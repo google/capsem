@@ -136,20 +136,11 @@ class PackageRail:
         mount = self._config.install.mount
         metadata = docker_git_metadata_mount(self._runner)
         mounts = (
-            # Read-write, and not by choice. The scratch grafts below cover
-            # `frontend/node_modules`, `frontend/dist` and the app crate's
-            # `gen/`, which is where the build's *outputs* go -- but the
-            # frontend bundler also writes atomic temporaries beside its
-            # target, directly in `frontend/`:
-            #
-            #   EROFS: read-only file system, open '/src/frontend/_tmp_50_...'
-            #
-            # Grafting scratch over `frontend/` itself would mask the source
-            # the build is meant to compile, so there is no flag that fixes
-            # this. Sealing the lane means baking the frontend into the builder
-            # image, as the parity lane did -- Phase 5's second half. Until
-            # then this stays declared and counted rather than quietly widened.
-            Mount.unmigrated(str(self.root), mount),
+            # No source mount. The checkout is copied into the lane image
+            # below, so the container holds its own bytes and a host step
+            # cannot race these inodes -- and the bundler's atomic
+            # temporaries, which made a read-only mount impossible, land in an
+            # image layer instead of the developer's `frontend/`.
             *((metadata,) if metadata is not None else ()),
             *(Mount(volume.source, volume.target) for volume in self._package.volumes),
             Mount(
@@ -164,9 +155,18 @@ class PackageRail:
         # name this one needs, and `docker create` fails on the collision
         # rather than replacing it.
         docker.remove(container)
+        # The source as a layer. Built here rather than in a warm-up step
+        # because it is keyed by the source itself: `COPY` invalidates on any
+        # change, so a stale image is not reachable.
+        docker.build(
+            tag=self._package.lane_image,
+            dockerfile=str(self.root / self._package.lane_dockerfile),
+            context=str(self.root),
+            args=[f"BASE={self._package.builder_image}"],
+        )
         docker.create(
             name=container,
-            image=self._package.builder_image,
+            image=self._package.lane_image,
             command=["bash", f"{mount}/{self._package.build_script}"],
             network=self._package.network,
             # Whatever signing contributed is the credential set, taken from

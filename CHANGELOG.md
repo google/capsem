@@ -95,6 +95,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Linux package lane no longer mounts the checkout. Its source is copied
+  into a lane image, so a host step and the container can no longer race the
+  same inodes. The mount it replaces could not be made read-only: the frontend
+  bundler writes atomic temporaries directly in `frontend/`, and grafting
+  container scratch over `frontend/` would have masked the source being built.
 - A service restarting after a crash now actually reaps the per-VM
   `capsem-process` children its predecessor orphaned. The reaper shelled out to
   `/bin/ps`, which is setuid root and which macOS refuses to exec from a

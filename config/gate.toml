@@ -331,6 +331,14 @@ dist_dir = "dist"
 # are baked into the builder image.
 network = "bridge"
 lane_container = "capsem-package-{arch}"
+# The source goes in as an image layer, not a mount. See
+# `docker/Dockerfile.package` for why a mount could not be sealed: the frontend
+# bundler writes atomic temporaries in `frontend/` itself, so `:ro` was
+# impossible and scratch over `frontend/` would have masked the source.
+# One tag for every architecture -- the source is the same, and `COPY`
+# invalidates the layer on any source change, which is the correct cache key.
+lane_dockerfile = "docker/Dockerfile.package"
+lane_image = "capsem-package-lane:latest"
 # The checkout goes in read-only; these three paths get container-local
 # scratch grafted over them, because the build genuinely writes to all three
 # and none of those writes belongs to the host. `pnpm install` fills
