@@ -83,35 +83,35 @@ owner = "none"
 # machine and a clean checkout disagree about one commit -- has nowhere to
 # live. It kept a `release_boundary` too, which meant a whole step existed to
 # hand back a volume nobody took.
-reason = "The sealed Linux parity lane mounts nothing; this has no producer."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-agent-target-arm64]
 kind = "volume"
-retention = "working"
+retention = "obsolete"
 owner = "assets"
 last_consumer = "assets"
 release_boundary = "after-assets"
-reason = "Agent compiler output is consumed by the completed asset rail."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-agent-target-x86_64]
 kind = "volume"
-retention = "working"
+retention = "obsolete"
 owner = "assets"
 last_consumer = "assets"
 release_boundary = "after-assets"
-reason = "Agent compiler output is consumed by the completed asset rail."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-rustup-arm64]
 kind = "volume"
-retention = "cache"
+retention = "obsolete"
 owner = "assets"
-reason = "Architecture-native Rust toolchain avoids a repeated toolchain download."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-rustup-x86_64]
 kind = "volume"
-retention = "cache"
+retention = "obsolete"
 owner = "assets"
-reason = "Architecture-native Rust toolchain avoids a repeated toolchain download."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-host-builder]
 kind = "image"
@@ -128,19 +128,19 @@ reason = "Both package builds and the install proof's base image need this tag."
 
 [resources.capsem-host-target-arm64]
 kind = "volume"
-retention = "working"
+retention = "obsolete"
 owner = "package-arm64"
 last_consumer = "package-arm64"
 release_boundary = "after-package-arm64"
-reason = "The exact arm64 package is copied to dist before this compiler output is released."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-host-target-x86_64]
 kind = "volume"
-retention = "working"
+retention = "obsolete"
 owner = "package-x86_64"
 last_consumer = "package-x86_64"
 release_boundary = "after-package-x86_64"
-reason = "The exact x86_64 package is copied to dist before this compiler output is released."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-install-target]
 kind = "volume"
@@ -150,7 +150,7 @@ last_consumer = "install"
 release_boundary = "after-install"
 release_boundaries = ["before-packages", "after-install"]
 maximum_gib = 25
-reason = "The install lanes copy their source into the image; nothing declares this, so it has no producer."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-install-frontend-dist]
 kind = "volume"
@@ -158,7 +158,7 @@ retention = "obsolete"
 owner = "install"
 last_consumer = "install"
 release_boundary = "after-install"
-reason = "The install lanes copy their source into the image; nothing declares this, so it has no producer."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-install-test]
 kind = "image"
@@ -171,21 +171,21 @@ reason = "Derived systemd test image is rebuilt from retained BuildKit layers."
 
 [resources.capsem-cargo-registry]
 kind = "volume"
-retention = "cache"
+retention = "obsolete"
 owner = "shared-rust"
-reason = "Downloaded Cargo registry content is reused by asset and package rails."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-cargo-git]
 kind = "volume"
-retention = "cache"
+retention = "obsolete"
 owner = "shared-rust"
-reason = "Downloaded Cargo git sources are reused by asset and package rails."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-rustup]
 kind = "volume"
-retention = "cache"
+retention = "obsolete"
 owner = "packages"
-reason = "Pinned Rust toolchains and targets are reused by both package architectures."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 # The three caches the parity lane used to carry between runs. The base image
 # resolves all three now -- `cargo fetch` against `Cargo.lock` and the rustup
@@ -197,66 +197,66 @@ reason = "Pinned Rust toolchains and targets are reused by both package architec
 kind = "volume"
 retention = "obsolete"
 owner = "none"
-reason = "The lockfile-keyed base image carries the registry; nothing mounts this."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-linux-rust-cargo-git]
 kind = "volume"
 retention = "obsolete"
 owner = "none"
-reason = "The lockfile-keyed base image carries the git sources; nothing mounts this."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-linux-rust-rustup]
 kind = "volume"
 retention = "obsolete"
 owner = "none"
-reason = "The lockfile-keyed base image carries the toolchain; nothing mounts this."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-install-cargo]
 kind = "volume"
 retention = "obsolete"
 owner = "install"
-reason = "The install lanes copy their source into the image; nothing declares this, so it has no producer."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-install-rustup]
 kind = "volume"
 retention = "obsolete"
 owner = "install"
-reason = "The install lanes copy their source into the image; nothing declares this, so it has no producer."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-install-frontend-node-modules]
 kind = "volume"
 retention = "obsolete"
 owner = "install"
-reason = "The install lanes copy their source into the image; nothing declares this, so it has no producer."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 # Mounted by the install proof and, until now, governed by nothing: it had no
 # entry here at all, so no retention, no owner and no budget applied to a
 # directory the release-site build fills on every run.
 [resources.capsem-install-release-site-dist]
 kind = "volume"
-retention = "working"
+retention = "obsolete"
 owner = "install"
 last_consumer = "install"
 release_boundary = "after-install"
-reason = "The rendered release site, kept container-local so the build does not write it into the image's source."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-install-release-site-node-modules]
 kind = "volume"
 retention = "obsolete"
 owner = "install"
-reason = "The install image bakes the release-site dependencies; nothing mounts this."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-linux-python-venv]
 kind = "volume"
 retention = "obsolete"
 owner = "none"
-reason = "No production recipe mounts this legacy volume."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [resources.capsem-linux-unit-target]
 kind = "volume"
 retention = "obsolete"
 owner = "none"
-reason = "No production recipe mounts this legacy target volume."
+reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [debug_artifacts]
 root = "test-artifacts"

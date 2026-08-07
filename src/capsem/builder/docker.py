@@ -598,8 +598,6 @@ def container_compile_agent(
     """
     runtime = detect_runtime()
     platform = "linux/arm64" if "aarch64" in rust_target else "linux/amd64"
-    arch_suffix = "arm64" if "aarch64" in rust_target else "x86_64"
-    target_volume = f"capsem-agent-target-{arch_suffix}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Build all shell commands from GUEST_BINARIES constant
@@ -622,8 +620,8 @@ def container_compile_agent(
     print(f"  Container build ({platform}) ...")
     # Source is mounted :ro to protect the host. We symlink everything into
     # a writable /build dir so cargo can generate Cargo.lock without modifying
-    # the host. The target dir and registry are persistent named volumes.
-    rustup_volume = f"capsem-rustup-{arch_suffix}"
+    # the host. Every cache below is an anonymous volume: a named one outlives
+    # the run and is state two gates share, which is what this work removes.
     run_cmd(
         [
             runtime,
@@ -636,13 +634,13 @@ def container_compile_agent(
             "-v",
             f"{output_dir.resolve()}:/output",
             "-v",
-            "capsem-cargo-registry:/usr/local/cargo/registry",
+            "/usr/local/cargo/registry",
             "-v",
-            "capsem-cargo-git:/usr/local/cargo/git",
+            "/usr/local/cargo/git",
             "-v",
-            f"{rustup_volume}:/usr/local/rustup",
+            "/usr/local/rustup",
             "-v",
-            f"{target_volume}:/build/target",
+            "/build/target",
             "-w",
             "/build",
             image,

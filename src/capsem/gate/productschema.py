@@ -16,11 +16,6 @@ from __future__ import annotations
 from .configschema import Strict
 
 
-class VolumeSpec(Strict):
-    source: str
-    target: str
-
-
 class InstallLayout(Strict):
     assets: str
     config: str
@@ -117,7 +112,6 @@ class InstallConfig(Strict):
     layout: InstallLayout
     guest_user: GuestUser
     suite: InstallSuite
-    volumes: tuple[VolumeSpec, ...]
 
     @property
     def preinstall_admin(self) -> str:
@@ -190,12 +184,7 @@ class PackageConfig(Strict):
     container_output_dir: str
     container_output_contents: str
     dist_dir: str
-    target_volume: str
     proof: PackageProof
-    volumes: tuple[VolumeSpec, ...]
-
-    def target_volume_for(self, arch: str) -> str:
-        return self.target_volume.format(arch=arch)
 
 
 class AssetsConfig(Strict):

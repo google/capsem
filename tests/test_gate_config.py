@@ -184,15 +184,17 @@ def test_the_preinstall_admin_is_not_the_installed_one(
     assert config.install.preinstall_admin.startswith(config.install.preinstall_root)
 
 
-def test_the_package_target_volume_is_per_architecture(
-    config: gate_config.GateConfig,
-) -> None:
-    """A shared /cargo-target would rebuild the world on every alternation."""
-    arm = config.package.target_volume_for("arm64")
-    intel = config.package.target_volume_for("x86_64")
+def test_the_package_lane_names_no_volume_at_all(config) -> None:
+    """Was: the per-architecture `/cargo-target` volume must differ per arch.
 
-    assert arm != intel
-    assert "arm64" in arm and "x86_64" in intel
+    It did, and it had to, because a shared named volume rebuilt the world on
+    every alternation. There is no named volume now -- the build directory is
+    anonymous, so Docker allocates one per container and reclaims it with that
+    container, which is per-architecture by construction and shares nothing
+    between two gates.
+    """
+    assert not hasattr(config.package, "volumes")
+    assert config.package.cargo_target_mount.startswith("/")
 
 
 def test_relaxed_lint_roots_are_the_ones_not_checked_strictly(

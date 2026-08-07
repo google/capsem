@@ -725,7 +725,7 @@ def test_install_test_does_not_rebuild_frontend_and_owns_release_site_scratch() 
 
     config = gate_config.load(PROJECT_ROOT)
     issued = _planned("install")
-    volumes = {volume.source: volume.target for volume in config.install.volumes}
+    volumes: dict[str, str] = {}  # the install lane mounts no named volume
 
     assert volumes == {
         "capsem-install-release-site-node-modules": "/src/release-site/node_modules",

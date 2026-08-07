@@ -104,6 +104,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- No lane mounts a named volume. Phase 9 completes literally rather than
+  partially: the cargo registry, cargo git and rustup volumes are gone because
+  they mounted over `/usr/local/cargo` and `/usr/local/rustup` -- exactly where
+  `Dockerfile.host-builder` installs the toolchain, the cross-targets,
+  tauri-cli and cargo-auditable -- so the image carried all of it and every
+  container saw a stale volume instead. The base image resolves the workspace
+  dependency graph now. The per-architecture build directories and the
+  release-site output are anonymous volumes, allocated per container and
+  reclaimed with it, so nothing carries state between two gates.
+
 - Public recipe names now come from `tests/variables.py`, which reads
   `config/public-surface.toml`, and a contract forbids spelling them as
   literals. Renaming one recipe broke five contracts in four files and not one

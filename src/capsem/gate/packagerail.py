@@ -153,11 +153,6 @@ class PackageRail:
                 Mount.generated(str(self.root / name), f"{mount}/{name}")
                 for name in self._package.generated_inputs
             ),
-            *(Mount(volume.source, volume.target) for volume in self._package.volumes),
-            Mount(
-                self._package.target_volume_for(self.target.name),
-                self._package.cargo_target_mount,
-            ),
         )
 
         docker = Docker(self._runner)
@@ -185,7 +180,15 @@ class PackageRail:
             forward=tuple(environment),
             carry=environment,
             mounts=mounts,
-            scratch=tuple(f"{mount}/{path}" for path in self._package.writable_paths),
+            # The build directory joins the scratch grafts rather than becoming a
+            # `Mount` with no source: an anonymous volume is spelled by its
+            # container path alone, and `scratch` already spells them that way.
+            # It was a named per-arch volume, which was the last state two
+            # gates shared.
+            scratch=(
+                *(f"{mount}/{path}" for path in self._package.writable_paths),
+                self._package.cargo_target_mount,
+            ),
             workdir=mount,
             secret_env=frozenset(signing),
         )

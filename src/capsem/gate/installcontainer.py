@@ -114,7 +114,6 @@ class InstallContainer:
                     for name in self._settings.generated_inputs
                     if (self._config.root / name).exists()
                 ),
-                *(Mount(v.source, v.target) for v in self._settings.volumes),
             ],
         )
         if self.boots_a_guest:

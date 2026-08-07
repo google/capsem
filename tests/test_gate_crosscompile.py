@@ -167,7 +167,7 @@ def test_the_builder_receives_every_name_for_the_target(
     assert f"bash /src/{BUILD_SCRIPT}" in build
 
 
-def test_the_cargo_caches_are_shared_and_the_target_dir_is_per_architecture(
+def test_the_lane_shares_no_named_volume_with_any_other_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A shared /cargo-target across architectures would rebuild the world on
@@ -179,9 +179,22 @@ def test_the_cargo_caches_are_shared_and_the_target_dir_is_per_architecture(
     _run_lane(_rail(runner))
 
     build = runner.matching(r"docker create")[0]
-    assert "-v capsem-cargo-registry:/usr/local/cargo/registry" in build
-    assert "-v capsem-rustup:/usr/local/rustup" in build
-    assert f"-v capsem-host-target-{TARGET.name}:/cargo-target" in build
+    # Reimplemented from a test that required exactly the opposite, and was
+    # right at the time: the cargo caches were shared named volumes and the
+    # target dir was one per architecture.
+    #
+    # They mounted over `/usr/local/cargo` and `/usr/local/rustup`, which is
+    # where `Dockerfile.host-builder` installs the toolchain, the cross-targets
+    # and its tools -- so the image carried all of it and the container saw a
+    # volume instead. The base image resolves the dependency graph now.
+    #
+    # The build directory is still off the host filesystem; it is simply
+    # anonymous, so Docker allocates one per container and reclaims it with
+    # that container rather than carrying it between two gates.
+    assert "capsem-cargo-registry" not in build
+    assert "capsem-rustup" not in build
+    assert "capsem-host-target" not in build
+    assert "-v /cargo-target" in build, f"the build directory left the container: {build}"
 
 
 def test_the_package_lane_mounts_no_git_metadata(

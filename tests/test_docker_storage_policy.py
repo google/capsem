@@ -72,16 +72,15 @@ def test_policy_declares_last_consumers_before_release_boundaries() -> None:
     # gate died at `docker build` with `pull access denied`.
     assert resources["capsem-host-builder"]["last_consumer"] == "install"
     assert resources["capsem-host-builder"]["release_boundary"] == "after-install"
-    assert resources["capsem-agent-target-arm64"]["last_consumer"] == "assets"
-    assert resources["capsem-agent-target-arm64"]["release_boundary"] == "after-assets"
-    assert resources["capsem-host-target-arm64"]["release_boundary"] == "after-package-arm64"
-    assert resources["capsem-host-target-x86_64"]["release_boundary"] == "after-package-x86_64"
     # `capsem-install-target` and `-frontend-node-modules` were `working` and
     # `cache`; both are obsolete now. The install lanes copy their source into
     # the image, so nothing declares them and nothing can mount them.
     assert resources["capsem-install-target"]["retention"] == "obsolete"
     assert resources["capsem-install-frontend-node-modules"]["retention"] == "obsolete"
-    assert resources["capsem-cargo-registry"]["retention"] == "cache"
+    # Obsolete: the base image resolves the dependency graph, and the volume
+    # that used to carry it mounted over `/usr/local/cargo` -- shadowing the
+    # toolchain, the cross-targets and the tools the image installs there.
+    assert resources["capsem-cargo-registry"]["retention"] == "obsolete"
     # Obsolete too: the install image bakes the release-site dependencies, so
     # nothing mounts this. It was a cache for a bind-mounted checkout that no
     # longer exists, and a stale copy of it mounted over an image-provided
@@ -322,8 +321,15 @@ def test_offline_snapshot_reports_every_managed_resource_and_decision() -> None:
     assert report["label"] == "contract"
     assert report["runtime"]["available"] is False
     resources = report["resources"]
-    assert resources["capsem-host-target-arm64"]["decision"] == ("release-after-package-arm64")
-    assert resources["capsem-cargo-registry"]["decision"] == "retain-cache"
+    # `delete-obsolete`, not `release-after-...`: there is no named volume to
+    # release. The per-arch build directory is an anonymous volume now,
+    # allocated per container and reclaimed with it, so the boundary that used
+    # to hand it back has nothing to hand.
+    assert resources["capsem-host-target-arm64"]["decision"] == "delete-obsolete"
+    # Nothing retains a cache volume any more. The base image resolves the
+    # dependency graph, and this volume mounted over the directory the image
+    # installs the toolchain and its tools into.
+    assert resources["capsem-cargo-registry"]["decision"] == "delete-obsolete"
     assert resources["capsem-linux-python-venv"]["decision"] == "delete-obsolete"
 
 

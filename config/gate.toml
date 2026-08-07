@@ -208,10 +208,6 @@ glowup = "target/local-release-glowup"
 # Written by the container as its own user, and handed back on the way out.
 extra_owned_paths = ["release-site/node_modules", "release-site/dist"]
 
-[[install.volumes]]
-source = "capsem-install-release-site-dist"
-target = "/src/release-site/dist"
-
 # ---------------------------------------------------------------------------
 # The Linux package rail
 # ---------------------------------------------------------------------------
@@ -372,7 +368,9 @@ container_output_dir = "/package-output"
 # nests one level down from where `resolve()` looks.
 container_output_contents = "/package-output/."
 # Per-architecture, so alternating targets does not rebuild the world.
-target_volume = "capsem-host-target-{arch}"
+# No `target_volume`. The build directory is an anonymous volume, spelled by
+# its container path in `cargo_target_mount` and allocated per container, so
+# there is no name for two gates to share.
 
 # Installing the exact package into a clean systemd container and proving it
 # works: every binary present and reporting the package's own version, the
@@ -425,19 +423,12 @@ status_requires = [
     "Gateway:   ok",
 ]
 
-# Shared across every package build, so the second architecture reuses the
-# first's downloads instead of refetching the index.
-[[package.volumes]]
-source = "capsem-cargo-registry"
-target = "/usr/local/cargo/registry"
-
-[[package.volumes]]
-source = "capsem-cargo-git"
-target = "/usr/local/cargo/git"
-
-[[package.volumes]]
-source = "capsem-rustup"
-target = "/usr/local/rustup"
+# No shared package volumes. `capsem-cargo-registry`, `-cargo-git` and
+# `-rustup` mounted over `/usr/local/cargo` and `/usr/local/rustup`, which is
+# exactly where `Dockerfile.host-builder` installs the toolchain, the
+# cross-targets, tauri-cli and cargo-auditable -- so the image carried all of
+# it and the container saw the volume instead. The base image resolves the
+# dependency graph now and nothing is mounted over it.
 
 # ---------------------------------------------------------------------------
 # The VM asset build and boot gate
@@ -983,7 +974,9 @@ lane_container = "capsem-linux-rust-run"
 # The Linux builder image, and the Linux-Rust parity lane that runs inside it.
 tag = "capsem-host-builder:latest"
 dockerfile = "docker/Dockerfile.host-builder"
-context = "docker/"
+# The checkout, so the lockfile is reachable: the base image resolves the
+# workspace dependency graph rather than a volume carrying it between runs.
+context = "."
 script = "scripts/test-linux-rust.sh"
 mount = "/src"
 # `probe_user` and `probe_network` are gone with the probe they configured.

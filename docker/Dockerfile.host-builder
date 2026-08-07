@@ -86,6 +86,13 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
         x86_64-unknown-linux-musl \
     && rustup component add llvm-tools
 
+# The workspace dependency graph, resolved here instead of in a named volume
+# mounted over `/usr/local/cargo`. That volume shadowed everything the layers
+# above install -- the toolchain, the targets, tauri-cli -- so the image
+# carried them and the container could not see them.
+COPY Cargo.toml Cargo.lock rust-toolchain.toml /workspace/
+RUN cd /workspace && CARGO_NET_RETRY=10 cargo fetch --locked
+
 RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install tauri-cli --locked && exit 0; sleep $((attempt * 5)); done; exit 1
 RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo-auditable --locked && exit 0; sleep $((attempt * 5)); done; exit 1
 RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo-nextest --locked && exit 0; sleep $((attempt * 5)); done; exit 1
