@@ -29,7 +29,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING
 
-from .faults import Event, Fault, facts_of, ignored_trees, source_inodes
+from .faults import Event, Fault, facts_of, ignored_here, source_inodes
 from .interception import CURRENT_STEP
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
@@ -49,7 +49,6 @@ class Watch:
     ) -> None:
         self._roots = [root for root in roots if root.exists()]
         self._source_root = source_root.resolve()
-        self._ignored = ignored_trees(self._source_root)
         self._source_inodes = source_inodes(self._source_root)
         self._declared = dict(declared or {})
         self._on_fault = on_fault
@@ -226,7 +225,7 @@ class Watch:
         # gitignored Tauri output and was reported as a source-tree fault on
         # every run; widening the set is whack-a-mole, since the next generated
         # directory lands somewhere else again.
-        return not any(relative.is_relative_to(ignored) for ignored in self._ignored)
+        return not ignored_here(self._source_root, relative.parent)
 
     # -- state, not moments -------------------------------------------------
 

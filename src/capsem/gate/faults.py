@@ -24,34 +24,43 @@ from pathlib import Path
 BUILD_OUTPUT = frozenset({"target", "dist", "packages", "assets", ".git", "node_modules", ".venv"})
 
 
-def ignored_trees(root: Path) -> tuple[Path, ...]:
-    """Everything git ignores, asked once.
+def ignored_here(root: Path, directory: Path) -> bool:
+    """Whether git ignores `directory`, asked once per directory and cached.
 
-    Per run rather than per event: `is_source` is consulted for every
-    filesystem operation the gate makes, and a subprocess each time would cost
-    more than the observation is worth.
+    Not a snapshot. The first version listed every ignored path at run start
+    with `git ls-files --ignored`, which reports only paths that *exist* -- and
+    the case that matters most is a tree the run creates: `crates/capsem-app/
+    gen/` is gitignored, so it is not in the private copy at all until Tauri's
+    build script makes it, and every file under it was still reported as source.
+    Asking about the rules rather than about today's files is the difference.
 
-    Directories as well as files, and deliberately *without*
-    `--no-empty-directory`: an ignored directory that happens to be empty right
-    now is exactly the state a tree is in before the run creates anything under
-    it, which is the case being classified.
-
-    A root that is not a directory answers nothing rather than raising --
-    `subprocess` refuses a missing cwd, and an observer that cannot be built is
-    worse than one that classifies conservatively.
+    Memoized per directory because `is_source` is on the path of every
+    filesystem operation the gate performs, while the number of distinct
+    directories it touches is small. `git check-ignore` answers about a path
+    whether or not it exists, which is exactly the property needed.
     """
     import subprocess
 
     if not root.is_dir():
-        return ()
-    listed = subprocess.run(
-        ["git", "ls-files", "-o", "--directory", "--exclude-standard", "--ignored", "-z"],
-        cwd=root,
-        check=False,
-        capture_output=True,
-        text=True,
-    ).stdout
-    return tuple(Path(name) for name in listed.split("\0") if name)
+        return False
+    cache = _IGNORED.setdefault(root, {})
+    key = str(directory)
+    if key not in cache:
+        cache[key] = (
+            subprocess.run(
+                ["git", "check-ignore", "-q", "--no-index", key],
+                cwd=root,
+                check=False,
+                capture_output=True,
+            ).returncode
+            == 0
+        )
+    return cache[key]
+
+
+#: Per checkout, per directory. A run observes one tree; a test may build
+#: several, so this is keyed by root rather than global.
+_IGNORED: dict[Path, dict[str, bool]] = {}
 
 
 #: Hash files up to this size. Digests answer "are these the same bytes under

@@ -503,7 +503,7 @@ def test_a_nested_ignored_tree_is_not_reported_as_source(tmp_path: Path) -> None
     from capsem.gate.observation import Watch
 
     root = tmp_path / "checkout"
-    (root / "crates" / "app" / "gen").mkdir(parents=True)
+    (root / "crates" / "app").mkdir(parents=True)
     (root / "src").mkdir()
     (root / ".gitignore").write_text("crates/app/gen/\ntarget/\n", encoding="utf-8")
     (root / "src" / "real.py").write_text("x = 1\n", encoding="utf-8")
@@ -512,7 +512,14 @@ def test_a_nested_ignored_tree_is_not_reported_as_source(tmp_path: Path) -> None
 
     watch = Watch([root], source_root=root)
 
+    # Created *after* the watch exists, which is the case that matters and the
+    # one the first fix missed: `crates/capsem-app/gen/` is gitignored, so it
+    # is not in the private copy at all until Tauri's build script makes it
+    # mid-run. A list of ignored paths gathered at startup cannot contain it,
+    # because it did not exist to be listed.
+    (root / "crates" / "app" / "gen" / "schemas").mkdir(parents=True)
     generated = root / "crates" / "app" / "gen" / "schemas" / "acl.json"
+    generated.write_text("{}\n", encoding="utf-8")
     assert not watch.is_source(generated), (
         "gitignored build output was classified as the source under test"
     )

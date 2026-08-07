@@ -185,12 +185,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Six checkout mounts remain, all declared and counted. None is new: every one
   was an inline `-v` that no guard could see, and the list can only shrink now.
 
-- The observer stops reporting gitignored build output as source. It compared
+- The observer stops reporting gitignored build output as source, including
+  trees the run creates. It compared
   only the *first* path component against a hand-written set of build-output
   names, so nothing nested could ever match: `crates/capsem-app/gen/` is
   gitignored Tauri output and was reported as a source-tree fault on every
-  run. Git is asked instead — once per run, directories included, so a path
-  created under an ignored tree during the run is recognised too.
+  run. Git is asked instead, about the *rules* rather than about today's
+  files: `git check-ignore` answers for a path whether or not it exists, which
+  matters because that directory is gitignored and so is absent from the
+  private copy until Tauri's build script creates it mid-run. Memoized per
+  directory, since the classifier is on the path of every filesystem operation
+  the gate makes.
 
   The names stay alongside it rather than being replaced: a test fixture is
   not always a git repository, and git answers nothing outside one, which
