@@ -8,7 +8,8 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
-from capsem.gate.docker import Docker, Mount, container_path
+from capsem.gate.docker import Docker
+from capsem.gate.dockermount import Mount, container_path
 from capsem.gate.errors import GateError
 
 MOUNT = gate_config.load(Path(__file__).resolve().parents[1]).install.mount

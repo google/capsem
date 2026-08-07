@@ -306,6 +306,11 @@ dist_dir = "dist"
 # The container the build runs in, kept until its output has been copied out.
 # `--rm` and `docker cp` are mutually exclusive, which is the same constraint
 # the Linux parity lane hit: a removed container has nothing left to read.
+# It needs outbound access: rustup target install, pnpm install, and apt's
+# multiarch swap all run inside. Named rather than omitted, so the decision is
+# visible -- and it is the next thing to close once the frontend and toolchain
+# are baked into the builder image.
+network = "bridge"
 lane_container = "capsem-package-{arch}"
 container_output_dir = "/package-output"
 # The trailing `/.` copies the directory's *contents*; without it the package

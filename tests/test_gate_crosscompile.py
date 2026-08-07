@@ -14,7 +14,7 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
-from capsem.gate.docker import Mount
+from capsem.gate.dockermount import Mount
 from capsem.gate.errors import GateError
 from capsem.gate.packageinputs import pinned_toolchain, resolve_channel
 from capsem.gate.packagerail import PackageRail
@@ -152,12 +152,19 @@ def test_the_builder_receives_every_name_for_the_target(
 
     _run_lane(_rail(runner))
 
-    build = runner.matching(r"docker run --rm")[0]
-    assert f"TARGET_ARCH={TARGET.name}" in build
-    assert f"RUST_TARGET={TARGET.rust_target}" in build
-    assert f"DPKG_ARCH={TARGET.dpkg}" in build
-    assert "RUST_TOOLCHAIN=1.2.3" in build
-    assert f"PKG_CONFIG_PATH={TARGET.pkg_config_path}" in build
+    build = runner.matching(r"docker create")[0]
+    # Forwarded by name, never as `NAME=value`: the same argv carries the
+    # Tauri signing key, and a value in argv is world-readable through `ps`.
+    # The values are asserted on the recorded environment instead.
+    for name in ("TARGET_ARCH", "RUST_TARGET", "DPKG_ARCH", "RUST_TOOLCHAIN", "PKG_CONFIG_PATH"):
+        assert f"-e {name}" in build, f"{name} is not handed to the builder"
+
+    created = next(c for c in runner.commands if c.argv[:2] == ("docker", "create"))
+    assert created.env["TARGET_ARCH"] == TARGET.name
+    assert created.env["RUST_TARGET"] == TARGET.rust_target
+    assert created.env["DPKG_ARCH"] == TARGET.dpkg
+    assert created.env["RUST_TOOLCHAIN"] == "1.2.3"
+    assert created.env["PKG_CONFIG_PATH"] == TARGET.pkg_config_path
     assert f"bash /src/{BUILD_SCRIPT}" in build
 
 
@@ -172,7 +179,7 @@ def test_the_cargo_caches_are_shared_and_the_target_dir_is_per_architecture(
 
     _run_lane(_rail(runner))
 
-    build = runner.matching(r"docker run --rm")[0]
+    build = runner.matching(r"docker create")[0]
     assert "-v capsem-cargo-registry:/usr/local/cargo/registry" in build
     assert "-v capsem-rustup:/usr/local/rustup" in build
     assert f"-v capsem-host-target-{TARGET.name}:/cargo-target" in build
@@ -192,7 +199,7 @@ def test_package_build_mounts_linked_worktree_git_metadata(
 
     _run_lane(_rail(runner))
 
-    build = runner.matching(r"docker run --rm")[0]
+    build = runner.matching(r"docker create")[0]
     assert f"-v {metadata}:{metadata}:ro" in build
 
 

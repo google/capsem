@@ -20,7 +20,7 @@ from .actions import Action, Run
 from .command import GateCommand
 from .config import GateConfig
 from .context import Context
-from .docker import Mount
+from .dockermount import Mount
 from .errors import GateError
 from .execution import Step, step
 from .gitmetadata import docker_git_metadata_mount

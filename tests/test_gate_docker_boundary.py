@@ -65,7 +65,6 @@ UNMIGRATED = {
     "crossexec.py": 1,
     "hostimage.py": 2,
     "installimage.py": 2,
-    "packagerail.py": 1,
 }
 
 
@@ -136,7 +135,7 @@ def test_a_mount_cannot_point_at_the_checkout() -> None:
     import pytest
 
     from capsem.gate import config as gate_config
-    from capsem.gate.docker import Mount
+    from capsem.gate.dockermount import Mount
     from capsem.gate.errors import GateError
 
     root = gate_config.load(PROJECT_ROOT).root
@@ -176,13 +175,22 @@ def test_every_container_declares_its_network() -> None:
 
 
 def test_the_checkout_mounts_are_enumerated_and_shrinking() -> None:
-    """Three mounts of the working tree remain, and all three say so.
+    """Four mounts of the working tree remain, and all four say so.
 
     `Mount.unmigrated` is deliberately ugly and deliberately greppable. The
     alternative was switching the guard off globally while the modules are
     converted, which is how a temporary exemption becomes the behaviour.
 
-    `gitmetadata.py` joined this list without any new mount being created. A
+    `gitmetadata.py` and `packagerail.py` joined this list without any new
+    mount being created -- both were bare `-v` argv where no guard could see
+    them. The count went up while the truth stayed the same, which is the one
+    reason a ratchet may move this way, and it belongs here rather than in a
+    commit message nobody reads.
+
+    `packagerail.py` is the one with a way out. It mounts the checkout writable
+    because the builder runs `pnpm install && pnpm build` inside
+    `/src/frontend`; baking the frontend into the builder image is what lets
+    that mount go, exactly as it did for the parity lane. A
     linked worktree's common directory lives under the primary checkout, and
     that mount was assembled as bare `-v` argv where no guard could see it. It
     is declared now, so the count went up while the truth stayed the same --
@@ -195,7 +203,12 @@ def test_the_checkout_mounts_are_enumerated_and_shrinking() -> None:
         if count:
             remaining[path.name] = count
 
-    assert remaining == {"debproof.py": 1, "gitmetadata.py": 1, "installcontainer.py": 1}, (
+    assert remaining == {
+        "debproof.py": 1,
+        "gitmetadata.py": 1,
+        "installcontainer.py": 1,
+        "packagerail.py": 1,
+    }, (
         f"the checkout-mount debt changed: {remaining}. It may shrink -- update "
         "this expectation when a module moves to COPY -- but a new one is the "
         "race that killed a release run coming back."

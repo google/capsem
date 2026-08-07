@@ -23,7 +23,8 @@ from . import config as gate_config
 from . import hostimage, installimage
 from .actions import Call
 from .command import GateCommand
-from .docker import Docker, container_path
+from .docker import Docker
+from .dockermount import container_path
 from .errors import GateError
 from .execution import step
 from .fileactions import remove

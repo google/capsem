@@ -11,70 +11,9 @@ The disk budget those containers consume is `storage.py`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
-
+from .dockermount import Mount
 from .errors import GateError
 from .proc import Runner
-
-
-@dataclass(frozen=True)
-class Mount:
-    """A bind mount or named volume, in `-v` order.
-
-    Refuses the checkout. `-v <repo_root>:/src` let a host step churning
-    hardlinks and a container reading the same inodes over virtiofs share a
-    filesystem neither declared, which killed a release run with an
-    intermittent `Permission denied` on a file that was `0644` before and
-    after. Containers get their source copied into an image instead, so there
-    is no mount to police.
-    """
-
-    source: str
-    target: str
-    options: str = ""
-
-    #: Set only by `unmigrated`. A mount of the checkout is a defect; until the
-    #: four modules that still do it are converted to `COPY`, each one says so
-    #: at its call site rather than the guard being switched off globally.
-    legacy: bool = False
-
-    @classmethod
-    def unmigrated(cls, source: str, target: str, options: str = "") -> Mount:
-        """A checkout mount that has not been converted to an image copy yet.
-
-        Deliberately ugly and deliberately greppable. `tests/
-        test_gate_docker_boundary.py` counts these and refuses a new one, so
-        the list can only shrink.
-        """
-        return cls(source=source, target=target, options=options, legacy=True)
-
-    def __post_init__(self) -> None:
-        if self.legacy:
-            return
-        # The checkout this package was imported from -- the same derivation
-        # `sourcestate.gate_source()` uses, because a `Mount` is constructed
-        # before any config is in hand and asking for one would put the check
-        # back at the call sites it exists to remove.
-        root = Path(__file__).resolve().parents[3]
-        # Docker's own rule: a source with no separator is a *named volume*,
-        # not a path. Resolving one relative to the cwd puts it inside the
-        # checkout and refuses every legitimate cache volume.
-        if "/" not in self.source:
-            return
-        try:
-            candidate = Path(self.source).resolve()
-        except (OSError, ValueError):
-            return
-        if candidate == root or root in candidate.parents:
-            raise GateError(
-                f"{self.source} is inside the checkout: a container that mounts the "
-                "working tree shares inodes with every host step, which is a race "
-                "no declaration can constrain. COPY the source into the image."
-            )
-
-    def __str__(self) -> str:
-        return f"{self.source}:{self.target}" + (f":{self.options}" if self.options else "")
 
 
 class Docker:
@@ -175,16 +114,48 @@ class Docker:
         command: list[str],
         network: str,
         env: dict[str, str] | None = None,
+        forward: tuple[str, ...] = (),
+        carry: dict[str, str] | None = None,
+        mounts: tuple[Mount, ...] = (),
+        workdir: str | None = None,
+        secret_env: frozenset[str] = frozenset(),
     ) -> None:
         """Create a container without starting it, so `copy_out` has something
         to read. `--rm` and `docker cp` are mutually exclusive: a removed
         container has nothing left to copy from, which is why extraction
-        cannot reuse `run_once`."""
+        cannot reuse `run_once`.
+
+        Two ways to hand a variable in, and the difference is the whole point.
+        `env` writes `-e NAME=value` into argv, for values that are not
+        secrets. `forward` writes `-e NAME` and leaves the value to `carry`,
+        which becomes this process's environment for the `docker` CLI itself --
+        so the value never enters argv, and therefore never enters `ps`, which
+        every user on the machine can read and which no log redaction covers.
+
+        A declared secret in `env` is refused rather than redacted. Redaction
+        would keep the run log clean and leave the value in the process
+        listing, which is the leak that mattered: the Tauri key and its
+        password reached `ps` this way, and reintroducing it is one keyword.
+        """
+        leaked = sorted(set(env or {}) & secret_env)
+        if leaked:
+            raise GateError(
+                f"{', '.join(leaked)} would be written into argv as NAME=value, "
+                "where `ps` can read it. Name it in `forward` and pass its value "
+                "in `carry`, so docker takes it from its own environment."
+            )
         argv = ["docker", "create", "--name", name, "--network", network]
         for key, value in (env or {}).items():
             argv += ["-e", f"{key}={value}"]
+        argv += [part for name_only in forward for part in ("-e", name_only)]
+        argv += [part for mount in mounts for part in ("-v", str(mount))]
+        if workdir is not None:
+            argv += ["-w", workdir]
         argv += [image, *command]
-        self._runner.run(argv)
+        # Only `carry` reaches this process's environment. `env` is already in
+        # argv, and setting it here as well would render every value twice and
+        # blur the one distinction this signature exists to make.
+        self._runner.run(argv, env=carry, secret_env=secret_env)
 
     def start(self, container: str) -> None:
         self._runner.run(["docker", "start", "-a", container])
@@ -286,14 +257,3 @@ class Docker:
 
     def exists(self, path: str, container: str, *, user: str | None = None) -> bool:
         return self.succeeds(container, ["test", "-f", path], user=user)
-
-
-def container_path(root: Path, host_path: Path, *, mount: str) -> str:
-    """Where a checkout path appears inside a container that bind-mounts it."""
-    host_path = Path(host_path)
-    root = Path(root)
-    try:
-        relative = host_path.relative_to(root)
-    except ValueError:
-        raise GateError(f"{host_path} is outside the mounted checkout {root}") from None
-    return f"{mount}/{relative}"

@@ -27,6 +27,8 @@ from pathlib import Path
 from . import config as gate_config
 from . import debproof, host
 from .config import Arch
+from .docker import Docker
+from .dockermount import Mount
 from .errors import GateError
 from .fileactions import copy_tree, make_dir, remove
 from .gitmetadata import docker_git_metadata_mount
@@ -131,35 +133,51 @@ class PackageRail:
             manifest_url=self.manifest_url,
             signing=signing,
         )
-        # `-e NAME`, not `-e NAME=value`: docker forwards the value from its
-        # own environment. The Tauri private key and its password used to be
-        # written into argv here, which put both in the process listing --
-        # world-readable through `ps`, and reachable by no amount of log
-        # redaction -- as well as in the run log, the failure text and the
-        # summary.
-        argv = ["docker", "run", "--rm"]
-        for name in environment:
-            argv += ["-e", name]
         mount = self._config.install.mount
-        argv += ["-v", f"{self.root}:{mount}"]
         metadata = docker_git_metadata_mount(self._runner)
-        if metadata is not None:
-            argv += ["-v", str(metadata)]
-        for volume in self._package.volumes:
-            argv += ["-v", f"{volume.source}:{volume.target}"]
-        argv += [
-            "-v",
-            f"{self._package.target_volume_for(self.target.name)}"
-            f":{self._package.cargo_target_mount}",
-            "-w",
-            mount,
-            self._package.builder_image,
-            "bash",
-            f"{mount}/{self._package.build_script}",
-        ]
-        # Whatever signing contributed is the credential set, taken from the
-        # keys it returned rather than from a second list of names here.
-        self._runner.run(argv, env=environment, secret_env=frozenset(signing))
+        mounts = (
+            # The one mount this lane cannot yet lose: the builder runs
+            # `pnpm install && pnpm build` inside `/src/frontend`, so the tree
+            # has to be writable until that is baked into the image. Declared
+            # as the exception it is rather than hand-built past the guard.
+            Mount.unmigrated(str(self.root), mount),
+            *((metadata,) if metadata is not None else ()),
+            *(Mount(volume.source, volume.target) for volume in self._package.volumes),
+            Mount(
+                self._package.target_volume_for(self.target.name),
+                self._package.cargo_target_mount,
+            ),
+        )
+
+        docker = Docker(self._runner)
+        container = self._package.lane_container.format(arch=self.target.name)
+        # Any predecessor first: a container left by a killed run holds the
+        # name this one needs, and `docker create` fails on the collision
+        # rather than replacing it.
+        docker.remove(container)
+        docker.create(
+            name=container,
+            image=self._package.builder_image,
+            command=["bash", f"{mount}/{self._package.build_script}"],
+            network=self._package.network,
+            # Whatever signing contributed is the credential set, taken from
+            # the keys it returned rather than from a second list of names.
+            forward=tuple(environment),
+            carry=environment,
+            mounts=mounts,
+            workdir=mount,
+            secret_env=frozenset(signing),
+        )
+        try:
+            docker.start(container)
+        finally:
+            # Before the removal, and on the failure path too: a build that
+            # failed after producing a package is exactly when the package is
+            # worth looking at, and `--rm` would have destroyed it. This is
+            # also what makes "the builder produced it" and "the host can read
+            # it" two events instead of one write through a shared mount.
+            docker.copy_out(container, self._package.container_output_contents, str(self._dist))
+            docker.remove(container)
 
     def resolve(self) -> Path:
         """The exact package this run produced, not whatever `dist/` holds.

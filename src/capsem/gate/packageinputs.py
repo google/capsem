@@ -61,6 +61,10 @@ def package_environment(
         names.rust_target: target.rust_target,
         names.dpkg_arch: target.dpkg,
         names.rust_toolchain: toolchain,
+        # A container path, so the package lands somewhere `docker cp` can
+        # take it from rather than being written back through the bind mount
+        # the host is simultaneously reading.
+        names.output_dir: config.package.container_output_dir,
         # Standard tool and process conventions, not Capsem rails: these mean
         # the same thing in every container, and giving them a TOML key would
         # be moving strings rather than giving a protocol an owner.

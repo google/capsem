@@ -99,6 +99,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- The Linux package lane extracts its artifacts instead of writing them back
+  through the bind mount. It creates a container, starts it, copies the deb,
+  the record and the agent binaries out with `docker cp`, and removes it —
+  copying on the failure path too, because a build that failed after producing
+  a package is exactly when the package is worth looking at. "The builder
+  produced it" and "the host can read it" are two events now instead of one
+  write into a tree a host step may be reading.
+
+  The lane's `docker` argv is gone with it, so the boundary ratchet drops to
+  three modules. `Docker.create` grew mounts, a working directory, and a
+  distinction it did not have: `env` writes `-e NAME=value` into argv, while
+  `forward` writes `-e NAME` and leaves the value to `carry`, which becomes
+  the environment of the `docker` process itself. A declared secret passed as
+  `env` is now refused rather than redacted — redaction keeps the run log
+  clean and leaves the value in `ps`, which is the leak that mattered.
+
+  `docker.py` crossed the 300-line ceiling doing this; the addressing half —
+  what may be mounted, and where a checkout path lands inside a container — is
+  `dockermount.py`.
+
 - A linked worktree's Git metadata mount is now declared rather than assembled
   as bare `-v` argv, so the checkout-mount guard can see it. It is a mount of
   the primary checkout — the common directory lives there — and it had been

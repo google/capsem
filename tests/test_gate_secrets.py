@@ -221,10 +221,19 @@ def test_the_docker_argv_names_the_variable_and_carries_the_value_in_the_child_e
 
     rail.build()
 
-    (command,) = [c for c in runner.commands if c.argv[0] == "docker"]
+    # The lane issues five docker commands now -- remove, create, start, copy
+    # out, remove -- and the credentials ride on `create`. Asserted over *all*
+    # of them, because "no byte of the signing key reaches argv" is a claim
+    # about every command this lane issues, not about whichever one carries it.
+    issued = [c for c in runner.commands if c.argv[0] == "docker"]
+    assert issued, "the lane issued no docker command at all"
+    for other in issued:
+        rendered = " ".join(other.argv)
+        assert SENTINEL not in rendered
+        assert PASSPHRASE not in rendered
+
+    (command,) = [c for c in issued if c.argv[:2] == ("docker", "create")]
     argv = " ".join(command.argv)
-    assert SENTINEL not in argv
-    assert PASSPHRASE not in argv
     assert f"-e {SIGNING.key_variable} " in argv + " "
     assert f"{SIGNING.key_variable}=" not in argv
     # It still reaches the container, which is the whole point of reading it.

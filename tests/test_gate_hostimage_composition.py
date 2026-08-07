@@ -30,7 +30,7 @@ from capsem.gate import (
 from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
 from capsem.gate.context import Context
-from capsem.gate.docker import Mount
+from capsem.gate.dockermount import Mount
 from capsem.gate.plan import Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
