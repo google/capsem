@@ -107,9 +107,18 @@ def mode(command_default: str, requested: str | None) -> str:
 def written_to(config: GateConfig, directory: Path, *, report: bool) -> Path:
     """Render the profile into `directory` and return where it landed.
 
-    Into the run's own directory, so a failed run's evidence includes the exact
-    profile it was refused by. A profile reconstructed afterwards from config
-    is a profile that may not be the one that ran.
+    Kept rather than reconstructed: a profile rebuilt from config afterwards
+    may not be the one that ran, and the question a refused run raises is
+    always "what exactly was I refused by".
+
+    It lands in the history root and not in the run's own directory, which is
+    the one thing worth knowing here. The profile has to exist before the
+    process that executes under it -- this is called from `reexec()`, above
+    every resource -- and the run directory is allocated by the recording that
+    starts inside that process. There is no run to put it in yet. The cost is
+    that consecutive runs overwrite it, so it answers "the last run" rather
+    than "that run"; `sandboxreport` writes its capture into the run directory
+    precisely because, being a resource, it can.
     """
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / config.sandbox.profile_name

@@ -71,7 +71,7 @@ class _Settings:
 class _Config:
     def __init__(self, root: Path) -> None:
         self.sandbox = _Settings()
-        self.runlog = type("RunLog", (), {"root": "runs"})()
+        self.runlog = type("RunLog", (), {"root": "runs", "latest_link": "latest"})()
         self._root = root
 
     def path(self, relative: str) -> Path:
@@ -119,3 +119,24 @@ def test_the_collector_is_part_of_the_complete_gate() -> None:
     original defect had: mechanism present, never reached."""
     source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "gateresources.py").read_text()
     assert "SandboxReport(config, runner, mode=mode)" in source
+
+
+def test_the_capture_lands_in_this_runs_directory(tmp_path: Path) -> None:
+    """Not in the history root.
+
+    The root would mean each run overwriting the last capture, and a file that
+    grows for a whole gate sitting where `runhistory` rotation -- which removes
+    run *directories* -- would never reclaim it.
+    """
+    current = tmp_path / "runs" / "20260807-000000-abc123-candidate"
+    current.mkdir(parents=True)
+    (tmp_path / "runs" / "latest").symlink_to(current.name)
+
+    resource = sandboxreport.SandboxReport(
+        _Config(tmp_path), RecordingRunner(PROJECT_ROOT), mode=sandbox.REPORT
+    )
+    resource.acquire()
+    resource.release()
+
+    assert (current / _Settings.report_log_name).is_file(), "capture missed the run directory"
+    assert not (tmp_path / "runs" / _Settings.report_log_name).exists(), "capture went to the root"

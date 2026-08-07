@@ -59,7 +59,15 @@ class SandboxReport(Resource, name="sandbox-report"):
         self._settings = config.sandbox
         self._runner = runner
         self._mode = mode
-        self._target = config.path(config.runlog.root) / self._settings.report_log_name
+        # Into *this run's* directory, not the history root. `_recording()`
+        # allocates it and repoints `latest` before any resource is acquired,
+        # so by the time this runs the link is live. The root would have meant
+        # each run overwriting the last capture, and -- worse for a file that
+        # grows -- one that `runhistory` rotation never reclaims, because
+        # rotation removes run directories and this would not be in one.
+        history = config.path(config.runlog.root)
+        current = history / config.runlog.latest_link
+        self._target = (current if current.is_dir() else history) / self._settings.report_log_name
         self._stream: subprocess.Popen | None = None
         self._handle = None
 
