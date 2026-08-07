@@ -40,6 +40,7 @@ use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
 
+mod proctable;
 mod startup;
 
 /// Ceiling on a session log tail returned over the API. `serial.log` is guest
@@ -13422,15 +13423,22 @@ fn find_orphan_capsem_pids(ps_output: &str, run_dir: &std::path::Path) -> Vec<i3
 /// out to `ps`, applies the match, and escalates SIGTERM -> 2s poll ->
 /// SIGKILL. Best effort: silent if `ps` is missing or nothing matches.
 fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
-    let output = match std::process::Command::new("ps")
-        .args(["-ax", "-o", "pid=,command="])
-        .output()
-    {
-        Ok(o) if o.status.success() => o,
-        _ => return,
+    let table = match proctable::running_processes() {
+        Ok(table) => table,
+        // Loudly. This used to shell out to `ps` and return silently when the
+        // spawn failed, which is indistinguishable from finding no orphans --
+        // and under a sandbox, where setuid `ps` cannot be exec'd, that was
+        // every single time.
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "cannot read the process table; orphaned capsem-process children \
+                 of a previous service run will not be reaped"
+            );
+            return;
+        }
     };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let orphan_pids = find_orphan_capsem_pids(&stdout, run_dir);
+    let orphan_pids = find_orphan_capsem_pids(&table, run_dir);
     if orphan_pids.is_empty() {
         return;
     }

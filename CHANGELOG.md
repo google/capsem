@@ -95,6 +95,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A service restarting after a crash now actually reaps the per-VM
+  `capsem-process` children its predecessor orphaned. The reaper shelled out to
+  `/bin/ps`, which is setuid root and which macOS refuses to exec from a
+  sandboxed process, and it treated the failed spawn as "no orphans found" --
+  so under the release gate the reap silently never happened and six processes
+  outlived a complete run by half an hour, each still holding its run
+  directory. The process table is now read with `proc_listallpids` and
+  `KERN_PROCARGS2`, an enumeration failure is logged rather than swallowed, and
+  a source contract keeps the next copy of this from being written.
 - Both release commands now run the complete gate from a private copy of the
   checkout, and publish from the checkout itself. Only `candidate` had the
   copy, so the two commands whose mistakes are public and irreversible were the

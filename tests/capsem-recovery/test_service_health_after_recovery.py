@@ -10,6 +10,26 @@ from helpers.service import ServiceInstance, wait_exec_ready
 pytestmark = pytest.mark.recovery
 
 
+def _processes_holding(run_dir) -> list[str]:
+    """Every `capsem-process` still naming `run_dir` on its command line.
+
+    The same match the service's reaper makes, from the outside, so the
+    assertion cannot pass by agreeing with a broken implementation.
+    """
+    import psutil
+
+    marker = f"--session-dir {run_dir}"
+    alive = []
+    for process in psutil.process_iter(["cmdline"]):
+        try:
+            cmdline = " ".join(process.info["cmdline"] or [])
+        except (psutil.Error, OSError):
+            continue
+        if "capsem-process" in cmdline and marker in cmdline:
+            alive.append(f"{process.pid} {cmdline}")
+    return alive
+
+
 def test_service_healthy_after_orphan_cleanup():
     """After recovering from orphaned VMs, service can create new VMs normally."""
     svc = ServiceInstance()
@@ -34,6 +54,17 @@ def test_service_healthy_after_orphan_cleanup():
         try:
             svc2.start()
             client2 = svc2.client()
+
+            # The restarted service reaps the per-VM processes its predecessor
+            # orphaned. Asserted, because this is what the test is named for
+            # and nothing here checked it: the reaper shelled out to setuid
+            # `ps`, which a sandboxed process cannot exec, and treated the
+            # failed spawn as "no orphans". Six processes then outlived a
+            # release gate by half an hour and only its teardown noticed.
+            assert not _processes_holding(svc.tmp_dir), (
+                "the restarted service left its predecessor's capsem-process "
+                f"children alive: {_processes_holding(svc.tmp_dir)}"
+            )
 
             # Clean up orphan
             with contextlib.suppress(Exception):

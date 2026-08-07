@@ -1099,6 +1099,7 @@ source_contract = [
     "tests/test_gate_sandbox.py",
     "tests/test_gate_git_worktree_mount.py",
     "tests/test_rust_filesystem_chokepoint.py",
+    "tests/test_rust_process_enumeration.py",
     "tests/test_agent_skill_index.py",
     "tests/test_authoritative_values_are_not_restated.py",
     "tests/test_build_assets_profile.py",
