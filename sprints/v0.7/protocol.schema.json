@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capsem.org/spec/v0.7/protocol.schema.json",
+  "title": "Capsem v0.7 terminal and session-event protocol",
+  "description": "Schema for decoded MessagePack WebSocket frames. Closed Rust enums in capsem-proto are authoritative and generate this artifact.",
+  "oneOf": [
+    { "$ref": "#/$defs/TerminalClientMessage" },
+    { "$ref": "#/$defs/TerminalServerMessage" },
+    { "$ref": "#/$defs/SessionEventEnvelope" }
+  ],
+  "$defs": {
+    "TerminalId": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 0,
+      "default": 0,
+      "description": "Reserved v0.7 terminal identifier. Only PRIMARY (0) is accepted."
+    },
+    "TerminalClientMessage": {
+      "oneOf": [
+        { "$ref": "#/$defs/Attach" },
+        { "$ref": "#/$defs/HistoryBefore" },
+        { "$ref": "#/$defs/Input" },
+        { "$ref": "#/$defs/Resize" },
+        { "$ref": "#/$defs/AcquireControl" },
+        { "$ref": "#/$defs/ReleaseControl" }
+      ]
+    },
+    "Attach": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "rows", "cols"],
+      "properties": {
+        "type": { "const": "attach" },
+        "terminal_id": { "$ref": "#/$defs/TerminalId" },
+        "after_live_sequence": { "type": "integer", "minimum": 0 },
+        "after_event_sequence": { "type": "integer", "minimum": 0 },
+        "rows": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "cols": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "request_control": { "type": "boolean", "default": false }
+      }
+    },
+    "HistoryBefore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "epoch", "limit"],
+      "properties": {
+        "type": { "const": "history_before" },
+        "terminal_id": { "$ref": "#/$defs/TerminalId" },
+        "epoch": { "type": "integer", "minimum": 0 },
+        "before_row_id": { "type": "integer", "minimum": 0 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 512 }
+      }
+    },
+    "Input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "bytes"],
+      "properties": {
+        "type": { "const": "input" },
+        "terminal_id": { "$ref": "#/$defs/TerminalId" },
+        "bytes": { "type": "string", "contentEncoding": "base64", "maxLength": 87384 }
+      }
+    },
+    "Resize": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "rows", "cols"],
+      "properties": {
+        "type": { "const": "resize" },
+        "terminal_id": { "$ref": "#/$defs/TerminalId" },
+        "rows": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "cols": { "type": "integer", "minimum": 1, "maximum": 1000 }
+      }
+    },
+    "AcquireControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": { "type": { "const": "acquire_control" }, "terminal_id": { "$ref": "#/$defs/TerminalId" } }
+    },
+    "ReleaseControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": { "type": { "const": "release_control" }, "terminal_id": { "$ref": "#/$defs/TerminalId" } }
+    },
+    "TerminalServerMessage": {
+      "oneOf": [
+        { "$ref": "#/$defs/TerminalSnapshot" },
+        { "$ref": "#/$defs/HistoryPage" },
+        { "$ref": "#/$defs/TerminalOutput" },
+        { "$ref": "#/$defs/ControlState" },
+        { "$ref": "#/$defs/TerminalEvent" },
+        { "$ref": "#/$defs/ResnapshotRequired" },
+        { "$ref": "#/$defs/ProtocolError" }
+      ]
+    },
+    "TerminalSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "epoch", "generation", "live_sequence", "event_sequence", "rows", "cols", "alternate_screen", "viewport"],
+      "properties": {
+        "type": { "const": "snapshot" },
+        "terminal_id": { "$ref": "#/$defs/TerminalId" },
+        "epoch": { "type": "integer", "minimum": 0 },
+        "generation": { "type": "integer", "minimum": 0 },
+        "live_sequence": { "type": "integer", "minimum": 0 },
+        "event_sequence": { "type": "integer", "minimum": 0 },
+        "rows": { "type": "integer", "minimum": 1 },
+        "cols": { "type": "integer", "minimum": 1 },
+        "alternate_screen": { "type": "boolean" },
+        "oldest_available_row_id": { "type": "integer", "minimum": 0 },
+        "newest_available_row_id": { "type": "integer", "minimum": 0 },
+        "viewport": { "type": "array", "items": { "$ref": "#/$defs/TerminalRow" } }
+      }
+    },
+    "TerminalRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "created_cols", "soft_wrapped"],
+      "properties": {
+        "row_id": { "type": "integer", "minimum": 0, "description": "Present only for immutable finalized history rows." },
+        "text": { "type": "string", "maxLength": 1048576 },
+        "created_cols": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "soft_wrapped": { "type": "boolean" }
+      }
+    },
+    "HistoryPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "epoch", "rows", "retention_gap"],
+      "properties": {
+        "type": { "const": "history_page" },
+        "terminal_id": { "$ref": "#/$defs/TerminalId" },
+        "epoch": { "type": "integer", "minimum": 0 },
+        "rows": { "type": "array", "maxItems": 512, "items": { "$ref": "#/$defs/TerminalRow" } },
+        "oldest_available_row_id": { "type": "integer", "minimum": 0 },
+        "newest_available_row_id": { "type": "integer", "minimum": 0 },
+        "retention_gap": { "type": "boolean" }
+      }
+    },
+    "TerminalOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "sequence", "bytes"],
+      "properties": {
+        "type": { "const": "output" },
+        "terminal_id": { "$ref": "#/$defs/TerminalId" },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "bytes": { "type": "string", "contentEncoding": "base64", "maxLength": 87384 }
+      }
+    },
+    "ControlState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "held_by_this_connection", "rows", "cols"],
+      "properties": {
+        "type": { "const": "control_state" },
+        "terminal_id": { "$ref": "#/$defs/TerminalId" },
+        "held_by_this_connection": { "type": "boolean" },
+        "rows": { "type": "integer", "minimum": 1 },
+        "cols": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "TerminalEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "event"],
+      "properties": {
+        "type": { "const": "terminal_event" },
+        "terminal_id": { "$ref": "#/$defs/TerminalId" },
+        "event": { "$ref": "#/$defs/SessionEventEnvelope" }
+      }
+    },
+    "ResnapshotRequired": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "reason"],
+      "properties": {
+        "type": { "const": "resnapshot_required" },
+        "terminal_id": { "$ref": "#/$defs/TerminalId" },
+        "reason": { "enum": ["live_gap", "event_gap", "epoch_changed"] }
+      }
+    },
+    "ProtocolError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message"],
+      "properties": {
+        "type": { "const": "error" },
+        "terminal_id": { "$ref": "#/$defs/TerminalId" },
+        "code": { "enum": ["invalid_message", "unsupported_version", "not_controller", "history_unavailable", "resource_limit"] },
+        "message": { "type": "string", "maxLength": 1024 }
+      }
+    },
+    "SessionEventEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session_id", "stream_epoch", "source", "sequence", "timestamp_us", "payload"],
+      "properties": {
+        "session_id": { "type": "string" },
+        "stream_epoch": { "type": "integer", "minimum": 0 },
+        "cursor": { "type": "string", "maxLength": 16384, "description": "Opaque integrity-tagged remote resumption cursor when emitted at a multi-session boundary." },
+        "source": { "enum": ["process", "service", "logger"] },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "timestamp_us": { "type": "integer", "minimum": 0 },
+        "payload": { "$ref": "#/$defs/SessionEventPayload" }
+      }
+    },
+    "SessionEventPayload": {
+      "oneOf": [
+        { "$ref": "#/$defs/StatsChanged" },
+        { "$ref": "#/$defs/ScreenModeChanged" },
+        { "$ref": "#/$defs/Bell" },
+        { "$ref": "#/$defs/TitleChanged" },
+        { "$ref": "#/$defs/Notification" },
+        { "$ref": "#/$defs/LifecycleChanged" },
+        { "$ref": "#/$defs/ServiceChanged" },
+        { "$ref": "#/$defs/GuiSurfaceChanged" }
+      ]
+    },
+    "StatsChanged": {
+      "type": "object", "additionalProperties": false, "required": ["type", "read_cache_epoch"],
+      "properties": { "type": { "const": "stats_changed" }, "read_cache_epoch": { "type": "integer", "minimum": 0 } }
+    },
+    "ScreenModeChanged": {
+      "type": "object", "additionalProperties": false, "required": ["type", "alternate_screen"],
+      "properties": { "type": { "const": "screen_mode_changed" }, "alternate_screen": { "type": "boolean" } }
+    },
+    "Bell": {
+      "type": "object", "additionalProperties": false, "required": ["type", "kind"],
+      "properties": { "type": { "const": "bell" }, "kind": { "enum": ["audible", "visual"] } }
+    },
+    "TitleChanged": {
+      "type": "object", "additionalProperties": false, "required": ["type", "title"],
+      "properties": { "type": { "const": "title_changed" }, "title": { "type": "string", "maxLength": 4096 } }
+    },
+    "Notification": {
+      "type": "object", "additionalProperties": false, "required": ["type", "body"],
+      "properties": { "type": { "const": "notification" }, "title": { "type": "string", "maxLength": 1024 }, "body": { "type": "string", "maxLength": 4096 } }
+    },
+    "LifecycleChanged": {
+      "type": "object", "additionalProperties": false, "required": ["type", "state"],
+      "properties": { "type": { "const": "lifecycle_changed" }, "state": { "enum": ["creating", "running", "stopped", "suspended", "defunct", "deleting"] } }
+    },
+    "ServiceChanged": {
+      "type": "object", "additionalProperties": false, "required": ["type", "service_id", "state"],
+      "properties": { "type": { "const": "service_changed" }, "service_id": { "type": "string" }, "state": { "enum": ["pending", "starting", "ready", "degraded", "syncing", "credential_expired", "stopped", "failed"] } }
+    },
+    "GuiSurfaceChanged": {
+      "type": "object", "additionalProperties": false, "required": ["type", "surface_id", "role", "mapped"],
+      "properties": { "type": { "const": "gui_surface_changed" }, "surface_id": { "type": "string" }, "role": { "enum": ["normal", "dialog", "tray", "unknown"] }, "mapped": { "type": "boolean" }, "title": { "type": "string" } }
+    }
+  }
+}

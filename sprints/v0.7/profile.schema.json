@@ -1,0 +1,701 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capsem.org/spec/v0.7/profile.schema.json",
+  "title": "Capsem v0.7 profile source model",
+  "description": "Normative post-TOML-parse model for config/profiles/<profile_id>/profile.toml. capsem-admin is the compiler and validator.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "name",
+    "description",
+    "revision",
+    "refresh_policy",
+    "availability",
+    "vm",
+    "assets",
+    "session"
+  ],
+  "properties": {
+    "id": {
+      "$ref": "#/$defs/profileId"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "icon_svg": {
+      "type": "string",
+      "maxLength": 32768
+    },
+    "revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "refresh_policy": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "availability": {
+      "$ref": "#/$defs/availability"
+    },
+    "vm": {
+      "$ref": "#/$defs/vm"
+    },
+    "assets": {
+      "$ref": "#/$defs/assets"
+    },
+    "rule_files": {
+      "$ref": "#/$defs/ruleFiles"
+    },
+    "default": {
+      "type": "object"
+    },
+    "profiles": {
+      "type": "object"
+    },
+    "ai": {
+      "type": "object"
+    },
+    "files": {
+      "$ref": "#/$defs/profileFiles"
+    },
+    "plugins": {
+      "type": "object",
+      "maxProperties": 64,
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "mcp": {
+      "type": "object"
+    },
+    "obom": {
+      "type": "object"
+    },
+    "skills": {
+      "type": "object"
+    },
+    "session": {
+      "$ref": "#/$defs/sessionProfile"
+    }
+  },
+  "$defs": {
+    "profileId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,62}$"
+    },
+    "argv": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      }
+    },
+    "guestPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^/"
+    },
+    "availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "web",
+        "shell",
+        "mobile"
+      ],
+      "properties": {
+        "web": {
+          "type": "boolean"
+        },
+        "shell": {
+          "type": "boolean"
+        },
+        "mobile": {
+          "type": "boolean"
+        }
+      }
+    },
+    "vm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cpu_count",
+        "ram_gb",
+        "scratch_disk_size_gb"
+      ],
+      "properties": {
+        "cpu_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "ram_gb": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "scratch_disk_size_gb": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2048
+        }
+      }
+    },
+    "assets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "refresh_policy",
+        "arch"
+      ],
+      "properties": {
+        "format": {
+          "const": "profile-assets.v1"
+        },
+        "refresh_policy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "arch": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "enum": [
+              "arm64",
+              "x86_64"
+            ]
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/archAssets"
+          }
+        }
+      }
+    },
+    "archAssets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kernel",
+        "initrd",
+        "rootfs"
+      ],
+      "properties": {
+        "kernel": {
+          "$ref": "#/$defs/assetDescriptor"
+        },
+        "initrd": {
+          "$ref": "#/$defs/assetDescriptor"
+        },
+        "rootfs": {
+          "$ref": "#/$defs/assetDescriptor"
+        }
+      }
+    },
+    "assetDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "url"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "hash": {
+          "type": "string",
+          "pattern": "^(blake3:)?[0-9a-f]{64}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "ruleFiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enforcement": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "sigma": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      }
+    },
+    "profileFiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enforcement": {
+          "$ref": "#/$defs/fileDescriptor"
+        },
+        "detection": {
+          "$ref": "#/$defs/fileDescriptor"
+        },
+        "mcp": {
+          "$ref": "#/$defs/fileDescriptor"
+        },
+        "apt_packages": {
+          "$ref": "#/$defs/fileDescriptor"
+        },
+        "python_requirements": {
+          "$ref": "#/$defs/fileDescriptor"
+        },
+        "npm_packages": {
+          "$ref": "#/$defs/fileDescriptor"
+        },
+        "build": {
+          "$ref": "#/$defs/fileDescriptor"
+        },
+        "tips": {
+          "$ref": "#/$defs/fileDescriptor"
+        },
+        "root_manifest": {
+          "$ref": "#/$defs/fileDescriptor"
+        },
+        "compiled_session": {
+          "$ref": "#/$defs/fileDescriptor",
+          "description": "Generated only in the materialized profile; source profiles must not hand-author this descriptor."
+        }
+      }
+    },
+    "fileDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "hash": {
+          "type": "string",
+          "pattern": "^(blake3:)?[0-9a-f]{64}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "sessionProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "surface",
+        "run_as",
+        "cmd",
+        "overrides"
+      ],
+      "properties": {
+        "surface": {
+          "enum": [
+            "terminal",
+            "gui"
+          ]
+        },
+        "run_as": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "cmd": {
+          "$ref": "#/$defs/argv"
+        },
+        "launcher": {
+          "$ref": "#/$defs/guestPath",
+          "description": "Generic profile launch adapter. GUI profiles initially use /usr/local/bin/capsem-gui-session."
+        },
+        "terminal_side_shell": {
+          "type": "boolean",
+          "default": false
+        },
+        "side_shell_cmd": {
+          "$ref": "#/$defs/argv"
+        },
+        "fortune": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "env": {
+          "type": "object",
+          "maxProperties": 128,
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 16384
+          }
+        },
+        "files": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/sessionFileTemplate"
+          }
+        },
+        "rewrites": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "session-spec.schema.json#/$defs/rewrite"
+          }
+        },
+        "credentials": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/credentialContract"
+          }
+        },
+        "services": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "session-spec.schema.json#/$defs/service"
+          }
+        },
+        "rules": {
+          "$ref": "#/$defs/sessionRuleContract"
+        },
+        "overrides": {
+          "$ref": "#/$defs/overridePolicy"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "surface": {
+                "const": "gui"
+              }
+            },
+            "required": [
+              "surface"
+            ]
+          },
+          "then": {
+            "required": [
+              "launcher"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "terminal_side_shell": {
+                "const": true
+              }
+            },
+            "required": [
+              "terminal_side_shell"
+            ]
+          },
+          "then": {
+            "required": [
+              "side_shell_cmd"
+            ]
+          }
+        }
+      ]
+    },
+    "sessionFileTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "path"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "description": "Profile-relative source file, included in profile evidence and materialized by capsem-admin."
+        },
+        "path": {
+          "$ref": "#/$defs/guestPath"
+        },
+        "mode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4095,
+          "default": 384
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "replace": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "credentialContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "alias",
+        "provider",
+        "required_scopes",
+        "allowed_targets"
+      ],
+      "properties": {
+        "alias": {
+          "$ref": "#/$defs/id"
+        },
+        "provider": {
+          "$ref": "#/$defs/credentialProvider"
+        },
+        "required": {
+          "type": "boolean",
+          "default": false
+        },
+        "required_scopes": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "allowed_targets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "terminal_env",
+              "gui_env",
+              "exec_env",
+              "file",
+              "rewrite",
+              "keyring",
+              "service"
+            ]
+          }
+        }
+      }
+    },
+    "sessionRuleContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default_enforcement": {
+          "$ref": "#/$defs/ruleIds"
+        },
+        "default_detection": {
+          "$ref": "#/$defs/ruleIds"
+        },
+        "allowed_enforcement": {
+          "$ref": "#/$defs/ruleIds"
+        },
+        "allowed_detection": {
+          "$ref": "#/$defs/ruleIds"
+        }
+      }
+    },
+    "ruleIds": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "overridePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cmd",
+        "fortune",
+        "env",
+        "files",
+        "rewrites",
+        "credentials",
+        "services",
+        "rules"
+      ],
+      "properties": {
+        "cmd": {
+          "$ref": "#/$defs/simpleOverridePolicy"
+        },
+        "fortune": {
+          "$ref": "#/$defs/simpleOverridePolicy"
+        },
+        "env": {
+          "$ref": "#/$defs/envOverridePolicy"
+        },
+        "files": {
+          "$ref": "#/$defs/pathOverridePolicy"
+        },
+        "rewrites": {
+          "$ref": "#/$defs/pathOverridePolicy"
+        },
+        "credentials": {
+          "$ref": "#/$defs/idOverridePolicy"
+        },
+        "services": {
+          "$ref": "#/$defs/idOverridePolicy"
+        },
+        "rules": {
+          "$ref": "#/$defs/idOverridePolicy"
+        }
+      }
+    },
+    "overrideMode": {
+      "type": "string",
+      "enum": [
+        "deny",
+        "allow"
+      ],
+      "description": "Wire representation generated from the closed Rust OverrideMode enum; unknown variants fail closed."
+    },
+    "simpleOverridePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/overrideMode"
+        }
+      }
+    },
+    "envOverridePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/overrideMode"
+        },
+        "names": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        },
+        "value_pattern": {
+          "type": "string",
+          "maxLength": 4096,
+          "description": "Optional Rust-regex constraint evaluated after secret-like-value rejection."
+        }
+      }
+    },
+    "pathOverridePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/overrideMode"
+        },
+        "path_prefixes": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/guestPath"
+          }
+        },
+        "credential_bearing": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/overrideMode"
+            }
+          ],
+          "default": "deny"
+        }
+      }
+    },
+    "idOverridePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/overrideMode"
+        },
+        "ids": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        }
+      }
+    },
+    "credentialProvider": {
+      "type": "string",
+      "enum": [
+        "anthropic",
+        "google",
+        "openai",
+        "github",
+        "mcp"
+      ],
+      "description": "Generated from capsem_core::credential_broker::CredentialProvider."
+    }
+  }
+}

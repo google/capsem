@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Made `sprints/v0.7` the durable active architecture package, reconciled the
+  private credential-material ref with session-bound grants, made terminal
+  history retention benchmark-derived, and preserved older sprint records
+  under `sprints/deprecated` as non-authoritative history.
+
 - Started the Claude Web GUI feasibility programme on the `v0.7` branch,
   required its GUI profile to use the normal `capsem-admin` authoring and build
   rails, added its arm64-only source profile with digest-verified Claude and

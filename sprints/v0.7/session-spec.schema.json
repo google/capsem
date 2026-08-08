@@ -1,0 +1,674 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capsem.org/spec/v0.7/session-spec.schema.json",
+  "title": "Capsem v0.7 SessionSpec",
+  "description": "Runtime inputs applied to one Capsem session. This document may contain credential references, never raw credentials.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "profile_id"
+  ],
+  "properties": {
+    "profile_id": {
+      "$ref": "#/$defs/profileId"
+    },
+    "profile_revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Optional optimistic pin. Creation fails if the selected materialized profile revision differs."
+    },
+    "cmd": {
+      "$ref": "#/$defs/argv",
+      "description": "Optional policy-approved replacement for the profile default command. It is argv, never a shell string."
+    },
+    "fortune": {
+      "type": "string",
+      "maxLength": 4096,
+      "description": "Session greeting. The engine may append verified readiness facts but must not claim unavailable capabilities."
+    },
+    "env": {
+      "type": "object",
+      "description": "Non-secret environment values. Raw credentials are forbidden even when they fit this shape.",
+      "maxProperties": 128,
+      "propertyNames": {
+        "$ref": "#/$defs/envName"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 16384
+      }
+    },
+    "files": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/file"
+      }
+    },
+    "rewrites": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/rewrite"
+      }
+    },
+    "credentials": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/credentialGrantRequest"
+      }
+    },
+    "services": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "#/$defs/service"
+      }
+    },
+    "rules": {
+      "$ref": "#/$defs/ruleAdditions"
+    }
+  },
+  "$defs": {
+    "profileId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,62}$"
+    },
+    "guestPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^/",
+      "description": "Absolute guest path. The implementation additionally rejects NUL, traversal, protected host paths, and escaping symlinks."
+    },
+    "envName": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "maxLength": 128
+    },
+    "argv": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "blob_base64"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/guestPath"
+        },
+        "blob_base64": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "maxLength": 11184812,
+          "description": "At most 8 MiB decoded. The service also enforces a 32 MiB aggregate decoded-file limit."
+        },
+        "mode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4095,
+          "default": 384,
+          "description": "POSIX mode as an integer; 384 is 0600."
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "replace": {
+          "type": "boolean",
+          "default": false,
+          "description": "False fails if the destination already exists."
+        },
+        "credential_bearing": {
+          "type": "boolean",
+          "default": false,
+          "description": "Marks a private runtime file that must never be returned by info, logs, snapshots, or file preview routes."
+        }
+      }
+    },
+    "rewrite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "path",
+        "edits"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "path": {
+          "$ref": "#/$defs/guestPath"
+        },
+        "max_input_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216,
+          "default": 1048576
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216,
+          "default": 1048576
+        },
+        "preserve_metadata": {
+          "type": "boolean",
+          "default": true
+        },
+        "edits": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/regexEdit"
+          }
+        }
+      }
+    },
+    "regexEdit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pattern",
+        "replacement"
+      ],
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "description": "Rust regex syntax; backreferences and look-around are unavailable by design."
+        },
+        "replacement": {
+          "type": "string",
+          "maxLength": 16384,
+          "description": "May contain {{credential.<alias>}} placeholders resolved only inside the guest materialization boundary."
+        },
+        "required": {
+          "type": "boolean",
+          "default": true
+        },
+        "min_matches": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1024,
+          "default": 1
+        },
+        "max_matches": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024,
+          "default": 1
+        },
+        "idempotency_marker": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Optional non-secret marker used to detect that this edit was already applied."
+        }
+      }
+    },
+    "credentialGrantRequest": {
+      "type": "object",
+      "description": "Declares a requested session binding. It contains no secret, material ref, or grant id; the credential endpoint supplies material and the engine issues the private session-bound grant.",
+      "additionalProperties": false,
+      "required": [
+        "alias",
+        "provider",
+        "targets"
+      ],
+      "properties": {
+        "alias": {
+          "$ref": "#/$defs/id"
+        },
+        "provider": {
+          "$ref": "#/$defs/credentialProvider"
+        },
+        "scopes": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "description": "Requested least-privilege scopes for validation and UI. The grant issued by the engine records the effective set."
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Non-secret expiry metadata."
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/credentialTarget"
+          }
+        }
+      }
+    },
+    "credentialTarget": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/terminalEnvCredentialTarget"
+        },
+        {
+          "$ref": "#/$defs/guiEnvCredentialTarget"
+        },
+        {
+          "$ref": "#/$defs/execEnvCredentialTarget"
+        },
+        {
+          "$ref": "#/$defs/fileCredentialTarget"
+        },
+        {
+          "$ref": "#/$defs/rewriteCredentialTarget"
+        },
+        {
+          "$ref": "#/$defs/keyringCredentialTarget"
+        },
+        {
+          "$ref": "#/$defs/serviceCredentialTarget"
+        }
+      ]
+    },
+    "credentialProvider": {
+      "type": "string",
+      "enum": [
+        "anthropic",
+        "google",
+        "openai",
+        "github",
+        "mcp"
+      ],
+      "description": "Generated from capsem_core::credential_broker::CredentialProvider; adding a provider is a deliberate Rust/package compatibility change."
+    },
+    "terminalEnvCredentialTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "name"
+      ],
+      "properties": {
+        "target": {
+          "const": "terminal_env"
+        },
+        "name": {
+          "$ref": "#/$defs/envName"
+        }
+      }
+    },
+    "guiEnvCredentialTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "name"
+      ],
+      "properties": {
+        "target": {
+          "const": "gui_env"
+        },
+        "name": {
+          "$ref": "#/$defs/envName"
+        }
+      }
+    },
+    "execEnvCredentialTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "name"
+      ],
+      "properties": {
+        "target": {
+          "const": "exec_env"
+        },
+        "name": {
+          "$ref": "#/$defs/envName"
+        }
+      }
+    },
+    "fileCredentialTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "path"
+      ],
+      "properties": {
+        "target": {
+          "const": "file"
+        },
+        "path": {
+          "$ref": "#/$defs/guestPath"
+        },
+        "mode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4095,
+          "default": 384
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "format": {
+          "enum": [
+            "raw",
+            "json_string",
+            "bearer"
+          ],
+          "default": "raw"
+        }
+      }
+    },
+    "rewriteCredentialTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "rewrite_id"
+      ],
+      "properties": {
+        "target": {
+          "const": "rewrite"
+        },
+        "rewrite_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "keyringCredentialTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "schema",
+        "attributes"
+      ],
+      "properties": {
+        "target": {
+          "const": "keyring"
+        },
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "attributes": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      }
+    },
+    "serviceCredentialTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "service_id",
+        "name"
+      ],
+      "properties": {
+        "target": {
+          "const": "service"
+        },
+        "service_id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "$ref": "#/$defs/envName"
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "cmd",
+        "run_as",
+        "readiness"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "enum": [
+            "daemon",
+            "fuse"
+          ]
+        },
+        "cmd": {
+          "$ref": "#/$defs/argv"
+        },
+        "run_as": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "before_primary": {
+          "type": "boolean",
+          "default": true
+        },
+        "restart": {
+          "enum": [
+            "never",
+            "on_failure"
+          ],
+          "default": "on_failure"
+        },
+        "stop_timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000,
+          "default": 5000
+        },
+        "mount": {
+          "$ref": "#/$defs/mount"
+        },
+        "readiness": {
+          "$ref": "#/$defs/readiness"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "fuse"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "mount"
+            ]
+          }
+        }
+      ]
+    },
+    "mount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target"
+      ],
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/guestPath"
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "mode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4095
+        },
+        "cache_path": {
+          "$ref": "#/$defs/guestPath"
+        },
+        "cache_max_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 68719476736
+        },
+        "writeback": {
+          "enum": [
+            "none",
+            "writes",
+            "full"
+          ]
+        }
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "timeout_ms"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "process",
+            "path",
+            "mountpoint",
+            "exec"
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/guestPath"
+        },
+        "cmd": {
+          "$ref": "#/$defs/argv"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 300000
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "path",
+                  "mountpoint"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "path"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "exec"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "cmd"
+            ]
+          }
+        }
+      ]
+    },
+    "ruleAdditions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enforcement": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "description": "Profile-declared rule ids enabled for this session. Inline rule authoring is not accepted by the remote API."
+        },
+        "detection": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      }
+    }
+  }
+}
