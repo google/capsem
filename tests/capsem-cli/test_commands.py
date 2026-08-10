@@ -36,7 +36,20 @@ def _provision_vm(uds_path, name, persistent=False):
     }
     if persistent:
         body["persistent"] = True
-    return client.post("/vms/create", body)
+    response = client.post("/vms/create", body)
+    assert response is not None and "id" in response, f"provision failed: {response}"
+    return response
+
+
+def test_provision_vm_surfaces_api_error(monkeypatch, tmp_path):
+    class RefusingClient:
+        def post(self, _path, _body):
+            return {"error": "VM assets are not ready: missing initrd.img"}
+
+    monkeypatch.setattr("helpers.uds_client.UdsHttpClient", lambda _path: RefusingClient())
+
+    with pytest.raises(AssertionError, match=r"VM assets are not ready: missing initrd\.img"):
+        _provision_vm(tmp_path / "service.sock", "refused-vm")
 
 
 class TestRun:
