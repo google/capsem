@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import assetevidence, crossexec, pidfiles
+from . import assetevidence, crossexec, imagebases, pidfiles
 from . import config as gate_config
 from .assetlanes import AssetLanes, Profile, discover_profiles
 from .errors import GateError
@@ -51,6 +51,11 @@ class AssetGate:
         self.root = self._config.root
         self.test_root = self._config.path(self._assets.test_root)
         self.host_arch = self._config.host_arch()
+
+    @property
+    def build_config(self):
+        """The exact image inputs copied into every materialized profile."""
+        return imagebases.build_config(self._config)
 
     # -- preflight ---------------------------------------------------------
 
@@ -174,6 +179,10 @@ class AssetGate:
         self._storage.ensure_space("assets")
         discard(self.test_root)
         make_dir(self.test_root)
+
+    def prefetch(self) -> None:
+        """Materialize exact bases through the Docker daemon's fetch edge."""
+        imagebases.prefetch(self._runner, self._config)
 
     def lane(self, arch_name: str) -> None:
         """One architecture's builds, across every profile."""

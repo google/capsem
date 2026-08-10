@@ -135,3 +135,22 @@ def test_exists_answers_without_failing_the_run(tmp_path: Path) -> None:
 
     assert docker.exists("/src/target/manifest.json", "box")
     assert not docker.exists("/src/absent.json", "box")
+
+
+def test_exact_image_presence_is_checked_for_its_platform(tmp_path: Path) -> None:
+    runner = RecordingRunner(tmp_path)
+    image = "registry.example/guest@sha256:" + "a" * 64
+
+    assert Docker(runner).image_exists(image, platform="linux/arm64")
+    assert runner.rendered == [
+        f"docker image inspect --platform linux/arm64 {image}"
+    ]
+
+
+def test_exact_image_pull_names_platform_and_digest(tmp_path: Path) -> None:
+    runner = RecordingRunner(tmp_path)
+    image = "registry.example/guest@sha256:" + "b" * 64
+
+    Docker(runner).pull(image, platform="linux/amd64")
+
+    assert runner.rendered == [f"docker pull --platform linux/amd64 {image}"]

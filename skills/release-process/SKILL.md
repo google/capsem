@@ -277,6 +277,11 @@ artifact resolver is a stable retry mechanism only; using it for nightly would
 turn the daily asset build into a no-op and lose the hermetic reproducibility
 signal.
 
+Before either architecture lane builds, the shared asset rail materializes the
+checked-in per-platform base child manifests by exact digest through Docker's
+daemon boundary. A cold runner and a warm developer host therefore select the
+same base bytes; this is not a reason to widen the release egress helper.
+
 All corporate manifest and profile authoring also goes through `capsem-admin`.
 A corporation owns its manifest and profile definitions, may use the latest
 compatible Capsem package or pin a compatible version, and never builds or

@@ -60,6 +60,9 @@ just release-profile <channel> <profile>
   CI materializes locked dependencies and immutable manifest-selected inputs
   before entering its module boundary. Never widen the whole release process
   merely because one edge needs the network.
+- Guest kernel/rootfs bases are per-platform child manifests pinned by digest.
+  Their guarded prefetch uses the Docker daemon's existing container-fetch
+  boundary and never widens the host-process release egress helper.
 - Every pairing that becomes public must pass the complete functional and
   glow-up modules. Saving build time never means skipping tests.
 - Binary and profile releases share the workflow-level

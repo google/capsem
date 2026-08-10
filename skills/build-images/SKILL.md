@@ -203,6 +203,12 @@ Templates use Jinja2 with variables from the admin-materialized profile image
 workspace. Do not add a second preview rail for product truth; if a build input
 needs validation, add it to the normal profile/admin validation path.
 
+Every architecture's `base_image` is required to be its immutable
+`repository@sha256:<child-manifest>` identity. Do not use a mutable tag or the
+multi-platform index. `capsem-gate` materializes a missing exact child through
+the Docker daemon before the cross-execution probe and build lanes; keep this
+on the ordinary guarded Docker runner, not the host-process egress broker.
+
 ---
 
 # Builder Internals (for modifying the builder itself)

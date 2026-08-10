@@ -17,6 +17,7 @@ from .actions import Call
 from .assets import AssetGate
 from .command import GateCommand
 from .execution import step
+from .imagebases import Prefetch
 from .opacity import CallJustification, Effect, OpaqueKind
 from .plan import Plan
 
@@ -46,8 +47,9 @@ def fragment(plan, config, *, after: tuple = ()):
     ready = phase.add(
         step(
             "preflight",
+            Prefetch(),
             Call(
-                "check capacity and clear the asset tree",
+                "run the container execution preflight, check capacity, and clear the asset tree",
                 lambda ctx: AssetGate(ctx.runner).preflight(),
                 justification=_because(
                     OpaqueKind.RUNTIME_DERIVED, PREFLIGHT, "process", "filesystem"

@@ -55,7 +55,7 @@ class ArchConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    base_image: str = "debian:bookworm-slim"
+    base_image: str = Field(pattern=r"^[^@\s]+@sha256:[0-9a-f]{64}$")
     docker_platform: str
     rust_target: str
     kernel_image: str

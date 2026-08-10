@@ -99,6 +99,11 @@ the helper owns no plan, lock, workspace, or release state. Its commands still
 pass through the same `GuardedRunner`, step log, journal, watcher checkpoints,
 and re-entry refusal.
 
+Exact guest base-image pulls are not helper egress. They are individually
+recorded Docker CLI actions that materialize per-platform child manifests
+through the already-declared Docker-daemon container-fetch boundary before the
+sealed asset lanes consume them.
+
 The allowed edges are exact and contract-tested: the shared fast module's
 RustSec, npm bulk, and OSV actions; binary `channel-source`; both
 `confirm-head` steps; and each final `release` step. The advisory authorities

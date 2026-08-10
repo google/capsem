@@ -17,6 +17,7 @@ from .command import GateCommand
 from .config import Arch, GateConfig
 from .errors import GateError
 from .execution import Step, step
+from .imagebases import Prefetch
 from .opacity import CallJustification, OpaqueKind
 from .plan import Plan
 
@@ -147,7 +148,14 @@ class BuildAssetsCommand(
         config = self._config
         wanted = [self._args.profile] if self._args.profile else profiles(config)
 
-        checked = plan.add(doctor(config))
+        bases = plan.add(
+            step(
+                "base-images",
+                Prefetch(),
+                contends=(config.exclusive("docker_daemon"),),
+            )
+        )
+        checked = plan.add(doctor(config), after=(bases,))
         for profile in wanted:
             plan.add(
                 build(
@@ -195,7 +203,15 @@ def check_assets(
         return after
 
     phase = plan.phase("assets")
-    checked = phase.add(doctor(config), after=after)
+    bases = phase.add(
+        step(
+            "base-images",
+            Prefetch((arch.name,)),
+            contends=(config.exclusive("docker_daemon"),),
+        ),
+        after=after,
+    )
+    checked = phase.add(doctor(config), after=(bases,))
     return tuple(
         phase.add(
             build(config, profile=profile, arch=arch.name, template="all"),

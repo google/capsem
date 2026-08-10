@@ -199,8 +199,6 @@ class AssetsConfig(Strict):
     hash_assets_script: str
     shell_proof_script: str
     container_cleanup_script: str
-    cross_platform_probe_image: str
-    cross_platform_prefix: str
     cross_platform_probe_command: str
     cross_platform_probe_network: str
     merged_assets_dir: str

@@ -460,9 +460,8 @@ shell_proof_script = "scripts/prove-installed-shell.py"
 container_cleanup_script = "scripts/cleanup-docker-containers-by-mount.sh"
 
 # Docker must be able to execute the *other* architecture before any lane
-# starts, or the second lane fails an hour in with an exec format error.
-cross_platform_probe_image = "debian:bookworm-slim"
-cross_platform_prefix = "linux/"
+# starts, or the second lane fails an hour in with an exec format error. The
+# image and platform come from the exact per-architecture base in `source_config`.
 cross_platform_probe_command = "/bin/true"
 # The probe runs `/bin/true` to ask whether the daemon can execute the other
 # architecture. It needs nothing from the network, and every container has to
@@ -1072,6 +1071,9 @@ cli = "target/debug/capsem"
 # thing that varies. Four recipes spelled it out, and the shape of the argv was
 # the same in all four.
 admin = ["cargo", "run", "-p", "capsem-admin", "--", "image", "build"]
+# The profile materializer copies this directory byte-for-byte. It is also the
+# one authority the gate uses to prefetch exact per-platform base manifests.
+source_config = "config/docker/image"
 # The stages a concurrent asset lane builds, in order. Named here because the
 # lanes build kernel and rootfs separately while a single-shot build uses
 # "all", and a second copy of that list in code is a second opinion.

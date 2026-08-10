@@ -321,8 +321,9 @@ def test_macos_doctor_requires_live_rosetta_registration() -> None:
     # say what network it needs -- the property the migration was for, and a
     # stronger claim than the argv fragment this line used to match.
     assert "cross_platform_probe_network" in crossexec
-    assert "cross_platform_prefix" in crossexec
-    assert config.assets.cross_platform_prefix == "linux/"
+    assert "build_arch.docker_platform" in crossexec
+    assert "build_arch.base_image" in crossexec
+    assert "cross_platform_probe_image" not in crossexec
     assert "Docker cannot execute {platform} containers" in crossexec
     assert "colima restart" in crossexec, "macOS needs its own remedy in the message"
 

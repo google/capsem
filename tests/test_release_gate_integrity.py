@@ -273,6 +273,24 @@ def test_host_builder_base_images_are_immutable() -> None:
     assert all("@sha256:" in base for base in bases), bases
 
 
+def test_every_guest_builder_base_is_an_exact_platform_child_manifest() -> None:
+    """A mutable tag lets a warm host and a cold release runner build different bytes."""
+    from capsem.builder.config import load_guest_config
+    from capsem.gate import config as gate_config
+
+    root = Path(__file__).resolve().parents[1]
+    config = gate_config.load(root)
+    build = load_guest_config(root / config.imagebuild.source_config).build
+    refs = {arch.base_image for arch in build.architectures.values()}
+
+    assert len(refs) == len(build.architectures)
+    for arch in build.architectures.values():
+        repository, digest = arch.base_image.rsplit("@sha256:", 1)
+        assert repository
+        assert len(digest) == 64
+        assert digest == digest.lower()
+
+
 def test_host_builder_trusts_the_bind_mounted_source_checkout() -> None:
     """On Linux CI the checkout's owner is not the image's user, so git rejects
     the mount as dubious ownership -- and `build.rs` answers that by embedding

@@ -84,6 +84,18 @@ def test_build_assets_requires_profile_and_uses_capsem_admin() -> None:
     assert "uv run capsem-builder build guest/" not in " ".join(argv)
 
 
+def test_every_asset_build_rail_materializes_exact_bases_before_building() -> None:
+    """Standalone profile CI and the complete gate share the cold-host edge."""
+    for command, args in (
+        ("build-assets", {"profile": "code", "arch": "arm64", "template": "all"}),
+        ("assets", {}),
+    ):
+        rendered = _planned(command, **args)
+        assert "materialize exact guest base images" in rendered
+        following = "image build" if command == "build-assets" else "container execution preflight"
+        assert rendered.index("materialize exact guest base images") < rendered.index(following)
+
+
 def test_asset_build_primitives_accept_an_isolated_output_root() -> None:
     """And the value reaches the builder, which is where it used to be lost.
 

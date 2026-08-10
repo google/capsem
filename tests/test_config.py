@@ -70,7 +70,7 @@ version = "9.9.9"
 sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 [build.architectures.arm64]
-base_image = "debian:bookworm-slim"
+base_image = "registry.example/debian@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
 kernel_image = "arch/arm64/boot/Image"
@@ -357,6 +357,7 @@ version = "9.9.9"
 sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 [build.architectures.arm64]
+base_image = "registry.example/debian@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
 kernel_image = "arch/arm64/boot/Image"
@@ -392,12 +393,14 @@ version = "9.9.9"
 sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 [build.architectures.arm64]
+base_image = "registry.example/debian@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
 kernel_image = "arch/arm64/boot/Image"
 defconfig = "kernel/defconfig.arm64"
 
 [build.architectures.x86_64]
+base_image = "registry.example/debian@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 docker_platform = "linux/amd64"
 rust_target = "x86_64-unknown-linux-musl"
 kernel_image = "arch/x86_64/boot/bzImage"

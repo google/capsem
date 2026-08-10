@@ -137,6 +137,7 @@ class LogsConfig(Strict):
 
 class ImageBuildConfig(Strict):
     admin: tuple[str, ...]
+    source_config: str
     lane_templates: tuple[str, ...]
     templates: tuple[str, ...]
     profiles_glob: str

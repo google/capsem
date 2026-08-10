@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Guest kernel/rootfs builders now require distinct per-platform Debian child
+  manifest digests, materialize missing exact bases through the guarded Docker
+  daemon boundary before every asset rail, and use that same exact base for the
+  cross-architecture execution probe. Cold arm64 runners no longer attempt to
+  resolve a mutable tag from inside Bubblewrap while warm x86_64 hosts pass
+  from stale cache, and the redundant constant `FROM --platform` warning is
+  gone.
+
 - Guest-kernel construction now uses one exact checked-in release and SHA-256,
   verifies the downloaded source archive before extraction, and no longer
   consults the mutable kernel.org latest-patch feed from inside the sealed

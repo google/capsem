@@ -12,6 +12,7 @@ stops being hermetic.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,7 @@ def _run_all(gate) -> None:
     that wants the whole phase says so -- and one that wants a single lane can
     finally ask for it.
     """
+    gate.prefetch()
     gate.preflight()
     for name in gate._config.architectures:
         gate.lane(name)
@@ -46,6 +48,9 @@ def _checkout(tmp_path: Path, *, profiles: tuple[str, ...] = ("code",)) -> Path:
     (tmp_path / "config" / "gate.toml").write_text(
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     )
+    image_config = tmp_path / "config" / "docker" / "image"
+    image_config.mkdir(parents=True)
+    shutil.copy2(PROJECT_ROOT / "config" / "docker" / "image" / "build.toml", image_config)
     for name in profiles:
         directory = tmp_path / "config" / "profiles" / name
         directory.mkdir(parents=True)
@@ -105,6 +110,30 @@ def test_cross_architecture_execution_is_proven_before_any_lane_starts(
     runner.assert_order(r"docker run --rm --network none --platform", r"image build")
 
 
+def test_cold_exact_base_images_are_pulled_before_the_cross_architecture_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate, runner = _gate(tmp_path, monkeypatch, failures=["docker image inspect"])
+
+    gate.prefetch()
+    gate.preflight()
+
+    for arch in gate.build_config.architectures.values():
+        pulled = f"docker pull --platform {arch.docker_platform} {arch.base_image}"
+        assert runner.matching(pulled)
+        runner.assert_order(pulled, r"docker run --rm --network none --platform")
+
+
+def test_warm_exact_base_images_do_not_contact_the_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate, runner = _gate(tmp_path, monkeypatch)
+
+    gate.prefetch()
+
+    assert not runner.matching(r"docker pull")
+
+
 def test_the_probe_targets_the_architecture_this_host_is_not(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -114,6 +143,12 @@ def test_the_probe_targets_the_architecture_this_host_is_not(
 
     probe = runner.matching(r"docker run --rm --network none --platform")[0]
     assert f"linux/{gate.host_arch.dpkg}" not in probe
+    other = next(
+        arch
+        for name, arch in gate.build_config.architectures.items()
+        if name != gate.host_arch.name
+    )
+    assert other.base_image in probe
     # And it declares what it needs. The probe runs `/bin/true` to ask whether
     # the daemon can execute the other architecture; it needs nothing from the
     # network, and the wrapper requires every container to say so rather than
@@ -124,7 +159,7 @@ def test_the_probe_targets_the_architecture_this_host_is_not(
 def test_a_host_that_cannot_run_the_other_architecture_says_how_to_fix_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    gate, _ = _gate(tmp_path, monkeypatch, failures=["--platform"])
+    gate, _ = _gate(tmp_path, monkeypatch, failures=["docker run"])
 
     with pytest.raises(GateError) as failure:
         _run_all(gate)
@@ -135,7 +170,7 @@ def test_a_host_that_cannot_run_the_other_architecture_says_how_to_fix_it(
 def test_a_linux_host_is_told_about_binfmt_instead(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    gate, _ = _gate(tmp_path, monkeypatch, failures=["--platform"])
+    gate, _ = _gate(tmp_path, monkeypatch, failures=["docker run"])
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
 
     with pytest.raises(GateError, match="binfmt QEMU"):

@@ -117,13 +117,20 @@ version = "X.Y.Z"
 sha256 = "<64 lowercase hex characters>"
 
 [build.architectures.arm64]
-base_image = "debian:bookworm-slim"
+base_image = "docker.io/library/debian@sha256:<arm64 child-manifest digest>"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
 kernel_image = "arch/arm64/boot/Image"
 defconfig = "kernel/defconfig.arm64"
 node_major = 24
 ```
+
+Each architecture names its own immutable child manifest, not a mutable tag or
+multi-platform index. The gate checks the local Docker image store and pulls a
+missing exact child through the Docker daemon before entering the build lanes;
+the sealed gate process itself does not gain general network access. The
+Docker build still receives `--platform`, while the rendered `FROM` line names
+only the exact digest.
 
 Profile package files such as `config/profiles/code/apt-packages.txt`,
 `python-requirements.txt`, and `npm-packages.txt` are materialized into backend

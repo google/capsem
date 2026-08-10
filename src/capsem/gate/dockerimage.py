@@ -68,8 +68,15 @@ class ImageOperations:
         argv += [image, *command]
         return self._runner.capture(argv, check=check)
 
-    def image_exists(self, tag: str) -> bool:
-        return self._runner.succeeds(["docker", "image", "inspect", tag])
+    def image_exists(self, tag: str, *, platform: str | None = None) -> bool:
+        argv = ["docker", "image", "inspect"]
+        if platform is not None:
+            argv += ["--platform", platform]
+        return self._runner.succeeds([*argv, tag])
+
+    def pull(self, image: str, *, platform: str) -> None:
+        """Materialize one exact platform image through the Docker daemon."""
+        self._runner.run(["docker", "pull", "--platform", platform, image])
 
     def image_id(self, tag: str) -> str:
         """The exact image a mutable tag currently names.

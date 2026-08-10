@@ -38,6 +38,7 @@ from capsem.builder.schema import McpTransport
 def _arch(*, docker_platform="linux/arm64", rust_target="aarch64-unknown-linux-musl",
           kernel_image="arch/arm64/boot/Image", defconfig="kernel/defconfig.arm64",
           **kw):
+    kw.setdefault("base_image", "docker.io/library/debian@sha256:" + "a" * 64)
     return ArchConfig(docker_platform=docker_platform, rust_target=rust_target,
                       kernel_image=kernel_image, defconfig=defconfig, **kw)
 
@@ -136,13 +137,36 @@ class TestArchConfig:
 
     def test_defaults(self):
         a = _arch()
-        assert a.base_image == "debian:bookworm-slim"
+        assert a.base_image == "docker.io/library/debian@sha256:" + "a" * 64
         assert a.node_major == 24
 
     def test_custom_values(self):
-        a = _arch(base_image="ubuntu:24.04", node_major=22)
-        assert a.base_image == "ubuntu:24.04"
+        image = "registry.example/guest@sha256:" + "b" * 64
+        a = _arch(base_image=image, node_major=22)
+        assert a.base_image == image
         assert a.node_major == 22
+
+    @pytest.mark.parametrize(
+        "base_image",
+        [
+            "debian:bookworm-slim",
+            "debian@sha256:short",
+            "debian@sha256:" + "A" * 64,
+            "sha256:" + "a" * 64,
+        ],
+    )
+    def test_mutable_or_malformed_base_image_is_rejected(self, base_image: str) -> None:
+        with pytest.raises(ValidationError):
+            _arch(base_image=base_image)
+
+    def test_base_image_is_required(self) -> None:
+        with pytest.raises(ValidationError, match="base_image"):
+            ArchConfig(  # ty: ignore[missing-argument]
+                docker_platform="linux/arm64",
+                rust_target="aarch64-unknown-linux-musl",
+                kernel_image="arch/arm64/boot/Image",
+                defconfig="kernel/defconfig.arm64",
+            )
 
     def test_frozen(self):
         a = _arch()
@@ -192,11 +216,12 @@ class TestBuildConfig:
     def test_legacy_per_arch_kernel_branch_is_rejected(self) -> None:
         with pytest.raises(ValidationError, match="kernel_branch"):
             ArchConfig(
+                base_image="registry.example/debian@sha256:" + "a" * 64,
                 docker_platform="linux/arm64",
                 rust_target="aarch64-unknown-linux-musl",
                 kernel_image="arch/arm64/boot/Image",
                 defconfig="kernel/defconfig.arm64",
-                kernel_branch="9.9",
+                kernel_branch="9.9",  # ty: ignore[unknown-argument]
             )
 
     def test_compression_level_min(self):
@@ -226,6 +251,7 @@ class TestBuildConfig:
 
     def test_multi_arch(self):
         x86 = ArchConfig(
+            base_image="registry.example/debian@sha256:" + "b" * 64,
             docker_platform="linux/amd64",
             rust_target="x86_64-unknown-linux-musl",
             kernel_image="arch/x86_64/boot/bzImage",

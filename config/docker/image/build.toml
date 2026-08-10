@@ -18,7 +18,7 @@ uv = "uv --version 2>&1 | awk '{print $2}'"
 pip = "pip3 --version 2>&1 | awk '{print $2}'"
 
 [build.architectures.arm64]
-base_image = "debian:bookworm-slim"
+base_image = "docker.io/library/debian@sha256:817e6cf99d6fc127ff4ffe8580049b60deba0adfbbb2bd65ddc3ef8fbb7aade0"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
 kernel_image = "arch/arm64/boot/Image"
@@ -26,7 +26,7 @@ defconfig = "kernel/defconfig.arm64"
 node_major = 24
 
 [build.architectures.x86_64]
-base_image = "debian:bookworm-slim"
+base_image = "docker.io/library/debian@sha256:362e64223cc0da95422b3b13c045186fc0a81250e765d31c025fbddf257f6143"
 docker_platform = "linux/amd64"
 rust_target = "x86_64-unknown-linux-musl"
 kernel_image = "arch/x86_64/boot/bzImage"

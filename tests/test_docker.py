@@ -29,6 +29,7 @@ from capsem.builder.docker import (
     _cdxgen_command,
     _directory_tree_hash,
     _file_ledger_entry,
+    _native_base_image,
     _normalize_cyclonedx_obom,
     _rootfs_config_input_record,
     _validate_cyclonedx_obom,
@@ -57,6 +58,7 @@ from capsem.builder.docker import (
 from capsem.builder.models import ErofsConfig, KernelConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+EXACT_EROFS_BASE = "registry.example/debian@sha256:" + "e" * 64
 
 
 def test_cdxgen_default_is_exactly_pinned_and_override_remains_explicit(monkeypatch):
@@ -245,11 +247,13 @@ def rendered_profile_arm64(generated_profile_guest):
 class TestRenderRootfs:
     """Rootfs Dockerfile renders correctly for both architectures."""
 
-    def test_arm64_from_line(self, rendered_arm64):
-        assert "FROM --platform=linux/arm64 debian:bookworm-slim" in rendered_arm64
+    def test_arm64_from_line(self, real_config, rendered_arm64):
+        assert f"FROM {real_config.build.architectures['arm64'].base_image}" in rendered_arm64
+        assert "FROM --platform=" not in rendered_arm64
 
-    def test_x86_64_from_line(self, rendered_x86):
-        assert "FROM --platform=linux/amd64 debian:bookworm-slim" in rendered_x86
+    def test_x86_64_from_line(self, real_config, rendered_x86):
+        assert f"FROM {real_config.build.architectures['x86_64'].base_image}" in rendered_x86
+        assert "FROM --platform=" not in rendered_x86
 
     def test_apt_packages_present(self, real_config, rendered_arm64):
         for pkg in real_config.package_sets["apt"].packages:
@@ -523,7 +527,8 @@ class TestRenderKernel:
 
     def test_arm64_from(self, real_config):
         result = render_dockerfile("Dockerfile.kernel.j2", real_config, "arm64")
-        assert "FROM --platform=linux/arm64" in result
+        assert f"FROM {real_config.build.architectures['arm64'].base_image}" in result
+        assert "FROM --platform=" not in result
 
     def test_arm64_defconfig(self, real_config):
         result = render_dockerfile("Dockerfile.kernel.j2", real_config, "arm64")
@@ -535,7 +540,8 @@ class TestRenderKernel:
 
     def test_x86_64_from(self, real_config):
         result = render_dockerfile("Dockerfile.kernel.j2", real_config, "x86_64")
-        assert "FROM --platform=linux/amd64" in result
+        assert f"FROM {real_config.build.architectures['x86_64'].base_image}" in result
+        assert "FROM --platform=" not in result
 
     def test_x86_64_defconfig(self, real_config):
         result = render_dockerfile("Dockerfile.kernel.j2", real_config, "x86_64")
@@ -644,7 +650,8 @@ class TestEdgeCases:
             package_sets={"apt": real_config.package_sets["apt"]},
         )
         result = render_dockerfile("Dockerfile.rootfs.j2", minimal, "arm64")
-        assert "FROM --platform=linux/arm64" in result
+        assert f"FROM {real_config.build.architectures['arm64'].base_image}" in result
+        assert "FROM --platform=" not in result
         # Should not have python install section
         assert "uv pip install --system" not in result or "certifi" in result
 
@@ -657,7 +664,8 @@ class TestEdgeCases:
             package_sets={"apt": real_config.package_sets["apt"]},
         )
         result = render_dockerfile("Dockerfile.rootfs.j2", minimal, "arm64")
-        assert "FROM --platform=linux/arm64" in result
+        assert f"FROM {real_config.build.architectures['arm64'].base_image}" in result
+        assert "FROM --platform=" not in result
         # npm install section should be absent
         assert "npm install -g --prefix" not in result
 
@@ -880,6 +888,7 @@ def real_arch():
     from capsem.builder.models import ArchConfig
 
     return ArchConfig(
+        base_image="registry.example/debian@sha256:" + "a" * 64,
         docker_platform="linux/arm64",
         rust_target="aarch64-unknown-linux-musl",
         kernel_image="arch/arm64/boot/Image",
@@ -976,6 +985,7 @@ class TestAptClockSkewOptions:
             Path("/tmp/rootfs.erofs"),
             "zstd",
             "65536",
+            base_image=EXACT_EROFS_BASE,
         )
         cmd_str = " ".join(mock_run.call_args[0][0])
         for opt in self.APT_CLOCK_SKEW_OPTIONS:
@@ -1012,6 +1022,7 @@ class TestCreateErofs:
             "lz4hc",
             "65536",
             "12",
+            base_image=EXACT_EROFS_BASE,
         )
 
         command = mock_run.call_args.args[0]
@@ -1030,6 +1041,7 @@ class TestCreateErofs:
                 "lz4hc",
                 "65536",
                 "12",
+                base_image=EXACT_EROFS_BASE,
             )
 
         mock_run.assert_not_called()
@@ -1042,6 +1054,7 @@ class TestCreateErofs:
             Path("/tmp/rootfs.erofs"),
             "zstd",
             "65536",
+            base_image=EXACT_EROFS_BASE,
         )
         cmd = mock_run.call_args[0][0]
         cmd_str = " ".join(cmd)
@@ -1060,10 +1073,11 @@ class TestCreateErofs:
             "lz4hc",
             "65536",
             "12",
+            base_image=EXACT_EROFS_BASE,
         )
         cmd = mock_run.call_args[0][0]
         cmd_str = " ".join(cmd)
-        assert "debian:bookworm-slim" in cmd
+        assert EXACT_EROFS_BASE in cmd
         assert "-Enosbcrc" in cmd_str
         assert "-zlz4hc,level=12" in cmd_str
         assert "-C65536" in cmd_str
@@ -1076,6 +1090,7 @@ class TestCreateErofs:
             Path("/tmp/out/rootfs.erofs"),
             "zstd",
             "65536",
+            base_image=EXACT_EROFS_BASE,
         )
         cmd = mock_run.call_args[0][0]
         cmd_str = " ".join(cmd)
@@ -1096,6 +1111,7 @@ class TestCreateErofs:
             "lz4hc",
             None,
             "12",
+            base_image=EXACT_EROFS_BASE,
         )
 
         cmd_str = " ".join(mock_run.call_args[0][0])
@@ -1433,7 +1449,7 @@ class TestBuildLedger:
         def fake_export(_runtime, _tag, _platform, output_tar):
             output_tar.write_bytes(b"rootfs tar")
 
-        def fake_erofs(_runtime, _tar_path, output_path, *_args):
+        def fake_erofs(_runtime, _tar_path, output_path, *_args, **_kwargs):
             output_path.write_bytes(b"erofs")
 
         def fake_obom(_tar_path, output_path, **_kwargs):
@@ -1503,7 +1519,7 @@ class TestBuildLedger:
             "compression": "lz4hc",
             "compression_level": "12",
             "cluster_size": None,
-            "utils_image": "debian:bookworm-slim",
+            "utils_image": _native_base_image(real_config),
         }
         assert erofs_record["outputs"][0]["path"] == "rootfs.erofs"
         assert erofs_record["inputs"]["build_context"]["hash"]
@@ -1808,7 +1824,8 @@ class TestPrepareBuildContext:
             PROJECT_ROOT,
         )
         content = (context_dir / "Dockerfile").read_text()
-        assert "FROM --platform=linux/arm64" in content
+        assert f"FROM {real_config.build.architectures['arm64'].base_image}" in content
+        assert "FROM --platform=" not in content
 
     def test_kernel_dockerfile_has_version(self, real_config, tmp_path):
         context_dir = tmp_path / "ctx"
