@@ -16,6 +16,7 @@ import shutil
 from .actions import Action, Run
 from .config import GateConfig
 from .context import Context
+from .errors import GateError
 from .execution import Step, step
 from .packageinputs import pinned_toolchain
 
@@ -90,5 +91,14 @@ class _EnsureRust(Action, name="ensure-rust"):
             # `shutil.which`, not `command -v`: the latter is a shell builtin
             # and there is no shell here, so it would report every tool
             # missing and reinstall the world on each run.
-            if shutil.which(crate.name) is None:
+            actual = ""
+            if shutil.which(crate.name) is not None:
+                actual = context.runner.capture(crate.probe, check=False)
+            if not actual.startswith(crate.expected):
                 context.runner.run(crate.install)
+                actual = context.runner.capture(crate.probe, check=False)
+                if not actual.startswith(crate.expected):
+                    raise GateError(
+                        f"{crate.name} did not provide {crate.expected}: "
+                        f"{actual or '<no version output>'}"
+                    )

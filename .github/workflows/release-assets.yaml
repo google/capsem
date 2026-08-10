@@ -318,6 +318,11 @@ jobs:
           components: llvm-tools
           targets: aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
 
+      - name: Install pinned functional test runner
+        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
+        with:
+          tool: cargo-nextest@0.9.137
+
       - name: Prepare hermetic qualification boundary
         run: |
           sudo apt-get update

@@ -57,7 +57,7 @@ jobs:
       - name: Install prebuilt Rust gate tools
         uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
         with:
-          tool: cargo-audit@0.22.1,cargo-llvm-cov@0.8.5,b3sum@1.8.5,cargo-sbom@0.10.0,tauri-cli@2.11.1
+          tool: cargo-audit@0.22.1,cargo-nextest@0.9.137,cargo-llvm-cov@0.8.5,b3sum@1.8.5,cargo-sbom@0.10.0,tauri-cli@2.11.1
 
       # The checked-in modules enter Bubblewrap before their first plan step.
       # Resolve only locked dependencies here; qualification itself must have

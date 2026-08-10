@@ -71,6 +71,21 @@ def _git_common_dir(root: Path) -> str:
     return found.stdout.strip()
 
 
+@cache
+def _cargo_tool_probe_replies(root: Path) -> dict[tuple[str, ...], str]:
+    """Config-owned answers for plan-only toolchain probes.
+
+    A recorder must not inherit whatever Cargo tools happen to be installed on
+    the test host. These answers let composition tests cross the same exact
+    version boundary without copying the versions into test infrastructure.
+    """
+    from capsem.gate import config as gate_config
+
+    config_root = root if (root / "config/gate.toml").is_file() else PROJECT_ROOT
+    settings = gate_config.load(config_root).toolchain
+    return {crate.probe: crate.expected for crate in settings.crates}
+
+
 class RecordingRunner(Runner):
     """Records every command; answers with canned output.
 
@@ -109,6 +124,8 @@ class RecordingRunner(Runner):
                 stdout = _git_common_dir(self.root)
             elif IMAGE_ID_PROBE in rendered:
                 stdout = RECORDED_IMAGE_ID
+            elif command.argv in _cargo_tool_probe_replies(self.root):
+                stdout = _cargo_tool_probe_replies(self.root)[command.argv]
         return subprocess.CompletedProcess(
             args=list(command.argv), returncode=status, stdout=stdout, stderr=""
         )

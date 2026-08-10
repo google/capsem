@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fresh bootstrap, reusable fast CI, both orthogonal release pairing jobs, and
+  the Linux host-builder now provision the same exact `cargo-nextest` version.
+  Config-owned Cargo tools carry executable version probes, so a warm host is
+  repaired and re-verified instead of silently qualifying with a drifting
+  binary; Rust inventory failures also print the hidden subprocess error.
+
 - Fresh profile asset lanes now repack every architecture's minimal kernel
   initrd with the complete config-owned guest payload before merge, boot, or
   archive proof. The same explicit-target primitive runs in profile release CI

@@ -1275,7 +1275,7 @@ def test_cdxgen_release_tool_prerequisite_is_documented() -> None:
     assert 'if [ "$CDXGEN_ACTUAL_VERSION" = "$CDXGEN_VERSION" ]' in release_preflight
     assert "npm install -g @cyclonedx/cdxgen@12.7.0" in release_preflight
     assert "for tool in gh openssl cdxgen" in doctor
-    assert "capsem_gate_cargo_tools" in doctor
+    assert "capsem_gate_cargo_tool_versions" in doctor
     assert 'name = "cargo-sbom"' in _source_text("config/gate.toml")
     assert 'skip "$tool (only needed for releases)"' in doctor
     assert "npm install -g @cyclonedx/cdxgen@12.7.0" in asset_workflow
@@ -5059,7 +5059,7 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
     assert "capsem-service" in runner
     assert 'package_args+=( -p "$package" )' in runner
     assert "--profile ci" in runner
-    assert "cargo install cargo-nextest" in host_builder
+    assert "cargo install cargo-nextest --version 0.9.137 --locked" in host_builder
     assert "cargo install cargo-llvm-cov" in host_builder
     assert host_builder.count("for attempt in 1 2 3") >= 4
     assert "CARGO_NET_RETRY=10" in host_builder

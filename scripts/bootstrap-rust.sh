@@ -38,36 +38,75 @@ capsem_rust_toolchain() {
 }
 
 capsem_gate_cargo_tools() {
+    CAPSEM_GATE_CARGO_VERSION_ROWS=$(capsem_gate_cargo_tool_versions "$1") || return
+    printf '%s\n' "$CAPSEM_GATE_CARGO_VERSION_ROWS" | cut -f1
+}
+
+capsem_gate_cargo_tool_versions() {
     CAPSEM_GATE_CONFIG=$1
     awk -F= '
+        function finish_crate() {
+            if (!in_crate) {
+                return
+            }
+            split(probe, probe_parts, " ")
+            if (name == "" || expected == "" || probe == "" || probe_parts[1] != name || seen[name]) {
+                printf "incomplete or duplicate Cargo tool version in %s: %s\n", FILENAME, name > "/dev/stderr"
+                invalid = 1
+            } else {
+                seen[name] = 1
+                names[++count] = name
+                expectations[count] = expected
+                probes[count] = probe
+            }
+            name = ""
+            expected = ""
+            probe = ""
+        }
         /^[[:space:]]*\[\[toolchain[.]crates\]\][[:space:]]*$/ {
+            finish_crate()
             in_crate = 1
             next
         }
         /^[[:space:]]*\[/ {
+            finish_crate()
             in_crate = 0
         }
         in_crate && $1 ~ /^[[:space:]]*name[[:space:]]*$/ {
             value = $2
             sub(/[[:space:]]*#.*/, "", value)
             gsub(/^[[:space:]]*"|"[[:space:]]*$/, "", value)
-            if (value !~ /^[A-Za-z0-9_-]+$/ || seen[value]) {
-                printf "invalid or duplicate toolchain crate name in %s: %s\n", FILENAME, value > "/dev/stderr"
+            name = value
+        }
+        in_crate && $1 ~ /^[[:space:]]*expected[[:space:]]*$/ {
+            value = $2
+            sub(/[[:space:]]*#.*/, "", value)
+            gsub(/^[[:space:]]*"|"[[:space:]]*$/, "", value)
+            expected = value
+        }
+        in_crate && $1 ~ /^[[:space:]]*probe[[:space:]]*$/ {
+            value = $2
+            sub(/[[:space:]]*#.*/, "", value)
+            gsub(/^[[:space:]]*\[|\][[:space:]]*$/, "", value)
+            gsub(/"/, "", value)
+            gsub(/,[[:space:]]*/, " ", value)
+            gsub(/[[:space:]]+/, " ", value)
+            if (value !~ /^[A-Za-z0-9_.-]+( [A-Za-z0-9_.-]+)*$/) {
+                printf "unsafe Cargo tool probe in %s: %s\n", FILENAME, value > "/dev/stderr"
                 invalid = 1
-                next
             }
-            seen[value] = 1
-            names[++count] = value
+            probe = value
         }
         END {
+            finish_crate()
             if (invalid || count == 0) {
                 if (!invalid) {
-                    printf "no [[toolchain.crates]] names in %s\n", FILENAME > "/dev/stderr"
+                    printf "no [[toolchain.crates]] versions in %s\n", FILENAME > "/dev/stderr"
                 }
                 exit 2
             }
             for (position = 1; position <= count; position++) {
-                print names[position]
+                printf "%s\t%s\t%s\n", names[position], expectations[position], probes[position]
             }
         }
     ' "$CAPSEM_GATE_CONFIG"

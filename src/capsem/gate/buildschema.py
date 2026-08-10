@@ -19,7 +19,21 @@ class CrateTool(Strict):
     """A cargo-installed tool: how to find it, and how to get it."""
 
     name: str
+    probe: tuple[str, ...]
+    expected: str
     install: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def exact_version_is_declared(self) -> CrateTool:
+        if not self.probe or self.probe[0] != self.name:
+            raise ValueError("Cargo tool probe must start with its configured name")
+        if not self.expected:
+            raise ValueError("Cargo tool expected version output may not be empty")
+        if self.install[:2] != ("cargo", "install"):
+            raise ValueError("Cargo tool install must use cargo install")
+        if "--version" not in self.install or "--locked" not in self.install:
+            raise ValueError("Cargo tool install must carry an exact version and --locked")
+        return self
 
 
 class ToolchainConfig(Strict):

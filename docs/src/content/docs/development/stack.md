@@ -262,8 +262,10 @@ Everything below is checked by `bootstrap.sh` and `just doctor`. You don't need 
 | Node.js 24+ / pnpm | Builds the Astro + Svelte frontend |
 | Python 3.11+ / uv | Runs capsem-builder (image builds, schema generation) |
 | Docker (via Colima on macOS) | Container runtime for kernel + rootfs builds |
+| cargo-nextest | Pinned native Rust test runner |
 | cargo-llvm-cov | Code coverage (`just test`) |
 | cargo-audit | Dependency vulnerability scanning |
 | cargo-tauri | Tauri CLI for desktop app builds |
+| cargo-sbom | Rust SBOM generation |
 | b3sum | BLAKE3 checksums for asset integrity |
 | codesign (macOS) | Signs binaries with virtualization entitlement |

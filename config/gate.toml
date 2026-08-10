@@ -787,24 +787,40 @@ rust_components = ["llvm-tools"]
 # `probe` is what proves it is already present; `install` is what puts it
 # there. A table rather than eight code blocks, so adding one is a line.
 [[toolchain.crates]]
+name = "cargo-nextest"
+probe = ["cargo-nextest", "--version"]
+expected = "cargo-nextest 0.9.137"
+install = ["cargo", "install", "cargo-nextest", "--version", "0.9.137", "--locked"]
+
+[[toolchain.crates]]
 name = "cargo-llvm-cov"
-install = ["cargo", "install", "cargo-llvm-cov"]
+probe = ["cargo-llvm-cov", "llvm-cov", "--version"]
+expected = "cargo-llvm-cov 0.8.5"
+install = ["cargo", "install", "cargo-llvm-cov", "--version", "0.8.5", "--locked"]
 
 [[toolchain.crates]]
 name = "b3sum"
-install = ["cargo", "install", "b3sum", "--locked"]
+probe = ["b3sum", "--version"]
+expected = "b3sum 1.8.5"
+install = ["cargo", "install", "b3sum", "--version", "1.8.5", "--locked"]
 
 [[toolchain.crates]]
 name = "cargo-audit"
-install = ["cargo", "install", "cargo-audit"]
+probe = ["cargo-audit", "--version"]
+expected = "cargo-audit 0.22.1"
+install = ["cargo", "install", "cargo-audit", "--version", "0.22.1", "--locked"]
 
 [[toolchain.crates]]
 name = "cargo-sbom"
-install = ["cargo", "install", "cargo-sbom", "--locked"]
+probe = ["cargo-sbom", "--version"]
+expected = "cargo-sbom 0.10.0"
+install = ["cargo", "install", "cargo-sbom", "--version", "0.10.0", "--locked"]
 
 [[toolchain.crates]]
 name = "cargo-tauri"
-install = ["cargo", "install", "tauri-cli"]
+probe = ["cargo-tauri", "--version"]
+expected = "tauri-cli 2.11.1"
+install = ["cargo", "install", "tauri-cli", "--version", "2.11.1", "--locked"]
 
 [release]
 # The order is non-negotiable, and it is the reason this exists as a command

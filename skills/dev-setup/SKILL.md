@@ -35,9 +35,11 @@ Rust targets (auto-installed by `just doctor fix`):
 - `x86_64-unknown-linux-musl` -- guest binaries (x86_64)
 
 Cargo tools (auto-installed by `just doctor fix`):
+- `cargo-nextest` -- native Rust test runner
 - `cargo-llvm-cov` -- coverage
 - `cargo-audit` -- vulnerability scanner
 - `cargo-tauri` -- Tauri CLI
+- `cargo-sbom` -- Rust SBOM generation
 - `b3sum` -- BLAKE3 checksums
 
 ## Container runtime setup
@@ -153,7 +155,7 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 | 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` (+ symlink into `~/.docker/cli-plugins`) |
 | 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` |
 | 2 | Frontend, docs, site, and release-site deps | config-driven `capsem-gate install-node` with frozen lockfiles |
-| 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` -- Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`, build VM assets, pack initrd |
+| 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` -- Rust targets, exact config-owned Cargo tools (`cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri`, `cargo-sbom`), build VM assets, pack initrd |
 
 Release-only local preflight also needs `cdxgen`. Install it with
 `npm install -g @cyclonedx/cdxgen@12.7.0` before running
@@ -339,7 +341,7 @@ All fixable issues use an **ordered fix registry** defined at the top of `doctor
 Registry order (each depends on the ones above it):
 1. `rustup-targets` -- cross-compile targets
 2. `llvm-tools` -- rust-lld linker
-3. `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` -- cargo tools
+3. `cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri`, `cargo-sbom` -- exact config-owned Cargo tools
 4. `entitlements`, `cargo-config`, `run-signed` -- git checkout config files
 5. `pnpm-install` -- every locked Node workspace, through `capsem-gate install-node`
 6. `build-assets` -- VM kernel + rootfs (needs docker)

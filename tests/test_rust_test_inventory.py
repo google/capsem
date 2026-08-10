@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -27,10 +28,15 @@ def _json_output(*argv: str, target_dir: Path) -> object:
         argv,
         cwd=ROOT,
         env=_cargo_env(target_dir),
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
+    if result.returncode != 0:
+        pytest.fail(
+            f"{shlex.join(argv)} failed ({result.returncode}):\n{result.stderr}",
+            pytrace=False,
+        )
     return json.loads(result.stdout)
 
 

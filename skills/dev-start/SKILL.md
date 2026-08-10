@@ -22,7 +22,7 @@ Three phases. Default answer at every prompt is **Yes** — press Enter to insta
 
 1. **Hard prereqs** (you must have): `bash`, `git`, `curl`. Auto-installed: `rustup` (sh.rustup.rs), `just` (just.systems → `~/.local/bin`).
 2. **Dependencies**: on Linux, distro-native build/Tauri packages, `cpio`, verified Node 24, pnpm 10, Docker + Buildx, Bubblewrap, and immediate Docker/KVM access; on macOS, `flock`, `colima` + `docker` + `docker-buildx`, Tart, and sshpass through Homebrew. Both platforms install `uv`, locked Python/frontend dependencies, and then prove the runtime.
-3. **Doctor `--fix`** (`scripts/doctor-common.sh --fix`): installs Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`; builds VM assets and packs the initrd.
+3. **Doctor `--fix`** (`scripts/doctor-common.sh --fix`): installs Rust targets and the exact config-owned Cargo tools (`cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri`, and `cargo-sbom`); builds VM assets and packs the initrd.
 
 Release-only local preflight also needs `cdxgen`. Install it with
 `npm install -g @cyclonedx/cdxgen@12.7.0` before running

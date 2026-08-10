@@ -100,7 +100,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
 
 RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install tauri-cli --locked && exit 0; sleep $((attempt * 5)); done; exit 1
 RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo-auditable --locked && exit 0; sleep $((attempt * 5)); done; exit 1
-RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo-nextest --locked && exit 0; sleep $((attempt * 5)); done; exit 1
+RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo-nextest --version 0.9.137 --locked && exit 0; sleep $((attempt * 5)); done; exit 1
 RUN installed=0; for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo-llvm-cov --locked && { installed=1; break; }; sleep $((attempt * 5)); done; \
     [ "$installed" = 1 ] && rm -rf /usr/local/cargo/registry/cache /usr/local/cargo/registry/src
 

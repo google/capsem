@@ -259,17 +259,26 @@ fi
 
 section "Cargo Tools"
 _check_cargo_tool() {
-    local tool="$1" fix_id="$2"
-    if command -v "$tool" &>/dev/null; then
-        pass "$tool"
+    local tool="$1" expected="$2" probe="$3" actual first_line
+    local -a probe_argv
+    if ! command -v "$tool" &>/dev/null; then
+        fixable gate-cargo-tools "$tool not found"
+        return
+    fi
+    read -r -a probe_argv <<< "$probe"
+    actual=$("${probe_argv[@]}" 2>/dev/null || true)
+    first_line=${actual%%$'\n'*}
+    if [[ "$actual" == "$expected"* ]]; then
+        pass "$tool ($expected)"
     else
-        fixable "$fix_id" "$tool not found"
+        fixable gate-cargo-tools \
+            "$tool version mismatch (expected $expected, found ${first_line:-no output})"
     fi
 }
-while IFS= read -r tool; do
-    _check_cargo_tool "$tool" gate-cargo-tools
+while IFS=$'\t' read -r tool expected probe; do
+    _check_cargo_tool "$tool" "$expected" "$probe"
 done <<EOF
-$(capsem_gate_cargo_tools "$PROJECT_ROOT/config/gate.toml")
+$(capsem_gate_cargo_tool_versions "$PROJECT_ROOT/config/gate.toml")
 EOF
 
 section "Container Tools"

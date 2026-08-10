@@ -466,11 +466,36 @@ def test_rust_bootstrap_reads_the_complete_gate_cargo_tool_inventory() -> None:
     )
 
     assert completed.stdout.splitlines() == [
+        "cargo-nextest",
         "cargo-llvm-cov",
         "b3sum",
         "cargo-audit",
         "cargo-sbom",
         "cargo-tauri",
+    ]
+
+
+def test_rust_bootstrap_reads_exact_cargo_tool_versions_from_the_same_inventory() -> None:
+    completed = subprocess.run(
+        [
+            "sh",
+            "-c",
+            ". scripts/bootstrap-rust.sh; "
+            "capsem_gate_cargo_tool_versions config/gate.toml",
+        ],
+        cwd=PROJECT_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.splitlines() == [
+        "cargo-nextest\tcargo-nextest 0.9.137\tcargo-nextest --version",
+        "cargo-llvm-cov\tcargo-llvm-cov 0.8.5\tcargo-llvm-cov llvm-cov --version",
+        "b3sum\tb3sum 1.8.5\tb3sum --version",
+        "cargo-audit\tcargo-audit 0.22.1\tcargo-audit --version",
+        "cargo-sbom\tcargo-sbom 0.10.0\tcargo-sbom --version",
+        "cargo-tauri\ttauri-cli 2.11.1\tcargo-tauri --version",
     ]
 
 
@@ -481,7 +506,9 @@ def test_rust_bootstrap_rejects_missing_or_duplicate_cargo_tool_inventory(
         "missing.toml": "[toolchain]\nrust_targets = []\n",
         "duplicate.toml": (
             '[[toolchain.crates]]\nname = "cargo-one"\n'
+            'probe = ["cargo-one", "--version"]\nexpected = "cargo-one 1"\n'
             '[[toolchain.crates]]\nname = "cargo-one"\n'
+            'probe = ["cargo-one", "--version"]\nexpected = "cargo-one 1"\n'
         ),
     }
     for filename, content in cases.items():
@@ -510,7 +537,9 @@ def test_bootstrap_and_doctor_install_then_expose_config_owned_cargo_tools() -> 
 
     assert '_doctor_install_gate_tools' in doctor
     assert 'uv run capsem-gate install-tools' in doctor
-    assert 'capsem_gate_cargo_tools "$PROJECT_ROOT/config/gate.toml"' in doctor
+    assert 'capsem_gate_cargo_tool_versions "$PROJECT_ROOT/config/gate.toml"' in doctor
+    assert '[[ "$actual" == "$expected"* ]]' in doctor
+    assert 'actual=$("${probe_argv[@]}"' in doctor
     assert 'capsem_expose_gate_cargo_tools "$PROJECT_ROOT/config/gate.toml"' in doctor
     assert "cargo-sbom (only needed for releases)" not in doctor
 
@@ -531,8 +560,10 @@ def test_gate_cargo_tool_exposure_is_limited_to_the_configured_inventory(
     rust_bin.mkdir()
     cargo_bin.mkdir(parents=True)
     config.write_text(
-        '[[toolchain.crates]]\nname = "cargo-one"\ninstall = ["cargo"]\n'
-        '[[toolchain.crates]]\nname = "cargo-two"\ninstall = ["cargo"]\n',
+        '[[toolchain.crates]]\nname = "cargo-one"\n'
+        'probe = ["cargo-one", "--version"]\nexpected = "cargo-one 1"\n'
+        '[[toolchain.crates]]\nname = "cargo-two"\n'
+        'probe = ["cargo-two", "--version"]\nexpected = "cargo-two 1"\n',
         encoding="utf-8",
     )
     rustup = rust_bin / "rustup"

@@ -34,6 +34,31 @@ def test_install_test_inherits_uv_from_its_locally_built_parent() -> None:
     assert "astral-sh/uv" not in child
 
 
+def test_every_fresh_ci_test_runner_preinstalls_the_exact_nextest() -> None:
+    pin = "cargo-nextest@0.9.137"
+    jobs = (
+        ("fast-gate.yaml", "static", "Materialize locked qualification dependencies", "just _test-fast"),
+        ("ci.yaml", "test-linux", None, "just _gate-linux-rust"),
+        ("ci.yaml", "test", None, "cargo llvm-cov nextest"),
+        ("release.yaml", "test-binary-pairing", "Prepare hermetic qualification boundary", "just _test-functional"),
+        ("release-assets.yaml", "test-profile-pairing", "Prepare hermetic qualification boundary", "just _test-functional"),
+    )
+
+    for workflow_name, job_name, seal, consumer in jobs:
+        job = _job_block(_read(f".github/workflows/{workflow_name}"), job_name)
+        assert pin in job, f"{workflow_name}:{job_name} does not install {pin}"
+        assert job.index(pin) < job.index(consumer)
+        if seal is not None:
+            assert job.index(pin) < job.index(seal) < job.index(consumer)
+
+
+def test_host_builder_installs_the_same_exact_nextest() -> None:
+    host_builder = _read("docker/Dockerfile.host-builder")
+
+    assert "cargo install cargo-nextest --version 0.9.137 --locked" in host_builder
+    assert "cargo install cargo-nextest --locked" not in host_builder
+
+
 def test_just_test_holds_source_state_stable_without_archiving_benchmarks() -> None:
     """Both HEAD and the working-tree digest are captured before and compared
     after: a gate that qualified a HEAD nobody has, or a tree edited halfway
