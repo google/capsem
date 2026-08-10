@@ -10,11 +10,28 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 RESOLVER = ROOT / "scripts" / "pkg-scripts" / "install-user"
+TARGET_USER = "capsem-test-user"
 
 
 def _run_resolver(
     request: Path, *, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
+    fake_bin = request.parent / "resolver-bin"
+    fake_bin.mkdir(exist_ok=True)
+    fake_id = fake_bin / "id"
+    fake_id.write_text(
+        f"""#!/bin/bash
+if [ "$#" -eq 2 ] && [ "$1" = "-u" ] && [ "$2" = "{TARGET_USER}" ]; then
+    printf '12345\\n'
+else
+    exec /usr/bin/id "$@"
+fi
+""",
+        encoding="utf-8",
+    )
+    fake_id.chmod(0o755)
+    resolver_env = dict(env or os.environ)
+    resolver_env["PATH"] = f"{fake_bin}:{resolver_env['PATH']}"
     return subprocess.run(
         [
             "bash",
@@ -28,7 +45,7 @@ def _run_resolver(
         capture_output=True,
         text=True,
         timeout=10,
-        env=env,
+        env=resolver_env,
     )
 
 
@@ -36,13 +53,13 @@ def test_secure_request_resolves_headless_non_root_user(tmp_path: Path) -> None:
     if os.geteuid() == 0:
         pytest.skip("the resolver's production owner is the effective package-script user")
     request = tmp_path / "install-user"
-    request.write_text(f"{os.environ['USER']}\n", encoding="utf-8")
+    request.write_text(f"{TARGET_USER}\n", encoding="utf-8")
     request.chmod(0o600)
 
     result = _run_resolver(request)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == os.environ["USER"]
+    assert result.stdout.strip() == TARGET_USER
 
 
 def test_secure_request_uses_gnu_file_stat_before_filesystem_stat(
@@ -51,7 +68,7 @@ def test_secure_request_uses_gnu_file_stat_before_filesystem_stat(
     if os.geteuid() == 0:
         pytest.skip("the resolver's production owner is the effective package-script user")
     request = tmp_path / "install-user"
-    request.write_text(f"{os.environ['USER']}\n", encoding="utf-8")
+    request.write_text(f"{TARGET_USER}\n", encoding="utf-8")
     request.chmod(0o600)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -80,14 +97,14 @@ PY
     result = _run_resolver(request, env=env)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == os.environ["USER"]
+    assert result.stdout.strip() == TARGET_USER
 
 
 def test_insecure_request_is_rejected_instead_of_silently_skipping(tmp_path: Path) -> None:
     if os.geteuid() == 0:
         pytest.skip("the resolver's production owner is the effective package-script user")
     request = tmp_path / "install-user"
-    request.write_text(f"{os.environ['USER']}\n", encoding="utf-8")
+    request.write_text(f"{TARGET_USER}\n", encoding="utf-8")
     request.chmod(0o644)
 
     result = _run_resolver(request)
@@ -110,14 +127,16 @@ def test_root_owned_headless_request_has_auditable_resolution(
 ) -> None:
     """PackageKit's root context must leave exact target-user evidence."""
     request = tmp_path / "install-user"
-    request.write_text(f"{os.environ['USER']}\n", encoding="utf-8")
+    request.write_text(f"{TARGET_USER}\n", encoding="utf-8")
     request.chmod(0o600)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     (fake_bin / "id").write_text(
-        """#!/bin/bash
+        f"""#!/bin/bash
 if [ "$#" -eq 1 ] && [ "$1" = "-u" ]; then
     printf '0\\n'
+elif [ "$#" -eq 2 ] && [ "$1" = "-u" ] && [ "$2" = "{TARGET_USER}" ]; then
+    printf '12345\\n'
 elif [ "$1" = "-u" ]; then
     exec /usr/bin/id -u "$2"
 else
@@ -160,6 +179,6 @@ fi
 
     assert result.returncode == 0, result.stderr
     assert "source=secure-request" in result.stdout
-    assert f"user={os.environ['USER']}" in result.stdout
+    assert f"user={TARGET_USER}" in result.stdout
     assert "request_owner_uid=0" in result.stdout
     assert "request_mode=600" in result.stdout
