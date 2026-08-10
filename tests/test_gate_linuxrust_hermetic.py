@@ -1,4 +1,4 @@
-"""The Linux parity lane holds its own bytes.
+"""The macOS-hosted Linux parity lane holds its own bytes.
 
 It carried every defect this work exists for: it bind-mounted the live
 checkout read-only, grafted two writable mounts through that to get output
@@ -16,21 +16,24 @@ from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _issued() -> str:
+def _macos_issued(monkeypatch: pytest.MonkeyPatch) -> str:
     import sys
 
     sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
     from helpers.gate import gate_issued
 
     return gate_issued("linux-rust")
 
 
-def test_the_lane_mounts_nothing() -> None:
+def test_the_lane_mounts_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     """No `-v` at all. Not a rewritten mount -- none."""
-    issued = _issued()
+    issued = _macos_issued(monkeypatch)
     docker_lines = [line for line in issued.splitlines() if line.startswith("docker ")]
     assert docker_lines, f"no docker command was issued:\n{issued}"
     # Only the commands that can mount. `docker rm -f -v` also carries a `-v`,
@@ -45,10 +48,10 @@ def test_the_lane_mounts_nothing() -> None:
     assert not mounting, "the lane still mounts something:\n  " + "\n  ".join(mounting)
 
 
-def test_the_lane_runs_with_no_network() -> None:
+def test_the_lane_runs_with_no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     """It compiles and runs tests. Fetching mid-run is what the base image is
     for, and denying it is what proves the base image is complete."""
-    issued = _issued()
+    issued = _macos_issued(monkeypatch)
     # `docker create` rather than `docker run`: the container has to outlive
     # its own exit so the coverage can be copied out of it.
     created = [line for line in issued.splitlines() if line.startswith("docker create")]
@@ -138,7 +141,9 @@ def test_rebuilding_the_parent_image_changes_the_tag(tmp_path: Path) -> None:
     assert before != after
 
 
-def test_the_lane_owns_its_base_image_instead_of_asking_the_operator() -> None:
+def test_the_lane_owns_its_base_image_instead_of_asking_the_operator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A module owns its prerequisites, or `just test` is not self-sufficient.
 
     The lane refuses to build the base image inside itself -- correctly, since
@@ -154,6 +159,7 @@ def test_the_lane_owns_its_base_image_instead_of_asking_the_operator() -> None:
     """
     from helpers.gate import gate_labels
 
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
     labels = list(gate_labels("candidate"))
 
     assert "warm-base" in labels, (
@@ -163,21 +169,24 @@ def test_the_lane_owns_its_base_image_instead_of_asking_the_operator() -> None:
     assert labels.index("warm-base") < labels.index("linux-rust")
 
 
-def test_the_ownership_steps_are_gone() -> None:
+def test_the_ownership_steps_are_gone(monkeypatch: pytest.MonkeyPatch) -> None:
     """`cache-ownership` and `output-ownership` existed only because root-owned
     volumes and bind mounts left files the host could not read. Without either,
     they are ceremony -- and a ratchet keeps them from coming back."""
     from helpers.gate import gate_labels
 
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
     labels = set(gate_labels("test-static")) | set(gate_labels("linux-rust"))
     assert "cache-ownership" not in labels, sorted(labels)
     assert "output-ownership" not in labels, sorted(labels)
 
 
-def test_the_coverage_output_is_copied_out_before_the_container_is_removed() -> None:
+def test_the_coverage_output_is_copied_out_before_the_container_is_removed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """`--rm` and `docker cp` are mutually exclusive: a removed container has
     nothing left to copy from. The edge is the assertion."""
-    issued = _issued()
+    issued = _macos_issued(monkeypatch)
     lines = issued.splitlines()
 
     def last_index_of(fragment: str) -> int:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import Any, cast
 
 CAPSEM_BENCH_GATES = {
     "disk_seq_mbps": 50,
@@ -175,7 +175,7 @@ def _assert_lte(value: float, gate: float, label: str) -> None:
 
 
 def _disk_rand_iops_gate() -> float:
-    gates = CAPSEM_BENCH_GATES["disk_rand_iops"]
+    gates = cast(dict[str, int], CAPSEM_BENCH_GATES["disk_rand_iops"])
     if sys.platform.startswith("linux"):
         return gates["linux"]
     return gates["default"]

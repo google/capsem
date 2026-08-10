@@ -669,7 +669,9 @@ def test_tart_harness_promotes_guest_evidence_to_a_durable_report() -> None:
     assert '"macos-glowup-final"' in source
 
 
-def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke() -> None:
+def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text()
     doctor = (PROJECT_ROOT / "scripts" / "doctor-macos.sh").read_text()
     justfile = (PROJECT_ROOT / "justfile").read_text()
@@ -686,6 +688,10 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke() 
     assert gate_config.load(PROJECT_ROOT).modules.macos_glowup_script.endswith(
         "macos_release_glowup.py"
     )
+    # This contract describes the macOS plan even when the portable release
+    # contracts are being exercised on Linux. The Linux plan correctly omits
+    # Tart because it cannot execute that host-only proof.
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
     # The recipe is a dispatch and the ordering is an edge in the plan: the
     # bootstrap that installs Tart runs before anything that needs it.
     labels = _gate_labels("test-candidate")

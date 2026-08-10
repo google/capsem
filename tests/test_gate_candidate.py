@@ -280,6 +280,7 @@ def test_the_gate_holds_everything_that_must_be_given_back() -> None:
     assert names == {
         "orphan-accounting",
         "sandbox-report",
+        "release-egress",
         "workspace",
         "colima",
         "failure-evidence",

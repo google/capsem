@@ -57,6 +57,8 @@ class LintConfig(Strict):
 
     python_roots: tuple[PythonRoot, ...]
     strict_roots: tuple[PythonRoot, ...]
+    python_platform: str
+    """One explicit Ty platform so the exact ratchet is host-independent."""
 
     error_on_warning: bool = True
     """A `ty` warning exits zero, so a warning-level rule on the ratchet could

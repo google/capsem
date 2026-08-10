@@ -549,6 +549,9 @@ key = "version"
 python_roots = ["src", "scripts", "tests", "guest"]
 # Already passes every rule, and must keep doing so.
 strict_roots = ["src"]
+# Check the same cross-platform Python surface on Linux and macOS so the exact
+# diagnostic ratchet cannot change merely because the gate moved hosts.
+python_platform = "all"
 # A ty warning exits zero, so without this a warning-level rule on the ratchet
 # could never be detected as fixed. The option is policy; the flag that spells
 # it is the adapter's business.
@@ -572,7 +575,7 @@ invalid-method-override = 4
 invalid-return-type = 6
 no-matching-overload = 9
 not-iterable = 2
-not-subscriptable = 177
+not-subscriptable = 176
 possibly-missing-submodule = 2
 unknown-argument = 4
 unresolved-attribute = 94
@@ -1434,6 +1437,7 @@ linux_args = [
     # mount explicitly so pytest capture and the KVM/vhost VM proofs both work.
     "--dev-bind", "/dev", "/dev",
 ]
+linux_device_mount = "/dev"
 profile_name = "gate.sb"
 
 # A release has three irreducibly networked edges: resolve the serialized

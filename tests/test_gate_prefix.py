@@ -145,21 +145,21 @@ def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
     )
 
 
-def test_the_prefix_is_no_more_expensive_than_the_checkout_it_replaces() -> None:
-    """Relative, because the absolute budget is already spent elsewhere.
+def test_the_prefix_stays_inside_the_kernel_socket_budget() -> None:
+    """The prefix itself stays inside the binding kernel socket budget.
 
-    Stated as a comparison rather than a constant so it keeps meaning if the
-    checkout moves: whatever headroom exists today, a run from a prefix must
-    not have less. Mutation: lengthen `[prefix] parent` and this goes red
-    before anything has to boot a VM to find out.
+    Comparing it with the checkout made the result depend on the developer's
+    username and where they cloned the repository, neither of which changes
+    ``sun_path``. Mutation: lengthen `[prefix] parent` beyond the real budget
+    and this goes red before anything has to boot a VM to find out.
     """
     from capsem.gate import prefix
 
     config = _config()
-    allowance = len(str(config.root)) + 2
+    allowance = SUN_LEN - GATEWAY_SUFFIX - 2
     assert len(str(prefix.example(config))) <= allowance, (
-        f"the prefix is longer than {config.root} plus two characters, so it "
-        "buys isolation by spending socket budget the asset lane needs"
+        f"the prefix spends {len(str(prefix.example(config)))} bytes of the "
+        f"{allowance}-byte root budget available before a gateway socket suffix"
     )
 
 

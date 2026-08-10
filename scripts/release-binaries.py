@@ -400,7 +400,7 @@ def precheck_release_binaries(channel: str, runner: Runner) -> None:
     expected_tag = f"v{_project_version()}"
     head_tag = _single_head_tag(runner)
     already_released = head_tag == expected_tag and (
-        channel == "nightly" or _tag_channel(runner, head_tag) == channel
+        channel == "nightly" or _tag_channel(runner, expected_tag) == channel
     )
     nightly_rebuild = channel == "nightly" and _tag_exists(runner, expected_tag)
     if already_released or nightly_rebuild:
@@ -428,18 +428,18 @@ def release_binaries(channel: str, runner: Runner) -> tuple[str, str]:
     expected_tag = f"v{_project_version()}"
     current_release_tag = _single_head_tag(runner)
     if current_release_tag == expected_tag and (
-        channel == "nightly" or _tag_channel(runner, current_release_tag) == channel
+        channel == "nightly" or _tag_channel(runner, expected_tag) == channel
     ):
         publish = channel != "nightly"
         run_id = _resume_release(
             runner,
-            ref=current_release_tag,
-            tag=current_release_tag,
+            ref=expected_tag,
+            tag=expected_tag,
             channel=channel,
             publish=publish,
             force_rebuild=not publish,
         )
-        return current_release_tag, run_id
+        return expected_tag, run_id
 
     if channel == "nightly" and _tag_exists(runner, expected_tag):
         run_id = _resume_release(

@@ -18,6 +18,7 @@ class SandboxConfig(Strict):
     command: str
     linux_command: str
     linux_args: tuple[str, ...]
+    linux_device_mount: str
     profile_name: str
     egress_metadata_variable: str
     egress_socket_template: str
@@ -50,12 +51,14 @@ class SandboxConfig(Strict):
             for index in range(max(0, len(self.linux_args) - 2))
         ):
             raise ValueError("linux_args must preserve the host filesystem with --bind / /")
+        device_mount = self.linux_device_mount
         if not any(
-            self.linux_args[index : index + 3] == ("--dev-bind", "/dev", "/dev")
+            self.linux_args[index : index + 3] == ("--dev-bind", device_mount, device_mount)
             for index in range(max(0, len(self.linux_args) - 2))
         ):
             raise ValueError(
-                "linux_args must preserve usable host devices with --dev-bind /dev /dev"
+                "linux_args must preserve its configured host device mount with "
+                f"--dev-bind {device_mount} {device_mount}"
             )
         for required in ("--die-with-parent", "--new-session"):
             if required not in self.linux_args:

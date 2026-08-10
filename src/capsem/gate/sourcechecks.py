@@ -65,11 +65,14 @@ def ty_argv(
     hand-assembled argv is a second thing to keep in step with the first.
     """
     flags = ["--error-on-warning"] if config.lint.error_on_warning else []
+    platform = ["--python-platform", config.lint.python_platform]
     ignores = [flag for rule in held_back for flag in ("--ignore", rule)]
-    return ["uv", "run", "ty", "check", *flags, *roots, *ignores]
+    return ["uv", "run", "ty", "check", *flags, *platform, *roots, *ignores]
 
 
-def ty_inventory_argv(roots: tuple[str, ...] | list[str]) -> list[str]:
+def ty_inventory_argv(
+    config: GateConfig, roots: tuple[str, ...] | list[str]
+) -> list[str]:
     """Emit every relaxed-tree diagnostic in a stable, countable format.
 
     ``--exit-zero`` is intentional: the contract compares the complete output
@@ -87,6 +90,8 @@ def ty_inventory_argv(roots: tuple[str, ...] | list[str]) -> list[str]:
         "concise",
         "--color",
         "never",
+        "--python-platform",
+        config.lint.python_platform,
         *roots,
     ]
 

@@ -35,6 +35,7 @@ def _policy(**overrides: object) -> LintConfig:
     base = {
         "python_roots": ("src", "scripts"),
         "strict_roots": ("src",),
+        "python_platform": "all",
         "error_on_warning": True,
         "ty_ratchet": {"invalid-assignment": 1},
         "suppression_budget": {
@@ -143,7 +144,7 @@ def test_the_argv_each_step_issues() -> None:
     described = _plan().describe()
 
     assert "uv run ruff check ." in described
-    assert "uv run ty check --error-on-warning src" in described
+    assert "uv run ty check --error-on-warning --python-platform all src" in described
 
 
 def test_strict_holds_nothing_back() -> None:
@@ -170,7 +171,7 @@ def test_the_type_ratchet_records_every_diagnostic_count_exactly() -> None:
     from capsem.gate.sourcechecks import ty_inventory_argv
 
     result = subprocess.run(
-        ty_inventory_argv(CONFIG.lint.relaxed_roots),
+        ty_inventory_argv(CONFIG, CONFIG.lint.relaxed_roots),
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,

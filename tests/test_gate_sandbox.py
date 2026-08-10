@@ -34,12 +34,14 @@ CONFIG = gate_config.load(PROJECT_ROOT)
 macos_only = pytest.mark.skipif(sys.platform != "darwin", reason="Seatbelt is macOS")
 linux_only = pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux")
 
-#: A sandbox cannot be nested: `sandbox-exec: sandbox_apply: Operation not
-#: permitted` once already inside one. So the two tests that really invoke it
-#: cannot run inside a sandboxed gate -- which is where they first ran, and
-#: where they first failed. Detected by asking the kernel rather than by a
-#: marker the gate would have to remember to export.
+#: A sandbox cannot be meaningfully nested. Seatbelt refuses the second
+#: application, while Bubblewrap cannot create the pre-boundary helper from
+#: inside the inherited network namespace. So tests that really invoke the
+#: boundary run only from an unsandboxed parent. Detected by asking the kernel
+#: rather than by a marker the gate would have to remember to export.
 def _already_sandboxed() -> bool:
+    if sys.platform == "linux":
+        return sandbox.active(CONFIG)
     if sys.platform != "darwin":
         return False
     probe = subprocess.run(
@@ -51,7 +53,7 @@ def _already_sandboxed() -> bool:
 
 
 unnested_only = pytest.mark.skipif(
-    _already_sandboxed(), reason="a sandbox cannot be applied inside a sandbox"
+    _already_sandboxed(), reason="the kernel sandbox cannot be applied from inside itself"
 )
 
 
@@ -426,6 +428,7 @@ def test_an_outside_action_uses_only_the_capability_runner() -> None:
 
 
 @linux_only
+@unnested_only
 def test_the_egress_broker_crosses_the_boundary_without_giving_children_its_capability(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
