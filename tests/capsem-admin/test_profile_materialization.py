@@ -10,6 +10,7 @@ import tomllib
 from pathlib import Path
 
 from blake3 import blake3
+from helpers.constants import ASSETS_DIR
 
 from scripts.release_test_binary import ensure_host_test_binary
 
@@ -136,9 +137,9 @@ def test_profile_materialize_generates_pins_without_mutating_source(tmp_path: Pa
             "--config-root",
             "config",
             "--manifest",
-            (PROJECT_ROOT / "assets/manifest.json").resolve().as_uri(),
+            (ASSETS_DIR / "manifest.json").resolve().as_uri(),
             "--assets-dir",
-            "assets",
+            str(ASSETS_DIR),
             "--output-root",
             str(output_root),
             "--arch",
@@ -207,7 +208,7 @@ def test_profile_materialize_generates_pins_without_mutating_source(tmp_path: Pa
         assert generated_file.read_bytes() == source_file.read_bytes()
 
     assert (output_root / "assets" / "manifest.json").read_bytes() == (
-        PROJECT_ROOT / "assets" / "manifest.json"
+        ASSETS_DIR / "manifest.json"
     ).read_bytes()
     assert not (output_root / "admin").exists()
     assert not (output_root / "skills").exists()
@@ -255,9 +256,7 @@ def test_assets_channel_profile_catalog_is_publishable_not_local(tmp_path: Path)
     manifest_text = manifest_path.read_text(encoding="utf-8")
     assert "file://" not in manifest_text
     assert str(tmp_path) not in manifest_text
-    publication_root = (
-        "/profiles/releases/stable/code/2.0.0/arm64"
-    )
+    publication_root = "/profiles/releases/stable/code/2.0.0/arm64"
     assert f"{publication_root}/vmlinuz" in manifest_text
     assert f"{publication_root}/obom.cdx.json" in manifest_text
     assert "/assets/releases/" not in manifest_text
@@ -278,7 +277,7 @@ def test_assets_channel_profile_catalog_is_publishable_not_local(tmp_path: Path)
 def test_profile_materialize_rejects_bare_manifest_path(tmp_path: Path) -> None:
     _ensure_admin_binary()
     output_root = tmp_path / "target-config"
-    manifest_path = (PROJECT_ROOT / "assets/manifest.json").resolve()
+    manifest_path = (ASSETS_DIR / "manifest.json").resolve()
 
     result = subprocess.run(
         [
