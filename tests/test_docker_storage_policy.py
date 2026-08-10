@@ -437,6 +437,15 @@ def test_the_evidence_bundle_says_what_it_could_not_collect(tmp_path: Path) -> N
     The bundle now carries a manifest of every source attempted and what
     happened to it.
     """
+    # Run the real CLI with an empty synthetic checkout as its ROOT.  The
+    # complete candidate deliberately leaves IronBank build logs in the live
+    # checkout, so using POLICY_SCRIPT in place made this "empty glob" test
+    # depend on whether asset lanes happened to run before broad pytest.
+    checkout = tmp_path / "checkout"
+    policy_script = checkout / "scripts" / POLICY_SCRIPT.name
+    policy_script.parent.mkdir(parents=True)
+    policy_script.write_bytes(POLICY_SCRIPT.read_bytes())
+
     policy_text = POLICY_PATH.read_text().replace(
         'root = "test-artifacts"', f'root = "{tmp_path.as_posix()}"'
     )
@@ -446,7 +455,7 @@ def test_the_evidence_bundle_says_what_it_could_not_collect(tmp_path: Path) -> N
     subprocess.run(
         [
             sys.executable,
-            str(POLICY_SCRIPT),
+            str(policy_script),
             "--policy",
             str(policy_path),
             "capture-failure",
@@ -468,6 +477,7 @@ def test_the_evidence_bundle_says_what_it_could_not_collect(tmp_path: Path) -> N
 
     # Every optional source is accounted for by name, present or not.
     assert any("ironbank" in source for source in by_source), sorted(by_source)
+    assert all(source.startswith(str(checkout)) for source in by_source), sorted(by_source)
     assert {entry["outcome"] for entry in collected["files"]} <= {
         "copied",
         "absent",
