@@ -250,6 +250,7 @@ def test_rust_mock_server_is_the_only_fixture_contract() -> None:
             "api.openai.com",
             "api.anthropic.com",
             "daily-cloudcode-pa.googleapis.com",
+            "deb.debian.org",
         } <= set(ready["dns_fixtures"])
 
         with urlopen(f"{ready['base_url']}/tiny", timeout=2) as response:

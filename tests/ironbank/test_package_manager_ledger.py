@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import contextlib
+import functools
+import hashlib
+import http.server
 import json
+import os
 import re
 import sqlite3
 import textwrap
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -19,11 +24,66 @@ from helpers.constants import (
     EXEC_READY_TIMEOUT,
     PROFILES_DIR,
 )
+from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 pytestmark = pytest.mark.integration
+
+
+class _QuietAptHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+
+def _write_apt_repository(root: Path) -> None:
+    """Write the smallest valid two-architecture Debian repository."""
+    release_root = root / "debian/dists/stable"
+    package_paths = [
+        release_root / f"main/binary-{arch}/Packages" for arch in ("all", "amd64", "arm64")
+    ]
+    for package_path in package_paths:
+        package_path.parent.mkdir(parents=True, exist_ok=True)
+        package_path.write_bytes(b"")
+    hashes = [
+        f" {hashlib.sha256(path.read_bytes()).hexdigest()} {path.stat().st_size} "
+        f"{path.relative_to(release_root)}"
+        for path in package_paths
+    ]
+    (release_root / "Release").write_text(
+        "\n".join(
+            [
+                "Origin: Capsem",
+                "Label: Capsem Hermetic APT Fixture",
+                "Suite: stable",
+                "Codename: stable",
+                "Date: Sat, 01 Aug 2026 00:00:00 +0000",
+                "Architectures: amd64 arm64",
+                "Components: main",
+                "Description: Loopback-only IronBank package-manager fixture",
+                "SHA256:",
+                *hashes,
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+@contextlib.contextmanager
+def _serve_apt_repository(root: Path):
+    _write_apt_repository(root)
+    handler = functools.partial(_QuietAptHandler, directory=str(root))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def _connect_session_db(service: ServiceInstance, session_id: str) -> sqlite3.Connection:
@@ -172,16 +232,24 @@ def _package_probe_script() -> str:
         apt-get install -y -qq "$work/ironbank-apt-tool.deb" >/tmp/ironbank-apt.log 2>&1
         ironbank-apt-tool "$work/payload.txt"
 
-        apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update \
+        apt_arch="$(dpkg --print-architecture)"
+        mkdir -p "$work/apt-lists/partial"
+        printf 'deb [trusted=yes arch=%s] http://deb.debian.org/debian stable main\n' \
+          "$apt_arch" > "$work/hermetic.sources.list"
+        apt-get \
+          -o Dir::Etc::sourcelist="$work/hermetic.sources.list" \
+          -o Dir::Etc::sourceparts="-" \
+          -o Dir::State::lists="$work/apt-lists" \
+          -o Acquire::Languages=none \
+          -o Acquire::Check-Valid-Until=false \
+          -o Acquire::Check-Date=false \
+          update \
           >/tmp/ironbank-remote-apt-update.log 2>&1
         if grep -E 'Certificate verification failed|No system certificates available' /tmp/ironbank-remote-apt-update.log; then
           cat /tmp/ironbank-remote-apt-update.log
           exit 1
         fi
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends hello \
-          >/tmp/ironbank-remote-apt-install.log 2>&1
-        printf 'IRONBANK:remote-apt:'
-        hello | head -n 1
+        printf 'IRONBANK:remote-apt:update\n'
 
         if command -v zstd >/dev/null 2>&1; then
           zstd -q -f "$work/payload.txt" -o "$work/zstd/payload.txt.zst"
@@ -201,8 +269,35 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
     service = ServiceInstance()
     session_id = vm_name("ironbank-pkg")
     script_name = f"ironbank-package-probe-{uuid.uuid4().hex[:8]}.sh"
+    fixture_stack = contextlib.ExitStack()
+    mock_proc = None
     client = None
+    old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     try:
+        apt_addr = fixture_stack.enter_context(
+            _serve_apt_repository(service.tmp_dir / "apt-repository")
+        )
+        mock_proc, ready = start_mock_server(
+            request_log=service.tmp_dir / "package-manager-upstream.jsonl"
+        )
+        corp_path = service.tmp_dir / "corp.toml"
+        corp_path.write_text(
+            textwrap.dedent(
+                f"""
+                refresh_policy = "24h"
+
+                [network.dns]
+                upstreams = [{json.dumps(ready["dns_udp_addr"])}]
+
+                [network.upstream_overrides."deb.debian.org:80"]
+                dial = {json.dumps(apt_addr)}
+                protocol = "http"
+                """
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
         create = client.post(
@@ -244,7 +339,7 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
             "IRONBANK:npm:npm:realm",
             "IRONBANK:npx:npm:realm",
             "IRONBANK:apt:apt:ironbank-package-bytes",
-            "IRONBANK:remote-apt:Hello, world!",
+            "IRONBANK:remote-apt:update",
             "IRONBANK:complete:apt+npm+npx+node+pip+uv",
         }
         assert expected_lines <= set(stdout.splitlines()), stdout
@@ -294,7 +389,9 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
             assert "uv pip install" in audit_text
             assert "npm install -g" in audit_text
             assert "apt-get install" in audit_text
-            assert "apt-get -o Acquire::Check-Valid-Until=false" in audit_text
+            assert "apt-get -o Dir::Etc::sourcelist=" in audit_text
+            assert "hermetic.sources.list" in audit_text
+            assert "Acquire::Check-Valid-Until=false" in audit_text
             for row in package_audit_rows[:20]:
                 _assert_ledger_id(row["event_id"])
                 assert row["pid"] > 0
@@ -385,10 +482,16 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
             )
             qnames = {row["qname"].rstrip(".") for row in remote_dns_rows}
             assert any("deb.debian.org" in qname for qname in qnames), qnames
+            assert any(
+                row["qname"].rstrip(".") == "deb.debian.org"
+                and row["qtype"] == 1
+                and row["rcode"] == 0
+                for row in remote_dns_rows
+            ), remote_dns_rows
             for row in remote_dns_rows:
                 _assert_ledger_id(row["event_id"])
                 assert row["qtype"] in {1, 28, 33, 65}
-                assert row["rcode"] == 0
+                assert row["rcode"] in {0, 3}
                 assert row["decision"] == "allowed"
 
             remote_security_rows = conn.execute(
@@ -436,3 +539,9 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
             with contextlib.suppress(Exception):
                 client.delete(f"/vms/{session_id}/delete", timeout=60)
         service.stop()
+        stop_process(mock_proc)
+        fixture_stack.close()
+        if old_corp_config is None:
+            os.environ.pop("CAPSEM_CORP_CONFIG", None)
+        else:
+            os.environ["CAPSEM_CORP_CONFIG"] = old_corp_config

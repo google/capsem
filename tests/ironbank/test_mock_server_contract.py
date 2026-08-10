@@ -102,6 +102,7 @@ def test_mock_server_advertises_all_release_protocol_surfaces() -> None:
             "api.openai.com",
             "api.anthropic.com",
             "daily-cloudcode-pa.googleapis.com",
+            "deb.debian.org",
         } <= set(ready["dns_fixtures"])
     finally:
         stop_process(proc)

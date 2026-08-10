@@ -83,6 +83,7 @@ const DNS_FIXTURES: &[&str] = &[
     "www.googleapis.com",
     "play.googleapis.com",
     "antigravity-unleash.goog",
+    "deb.debian.org",
 ];
 
 type RespBody = BoxBody<Bytes, Infallible>;
