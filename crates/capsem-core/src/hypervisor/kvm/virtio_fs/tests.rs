@@ -2,11 +2,85 @@ use super::*;
 use crate::hypervisor::fuse::file_handles::FileHandleKindSnapshot;
 use crate::hypervisor::kvm::memory::{GuestMemory, RAM_BASE};
 use crate::hypervisor::kvm::virtio_queue::VirtqDesc;
+use std::collections::BTreeMap;
 use std::io::{Seek, SeekFrom};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::sync::atomic::AtomicU32;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use tracing::field::{Field, Visit};
+use tracing::{Event, Level, Subscriber};
+use tracing_subscriber::layer::Context as LayerContext;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::Layer;
+
+static EVENT_CAPTURE_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Clone, Default)]
+struct EventCapture {
+    events: Arc<Mutex<Vec<CapturedEvent>>>,
+}
+
+#[derive(Debug)]
+struct CapturedEvent {
+    level: Level,
+    fields: BTreeMap<String, String>,
+}
+
+#[derive(Default)]
+struct FieldCapture(BTreeMap<String, String>);
+
+impl Visit for FieldCapture {
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.0.insert(field.name().to_owned(), value.to_string());
+    }
+
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.0.insert(field.name().to_owned(), value.to_string());
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.0.insert(field.name().to_owned(), value.to_string());
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.0.insert(field.name().to_owned(), value.to_owned());
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        self.0.insert(field.name().to_owned(), format!("{value:?}"));
+    }
+}
+
+impl<S> Layer<S> for EventCapture
+where
+    S: Subscriber,
+{
+    fn on_event(&self, event: &Event<'_>, _context: LayerContext<'_, S>) {
+        let mut fields = FieldCapture::default();
+        event.record(&mut fields);
+        self.events.lock().unwrap().push(CapturedEvent {
+            level: *event.metadata().level(),
+            fields: fields.0,
+        });
+    }
+}
+
+fn capture_events(run: impl FnOnce()) -> Vec<CapturedEvent> {
+    let _capture_guard = EVENT_CAPTURE_LOCK.lock().unwrap();
+    let capture = EventCapture::default();
+    let events = Arc::clone(&capture.events);
+    tracing::subscriber::with_default(tracing_subscriber::registry().with(capture), run);
+    let captured = std::mem::take(&mut *events.lock().unwrap());
+    captured
+}
+
+fn events_named<'a>(events: &'a [CapturedEvent], name: &str) -> Vec<&'a CapturedEvent> {
+    events
+        .iter()
+        .filter(|event| event.fields.get("event_name").map(String::as_str) == Some(name))
+        .collect()
+}
 
 fn temp_share(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join("capsem-virtfs-test").join(name);
@@ -94,8 +168,11 @@ fn run_worker_notification(harness: WorkerHarness, dir: &Path, queue_index: u32)
     let memref = mem.clone_ref(RAM_BASE);
     let irq_raw_fd = irq_fd.as_raw_fd();
     let worker_status = Arc::clone(&interrupt_status);
+    let dispatcher = tracing::dispatcher::get_default(Clone::clone);
     let handle = std::thread::spawn(move || {
-        worker_loop(proc, request, hiprio, memref, rx, irq_raw_fd, worker_status)
+        tracing::dispatcher::with_default(&dispatcher, || {
+            worker_loop(proc, request, hiprio, memref, rx, irq_raw_fd, worker_status)
+        })
     });
 
     tx.send(WorkerCommand::Notify(queue_index)).unwrap();
@@ -217,6 +294,83 @@ fn completed_queue_raises_irq_when_driver_requests_it() {
     harness.mem.read_at(0x202, &mut used_idx).unwrap();
     assert_eq!(u16::from_le_bytes(used_idx), 1);
     assert_irq_signaled(&harness);
+}
+
+#[test]
+fn queue_notification_is_trace_only() {
+    let dir = temp_share("queue-notify-log-level");
+    let events = capture_events(|| {
+        test_device(&dir).queue_notify(1);
+    });
+    let notify = events_named(&events, "virtio.fs.queue_notify");
+
+    assert_eq!(notify.len(), 1, "{events:#?}");
+    assert_eq!(notify[0].level, Level::TRACE);
+    assert_eq!(notify[0].fields.get("queue_index").unwrap(), "1");
+}
+
+#[test]
+fn empty_notification_and_checkpoint_keep_only_structured_evidence() {
+    let dir = temp_share("empty-notify-structured-log");
+    let events = capture_events(|| {
+        run_worker_notification(worker_harness(), &dir, 1);
+    });
+    let drains = events_named(&events, "virtio.fs.queue_drain");
+    let quiesce = events_named(&events, "virtio.fs.quiesce");
+
+    assert_eq!(drains.len(), 1, "{events:#?}");
+    assert_eq!(drains[0].level, Level::TRACE);
+    assert_eq!(drains[0].fields.get("queue").unwrap(), "request");
+    assert_eq!(drains[0].fields.get("processed").unwrap(), "0");
+    assert_eq!(drains[0].fields.get("should_interrupt").unwrap(), "false");
+    assert_eq!(quiesce.len(), 1, "{events:#?}");
+    assert_eq!(quiesce[0].level, Level::DEBUG);
+    assert_eq!(quiesce[0].fields.get("hiprio_processed").unwrap(), "0");
+    assert_eq!(quiesce[0].fields.get("request_processed").unwrap(), "0");
+    assert_eq!(
+        quiesce[0].fields.get("hiprio_should_interrupt").unwrap(),
+        "false"
+    );
+    assert_eq!(
+        quiesce[0].fields.get("request_should_interrupt").unwrap(),
+        "false"
+    );
+}
+
+#[test]
+fn nonempty_notification_emits_one_debug_drain_with_irq_decision() {
+    let dir = temp_share("nonempty-notify-structured-log");
+    let harness = worker_harness();
+    enqueue_hiprio_request(&harness, 0);
+    let events = capture_events(|| {
+        run_worker_notification(harness, &dir, 0);
+    });
+    let drains = events_named(&events, "virtio.fs.queue_drain");
+
+    assert_eq!(drains.len(), 1, "{events:#?}");
+    assert_eq!(drains[0].level, Level::DEBUG);
+    assert_eq!(drains[0].fields.get("queue").unwrap(), "hiprio");
+    assert_eq!(drains[0].fields.get("processed").unwrap(), "1");
+    assert_eq!(drains[0].fields.get("should_interrupt").unwrap(), "true");
+}
+
+#[test]
+fn closed_worker_notification_warns_once_and_disables_sender() {
+    let dir = temp_share("closed-worker-notify-log");
+    let mut device = test_device(&dir);
+    let (tx, rx) = mpsc::channel();
+    device.notify_tx = Some(tx);
+    drop(rx);
+    let events = capture_events(|| {
+        device.queue_notify(1);
+        device.queue_notify(1);
+    });
+    let failures = events_named(&events, "virtio.fs.queue_notify_failed");
+
+    assert_eq!(failures.len(), 1, "{events:#?}");
+    assert_eq!(failures[0].level, Level::WARN);
+    assert_eq!(failures[0].fields.get("queue_index").unwrap(), "1");
+    assert!(device.notify_tx.is_none());
 }
 
 #[test]

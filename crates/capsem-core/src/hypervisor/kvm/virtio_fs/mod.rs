@@ -222,14 +222,18 @@ fn worker_loop(
     while let Ok(command) = rx.recv() {
         match command {
             WorkerCommand::Notify(0) => {
-                drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem);
-                if hiprio_queue.prepare_kick() {
+                let processed = drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem);
+                let should_interrupt = hiprio_queue.prepare_kick();
+                log_queue_drain("hiprio", processed, should_interrupt);
+                if should_interrupt {
                     signal_irq(irq_fd, &interrupt_status);
                 }
             }
             WorkerCommand::Notify(1) => {
-                drain_request_queue(&mut proc, &mut request_queue, &mem);
-                if request_queue.prepare_kick() {
+                let processed = drain_request_queue(&mut proc, &mut request_queue, &mem);
+                let should_interrupt = request_queue.prepare_kick();
+                log_queue_drain("request", processed, should_interrupt);
+                if should_interrupt {
                     signal_irq(irq_fd, &interrupt_status);
                 }
             }
@@ -246,6 +250,8 @@ fn worker_loop(
                     event_name = "virtio.fs.quiesce",
                     hiprio_processed = hiprio,
                     request_processed = request,
+                    hiprio_should_interrupt = hiprio_interrupt,
+                    request_should_interrupt = request_interrupt,
                     "virtio-fs queues quiesced"
                 );
                 let checkpoint = proc.encode_checkpoint_with_tag(tag);
@@ -283,12 +289,6 @@ fn drain_hiprio_queue(
         }
         hiprio_queue.push_used(chain.head, 0);
     }
-    debug!(
-        event_name = "virtio.fs.queue_drain",
-        queue = "hiprio",
-        processed,
-        "virtio-fs queue drained"
-    );
     processed
 }
 
@@ -323,13 +323,24 @@ fn drain_request_queue(
         let written = write_response(mem, &chain, &response);
         request_queue.push_used(chain.head, written);
     }
-    debug!(
-        event_name = "virtio.fs.queue_drain",
-        queue = "request",
-        processed,
-        "virtio-fs queue drained"
-    );
     processed
+}
+
+fn log_queue_drain(queue: &'static str, processed: u32, should_interrupt: bool) {
+    if processed == 0 {
+        trace!(
+            event_name = "virtio.fs.queue_drain",
+            queue,
+            processed,
+            should_interrupt,
+            "virtio-fs queue drained"
+        );
+    } else {
+        debug!(
+            event_name = "virtio.fs.queue_drain",
+            queue, processed, should_interrupt, "virtio-fs queue drained"
+        );
+    }
 }
 
 fn signal_irq(irq_fd: RawFd, interrupt_status: &AtomicU32) {
@@ -502,12 +513,21 @@ impl VirtioDevice for VirtioFsDevice {
     }
 
     fn queue_notify(&mut self, queue_index: u32) -> bool {
-        debug!(
+        trace!(
             event_name = "virtio.fs.queue_notify",
-            queue_index, "virtio-fs queue notified"
+            queue_index,
+            "virtio-fs queue notified"
         );
-        if let Some(ref tx) = self.notify_tx {
-            let _ = tx.send(WorkerCommand::Notify(queue_index));
+        let send_failed = self
+            .notify_tx
+            .as_ref()
+            .is_some_and(|tx| tx.send(WorkerCommand::Notify(queue_index)).is_err());
+        if send_failed {
+            warn!(
+                event_name = "virtio.fs.queue_notify_failed",
+                queue_index, "virtio-fs worker unavailable; notification dropped"
+            );
+            self.notify_tx = None;
         }
         false
     }
