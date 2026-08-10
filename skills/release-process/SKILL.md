@@ -79,10 +79,11 @@ The complete executor is also kernel-isolated for the entire candidate graph:
 Bubblewrap provides a loopback-only namespace on Linux and Seatbelt provides
 the macOS boundary. Network access is not restored process-wide for release.
 An authenticated helper created immediately before sandbox re-exec serves only
-the explicitly marked manifest-resolution, exact-main confirmation/push, and
-final dispatch actions. Its one-time mode-0600 metadata is deleted before plan
-work; every brokered command remains in the owning `GuardedRunner`, step log,
-and run journal. Never use `outside_sandbox=True` inside the candidate modules.
+the explicitly marked RustSec, npm bulk, and OSV advisory queries plus
+manifest-resolution, exact-main confirmation/push, and final dispatch actions.
+Its one-time mode-0600 metadata is deleted before plan work; every brokered
+command remains in the owning `GuardedRunner`, step log, and run journal. No
+other candidate-module action may use `outside_sandbox=True`.
 
 `just fast-test` remains useful public developer feedback. It *is* the exact
 private `_test-fast` module used by `just test` and release CI, including YAML

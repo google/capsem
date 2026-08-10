@@ -191,6 +191,108 @@ def test_linux_bootstrap_node_major_parser_requires_one_shared_value() -> None:
     assert completed.stdout.strip() == "24"
 
 
+def test_bootstrap_rust_toolchain_parser_requires_the_checked_in_pin() -> None:
+    command = (
+        '. scripts/bootstrap-rust.sh; '
+        'capsem_rust_toolchain rust-toolchain.toml'
+    )
+    completed = subprocess.run(
+        ["sh", "-c", command],
+        cwd=PROJECT_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "1.97.1"
+
+
+def test_bootstrap_installs_and_proves_the_exact_checked_in_rust_toolchain() -> None:
+    bootstrap = _read("bootstrap.sh")
+    rust = _read("scripts/bootstrap-rust.sh")
+    doctor = _read("scripts/doctor-common.sh")
+
+    assert '. "$SCRIPT_DIR/scripts/bootstrap-rust.sh"' in bootstrap
+    assert 'capsem_rust_toolchain "$SCRIPT_DIR/rust-toolchain.toml"' in bootstrap
+    assert '--default-toolchain "$CAPSEM_RUST_TOOLCHAIN" --profile minimal' in bootstrap
+    assert 'capsem_ensure_rust_toolchain "$CAPSEM_RUST_TOOLCHAIN"' in bootstrap
+    assert "capsem_expose_rustup_tools" in bootstrap
+    expose = bootstrap.index("capsem_expose_rustup_tools")
+    assert bootstrap.rfind('if [ "$(uname -s)" = "Linux" ]', 0, expose) >= 0
+    assert 'rustup toolchain install "$CAPSEM_RUST_TOOLCHAIN" --profile minimal' in rust
+    assert 'rustup run "$CAPSEM_RUST_TOOLCHAIN" rustc --version' in rust
+    assert 'for CAPSEM_RUST_TOOL in rustup rustc cargo' in rust
+    assert '"$HOME/.local/bin/$CAPSEM_RUST_TOOL"' in rust
+    assert "refusing to replace unmanaged" in rust
+
+    # Doctor consumes the same checked-in pin and tests the exact selected
+    # compiler. Merely finding a standalone cargo binary is not a Rust setup.
+    assert '. "$SCRIPT_DIR/bootstrap-rust.sh"' in doctor
+    assert 'capsem_rust_toolchain "$PROJECT_ROOT/rust-toolchain.toml"' in doctor
+    assert 'rustup run "$CAPSEM_RUST_TOOLCHAIN" rustc --version' in doctor
+    assert 'target list --toolchain "$CAPSEM_RUST_TOOLCHAIN" --installed' in doctor
+    assert 'component list --toolchain "$CAPSEM_RUST_TOOLCHAIN" --installed' in doctor
+    assert "rustup target add --toolchain $CAPSEM_RUST_TOOLCHAIN" in doctor
+    assert "rustup component add --toolchain $CAPSEM_RUST_TOOLCHAIN" in doctor
+
+
+def test_bootstrap_exposes_rustup_proxies_to_the_agent_path(tmp_path: Path) -> None:
+    rust_bin = tmp_path / "cargo-bin"
+    local_bin = tmp_path / "home" / ".local" / "bin"
+    rust_bin.mkdir()
+    for tool in ("rustup", "rustc", "cargo"):
+        proxy = rust_bin / tool
+        proxy.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        proxy.chmod(0o755)
+
+    completed = subprocess.run(
+        [
+            "sh",
+            "-c",
+            '. scripts/bootstrap-rust.sh; capsem_expose_rustup_tools; '
+            'readlink "$HOME/.local/bin/rustup"; '
+            'readlink "$HOME/.local/bin/rustc"; '
+            'readlink "$HOME/.local/bin/cargo"',
+        ],
+        cwd=PROJECT_ROOT,
+        env={"HOME": str(tmp_path / "home"), "PATH": f"{rust_bin}:/usr/bin:/bin"},
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.splitlines() == [
+        str(rust_bin / "rustup"),
+        str(rust_bin / "rustc"),
+        str(rust_bin / "cargo"),
+    ]
+    assert all((local_bin / tool).is_symlink() for tool in ("rustup", "rustc", "cargo"))
+
+
+def test_bootstrap_refuses_to_replace_an_unmanaged_rust_tool(tmp_path: Path) -> None:
+    rust_bin = tmp_path / "cargo-bin"
+    local_bin = tmp_path / "home" / ".local" / "bin"
+    rust_bin.mkdir(parents=True)
+    local_bin.mkdir(parents=True)
+    for tool in ("rustup", "rustc", "cargo"):
+        proxy = rust_bin / tool
+        proxy.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        proxy.chmod(0o755)
+    (local_bin / "rustup").write_text("owned elsewhere\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        ["sh", "-c", ". scripts/bootstrap-rust.sh; capsem_expose_rustup_tools"],
+        cwd=PROJECT_ROOT,
+        env={"HOME": str(tmp_path / "home"), "PATH": f"{rust_bin}:/usr/bin:/bin"},
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+    assert "refusing to replace unmanaged file" in completed.stderr
+
+
 def test_linux_doctor_uses_ubuntu_buildx_name_and_enforces_node_major() -> None:
     doctor_linux = _read("scripts/doctor-linux.sh")
     doctor_common = _read("scripts/doctor-common.sh")

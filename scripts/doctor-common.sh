@@ -12,6 +12,9 @@ cd "$PROJECT_ROOT"
 # the library is inert: it only defines functions and performs no Linux setup.
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/bootstrap-linux.sh"
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/bootstrap-rust.sh"
+CAPSEM_RUST_TOOLCHAIN=$(capsem_rust_toolchain "$PROJECT_ROOT/rust-toolchain.toml")
 
 ENTITLEMENTS="entitlements.plist"
 ASSETS_DIR="assets"
@@ -85,9 +88,9 @@ _doctor_install_node_workspaces() {
 }
 
 # Order matters: tools before builds, builds before assets
-_reg rustup-targets   "rustup target add aarch64-unknown-linux-musl x86_64-unknown-linux-musl" \
+_reg rustup-targets   "rustup target add --toolchain $CAPSEM_RUST_TOOLCHAIN aarch64-unknown-linux-musl x86_64-unknown-linux-musl" \
                       "Install Rust cross-compile targets"
-_reg llvm-tools       "rustup component add llvm-tools" \
+_reg llvm-tools       "rustup component add --toolchain $CAPSEM_RUST_TOOLCHAIN llvm-tools" \
                       "Install llvm-tools (provides rust-lld)"
 _reg linux-musl-tools "_doctor_install_linux_musl_tools" \
                       "Install Linux musl C compiler/linker (musl-tools)"
@@ -217,14 +220,22 @@ if command -v node &>/dev/null; then
 fi
 
 section "Rust Toolchain"
+if _doctor_rust_version=$(rustup run "$CAPSEM_RUST_TOOLCHAIN" rustc --version 2>/dev/null) \
+    && [[ "$_doctor_rust_version" == "rustc $CAPSEM_RUST_TOOLCHAIN "* ]]; then
+    pass "Rust $CAPSEM_RUST_TOOLCHAIN (checked-in toolchain)"
+else
+    fail "Rust $CAPSEM_RUST_TOOLCHAIN missing or unusable -- run ./bootstrap.sh"
+fi
 for target in aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
-    if rustup target list --installed 2>/dev/null | grep -q "$target"; then
+    if rustup target list --toolchain "$CAPSEM_RUST_TOOLCHAIN" --installed \
+        2>/dev/null | grep -q "$target"; then
         pass "target: $target"
     else
         fixable rustup-targets "target: $target missing"
     fi
 done
-if rustup component list --installed 2>/dev/null | grep -q llvm-tools; then
+if rustup component list --toolchain "$CAPSEM_RUST_TOOLCHAIN" --installed \
+    2>/dev/null | grep -q llvm-tools; then
     pass "component: llvm-tools"
 else
     fixable llvm-tools "component: llvm-tools missing"

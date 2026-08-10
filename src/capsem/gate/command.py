@@ -47,8 +47,6 @@ class GateCommand(Recorded, ABC):
     that did not hold still -- and nothing downstream can tell.
     """
 
-    """A subcommand. Subclasses declare what they hold and what they do."""
-
     name: ClassVar[str]
     help: ClassVar[str]
 
@@ -67,6 +65,7 @@ class GateCommand(Recorded, ABC):
     Off by default and overridable with `--sandbox`; see `capsem.gate.sandbox`
     for what a mode means and why `reexec` is where one is applied.
     """
+    outside_egress: ClassVar[bool] = False
 
     private_checkout: ClassVar[bool] = False
     """Whether this runs from a private copy of the checkout instead of it.
@@ -176,6 +175,7 @@ class GateCommand(Recorded, ABC):
         return sandbox.reexec(
             self._config, self._runner, default=self.sandboxed,
             requested=getattr(self._args, "sandbox", None),
+            outside_egress=self.outside_egress,
         )
 
     @abstractmethod

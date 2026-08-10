@@ -171,6 +171,7 @@ class CandidateCommand(
     exclusive = True
     uses_qualification = True
     sandboxed = sandbox.ENFORCE
+    outside_egress = True
     """Phase 8b: the complete local gate refuses the network.
 
     `candidate` only. A release still runs the wider profile, because its

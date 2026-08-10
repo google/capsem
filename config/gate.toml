@@ -1210,6 +1210,7 @@ source_contract = [
     "tests/test_just_argument_boundary.py",
     "tests/test_gate_testmodules.py",
     "tests/test_gate_timing.py",
+    "tests/test_gate_toolchain.py",
     "tests/test_gate_versions.py",
     "tests/test_gate_workspace.py",
     "tests/test_integration_script_profiles.py",
@@ -1440,13 +1441,12 @@ linux_args = [
 linux_device_mount = "/dev"
 profile_name = "gate.sb"
 
-# A release has three irreducibly networked edges: resolve the serialized
-# source manifest, publish the exact tested main HEAD, and dispatch the owning
-# release workflow. The plan executor remains inside the kernel sandbox; a
-# helper born immediately before the sandbox accepts only authenticated,
-# explicitly marked commands for those edges. The one-time metadata is deleted
-# before the first plan action, so ordinary qualification children never
-# inherit the capability.
+# Three live advisory queries, plus a release's manifest resolution, exact-main
+# publication, and workflow dispatch, are irreducibly networked. The plan
+# executor remains inside the kernel sandbox; a helper born immediately before
+# it accepts only authenticated, explicitly marked commands for those edges.
+# The one-time metadata is deleted before the first plan action, so ordinary
+# qualification children never inherit the capability.
 egress_metadata_variable = "CAPSEM_GATE_EGRESS_METADATA"
 egress_socket_template = "/tmp/capsem-egress-{pid}-{nonce}.sock"
 egress_metadata_template = ".egress-{pid}-{nonce}.json"

@@ -17,6 +17,7 @@ from .actions import Action, Run
 from .config import GateConfig
 from .context import Context
 from .execution import Step, step
+from .packageinputs import pinned_toolchain
 
 
 def sync(config: GateConfig) -> Step:
@@ -65,16 +66,25 @@ class _EnsureRust(Action, name="ensure-rust"):
 
     def perform(self, context: Context) -> None:
         settings = context.config.toolchain
+        toolchain = pinned_toolchain(context.config.root)
 
-        installed = context.runner.capture(["rustup", "target", "list", "--installed"])
+        installed = context.runner.capture(
+            ["rustup", "target", "list", "--toolchain", toolchain, "--installed"]
+        )
         for target in settings.rust_targets:
             if target not in installed:
-                context.runner.run(["rustup", "target", "add", target])
+                context.runner.run(
+                    ["rustup", "target", "add", "--toolchain", toolchain, target]
+                )
 
-        components = context.runner.capture(["rustup", "component", "list", "--installed"])
+        components = context.runner.capture(
+            ["rustup", "component", "list", "--toolchain", toolchain, "--installed"]
+        )
         for component in settings.rust_components:
             if component not in components:
-                context.runner.run(["rustup", "component", "add", component])
+                context.runner.run(
+                    ["rustup", "component", "add", "--toolchain", toolchain, component]
+                )
 
         for crate in settings.crates:
             # `shutil.which`, not `command -v`: the latter is a shell builtin

@@ -135,10 +135,10 @@ def test_strict_pytest_collection_is_a_fast_leaf() -> None:
 
 
 def test_the_fast_module_works_in_an_isolated_home() -> None:
-    """Never the developer's `~/.capsem`."""
+    """Never the developer's `~/.capsem`; only audits get scoped egress."""
     resources = _module(FastModule).resources(RUNNER_FOR_RESOURCES)
 
-    assert [resource.name for resource in resources] == ["workspace"]
+    assert [resource.name for resource in resources] == ["release-egress", "workspace"]
 
 
 def test_the_fast_module_needs_the_machine_to_itself() -> None:

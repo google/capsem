@@ -24,9 +24,16 @@ def all_of(config: GateConfig) -> list[Step]:
     """Every audit, in no particular order because there is none."""
     audits = config.audits
     return [
-        step("audit.cargo", Script(audits.cargo)),
-        step("audit.pnpm", Script(audits.pnpm)),
-        step("audit.python-lock", Run(["bash", audits.python_lock])),
+        # These three query mutable advisory authorities at qualification time.
+        # Locked language dependencies can be materialized before the sandbox;
+        # current RustSec, npm bulk, and OSV answers cannot.  Keep only these
+        # explicit actions on the authenticated scoped-egress runner.
+        step("audit.cargo", Script(audits.cargo, outside_sandbox=True)),
+        step("audit.pnpm", Script(audits.pnpm, outside_sandbox=True)),
+        step(
+            "audit.python-lock",
+            Run(["bash", audits.python_lock], outside_sandbox=True),
+        ),
         step("audit.public-surface", Script(audits.public_surface)),
         step(
             "audit.skills",

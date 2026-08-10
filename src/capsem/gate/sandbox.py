@@ -60,11 +60,20 @@ def prepare_egress(config: GateConfig) -> None:
     os.environ[config.sandbox.egress_metadata_variable] = str(metadata)
 
 
-def reexec(config: GateConfig, runner, *, default: str, requested: str | None):
+def reexec(
+    config: GateConfig,
+    runner,
+    *,
+    default: str,
+    requested: str | None,
+    outside_egress: bool = False,
+):
     """The current gate invocation under its declared kernel boundary."""
     chosen = mode(default, requested)
     if chosen == OFF or active(config):
         return None
+    if outside_egress:
+        prepare_egress(config)
     return applied(
         config,
         runner,

@@ -24,6 +24,7 @@ from pydantic import ValidationError
 from capsem.gate import config as gate_config
 from capsem.gate import egress, sandbox
 from capsem.gate.actions import Run
+from capsem.gate.config import GateConfig
 from capsem.gate.context import Context
 from capsem.gate.errors import GateError
 from capsem.gate.harnessschema import SandboxConfig
@@ -55,6 +56,12 @@ def _already_sandboxed() -> bool:
 unnested_only = pytest.mark.skipif(
     _already_sandboxed(), reason="the kernel sandbox cannot be applied from inside itself"
 )
+
+ONLINE_AUDITS = {
+    "fast.audit.cargo",
+    "fast.audit.pnpm",
+    "fast.audit.python-lock",
+}
 
 
 def test_the_profile_denies_the_network() -> None:
@@ -425,6 +432,79 @@ def test_an_outside_action_uses_only_the_capability_runner() -> None:
 
     assert ordinary.commands == []
     assert capability.rendered == ["python3 -c 'print('\"'\"'networked'\"'\"')'"]
+
+
+@pytest.mark.parametrize(
+    ("name", "args"),
+    [
+        ("test-fast", ()),
+        ("candidate", ()),
+        ("release-binaries", (("channel", "nightly"),)),
+        (
+            "release-profile",
+            (("channel", "nightly"), ("profile", "code")),
+        ),
+    ],
+)
+def test_only_live_advisory_queries_cross_the_fast_gate_network_boundary(
+    name: str, args: tuple[tuple[str, str], ...]
+) -> None:
+    """Mutable advisory services are narrow exceptions, not a wider gate.
+
+    Cargo's advisory Git repository, npm's bulk endpoint, and OSV cannot be
+    materialized by the locked language-dependency bootstrap.  They must be
+    queried at qualification time, while every other fast-gate action stays in
+    the loopback-only namespace.
+    """
+    from helpers.gate import built_command
+
+    plan = built_command(PROJECT_ROOT, name, args)._describe()
+    marked = {
+        candidate.label
+        for candidate in plan.steps
+        if any("[outside kernel sandbox]" in line for line in candidate.render())
+    }
+
+    assert marked >= ONLINE_AUDITS
+    assert not {
+        label
+        for label in marked
+        if label.startswith("fast.") and label not in ONLINE_AUDITS
+    }
+
+
+@pytest.mark.parametrize(
+    ("name", "args"),
+    [
+        ("test-fast", ()),
+        ("candidate", ()),
+        ("release-binaries", (("channel", "nightly"),)),
+        (
+            "release-profile",
+            (("channel", "nightly"), ("profile", "code")),
+        ),
+    ],
+)
+def test_every_fast_gate_entrypoint_prepares_one_scoped_egress_capability(
+    name: str,
+    args: tuple[tuple[str, str], ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from helpers.gate import built_command
+
+    prepared: list[GateConfig] = []
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/bwrap")
+    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: False)
+    monkeypatch.setattr(
+        "capsem.gate.sandbox.prepare_egress", lambda config: prepared.append(config)
+    )
+
+    replacement = built_command(PROJECT_ROOT, name, args).reexec()
+
+    assert replacement is not None
+    assert replacement[0] == CONFIG.sandbox.linux_command
+    assert prepared == [CONFIG]
 
 
 @linux_only

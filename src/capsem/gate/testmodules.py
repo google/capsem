@@ -32,6 +32,7 @@ from . import (
 from .actions import Run
 from .command import GateCommand
 from .config import GateConfig
+from .egress import Egress
 from .execution import Step, step
 from .fileactions import RequireFile
 from .lifecycle import Resource
@@ -78,6 +79,15 @@ class FastModule(
     skipped clippy entirely when the frontend failed -- losing the clippy
     result on exactly the runs where the most had changed.
     """
+
+    outside_egress = True
+
+    def resources(self, runner: Runner) -> tuple[Resource, ...]:
+        chosen = sandbox.mode(self.sandboxed, getattr(self._args, "sandbox", None))
+        return (
+            Egress(self._config, enabled=chosen != sandbox.OFF),
+            Workspace(self._config),
+        )
 
     def plan(self) -> Plan:
         plan = Plan(self.name)

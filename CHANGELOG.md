@@ -10,10 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Release qualification now remains inside Linux Bubblewrap or macOS Seatbelt
-  while an authenticated one-time helper serves only manifest resolution,
-  exact-main publication, and workflow dispatch. Direct release-CI modules
-  enter the same boundary after locked dependencies and immutable inputs are
-  materialized.
+  while an authenticated one-time helper serves only the three live advisory
+  queries, manifest resolution, exact-main publication, and workflow dispatch.
+  Direct release-CI modules enter the same boundary after locked dependencies
+  and immutable inputs are materialized.
 
 - Filesystem source mutations discovered by watchdog now cross back to the
   plan worker and fail publishing runs after durable fault/journal evidence;
@@ -29,7 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contracts describe platform behavior rather than removed shell mechanisms,
   and gate/release/setup skills document the current hermetic release model.
   Bootstrap now installs all four config-owned Node workspaces through the
-  gate instead of provisioning only the frontend by hand.
+  gate instead of provisioning only the frontend by hand, and derives,
+  installs, exposes, and verifies the exact checked-in Rust toolchain instead
+  of trusting an ambient `cargo` shim or default toolchain.
 
 - Linux Bubblewrap qualification now explicitly preserves the host device
   mount. A root bind alone exposed `/dev/null`, KVM, and vhost nodes but left

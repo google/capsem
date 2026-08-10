@@ -56,8 +56,21 @@ PUBLICATION = ("precheck", "record-head", "confirm-head", "release")
 # filesystem/git reads; resolution, source publication and dispatch genuinely
 # need the network.
 NETWORKED = {
-    "release-binaries": ("channel-source", "confirm-head", "release"),
-    "release-profile": ("confirm-head", "release"),
+    "release-binaries": (
+        "channel-source",
+        "fast.audit.cargo",
+        "fast.audit.pnpm",
+        "fast.audit.python-lock",
+        "confirm-head",
+        "release",
+    ),
+    "release-profile": (
+        "fast.audit.cargo",
+        "fast.audit.pnpm",
+        "fast.audit.python-lock",
+        "confirm-head",
+        "release",
+    ),
 }
 
 
@@ -197,6 +210,7 @@ def test_only_networked_release_edges_cross_the_kernel_boundary(name, args) -> N
 
     assert marked == set(NETWORKED[name])
     assert not any(
-        label.startswith(("fast.", "static.", "artifacts.", "functional.", "glowup."))
+        label.startswith(("static.", "artifacts.", "functional.", "glowup."))
+        or (label.startswith("fast.") and label not in NETWORKED[name])
         for label in marked
     )

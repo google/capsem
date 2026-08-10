@@ -52,10 +52,11 @@ just release-profile <channel> <profile>
   rather than the bytes being executed.
 - Candidate, both release commands, and every directly invoked private test
   module execute under the host kernel's network boundary: Bubblewrap with
-  loopback only on Linux, Seatbelt on macOS. A local release keeps only its
-  manifest resolution, exact-main publication, and workflow dispatch outside
-  that boundary through the authenticated one-time egress resource; those
-  commands still pass through the same `GuardedRunner` and run journal. Release
+  loopback only on Linux, Seatbelt on macOS. Only the three live advisory
+  queries (RustSec, npm bulk, and OSV) and a local release's manifest
+  resolution, exact-main publication, and workflow dispatch run outside that
+  boundary through the authenticated one-time egress resource; those commands
+  still pass through the same `GuardedRunner` and run journal. Release
   CI materializes locked dependencies and immutable manifest-selected inputs
   before entering its module boundary. Never widen the whole release process
   merely because one edge needs the network.

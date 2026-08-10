@@ -233,7 +233,9 @@ def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
     assert "--default-toolchain stable" not in builder
 
     bootstrap = _read("bootstrap.sh")
-    assert f"--default-toolchain {PINNED_RUST}" in bootstrap
+    assert '--default-toolchain "$CAPSEM_RUST_TOOLCHAIN"' in bootstrap
+    assert 'capsem_rust_toolchain "$SCRIPT_DIR/rust-toolchain.toml"' in bootstrap
+    assert f"--default-toolchain {PINNED_RUST}" not in bootstrap
     assert "--default-toolchain stable" not in bootstrap
 
     uses_pattern = re.compile(r"^\s*- uses:\s+([^\s#]+)", re.MULTILINE)

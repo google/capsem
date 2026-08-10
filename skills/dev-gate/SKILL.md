@@ -99,11 +99,13 @@ the helper owns no plan, lock, workspace, or release state. Its commands still
 pass through the same `GuardedRunner`, step log, journal, watcher checkpoints,
 and re-entry refusal.
 
-The allowed local release edges are exact and contract-tested: binary
-`channel-source`, both `confirm-head` steps, and each final `release` step.
-Never mark a candidate/module action outside the sandbox or hand the external
-runner to ordinary qualification work. Release CI downloads immutable inputs
-and materializes locked dependencies before invoking its sandboxed modules.
+The allowed edges are exact and contract-tested: the shared fast module's
+RustSec, npm bulk, and OSV actions; binary `channel-source`; both
+`confirm-head` steps; and each final `release` step. The advisory authorities
+are mutable security inputs and therefore cannot be replaced by locked package
+prefetch. Never hand the external runner to any other qualification work.
+Release CI downloads immutable inputs and materializes locked dependencies
+before invoking its sandboxed modules.
 
 ## Declaring a command
 

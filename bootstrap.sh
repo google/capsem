@@ -104,6 +104,13 @@ fi
 # script -- both installers drop binaries there but don't reload PATH.
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 
+# The workspace pin is the one Rust version setup is allowed to install. Keep
+# its parser in a source-only helper shared with doctor so bootstrap, doctor,
+# and the gate cannot silently qualify different compilers.
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/scripts/bootstrap-rust.sh"
+CAPSEM_RUST_TOOLCHAIN=$(capsem_rust_toolchain "$SCRIPT_DIR/rust-toolchain.toml")
+
 # Linux is a first-class build and runtime host. Provision the complete native
 # fast-gate toolchain, the container runtime, same-session Docker/KVM access,
 # and the Node major selected by config/docker/image/build.toml. The helper is
@@ -119,7 +126,7 @@ if command -v rustup >/dev/null 2>&1; then
     printf "  [ok]   rustup\n"
 elif confirm "rustup (Rust toolchain manager, via sh.rustup.rs)"; then
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --default-toolchain 1.97.1 --profile minimal
+        | sh -s -- -y --default-toolchain "$CAPSEM_RUST_TOOLCHAIN" --profile minimal
     # shellcheck disable=SC1091
     [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 fi
@@ -139,6 +146,14 @@ for tool in rustup just; do
         exit 1
     fi
 done
+
+# An unrelated standalone `cargo` is not proof that this checkout can build.
+# Install and execute the exact compiler named by rust-toolchain.toml before
+# dependency materialization or the private-copy gate can begin.
+capsem_ensure_rust_toolchain "$CAPSEM_RUST_TOOLCHAIN"
+if [ "$(uname -s)" = "Linux" ]; then
+    capsem_expose_rustup_tools
+fi
 
 # --- Phase 2: Install dependencies ---
 echo ""
