@@ -30,7 +30,7 @@ from contextlib import suppress
 from pathlib import Path
 
 import pytest
-from helpers.gate import RecordingJournal, RecordingRunner, built_command
+from helpers.gate import RecordingJournal, RecordingRunner, built_command, gate_issued
 
 from capsem.gate import cli  # noqa: F401 - imported so every command registers
 from capsem.gate import config as gate_config
@@ -448,3 +448,32 @@ def test_interrogating_the_gate_plan_leaves_the_checkout_alone() -> None:
         )
     finally:
         recorded.unlink(missing_ok=True)
+
+
+def test_issued_command_introspection_cannot_clear_live_asset_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Opaque callbacks run only in an expendable copy while a plan is read.
+
+    ``gate_issued`` used a recording subprocess runner against the checkout it
+    was inspecting.  That records ``Run`` actions safely, but an opaque
+    ``Call`` executes Python directly.  The assets preflight therefore cleared
+    the live ``target/ironbank-assets`` tree halfway through broad pytest,
+    deleting the exact profile catalog the same pytest process was consuming.
+    """
+    from capsem.gate import snapshot
+
+    checkout = tmp_path / "checkout"
+    snapshot.populate(PROJECT_ROOT, checkout, gate_config.load(PROJECT_ROOT))
+    sentinel = checkout / CONFIG.assets.test_root / "code" / "config" / "profiles" / "proof"
+    sentinel.mkdir(parents=True)
+    marker = sentinel / "profile.toml"
+    marker.write_text('id = "proof"\n', encoding="utf-8")
+    inspections = tmp_path / "inspections"
+    inspections.mkdir()
+    monkeypatch.setattr("helpers.gate.tempfile.tempdir", str(inspections))
+
+    gate_issued("assets", root=checkout)
+
+    assert marker.read_text(encoding="utf-8") == 'id = "proof"\n'
+    assert not list(inspections.iterdir()), "the expendable inspection checkout was retained"

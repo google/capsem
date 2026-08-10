@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
+import tempfile
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager, suppress
 from functools import cache
@@ -378,10 +380,40 @@ def gate_issued(
     this work is still behind `Call`, which renders as prose, and these
     contracts are about the arguments underneath.
     """
+    source = root or PROJECT_ROOT
+    with _inspection_checkout(source) as checkout:
+        return _gate_issued_from(checkout, name, args)
+
+
+@contextmanager
+def _inspection_checkout(source: Path) -> Iterator[Path]:
+    """Give opaque plan callbacks an expendable checkout to mutate.
+
+    A recording runner makes subprocess actions inert, but a ``Call`` executes
+    Python in-process and may legitimately clear or rebuild output.  Plan
+    introspection therefore needs the same source isolation as a real gate,
+    not the live tree whose outputs a concurrent test may be consuming.
+    """
+    from unittest.mock import patch
+
+    from capsem.gate import config as gate_config
+    from capsem.gate import host, snapshot
+
+    with tempfile.TemporaryDirectory(prefix="capsem-gate-inspect-") as temporary:
+        checkout = Path(temporary) / "checkout"
+        # Plan contracts deliberately monkeypatch the gate's host to render a
+        # Darwin plan on Linux.  The copy itself still runs on this kernel, so
+        # its clonefile choice must use the real interpreter platform.
+        with patch.object(host, "on_macos", return_value=sys.platform == "darwin"):
+            snapshot.populate(source, checkout, gate_config.load(source))
+        yield checkout
+
+
+def _gate_issued_from(root: Path, name: str, args: tuple[tuple[str, object], ...]) -> str:
+    """Run one plan against a recorder inside an already-isolated checkout."""
     from capsem.gate import config as gate_config
     from capsem.gate.context import Context
 
-    root = root or PROJECT_ROOT
     command = _built(root, name, args)
     runner = command._runner
     try:
@@ -420,6 +452,9 @@ def _issues(name: str | None, root: Path | None, mode: object) -> str:
     selection = (
         tuple(entry for entry in WHOLE_GATE if entry[0] == name) if name is not None else WHOLE_GATE
     )
-    return "\n".join(
-        gate_issued(command, tuple(sorted(args.items())), root) for command, args in selection
-    )
+    source = root or PROJECT_ROOT
+    with _inspection_checkout(source) as checkout:
+        return "\n".join(
+            _gate_issued_from(checkout, command, tuple(sorted(args.items())))
+            for command, args in selection
+        )
