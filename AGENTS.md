@@ -113,8 +113,9 @@ The justfile dispatches; `src/capsem/gate/` decides. No recipe carries a shell
 body and none exceeds five lines, both held by contract tests rather than
 convention.
 
-`just test` is **one process, one machine lock, one workspace, one plan** -- 83
-steps and 112 actions in the current graph. Both release commands contain that
+`just test` is **one process, one machine lock, one workspace, one plan**.
+Its dry run reports the current totals; conditional asset staging makes a
+checked-in count depend on machine state. Both release commands contain that
 same plan rather than launching it.
 
 Six rules, each with a guard:

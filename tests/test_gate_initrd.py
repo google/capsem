@@ -1,0 +1,173 @@
+"""The shared initrd repacker, against real gzip+cpio archives."""
+
+from __future__ import annotations
+
+import gzip
+import os
+import stat
+import subprocess
+from pathlib import Path
+
+import pytest
+from helpers.gate import RecordingJournal, RecordingRunner
+
+from capsem.gate import config as gate_config
+from capsem.gate.context import Context
+from capsem.gate.errors import GateError
+from capsem.gate.initrd import _Repack, repack_step
+from capsem.gate.proc import Runner
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CONFIG = gate_config.load(PROJECT_ROOT)
+DIRECT_BUILDER_INPUTS = {
+    "config/gate.toml",
+    "src/capsem/builder/config.py",
+    "src/capsem/builder/models.py",
+    "src/capsem/builder/cli.py",
+    "src/capsem/builder/docker.py",
+    "src/capsem/builder/guestbuilder.py",
+    "config/docker/image/build.toml",
+    "docker/Dockerfile.guest-rust-builder",
+}
+
+
+def _archive(path: Path) -> bytes:
+    source = path.with_suffix(".source")
+    source.mkdir(parents=True)
+    initial = source / "init"
+    initial.write_text("#!/bin/sh\n", encoding="utf-8")
+    initial.chmod(0o755)
+    entries = b".\n./init\n"
+    packed = subprocess.run(
+        ("cpio", "-o", "-H", "newc"),
+        cwd=source,
+        input=entries,
+        capture_output=True,
+        check=True,
+    ).stdout
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(gzip.compress(packed))
+    return path.read_bytes()
+
+
+def _extract(archive: Path, destination: Path) -> None:
+    destination.mkdir()
+    subprocess.run(
+        ("cpio", "-id"),
+        cwd=destination,
+        input=gzip.decompress(archive.read_bytes()),
+        capture_output=True,
+        check=True,
+    )
+
+
+def _config(staging: Path):
+    initrd = CONFIG.initrd.model_copy(update={"staging": str(staging)})
+    return CONFIG.model_copy(update={"initrd": initrd})
+
+
+@pytest.mark.parametrize("arch", tuple(CONFIG.architectures))
+def test_repack_accepts_an_exact_arch_and_target_without_breaking_hardlinks(
+    tmp_path: Path, arch: str
+) -> None:
+    staging = tmp_path / "staging"
+    for name in CONFIG.initrd.binaries:
+        binary = staging / arch / name
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_bytes(f"{arch}:{name}".encode())
+
+    target = tmp_path / "private assets" / arch / CONFIG.artifacts.initrd
+    original = _archive(target)
+    alias = tmp_path / "old-by-hash.img"
+    os.link(target, alias)
+    context = Context(Runner(PROJECT_ROOT), _config(staging), journal=RecordingJournal())
+
+    _Repack(target=target, arch=arch).perform(context)
+
+    assert alias.read_bytes() == original
+    extracted = tmp_path / "extracted"
+    _extract(target, extracted)
+    for name in CONFIG.initrd.binaries:
+        payload = extracted / name
+        assert payload.read_bytes() == f"{arch}:{name}".encode()
+        assert stat.S_IMODE(payload.stat().st_mode) == CONFIG.initrd.binary_mode
+    assert stat.S_IMODE((extracted / "init").stat().st_mode) == CONFIG.initrd.init_mode
+    for relative in CONFIG.initrd.files:
+        assert (extracted / Path(relative).name).is_file()
+    for relative in CONFIG.initrd.trees:
+        tree = extracted / Path(relative).name
+        assert tree.is_dir()
+        assert not list(tree.rglob(CONFIG.initrd.prune))
+
+
+def test_repack_refuses_a_missing_binary_before_replacing_the_target(tmp_path: Path) -> None:
+    staging = tmp_path / "staging"
+    arch = next(iter(CONFIG.architectures))
+    for name in CONFIG.initrd.binaries[1:]:
+        binary = staging / arch / name
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_bytes(b"agent")
+    target = tmp_path / CONFIG.artifacts.initrd
+    original = _archive(target)
+    context = Context(Runner(PROJECT_ROOT), _config(staging), journal=RecordingJournal())
+
+    with pytest.raises(GateError, match=CONFIG.initrd.binaries[0]):
+        _Repack(target=target, arch=arch).perform(context)
+
+    assert target.read_bytes() == original
+
+
+def test_matrix_step_builds_only_stale_architecture_staging(tmp_path: Path) -> None:
+    arch = next(iter(CONFIG.architectures))
+    config = _config(tmp_path / "staging")
+    target = tmp_path / CONFIG.artifacts.initrd
+    stage = repack_step(config, {arch: (target,)}).actions[0]
+    runner = RecordingRunner(PROJECT_ROOT)
+    context = Context(runner, config, journal=RecordingJournal())
+
+    stage.perform(context)
+
+    assert runner.rendered == [
+        " ".join((*CONFIG.initrd.build, "--arch", arch)),
+    ]
+
+    runner.commands.clear()
+    for name in CONFIG.initrd.binaries:
+        binary = Path(config.initrd.staging) / arch / name
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_bytes(b"fresh")
+        os.utime(binary, (4_000_000_000, 4_000_000_000))
+
+    stage.perform(context)
+
+    assert runner.commands == []
+
+
+def test_freshness_inventory_covers_the_direct_builder_inputs() -> None:
+    assert set(CONFIG.initrd.freshness_inputs) >= DIRECT_BUILDER_INPUTS
+
+
+@pytest.mark.parametrize("relative", CONFIG.initrd.freshness_inputs)
+def test_touching_each_declared_input_rebuilds_warm_staging(tmp_path: Path, relative: str) -> None:
+    config = CONFIG.model_copy(update={"root": tmp_path})
+    arch = next(iter(config.architectures))
+    for declared in config.initrd.freshness_inputs:
+        source = config.path(declared)
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"input")
+        os.utime(source, (1, 1))
+    for name in config.initrd.binaries:
+        binary = config.path(config.initrd.staging) / arch / name
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_bytes(b"warm")
+        os.utime(binary, (2, 2))
+    os.utime(config.path(relative), (3, 3))
+    runner = RecordingRunner(tmp_path)
+    context = Context(runner, config, journal=RecordingJournal())
+    stage = repack_step(config, {arch: (tmp_path / config.artifacts.initrd,)}).actions[0]
+
+    stage.perform(context)
+
+    assert runner.rendered == [
+        " ".join((*config.initrd.build, "--arch", arch)),
+    ]

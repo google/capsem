@@ -1,18 +1,8 @@
-"""Building a profile's VM assets, and knowing whether they are already there.
-
-Four recipes spelled out the same `capsem-admin image build` invocation --
-`_build-assets`, `_build-image-template`, `_build-kernel`, `_build-rootfs` --
-and the only thing that varied between them was the template. A fifth,
-`_check-assets`, hand-rolled a `uname -m | sed` architecture mapping and two
-directory layouts to decide whether to call the others.
-
-That mapping is the one `config.arch` already owns, and having a second copy in
-shell is how `arm64` came to mean two different things in one repository.
-"""
+"""Build profile-owned VM assets through the one config-owned image rail."""
 
 from __future__ import annotations
 
-from . import crossexec
+from . import crossexec, initrd
 from .actions import Call, Run
 from .command import GateCommand
 from .config import Arch, GateConfig
@@ -180,7 +170,7 @@ class BuildAssetsCommand(
                 ),
                 after=(ready,),
             )
-        for profile in wanted:
+        images = tuple(
             plan.add(
                 build(
                     config,
@@ -190,6 +180,13 @@ class BuildAssetsCommand(
                 ),
                 after=(ready,),
             )
+            for profile in wanted
+        )
+        if self._args.template != "kernel":
+            assets = config.path(config.imagebuild.output)
+            targets = {name: (assets / name / config.artifacts.initrd,) for name in names}
+            packed = plan.add(initrd.repack_step(config, targets), after=images)
+            initrd.finalize(plan, config, assets=assets, after=(packed,))
         return plan
 
 

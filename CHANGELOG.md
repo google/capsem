@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fresh profile asset lanes now repack every architecture's minimal kernel
+  initrd with the complete config-owned guest payload before merge, boot, or
+  archive proof. The same explicit-target primitive runs in profile release CI
+  after rootfs construction, then regenerates the manifest and hash aliases;
+  kernel-only construction remains minimal until that rootfs step.
+
 - Rust MITM integration coverage now routes its allowed TLS/SNI cases to a
   loopback upstream override while preserving policy, telemetry, method/path,
   and keep-alive assertions, so the complete sealed gate no longer depends on

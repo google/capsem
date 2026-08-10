@@ -194,17 +194,15 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
     preflight = installimage.fragment(plan, config, after=after)
     leaves.append(phase.add(storagerelease(config, "install-preflight"), after=(preflight,)))
 
-    # `_pack-initrd` already built the host architecture; this proves the other
-    # one compiles against musl, so a cross-arch regression surfaces before the
-    # Docker cross-compile rather than an hour later.
+    initrd = config.initrd
     agents = phase.add(
         step(
             "guest-agents",
-            Run(settings.guest_agent_build),
+            Run(initrd.build),
             # The musl binaries the initrd carries and the VM executes.
             produces=tuple(
-                config.path(settings.guest_binary_root) / config.host_arch().name / name
-                for name in settings.guest_binaries
+                config.path(initrd.staging) / config.host_arch().name / name
+                for name in initrd.binaries
             ),
         ),
         after=after,
@@ -247,10 +245,10 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
 
 def _guest_binaries_present(config: GateConfig):
     """Every guest binary the host architecture should have produced."""
-    root = config.path(config.modules.guest_binary_root) / config.host_arch().name
+    root = config.path(config.initrd.staging) / config.host_arch().name
     return step(
         "guest-binaries",
-        *[RequireFile(root / name) for name in config.modules.guest_binaries],
+        *[RequireFile(root / name) for name in config.initrd.binaries],
     )
 
 

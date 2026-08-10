@@ -9,10 +9,10 @@ The justfile dispatches; `src/capsem/gate/` decides. No recipe carries a shell
 body, none exceeds five lines, and both are contract tests rather than
 conventions.
 
-`just test` is **one process, one machine lock, one workspace, one plan** — 83
-steps and 112 actions in the current graph. Both release commands *contain*
-that same plan rather than launching it. Trust the plan header when the graph
-evolves; do not maintain a second count in code.
+`just test` is **one process, one machine lock, one workspace, one plan**. Its
+dry run reports the current totals; conditional asset staging makes a literal
+step/action count depend on machine state. Both release commands *contain*
+that same plan rather than launching it.
 
 ## The rule everything else follows from
 

@@ -277,6 +277,12 @@ artifact resolver is a stable retry mechanism only; using it for nightly would
 turn the daily asset build into a no-op and lose the hermetic reproducibility
 signal.
 
+Each architecture's CI rail may build the kernel and rootfs as separate
+private commands, but `build-assets rootfs` must finish by injecting the
+config-owned guest payload into that kernel's minimal initrd and regenerating
+the manifest/hash aliases. Uploading the kernel-stage initrd directly would
+publish bytes the complete local IronBank graph never qualified.
+
 Before either architecture lane builds, the shared asset rail materializes the
 checked-in per-platform base child manifests by exact digest through Docker's
 daemon boundary. A cold runner and a warm developer host therefore select the

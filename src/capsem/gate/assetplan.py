@@ -13,7 +13,9 @@ a thread pool the plan could not see, order against, or attribute a failure to.
 
 from __future__ import annotations
 
+from . import initrd
 from .actions import Call
+from .assetlanes import discover_profiles, lane_assets
 from .assets import AssetGate
 from .command import GateCommand
 from .execution import step
@@ -90,6 +92,15 @@ def fragment(plan, config, *, after: tuple = ()):
         ),
         after=lanes,
     )
+    profiles = discover_profiles(config)
+    targets = {
+        name: tuple(
+            lane_assets(config, profile, config.arch(name)) / name / config.artifacts.initrd
+            for profile in profiles
+        )
+        for name in config.architectures
+    }
+    packed = phase.add(initrd.repack_step(config, targets), after=(swept,))
     return phase.add(
         step(
             "assemble",
@@ -102,7 +113,7 @@ def fragment(plan, config, *, after: tuple = ()):
             ),
             contends=exclusive,
         ),
-        after=(swept,),
+        after=(packed,),
     )
 
 

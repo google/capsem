@@ -850,8 +850,8 @@ def test_pulled_binary_static_gate_owns_source_agent_assertions() -> None:
     assert "capsem-builder agent config/docker/image" in static
     assert "tests/capsem-bootstrap/test_cross_compile.py" in static
     assert "tests/capsem-security/test_binary_perms.py" in static
-    assert f"{CONFIG.modules.guest_binary_root}/" in static
-    for binary in CONFIG.modules.guest_binaries:
+    assert f"{CONFIG.initrd.staging}/" in static
+    for binary in CONFIG.initrd.binaries:
         assert binary in static
 
 

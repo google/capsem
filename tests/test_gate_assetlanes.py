@@ -23,7 +23,6 @@ CONFIG = gate_config.load(PROJECT_ROOT)
 ARCHES = (CONFIG.arch("arm64"), CONFIG.arch("x86_64"))
 
 
-
 def _build_all(lanes) -> None:
     """Every architecture's lane, as the plan schedules them.
 
@@ -126,6 +125,34 @@ def test_every_profile_is_built_for_every_architecture(tmp_path: Path) -> None:
                 ), f"{profile}/{arch.name}/{stage} was never built"
 
 
+def test_asset_plan_repacks_every_private_lane_before_assembly() -> None:
+    from capsem.gate.assetplan import fragment
+    from capsem.gate.plan import Plan
+
+    plan = Plan("assets")
+    fragment(plan, CONFIG)
+
+    assert plan.after_of("assets.pack-initrds") == {"assets.sweep"}
+    assert plan.after_of("assets.assemble") == {"assets.pack-initrds"}
+    packed = plan.step_named("assets.pack-initrds")
+    profiles = {path.parent.name for path in CONFIG.root.glob(CONFIG.assets.profiles_glob)}
+    expected = {
+        CONFIG.path(CONFIG.assets.test_root)
+        / profile
+        / f"build-{arch}"
+        / arch
+        / CONFIG.artifacts.initrd
+        for profile in profiles
+        for arch in CONFIG.architectures
+    }
+    assert set(packed.produces) == expected
+    rendering = "\n".join(packed.render())
+    for arch in CONFIG.architectures:
+        assert f"--arch {arch}" in rendering
+    for target in expected:
+        assert str(target) in rendering
+
+
 def test_each_lane_writes_to_its_own_output_root(tmp_path: Path) -> None:
     """One shared root is how two concurrent lanes race over `current`."""
     root = _checkout(tmp_path)
@@ -188,11 +215,15 @@ def test_both_lanes_are_awaited_even_when_the_first_fails(tmp_path: Path) -> Non
         plan.add(
             step(
                 f"build.{arch.name}",
-                Call(arch.name, lambda _ctx, a=arch: lanes.build(a), justification=CallJustification(
-                    kind=OpaqueKind.RUNTIME_DERIVED,
-                    reason="a synthetic step whose work is decided by the test",
-                    effects=frozenset(),
-                )),
+                Call(
+                    arch.name,
+                    lambda _ctx, a=arch: lanes.build(a),
+                    justification=CallJustification(
+                        kind=OpaqueKind.RUNTIME_DERIVED,
+                        reason="a synthetic step whose work is decided by the test",
+                        effects=frozenset(),
+                    ),
+                ),
                 contends=(CONFIG.shared("docker_daemon"),),
             )
         )
@@ -267,9 +298,7 @@ def test_each_lane_tells_the_builder_where_to_write(tmp_path: Path) -> None:
     for arch in ARCHES:
         expected = str(lanes.lane_assets(profile, arch))
         issued = [c for c in runner.commands if "--output" in c.argv]
-        assert any(
-            c.argv[c.argv.index("--output") + 1] == expected for c in issued
-        ), (
+        assert any(c.argv[c.argv.index("--output") + 1] == expected for c in issued), (
             f"the {arch.name} lane did not tell the builder to write to "
             f"{expected}; it issued:\n  " + "\n  ".join(str(c) for c in issued)
         )

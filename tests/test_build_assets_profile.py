@@ -115,6 +115,32 @@ def test_kernel_only_asset_build_does_not_materialize_a_rust_helper() -> None:
     assert "prove Docker can execute arm64 containers" in rendered
     assert "Rust builder bases (none)" in rendered
     assert "materialize locked guest Rust builders" not in rendered
+    assert "repack" not in rendered
+
+
+def test_rootfs_asset_build_repacks_then_regenerates_its_manifest() -> None:
+    command = _command("build-assets", profile="code", arch="arm64", template="rootfs")
+    plan = command.plan()
+
+    assert plan.after_of("pack-initrds") == {"image.code.rootfs.arm64"}
+    assert plan.after_of("manifest") == {"pack-initrds"}
+    assert plan.after_of("hash-aliases") == {"manifest"}
+    packed = plan.step_named("pack-initrds")
+    assert packed.produces == (PROJECT_ROOT / "assets" / "arm64" / "initrd.img",)
+    rendering = "\n".join(packed.render())
+    assert "--arch arm64" in rendering
+    assert str(packed.produces[0]) in rendering
+
+
+def test_unscoped_rootfs_asset_build_repacks_every_architecture() -> None:
+    from capsem.gate import config as gate_config
+
+    plan = _command("build-assets", profile="code", arch=None, template="all").plan()
+    packed = plan.step_named("pack-initrds")
+
+    assert {path.parent.name for path in packed.produces} == set(
+        gate_config.load(PROJECT_ROOT).architectures
+    )
 
 
 def test_standalone_asset_build_proves_execution_before_helper_materialization() -> None:
@@ -130,6 +156,17 @@ def test_standalone_asset_build_proves_execution_before_helper_materialization()
     assert plan.after_of("guest-execution") == {"doctor"}
     assert plan.after_of("guest-builders") == {"guest-execution"}
     assert plan.after_of("image.code.rootfs.arm64") == {"guest-builders"}
+
+
+def test_macos_rootfs_materializes_its_native_helper_before_repack(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("capsem.gate.imagebases.host.on_macos", lambda: True)
+    plan = _command("build-assets", profile="code", arch="x86_64", template="rootfs").plan()
+
+    assert plan.after_of("guest-builders") == {"guest-execution"}
+    assert plan.after_of("image.code.rootfs.x86_64") == {"guest-builders"}
+    assert plan.after_of("pack-initrds") == {"image.code.rootfs.x86_64"}
 
 
 def test_asset_build_primitives_accept_an_isolated_output_root() -> None:
@@ -246,7 +283,8 @@ def test_asset_gate_runs_architecture_lanes_in_parallel_before_boot_proofs() -> 
     labels = list(gate_labels("candidate"))
     for arch in ("arm64", "x86_64"):
         assert labels.index(f"assets.build.{arch}") < labels.index("assets.sweep")
-    assert labels.index("assets.sweep") < labels.index("assets.assemble")
+    assert labels.index("assets.sweep") < labels.index("assets.pack-initrds")
+    assert labels.index("assets.pack-initrds") < labels.index("assets.assemble")
     assert assets.index("self._merge_lanes(") < assets.index("self._prove(")
 
 
@@ -278,6 +316,9 @@ def test_asset_ci_uses_primitives_owned_by_just_test() -> None:
 
     assert 'just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
     assert 'just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
+    assert "pack-initrds" in _planned(
+        "build-assets", profile="code", arch="arm64", template="rootfs"
+    )
     # The lanes reach the same builder invocation directly, each with its own
     # output. Asserting they still *mention* the retired recipe was asserting
     # on a comment; this is the claim underneath it.

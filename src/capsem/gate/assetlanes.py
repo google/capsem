@@ -49,6 +49,11 @@ def discover_profiles(config: gate_config.GateConfig) -> list[Profile]:
     return found
 
 
+def lane_assets(config: gate_config.GateConfig, profile: Profile, arch: Arch) -> Path:
+    """The isolated output root shared by planning and lane execution."""
+    return config.path(config.assets.test_root) / profile.name / f"build-{arch.name}"
+
+
 class AssetLanes:
     """One build lane per architecture, run concurrently and reported together."""
 
@@ -61,7 +66,7 @@ class AssetLanes:
         self._profiles = profiles
 
     def lane_assets(self, profile: Profile, arch: Arch) -> Path:
-        return self._root / profile.name / f"build-{arch.name}"
+        return lane_assets(self._config, profile, arch)
 
     def _build(self, arch: Arch) -> None:
         log = self._root / f"build-{arch.name}.log"

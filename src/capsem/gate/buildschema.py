@@ -38,9 +38,6 @@ class ModulesConfig(Strict):
     contract_glob: str
     rust_coverage: tuple[str, ...]
     rust_coverage_floor: str
-    guest_agent_build: tuple[str, ...]
-    guest_binaries: tuple[str, ...]
-    guest_binary_root: str
     guest_binary_tests: tuple[str, ...]
     release_input_dir: str
     release_profile: str

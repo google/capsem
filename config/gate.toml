@@ -860,7 +860,19 @@ sources = ["crates/capsem-agent", "crates/capsem-proto", "crates/capsem-bench"]
 # the workspace-wide ones. Split because the first are globbed per crate and
 # the second are single paths.
 freshness_globs = ["*.rs", "Cargo.toml", "build.rs"]
-freshness_inputs = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"]
+freshness_inputs = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "config/gate.toml",
+    "src/capsem/builder/config.py",
+    "src/capsem/builder/models.py",
+    "src/capsem/builder/cli.py",
+    "src/capsem/builder/docker.py",
+    "src/capsem/builder/guestbuilder.py",
+    "config/docker/image/build.toml",
+    "docker/Dockerfile.guest-rust-builder",
+]
 build = ["uv", "run", "capsem-builder", "agent", "config/docker/image"]
 
 # Checked-in guest payloads copied in beside the binaries.
@@ -1130,6 +1142,7 @@ blocks_clippy = "frontend"
 source_contract = [
     "tests/test_gate_observation.py",
     "tests/test_gate_observation_propagation.py",
+    "tests/test_gate_initrd.py",
     "tests/test_gate_plan_purity.py",
     "tests/test_gate_docker_boundary.py",
     "tests/test_gate_linuxrust_hermetic.py",
@@ -1338,9 +1351,6 @@ contract_glob = "tests/test_*contract.py"
 rust_coverage = ["cargo", "llvm-cov", "--workspace", "--bins", "--lib", "--tests", "--no-cfg-coverage"]
 rust_coverage_floor = "--fail-under-lines=63"
 
-guest_agent_build = ["uv", "run", "capsem-builder", "agent", "config/docker/image"]
-guest_binaries = ["capsem-pty-agent", "capsem-net-proxy", "capsem-mcp-server"]
-guest_binary_root = "target/linux-agent"
 guest_binary_tests = [
     "tests/capsem-bootstrap/test_cross_compile.py",
     "tests/capsem-security/test_binary_perms.py::test_agent_binaries_555",

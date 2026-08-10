@@ -4,18 +4,17 @@ This is the recipe `AtomicReplace` was written for. `create_hash_assets.py`
 gives the unhashed `initrd.img` a hash-named hardlink sharing one inode, so a
 shell `> "$INITRD"` -- truncate and write in place -- mutates that hardlink's
 contents too. A VM mid-`VmConfig::build`, reading the old hash-named path,
-then sees new bytes that do not match the embedded hash, and reports
-`hash mismatch for ...img: expected X, got Y`. A stress run hitting this loses
-two cycles per repack.
+then sees bytes that do not match the embedded hash.
 
-The cross-compile is conditional for a plain reason: it is slow, and it is only
-needed when a staged binary is missing or older than the sources that produce
-it. That was a `find -newer` in shell and is a stat comparison here.
+Cross-compilation runs only when staged binaries are missing or older than
+their inputs; the former shell `find -newer` is a stat comparison here.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
+from shlex import quote
 
 from . import crossexec, host
 from .actions import Action, Run, Script
@@ -30,23 +29,25 @@ from .plan import Plan
 from .versions import workspace_version
 
 
-def _staging(config: GateConfig) -> Path:
-    return config.path(config.initrd.staging) / config.host_arch().name
+def _staging(config: GateConfig, arch: str | None = None) -> Path:
+    selected = config.arch(arch).name if arch else config.host_arch().name
+    return config.path(config.initrd.staging) / selected
 
 
-def _initrd_path(config: GateConfig) -> Path:
+def _initrd_path(config: GateConfig, arch: str | None = None) -> Path:
     """Where the repack writes, whether or not it is there yet."""
-    return config.path(config.imagebuild.output) / config.host_arch().name / config.artifacts.initrd
+    selected = config.arch(arch).name if arch else config.host_arch().name
+    return config.path(config.imagebuild.output) / selected / config.artifacts.initrd
 
 
-def _initrd(config: GateConfig) -> Path:
-    found = _initrd_path(config)
+def _initrd(config: GateConfig, arch: str | None = None) -> Path:
+    found = _initrd_path(config, arch)
     if not found.is_file():
         raise GateError(f"initrd not found at {found}; run `just doctor fix` first")
     return found
 
 
-def needs_rebuild(config: GateConfig) -> bool:
+def needs_rebuild(config: GateConfig, arch: str | None = None) -> bool:
     """Whether any staged guest binary is missing or older than its inputs.
 
     Its *inputs*, not just its `*.rs` files. A dependency bump, a feature
@@ -55,7 +56,7 @@ def needs_rebuild(config: GateConfig) -> bool:
     initrd that does not match the source it claims to have been built from.
     """
     settings = config.initrd
-    staged = [_staging(config) / name for name in settings.binaries]
+    staged = [_staging(config, arch) / name for name in settings.binaries]
     if any(not path.is_file() for path in staged):
         return True
 
@@ -78,14 +79,26 @@ def _build_inputs(config: GateConfig):
 class _Repack(Action, name="repack-initrd"):
     """Unpack, replace the guest payload, and repack into a new inode."""
 
+    def __init__(self, *, target: Path | None = None, arch: str | None = None) -> None:
+        self._target = target
+        self._arch = arch
+
     def render(self) -> str:
-        return "unpack the initrd, refresh its guest payload, and repack it"
+        detail = ""
+        if self._target is not None:
+            detail = f" {self._target}"
+        if self._arch is not None:
+            detail += f" from {self._arch} staging"
+        return f"unpack the initrd{detail}, refresh its guest payload, and repack it"
 
     def perform(self, context: Context) -> None:
         config = context.config
         settings = config.initrd
-        target = _initrd(config)
-        staging = _staging(config)
+        arch = config.arch(self._arch).name if self._arch else config.host_arch().name
+        target = self._target or _initrd(config, arch)
+        if not target.is_file():
+            raise GateError(f"initrd not found at {target}")
+        staging = _staging(config, arch)
 
         for name in settings.binaries:
             if not (staging / name).is_file():
@@ -106,9 +119,8 @@ class _Repack(Action, name="repack-initrd"):
         AtomicReplace(target, build).perform(context)
 
     # -- the pieces --------------------------------------------------------
-
     def _unpack(self, context: Context, initrd: Path, workdir: Path) -> None:
-        context.runner.bash(f"gzip -dc {initrd} | cpio -id", cwd=workdir)
+        context.runner.bash(f"gzip -dc {quote(str(initrd))} | cpio -id", cwd=workdir)
 
     def _stage(self, config: GateConfig, staging: Path, workdir: Path) -> None:
         settings = config.initrd
@@ -118,20 +130,8 @@ class _Repack(Action, name="repack-initrd"):
         Copy(config.path(settings.init), init).perform(self._context)
         init.chmod(settings.init_mode)
 
-        # 555 on every guest binary in the *initrd*, reasserted rather than
-        # assumed: the builder applies it after a fresh cross-compile, but a
-        # cached staging directory may have had its modes changed since.
-        #
-        # On the copy only. This chmodded the source as well, and three of
-        # those sources are tracked files -- `guest/artifacts/capsem-doctor`
-        # and friends, recorded 100755 by git. The source digest hashes
-        # `S_IMODE`, and git does not track the write bit, so the change was
-        # invisible to `git status` and fatal to `source.verify`: a clean
-        # checkout records 755, this drops it to 555, and the run ends an hour
-        # later claiming the gate changed its own source. It passed on warm
-        # machines because the files were already 555 from an earlier run.
-        # The copy's mode is set on the next line regardless, so the source
-        # chmod never affected the initrd at all.
+        # Set modes on copies only. Changing tracked source modes made a clean
+        # gate fail its later byte-and-mode source verification.
         staged = [(staging / name, workdir / name) for name in settings.binaries]
         staged += [
             (config.path(relative), workdir / Path(relative).name) for relative in settings.files
@@ -150,7 +150,75 @@ class _Repack(Action, name="repack-initrd"):
                 Remove(cached).perform(self._context)
 
     def _pack(self, context: Context, workdir: Path, scratch: Path) -> None:
-        context.runner.bash(f"find . | cpio -o -H newc | gzip > {scratch}", cwd=workdir)
+        command = f"find . | cpio -o -H newc | gzip > {quote(str(scratch))}"
+        context.runner.bash(command, cwd=workdir)
+
+
+class _Stage(Action, name="stage-initrd-agents"):
+    """Build one architecture's configured payload only when it is stale."""
+
+    def __init__(self, config: GateConfig, arch: str) -> None:
+        self._arch = config.arch(arch).name
+        self._run = Run([*config.initrd.build, "--arch", self._arch])
+
+    def render(self) -> str:
+        return f"if {self._arch} initrd agents are stale: {self._run.render()}"
+
+    def perform(self, context: Context) -> None:
+        if needs_rebuild(context.config, self._arch):
+            self._run.perform(context)
+
+
+def repack_step(config: GateConfig, targets: Mapping[str, tuple[Path, ...]]) -> Step:
+    """One resumable frontier that stages and repacks exact initrd targets."""
+    actions: list[Action] = []
+    produced: list[Path] = []
+    for spelling, paths in targets.items():
+        arch = config.arch(spelling).name
+        if not paths:
+            continue
+        actions.append(_Stage(config, arch))
+        for target in paths:
+            actions.append(_Repack(target=target, arch=arch))
+            produced.append(target)
+    if not produced:
+        raise GateError("an initrd repack step needs at least one exact target")
+    return step(
+        "pack-initrds",
+        *actions,
+        contends=(config.exclusive("docker_daemon"),),
+        produces=tuple(produced),
+    )
+
+
+def finalize(
+    plan: Plan,
+    config: GateConfig,
+    *,
+    assets: Path,
+    after: tuple[Step, ...],
+    phase_name: str | None = None,
+) -> Step:
+    """Regenerate manifest and aliases after initrd bytes change."""
+    phase = plan.phase(phase_name) if phase_name else plan
+    manifest = phase.add(
+        step(
+            "manifest",
+            Run(
+                [
+                    *config.initrd.manifest,
+                    str(assets),
+                    "--version",
+                    workspace_version(config.root),
+                ]
+            ),
+        ),
+        after=after,
+    )
+    return phase.add(
+        step("hash-aliases", Script(config.initrd.hash_assets, str(assets))),
+        after=(manifest,),
+    )
 
 
 class PackInitrdCommand(
@@ -223,21 +291,10 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
         after=previous,
     )
 
-    assets = config.path(config.imagebuild.output)
-    manifest = phase.add(
-        step(
-            "manifest",
-            Run([*settings.manifest, str(assets), "--version", workspace_version(config.root)]),
-        ),
+    return finalize(
+        plan,
+        config,
+        assets=config.path(config.imagebuild.output),
         after=(packed,),
-    )
-    return phase.add(
-        step(
-            "hash-aliases",
-            # Hash-named hardlinks, so the dev layout matches the installed
-            # one and startup resolves locally instead of falling through
-            # to a remote fetch.
-            Script(settings.hash_assets, str(assets)),
-        ),
-        after=(manifest,),
+        phase_name="initrd",
     )
