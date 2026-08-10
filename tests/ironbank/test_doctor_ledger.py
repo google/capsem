@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
 import shlex
 import sqlite3
@@ -208,17 +209,28 @@ def _doctor_failure_diagnostics(service: ServiceInstance) -> str:
 def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; build capsem-mock-server"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config before Ironbank"
+    assert PROFILES_DIR.exists(), (
+        f"{PROFILES_DIR} missing; materialize profile config before Ironbank"
+    )
 
     service = ServiceInstance()
     client = None
     mock_proc = None
     session_id = vm_name("ironbank-doctor")
     vm_id: str | None = None
+    old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     try:
+        mock_proc, ready = start_mock_server()
+        corp_path = service.tmp_dir / "corp.toml"
+        corp_path.write_text(
+            'refresh_policy = "24h"\n\n'
+            "[network.dns]\n"
+            f"upstreams = [{json.dumps(ready['dns_udp_addr'])}]\n",
+            encoding="utf-8",
+        )
+        os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
-        mock_proc, ready = start_mock_server()
         mock_base_url = ready["base_url"]
         create = client.post(
             "/vms/create",
@@ -287,8 +299,14 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         assert all(set(row) == EXPECTED_SECURITY_LATEST_FIELDS for row in security_latest)
         assert all(row["event_id"] for row in security_latest)
         assert all(row["rule_id"] for row in security_latest)
-        assert all(row["rule_action"] in {"allow", "ask", "block", "preprocess", "rewrite", "postprocess"} for row in security_latest)
-        assert all(row["detection_level"] in {"none", "informational", "low", "medium", "high", "critical"} for row in security_latest)
+        assert all(
+            row["rule_action"] in {"allow", "ask", "block", "preprocess", "rewrite", "postprocess"}
+            for row in security_latest
+        )
+        assert all(
+            row["detection_level"] in {"none", "informational", "low", "medium", "high", "critical"}
+            for row in security_latest
+        )
         assert all(json.loads(row["rule_json"]) for row in security_latest)
         assert all(json.loads(row["event_json"]) for row in security_latest)
 
@@ -591,7 +609,10 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         _assert_ledger_id(dns["event_id"])
         assert dns["qname"]
         assert dns["source_proto"] in {"udp", "tcp"}
-        assert dns["decision"] in {"allowed", "denied"}
+        assert dns["decision"] == "allowed"
+        assert dns["rcode"] in {0, 3}
+        assert dns["policy_action"] == "allow"
+        assert dns["policy_rule"] == "profiles.rules.default_dns"
 
         fs = _single(conn, "SELECT * FROM fs_events ORDER BY id DESC LIMIT 1")
         _assert_ledger_id(fs["event_id"])
@@ -624,11 +645,17 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             with contextlib.suppress(Exception):
                 client.delete(f"/vms/{vm_id or session_id}/delete", timeout=60)
         service.stop()
+        if old_corp_config is None:
+            os.environ.pop("CAPSEM_CORP_CONFIG", None)
+        else:
+            os.environ["CAPSEM_CORP_CONFIG"] = old_corp_config
 
 
 def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config before Ironbank"
+    assert PROFILES_DIR.exists(), (
+        f"{PROFILES_DIR} missing; materialize profile config before Ironbank"
+    )
 
     service = ServiceInstance()
     client = None
@@ -757,9 +784,7 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         assert security_rows, "file imports must emit security ledger rows"
         assert {row["rule_action"] for row in security_rows} == {"allow"}
         payloads = [json.loads(row["event_json"]) for row in security_rows]
-        assert {"block", "allow"} <= {
-            payload["decision"]["effective"] for payload in payloads
-        }
+        assert {"block", "allow"} <= {payload["decision"]["effective"] for payload in payloads}
 
         blocked_rows = [
             row
