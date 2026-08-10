@@ -15,6 +15,7 @@ The three below came from `/usr/bin/log stream --predicate 'sender ==
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ from helpers.gate import RecordingRunner
 from capsem.gate import sandbox, sandboxreport
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+macos_only = pytest.mark.skipif(sys.platform != "darwin", reason="Seatbelt log stream is macOS")
 
 #: Real output, not a fixture shaped to suit the regex.
 CAPTURED = """
@@ -93,6 +95,7 @@ def test_off_and_enforce_start_no_collector(tmp_path: Path) -> None:
         assert not (tmp_path / "runs" / _Settings.report_log_name).exists()
 
 
+@macos_only
 def test_report_mode_captures_and_summarizes(tmp_path: Path) -> None:
     """The real thing, against the real `log` binary.
 
@@ -135,6 +138,7 @@ def test_the_collector_is_part_of_the_complete_gate() -> None:
     assert "SandboxReport(config, runner, mode=mode)" in source
 
 
+@macos_only
 def test_the_capture_lands_in_this_runs_directory(tmp_path: Path) -> None:
     """Not in the history root.
 
@@ -155,6 +159,7 @@ def test_the_capture_lands_in_this_runs_directory(tmp_path: Path) -> None:
     assert not (tmp_path / "runs" / _Settings.report_log_name).exists(), "capture went to the root"
 
 
+@macos_only
 def test_the_capture_survives_being_started_before_the_run_exists(tmp_path: Path) -> None:
     """The exact ordering the collector really runs in.
 

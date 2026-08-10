@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +89,97 @@ def test_bootstrap_waits_for_container_dns_after_colima_restart() -> None:
     assert "docker run --rm --pull=missing alpine:3.20 getent hosts ghcr.io" in bootstrap
     assert "Docker DNS did not become ready" in bootstrap
     assert "for attempt in $(seq 1 30)" in bootstrap
+
+
+def test_linux_bootstrap_owns_host_packages_node_docker_and_kvm_access() -> None:
+    bootstrap = _read("bootstrap.sh")
+    linux = _read("scripts/bootstrap-linux.sh")
+
+    assert '. "$SCRIPT_DIR/scripts/bootstrap-linux.sh"' in bootstrap
+    assert 'bootstrap_linux "$SCRIPT_DIR" "$ASSUME_YES"' in bootstrap
+    assert "[SKIP] docker (install via your package manager" not in bootstrap
+    assert "[SKIP] docker daemon" not in bootstrap
+
+    # Ubuntu/Debian host prerequisites cover the native fast gate as well as
+    # the image builder. Buildx is the Ubuntu archive package name; the
+    # Docker-CE repository's *-plugin name is only a fallback.
+    for package in [
+        "build-essential",
+        "bubblewrap",
+        "cpio",
+        "pkg-config",
+        "libssl-dev",
+        "libgtk-3-dev",
+        "libwebkit2gtk-4.1-dev",
+        "libayatana-appindicator3-dev",
+        "libxdo-dev",
+        "librsvg2-dev",
+        "musl-tools",
+        "docker.io",
+        "docker-buildx",
+        "acl",
+    ]:
+        assert package in linux
+    assert "apt-get update" in linux
+    assert "apt-get install" in linux
+    assert "systemctl enable --now docker" in linux
+
+    # Durable group membership helps future shells; a narrow device/socket ACL
+    # makes this bootstrap process usable immediately without a logout.
+    assert 'usermod -aG docker "$CAPSEM_BOOTSTRAP_USER"' in linux
+    assert 'usermod -aG kvm "$CAPSEM_BOOTSTRAP_USER"' in linux
+    assert 'setfacl -m "u:$CAPSEM_BOOTSTRAP_USER:rw" /var/run/docker.sock' in linux
+    assert 'setfacl -m "u:$CAPSEM_BOOTSTRAP_USER:rw" /dev/kvm' in linux
+    assert "docker info" in linux
+    assert "docker buildx version" in linux
+    assert "bwrap --unshare-net" in linux
+    assert '[ -r /dev/kvm ] && [ -w /dev/kvm ]' in linux
+
+    # Linux does not accept whatever Node happens to be in the distribution.
+    # The required major comes from the profile image config and the fetched
+    # official tarball is checked against Node's SHA256 manifest.
+    assert "config/docker/image/build.toml" in bootstrap
+    assert "latest-v${CAPSEM_NODE_MAJOR}.x/SHASUMS256.txt" in linux
+    assert "sha256sum" in linux
+    assert 'CAPSEM_NODE_COMMAND=$(command -v node 2>/dev/null || true)' in linux
+    assert '"$HOME/.local/bin/node"' in linux
+    assert "refusing to replace unmanaged" in linux
+    assert 'npm install --global pnpm@10 --prefix "$HOME/.local"' in bootstrap
+    assert 'PNPM_MAJOR=${PNPM_VERSION%%.*}' in bootstrap
+    assert '"$PNPM_MAJOR" = 10' in bootstrap
+    assert "pnpm 10 is required after bootstrap" in bootstrap
+
+    # Daemon activation and a new socket are asynchronous on a fresh host.
+    # Bootstrap waits for both the socket and post-ACL client access instead
+    # of racing systemd and failing a valid installation.
+    assert "CAPSEM_DOCKER_WAIT" in linux
+    assert "CAPSEM_DOCKER_ACCESS_WAIT" in linux
+
+
+def test_linux_bootstrap_node_major_parser_requires_one_shared_value() -> None:
+    command = (
+        '. scripts/bootstrap-linux.sh; '
+        'capsem_linux_node_major config/docker/image/build.toml'
+    )
+    completed = subprocess.run(
+        ["sh", "-c", command],
+        cwd=PROJECT_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == "24"
+
+
+def test_linux_doctor_uses_ubuntu_buildx_name_and_enforces_node_major() -> None:
+    doctor_linux = _read("scripts/doctor-linux.sh")
+    doctor_common = _read("scripts/doctor-common.sh")
+
+    assert 'apt) echo "sudo apt install docker-buildx"' in doctor_linux
+    assert "required Node.js major" in doctor_common
+    assert "config/docker/image/build.toml" in doctor_common
+    assert "for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum flock zstd cpio" in doctor_common
 
 
 def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:

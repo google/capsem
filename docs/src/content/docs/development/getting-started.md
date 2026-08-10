@@ -23,7 +23,8 @@ sidebar:
 | **Debian/Ubuntu** | apt-based distro (for .deb install) |
 | **x86_64 or arm64** | Both architectures supported |
 | **KVM** | `/dev/kvm` must be accessible. Load `kvm-intel` or `kvm-amd` module. |
-| **Docker** | Needed for `just build-assets code` (kernel + rootfs builds) |
+| **Docker** | Installed/started by bootstrap; needed for `just build-assets code` |
+| **Bubblewrap** | Installed/proved by bootstrap; gives `just test` a loopback-only host network namespace |
 
 ## Clone and bootstrap
 
@@ -33,7 +34,11 @@ git clone https://github.com/google/capsem.git && cd capsem
 ./bootstrap.sh --yes      # non-interactive: auto-yes (use in CI)
 ```
 
-`bootstrap.sh` lives at the repo root. It walks the dependency tree top-down, asking before installing anything, and exits clean when everything's already in place.
+`bootstrap.sh` lives at the repo root. It walks the dependency tree top-down,
+asking before installing anything, and exits clean when everything is already
+in place. On Linux it owns system package installation, native Docker/Buildx,
+the configured Node major, pnpm, and current-session Docker/KVM access; a
+logout is not required for the bootstrap run to complete.
 
 ### What bootstrap installs
 
@@ -42,6 +47,9 @@ git clone https://github.com/google/capsem.git && cd capsem
 | 1 (hard prereqs) | `bash`, `git`, `curl` | system package manager (you install) | Without curl we can't fetch any installer |
 | 1 | `rustup` (stable, minimal profile) | `sh.rustup.rs` official installer | Source of `cargo` |
 | 1 | `just` | `just.systems` installer → `~/.local/bin` | Recipe runner — used by every other build step |
+| 1 (Linux) | compiler/Tauri libraries, `cpio`, Docker/Buildx, Bubblewrap | apt or dnf | Native gate, initrd repack, image builds, and kernel-enforced host egress isolation |
+| 1 (Linux) | Node 24 + pnpm 10 | SHA256-verified Node archive + npm | Matches CI and the immutable host builder |
+| 1 (Linux) | Docker/KVM access | durable groups + current-session ACL | Lets the same bootstrap process build and boot without a logout |
 | 2 | `uv` | `astral.sh/uv` installer → `~/.local/bin` | Python deps for `capsem-builder` |
 | 2 | Python deps | `uv sync` | Locked via `uv.lock` |
 | 2 (macOS) | `flock`, `pnpm` | `brew` | flock = multi-agent recipe lock; pnpm = frontend deps |

@@ -18,14 +18,19 @@ import sys
 from pathlib import Path
 
 import pytest
+from helpers.gate import RecordingRunner
+from pydantic import ValidationError
 
 from capsem.gate import config as gate_config
 from capsem.gate import sandbox
+from capsem.gate.errors import GateError
+from capsem.gate.harnessschema import SandboxConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
 
 macos_only = pytest.mark.skipif(sys.platform != "darwin", reason="Seatbelt is macOS")
+linux_only = pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux")
 
 #: A sandbox cannot be nested: `sandbox-exec: sandbox_apply: Operation not
 #: permitted` once already inside one. So the two tests that really invoke it
@@ -182,6 +187,119 @@ def test_docker_still_answers_through_its_unix_socket(tmp_path: Path) -> None:
         f"UNIX socket looks like: {answered.stderr.strip()}"
     )
     assert answered.stdout.strip(), "the daemon answered with nothing"
+
+
+def test_linux_enforcement_uses_bubblewrap_network_namespace(monkeypatch) -> None:
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/bwrap")
+    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: False)
+
+    wrapped = sandbox.applied(
+        CONFIG,
+        RecordingRunner(PROJECT_ROOT),
+        default=sandbox.ENFORCE,
+        requested=None,
+        argv=("python3", "-c", "print('inside')"),
+    )
+
+    assert wrapped[0] == CONFIG.sandbox.linux_command
+    assert tuple(CONFIG.sandbox.linux_args) == wrapped[1 : 1 + len(CONFIG.sandbox.linux_args)]
+    assert "--unshare-net" in wrapped
+    assert wrapped[
+        wrapped.index("--bind") : wrapped.index("--bind") + 3
+    ] == ("--bind", "/", "/")
+    assert wrapped[-3:] == ("python3", "-c", "print('inside')")
+
+
+@pytest.mark.parametrize(
+    "linux_args",
+    [
+        ("--die-with-parent", "--new-session", "--bind", "/", "/"),
+        ("--unshare-net", "--new-session", "--bind", "/", "/"),
+        ("--unshare-net", "--die-with-parent", "--new-session"),
+    ],
+)
+def test_linux_sandbox_config_cannot_remove_an_enforcement_property(
+    linux_args: tuple[str, ...],
+) -> None:
+    raw = CONFIG.sandbox.model_dump()
+    raw["linux_args"] = linux_args
+
+    with pytest.raises(ValidationError):
+        SandboxConfig.model_validate(raw)
+
+
+def test_linux_report_mode_refuses_to_claim_unimplemented_observation(monkeypatch) -> None:
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: False)
+
+    with pytest.raises(GateError, match="report mode"):
+        sandbox.applied(
+            CONFIG,
+            RecordingRunner(PROJECT_ROOT),
+            default=sandbox.REPORT,
+            requested=None,
+            argv=("true",),
+        )
+
+
+@linux_only
+def test_linux_kernel_boundary_keeps_loopback_and_denies_external_interfaces() -> None:
+    probe = """
+import socket
+import threading
+
+interfaces = {name for _index, name in socket.if_nameindex()}
+assert interfaces == {"lo"}, interfaces
+
+server = socket.socket()
+server.bind(("127.0.0.1", 0))
+server.listen(1)
+port = server.getsockname()[1]
+thread = threading.Thread(
+    target=lambda: socket.create_connection(("127.0.0.1", port), timeout=1).close()
+)
+thread.start()
+connection, _address = server.accept()
+connection.close()
+server.close()
+thread.join(timeout=1)
+assert not thread.is_alive()
+
+try:
+    socket.create_connection(("1.1.1.1", 443), timeout=0.2)
+except OSError:
+    pass
+else:
+    raise AssertionError("external AF_INET connection escaped the Linux gate boundary")
+"""
+    argv = sandbox.applied(
+        CONFIG,
+        RecordingRunner(PROJECT_ROOT),
+        default=sandbox.ENFORCE,
+        requested=None,
+        argv=(sys.executable, "-c", probe),
+    )
+
+    completed = subprocess.run(argv, capture_output=True, text=True, timeout=10)
+
+    assert completed.returncode == 0, completed.stderr
+
+
+@linux_only
+def test_docker_answers_inside_the_linux_kernel_boundary() -> None:
+    argv = sandbox.applied(
+        CONFIG,
+        RecordingRunner(PROJECT_ROOT),
+        default=sandbox.ENFORCE,
+        requested=None,
+        argv=("docker", "version", "--format", "{{.Server.Version}}"),
+    )
+
+    answered = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+
+    assert answered.returncode == 0, answered.stderr
+    assert answered.stdout.strip(), "Docker daemon answered with no version"
 
 
 def test_the_sandbox_is_applied_before_any_resource_is_held() -> None:

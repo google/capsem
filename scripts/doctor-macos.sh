@@ -26,6 +26,7 @@ tool_hint() {
         b3sum)         echo "cargo install b3sum --locked" ;;
         flock)         echo "brew install flock (multi-agent lock on ~/.capsem/run/execution.lock)" ;;
         zstd)          echo "brew install zstd" ;;
+        cpio)          echo "brew install cpio" ;;
         tart)          echo "brew trust --formula cirruslabs/cli/softnet && brew install cirruslabs/cli/tart" ;;
         sshpass)       echo "brew install cirruslabs/cli/sshpass" ;;
         docker)        echo "brew install colima docker (CLI + Colima backend) && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk $(recommended_docker_disk_gib)" ;;

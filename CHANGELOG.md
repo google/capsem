@@ -88,6 +88,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Linux complete candidate gates now enter a Bubblewrap network namespace
+  with loopback as the only interface, matching the direct-egress guarantee of
+  the macOS Seatbelt profile while leaving Docker's AF_UNIX socket and local
+  test servers usable. The wrapper is applied before the machine lock and any
+  held resource. Recursion is detected from the kernel's effective interface
+  set, not an environment marker an inherited shell could forge; exporting the
+  existing keep-awake marker no longer bypasses the macOS sandbox either.
+
 - `nanoid` is pinned above GHSA-2v37-7h3g-55 in all four JavaScript
   workspaces, a high-severity hang where a custom generator loops indefinitely
   when size is zero (affects < 3.3.17). All four sat on 3.3.16, one patch
@@ -170,6 +178,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   liveness only. This is a deliberate public-surface change.
 
 ### Fixed
+
+- `bootstrap.sh --yes` now provisions Linux instead of printing Docker setup
+  hints and failing later. It installs the native compiler/Tauri dependencies,
+  the distro's actual Buildx package, Bubblewrap, `cpio`, and a SHA256-verified Node
+  runtime whose major comes from the profile image configuration; pins pnpm
+  10; starts Docker; adds durable Docker/KVM group membership; and grants the
+  current process narrow socket/device ACLs so the same bootstrap can finish
+  without a logout. Doctor now enforces the configured Node floor and points
+  Linux users back to that canonical setup path.
+
+- Linux filesystem observation no longer treats watchdog's
+  `closed_no_write` event as a source mutation. Ordinary compiler and profile
+  reads previously produced thousands of false faults, repeatedly hashed
+  source inputs, grew the gate by gigabytes, and prevented a clean bootstrap
+  from completing; close-after-write and all real mutation events remain
+  observed.
 
 - The observer records a symlink where it was created, not where it points.
   `symlink` was missing from the set of calls whose destination is the second

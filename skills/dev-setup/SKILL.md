@@ -7,9 +7,10 @@ description: Setting up a Capsem development environment from scratch. Use when 
 
 ## Prerequisites
 
+- **Linux**: supported Debian/Ubuntu or dnf-based host, x86_64/arm64, sudo/root for initial packages, and `/dev/kvm` for VM execution
 - **macOS 13+** (Ventura or later) -- required for Virtualization.framework
-- **Apple Silicon** (arm64) -- primary target. Intel Macs are not supported for VM features.
-- **Docker (via Colima on macOS)** -- needed for `just _build-assets` (kernel + rootfs builds)
+- **Apple Silicon** (arm64) -- primary macOS target. Intel Macs are not supported for VM features.
+- **Docker** (native on Linux, Colima on macOS) -- needed for `just _build-assets` (kernel + rootfs builds)
 - **Tart + sshpass (macOS)** -- needed for the clean-macOS package install owned by `just test`
 
 ## Required tools
@@ -24,7 +25,9 @@ Run `just doctor` to check all of these:
 | Node.js 24+ | Frontend build | `nvm` or `brew install node` |
 | uv | Python package manager | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | Docker (via Colima on macOS) | VM image builds | `brew install colima docker` (macOS) or `sudo apt install docker.io` (Linux) |
-| Docker BuildKit (buildx) | Cross-arch container builds | `brew install docker-buildx` (macOS) or `sudo apt install docker-buildx-plugin` (Linux) |
+| Docker BuildKit (buildx) | Cross-arch container builds | `brew install docker-buildx` (macOS); bootstrap selects `docker-buildx` from Ubuntu/Debian archives or the discovered `docker-buildx-plugin` fallback |
+| Bubblewrap (Linux) | Kernel-enforced loopback-only host gate | `sudo apt install bubblewrap` (bootstrap-owned) |
+| cpio | Initrd unpack/repack | system on macOS; `sudo apt install cpio` or `sudo dnf install cpio` on Linux (bootstrap-owned) |
 | Tart + sshpass (macOS) | Disposable clean-Mac package install gate | `brew trust --formula cirruslabs/cli/softnet && brew install cirruslabs/cli/tart cirruslabs/cli/sshpass` |
 
 Rust targets (auto-installed by `just doctor fix`):
@@ -93,10 +96,13 @@ blocker. Record the exact failed command and the Docker/Colima output.
 
 ### Linux
 
-Docker runs natively on Linux -- no Colima or memory tuning needed.
+Docker runs natively on Linux -- no Colima or memory tuning needed. Canonical
+bootstrap installs the native build libraries, Docker/Buildx, and Bubblewrap;
+enables the daemon; adds durable `docker`/`kvm` group membership; and applies a
+narrow ACL so the current process can finish without requiring a logout.
 
 ```bash
-sudo apt install docker.io
+./bootstrap.sh --yes
 ```
 
 `just doctor` checks these resources automatically and fails if below minimum.
@@ -128,6 +134,9 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 | 1 | `just` | `just.systems` -> `~/.local/bin` |
 | 2 | `uv` | `astral.sh/uv` -> `~/.local/bin` |
 | 2 | Python deps | `uv sync` |
+| 2 (Linux) | native compiler/Tauri libs, `cpio`, Docker/Buildx, Bubblewrap | apt or dnf |
+| 2 (Linux) | configured Node major + pnpm 10 | SHA256-verified official Node archive + npm |
+| 2 (Linux) | Docker/KVM current-session access | groups + narrow socket/device ACL |
 | 2 (macOS) | `flock`, `pnpm` | `brew` |
 | 2 (macOS) | `tart`, `sshpass` | `brew` |
 | 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` (+ symlink into `~/.docker/cli-plugins`) |
@@ -334,4 +343,4 @@ Registry order (each depends on the ones above it):
 - **Recover Colima before declaring Docker dead.** On macOS, a stale Colima VM
   can leave the Docker socket present but unusable. Use the Colima recovery
   discipline above before filing or reporting a Docker/Colima blocker.
-- **Bootstrap calls doctor.** `bootstrap.sh` checks bare minimums (bash, git, curl, rustup, just), installs Python/frontend deps, then runs `doctor-common.sh --fix`.
+- **Bootstrap calls doctor.** `bootstrap.sh` checks bare minimums (bash, git, curl), provisions the complete platform host (including Linux Docker/KVM/Bubblewrap and configured Node), installs Rust/Python/frontend tools, then runs `doctor-common.sh --fix`.

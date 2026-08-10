@@ -99,6 +99,24 @@ def test_a_fault_is_emitted_when_it_happens_not_at_the_end(tmp_path: Path) -> No
         watch.left("suite")
 
 
+def test_a_read_only_close_is_not_recorded_as_a_filesystem_change(tmp_path: Path) -> None:
+    """Linux inotify names an ordinary close-after-read ``closed_no_write``.
+
+    Judging it as a mutation makes every compiler/profile read look like a
+    source edit, and hashing each one turns the observer itself into the
+    dominant cost of a clean bootstrap.  The kernel has already told us no
+    write occurred, so this event must be inert before facts are collected.
+    """
+    source = tmp_path / "config.toml"
+    source.write_text("value = 1\n", encoding="utf-8")
+    watch = _watch(tmp_path)
+
+    watch.observed("closed_no_write", source)
+
+    assert watch.events == []
+    assert watch.faults == []
+
+
 def test_the_error_log_survives_a_run_that_is_killed(tmp_path: Path) -> None:
     """Line-buffered and fsynced, because the run being described may not
     exit cleanly -- and that is when the report matters most."""

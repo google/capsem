@@ -112,7 +112,7 @@ class CompleteGate:
         )
 
     def reexec(self) -> tuple[str, ...] | None:
-        """Become *this* command under a keep-awake wrapper, once.
+        """Become *this* command under its host wrappers, once.
 
         Before the machine lock, not inside it. As a step this deadlocked --
         the re-exec'd child asked for the lock its own parent was holding and
@@ -132,21 +132,29 @@ class CompleteGate:
         `caffeinate` gave `env: __main__.py: Permission denied` and a gate that
         stopped in three seconds.
         """
-        wrapper = keep_awake(self._runner)
-        if wrapper is None:
+        awake_wrapper = keep_awake(self._runner)
+        sandbox_mode = sandbox.mode(
+            self.sandboxed, getattr(self._args, "sandbox", None)
+        )
+        needs_sandbox = sandbox_mode != sandbox.OFF and not sandbox.active(self._config)
+        if awake_wrapper is None and not needs_sandbox:
             return None
-        self._runner.step("Holding macOS awake for the complete gate")
-        replacement = (*wrapper, sys.executable, "-m", MODULE, *sys.argv[1:])
+        replacement = (sys.executable, "-m", MODULE, *sys.argv[1:])
+        if awake_wrapper is not None:
+            self._runner.step("Holding macOS awake for the complete gate")
+            replacement = (*awake_wrapper, *replacement)
         # Under the sandbox too, when this run asked for one -- here rather
         # than anywhere later, because a profile is inherited by every child
         # and cannot be dropped. See `sandbox.applied`.
-        return sandbox.applied(
-            self._config,
-            self._runner,
-            default=self.sandboxed,
-            requested=getattr(self._args, "sandbox", None),
-            argv=replacement,
-        )
+        if needs_sandbox:
+            return sandbox.applied(
+                self._config,
+                self._runner,
+                default=sandbox_mode,
+                requested=None,
+                argv=replacement,
+            )
+        return replacement
 
 
 class CandidateCommand(

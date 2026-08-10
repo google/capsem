@@ -1,9 +1,11 @@
-"""The macOS sandbox profile a run executes under.
+"""The host-kernel sandbox a gate run executes under.
 
 The last isolation the gate has that is enforced by the kernel rather than by
 agreement. The prefix makes the source private; this makes "the gate fetched
 nothing mid-run" checkable instead of believed -- and it is the only mechanism
-here that a mistake in the gate's own code cannot talk its way past.
+here that a mistake in the gate's own code cannot talk its way past. macOS uses
+Seatbelt. Linux uses Bubblewrap to enter a network namespace with loopback but
+no external interface while preserving the filesystem and AF_UNIX sockets.
 
 Shaped by measurement, not by preference. `(deny default)` widened by
 enumerated allows was tried and abandoned: every read list produced a silent
@@ -29,9 +31,14 @@ Two facts that are easy to get wrong and expensive to rediscover:
 
 from __future__ import annotations
 
+import shutil
+import socket
+import subprocess
 from pathlib import Path
 
+from . import host
 from .config import GateConfig
+from .errors import GateError
 
 #: SBPL's own comment marker, so a generated profile can explain itself to
 #: whoever reads it out of a failed run's directory.
@@ -75,8 +82,8 @@ def profile(config: GateConfig, *, report: bool) -> str:
 
     lines.append("(deny network*)")
     lines.append(f"{_COMMENT} {settings.socket_reason}")
-    for socket in _sockets(config):
-        lines.append(f'(allow network* (literal "{socket}"))')
+    for socket_path in _sockets(config):
+        lines.append(f'(allow network* (literal "{socket_path}"))')
     for prefix in settings.local_socket_prefixes:
         lines.append(f'(allow network* (regex #"^{prefix}"))')
     # Unanchored: the workspace lives inside a per-run prefix, so its absolute
@@ -136,7 +143,7 @@ def written_to(config: GateConfig, directory: Path, *, report: bool) -> Path:
 
 
 def wrap(config: GateConfig, written: Path, argv: tuple[str, ...]) -> tuple[str, ...]:
-    """The same command, under the profile at `written`.
+    """The same macOS command, under the Seatbelt profile at `written`.
 
     A wrapper rather than an in-process call, because a sandbox is inherited
     and irrevocable: applying it to this interpreter would sandbox the parent
@@ -147,6 +154,58 @@ def wrap(config: GateConfig, written: Path, argv: tuple[str, ...]) -> tuple[str,
     return (config.sandbox.command, "-f", str(written), *argv)
 
 
+def linux_wrap(config: GateConfig, argv: tuple[str, ...]) -> tuple[str, ...]:
+    """The same Linux command in a loopback-only network namespace."""
+    settings = config.sandbox
+    if shutil.which(settings.linux_command) is None:
+        raise GateError(
+            f"Linux gate sandbox requires {settings.linux_command}; run bootstrap.sh"
+        )
+    return (settings.linux_command, *settings.linux_args, "--", *argv)
+
+
+def active(config: GateConfig) -> bool:
+    """Whether the kernel, rather than a forgeable marker, says we are inside.
+
+    Trusting an environment variable here lets an operator (or inherited shell
+    state) disable the only enforcement boundary by exporting one string. On
+    macOS a nested Seatbelt application is refused. On Linux the property being
+    claimed is checked directly: the kernel exposes only loopback interfaces.
+    A host with that same effective boundary is already safe; a forged marker
+    on an ordinary host still sees its external interface and cannot bypass the
+    wrapper.
+    """
+    if host.on_macos():
+        if shutil.which(config.sandbox.command) is None:
+            raise GateError(f"macOS gate sandbox requires {config.sandbox.command}")
+        probe = subprocess.run(
+            [
+                config.sandbox.command,
+                "-p",
+                "(version 1)(allow default)",
+                "true",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if probe.returncode == 0:
+            return False
+        if "sandbox_apply" in probe.stderr and "Operation not permitted" in probe.stderr:
+            return True
+        raise GateError(
+            "could not determine whether the macOS Seatbelt sandbox is active: "
+            f"{probe.stderr.strip() or f'exit {probe.returncode}'}"
+        )
+    if host.on_linux():
+        try:
+            interfaces = {name for _index, name in socket.if_nameindex()}
+        except OSError as error:
+            raise GateError(f"cannot inspect Linux network interfaces: {error}") from error
+        return interfaces == {"lo"}
+    raise GateError(f"the gate sandbox does not support host system {host.system()!r}")
+
+
 def applied(
     config: GateConfig,
     runner,
@@ -155,7 +214,7 @@ def applied(
     requested: str | None,
     argv: tuple[str, ...],
 ) -> tuple[str, ...]:
-    """`argv`, wrapped in this run's profile, or unchanged when off.
+    """`argv`, wrapped in this host's kernel sandbox, or unchanged when off.
 
     The whole decision in one place: which mode, where the profile is written,
     and whether to wrap at all. It lives here rather than on the command
@@ -163,8 +222,18 @@ def applied(
     everything about what one is belongs to this module.
     """
     chosen = mode(default, requested)
-    if chosen == OFF:
+    if chosen == OFF or active(config):
         return argv
+    if host.on_linux():
+        if chosen == REPORT:
+            raise GateError(
+                "Linux sandbox report mode is not implemented; use enforce for "
+                "kernel-denied egress rather than claiming unobserved access"
+            )
+        runner.step("Running in the enforce Bubblewrap network namespace")
+        return linux_wrap(config, argv)
+    if not host.on_macos():
+        raise GateError(f"the gate sandbox does not support host system {host.system()!r}")
     written = written_to(
         config, config.path(config.runlog.root), report=chosen == REPORT
     )

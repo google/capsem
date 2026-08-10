@@ -11,13 +11,8 @@ tool_hint() {
         rustup)    echo "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" ;;
         cargo)     echo "installed with rustup" ;;
         just)      echo "cargo install just" ;;
-        node)
-            case "$pkg" in
-                apt) echo "sudo apt install nodejs npm" ;;
-                dnf) echo "sudo dnf install nodejs npm" ;;
-                *)   echo "https://nodejs.org" ;;
-            esac ;;
-        pnpm)      echo "npm i -g pnpm" ;;
+        node)      echo "run ./bootstrap.sh (installs the configured Node major with SHA256 verification)" ;;
+        pnpm)      echo "run ./bootstrap.sh (installs pnpm 10 through the configured Node runtime)" ;;
         python3)
             case "$pkg" in
                 apt) echo "sudo apt install python3 python3-venv" ;;
@@ -44,6 +39,12 @@ tool_hint() {
                 dnf) echo "sudo dnf install zstd" ;;
                 *)   echo "install zstd" ;;
             esac ;;
+        cpio)
+            case "$pkg" in
+                apt) echo "sudo apt install cpio" ;;
+                dnf) echo "sudo dnf install cpio" ;;
+                *)   echo "install cpio" ;;
+            esac ;;
         flock)
             case "$pkg" in
                 apt) echo "sudo apt install util-linux" ;;
@@ -59,7 +60,7 @@ tool_hint() {
         docker-daemon) echo "start Docker: sudo systemctl start docker" ;;
         docker-buildx)
             case "$pkg" in
-                apt) echo "sudo apt install docker-buildx-plugin" ;;
+                apt) echo "sudo apt install docker-buildx" ;;
                 dnf) echo "sudo dnf install docker-buildx-plugin" ;;
                 *)   echo "install docker-buildx-plugin" ;;
             esac ;;

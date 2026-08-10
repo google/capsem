@@ -42,6 +42,13 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
 #: drifted.
 SOURCE_TREE = "source-tree"
 
+# Linux inotify/watchdog emits this when a descriptor opened only for reading
+# is closed.  It is explicitly evidence that no write happened, not a
+# best-effort change notification.  Keep it out before `facts_of` hashes the
+# path: a build reads thousands of source/profile files and otherwise turns
+# those reads into false mutations and unbounded observation work.
+READ_ONLY_CLOSE = "closed_no_write"
+
 
 class Watch:
     """Observes the paths a run must not disturb and judges each change live."""
@@ -124,6 +131,8 @@ class Watch:
         can supply: after the call it is simply the current mode, and the
         transition is what makes a concurrent reader fail.
         """
+        if kind == READ_ONLY_CLOSE:
+            return
         step = CURRENT_STEP.get()
         if step is not None:
             steps: tuple[str, ...] = (step,)

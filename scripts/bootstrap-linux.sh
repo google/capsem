@@ -1,0 +1,398 @@
+#!/bin/sh
+# Linux host provisioning used by bootstrap.sh.
+#
+# This file only defines functions so its config parsing can be exercised by
+# contract tests without installing packages or touching the host. bootstrap.sh
+# sources it and calls bootstrap_linux on Linux.
+
+capsem_linux_node_major() {
+    CAPSEM_NODE_CONFIG=$1
+    awk -F= '
+        /^[[:space:]]*node_major[[:space:]]*=/ {
+            value = $2
+            gsub(/[[:space:]]/, "", value)
+            if (value !~ /^[0-9]+$/) {
+                printf "invalid node_major in %s: %s\n", FILENAME, value > "/dev/stderr"
+                invalid = 1
+                next
+            }
+            if (count == 0) {
+                required = value
+            } else if (value != required) {
+                printf "node_major must match across every architecture in %s\n", FILENAME > "/dev/stderr"
+                invalid = 1
+            }
+            count++
+        }
+        END {
+            if (invalid || count == 0) {
+                exit 2
+            }
+            print required
+        }
+    ' "$CAPSEM_NODE_CONFIG"
+}
+
+capsem_linux_confirm() {
+    CAPSEM_CONFIRM_LABEL=$1
+    CAPSEM_CONFIRM_YES=$2
+    if [ "$CAPSEM_CONFIRM_YES" = 1 ] || [ ! -t 0 ]; then
+        return 0
+    fi
+    printf "  Install %s? [Y/n] " "$CAPSEM_CONFIRM_LABEL"
+    read -r CAPSEM_CONFIRM_ANSWER
+    case "$CAPSEM_CONFIRM_ANSWER" in
+        n|N|no|NO) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+capsem_linux_as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
+    else
+        printf "  [FAIL] Linux host provisioning requires root or sudo: %s\n" "$*" >&2
+        return 1
+    fi
+}
+
+capsem_linux_bootstrap_user() {
+    if [ "$(id -u)" -eq 0 ] \
+        && [ -n "${SUDO_USER:-}" ] \
+        && [ "${SUDO_USER:-root}" != root ]; then
+        printf "%s\n" "$SUDO_USER"
+    else
+        id -un
+    fi
+}
+
+capsem_linux_apt_buildx_package() {
+    # Ubuntu and Debian archive Docker packages call this docker-buildx. The
+    # Docker-CE repository calls it docker-buildx-plugin, so retain that as a
+    # discovered fallback instead of prescribing the wrong package everywhere.
+    if apt-cache show docker-buildx >/dev/null 2>&1; then
+        printf "docker-buildx\n"
+    elif apt-cache show docker-buildx-plugin >/dev/null 2>&1; then
+        printf "docker-buildx-plugin\n"
+    else
+        printf "  [FAIL] neither docker-buildx nor docker-buildx-plugin is available from apt\n" >&2
+        return 1
+    fi
+}
+
+capsem_linux_install_apt_packages() {
+    CAPSEM_APT_ASSUME_YES=$1
+    CAPSEM_APT_BASE_PACKAGES="
+        acl
+        build-essential
+        bubblewrap
+        ca-certificates
+        cpio
+        docker.io
+        file
+        libayatana-appindicator3-dev
+        librsvg2-dev
+        libssl-dev
+        libwebkit2gtk-4.1-dev
+        libxdo-dev
+        libgtk-3-dev
+        musl-tools
+        pkg-config
+        python3
+        python3-venv
+        sqlite3
+        util-linux
+        xdg-utils
+        xvfb
+        xz-utils
+        zstd
+    "
+
+    CAPSEM_APT_NEEDS_INSTALL=0
+    for CAPSEM_APT_PACKAGE in $CAPSEM_APT_BASE_PACKAGES; do
+        if ! dpkg-query -W -f='${Status}' "$CAPSEM_APT_PACKAGE" 2>/dev/null \
+            | grep -q '^install ok installed$'; then
+            CAPSEM_APT_NEEDS_INSTALL=1
+            break
+        fi
+    done
+    if ! docker buildx version >/dev/null 2>&1; then
+        CAPSEM_APT_NEEDS_INSTALL=1
+    fi
+    if [ "$CAPSEM_APT_NEEDS_INSTALL" -eq 0 ]; then
+        printf "  [ok]   Linux system packages\n"
+        return 0
+    fi
+
+    if ! capsem_linux_confirm "required Linux system packages" "$CAPSEM_APT_ASSUME_YES"; then
+        printf "  [FAIL] required Linux system packages were declined\n" >&2
+        return 1
+    fi
+
+    capsem_linux_as_root env DEBIAN_FRONTEND=noninteractive apt-get update
+    CAPSEM_APT_BUILDX_PACKAGE=$(capsem_linux_apt_buildx_package)
+    capsem_linux_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        --no-install-recommends \
+        $CAPSEM_APT_BASE_PACKAGES \
+        "$CAPSEM_APT_BUILDX_PACKAGE"
+    printf "  [ok]   Linux system packages installed\n"
+}
+
+capsem_linux_install_dnf_packages() {
+    CAPSEM_DNF_ASSUME_YES=$1
+    CAPSEM_DNF_PACKAGES="
+        acl
+        bubblewrap
+        cpio
+        docker
+        docker-buildx-plugin
+        file
+        gcc
+        gcc-c++
+        gtk3-devel
+        libappindicator-gtk3-devel
+        librsvg2-devel
+        libxdo-devel
+        make
+        musl-gcc
+        openssl-devel
+        pkgconf-pkg-config
+        python3
+        sqlite
+        util-linux
+        webkit2gtk4.1-devel
+        xdg-utils
+        xz
+        zstd
+    "
+
+    CAPSEM_DNF_NEEDS_INSTALL=0
+    for CAPSEM_DNF_PACKAGE in $CAPSEM_DNF_PACKAGES; do
+        if ! rpm -q "$CAPSEM_DNF_PACKAGE" >/dev/null 2>&1; then
+            CAPSEM_DNF_NEEDS_INSTALL=1
+            break
+        fi
+    done
+    if [ "$CAPSEM_DNF_NEEDS_INSTALL" -eq 0 ]; then
+        printf "  [ok]   Linux system packages\n"
+        return 0
+    fi
+    if ! capsem_linux_confirm "required Linux system packages" "$CAPSEM_DNF_ASSUME_YES"; then
+        printf "  [FAIL] required Linux system packages were declined\n" >&2
+        return 1
+    fi
+    capsem_linux_as_root dnf install -y $CAPSEM_DNF_PACKAGES
+    printf "  [ok]   Linux system packages installed\n"
+}
+
+capsem_linux_install_node() {
+    CAPSEM_NODE_PROJECT_ROOT=$1
+    CAPSEM_NODE_ASSUME_YES=$2
+    CAPSEM_NODE_MAJOR=$(capsem_linux_node_major \
+        "$CAPSEM_NODE_PROJECT_ROOT/config/docker/image/build.toml")
+    CAPSEM_NODE_INSTALL_ROOT="$HOME/.local/share/capsem/node"
+    CAPSEM_NODE_COMMAND=$(command -v node 2>/dev/null || true)
+    CAPSEM_NODE_CURRENT_MAJOR=""
+    if [ -n "$CAPSEM_NODE_COMMAND" ]; then
+        CAPSEM_NODE_CURRENT_MAJOR=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)
+    fi
+    CAPSEM_NODE_IS_MANAGED=0
+    if [ "$CAPSEM_NODE_COMMAND" = "$HOME/.local/bin/node" ] \
+        && [ -L "$HOME/.local/bin/node" ]; then
+        case "$(readlink "$HOME/.local/bin/node")" in
+            "$CAPSEM_NODE_INSTALL_ROOT"/*) CAPSEM_NODE_IS_MANAGED=1 ;;
+        esac
+    fi
+    if [ "$CAPSEM_NODE_CURRENT_MAJOR" = "$CAPSEM_NODE_MAJOR" ] \
+        && [ "$CAPSEM_NODE_IS_MANAGED" -eq 1 ]; then
+        printf "  [ok]   Node.js %s (required major %s)\n" \
+            "$(node --version)" "$CAPSEM_NODE_MAJOR"
+        return 0
+    fi
+
+    if ! capsem_linux_confirm \
+        "Node.js $CAPSEM_NODE_MAJOR (verified official Linux archive)" \
+        "$CAPSEM_NODE_ASSUME_YES"; then
+        printf "  [FAIL] Node.js major %s is required; found %s\n" \
+            "$CAPSEM_NODE_MAJOR" "${CAPSEM_NODE_CURRENT_MAJOR:-none}" >&2
+        return 1
+    fi
+
+    case "$(uname -m)" in
+        x86_64|amd64) CAPSEM_NODE_ARCH=x64 ;;
+        aarch64|arm64) CAPSEM_NODE_ARCH=arm64 ;;
+        *)
+            printf "  [FAIL] unsupported Linux architecture for Node.js: %s\n" "$(uname -m)" >&2
+            return 1 ;;
+    esac
+
+    CAPSEM_NODE_TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/capsem-node.XXXXXX")
+    CAPSEM_NODE_SUMS="$CAPSEM_NODE_TMPDIR/SHASUMS256.txt"
+    curl --proto '=https' --tlsv1.2 -fsSL \
+        "https://nodejs.org/dist/latest-v${CAPSEM_NODE_MAJOR}.x/SHASUMS256.txt" \
+        -o "$CAPSEM_NODE_SUMS"
+    CAPSEM_NODE_ARCHIVE_NAME=$(awk -v arch="$CAPSEM_NODE_ARCH" '
+        $2 ~ ("^node-v[0-9.]+-linux-" arch "[.]tar[.]xz$") { print $2; exit }
+    ' "$CAPSEM_NODE_SUMS")
+    if [ -z "$CAPSEM_NODE_ARCHIVE_NAME" ]; then
+        printf "  [FAIL] Node.js checksum manifest has no Linux %s archive\n" \
+            "$CAPSEM_NODE_ARCH" >&2
+        rm -f "$CAPSEM_NODE_SUMS"
+        rmdir "$CAPSEM_NODE_TMPDIR"
+        return 1
+    fi
+
+    CAPSEM_NODE_ARCHIVE="$CAPSEM_NODE_TMPDIR/$CAPSEM_NODE_ARCHIVE_NAME"
+    curl --proto '=https' --tlsv1.2 -fsSL \
+        "https://nodejs.org/dist/latest-v${CAPSEM_NODE_MAJOR}.x/$CAPSEM_NODE_ARCHIVE_NAME" \
+        -o "$CAPSEM_NODE_ARCHIVE"
+    CAPSEM_NODE_EXPECTED_SHA=$(awk -v archive="$CAPSEM_NODE_ARCHIVE_NAME" \
+        '$2 == archive { print $1; exit }' "$CAPSEM_NODE_SUMS")
+    CAPSEM_NODE_ACTUAL_SHA=$(sha256sum "$CAPSEM_NODE_ARCHIVE" | awk '{print $1}')
+    if [ -z "$CAPSEM_NODE_EXPECTED_SHA" ] \
+        || [ "$CAPSEM_NODE_ACTUAL_SHA" != "$CAPSEM_NODE_EXPECTED_SHA" ]; then
+        printf "  [FAIL] Node.js archive SHA256 does not match the official manifest\n" >&2
+        rm -f "$CAPSEM_NODE_ARCHIVE" "$CAPSEM_NODE_SUMS"
+        rmdir "$CAPSEM_NODE_TMPDIR"
+        return 1
+    fi
+
+    CAPSEM_NODE_TREE=${CAPSEM_NODE_ARCHIVE_NAME%.tar.xz}
+    mkdir -p "$CAPSEM_NODE_INSTALL_ROOT" "$HOME/.local/bin"
+    tar -xJf "$CAPSEM_NODE_ARCHIVE" -C "$CAPSEM_NODE_INSTALL_ROOT"
+    CAPSEM_NODE_BIN="$CAPSEM_NODE_INSTALL_ROOT/$CAPSEM_NODE_TREE/bin"
+    for CAPSEM_NODE_TOOL in node npm npx corepack; do
+        [ -e "$CAPSEM_NODE_BIN/$CAPSEM_NODE_TOOL" ] || continue
+        CAPSEM_NODE_LINK="$HOME/.local/bin/$CAPSEM_NODE_TOOL"
+        if [ -L "$CAPSEM_NODE_LINK" ]; then
+            case "$(readlink "$CAPSEM_NODE_LINK")" in
+                "$CAPSEM_NODE_INSTALL_ROOT"/*) ;;
+                *)
+                    printf "  [FAIL] refusing to replace unmanaged symlink %s\n" \
+                        "$CAPSEM_NODE_LINK" >&2
+                    return 1 ;;
+            esac
+        elif [ -e "$CAPSEM_NODE_LINK" ]; then
+            printf "  [FAIL] refusing to replace unmanaged file %s\n" \
+                "$CAPSEM_NODE_LINK" >&2
+            return 1
+        fi
+        ln -sfn "$CAPSEM_NODE_BIN/$CAPSEM_NODE_TOOL" "$CAPSEM_NODE_LINK"
+    done
+    rm -f "$CAPSEM_NODE_ARCHIVE" "$CAPSEM_NODE_SUMS"
+    rmdir "$CAPSEM_NODE_TMPDIR"
+    hash -r 2>/dev/null || true
+
+    CAPSEM_NODE_INSTALLED_MAJOR=$(node -p 'process.versions.node.split(".")[0]')
+    if [ "$CAPSEM_NODE_INSTALLED_MAJOR" != "$CAPSEM_NODE_MAJOR" ]; then
+        printf "  [FAIL] installed Node.js major %s, expected %s\n" \
+            "$CAPSEM_NODE_INSTALLED_MAJOR" "$CAPSEM_NODE_MAJOR" >&2
+        return 1
+    fi
+    printf "  [ok]   Node.js %s installed from verified official archive\n" \
+        "$(node --version)"
+}
+
+capsem_linux_prepare_bubblewrap() {
+    if ! bwrap --unshare-net --bind / / -- true >/dev/null 2>&1; then
+        printf "  [FAIL] Bubblewrap cannot create the Linux gate network namespace\n" >&2
+        printf "         Check that unprivileged user namespaces are enabled.\n" >&2
+        return 1
+    fi
+    printf "  [ok]   Bubblewrap network namespace\n"
+}
+
+capsem_linux_prepare_docker() {
+    CAPSEM_BOOTSTRAP_USER=$(capsem_linux_bootstrap_user)
+    if ! id "$CAPSEM_BOOTSTRAP_USER" >/dev/null 2>&1; then
+        printf "  [FAIL] bootstrap user does not exist: %s\n" "$CAPSEM_BOOTSTRAP_USER" >&2
+        return 1
+    fi
+
+    if ! docker info >/dev/null 2>&1; then
+        if command -v systemctl >/dev/null 2>&1 \
+            && capsem_linux_as_root systemctl enable --now docker; then
+            :
+        elif command -v service >/dev/null 2>&1 \
+            && capsem_linux_as_root service docker start; then
+            :
+        else
+            printf "  [FAIL] Docker daemon is unavailable and could not be started\n" >&2
+            return 1
+        fi
+    fi
+
+    # `systemctl start` returning only means activation was accepted. Wait for
+    # the socket before repairing current-session access so a fresh host does
+    # not race the daemon it just enabled.
+    CAPSEM_DOCKER_WAIT=0
+    while [ ! -S /var/run/docker.sock ] && [ "$CAPSEM_DOCKER_WAIT" -lt 30 ]; do
+        sleep 1
+        CAPSEM_DOCKER_WAIT=$((CAPSEM_DOCKER_WAIT + 1))
+    done
+
+    if [ "$(id -u "$CAPSEM_BOOTSTRAP_USER")" -ne 0 ] \
+        && getent group docker >/dev/null 2>&1; then
+        capsem_linux_as_root usermod -aG docker "$CAPSEM_BOOTSTRAP_USER"
+    fi
+    if ! docker info >/dev/null 2>&1 && [ -S /var/run/docker.sock ]; then
+        capsem_linux_as_root setfacl -m "u:$CAPSEM_BOOTSTRAP_USER:rw" /var/run/docker.sock
+    fi
+    CAPSEM_DOCKER_ACCESS_WAIT=0
+    while ! docker info >/dev/null 2>&1 \
+        && [ "$CAPSEM_DOCKER_ACCESS_WAIT" -lt 30 ]; do
+        sleep 1
+        CAPSEM_DOCKER_ACCESS_WAIT=$((CAPSEM_DOCKER_ACCESS_WAIT + 1))
+    done
+    if ! docker info >/dev/null 2>&1; then
+        printf "  [FAIL] Docker daemon is not accessible after provisioning\n" >&2
+        return 1
+    fi
+    if ! docker buildx version >/dev/null 2>&1; then
+        printf "  [FAIL] docker buildx is not available after provisioning\n" >&2
+        return 1
+    fi
+    printf "  [ok]   Docker daemon + Buildx (current-session access)\n"
+}
+
+capsem_linux_prepare_kvm() {
+    CAPSEM_BOOTSTRAP_USER=$(capsem_linux_bootstrap_user)
+    if [ ! -e /dev/kvm ]; then
+        printf "  [WARN] /dev/kvm not found; VM boot tests require KVM\n"
+        return 0
+    fi
+    if [ "$(id -u "$CAPSEM_BOOTSTRAP_USER")" -ne 0 ] \
+        && getent group kvm >/dev/null 2>&1; then
+        capsem_linux_as_root usermod -aG kvm "$CAPSEM_BOOTSTRAP_USER"
+    fi
+    if ! { [ -r /dev/kvm ] && [ -w /dev/kvm ]; }; then
+        capsem_linux_as_root setfacl -m "u:$CAPSEM_BOOTSTRAP_USER:rw" /dev/kvm
+    fi
+    if ! { [ -r /dev/kvm ] && [ -w /dev/kvm ]; }; then
+        printf "  [FAIL] /dev/kvm is not readable and writable after provisioning\n" >&2
+        return 1
+    fi
+    printf "  [ok]   /dev/kvm (current-session access)\n"
+}
+
+bootstrap_linux() {
+    CAPSEM_LINUX_PROJECT_ROOT=$1
+    CAPSEM_LINUX_ASSUME_YES=$2
+
+    printf "\n== Provisioning Linux host ==\n"
+    if command -v apt-get >/dev/null 2>&1; then
+        capsem_linux_install_apt_packages "$CAPSEM_LINUX_ASSUME_YES"
+    elif command -v dnf >/dev/null 2>&1; then
+        capsem_linux_install_dnf_packages "$CAPSEM_LINUX_ASSUME_YES"
+    else
+        printf "  [FAIL] unsupported Linux package manager (expected apt-get or dnf)\n" >&2
+        return 1
+    fi
+
+    capsem_linux_prepare_bubblewrap
+    capsem_linux_install_node "$CAPSEM_LINUX_PROJECT_ROOT" "$CAPSEM_LINUX_ASSUME_YES"
+    capsem_linux_prepare_docker
+    capsem_linux_prepare_kvm
+}

@@ -321,6 +321,7 @@ def test_a_reexec_becomes_the_same_command_it_replaced(monkeypatch, tmp_path) ->
     marker = gate_config.load(Path(__file__).resolve().parents[1]).candidate.keep_awake_marker
     monkeypatch.setattr(candidate.host, "on_macos", lambda: True)
     monkeypatch.setattr(candidate.shutil, "which", lambda _name: "/usr/bin/caffeinate")
+    monkeypatch.setattr(candidate.sandbox, "active", lambda _config: False)
     monkeypatch.delenv(marker, raising=False)
     # The shape a real run has: `capsem-gate` re-execs itself under an
     # isolated bytecode cache with `-m capsem.gate`, so argv[0] here is the

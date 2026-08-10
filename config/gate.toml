@@ -1402,7 +1402,7 @@ carried = [".git", "private"]
 exports = ["dist", "packages", "assets", "target/gate-runs"]
 
 # ---------------------------------------------------------------------------
-# The macOS sandbox
+# The host-kernel sandbox
 # ---------------------------------------------------------------------------
 # `(allow default)` narrowed by targeted denials, not `(deny default)` widened
 # by enumerated allows. The second was measured and abandoned: every read list
@@ -1411,6 +1411,12 @@ exports = ["dist", "packages", "assets", "target/gate-runs"]
 # nothing. Denying writes and the network is where the value is anyway.
 [sandbox]
 command = "sandbox-exec"
+linux_command = "bwrap"
+# Same scope as the Seatbelt profile: preserve the host filesystem and UNIX
+# sockets, but give the whole gate a network namespace with loopback only.
+# Docker still answers over /var/run/docker.sock and its daemon may perform the
+# explicitly declared container fetches; direct host-gate egress has no route.
+linux_args = ["--unshare-net", "--die-with-parent", "--new-session", "--bind", "/", "/"]
 profile_name = "gate.sb"
 
 network_reason = "No mid-run fetch. This is the rule the whole profile exists for."

@@ -104,6 +104,17 @@ fi
 # script -- both installers drop binaries there but don't reload PATH.
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 
+# Linux is a first-class build and runtime host. Provision the complete native
+# fast-gate toolchain, the container runtime, same-session Docker/KVM access,
+# and the Node major selected by config/docker/image/build.toml. The helper is
+# sourced rather than executed so its verified ~/.local/bin Node install is
+# immediately visible to the remaining bootstrap phases.
+if [ "$(uname -s)" = "Linux" ]; then
+    # shellcheck disable=SC1091
+    . "$SCRIPT_DIR/scripts/bootstrap-linux.sh"
+    bootstrap_linux "$SCRIPT_DIR" "$ASSUME_YES"
+fi
+
 if command -v rustup >/dev/null 2>&1; then
     printf "  [ok]   rustup\n"
 elif confirm "rustup (Rust toolchain manager, via sh.rustup.rs)"; then
@@ -207,7 +218,17 @@ if [ "$(uname -s)" = "Darwin" ] \
     export CAPSEM_BOOTSTRAP_TART_PROVEN=1
 fi
 
+PNPM_READY=0
+PNPM_VERSION=""
+PNPM_MAJOR=""
 if command -v pnpm >/dev/null 2>&1; then
+    PNPM_VERSION=$(pnpm --version 2>/dev/null || true)
+    PNPM_MAJOR=${PNPM_VERSION%%.*}
+    if [ "$(uname -s)" != "Linux" ] || [ "$PNPM_MAJOR" = 10 ]; then
+        PNPM_READY=1
+    fi
+fi
+if [ "$PNPM_READY" -eq 1 ]; then
     printf "  Frontend deps (pnpm install)...\n"
     (cd frontend && CI=true pnpm install --frozen-lockfile)
 else
@@ -217,15 +238,22 @@ else
                 brew install pnpm
             fi ;;
         Linux)
-            # Official installer; no npm or sudo required. Drops to ~/.local/share/pnpm.
-            if confirm "pnpm (Node package manager, via get.pnpm.io)"; then
-                curl --proto '=https' --tlsv1.2 -fsSL https://get.pnpm.io/install.sh \
-                    | env SHELL=/bin/sh ENV="" PNPM_HOME="$HOME/.local/share/pnpm" sh -
-                export PNPM_HOME="$HOME/.local/share/pnpm"
-                export PATH="$PNPM_HOME:$PATH"
+            # bootstrap_linux installed the configured Node major first. Keep
+            # pnpm aligned with CI and the immutable host-builder image.
+            if confirm "pnpm 10 (Node package manager, via npm)"; then
+                npm install --global pnpm@10 --prefix "$HOME/.local"
             fi ;;
     esac
     if command -v pnpm >/dev/null 2>&1; then
+        if [ "$(uname -s)" = "Linux" ]; then
+            PNPM_VERSION=$(pnpm --version 2>/dev/null || true)
+            PNPM_MAJOR=${PNPM_VERSION%%.*}
+            if [ "$PNPM_MAJOR" != 10 ]; then
+                printf "  [FAIL] pnpm 10 is required after bootstrap; found %s\n" \
+                    "${PNPM_VERSION:-unknown}" >&2
+                exit 1
+            fi
+        fi
         printf "  Frontend deps (pnpm install)...\n"
         (cd frontend && CI=true pnpm install --frozen-lockfile)
     else
@@ -236,9 +264,8 @@ fi
 # Container runtime. Required by `just build-assets` (kernel/rootfs are built
 # in Docker) which doctor's auto-fix step runs next.
 #   macOS: install colima + docker + docker-buildx via brew, start the VM.
-#   Linux: docker is system-managed (apt/dnf, sudo, group membership, daemon
-#          setup). Auto-installing it here would be invasive and distro-
-#          specific -- print a clear hint instead and let doctor surface it.
+#   Linux: bootstrap_linux installed and started the native daemon, repaired
+#          current-session access, and verified Buildx before dependency work.
 case "$(uname -s)" in
     Darwin)
         if ! command -v brew >/dev/null 2>&1; then
@@ -299,11 +326,9 @@ case "$(uname -s)" in
             fi
         fi ;;
     Linux)
-        if ! command -v docker >/dev/null 2>&1; then
-            printf "  [SKIP] docker (install via your package manager: 'apt install docker.io' or 'dnf install docker', then 'sudo usermod -aG docker \$USER' and re-login)\n"
-        elif ! docker info >/dev/null 2>&1; then
-            printf "  [SKIP] docker daemon (run 'sudo systemctl enable --now docker' and ensure your user is in the docker group)\n"
-        fi ;;
+        docker info >/dev/null
+        docker buildx version >/dev/null
+        printf "  [ok]   native Docker daemon + Buildx\n" ;;
 esac
 
 # --- Phase 3: Run doctor with auto-fix ---

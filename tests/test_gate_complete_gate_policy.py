@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from helpers.gate import RecordingRunner
 
-from capsem.gate import candidate, cli  # noqa: F401 - importing registers every command
+from capsem.gate import candidate, cli, sandbox  # noqa: F401 - importing registers commands
 from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
 
@@ -45,6 +45,7 @@ def _command(name: str, **args):
 def macos(monkeypatch):
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/caffeinate")
+    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: False)
     monkeypatch.delenv(CONFIG.candidate.keep_awake_marker, raising=False)
 
 
@@ -99,17 +100,48 @@ def test_the_wrapper_preserves_the_operators_exact_invocation(name, macos) -> No
 
 @pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
 def test_the_wrapper_is_applied_exactly_once(name, macos, monkeypatch) -> None:
-    """The marker the wrapper exports stops the child wrapping itself."""
+    """Kernel state, not a forgeable environment marker, stops rewrapping."""
     monkeypatch.setenv(CONFIG.candidate.keep_awake_marker, "1")
+    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: True)
 
     assert _command(name, **COMPLETE_GATE[name]).reexec() is None
 
 
-@pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
-def test_linux_needs_no_wrapper(name, monkeypatch) -> None:
+def test_forging_the_keep_awake_marker_cannot_disable_the_macos_sandbox(
+    macos, monkeypatch
+) -> None:
+    monkeypatch.setenv(CONFIG.candidate.keep_awake_marker, "1")
+
+    replacement = _command("candidate").reexec()
+
+    assert replacement is not None
+    assert replacement[0] == CONFIG.sandbox.command
+
+
+def test_linux_candidate_gets_the_kernel_enforced_network_wrapper(monkeypatch) -> None:
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/bwrap")
+    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: False)
+
+    replacement = _command("candidate").reexec()
+
+    assert replacement is not None
+    assert replacement[0] == CONFIG.sandbox.linux_command
+    assert "--unshare-net" in replacement
+
+
+@pytest.mark.parametrize("name", ["release-binaries", "release-profile"])
+def test_linux_release_command_keeps_its_declared_network(name, monkeypatch) -> None:
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
 
     assert _command(name, **COMPLETE_GATE[name]).reexec() is None
+
+
+def test_linux_kernel_wrapper_is_applied_exactly_once(monkeypatch) -> None:
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: True)
+
+    assert _command("candidate").reexec() is None
 
 
 def test_the_policy_is_stated_as_policy_not_as_one_command_name() -> None:

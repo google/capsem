@@ -8,6 +8,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# Share the architecture-consistency parser with canonical bootstrap. Sourcing
+# the library is inert: it only defines functions and performs no Linux setup.
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/bootstrap-linux.sh"
+
 ENTITLEMENTS="entitlements.plist"
 ASSETS_DIR="assets"
 
@@ -181,7 +186,7 @@ echo -e "${BOLD}Capsem Doctor${NC}"
 echo "============================================"
 
 section "System Tools"
-for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum flock zstd; do
+for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum flock zstd cpio; do
     if command -v "$tool" &>/dev/null; then
         pass "$tool"
     else
@@ -189,6 +194,18 @@ for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum flock zstd; do
         fail "$tool not found -- install: $_hint"
     fi
 done
+
+if command -v node &>/dev/null; then
+    _required_node_major=$(capsem_linux_node_major \
+        "$PROJECT_ROOT/config/docker/image/build.toml")
+    _installed_node_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)
+    if [[ "$_installed_node_major" =~ ^[0-9]+$ ]] \
+        && (( _installed_node_major >= _required_node_major )); then
+        pass "Node.js major $_installed_node_major (required Node.js major $_required_node_major or newer)"
+    else
+        fail "Node.js major ${_installed_node_major:-unknown} is below required Node.js major $_required_node_major -- run bootstrap.sh"
+    fi
+fi
 
 section "Rust Toolchain"
 for target in aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do

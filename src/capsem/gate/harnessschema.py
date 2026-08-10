@@ -260,15 +260,18 @@ class PrefixConfig(Strict):
 
 
 class SandboxConfig(Strict):
-    """What the generated Seatbelt profile is allowed to say.
+    """What the host-kernel sandbox is allowed to say.
 
-    Every rule the profile emits comes from here. `test_gate_has_no_literal_data`
+    macOS renders Seatbelt rules; Linux enters a Bubblewrap network namespace.
+    Every command, argument, and rule comes from here. `test_gate_has_no_literal_data`
     enforces that for free and strictly, which matters more here than anywhere
-    else: a literal path in a security profile is a rule nobody can find when
-    it turns out to be wrong.
+    else: a literal in a security boundary is a rule nobody can find when it
+    turns out to be wrong.
     """
 
     command: str
+    linux_command: str
+    linux_args: tuple[str, ...]
     profile_name: str
     network_reason: str
     socket_reason: str
@@ -284,6 +287,21 @@ class SandboxConfig(Strict):
     report_summary_suffix: str
     report_pid_suffix: str
     report_stop_timeout: float
+
+    @model_validator(mode="after")
+    def _linux_network_namespace_is_an_enforcement_boundary(self) -> SandboxConfig:
+        """A configurable wrapper must not be configurable into doing nothing."""
+        if self.linux_args.count("--unshare-net") != 1:
+            raise ValueError("linux_args must contain exactly one --unshare-net")
+        if not any(
+            self.linux_args[index : index + 3] == ("--bind", "/", "/")
+            for index in range(max(0, len(self.linux_args) - 2))
+        ):
+            raise ValueError("linux_args must preserve the host filesystem with --bind / /")
+        for required in ("--die-with-parent", "--new-session"):
+            if required not in self.linux_args:
+                raise ValueError(f"linux_args must contain {required}")
+        return self
 
 
 class WorkspaceConfig(Strict):
