@@ -146,10 +146,10 @@ def _validate_start(runner: Runner, channel: str) -> str | None:
         ahead == "1"
         and parent == remote
         and tag == expected_tag
-        and _tag_channel(runner, tag) == channel
+        and _tag_channel(runner, expected_tag) == channel
         and subject == f"release({channel}): {tag}"
     ):
-        return tag
+        return expected_tag
     raise ValueError(
         f"local main differs from origin/main and is not one resumable {channel} release commit"
     )
