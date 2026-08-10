@@ -82,8 +82,43 @@ capsem_linux_apt_buildx_package() {
     fi
 }
 
+capsem_linux_cross_arch() {
+    CAPSEM_CROSS_MACHINE=${1:-$(uname -m)}
+    case "$CAPSEM_CROSS_MACHINE" in
+        x86_64|amd64) printf "aarch64\n" ;;
+        aarch64|arm64) printf "x86_64\n" ;;
+        *)
+            printf "  [FAIL] unsupported Linux architecture for binfmt: %s\n" \
+                "$CAPSEM_CROSS_MACHINE" >&2
+            return 1 ;;
+    esac
+}
+
+capsem_linux_apt_binfmt_package() {
+    # Noble/Jammy ship the static bundle under this name. Resolute exposes the
+    # registration package directly, so discover the archive's current name
+    # rather than pinning bootstrap to one Ubuntu generation.
+    for CAPSEM_APT_BINFMT_CANDIDATE in qemu-user-static qemu-user-binfmt; do
+        if apt-cache show "$CAPSEM_APT_BINFMT_CANDIDATE" 2>/dev/null \
+            | grep -q '^Package:'; then
+            printf "%s\n" "$CAPSEM_APT_BINFMT_CANDIDATE"
+            return 0
+        fi
+    done
+    printf "  [FAIL] neither qemu-user-static nor qemu-user-binfmt is available from apt\n" >&2
+    return 1
+}
+
+capsem_linux_dnf_binfmt_package() {
+    case "$(capsem_linux_cross_arch)" in
+        aarch64) printf "qemu-user-static-aarch64\n" ;;
+        x86_64) printf "qemu-user-static-x86\n" ;;
+    esac
+}
+
 capsem_linux_install_apt_packages() {
     CAPSEM_APT_ASSUME_YES=$1
+    CAPSEM_APT_BINFMT_PACKAGE=$(capsem_linux_apt_binfmt_package)
     CAPSEM_APT_BASE_PACKAGES="
         acl
         build-essential
@@ -108,6 +143,7 @@ capsem_linux_install_apt_packages() {
         xvfb
         xz-utils
         zstd
+        $CAPSEM_APT_BINFMT_PACKAGE
     "
 
     CAPSEM_APT_NEEDS_INSTALL=0
@@ -142,6 +178,7 @@ capsem_linux_install_apt_packages() {
 
 capsem_linux_install_dnf_packages() {
     CAPSEM_DNF_ASSUME_YES=$1
+    CAPSEM_DNF_BINFMT_PACKAGE=$(capsem_linux_dnf_binfmt_package)
     CAPSEM_DNF_PACKAGES="
         acl
         bubblewrap
@@ -166,6 +203,7 @@ capsem_linux_install_dnf_packages() {
         xdg-utils
         xz
         zstd
+        $CAPSEM_DNF_BINFMT_PACKAGE
     "
 
     CAPSEM_DNF_NEEDS_INSTALL=0
@@ -309,6 +347,79 @@ capsem_linux_network_interfaces() {
 
 capsem_linux_loopback_only() {
     [ "$(capsem_linux_network_interfaces "${1:-/proc/net/dev}")" = lo ]
+}
+
+capsem_linux_binfmt_entry() {
+    CAPSEM_BINFMT_ROOT=${1:-/proc/sys/fs/binfmt_misc}
+    CAPSEM_BINFMT_ARCH=${2:-$(capsem_linux_cross_arch)}
+    for CAPSEM_BINFMT_CANDIDATE in \
+        "$CAPSEM_BINFMT_ROOT/qemu-$CAPSEM_BINFMT_ARCH" \
+        "$CAPSEM_BINFMT_ROOT/qemu-$CAPSEM_BINFMT_ARCH-static"; do
+        if [ -f "$CAPSEM_BINFMT_CANDIDATE" ]; then
+            printf "%s\n" "$CAPSEM_BINFMT_CANDIDATE"
+            return 0
+        fi
+    done
+    return 1
+}
+
+capsem_linux_verify_binfmt() {
+    CAPSEM_BINFMT_ROOT=${1:-/proc/sys/fs/binfmt_misc}
+    CAPSEM_BINFMT_ARCH=${2:-$(capsem_linux_cross_arch)}
+    CAPSEM_BINFMT_ENTRY=$(capsem_linux_binfmt_entry \
+        "$CAPSEM_BINFMT_ROOT" "$CAPSEM_BINFMT_ARCH" || true)
+    if [ -z "$CAPSEM_BINFMT_ENTRY" ]; then
+        printf "  [FAIL] no enabled qemu-%s binfmt registration\n" \
+            "$CAPSEM_BINFMT_ARCH" >&2
+        return 1
+    fi
+    if ! grep -qx 'enabled' "$CAPSEM_BINFMT_ENTRY"; then
+        printf "  [FAIL] qemu-%s binfmt registration is disabled\n" \
+            "$CAPSEM_BINFMT_ARCH" >&2
+        return 1
+    fi
+    CAPSEM_BINFMT_FLAGS=$(awk -F': ' '$1 == "flags" { print $2; exit }' \
+        "$CAPSEM_BINFMT_ENTRY")
+    case "$CAPSEM_BINFMT_FLAGS" in
+        *F*) ;;
+        *)
+            printf "  [FAIL] qemu-%s binfmt lacks the fix-binary flag Docker requires\n" \
+                "$CAPSEM_BINFMT_ARCH" >&2
+            return 1 ;;
+    esac
+    CAPSEM_BINFMT_INTERPRETER=$(awk '$1 == "interpreter" { print $2; exit }' \
+        "$CAPSEM_BINFMT_ENTRY")
+    if [ -z "$CAPSEM_BINFMT_INTERPRETER" ] \
+        || [ ! -x "$CAPSEM_BINFMT_INTERPRETER" ]; then
+        printf "  [FAIL] qemu-%s binfmt interpreter is missing or not executable: %s\n" \
+            "$CAPSEM_BINFMT_ARCH" "${CAPSEM_BINFMT_INTERPRETER:-none}" >&2
+        return 1
+    fi
+    printf "  [ok]   qemu-%s binfmt (Docker %s container execution)\n" \
+        "$CAPSEM_BINFMT_ARCH" "$CAPSEM_BINFMT_ARCH"
+}
+
+capsem_linux_prepare_binfmt() {
+    CAPSEM_BINFMT_NET_DEV=${1:-/proc/net/dev}
+    if capsem_linux_verify_binfmt >/dev/null 2>&1; then
+        capsem_linux_verify_binfmt
+        return 0
+    fi
+    if capsem_linux_loopback_only "$CAPSEM_BINFMT_NET_DEV"; then
+        printf "         Run ./bootstrap.sh outside the gate to register distro QEMU.\n" >&2
+        return 1
+    fi
+
+    # The distro owns the magic/mask and interpreter path. Refresh its
+    # registration service instead of copying those architecture constants
+    # into Capsem or using a privileged mutable helper image.
+    if command -v systemctl >/dev/null 2>&1; then
+        capsem_linux_as_root systemctl restart systemd-binfmt.service || true
+    fi
+    if command -v update-binfmts >/dev/null 2>&1; then
+        capsem_linux_as_root update-binfmts --enable || true
+    fi
+    capsem_linux_verify_binfmt
 }
 
 capsem_linux_prepare_bubblewrap() {
@@ -484,6 +595,7 @@ bootstrap_linux() {
         return 1
     fi
 
+    capsem_linux_prepare_binfmt "$CAPSEM_NET_DEV"
     capsem_linux_prepare_bubblewrap "$CAPSEM_NET_DEV"
     capsem_linux_install_node "$CAPSEM_LINUX_PROJECT_ROOT" "$CAPSEM_LINUX_ASSUME_YES"
     if capsem_linux_loopback_only "$CAPSEM_NET_DEV"; then

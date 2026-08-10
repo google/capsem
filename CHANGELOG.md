@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Canonical Linux bootstrap now installs the distro-owned QEMU user/binfmt
+  package for the host's opposite architecture, refreshes only the distro
+  registration service, and proves an enabled executable interpreter with the
+  fix-binary flag Docker requires. The exact arm64 preflight therefore works on
+  a fresh x86_64 host without a privileged helper-image workaround, while
+  macOS keeps its existing Colima Rosetta path.
+
 - Guest kernel/rootfs builders now require distinct per-platform Debian child
   manifest digests, materialize missing exact bases through the guarded Docker
   daemon boundary before every asset rail, and use that same exact base for the

@@ -50,6 +50,6 @@ def require(runner: Runner, config: gate_config.GateConfig, native: gate_config.
     remedy = (
         "Colima Rosetta may be configured but stale; run 'colima restart' and retry."
         if host.on_macos()
-        else "Install/register binfmt QEMU support and retry."
+        else "Run './bootstrap.sh --yes' outside the gate to install/register binfmt QEMU."
     )
     raise GateError(f"Docker cannot execute {platform} containers.\n{remedy}")

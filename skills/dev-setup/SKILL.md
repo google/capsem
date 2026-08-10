@@ -98,12 +98,15 @@ blocker. Record the exact failed command and the Docker/Colima output.
 
 Docker runs natively on Linux -- no Colima or memory tuning needed. Canonical
 bootstrap installs the native build libraries, Docker/Buildx, and Bubblewrap;
-enables the daemon; loads KVM and vhost-vsock; and provisions both device nodes
-for repeated VM lifecycles in the current shell. KVM uses the same durable mode
-as Linux release CI because systemd-logind can remove a named ACL after the
-first VM exits. vhost-vsock remains group-owned with a narrow current-user ACL.
-Do not hand-provision either device or weaken the separate macOS VZ/Seatbelt
-path; rerun the checked-in bootstrap so its udev rules remain the authority.
+installs the distro's QEMU user/binfmt package and proves the fix-binary
+registration Docker needs for the other architecture; enables the daemon;
+loads KVM and vhost-vsock; and provisions both device nodes for repeated VM
+lifecycles in the current shell. KVM uses the same durable mode as Linux release
+CI because systemd-logind can remove a named ACL after the first VM exits.
+vhost-vsock remains group-owned with a narrow current-user ACL. Do not
+hand-provision binfmt or either device, and do not weaken the separate macOS
+VZ/Seatbelt path; rerun the checked-in bootstrap so distro registration and
+udev rules remain the authority.
 
 ```bash
 ./bootstrap.sh --yes

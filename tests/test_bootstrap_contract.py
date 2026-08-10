@@ -181,6 +181,61 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert "CAPSEM_DOCKER_ACCESS_WAIT" in linux
 
 
+def test_linux_bootstrap_owns_distro_binfmt_setup_before_the_gate() -> None:
+    linux = _read("scripts/bootstrap-linux.sh")
+
+    assert "qemu-user-static" in linux
+    assert "qemu-user-binfmt" in linux
+    assert "qemu-user-static-aarch64" in linux
+    assert "qemu-user-static-x86" in linux
+    assert "capsem_linux_prepare_binfmt" in linux
+    assert linux.index("capsem_linux_prepare_binfmt") < linux.index(
+        "capsem_linux_prepare_bubblewrap"
+    )
+    assert "/proc/sys/fs/binfmt_misc" in linux
+    assert '$1 == "flags"' in linux
+    assert "systemd-binfmt" in linux
+    assert "update-binfmts" in linux
+
+
+def test_linux_binfmt_verifier_requires_enabled_fix_binary_registration(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "binfmt"
+    root.mkdir()
+    entry = root / "qemu-aarch64"
+    entry.write_text(
+        "enabled\ninterpreter /bin/true\nflags: OCF\n",
+        encoding="utf-8",
+    )
+    script = PROJECT_ROOT / "scripts/bootstrap-linux.sh"
+    command = '. "$1"; capsem_linux_verify_binfmt "$2" aarch64'
+
+    valid = subprocess.run(
+        ["sh", "-c", command, "sh", str(script), str(root)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert valid.returncode == 0, valid.stderr
+    assert "aarch64 container execution" in valid.stdout
+
+    entry.write_text(
+        "enabled\ninterpreter /bin/true\nflags: OC\n",
+        encoding="utf-8",
+    )
+    invalid = subprocess.run(
+        ["sh", "-c", command, "sh", str(script), str(root)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert invalid.returncode != 0
+    assert "fix-binary flag" in invalid.stderr
+
+
 def test_linux_bubblewrap_probe_does_not_nest_an_active_namespace(tmp_path: Path) -> None:
     """Kernel state, not a forgeable gate marker, decides whether to nest."""
     loopback = tmp_path / "loopback-net-dev"
@@ -247,6 +302,7 @@ def test_linux_bootstrap_verifies_in_gate_and_provisions_only_on_host(
     command = """
 . "$1"
 capsem_linux_install_apt_packages() { :; }
+capsem_linux_prepare_binfmt() { printf 'prepare-binfmt\n'; }
 capsem_linux_prepare_bubblewrap() { :; }
 capsem_linux_install_node() { :; }
 capsem_linux_verify_docker() { printf 'verify-docker\n'; }
@@ -262,6 +318,7 @@ bootstrap_linux "$2" 1 "$3"
         capture_output=True,
         check=True,
     )
+    assert "prepare-binfmt" in active.stdout
     assert "verify-docker\nverify-devices\n" in active.stdout
     assert "provision-" not in active.stdout
 

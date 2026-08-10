@@ -25,6 +25,7 @@ sidebar:
 | **KVM + vhost-vsock** | `/dev/kvm` and `/dev/vhost-vsock` must be accessible. Bootstrap loads and provisions both. |
 | **Docker** | Installed/started by bootstrap; needed for `just build-assets code` |
 | **Bubblewrap** | Installed/proved by bootstrap; gives `just test` a loopback-only host network namespace |
+| **QEMU user/binfmt** | Installed and registration-proved by bootstrap; executes the non-host asset architecture |
 
 ## Clone and bootstrap
 
@@ -48,7 +49,7 @@ lifecycles in the bootstrap run.
 | 1 (hard prereqs) | `bash`, `git`, `curl` | system package manager (you install) | Without curl we can't fetch any installer |
 | 1 | `rustup` (stable, minimal profile) | `sh.rustup.rs` official installer | Source of `cargo` |
 | 1 | `just` | `just.systems` installer → `~/.local/bin` | Recipe runner — used by every other build step |
-| 1 (Linux) | compiler/Tauri libraries, `cpio`, Docker/Buildx, Bubblewrap | apt or dnf | Native gate, initrd repack, image builds, and kernel-enforced host egress isolation |
+| 1 (Linux) | compiler/Tauri libraries, `cpio`, Docker/Buildx, Bubblewrap, QEMU user/binfmt | apt or dnf | Native gate, initrd repack, exact cross-architecture image builds, and kernel-enforced host egress isolation |
 | 1 (Linux) | Node 24 + pnpm 10 | SHA256-verified Node archive + npm | Matches CI and the immutable host builder |
 | 1 (Linux) | Docker/KVM/vhost-vsock access | durable groups + udev policy and current-session ACL | Lets the same bootstrap process build and run repeated VM lifecycles without a logout |
 | 2 | `uv` | `astral.sh/uv` installer → `~/.local/bin` | Python deps for `capsem-builder` |
