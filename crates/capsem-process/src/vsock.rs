@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::sync::{broadcast, mpsc};
-use tracing::{error, info, warn};
+use tracing::{error, info, trace, warn};
 
 use crate::helpers::clone_fd;
 use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
@@ -1327,6 +1327,16 @@ fn ackable_response_id(msg: &GuestToHost) -> Option<u64> {
     }
 }
 
+/// Replies produced by the periodic control-channel liveness probe.
+///
+/// These messages carry no job result and need no replay acknowledgement. A
+/// healthy VM sends one every few seconds, so treating them as an unknown wire
+/// variant turns normal uptime into warning spam and hides the first useful
+/// fault in a preserved process log.
+fn is_guest_liveness_message(msg: &GuestToHost) -> bool {
+    matches!(msg, GuestToHost::Pong)
+}
+
 const FILE_SECURITY_CONTENT_PREVIEW_MAX: usize = 64 * 1024;
 
 struct FileSecurityBoundary {
@@ -1382,7 +1392,9 @@ fn exec_boundary_refusal(
         }
         Err(error) => {
             warn!(id, error, "failed to evaluate exec boundary");
-            Some(format!("capsem: command refused, security evaluation failed: {error}"))
+            Some(format!(
+                "capsem: command refused, security evaluation failed: {error}"
+            ))
         }
     }
 }
@@ -1661,6 +1673,9 @@ async fn handle_guest_msg(
             if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
                 capsem_core::try_send!("job_result_error", tx.send(JobResult::Error { message }));
             }
+        }
+        other if is_guest_liveness_message(&other) => {
+            trace!(target: "ipc", message = ?other, "guest liveness reply");
         }
         other => {
             warn!(target: "ipc", unhandled = ?other, "handle_guest_msg: unknown variant; this binary may be older than its peer");

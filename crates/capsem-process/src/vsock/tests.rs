@@ -670,13 +670,30 @@ fn every_guest_to_host_completion_is_ack_eligible() {
 
 #[test]
 fn guest_liveness_messages_are_not_ack_eligible() {
-    for msg in [GuestToHost::Pong, GuestToHost::Ready { version: "1.0".into() }] {
+    for msg in [
+        GuestToHost::Pong,
+        GuestToHost::Ready {
+            version: "1.0".into(),
+        },
+    ] {
         assert_eq!(
             ackable_response_id(&msg),
             None,
             "{msg:?} carries no correlation id to ack"
         );
     }
+}
+
+#[test]
+fn only_periodic_pong_is_expected_post_handshake_liveness() {
+    assert!(is_guest_liveness_message(&GuestToHost::Pong));
+    assert!(!is_guest_liveness_message(&GuestToHost::Ready {
+        version: "1.0".into(),
+    }));
+    assert!(!is_guest_liveness_message(&GuestToHost::Error {
+        id: 9,
+        message: "broken".into(),
+    }));
 }
 
 #[test]
