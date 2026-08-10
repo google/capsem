@@ -369,10 +369,11 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
         "scripts/audit-python-lock.sh",
         # ruff over the whole tree, and ty over src/scripts/tests/guest -- as
         # three steps, so a ruff failure no longer hides what ty would have
-        # said. ty used to run on src/capsem alone, leaving the release
-        # scripts with no type gate at all.
+        # said. The explicit all-platform surface keeps the exact diagnostic
+        # ratchet identical on Linux and macOS. ty used to run on src/capsem
+        # alone, leaving the release scripts with no type gate at all.
         "ruff check .",
-        "ty check --error-on-warning src",
+        "ty check --error-on-warning --python-platform all src",
         "cargo clippy --workspace --all-targets -- -D warnings",
         "check-web-surface.sh frontend",
         "check-web-surface.sh release-site",
