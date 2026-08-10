@@ -1,4 +1,4 @@
-name: Daily nightly binary release
+name: Daily nightly orthogonal release
 
 on:
   schedule:
@@ -14,7 +14,32 @@ permissions:
   contents: write
 
 jobs:
+  release-profiles:
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        profile: [code, co-work]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
+
+      - name: Rebuild nightly ${{ matrix.profile }} profile assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: just release-profile nightly ${{ matrix.profile }}
+
   release-binaries:
+    needs: release-profiles
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
@@ -32,7 +57,7 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
 
-      - name: Release nightly binaries when main changed
+      - name: Rebuild or release nightly binaries
         env:
           GH_TOKEN: ${{ github.token }}
         run: just release-binaries nightly

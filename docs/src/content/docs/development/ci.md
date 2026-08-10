@@ -13,8 +13,8 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 |----------|---------|-------------|
 | `ci.yaml` | Pull requests and pushes to `main` | Quality gate: the shared fast/static module, Rust unit/integration, frontend, Python contracts, install checks, explicit runner substitutions, and a post-merge main signal |
 | `security-audit.yaml` | Weekly schedule or manual dispatch | Blocking RustSec and dependency advisories across every JavaScript web workspace |
-| `release-nightly.yaml` | Daily schedule or manual dispatch | Check out current `main` and call `just release-binaries nightly`; tagged `main` is a clean no-op |
-| `release.yaml` | Dispatch from `release-binaries` with `{tag, channel}` | Run one per-channel serialized stable or nightly release: build apps, install-test the exact packages, publish them, update only the selected channel, and run public glow-up checks |
+| `release-nightly.yaml` | Daily schedule or manual dispatch | Check out current `main`, run the selected `just release-profile nightly <profile>` commands serially, then run `just release-binaries nightly` as a separate lane |
+| `release.yaml` | Correlated dispatch from `release-binaries` with `{tag, channel, publish, dispatch_id}` | Build and install-test exact native packages; publish and advance only a new immutable identity, or finish as a rebuild-only proof when that identity already exists |
 | `release-assets.yaml` | Correlated dispatch from `capsem-admin release` | Build exactly one channel/profile's images, config, and evidence against the existing channel package; the public command watches that exact run through success |
 | `release-channel-staging.yaml` | Manual | Build a deterministic staging asset channel fixture, deploy it to a Cloudflare Pages preview branch, and validate the same release-channel contract without invoking `build-assets`, `build-app-macos`, or `build-app-linux` |
 | `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove profile image metadata is unchanged without creating a GitHub release or deploying release.capsem.org |
@@ -24,7 +24,7 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 
 Installers carry host binaries and the selected manifest URL provenance, plus
 materialized profiles. They do not carry a manifest snapshot or VM image blobs.
-The manual VM asset workflow publishes changed image/evidence blobs to the
+The profile asset workflow publishes changed image/evidence blobs to the
 immutable GitHub Release tag `assets-v<asset-version>` using arch-prefixed
 artifact names. The logical manifest names stay `vmlinuz`, `initrd.img`,
 `rootfs.erofs`, `obom.cdx.json`, and `software-inventory.json`; published blob
@@ -153,11 +153,21 @@ not change the public channel. The following binary lane resolves those exact
 bytes, runs the complete pairing proof, and activates the channel. Neither
 artifact family is rebuilt twice.
 
-Nightly binary release runs once daily through `release-nightly.yaml`, which
-calls the same public binary command rather than duplicating release steps or
-publishing on every push. If current `main` already has an immutable binary
-tag, the script exits successfully before stamping or dispatching. Stable is
-started explicitly through the same command.
+Nightly rebuild runs once daily through `release-nightly.yaml`. The scheduler
+calls the public profile command for `code` and `co-work` with a serial matrix,
+then calls the separate public binary command even if one profile lane failed.
+It contains no release implementation and never dispatches `release.yaml` or
+`release-assets.yaml` directly. Its `capsem-nightly-release-scheduler` lock
+prevents overlapping orchestrators; each downstream run independently holds
+the shared `capsem-release-nightly` transaction lock.
+
+Nightly profiles always rebuild their assets; exact prior-run artifact reuse is
+reserved for stable retry. Nightly binaries always rebuild and pass native
+installation plus complete pairing proof. When the version tag already exists,
+the binary workflow disables publication after those gates because fresh Apple
+signing/notarization changes bytes and immutable release assets cannot be
+overwritten. A new version identity publishes and activates normally. Stable
+has no schedule and is started explicitly through the same two public commands.
 
 ## PR gate compared with `just test`
 
@@ -308,22 +318,28 @@ into `target/config/` and pins profile asset descriptors to the current public
 asset channel manifest at
 `https://release.capsem.org/assets/<selected-channel>/manifest.json`. CI must not
 hand-edit profiles or bypass that step. Channel-specific profile image changes
-remain owned by the manual profile image rail.
+remain owned by the profile image rail; stable is manual, while the nightly
+scheduler invokes that same public rail.
 
 ## Asset channel workflow (`release-channel.yaml`)
 
-`release-assets.yaml` is the manual profile image release entrypoint. It builds
+`release-assets.yaml` is the profile image release workflow. It builds
 the profile-owned image files for both supported architectures, generates the
 same `assets/manifest.json` produced by `capsem-admin manifest generate`, and
 builds a channel preview. By default it runs as a dry run; live publication
 calls `release-channel.yaml`.
 
-Local release preflight has one extra release-only OBOM prerequisite beyond the
+macOS release preflight has one extra release-only OBOM prerequisite beyond the
 normal developer bootstrap path: `bash scripts/check-release-workflow.sh`
 expects `cdxgen` in `PATH`. Install it with
-`npm install -g @cyclonedx/cdxgen@12.7.0` before local profile image release dry runs; the
-manual asset workflow installs `@cyclonedx/cdxgen@12.7.0` in CI before invoking
-the build with `CAPSEM_CDXGEN_CMD=cdxgen`.
+`npm install -g @cyclonedx/cdxgen@12.7.0` before local profile image release dry
+runs; the profile asset workflow installs `@cyclonedx/cdxgen@12.7.0` in CI
+before invoking the build with `CAPSEM_CDXGEN_CMD=cdxgen`.
+
+On Linux, that preflight reports the macOS signing key, `cargo-sbom`, and host
+`cdxgen` as not applicable when they are absent: the macOS release job and
+hermetic asset builder provision them. If any is present it is still validated,
+and macOS continues to fail closed on missing or malformed signing material.
 
 `release.capsem.org` is the asset channel publication surface. It is generated
 from the release graph JSON and profile image files produced by the asset
@@ -385,7 +401,8 @@ host attestations, and the per-binary inventory for one channel without
 touching profiles, profile images, or other channels. Every executable inside
 each package must be listed with SHA-256, BLAKE3, package provenance, and
 an SBOM component reference so enterprise allowlists can reason about binaries
-directly. A manual profile image release updates one channel/profile entry,
+directly. A stable/manual or scheduled-nightly profile image release updates
+one channel/profile entry,
 profile config files, profile images, software inventory, ABOM/OBOM evidence,
 and matching manifest digests without mutating package metadata, per-binary
 inventory, other profiles, or other channels. Profiles may declare

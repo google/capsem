@@ -183,6 +183,7 @@ jobs:
 
   resolve-profile-assets:
     needs: resolve-current-binary
+    if: ${{ inputs.channel == 'stable' }}
     runs-on: ubuntu-latest
     name: Resolve reusable profile assets
     outputs:
@@ -209,7 +210,7 @@ jobs:
 
   build-assets:
     needs: [cloudflare-release-site-preflight, resolve-current-binary, fast-gate, resolve-profile-assets]
-    if: ${{ needs.resolve-profile-assets.outputs.reuse_run_id == '' }}
+    if: ${{ always() && needs.cloudflare-release-site-preflight.result == 'success' && needs.resolve-current-binary.result == 'success' && needs.fast-gate.result == 'success' && (inputs.channel == 'nightly' || needs.resolve-profile-assets.outputs.reuse_run_id == '') }}
     strategy:
       matrix:
         include:
@@ -267,7 +268,7 @@ jobs:
 
   reuse-assets:
     needs: [cloudflare-release-site-preflight, fast-gate, resolve-profile-assets]
-    if: ${{ needs.resolve-profile-assets.outputs.reuse_run_id != '' }}
+    if: ${{ always() && inputs.channel == 'stable' && needs.cloudflare-release-site-preflight.result == 'success' && needs.fast-gate.result == 'success' && needs.resolve-profile-assets.result == 'success' && needs.resolve-profile-assets.outputs.reuse_run_id != '' }}
     strategy:
       matrix:
         arch: [arm64, x86_64]

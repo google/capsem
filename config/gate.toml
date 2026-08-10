@@ -803,7 +803,7 @@ install = ["cargo", "install", "tauri-cli"]
 # push, tag, or dispatch a workflow before the complete local gate has passed
 # against the exact HEAD that gets published.
 precheck = ["scripts/publish-tested-main.py", "--precheck"]
-notes = ["scripts/extract-release-notes.py", "--check"]
+notes = ["scripts/release-binaries.py", "--precheck"]
 fetch_manifest = "scripts/fetch-channel-source-manifest.py"
 publish = "scripts/publish-tested-main.py"
 binaries = "scripts/release-binaries.py"

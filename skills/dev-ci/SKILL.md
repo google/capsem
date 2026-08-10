@@ -154,6 +154,22 @@ Release rules live in `AGENTS.md`, `tmp/release-spec.md`, and
 - Diagnose and fix a failed lane forward; never bypass or selectively rerun
   away a failed required module.
 
+The daily scheduler is orchestration, not a third release lane. It invokes
+`just release-profile nightly <profile>` serially for every selected profile,
+then invokes `just release-binaries nightly` even if one profile command
+failed. Each command identifies and watches its own downstream run, whose
+`capsem-release-nightly` lock owns the channel transaction. The separate
+`capsem-nightly-release-scheduler` lock only prevents two daily orchestrators
+from overlapping.
+
+Nightly profile runs always rebuild assets; exact prior-run asset reuse is
+stable-retry behavior. Nightly binary runs always rebuild and test native
+packages. When the version tag already exists, CI disables publication after
+the complete package and pairing gates because signed/notarized packages are
+not reproducible bytes and immutable release assets may not be overwritten.
+Stable has no scheduled trigger. Neither scheduler nor operators dispatch
+`release.yaml` or `release-assets.yaml` directly.
+
 ## Editing workflows
 
 - `pr-gate` must list every job in `needs:` and test each result explicitly;

@@ -64,9 +64,10 @@ The release system MUST provide all of the following:
   in every channel.
 - Independent channel/profile instances when a profile name exists in more
   than one channel.
-- Daily, scheduled nightly binary publication from the current releasable
-  `main` state rather than publication after every push.
-- Manually initiated stable binary publication.
+- Daily, scheduled nightly rebuilds of the binary family and every selected
+  profile/asset family from current `main`, through their independent public
+  commands rather than publication after every push.
+- Manually initiated stable binary and profile publication.
 - Targeted profile publication for exactly one channel/profile pair.
 - An ordered `release-profile` then `release-binaries` path when a new or
   changed profile requires a new Capsem binary, without rebuilding the profile.
@@ -1058,23 +1059,39 @@ Their precise test partitioning is an implementation decision, but failures in
 required checks MUST block merge or candidate selection according to project
 policy.
 
-### 13.2 Nightly binary schedule
+### 13.2 Nightly orthogonal schedule
 
-Nightly binary publication SHOULD run once daily.
+Nightly binary and selected profile/asset rebuilds SHOULD run once daily.
 
 Each run MUST:
 
 - Run from the current releasable `main` state selected by the scheduled
   workflow.
 - Target only the nightly channel.
-- Use the binary-only flow unless an explicitly requested composed release is
-  required.
-- Test the binary against existing nightly channel profiles.
-- Avoid rebuilding nightly profiles merely because source commits accumulated.
-- Skip activation safely when no releasable binary change exists.
+- Invoke `just release-profile nightly <profile>` separately for every selected
+  profile, then invoke `just release-binaries nightly`; it MUST NOT dispatch a
+  downstream workflow or combine artifact ownership itself.
+- Wait for each exact correlated profile run before starting another
+  same-channel command. Profile commands MAY be ordered serially while each
+  profile workflow keeps its independent artifact ownership.
+- Run the binary command after all scheduled profile commands have terminated,
+  even when one profile lane failed, so one orthogonal family cannot suppress
+  the other family's daily rebuild.
+- Rebuild nightly profile assets rather than resolving a prior workflow's build
+  artifacts. Stable retry MAY reuse one exact verified prior artifact cohort.
+- Rebuild and test binary packages against the manifest-selected nightly
+  profiles every day.
+- Publish and activate only when the current version introduces a new immutable
+  release identity. When that identity already exists, run the same package,
+  native-install, functional, Winterfell, IronBank, and glow-up proof with
+  publication disabled; signed/notarized bytes MUST NOT overwrite an existing
+  tag.
 
-The daily schedule provides a fast-moving binary without converting every push
-into a release.
+The scheduler has its own non-cancelling lock to prevent overlapping daily
+orchestrators. The downstream binary and profile workflows retain the shared
+`capsem-release-nightly` transaction lock from manifest resolution through
+deployment. The daily schedule rebuilds current `main` without converting
+every push into a publication.
 
 ### 13.3 Stable binary trigger
 
@@ -1518,8 +1535,11 @@ No additional evidence ledger or result document is introduced.
 An implementation conforming to this specification MUST demonstrate:
 
 - [ ] Local `just test` constructs and validates the complete pipeline.
-- [ ] Nightly binary publication is scheduled daily rather than per push.
-- [ ] Stable binary publication is manual.
+- [ ] Nightly binary and selected profile/asset rebuilds are scheduled daily
+      through separate public commands rather than per push.
+- [ ] Existing nightly identities are rebuilt and tested without overwriting
+      immutable publications.
+- [ ] Stable binary and profile publication is manual.
 - [ ] Binary release accepts exactly one channel.
 - [ ] Profile release accepts exactly one channel and profile and derives its
       immutable publication identity.

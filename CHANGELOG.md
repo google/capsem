@@ -9,12 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Release workflow preflight now treats absent Apple credentials and CI-owned
+  SBOM tools as explicitly inapplicable on Linux while remaining fail-closed
+  for macOS signing.
+
 - Profile release dispatch now carries a unique workflow correlation identity
   and waits for that exact GitHub Actions run with failure propagation. This
   makes serialized profile-then-binary automation safe when the same channel
   already has queued release work.
 
 ### Added
+
+- The nightly scheduler now rebuilds the `code` and `co-work` profile assets
+  through their independent public commands before running the binary lane.
+  Existing binary identities take a correlated rebuild-and-test path without
+  overwriting immutable signed releases; stable remains manual.
 
 - `capsem.gate.auditfs` is the one place Python may hardlink a file into
   published output, and a contract refuses a raw `os.link` anywhere else. It

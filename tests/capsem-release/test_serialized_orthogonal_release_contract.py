@@ -203,7 +203,7 @@ def test_public_release_command_executes_read_only_preflight_then_full_test_befo
     issued = runner.rendered
     assert "publish-tested-main.py --precheck" in issued[0]
     if recipe == "release-binaries":
-        assert any("extract-release-notes.py --check" in line for line in issued)
+        assert any("release-binaries.py --precheck nightly" in line for line in issued)
         assert any("fetch-channel-source-manifest.py" in line for line in issued)
 
     # Then the gate, then the confirmation, then the mutation. Every phase of
@@ -266,7 +266,7 @@ def test_failed_full_test_prevents_every_release_side_effect(
     assert "cargo clippy" in issued, "the gate must actually have been attempted"
     for mutation in (
         "publish-tested-main.py --expected-head",
-        "scripts/release-binaries.py",
+        "scripts/release-binaries.py nightly",
         "capsem-admin -- release",
     ):
         assert mutation not in issued, f"{mutation} ran after a failing gate"
@@ -304,13 +304,60 @@ def test_profile_dispatch_is_correlated_and_awaited_before_the_next_lane() -> No
         "${{ inputs.dispatch_id }}"
     ) in workflow
     assert "dispatch_id:" in workflow
-    assert "required: true" in workflow.split("dispatch_id:", maxsplit=1)[1].split(
-        "dry_run:", maxsplit=1
-    )[0]
+    assert (
+        "required: true"
+        in workflow.split("dispatch_id:", maxsplit=1)[1].split("dry_run:", maxsplit=1)[0]
+    )
     assert 'format!("dispatch_id={dispatch_id}")' in admin
     assert '"watch".to_string()' in admin
     assert '"--exit-status".to_string()' in admin
     assert "run_id: Option<u64>" in admin
+
+
+def test_daily_scheduler_runs_profile_and_binary_lanes_without_direct_dispatch() -> None:
+    workflow = _workflow("release-nightly.yaml")
+    profiles = _job_block(workflow, "release-profiles")
+    binaries = _job_block(workflow, "release-binaries")
+
+    assert workflow.count("cron:") == 1
+    assert "push:" not in workflow
+    assert "profile: [code, co-work]" in profiles
+    assert "max-parallel: 1" in profiles
+    assert "fail-fast: false" in profiles
+    assert "just release-profile nightly ${{ matrix.profile }}" in profiles
+    assert "needs: release-profiles" in binaries
+    assert "if: ${{ always() }}" in binaries
+    assert "just release-binaries nightly" in binaries
+    assert "release.yaml" not in workflow
+    assert "release-assets.yaml" not in workflow
+
+
+def test_nightly_binary_rebuild_is_correlated_but_does_not_republish_identity() -> None:
+    workflow = _workflow("release.yaml")
+    script = _read("scripts/release-binaries.py")
+    create = _job_block(workflow, "create-release")
+
+    assert (
+        "run-name: Release ${{ inputs.channel }} ${{ inputs.tag }} ${{ inputs.dispatch_id }}"
+    ) in workflow
+    assert "dispatch_id:" in workflow
+    assert "publish:" in workflow
+    assert "if: ${{ inputs.publish == true }}" in create
+    assert 'f"dispatch_id={dispatch_id}"' in script
+    assert 'f"publish={str(publish).lower()}"' in script
+    assert '"--exit-status"' in script
+
+
+def test_nightly_profiles_always_rebuild_while_stable_retry_can_reuse() -> None:
+    workflow = _workflow("release-assets.yaml")
+    resolver = _job_block(workflow, "resolve-profile-assets")
+    build = _job_block(workflow, "build-assets")
+    reuse = _job_block(workflow, "reuse-assets")
+
+    assert "if: ${{ inputs.channel == 'stable' }}" in resolver
+    assert "inputs.channel == 'nightly'" in build
+    assert "inputs.channel == 'stable'" in reuse
+    assert "resolve-reusable-profile-assets.py" in resolver
 
 
 def test_release_lanes_run_one_reusable_fast_gate_before_builders() -> None:

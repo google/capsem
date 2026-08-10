@@ -106,10 +106,10 @@ environment-variable bypass, or direct checked-in caller of:
 - `capsem-admin release` for a first-party public profile;
 - `release.yaml` or `release-assets.yaml`.
 
-Daily nightly automation calls `just release-binaries nightly`; it does not
-dispatch the workflow directly. The supported first-party profile path calls
-`just release-profile`. Direct GitHub UI dispatch is not the documented or
-tested release path.
+Daily nightly automation calls `just release-profile nightly <profile>` once
+for each selected profile and then `just release-binaries nightly`. It never
+dispatches either downstream workflow directly. Direct GitHub UI dispatch is
+not the documented or tested release path.
 
 Each command owns one artifact family. There is no combined release command.
 The commands may run sequentially when a profile requires new code, but neither
@@ -220,6 +220,12 @@ The selected channel source manifest is the sole mutable release authority. Do
 not add a release result file, pending ledger, last-known-good graph, manual
 diff approval record, or parallel authoring path.
 
+`scripts/check-release-workflow.sh` is platform-aware without weakening the
+publication boundary. Linux reports absent Apple signing material and CI-owned
+`cargo-sbom`/`cdxgen` as not applicable; it never fabricates a key or installs a
+secret-dependent macOS toolchain. Present tools are validated, and macOS still
+fails closed when the signing key is absent or malformed.
+
 ## Profile release
 
 `just release-profile nightly code` invokes:
@@ -250,6 +256,11 @@ If the public package is too old, publish the immutable profile artifacts and
 persist the staged source-manifest state, but do not deploy that incompatible
 pairing. Other profiles, channels, packages, and binaries remain untouched.
 
+The nightly lane always rebuilds its selected profile assets. The prior-run
+artifact resolver is a stable retry mechanism only; using it for nightly would
+turn the daily asset build into a no-op and lose the hermetic reproducibility
+signal.
+
 All corporate manifest and profile authoring also goes through `capsem-admin`.
 A corporation owns its manifest and profile definitions, may use the latest
 compatible Capsem package or pin a compatible version, and never builds or
@@ -274,9 +285,22 @@ binary release script. The locked binary workflow:
 
 The workflow must never invoke a profile/image builder.
 
-Daily nightly automation calls this same binary command path and queues behind
-other nightly release work. It does not publish on every push. Stable uses the
-same command explicitly and the same quality gates.
+Daily nightly automation calls this same binary command path after the profile
+commands terminate and queues behind other nightly release work. The binary
+workflow always rebuilds and runs native install, functional, Winterfell,
+IronBank, and glow-up proof. If the version tag is already immutable, the
+correlated workflow runs with publication disabled; fresh Apple signing and
+notarization timestamps are not byte-identical and may never overwrite an
+existing release. A new version identity takes the normal publish-and-activate
+path. Stable uses the same command explicitly and the same quality gates, and
+has no schedule.
+
+`release-nightly.yaml` owns only sequencing: selected profile commands run with
+`max-parallel: 1`, each waits for its exact run, and the binary command runs
+after the profile matrix terminates even if a profile failed. The scheduler's
+`capsem-nightly-release-scheduler` lock prevents overlapping orchestrators; it
+does not replace the downstream workflows' shared
+`capsem-release-nightly` transaction lock.
 
 ## Dependent profile then binary release
 

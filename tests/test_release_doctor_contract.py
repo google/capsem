@@ -1278,6 +1278,8 @@ def test_cdxgen_release_tool_prerequisite_is_documented() -> None:
     assert "npm install -g @cyclonedx/cdxgen@12.7.0" in asset_workflow
     assert "@cyclonedx/cdxgen@latest" not in asset_workflow
     assert "CAPSEM_CDXGEN_CMD: cdxgen" in asset_workflow
+    assert 'elif [ "$PLATFORM" = "Darwin" ]' in release_preflight
+    assert "provisioned by the hermetic asset builder" in release_preflight
 
     for source in docs_and_skills:
         normalized = " ".join(source.split())
@@ -1285,6 +1287,17 @@ def test_cdxgen_release_tool_prerequisite_is_documented() -> None:
         assert "release-only" in normalized.lower()
         assert "npm install -g @cyclonedx/cdxgen@12.7.0" in source
         assert "check-release-workflow.sh" in source
+
+
+def test_release_workflow_preflight_preserves_macos_key_and_linux_skip() -> None:
+    preflight = _source_text("scripts/check-release-workflow.sh")
+
+    assert "PLATFORM=$(uname -s)" in preflight
+    assert 'if [ "$PLATFORM" = "Darwin" ]' in preflight
+    assert 'fail "$KEY_FILE not found"' in preflight
+    assert "is macOS signing material and is not applicable" in preflight
+    assert "key decodes to valid Tauri updater key format" in preflight
+    assert "key does not decode to valid Tauri updater key format" in preflight
 
 
 def test_linux_doctor_installs_musl_c_toolchain_before_building_assets() -> None:
@@ -1744,8 +1757,8 @@ def test_binary_release_channel_policy_supports_daily_nightly_and_explicit_stabl
     assert "group: capsem-release-${{ inputs.channel }}" in workflow
     assert "cancel-in-progress: false" in workflow
     assert "Prove binary candidate preserved every profile" in workflow
-    assert "Nightly binary release runs once daily" in normalized_docs
-    assert "Stable is started explicitly" in normalized_docs
+    assert "Nightly rebuild runs once daily" in normalized_docs
+    assert "Stable has no schedule" in normalized_docs
     assert "Daily nightly automation calls this same binary command path" in release_skill
     assert "Stable uses the same command explicitly" in " ".join(release_skill.split())
 
@@ -2860,11 +2873,11 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
 
     assert (
-        "| `release-nightly.yaml` | Daily schedule or manual dispatch | Check out current `main` and call `just release-binaries nightly`; tagged `main` is a clean no-op |"
+        "| `release-nightly.yaml` | Daily schedule or manual dispatch | Check out current `main`, run the selected `just release-profile nightly <profile>` commands serially, then run `just release-binaries nightly` as a separate lane |"
         in docs
     )
     assert (
-        "| `release.yaml` | Dispatch from `release-binaries` with `{tag, channel}` | Run one per-channel serialized stable or nightly release: build apps, install-test the exact packages, publish them, update only the selected channel, and run public glow-up checks |"
+        "| `release.yaml` | Correlated dispatch from `release-binaries` with `{tag, channel, publish, dispatch_id}` | Build and install-test exact native packages; publish and advance only a new immutable identity, or finish as a rebuild-only proof when that identity already exists |"
         in docs
     )
     assert (

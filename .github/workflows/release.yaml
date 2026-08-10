@@ -1,5 +1,5 @@
 name: Release
-run-name: Release ${{ inputs.channel }} ${{ inputs.tag }}
+run-name: Release ${{ inputs.channel }} ${{ inputs.tag }} ${{ inputs.dispatch_id }}
 on:
   workflow_dispatch:
     inputs:
@@ -14,6 +14,14 @@ on:
         options:
           - stable
           - nightly
+      publish:
+        description: Publish and activate the tested immutable binary identity.
+        required: true
+        type: boolean
+      dispatch_id:
+        description: Correlation id supplied by release-binaries.py.
+        required: true
+        type: string
 
 concurrency:
   group: capsem-release-${{ inputs.channel }}
@@ -1038,6 +1046,7 @@ jobs:
 
   create-release:
     needs: [test-native-macos-package, test-native-linux-package, test-binary-pairing]
+    if: ${{ inputs.publish == true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd

@@ -6,8 +6,8 @@ published. In shell that order was six lines whose correctness was where they
 sat; here it is edges, so a step cannot be moved above the gate by accident.
 
 The cheap prechecks come first deliberately. A dirty tree, the wrong branch, or
-missing release notes are deterministic failures, and finding them after forty
-minutes of gate is forty minutes nobody gets back.
+missing notes for a new immutable identity are deterministic failures, and
+finding them after forty minutes of gate is forty minutes nobody gets back.
 
 One plan, two territories. `CompleteGate` runs the whole thing from a private
 copy of the checkout, so the subject cannot move while it is being measured;
@@ -112,7 +112,7 @@ class ReleaseBinariesCommand(
                 # construction and on whatever branch it was cloned from, so
                 # asking it these questions answers about the wrong tree.
                 Script(*settings.precheck, root=checkout),
-                Script(*settings.notes, root=checkout),
+                Script(*settings.notes, channel, root=checkout),
                 MakeDir(config.path(settings.preflight_dir)),
             )
         )

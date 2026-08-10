@@ -18,9 +18,7 @@ RELEASE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = RELEASE
 SPEC.loader.exec_module(RELEASE)
 NOTES_SCRIPT = PROJECT_ROOT / "scripts" / "extract-release-notes.py"
-NOTES_SPEC = importlib.util.spec_from_file_location(
-    "extract_release_notes", NOTES_SCRIPT
-)
+NOTES_SPEC = importlib.util.spec_from_file_location("extract_release_notes", NOTES_SCRIPT)
 assert NOTES_SPEC is not None and NOTES_SPEC.loader is not None
 NOTES = importlib.util.module_from_spec(NOTES_SPEC)
 NOTES_SPEC.loader.exec_module(NOTES)
@@ -46,6 +44,7 @@ class FakeRunner:
         omit_release_notes_change: bool = False,
         mixed_version_cohort: bool = False,
         current_release_channel: str | None = None,
+        existing_version_tag: str = "",
         run_rows: list[dict[str, object]] | None = None,
         pending_local_release: bool = False,
         divergent_pending_release: bool = False,
@@ -59,6 +58,7 @@ class FakeRunner:
         self.omit_release_notes_change = omit_release_notes_change
         self.mixed_version_cohort = mixed_version_cohort
         self.current_release_channel = current_release_channel
+        self.existing_version_tag = existing_version_tag
         self.run_rows = run_rows
         self.pending_local_release = pending_local_release
         self.divergent_pending_release = divergent_pending_release
@@ -68,6 +68,9 @@ class FakeRunner:
         self.stamped = False
         self.dispatched_tag = ""
         self.dispatched_channel = ""
+        self.dispatched_id = ""
+        self.dispatched_publish = ""
+        self.dispatched_ref = ""
         self.head = "a" * 40
 
     def run(
@@ -91,14 +94,10 @@ class FakeRunner:
                     paths.remove(path)
             if self.unexpected:
                 paths.append(Path("config/profiles/code/profile.toml"))
-            return RELEASE.CommandResult(
-                "\n".join(f" M {path}" for path in paths)
-            )
+            return RELEASE.CommandResult("\n".join(f" M {path}" for path in paths))
         if command == ("git", "branch", "--show-current"):
             return RELEASE.CommandResult("main\n")
-        if command in (
-            ("git", "rev-parse", "HEAD"),
-        ):
+        if command in (("git", "rev-parse", "HEAD"),):
             return RELEASE.CommandResult(self.head + "\n")
         if command == ("git", "rev-parse", "origin/main"):
             value = "b" * 40 if self.pending_local_release else "a" * 40
@@ -157,15 +156,15 @@ class FakeRunner:
                 encoding="utf-8",
             )
             (self.root / "uv.lock").write_text(
-                "[[package]]\n"
-                'name = "capsem"\n'
-                f'version = "{COHORT_VERSION}"\n',
+                f'[[package]]\nname = "capsem"\nversion = "{COHORT_VERSION}"\n',
                 encoding="utf-8",
             )
             return RELEASE.CommandResult("")
         if len(command) >= 2 and command[1] == "scripts/extract-release-notes.py":
             return RELEASE.CommandResult("")
         if command[:3] == ("git", "tag", "--list"):
+            if len(command) == 4 and command[3] == self.existing_version_tag:
+                return RELEASE.CommandResult(f"{self.existing_version_tag}\n")
             return RELEASE.CommandResult("")
         if command[:2] == ("git", "commit"):
             if self.fail_commit:
@@ -181,32 +180,38 @@ class FakeRunner:
             return RELEASE.CommandResult("")
         if command[:3] == ("gh", "workflow", "run"):
             self.dispatched_tag = command[command.index("--ref") + 1]
-            fields = [
-                command[index + 1]
-                for index, value in enumerate(command)
-                if value == "-f"
-            ]
+            self.dispatched_ref = self.dispatched_tag
+            fields = [command[index + 1] for index, value in enumerate(command) if value == "-f"]
             self.dispatched_channel = next(
-                value.removeprefix("channel=")
+                value.removeprefix("channel=") for value in fields if value.startswith("channel=")
+            )
+            self.dispatched_id = next(
+                value.removeprefix("dispatch_id=")
                 for value in fields
-                if value.startswith("channel=")
+                if value.startswith("dispatch_id=")
+            )
+            self.dispatched_publish = next(
+                value.removeprefix("publish=") for value in fields if value.startswith("publish=")
+            )
+            self.dispatched_tag = next(
+                value.removeprefix("tag=") for value in fields if value.startswith("tag=")
             )
             return RELEASE.CommandResult("")
         if command[:4] == ("gh", "run", "list", "--workflow"):
-            rows = self.run_rows
-            if rows is None:
-                rows = []
-            if not rows and self.dispatched_tag:
-                tag = self.dispatched_tag or self.current_release_tag or f"v{COHORT_VERSION}"
-                channel = self.dispatched_channel or self.current_release_channel or "nightly"
-                rows = [
+            rows = list(self.run_rows or [])
+            if self.dispatched_tag:
+                rows.insert(
+                    0,
                     {
                         "databaseId": 42,
-                        "displayTitle": f"Release {channel} {tag}",
+                        "displayTitle": (
+                            f"Release {self.dispatched_channel} {self.dispatched_tag} "
+                            f"{self.dispatched_id}"
+                        ),
                         "status": "in_progress",
                         "conclusion": "",
-                    }
-                ]
+                    },
+                )
             return RELEASE.CommandResult(json.dumps(rows))
         return RELEASE.CommandResult("")
 
@@ -220,7 +225,6 @@ def _release_tree(tmp_path: Path) -> None:
         f'[workspace.package]\nversion = "{OLDER_VERSION}"\n',
         encoding="utf-8",
     )
-
 
 
 def _release_plan(command: str, *arguments: str):
@@ -263,7 +267,11 @@ def test_binary_release_owns_one_scripted_build_and_dispatch(
         f"tag={tag}",
         "-f",
         "channel=nightly",
-    ) in runner.calls
+        "-f",
+        "publish=true",
+        "-f",
+    ) == next(call[:-1] for call in runner.calls if call[:3] == ("gh", "workflow", "run"))
+    assert runner.dispatched_id.startswith("capsem-binaries-")
     assert ("gh", "run", "watch", "42", "--exit-status") in runner.calls
     joined = "\n".join(" ".join(call) for call in runner.calls)
     assert "_build-kernel" not in joined
@@ -280,14 +288,12 @@ def test_binary_release_checks_notes_before_version_stamp(
 
     RELEASE.release_binaries("nightly", runner)
 
-    check = runner.calls.index(
-        (sys.executable, "scripts/extract-release-notes.py", "--check")
-    )
+    check = runner.calls.index((sys.executable, "scripts/extract-release-notes.py", "--check"))
     stamp = runner.calls.index(("just", "_stamp-version"))
     assert check < stamp
 
 
-def test_binary_recipe_checks_notes_before_complete_local_gate_and_push() -> None:
+def test_binary_recipe_checks_release_intent_before_complete_local_gate_and_push() -> None:
     """Missing release notes cost seconds, not a complete gate.
 
     Asked of the plan: the recipe dispatches, so its text no longer carries
@@ -296,18 +302,43 @@ def test_binary_recipe_checks_notes_before_complete_local_gate_and_push() -> Non
     plan = _release_plan("release-binaries", "nightly")
     order = list(plan.labels)
 
-    assert "extract-release-notes.py --check" in plan.describe()
+    assert "release-binaries.py --precheck nightly" in plan.describe()
     # Every phase of the gate sits between them: there is no step named `gate`
     # now that the release plan contains the gate rather than launching it.
     first_phase = next(i for i, label in enumerate(order) if label.startswith("fast."))
-    last_phase = max(
-        i for i, label in enumerate(order) if label.startswith("glowup.")
-    )
+    last_phase = max(i for i, label in enumerate(order) if label.startswith("glowup."))
     assert order.index("precheck") < first_phase
     assert last_phase < order.index("confirm-head")
 
     profile = _release_plan("release-profile", "nightly", "code").describe()
-    assert "extract-release-notes.py" not in profile
+    assert "release-binaries.py --precheck" not in profile
+
+
+def test_binary_precheck_requires_notes_only_for_a_new_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    publish = FakeRunner(tmp_path)
+    rebuild = FakeRunner(tmp_path, existing_version_tag=f"v{OLDER_VERSION}")
+
+    RELEASE.precheck_release_binaries("stable", publish)
+    RELEASE.precheck_release_binaries("nightly", rebuild)
+
+    notes = (sys.executable, "scripts/extract-release-notes.py", "--check")
+    assert notes in publish.calls
+    assert notes not in rebuild.calls
+
+
+def test_binary_precheck_rejects_stable_reuse_of_an_existing_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    runner = FakeRunner(tmp_path, existing_version_tag=f"v{OLDER_VERSION}")
+
+    with pytest.raises(RuntimeError, match="bump the stable version"):
+        RELEASE.precheck_release_binaries("stable", runner)
 
 
 def test_binary_recipe_fetches_serialized_channel_source_before_full_local_gate() -> None:
@@ -335,18 +366,14 @@ def test_unexpected_write_aborts_before_commit_and_restores_owned_files(
 ) -> None:
     _release_tree(tmp_path)
     monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
-    before = {
-        path: (tmp_path / path).read_bytes() for path in RELEASE.MUTATED_PATHS
-    }
+    before = {path: (tmp_path / path).read_bytes() for path in RELEASE.MUTATED_PATHS}
     runner = FakeRunner(tmp_path, unexpected=True)
 
     with pytest.raises(RuntimeError, match="write set is invalid"):
         RELEASE.release_binaries("stable", runner)
 
     assert not any(call[:2] == ("git", "commit") for call in runner.calls)
-    assert {
-        path: (tmp_path / path).read_bytes() for path in RELEASE.MUTATED_PATHS
-    } == before
+    assert {path: (tmp_path / path).read_bytes() for path in RELEASE.MUTATED_PATHS} == before
 
 
 @pytest.mark.parametrize("failure", ["commit", "tag"])
@@ -357,9 +384,7 @@ def test_git_preparation_failure_restores_owned_files_index_and_head(
 ) -> None:
     _release_tree(tmp_path)
     monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
-    before = {
-        path: (tmp_path / path).read_bytes() for path in RELEASE.MUTATED_PATHS
-    }
+    before = {path: (tmp_path / path).read_bytes() for path in RELEASE.MUTATED_PATHS}
     runner = FakeRunner(
         tmp_path,
         fail_commit=failure == "commit",
@@ -371,9 +396,7 @@ def test_git_preparation_failure_restores_owned_files_index_and_head(
 
     assert ("git", "reset", "--mixed", "a" * 40) in runner.calls
     assert runner.head == "a" * 40
-    assert {
-        path: (tmp_path / path).read_bytes() for path in RELEASE.MUTATED_PATHS
-    } == before
+    assert {path: (tmp_path / path).read_bytes() for path in RELEASE.MUTATED_PATHS} == before
     assert not any(call[:2] == ("git", "push") for call in runner.calls)
 
 
@@ -435,7 +458,7 @@ def test_invalid_channel_is_rejected_before_git_or_github(tmp_path: Path) -> Non
     assert runner.calls == []
 
 
-def test_nightly_release_skips_when_main_has_no_unreleased_binary_change(
+def test_nightly_release_rebuilds_when_main_has_no_unreleased_binary_change(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _release_tree(tmp_path)
@@ -444,11 +467,33 @@ def test_nightly_release_skips_when_main_has_no_unreleased_binary_change(
 
     tag, run_id = RELEASE.release_binaries("nightly", runner)
 
-    assert tag is None
-    assert run_id is None
+    assert tag == f"v{OLDER_VERSION}"
+    assert run_id == "42"
+    assert runner.dispatched_ref == f"v{OLDER_VERSION}"
+    assert runner.dispatched_publish == "false"
     assert ("just", "_stamp-version") not in runner.calls
     assert not any(call[:2] == ("git", "commit") for call in runner.calls)
-    assert not any(call[:3] == ("gh", "workflow", "run") for call in runner.calls)
+    assert any(call[:3] == ("gh", "workflow", "run") for call in runner.calls)
+
+
+def test_untagged_nightly_main_rebuilds_an_existing_version_without_publishing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    runner = FakeRunner(
+        tmp_path,
+        existing_version_tag=f"v{OLDER_VERSION}",
+    )
+
+    tag, run_id = RELEASE.release_binaries("nightly", runner)
+
+    assert (tag, run_id) == (f"v{OLDER_VERSION}", "42")
+    assert runner.dispatched_ref == "main"
+    assert runner.dispatched_publish == "false"
+    assert (sys.executable, "scripts/extract-release-notes.py", "--check") not in runner.calls
+    assert ("just", "_stamp-version") not in runner.calls
+    assert not any(call[:2] == ("git", "commit") for call in runner.calls)
 
 
 def test_tagged_nightly_with_missing_dispatch_resumes_without_new_version(
@@ -509,7 +554,7 @@ def test_tagged_failed_nightly_stops_for_diagnosis_without_blind_rerun(
     assert ("just", "_stamp-version") not in runner.calls
 
 
-def test_tagged_successful_nightly_is_idempotent(
+def test_tagged_successful_nightly_starts_a_fresh_rebuild(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _release_tree(tmp_path)
@@ -529,10 +574,11 @@ def test_tagged_successful_nightly_is_idempotent(
         ],
     )
 
-    assert RELEASE.release_binaries("nightly", runner) == (tag, "23")
-    assert not any(call[:3] == ("gh", "workflow", "run") for call in runner.calls)
+    assert RELEASE.release_binaries("nightly", runner) == (tag, "42")
+    assert any(call[:3] == ("gh", "workflow", "run") for call in runner.calls)
     assert not any(call[:3] == ("gh", "run", "rerun") for call in runner.calls)
-    assert not any(call[:3] == ("gh", "run", "watch") for call in runner.calls)
+    assert ("gh", "run", "watch", "42", "--exit-status") in runner.calls
+    assert runner.dispatched_publish == "false"
 
 
 def test_unpushed_local_release_commit_is_pushed_and_dispatched_without_restamping(
@@ -592,35 +638,32 @@ def test_stable_binary_release_remains_explicit_even_at_a_version_tag(
     assert tag == f"v{COHORT_VERSION}"
     assert run_id == "42"
     assert ("just", "_stamp-version") in runner.calls
-    assert (
-        "gh",
-        "workflow",
-        "run",
-        "release.yaml",
-        "--ref",
-        tag,
-        "-f",
-        f"tag={tag}",
-        "-f",
-        "channel=stable",
-    ) in runner.calls
+    assert any(call[:3] == ("gh", "workflow", "run") for call in runner.calls)
+    assert runner.dispatched_ref == tag
+    assert runner.dispatched_channel == "stable"
+    assert runner.dispatched_publish == "true"
 
 
-def test_daily_nightly_schedule_uses_only_the_public_binary_command() -> None:
-    workflow = (
-        PROJECT_ROOT / ".github" / "workflows" / "release-nightly.yaml"
-    ).read_text(encoding="utf-8")
+def test_daily_nightly_schedule_uses_only_public_orthogonal_commands() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "release-nightly.yaml").read_text(
+        encoding="utf-8"
+    )
 
     assert workflow.count("cron:") == 1
     assert '- cron: "23 7 * * *"' in workflow
     assert "push:" not in workflow
     assert workflow.count("just release-binaries nightly") == 1
+    assert workflow.count("just release-profile nightly ${{ matrix.profile }}") == 1
+    assert "profile: [code, co-work]" in workflow
+    assert "max-parallel: 1" in workflow
+    assert "fail-fast: false" in workflow
     assert "group: capsem-nightly-release-scheduler" in workflow
     assert "cancel-in-progress: false" in workflow
     assert "ref: main" in workflow
     assert "fetch-depth: 0" in workflow
-    assert "release.yaml" not in workflow
-    assert "release-assets.yaml" not in workflow
+    binary_job = workflow.split("  release-binaries:", maxsplit=1)[1]
+    assert "needs: release-profiles" in binary_job
+    assert "if: ${{ always() }}" in binary_job
     for forbidden in (
         "fetch-channel-source-manifest.py",
         "capsem-admin",
@@ -629,6 +672,8 @@ def test_daily_nightly_schedule_uses_only_the_public_binary_command() -> None:
         "build-pkg.sh",
         "build-complete-release-channel.py",
         "release-channel.yaml",
+        "release.yaml",
+        "release-assets.yaml",
     ):
         assert forbidden not in workflow
 

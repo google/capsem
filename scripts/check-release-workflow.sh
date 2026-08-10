@@ -3,9 +3,11 @@
 # Catches tool/format/args issues that would waste a CI cycle.
 set -euo pipefail
 
-PASS=0; FAIL=0
+PASS=0; SKIP=0; FAIL=0
 pass() { echo "  OK  $1"; PASS=$((PASS + 1)); }
+skip() { echo "  SKIP  $1"; SKIP=$((SKIP + 1)); }
 fail() { echo "  FAIL  $1"; FAIL=$((FAIL + 1)); }
+PLATFORM=$(uname -s)
 
 echo "=== Release workflow preflight ==="
 
@@ -14,7 +16,13 @@ echo ""
 echo "Tools:"
 command -v cargo >/dev/null && pass "cargo" || fail "cargo not found"
 cargo tauri --version >/dev/null 2>&1 && pass "cargo-tauri" || fail "cargo-tauri not found (cargo install tauri-cli)"
-cargo sbom --help >/dev/null 2>&1 && pass "cargo-sbom" || fail "cargo-sbom not found (cargo install cargo-sbom)"
+if cargo sbom --help >/dev/null 2>&1; then
+    pass "cargo-sbom"
+elif [ "$PLATFORM" = "Darwin" ]; then
+    fail "cargo-sbom not found (cargo install cargo-sbom)"
+else
+    skip "cargo-sbom is provisioned by the macOS release job"
+fi
 CDXGEN_VERSION="12.7.0"
 if command -v cdxgen >/dev/null; then
     CDXGEN_ACTUAL_VERSION=$(cdxgen --version 2>&1 | sed -n 's/.*CycloneDX Generator \([0-9.]*\).*/\1/p' | head -1)
@@ -24,7 +32,11 @@ if command -v cdxgen >/dev/null; then
         fail "cdxgen version $CDXGEN_ACTUAL_VERSION does not match required $CDXGEN_VERSION (npm install -g @cyclonedx/cdxgen@12.7.0)"
     fi
 else
-    fail "cdxgen not found (npm install -g @cyclonedx/cdxgen@12.7.0)"
+    if [ "$PLATFORM" = "Darwin" ]; then
+        fail "cdxgen not found (npm install -g @cyclonedx/cdxgen@12.7.0)"
+    else
+        skip "cdxgen $CDXGEN_VERSION is provisioned by the hermetic asset builder"
+    fi
 fi
 
 # --- Tauri key format ---
@@ -41,7 +53,11 @@ if [ -f "$KEY_FILE" ]; then
         fail "key does not decode to valid Tauri updater key format -- check $KEY_FILE"
     fi
 else
-    fail "$KEY_FILE not found"
+    if [ "$PLATFORM" = "Darwin" ]; then
+        fail "$KEY_FILE not found"
+    else
+        skip "$KEY_FILE is macOS signing material and is not applicable on $PLATFORM"
+    fi
 fi
 
 # --- Tauri config: rootfs not bundled ---
@@ -72,5 +88,5 @@ fi
 
 # --- Summary ---
 echo ""
-echo "=== $PASS passed, $FAIL failed ==="
+echo "=== $PASS passed, $SKIP skipped, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] || exit 1
