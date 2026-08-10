@@ -69,6 +69,25 @@ The VirtioFS server propagates all I/O errors to the guest:
 
 This ensures the guest kernel marks pages correctly and applications can detect write failures.
 
+## KVM Warm-Checkpoint Integrity
+
+On Linux, saving guest RAM and virtqueue indices is not sufficient for a warm
+restore: the guest also retains VirtioFS inode numbers and open-handle IDs. The
+KVM checkpoint therefore captures the host VirtioFS processor only after its
+worker has drained both request queues, then restores that state before any
+queue is activated.
+
+The backend payload is versioned and bounded. Paths are stored relative to the
+current share root as raw Unix bytes, while inode and handle records carry host
+filesystem identity. Restore fails closed if a path is missing or replaced, a
+restored access path follows a symlink outside the share, an open object cannot
+be reconstructed, the share tag or read-only policy changed, or the MMIO slot
+topology is inconsistent.
+Absolute host roots are never accepted from the checkpoint as authority.
+
+Apple VZ continues to use the platform's native machine-state restore path;
+the KVM-specific format does not replace or weaken that behavior.
+
 ## Async I/O Isolation
 
 FUSE request processing runs on a **dedicated worker thread**, not on the vCPU thread. This prevents a slow host disk from freezing the guest CPU.

@@ -131,6 +131,73 @@ class TestSuspendOverlayDurability:
         finally:
             client.delete(f"/vms/{name}/delete")
 
+    def test_open_workspace_file_and_directory_fds_survive_suspend_resume(self, client):
+        """Warm resume preserves pre-existing VirtioFS file and directory handles."""
+        name = vm_name("openfd")
+        client.post(
+            "/vms/create",
+            {
+                "name": name,
+                "profile_id": CODE_PROFILE_ID,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+                "persistent": True,
+            },
+        )
+        try:
+            assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
+            setup = _exec(
+                client,
+                name,
+                r"""set -eu
+rm -f /tmp/capsem-fd-ready /tmp/capsem-fd-go /tmp/capsem-fd-done
+mkfifo /tmp/capsem-fd-ready /tmp/capsem-fd-go /tmp/capsem-fd-done
+printf 'before\n' > /root/held-open.txt
+cat > /tmp/capsem-hold-fds.py <<'PY'
+import os
+
+held = open('/root/held-open.txt', 'a', encoding='utf-8')
+directory = os.open('/root', os.O_RDONLY | os.O_DIRECTORY)
+with open('/tmp/capsem-fd-ready', 'w', encoding='utf-8') as ready:
+    ready.write('ready\n')
+with open('/tmp/capsem-fd-go', encoding='utf-8') as go:
+    assert go.readline().strip() == 'go'
+held.write('after\n')
+held.flush()
+os.fsync(held.fileno())
+entries = sorted(os.listdir(directory))
+with open('/tmp/capsem-fd-done', 'w', encoding='utf-8') as done:
+    done.write(','.join(entries) + '\n')
+PY
+setsid python3 /tmp/capsem-hold-fds.py </dev/null >/tmp/capsem-hold-fds.log 2>&1 &
+IFS= read -r ready < /tmp/capsem-fd-ready
+test "$ready" = ready""",
+            )
+            assert setup.get("exit_code") == 0, f"open-FD setup failed: {setup}"
+
+            suspended = client.post(f"/vms/{name}/pause", {})
+            assert suspended and suspended.get("success"), f"suspend failed: {suspended}"
+            response = client.post(f"/vms/{name}/resume", {})
+            assert response is not None, "resume returned None"
+            resumed = response.get("id", name)
+            assert wait_exec_ready(client, resumed, timeout=EXEC_READY_TIMEOUT)
+
+            result = _exec(
+                client,
+                resumed,
+                """set -eu
+printf 'go\n' > /tmp/capsem-fd-go
+IFS= read -r entries < /tmp/capsem-fd-done
+printf '%s\n' "$entries"
+cat /root/held-open.txt""",
+            )
+            assert result.get("exit_code") == 0, f"restored open FDs failed: {result}"
+            lines = result.get("stdout", "").splitlines()
+            assert "held-open.txt" in lines[0].split(","), result
+            assert lines[1:] == ["before", "after"], result
+        finally:
+            client.delete(f"/vms/{name}/delete")
+
     def test_suspend_failure_does_not_brick_vm(self, client):
         """Heavy-overlay write + suspend + resume + suspend + resume.
 

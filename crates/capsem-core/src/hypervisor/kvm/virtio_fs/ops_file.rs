@@ -24,10 +24,13 @@ impl FuseProcessor {
             return fuse::error_response(header.unique, -libc::EROFS);
         }
 
+        let readable = accmode == libc::O_RDONLY || accmode == libc::O_RDWR;
+        let writable = accmode == libc::O_WRONLY || accmode == libc::O_RDWR;
+        let append = flags & libc::O_APPEND != 0;
         let file = match std::fs::OpenOptions::new()
-            .read(accmode == libc::O_RDONLY || accmode == libc::O_RDWR)
-            .write(accmode == libc::O_WRONLY || accmode == libc::O_RDWR)
-            .append(flags & libc::O_APPEND != 0)
+            .read(readable)
+            .write(writable)
+            .append(append)
             .truncate(flags & libc::O_TRUNC != 0)
             .open(&path)
         {
@@ -35,7 +38,10 @@ impl FuseProcessor {
             Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
         };
 
-        let fh = match self.file_handles.alloc(OpenHandle::File(file)) {
+        let fh = match self
+            .file_handles
+            .alloc_file(file, header.nodeid, readable, writable, append)
+        {
             Some(fh) => fh,
             None => return fuse::error_response(header.unique, -libc::EMFILE),
         };
@@ -133,9 +139,11 @@ impl FuseProcessor {
 
                 let flags = create_in.flags as i32;
                 let accmode = flags & libc::O_ACCMODE;
+                let readable = accmode == libc::O_RDONLY || accmode == libc::O_RDWR;
                 let file = match std::fs::OpenOptions::new()
-                    .read(accmode == libc::O_RDONLY || accmode == libc::O_RDWR)
+                    .read(readable)
                     .write(true)
+                    .append(flags & libc::O_APPEND != 0)
                     .create_new(true)
                     .open(&child_path)
                 {
@@ -152,7 +160,13 @@ impl FuseProcessor {
                     Some(i) => i,
                     None => return fuse::error_response(header.unique, -libc::EIO),
                 };
-                let fh = match self.file_handles.alloc(OpenHandle::File(file)) {
+                let fh = match self.file_handles.alloc_file(
+                    file,
+                    ino,
+                    readable,
+                    true,
+                    flags & libc::O_APPEND != 0,
+                ) {
                     Some(fh) => fh,
                     None => return fuse::error_response(header.unique, -libc::EMFILE),
                 };
@@ -173,16 +187,24 @@ impl FuseProcessor {
         };
         let flags = create_in.flags as i32;
         let accmode = flags & libc::O_ACCMODE;
+        let readable = accmode == libc::O_RDONLY || accmode == libc::O_RDWR;
         let file = match std::fs::OpenOptions::new()
-            .read(accmode == libc::O_RDONLY || accmode == libc::O_RDWR)
+            .read(readable)
             .write(true)
+            .append(flags & libc::O_APPEND != 0)
             .truncate(flags & libc::O_TRUNC != 0)
             .open(&path)
         {
             Ok(f) => f,
             Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
         };
-        let fh = match self.file_handles.alloc(OpenHandle::File(file)) {
+        let fh = match self.file_handles.alloc_file(
+            file,
+            ino,
+            readable,
+            true,
+            flags & libc::O_APPEND != 0,
+        ) {
             Some(fh) => fh,
             None => return fuse::error_response(header.unique, -libc::EMFILE),
         };

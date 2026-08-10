@@ -16,6 +16,10 @@ impl FuseProcessor {
             Ok(rd) => rd,
             Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
         };
+        let dir_metadata = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
+        };
 
         let mut entries = vec![
             DirEntryData {
@@ -39,7 +43,12 @@ impl FuseProcessor {
             entries.push(DirEntryData { name, ino, type_ });
         }
 
-        let fh = match self.file_handles.alloc(OpenHandle::Dir(entries)) {
+        let fh = match self.file_handles.alloc_dir(
+            header.nodeid,
+            dir_metadata.dev(),
+            dir_metadata.ino(),
+            entries,
+        ) {
             Some(fh) => fh,
             None => return fuse::error_response(header.unique, -libc::EMFILE),
         };

@@ -8,7 +8,7 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 use super::memory::GuestMemoryRef;
 use super::mmio::MmioDevice;
@@ -102,6 +102,17 @@ pub(super) trait VirtioDevice: Send {
     fn quiesce(&mut self) -> Result<()> {
         Ok(())
     }
+    /// Serialize process-local device state after quiescence.
+    fn checkpoint_state(&mut self) -> Result<Vec<u8>> {
+        Ok(Vec::new())
+    }
+    /// Restore process-local device state before any queue is activated.
+    fn restore_checkpoint_state(&mut self, state: &[u8]) -> Result<()> {
+        if !state.is_empty() {
+            bail!("stateless virtio device rejected non-empty checkpoint state");
+        }
+        Ok(())
+    }
     /// Whether the transport should raise the virtio-mmio used-buffer IRQ
     /// after queue processing. Vhost-backed devices wire their own callfd.
     fn uses_mmio_interrupt(&self) -> bool {
@@ -124,7 +135,7 @@ struct QueueState {
     device_hi: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct QueueSnapshot {
     pub num: u16,
     pub ready: bool,
@@ -136,8 +147,24 @@ pub(super) struct QueueSnapshot {
     pub device_hi: u32,
 }
 
+impl QueueSnapshot {
+    fn desc_addr(&self) -> u64 {
+        (u64::from(self.desc_hi) << 32) | u64::from(self.desc_lo)
+    }
+
+    fn driver_addr(&self) -> u64 {
+        (u64::from(self.driver_hi) << 32) | u64::from(self.driver_lo)
+    }
+
+    fn device_addr(&self) -> u64 {
+        (u64::from(self.device_hi) << 32) | u64::from(self.device_lo)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct VirtioMmioSnapshot {
+    pub device_type: u32,
+    pub device_state: Vec<u8>,
     pub status: u32,
     pub features_sel: u32,
     pub driver_features: u64,
@@ -281,9 +308,13 @@ impl VirtioMmioTransport {
     }
 
     #[cfg(target_arch = "x86_64")]
-    pub fn snapshot(&self) -> VirtioMmioSnapshot {
-        let state = self.state.lock().unwrap();
-        VirtioMmioSnapshot {
+    pub fn snapshot(&self) -> Result<VirtioMmioSnapshot> {
+        let mut state = self.state.lock().unwrap();
+        let device_type = state.device.device_type();
+        let device_state = state.device.checkpoint_state()?;
+        Ok(VirtioMmioSnapshot {
+            device_type,
+            device_state,
             status: state.status,
             features_sel: state.features_sel,
             driver_features: state.driver_features,
@@ -293,7 +324,7 @@ impl VirtioMmioTransport {
             interrupt_status: state.interrupt_status.load(Ordering::SeqCst),
             config_generation: state.config_generation,
             activated: state.activated,
-        }
+        })
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -305,6 +336,20 @@ impl VirtioMmioTransport {
     #[cfg(target_arch = "x86_64")]
     pub fn restore(&self, snapshot: &VirtioMmioSnapshot) -> Result<()> {
         let mut state = self.state.lock().unwrap();
+        if snapshot.device_type != state.device.device_type() {
+            bail!(
+                "virtio-mmio device type mismatch: checkpoint={}, device={}",
+                snapshot.device_type,
+                state.device.device_type()
+            );
+        }
+        let driver_ok = snapshot.status & STATUS_DRIVER_OK != 0;
+        if snapshot.activated != driver_ok {
+            bail!(
+                "virtio-mmio activation contradicts DRIVER_OK status: activated={}, DRIVER_OK={driver_ok}",
+                snapshot.activated
+            );
+        }
         if snapshot.queues.len() != state.queues.len() {
             bail!(
                 "virtio-mmio queue count mismatch: checkpoint={}, device={}",
@@ -312,6 +357,34 @@ impl VirtioMmioTransport {
                 state.queues.len()
             );
         }
+        if snapshot.queue_sel as usize >= snapshot.queues.len() {
+            bail!(
+                "virtio-mmio queue selector is out of range: {}",
+                snapshot.queue_sel
+            );
+        }
+        let max_sizes = state.device.queue_max_sizes();
+        for (index, queue) in snapshot.queues.iter().enumerate() {
+            if queue.num > max_sizes[index] {
+                bail!(
+                    "virtio-mmio queue {index} size exceeds device maximum: {} > {}",
+                    queue.num,
+                    max_sizes[index]
+                );
+            }
+            if snapshot.activated {
+                if queue.num == 0 || !queue.ready {
+                    bail!("activated virtio-mmio queue {index} is not ready with nonzero size");
+                }
+                validate_queue_memory(&state.mem, index, queue)?;
+            }
+        }
+
+        // A device backend must be fully reconstructed before activation can
+        // observe the restored virtqueue addresses.
+        state
+            .device
+            .restore_checkpoint_state(&snapshot.device_state)?;
 
         state.status = snapshot.status;
         state.features_sel = snapshot.features_sel;
@@ -350,6 +423,38 @@ impl VirtioMmioTransport {
 
         Ok(())
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn validate_queue_memory(mem: &GuestMemoryRef, index: usize, queue: &QueueSnapshot) -> Result<()> {
+    let size = u64::from(queue.num);
+    let ranges = [
+        (
+            queue.desc_addr(),
+            size.checked_mul(16).context("descriptor span overflow")?,
+            "descriptor",
+        ),
+        (
+            queue.driver_addr(),
+            size.checked_mul(2)
+                .and_then(|n| n.checked_add(8))
+                .context("available ring span overflow")?,
+            "available ring",
+        ),
+        (
+            queue.device_addr(),
+            size.checked_mul(8)
+                .and_then(|n| n.checked_add(8))
+                .context("used ring span overflow")?,
+            "used ring",
+        ),
+    ];
+    for (address, len, name) in ranges {
+        if mem.gpa_range_to_host(address, len).is_none() {
+            bail!("virtio-mmio queue {index} {name} is outside guest memory");
+        }
+    }
+    Ok(())
 }
 
 impl MmioDevice for VirtioMmioTransport {

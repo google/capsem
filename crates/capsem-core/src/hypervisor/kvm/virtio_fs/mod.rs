@@ -9,6 +9,7 @@
 //! - `ops_file`: OPEN, READ, WRITE, CREATE, RELEASE, FLUSH, FSYNC, LSEEK
 //! - `ops_dir`:  OPENDIR, READDIR, MKDIR, RMDIR, UNLINK, RENAME, MKNOD, SYMLINK, LINK
 
+mod checkpoint_state;
 mod ops_dir;
 mod ops_file;
 mod ops_meta;
@@ -20,7 +21,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use tracing::{debug, trace, warn};
 
 use super::memory::GuestMemoryRef;
@@ -28,6 +29,7 @@ use super::virtio_mmio::{QueueConfig, VirtioDevice};
 use super::virtio_queue::{DescriptorChain, VirtQueue};
 
 use crate::hypervisor::fuse::{self, *};
+use checkpoint_state::VirtioFsBackendSnapshot;
 
 const VIRTIO_ID_FS: u32 = 26;
 const VIRTIO_F_VERSION_1: u64 = 1 << 32;
@@ -102,6 +104,51 @@ impl FuseProcessor {
             _ => fuse::error_response(header.unique, -libc::ENOSYS),
         }
     }
+
+    fn checkpoint_snapshot(&mut self, tag: [u8; TAG_LEN]) -> Result<VirtioFsBackendSnapshot> {
+        let inodes = self.inodes.checkpoint()?;
+        let file_handles = self.file_handles.checkpoint(&self.inodes)?;
+        Ok(VirtioFsBackendSnapshot {
+            tag,
+            read_only: self.read_only,
+            inodes,
+            file_handles,
+        })
+    }
+
+    fn encode_checkpoint_with_tag(&mut self, tag: [u8; TAG_LEN]) -> Result<Vec<u8>> {
+        self.checkpoint_snapshot(tag)?.encode()
+    }
+
+    #[cfg(test)]
+    fn encode_checkpoint(&mut self) -> Result<Vec<u8>> {
+        self.encode_checkpoint_with_tag([0; TAG_LEN])
+    }
+
+    fn restore_snapshot(
+        root_path: &Path,
+        read_only: bool,
+        snapshot: &VirtioFsBackendSnapshot,
+    ) -> Result<Self> {
+        ensure!(
+            snapshot.read_only == read_only,
+            "VirtioFS checkpoint read-only identity mismatch"
+        );
+        let inodes = InodeTable::restore(root_path, &snapshot.inodes)?;
+        let file_handles = FileHandleTable::restore(&snapshot.file_handles, &inodes, read_only)?;
+        Ok(Self {
+            root_path: root_path.to_path_buf(),
+            read_only,
+            inodes,
+            file_handles,
+        })
+    }
+
+    #[cfg(test)]
+    fn restore_checkpoint(root_path: &Path, read_only: bool, encoded: &[u8]) -> Result<Self> {
+        let snapshot = VirtioFsBackendSnapshot::decode(encoded)?;
+        Self::restore_snapshot(root_path, read_only, &snapshot)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -153,7 +200,10 @@ fn write_response(mem: &GuestMemoryRef, chain: &DescriptorChain, data: &[u8]) ->
 
 enum WorkerCommand {
     Notify(u32),
-    Drain(mpsc::Sender<()>),
+    Checkpoint {
+        tag: [u8; TAG_LEN],
+        done: mpsc::Sender<Result<Vec<u8>>>,
+    },
 }
 
 fn worker_loop(
@@ -184,7 +234,7 @@ fn worker_loop(
                 }
             }
             WorkerCommand::Notify(_) => {}
-            WorkerCommand::Drain(done) => {
+            WorkerCommand::Checkpoint { tag, done } => {
                 let hiprio = drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem);
                 let request = drain_request_queue(&mut proc, &mut request_queue, &mem);
                 let hiprio_interrupt = hiprio_queue.prepare_kick();
@@ -198,7 +248,8 @@ fn worker_loop(
                     request_processed = request,
                     "virtio-fs queues quiesced"
                 );
-                let _ = done.send(());
+                let checkpoint = proc.encode_checkpoint_with_tag(tag);
+                let _ = done.send(checkpoint);
             }
         }
     }
@@ -309,6 +360,7 @@ pub(in crate::hypervisor::kvm) struct VirtioFsDevice {
     /// Eventfd wired to the guest GIC for interrupt injection.
     irq_fd: RawFd,
     interrupt_status: Arc<AtomicU32>,
+    checkpoint_state: Option<Vec<u8>>,
 }
 
 impl VirtioFsDevice {
@@ -335,6 +387,7 @@ impl VirtioFsDevice {
             worker_handle: None,
             irq_fd,
             interrupt_status,
+            checkpoint_state: None,
         })
     }
 }
@@ -461,14 +514,60 @@ impl VirtioDevice for VirtioFsDevice {
 
     fn quiesce(&mut self) -> Result<()> {
         let Some(tx) = self.notify_tx.as_ref() else {
+            let processor = self
+                .processor
+                .as_mut()
+                .context("VirtioFS processor is unavailable for checkpoint")?;
+            self.checkpoint_state = Some(processor.encode_checkpoint_with_tag(self.tag)?);
             return Ok(());
         };
         let (done_tx, done_rx) = mpsc::channel();
-        tx.send(WorkerCommand::Drain(done_tx))
-            .context("send virtio-fs quiesce command")?;
-        done_rx
-            .recv_timeout(Duration::from_secs(2))
-            .context("wait for virtio-fs quiesce")?;
+        tx.send(WorkerCommand::Checkpoint {
+            tag: self.tag,
+            done: done_tx,
+        })
+        .context("send virtio-fs quiesce command")?;
+        self.checkpoint_state = Some(
+            done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .context("wait for virtio-fs quiesce")??,
+        );
+        Ok(())
+    }
+
+    fn checkpoint_state(&mut self) -> Result<Vec<u8>> {
+        if let Some(state) = self.checkpoint_state.as_ref() {
+            return Ok(state.clone());
+        }
+        let processor = self
+            .processor
+            .as_mut()
+            .context("VirtioFS must be quiesced before checkpoint state is read")?;
+        processor.encode_checkpoint_with_tag(self.tag)
+    }
+
+    fn restore_checkpoint_state(&mut self, encoded: &[u8]) -> Result<()> {
+        ensure!(
+            self.notify_tx.is_none() && self.worker_handle.is_none(),
+            "cannot restore VirtioFS backend state after activation"
+        );
+        let snapshot = VirtioFsBackendSnapshot::decode(encoded)?;
+        ensure!(
+            snapshot.tag == self.tag,
+            "VirtioFS checkpoint tag identity mismatch"
+        );
+        let current = self
+            .processor
+            .as_ref()
+            .context("VirtioFS processor is unavailable for restore")?;
+        ensure!(
+            snapshot.read_only == current.read_only,
+            "VirtioFS checkpoint read-only identity mismatch"
+        );
+        let restored =
+            FuseProcessor::restore_snapshot(&current.root_path, current.read_only, &snapshot)?;
+        self.processor = Some(restored);
+        self.checkpoint_state = Some(encoded.to_vec());
         Ok(())
     }
 }

@@ -21,10 +21,13 @@ use super::sys::{
 use super::virtio_mmio::{QueueSnapshot, VirtioMmioSnapshot};
 
 const MAGIC: &[u8; 16] = b"CAPSEM-KVM-CKPT\0";
-const VERSION: u32 = 7;
+const VERSION: u32 = 8;
 const HEADER_LEN: u64 = 16 + 4 + 4 + 8 + 4 + 4 + 4;
 const COPY_CHUNK_SIZE: usize = 1024 * 1024;
 const CHECKPOINT_PROGRESS_INTERVAL: u64 = 1024 * 1024 * 1024;
+const MAX_DEVICE_STATE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_TOTAL_DEVICE_STATE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_QUEUES_PER_DEVICE: usize = 256;
 #[cfg(target_arch = "x86_64")]
 const SELECTED_MSR_INDEXES: &[u32] = &[
     0x0000_0010, // IA32_TSC
@@ -324,8 +327,11 @@ pub(super) fn read_checkpoint(
     let vm = read_vm_snapshot(&mut reader)?;
 
     let mut mmio_devices = Vec::with_capacity(header.mmio_device_count as usize);
+    let mut remaining_device_state = MAX_TOTAL_DEVICE_STATE_BYTES;
     for _ in 0..header.mmio_device_count {
-        mmio_devices.push(read_mmio_device_snapshot(&mut reader)?);
+        let snapshot = read_mmio_device_snapshot_with_budget(&mut reader, remaining_device_state)?;
+        remaining_device_state -= snapshot.transport.device_state.len();
+        mmio_devices.push(snapshot);
     }
 
     let mut offset = 0u64;
@@ -365,6 +371,15 @@ fn write_checkpoint_inner(
     vm: &VmSnapshot,
     mmio_devices: &[MmioDeviceSnapshot],
 ) -> Result<()> {
+    let total_device_state = mmio_devices.iter().try_fold(0usize, |total, snapshot| {
+        ensure_device_state_len(snapshot.transport.device_state.len())?;
+        total
+            .checked_add(snapshot.transport.device_state.len())
+            .context("checkpoint total device state size overflow")
+    })?;
+    if total_device_state > MAX_TOTAL_DEVICE_STATE_BYTES {
+        bail!("checkpoint total device state exceeds limit: {total_device_state}");
+    }
     let file = std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -601,6 +616,14 @@ fn write_mmio_device_snapshot(
     writer
         .write_all(&snapshot.slot.to_le_bytes())
         .context("write checkpoint MMIO slot")?;
+    write_u32(writer, snapshot.transport.device_type)
+        .context("write checkpoint MMIO device type")?;
+    ensure_device_state_len(snapshot.transport.device_state.len())?;
+    write_u32(writer, snapshot.transport.device_state.len() as u32)
+        .context("write checkpoint MMIO device state length")?;
+    writer
+        .write_all(&snapshot.transport.device_state)
+        .context("write checkpoint MMIO device state")?;
     write_u32(writer, snapshot.transport.status).context("write checkpoint MMIO status")?;
     write_u32(writer, snapshot.transport.features_sel)
         .context("write checkpoint MMIO features_sel")?;
@@ -626,7 +649,26 @@ fn write_mmio_device_snapshot(
 
 #[cfg(target_arch = "x86_64")]
 fn read_mmio_device_snapshot(reader: &mut impl Read) -> Result<MmioDeviceSnapshot> {
+    read_mmio_device_snapshot_with_budget(reader, MAX_TOTAL_DEVICE_STATE_BYTES)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn read_mmio_device_snapshot_with_budget(
+    reader: &mut impl Read,
+    remaining_device_state: usize,
+) -> Result<MmioDeviceSnapshot> {
     let slot = read_u32(reader).context("read checkpoint MMIO slot")?;
+    let device_type = read_u32(reader).context("read checkpoint MMIO device type")?;
+    let device_state_len =
+        read_u32(reader).context("read checkpoint MMIO device state length")? as usize;
+    ensure_device_state_len(device_state_len)?;
+    if device_state_len > remaining_device_state {
+        bail!("checkpoint total device state exceeds limit");
+    }
+    let mut device_state = vec![0u8; device_state_len];
+    reader
+        .read_exact(&mut device_state)
+        .context("read checkpoint MMIO device state")?;
     let status = read_u32(reader).context("read checkpoint MMIO status")?;
     let features_sel = read_u32(reader).context("read checkpoint MMIO features_sel")?;
     let driver_features = read_u64(reader).context("read checkpoint MMIO driver_features")?;
@@ -635,11 +677,11 @@ fn read_mmio_device_snapshot(reader: &mut impl Read) -> Result<MmioDeviceSnapsho
     let queue_sel = read_u32(reader).context("read checkpoint MMIO queue_sel")?;
     let interrupt_status = read_u32(reader).context("read checkpoint MMIO interrupt_status")?;
     let config_generation = read_u32(reader).context("read checkpoint MMIO config_generation")?;
-    let mut activated = [0u8; 1];
-    reader
-        .read_exact(&mut activated)
-        .context("read checkpoint MMIO activated")?;
+    let activated = read_bool(reader, "MMIO activated")?;
     let queue_count = read_u32(reader).context("read checkpoint MMIO queue count")?;
+    if queue_count as usize > MAX_QUEUES_PER_DEVICE {
+        bail!("checkpoint MMIO queue count exceeds limit: {queue_count}");
+    }
     let mut queues = Vec::with_capacity(queue_count as usize);
     for _ in 0..queue_count {
         queues.push(read_queue_snapshot(reader)?);
@@ -647,6 +689,8 @@ fn read_mmio_device_snapshot(reader: &mut impl Read) -> Result<MmioDeviceSnapsho
     Ok(MmioDeviceSnapshot {
         slot,
         transport: VirtioMmioSnapshot {
+            device_type,
+            device_state,
             status,
             features_sel,
             driver_features,
@@ -655,7 +699,7 @@ fn read_mmio_device_snapshot(reader: &mut impl Read) -> Result<MmioDeviceSnapsho
             queues,
             interrupt_status,
             config_generation,
-            activated: activated[0] != 0,
+            activated,
         },
     })
 }
@@ -676,11 +720,10 @@ fn write_queue_snapshot(writer: &mut impl Write, queue: &QueueSnapshot) -> Resul
 #[cfg(target_arch = "x86_64")]
 fn read_queue_snapshot(reader: &mut impl Read) -> Result<QueueSnapshot> {
     let num = read_u16(reader)?;
-    let mut ready = [0u8; 1];
-    reader.read_exact(&mut ready)?;
+    let ready = read_bool(reader, "MMIO queue ready")?;
     Ok(QueueSnapshot {
         num,
-        ready: ready[0] != 0,
+        ready,
         desc_lo: read_u32(reader)?,
         desc_hi: read_u32(reader)?,
         driver_lo: read_u32(reader)?,
@@ -688,6 +731,25 @@ fn read_queue_snapshot(reader: &mut impl Read) -> Result<QueueSnapshot> {
         device_lo: read_u32(reader)?,
         device_hi: read_u32(reader)?,
     })
+}
+
+#[cfg(target_arch = "x86_64")]
+fn ensure_device_state_len(len: usize) -> Result<()> {
+    if len > MAX_DEVICE_STATE_BYTES {
+        bail!("checkpoint MMIO device state length exceeds limit: {len}");
+    }
+    Ok(())
+}
+
+#[cfg(target_arch = "x86_64")]
+fn read_bool(reader: &mut impl Read, field: &str) -> Result<bool> {
+    let mut byte = [0u8; 1];
+    reader.read_exact(&mut byte)?;
+    match byte[0] {
+        0 => Ok(false),
+        1 => Ok(true),
+        value => bail!("invalid checkpoint boolean for {field}: {value}"),
+    }
 }
 
 #[cfg(target_arch = "x86_64")]

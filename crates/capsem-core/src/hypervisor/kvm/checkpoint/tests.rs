@@ -32,6 +32,7 @@ fn header_roundtrips() {
     let decoded = CheckpointHeader::decode(&header.encode()).unwrap();
     assert_eq!(decoded, header);
     assert_eq!(decoded.version, VERSION);
+    assert_eq!(decoded.version, 8, "VirtioFS backend state requires v8");
     assert_eq!(decoded.ram_bytes, 4096);
     assert_eq!(decoded.vcpu_count, 2);
     #[cfg(target_arch = "x86_64")]
@@ -115,6 +116,8 @@ fn mmio(slot: u32) -> MmioDeviceSnapshot {
     MmioDeviceSnapshot {
         slot,
         transport: VirtioMmioSnapshot {
+            device_type: 26,
+            device_state: b"virtiofs-state".to_vec(),
             status: 0xf,
             features_sel: 1,
             driver_features: 0x1000_0000,
@@ -135,6 +138,76 @@ fn mmio(slot: u32) -> MmioDeviceSnapshot {
             activated: true,
         },
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn rejects_oversized_mmio_device_state_before_allocation() {
+    let mut encoded = Vec::new();
+    write_u32(&mut encoded, 4).unwrap();
+    write_u32(&mut encoded, 26).unwrap();
+    write_u32(&mut encoded, (MAX_DEVICE_STATE_BYTES + 1) as u32).unwrap();
+
+    let err = read_mmio_device_snapshot(&mut encoded.as_slice()).unwrap_err();
+
+    assert!(err.to_string().contains("device state length"), "{err:#}");
+}
+
+#[cfg(target_arch = "x86_64")]
+fn encoded_mmio(snapshot: &MmioDeviceSnapshot) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    write_mmio_device_snapshot(&mut encoded, snapshot).unwrap();
+    encoded
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn rejects_total_mmio_device_state_before_allocation() {
+    let snapshot = mmio(4);
+    let encoded = encoded_mmio(&snapshot);
+    let budget = snapshot.transport.device_state.len() - 1;
+
+    let err = read_mmio_device_snapshot_with_budget(&mut encoded.as_slice(), budget).unwrap_err();
+
+    assert!(err.to_string().contains("total device state"), "{err:#}");
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn rejects_non_boolean_mmio_activation_and_queue_ready_bytes() {
+    let snapshot = mmio(4);
+    let encoded = encoded_mmio(&snapshot);
+    let activated_offset = 12 + snapshot.transport.device_state.len() + 32;
+    let queue_ready_offset = activated_offset + 1 + 4 + 2;
+
+    let mut bad_activation = encoded.clone();
+    bad_activation[activated_offset] = 2;
+    let err = read_mmio_device_snapshot(&mut bad_activation.as_slice()).unwrap_err();
+    assert!(err.to_string().contains("MMIO activated"), "{err:#}");
+
+    let mut bad_queue = encoded;
+    bad_queue[queue_ready_offset] = 2;
+    let err = read_mmio_device_snapshot(&mut bad_queue.as_slice()).unwrap_err();
+    assert!(err.to_string().contains("MMIO queue ready"), "{err:#}");
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn rejects_oversized_mmio_queue_count_before_allocation() {
+    let snapshot = mmio(4);
+    let mut encoded = encoded_mmio(&snapshot);
+    let activated_offset = 12 + snapshot.transport.device_state.len() + 32;
+    let queue_count_offset = activated_offset + 1;
+    encoded[queue_count_offset..queue_count_offset + 4]
+        .copy_from_slice(&((MAX_QUEUES_PER_DEVICE + 1) as u32).to_le_bytes());
+    encoded.truncate(queue_count_offset + 4);
+
+    let err = read_mmio_device_snapshot(&mut encoded.as_slice()).unwrap_err();
+
+    assert!(
+        err.to_string().contains("queue count exceeds limit"),
+        "{err:#}"
+    );
 }
 
 #[cfg(target_arch = "x86_64")]

@@ -51,6 +51,25 @@ These test the full boot path: config validation, device setup, serial output, v
 - Tests capsem-core, capsem-logger, capsem-proto (KVM backend compiles + tests)
 - Verifies /dev/kvm is available (fails CI if KVM tests were silently skipped)
 
+## KVM warm-checkpoint device state
+
+A warm checkpoint must preserve host device-model state as well as guest RAM,
+vCPUs, and virtqueue indices. In particular, the guest retains VirtioFS inode
+numbers and file-handle IDs across resume, so restoring a fresh host-side FUSE
+processor is invalid even when the VM reaches `Ready` and answers pings.
+
+When changing KVM checkpoint or VirtioFS state:
+
+- prove backend state is captured after queue drain and restored before queue
+  activation;
+- keep checkpoint lengths/counts bounded before allocation and reject changed
+  device/share identity;
+- test a real guest process that holds both a file FD and directory FD under
+  `/root` across suspend, then uses both after resume without sleeps or retries;
+- rebuild `capsem-process` before black-box testing, because it owns the KVM
+  hypervisor, and run the lifecycle test serially against one exact asset and
+  profile cohort.
+
 ## x86_64 KVM boot: known pitfalls
 
 The x86_64 KVM backend boots bzImage kernels in 64-bit long mode. Key invariants:

@@ -229,6 +229,42 @@ fn kvm_state_decoder_preserves_transient_states() {
     assert_eq!(state_from_u8(255), VmState::Unknown);
 }
 
+#[cfg(target_arch = "x86_64")]
+fn mmio_slot(slot: u32) -> checkpoint::MmioDeviceSnapshot {
+    checkpoint::MmioDeviceSnapshot {
+        slot,
+        transport: virtio_mmio::VirtioMmioSnapshot {
+            device_type: 26,
+            device_state: Vec::new(),
+            status: 0,
+            features_sel: 0,
+            driver_features: 0,
+            driver_features_sel: 0,
+            queue_sel: 0,
+            queues: vec![virtio_mmio::QueueSnapshot::default()],
+            interrupt_status: 0,
+            config_generation: 0,
+            activated: false,
+        },
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restore_rejects_duplicate_mmio_slots_before_device_activation() {
+    let err = validate_mmio_slot_topology(&[0, 4], &[mmio_slot(4), mmio_slot(4)]).unwrap_err();
+
+    assert!(err.to_string().contains("duplicate MMIO slot"), "{err:#}");
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restore_rejects_missing_mmio_slot_before_device_activation() {
+    let err = validate_mmio_slot_topology(&[0, 4], &[mmio_slot(0)]).unwrap_err();
+
+    assert!(err.to_string().contains("topology mismatch"), "{err:#}");
+}
+
 #[cfg(not(target_arch = "x86_64"))]
 #[test]
 fn kvm_boot_rejects_checkpoint_path_on_unsupported_arch() {

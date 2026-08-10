@@ -227,6 +227,8 @@ fn status_reset() {
 fn restore_rehydrates_state_and_activates_device() {
     let (t, activated, notify_count) = make_transport();
     let snapshot = VirtioMmioSnapshot {
+        device_type: 3,
+        device_state: Vec::new(),
         status: STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
         features_sel: 1,
         driver_features: 0x1000_0001,
@@ -236,21 +238,21 @@ fn restore_rehydrates_state_and_activates_device() {
             QueueSnapshot {
                 num: 16,
                 ready: true,
-                desc_lo: 0x1000,
+                desc_lo: 0x100,
                 desc_hi: 0,
-                driver_lo: 0x2000,
+                driver_lo: 0x300,
                 driver_hi: 0,
-                device_lo: 0x3000,
+                device_lo: 0x500,
                 device_hi: 0,
             },
             QueueSnapshot {
                 num: 8,
-                ready: false,
-                desc_lo: 0x4000,
+                ready: true,
+                desc_lo: 0x700,
                 desc_hi: 0,
-                driver_lo: 0x5000,
+                driver_lo: 0x900,
                 driver_hi: 0,
-                device_lo: 0x6000,
+                device_lo: 0xb00,
                 device_hi: 0,
             },
         ],
@@ -262,7 +264,7 @@ fn restore_rehydrates_state_and_activates_device() {
     t.restore(&snapshot).unwrap();
 
     assert!(activated.load(std::sync::atomic::Ordering::SeqCst));
-    assert_eq!(t.snapshot(), snapshot);
+    assert_eq!(t.snapshot().unwrap(), snapshot);
     write_u32(&t, QUEUE_NOTIFY, 0);
     assert_eq!(notify_count.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
@@ -272,6 +274,8 @@ fn restore_rehydrates_state_and_activates_device() {
 fn restore_rejects_wrong_queue_count() {
     let (t, _, _) = make_transport();
     let snapshot = VirtioMmioSnapshot {
+        device_type: 3,
+        device_state: Vec::new(),
         status: 0,
         features_sel: 0,
         driver_features: 0,
@@ -286,6 +290,214 @@ fn restore_rejects_wrong_queue_count() {
     let err = t.restore(&snapshot).unwrap_err();
 
     assert!(err.to_string().contains("queue count mismatch"));
+}
+
+#[cfg(target_arch = "x86_64")]
+fn valid_restored_snapshot() -> VirtioMmioSnapshot {
+    VirtioMmioSnapshot {
+        device_type: 3,
+        device_state: Vec::new(),
+        status: STATUS_DRIVER_OK,
+        features_sel: 0,
+        driver_features: 0,
+        driver_features_sel: 0,
+        queue_sel: 1,
+        queues: vec![
+            QueueSnapshot {
+                num: 8,
+                ready: true,
+                desc_lo: 0x100,
+                desc_hi: 0,
+                driver_lo: 0x300,
+                driver_hi: 0,
+                device_lo: 0x500,
+                device_hi: 0,
+            },
+            QueueSnapshot {
+                num: 8,
+                ready: true,
+                desc_lo: 0x700,
+                desc_hi: 0,
+                driver_lo: 0x900,
+                driver_hi: 0,
+                device_lo: 0xb00,
+                device_hi: 0,
+            },
+        ],
+        interrupt_status: 0,
+        config_generation: 0,
+        activated: true,
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restore_rejects_invalid_queue_selector_size_and_guest_memory_span() {
+    let (transport, activated, _) = make_transport();
+
+    let mut invalid_selector = valid_restored_snapshot();
+    invalid_selector.queue_sel = 2;
+    let err = transport.restore(&invalid_selector).unwrap_err();
+    assert!(
+        err.to_string().contains("selector is out of range"),
+        "{err:#}"
+    );
+
+    let mut zero_size = valid_restored_snapshot();
+    zero_size.queues[0].num = 0;
+    let err = transport.restore(&zero_size).unwrap_err();
+    assert!(err.to_string().contains("nonzero size"), "{err:#}");
+
+    let mut too_large = valid_restored_snapshot();
+    too_large.queues[0].num = 257;
+    let err = transport.restore(&too_large).unwrap_err();
+    assert!(
+        err.to_string().contains("exceeds device maximum"),
+        "{err:#}"
+    );
+
+    let mut outside_memory = valid_restored_snapshot();
+    outside_memory.queues[0].desc_lo = 4090;
+    let err = transport.restore(&outside_memory).unwrap_err();
+    assert!(err.to_string().contains("outside guest memory"), "{err:#}");
+    assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restore_rejects_driver_ok_status_without_activation() {
+    let (transport, activated, _) = make_transport();
+    let mut snapshot = valid_restored_snapshot();
+    snapshot.activated = false;
+
+    let err = transport.restore(&snapshot).unwrap_err();
+
+    assert!(err.to_string().contains("DRIVER_OK"), "{err:#}");
+    assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restore_rejects_activation_without_driver_ok_status() {
+    let (transport, activated, _) = make_transport();
+    let mut snapshot = valid_restored_snapshot();
+    snapshot.status &= !STATUS_DRIVER_OK;
+
+    let err = transport.restore(&snapshot).unwrap_err();
+
+    assert!(err.to_string().contains("DRIVER_OK"), "{err:#}");
+    assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn stateless_device_rejects_nonempty_checkpoint_state_before_activation() {
+    let (transport, activated, _) = make_transport();
+    let mut snapshot = valid_restored_snapshot();
+    snapshot.device_state = b"unexpected".to_vec();
+
+    let err = transport.restore(&snapshot).unwrap_err();
+
+    assert!(
+        err.to_string().contains("stateless virtio device"),
+        "{err:#}"
+    );
+    assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restore_rejects_wrong_device_type_before_activation() {
+    let (t, activated, _) = make_transport();
+    let snapshot = VirtioMmioSnapshot {
+        device_type: 26,
+        device_state: Vec::new(),
+        status: STATUS_DRIVER_OK,
+        features_sel: 0,
+        driver_features: 0,
+        driver_features_sel: 0,
+        queue_sel: 0,
+        queues: vec![QueueSnapshot::default(), QueueSnapshot::default()],
+        interrupt_status: 0,
+        config_generation: 0,
+        activated: true,
+    };
+
+    let err = t.restore(&snapshot).unwrap_err();
+
+    assert!(err.to_string().contains("device type mismatch"), "{err:#}");
+    assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restore_rehydrates_device_state_before_queue_activation() {
+    struct StatefulDevice {
+        events: std::sync::Arc<std::sync::Mutex<Vec<&'static str>>>,
+    }
+
+    impl VirtioDevice for StatefulDevice {
+        fn device_type(&self) -> u32 {
+            99
+        }
+        fn features(&self) -> u64 {
+            0
+        }
+        fn queue_max_sizes(&self) -> &[u16] {
+            &[8]
+        }
+        fn read_config(&self, _offset: u64, _data: &mut [u8]) {}
+        fn write_config(&self, _offset: u64, _data: &[u8]) {}
+        fn activate(&mut self, _mem: GuestMemoryRef, _queues: &[QueueConfig]) {
+            self.events.lock().unwrap().push("activate");
+        }
+        fn queue_notify(&mut self, _queue_index: u32) -> bool {
+            false
+        }
+        fn checkpoint_state(&mut self) -> anyhow::Result<Vec<u8>> {
+            Ok(b"live".to_vec())
+        }
+        fn restore_checkpoint_state(&mut self, state: &[u8]) -> anyhow::Result<()> {
+            anyhow::ensure!(state == b"saved", "unexpected state");
+            self.events.lock().unwrap().push("restore");
+            Ok(())
+        }
+    }
+
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mem = GuestMemory::new(4096).unwrap();
+    let transport = VirtioMmioTransport::new(
+        Box::new(StatefulDevice {
+            events: events.clone(),
+        }),
+        mem.clone_ref(RAM_BASE),
+    );
+    let snapshot = VirtioMmioSnapshot {
+        device_type: 99,
+        device_state: b"saved".to_vec(),
+        status: STATUS_DRIVER_OK,
+        features_sel: 0,
+        driver_features: 0,
+        driver_features_sel: 0,
+        queue_sel: 0,
+        queues: vec![QueueSnapshot {
+            num: 8,
+            ready: true,
+            desc_lo: 0,
+            desc_hi: 0,
+            driver_lo: 0,
+            driver_hi: 0,
+            device_lo: 0,
+            device_hi: 0,
+        }],
+        interrupt_status: 0,
+        config_generation: 0,
+        activated: true,
+    };
+
+    transport.restore(&snapshot).unwrap();
+
+    assert_eq!(*events.lock().unwrap(), vec!["restore", "activate"]);
 }
 
 // -----------------------------------------------------------------------

@@ -1,9 +1,10 @@
 use super::*;
+use crate::hypervisor::fuse::file_handles::FileHandleKindSnapshot;
 use crate::hypervisor::kvm::memory::{GuestMemory, RAM_BASE};
 use crate::hypervisor::kvm::virtio_queue::VirtqDesc;
 use std::io::{Seek, SeekFrom};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 
@@ -12,6 +13,11 @@ fn temp_share(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+fn host_file_type(metadata: &std::fs::Metadata) -> u32 {
+    const MASK: u32 = libc::S_IFMT as _;
+    metadata.mode() & MASK
 }
 
 /// Helper: create a FuseProcessor for testing (no queues needed).
@@ -94,8 +100,15 @@ fn run_worker_notification(harness: WorkerHarness, dir: &Path, queue_index: u32)
 
     tx.send(WorkerCommand::Notify(queue_index)).unwrap();
     let (done_tx, done_rx) = mpsc::channel();
-    tx.send(WorkerCommand::Drain(done_tx)).unwrap();
-    done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    tx.send(WorkerCommand::Checkpoint {
+        tag: [0; TAG_LEN],
+        done: done_tx,
+    })
+    .unwrap();
+    done_rx
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap()
+        .unwrap();
     drop(tx);
     handle.join().unwrap();
 
@@ -380,6 +393,357 @@ fn open_file(proc: &mut FuseProcessor, nodeid: u64, flags: u32) -> Result<u64, i
     }
     let open_out: FuseOpenOut = fuse::read_struct(&resp[OUT_HDR_SIZE..]).unwrap();
     Ok(open_out.fh)
+}
+
+fn open_dir(proc: &mut FuseProcessor, nodeid: u64) -> Result<u64, i32> {
+    let h = make_header(FUSE_OPENDIR, nodeid, 201);
+    let resp = proc.handle_request(&build_request(&h, &[]));
+    let out: FuseOutHeader = fuse::read_struct(&resp).unwrap();
+    if out.error != 0 {
+        return Err(out.error);
+    }
+    let open_out: FuseOpenOut = fuse::read_struct(&resp[OUT_HDR_SIZE..]).unwrap();
+    Ok(open_out.fh)
+}
+
+#[test]
+fn checkpoint_roundtrip_preserves_inode_and_open_handle_state() {
+    let dir = temp_share("checkpoint-state-roundtrip");
+    std::fs::write(dir.join("held.txt"), b"before\n").unwrap();
+    std::fs::write(dir.join("next.txt"), b"next").unwrap();
+    let mut proc = test_processor(&dir);
+    let held_ino = lookup(&mut proc, 1, "held.txt").unwrap();
+    assert_eq!(lookup(&mut proc, 1, "held.txt").unwrap(), held_ino);
+    let file_fh = open_file(
+        &mut proc,
+        held_ino,
+        (libc::O_WRONLY | libc::O_APPEND) as u32,
+    )
+    .unwrap();
+    let dir_fh = open_dir(&mut proc, 1).unwrap();
+    proc.file_handles
+        .get_file(file_fh)
+        .unwrap()
+        .seek(SeekFrom::Start(3))
+        .unwrap();
+
+    let encoded = proc.encode_checkpoint().unwrap();
+    let decoded = VirtioFsBackendSnapshot::decode(&encoded).unwrap();
+    let expected_dir_entries = match &decoded
+        .file_handles
+        .handles
+        .iter()
+        .find(|handle| handle.fh == dir_fh)
+        .unwrap()
+        .kind
+    {
+        FileHandleKindSnapshot::Dir { entries, .. } => entries.clone(),
+        _ => panic!("expected directory handle"),
+    };
+    let expected_next_ino = decoded.inodes.next_ino;
+    let expected_next_fh = decoded.file_handles.next_fh;
+    let mut restored = FuseProcessor::restore_checkpoint(&dir, false, &encoded).unwrap();
+    assert_eq!(
+        restored.file_handles.get_dir(dir_fh).unwrap(),
+        &expected_dir_entries,
+        "directory entry snapshot order must be preserved verbatim"
+    );
+    let seek = FuseLseekIn {
+        fh: file_fh,
+        offset: 0,
+        whence: libc::SEEK_CUR as u32,
+        padding: 0,
+    };
+    let response = restored.do_lseek(
+        &make_header(FUSE_LSEEK, held_ino, 204),
+        fuse::as_bytes(&seek),
+    );
+    assert_eq!(response_error(&response), 0);
+    let seek_out: FuseLseekOut = fuse::read_struct(&response[OUT_HDR_SIZE..]).unwrap();
+    assert_eq!(seek_out.offset, 3);
+
+    restored.inodes.forget(held_ino, 1);
+    assert!(restored.inodes.get(held_ino).is_some());
+    restored.inodes.forget(held_ino, 1);
+    assert!(restored.inodes.get(held_ino).is_none());
+    assert_eq!(
+        lookup(&mut restored, 1, "next.txt").unwrap(),
+        expected_next_ino
+    );
+
+    let write = FuseWriteIn {
+        fh: file_fh,
+        offset: 0,
+        size: 6,
+        write_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
+    };
+    let mut body = fuse::as_bytes(&write).to_vec();
+    body.extend_from_slice(b"after\n");
+    let response = restored.do_write(&make_header(FUSE_WRITE, held_ino, 202), &body);
+    assert_eq!(response_error(&response), 0);
+    assert_eq!(
+        std::fs::read(dir.join("held.txt")).unwrap(),
+        b"before\nafter\n"
+    );
+
+    let read = FuseReadIn {
+        fh: dir_fh,
+        offset: 0,
+        size: 4096,
+        read_flags: 0,
+        lock_owner: 0,
+        flags: 0,
+        padding: 0,
+    };
+    let response = restored.do_readdir(&make_header(FUSE_READDIR, 1, 203), fuse::as_bytes(&read));
+    assert_eq!(response_error(&response), 0);
+    assert!(response
+        .windows(b"held.txt".len())
+        .any(|w| w == b"held.txt"));
+    assert_eq!(open_dir(&mut restored, 1).unwrap(), expected_next_fh);
+}
+
+#[test]
+fn checkpoint_restore_rejects_inode_path_escaping_share_root() {
+    let dir = temp_share("checkpoint-state-escape");
+    let outside = temp_share("checkpoint-state-outside");
+    std::fs::write(outside.join("secret"), b"secret").unwrap();
+    std::os::unix::fs::symlink(&outside, dir.join("escape")).unwrap();
+    let mut proc = test_processor(&dir);
+    let ino = lookup(&mut proc, 1, "escape").unwrap();
+    let encoded = proc.encode_checkpoint().unwrap();
+    let mut decoded = VirtioFsBackendSnapshot::decode(&encoded).unwrap();
+    decoded
+        .inodes
+        .entries
+        .iter_mut()
+        .find(|entry| entry.ino == ino)
+        .unwrap()
+        .relative_path = b"escape/secret".to_vec();
+
+    let err = match FuseProcessor::restore_checkpoint(&dir, false, &decoded.encode().unwrap()) {
+        Ok(_) => panic!("escaped inode path must be rejected"),
+        Err(err) => err,
+    };
+
+    assert!(
+        format!("{err:#}").contains("outside VirtioFS root"),
+        "{err:#}"
+    );
+}
+
+#[test]
+fn checkpoint_restore_rejects_replaced_open_file() {
+    let dir = temp_share("checkpoint-state-replaced-file");
+    let path = dir.join("held.txt");
+    std::fs::write(&path, b"before").unwrap();
+    let mut proc = test_processor(&dir);
+    let ino = lookup(&mut proc, 1, "held.txt").unwrap();
+    open_file(&mut proc, ino, libc::O_RDONLY as u32).unwrap();
+    let encoded = proc.encode_checkpoint().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(&path, b"replacement").unwrap();
+
+    let err = match FuseProcessor::restore_checkpoint(&dir, false, &encoded) {
+        Ok(_) => panic!("replaced open file must be rejected"),
+        Err(err) => err,
+    };
+
+    assert!(err.to_string().contains("identity changed"), "{err:#}");
+}
+
+#[test]
+fn checkpoint_rejects_open_but_unlinked_file() {
+    let dir = temp_share("checkpoint-state-unlinked-file");
+    let path = dir.join("held.txt");
+    std::fs::write(&path, b"before").unwrap();
+    let mut proc = test_processor(&dir);
+    let ino = lookup(&mut proc, 1, "held.txt").unwrap();
+    open_file(&mut proc, ino, libc::O_RDONLY as u32).unwrap();
+    std::fs::remove_file(&path).unwrap();
+
+    let err = proc.encode_checkpoint().unwrap_err();
+
+    assert!(err.to_string().contains("not reopenable"), "{err:#}");
+}
+
+#[test]
+fn checkpoint_restore_rejects_replaced_cached_root_inode() {
+    let dir = temp_share("checkpoint-state-replaced-root");
+    let moved = dir.with_extension("original");
+    let _ = std::fs::remove_dir_all(&moved);
+    let mut proc = test_processor(&dir);
+    let encoded = proc.encode_checkpoint().unwrap();
+    std::fs::rename(&dir, &moved).unwrap();
+    std::fs::create_dir(&dir).unwrap();
+
+    let err = match FuseProcessor::restore_checkpoint(&dir, false, &encoded) {
+        Ok(_) => panic!("replaced root inode must be rejected"),
+        Err(err) => err,
+    };
+
+    assert!(err.to_string().contains("identity changed"), "{err:#}");
+}
+
+#[test]
+fn checkpoint_restore_rejects_replaced_directory_handle() {
+    let dir = temp_share("checkpoint-state-replaced-directory");
+    std::fs::create_dir(dir.join("held-dir")).unwrap();
+    let mut proc = test_processor(&dir);
+    let ino = lookup(&mut proc, 1, "held-dir").unwrap();
+    open_dir(&mut proc, ino).unwrap();
+    let encoded = proc.encode_checkpoint().unwrap();
+    std::fs::rename(dir.join("held-dir"), dir.join("old-dir")).unwrap();
+    std::fs::create_dir(dir.join("held-dir")).unwrap();
+
+    let err = match FuseProcessor::restore_checkpoint(&dir, false, &encoded) {
+        Ok(_) => panic!("replaced directory handle must be rejected"),
+        Err(err) => err,
+    };
+
+    assert!(err.to_string().contains("identity changed"), "{err:#}");
+}
+
+#[test]
+fn checkpoint_restore_rejects_fifo_before_reopen() {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let dir = temp_share("checkpoint-state-fifo");
+    let path = dir.join("held.txt");
+    std::fs::write(&path, b"before").unwrap();
+    let mut proc = test_processor(&dir);
+    let ino = lookup(&mut proc, 1, "held.txt").unwrap();
+    let fh = open_file(&mut proc, ino, libc::O_RDONLY as u32).unwrap();
+    let encoded = proc.encode_checkpoint().unwrap();
+    let mut decoded = VirtioFsBackendSnapshot::decode(&encoded).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let c_path = CString::new(path.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+    let metadata = std::fs::symlink_metadata(&path).unwrap();
+    let inode = decoded
+        .inodes
+        .entries
+        .iter_mut()
+        .find(|entry| entry.ino == ino)
+        .unwrap();
+    inode.device = metadata.dev();
+    inode.host_inode = metadata.ino();
+    inode.file_type = host_file_type(&metadata);
+    let handle = decoded
+        .file_handles
+        .handles
+        .iter_mut()
+        .find(|handle| handle.fh == fh)
+        .unwrap();
+    if let FileHandleKindSnapshot::File {
+        device,
+        inode,
+        file_type,
+        ..
+    } = &mut handle.kind
+    {
+        *device = metadata.dev();
+        *inode = metadata.ino();
+        *file_type = host_file_type(&metadata);
+    }
+
+    let err = match FuseProcessor::restore_checkpoint(&dir, false, &decoded.encode().unwrap()) {
+        Ok(_) => panic!("FIFO checkpoint must be rejected"),
+        Err(err) => err,
+    };
+
+    assert!(err.to_string().contains("not a regular file"), "{err:#}");
+}
+
+#[test]
+fn virtiofs_device_restore_rejects_tag_and_read_only_identity_mismatch() {
+    let dir = temp_share("checkpoint-device-identity");
+    let mut source = test_device(&dir);
+    source.quiesce().unwrap();
+    let state = source.checkpoint_state().unwrap();
+
+    let mut wrong_tag =
+        VirtioFsDevice::new("other", &dir, false, -1, Arc::new(AtomicU32::new(0))).unwrap();
+    let tag_err = wrong_tag.restore_checkpoint_state(&state).unwrap_err();
+    assert!(
+        tag_err.to_string().contains("tag identity mismatch"),
+        "{tag_err:#}"
+    );
+
+    let mut wrong_mode =
+        VirtioFsDevice::new("capsem", &dir, true, -1, Arc::new(AtomicU32::new(0))).unwrap();
+    let mode_err = wrong_mode.restore_checkpoint_state(&state).unwrap_err();
+    assert!(
+        mode_err.to_string().contains("read-only identity mismatch"),
+        "{mode_err:#}"
+    );
+}
+
+#[test]
+fn checkpoint_codec_rejects_invalid_boolean_and_count_before_allocation() {
+    let dir = temp_share("checkpoint-codec-bounds");
+    let mut proc = test_processor(&dir);
+    let encoded = proc.encode_checkpoint().unwrap();
+
+    let mut invalid_boolean = encoded.clone();
+    invalid_boolean[8 + 4 + TAG_LEN] = 2;
+    let err = VirtioFsBackendSnapshot::decode(&invalid_boolean).unwrap_err();
+    assert!(err.to_string().contains("boolean"), "{err:#}");
+
+    let mut invalid_count = encoded;
+    let count_offset = 8 + 4 + TAG_LEN + 1;
+    invalid_count[count_offset..count_offset + 4].copy_from_slice(&1_048_577u32.to_le_bytes());
+    let err = VirtioFsBackendSnapshot::decode(&invalid_count).unwrap_err();
+    assert!(
+        err.to_string().contains("inode count exceeds limit"),
+        "{err:#}"
+    );
+}
+
+#[test]
+fn checkpoint_restore_rejects_symlink_replacement_without_following_it() {
+    let dir = temp_share("checkpoint-state-symlink-replacement");
+    let outside = temp_share("checkpoint-state-symlink-target");
+    let path = dir.join("held.txt");
+    let outside_path = outside.join("outside.txt");
+    std::fs::write(&path, b"inside").unwrap();
+    std::fs::write(&outside_path, b"outside").unwrap();
+    let mut proc = test_processor(&dir);
+    let ino = lookup(&mut proc, 1, "held.txt").unwrap();
+    let fh = open_file(&mut proc, ino, libc::O_RDONLY as u32).unwrap();
+    let encoded = proc.encode_checkpoint().unwrap();
+    let mut decoded = VirtioFsBackendSnapshot::decode(&encoded).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    std::os::unix::fs::symlink(&outside_path, &path).unwrap();
+    let metadata = std::fs::symlink_metadata(&path).unwrap();
+    let inode = decoded
+        .inodes
+        .entries
+        .iter_mut()
+        .find(|entry| entry.ino == ino)
+        .unwrap();
+    inode.device = metadata.dev();
+    inode.host_inode = metadata.ino();
+    inode.file_type = host_file_type(&metadata);
+    assert!(decoded
+        .file_handles
+        .handles
+        .iter()
+        .any(|handle| handle.fh == fh));
+
+    let err = match FuseProcessor::restore_checkpoint(&dir, false, &decoded.encode().unwrap()) {
+        Ok(_) => panic!("symlink replacement must be rejected"),
+        Err(err) => err,
+    };
+
+    assert!(
+        format!("{err:#}").contains("outside VirtioFS root"),
+        "{err:#}"
+    );
 }
 
 // ── ops_meta tests ───────────────────────────────────────────────
@@ -838,6 +1202,57 @@ fn create_new_file() {
     assert!(entry.nodeid > 0);
     let open_out: FuseOpenOut = fuse::read_struct(&resp[OUT_HDR_SIZE + ENTRY_OUT_SIZE..]).unwrap();
     assert!(open_out.fh > 0);
+}
+
+#[test]
+fn create_new_append_handle_preserves_semantics_across_checkpoint() {
+    let dir = temp_share("create-new-append-checkpoint");
+    let mut proc = test_processor(&dir);
+
+    let create_in = FuseCreateIn {
+        flags: (libc::O_WRONLY | libc::O_APPEND) as u32,
+        mode: 0o644,
+        umask: 0,
+        open_flags: 0,
+    };
+    let header = make_header(FUSE_CREATE, 1, 1);
+    let mut body = fuse::as_bytes(&create_in).to_vec();
+    body.extend_from_slice(b"append.txt\0");
+    let response = proc.handle_request(&build_request(&header, &body));
+    assert_eq!(response_error(&response), 0);
+    let entry: FuseEntryOut = fuse::read_struct(&response[OUT_HDR_SIZE..]).unwrap();
+    let opened: FuseOpenOut =
+        fuse::read_struct(&response[OUT_HDR_SIZE + ENTRY_OUT_SIZE..]).unwrap();
+
+    std::fs::write(dir.join("append.txt"), b"base\n").unwrap();
+    let write = |processor: &mut FuseProcessor, unique, data: &[u8]| {
+        let input = FuseWriteIn {
+            fh: opened.fh,
+            offset: 0,
+            size: data.len() as u32,
+            write_flags: 0,
+            lock_owner: 0,
+            flags: 0,
+            padding: 0,
+        };
+        let mut request = fuse::as_bytes(&input).to_vec();
+        request.extend_from_slice(data);
+        let response = processor.handle_request(&build_request(
+            &make_header(FUSE_WRITE, entry.nodeid, unique),
+            &request,
+        ));
+        assert_eq!(response_error(&response), 0);
+    };
+
+    write(&mut proc, 2, b"before\n");
+    let checkpoint = proc.encode_checkpoint().unwrap();
+    let mut restored = FuseProcessor::restore_checkpoint(&dir, false, &checkpoint).unwrap();
+    write(&mut restored, 3, b"after\n");
+
+    assert_eq!(
+        std::fs::read(dir.join("append.txt")).unwrap(),
+        b"base\nbefore\nafter\n"
+    );
 }
 
 #[test]

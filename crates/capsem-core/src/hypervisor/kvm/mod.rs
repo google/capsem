@@ -31,7 +31,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use tokio::sync::mpsc;
 
 use super::{Hypervisor, SerialConsole, VmHandle, VsockConnection};
@@ -649,6 +649,8 @@ impl Hypervisor for KvmHypervisor {
 
         #[cfg(target_arch = "x86_64")]
         if let Some(restored) = restored_checkpoint.as_ref() {
+            let live_slots: Vec<u32> = mmio_transports.iter().map(|(slot, _)| *slot).collect();
+            validate_mmio_slot_topology(&live_slots, &restored.mmio_devices)?;
             for snapshot in &restored.mmio_devices {
                 let Some((_slot, transport)) = mmio_transports
                     .iter()
@@ -889,11 +891,13 @@ impl VmHandle for KvmHandle {
             let mmio_snapshots: Vec<_> = self
                 ._mmio_transports
                 .iter()
-                .map(|(slot, transport)| checkpoint::MmioDeviceSnapshot {
-                    slot: *slot,
-                    transport: transport.snapshot(),
+                .map(|(slot, transport)| -> Result<_> {
+                    Ok(checkpoint::MmioDeviceSnapshot {
+                        slot: *slot,
+                        transport: transport.snapshot()?,
+                    })
                 })
-                .collect();
+                .collect::<Result<_>>()?;
             tracing::info!(
                 target: "suspend",
                 op = "kvm_mmio_snapshot",
@@ -932,6 +936,33 @@ impl VmHandle for KvmHandle {
     fn supports_checkpoint(&self) -> bool {
         cfg!(target_arch = "x86_64")
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn validate_mmio_slot_topology(
+    live_slots: &[u32],
+    snapshots: &[checkpoint::MmioDeviceSnapshot],
+) -> Result<()> {
+    use std::collections::HashSet;
+
+    let live: HashSet<u32> = live_slots.iter().copied().collect();
+    ensure!(
+        live.len() == live_slots.len(),
+        "restored VM contains duplicate live MMIO slots"
+    );
+    let mut checkpoint = HashSet::with_capacity(snapshots.len());
+    for snapshot in snapshots {
+        ensure!(
+            checkpoint.insert(snapshot.slot),
+            "checkpoint contains duplicate MMIO slot {}",
+            snapshot.slot
+        );
+    }
+    ensure!(
+        checkpoint == live,
+        "checkpoint MMIO slot topology mismatch: checkpoint={checkpoint:?}, vm={live:?}"
+    );
+    Ok(())
 }
 
 fn state_from_u8(val: u8) -> VmState {
@@ -985,7 +1016,10 @@ fn run_kvm_diagnostics(kvm: &sys::KvmFd) {
                 );
             }
             Err(e) => {
-                tracing::error!(error = format!("{e:#}"), "probe: vCPU(0) fails even WITHOUT IRQCHIP");
+                tracing::error!(
+                    error = format!("{e:#}"),
+                    "probe: vCPU(0) fails even WITHOUT IRQCHIP"
+                );
                 tracing::error!("probe: this KVM environment cannot create vCPUs at all");
             }
         },
