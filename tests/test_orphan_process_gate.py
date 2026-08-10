@@ -190,18 +190,18 @@ def test_a_process_from_this_checkout_is_ours() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _long_lived_capsem_fixture(binary: Path) -> list[str]:
-    """Copy a process whose Linux name remains the fixture's ``capsem-*`` name.
+def _start_long_lived_capsem_fixture(binary: Path) -> subprocess.Popen:
+    """Start a process whose Linux name remains the fixture's ``capsem-*`` name.
 
     This host's ``/bin/sleep`` is the uutils multicall launcher: copying it
     under a new basename makes it dispatch that basename and immediately fail
-    with ``unknown program``. A copied Python interpreter preserves the kernel
-    process name and executable path that orphan accounting must inspect.
-    macOS keeps the signed sleep fixture already proven there.
+    with ``unknown program``. A copied Bash blocks in its ``read`` builtin, so
+    it needs no adjacent runtime and leaves no child behind when reaped. macOS
+    keeps the signed sleep fixture already proven there.
     """
     if sys.platform == "linux":
-        shutil.copy(sys.executable, binary)
-        argv = [str(binary), "-c", "import time; time.sleep(300)"]
+        shutil.copy("/bin/bash", binary)
+        argv = [str(binary), "-c", "read -r _"]
     else:
         shutil.copy("/bin/sleep", binary)
         argv = [str(binary), "300"]
@@ -209,7 +209,9 @@ def _long_lived_capsem_fixture(binary: Path) -> list[str]:
     # at exec. Same ad-hoc signing every other test fixture uses; a no-op on
     # Linux.
     sign_binary(binary)
-    return argv
+    # Keep stdin open so the Linux Bash remains blocked in its own builtin;
+    # sleep ignores the pipe on macOS. The caller owns and closes it.
+    return subprocess.Popen(argv, stdin=subprocess.PIPE)
 
 
 @pytest.mark.skipif(not Path("/bin/sleep").exists(), reason="needs /bin/sleep")
@@ -222,7 +224,6 @@ def test_check_detects_and_reaps_a_real_orphan(tmp_path: Path) -> None:
     fake_root = tmp_path / "checkout"
     (fake_root / "target" / "debug").mkdir(parents=True)
     binary = fake_root / "target" / "debug" / "capsem-fake-leak"
-    fixture_argv = _long_lived_capsem_fixture(binary)
 
     baseline_file = tmp_path / "baseline.json"
     assert (
@@ -231,7 +232,7 @@ def test_check_detects_and_reaps_a_real_orphan(tmp_path: Path) -> None:
     )
     assert json.loads(baseline_file.read_text()) == {}
 
-    leaked = subprocess.Popen(fixture_argv)
+    leaked = _start_long_lived_capsem_fixture(binary)
     try:
         deadline = time.time() + 10
         while time.time() < deadline:
@@ -250,6 +251,8 @@ def test_check_detects_and_reaps_a_real_orphan(tmp_path: Path) -> None:
         if leaked.poll() is None:
             leaked.kill()
         leaked.wait()
+        assert leaked.stdin is not None
+        leaked.stdin.close()
 
 
 def test_baseline_announces_leftovers_from_an_earlier_run(tmp_path: Path, capsys) -> None:
@@ -262,9 +265,8 @@ def test_baseline_announces_leftovers_from_an_earlier_run(tmp_path: Path, capsys
     fake_root = tmp_path / "checkout"
     (fake_root / "target" / "debug").mkdir(parents=True)
     binary = fake_root / "target" / "debug" / "capsem-fake-leftover"
-    fixture_argv = _long_lived_capsem_fixture(binary)
 
-    leftover = subprocess.Popen(fixture_argv)
+    leftover = _start_long_lived_capsem_fixture(binary)
     try:
         deadline = time.time() + 10
         while time.time() < deadline and not ORPHANS.repo_capsem_processes(fake_root):
@@ -292,6 +294,8 @@ def test_baseline_announces_leftovers_from_an_earlier_run(tmp_path: Path, capsys
     finally:
         leftover.kill()
         leftover.wait()
+        assert leftover.stdin is not None
+        leftover.stdin.close()
 
 
 def test_check_refuses_to_guess_without_a_baseline(tmp_path: Path, capsys) -> None:
