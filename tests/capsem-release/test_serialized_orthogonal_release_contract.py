@@ -333,6 +333,15 @@ def test_daily_scheduler_runs_profile_and_binary_lanes_without_direct_dispatch()
     assert "release-assets.yaml" not in workflow
 
 
+def test_daily_scheduler_forwards_the_channel_source_token() -> None:
+    workflow = _workflow("release-nightly.yaml")
+    profiles = _job_block(workflow, "release-profiles")
+    binaries = _job_block(workflow, "release-binaries")
+
+    for job in (profiles, binaries):
+        assert "GITHUB_TOKEN: ${{ github.token }}" in job
+
+
 def test_nightly_binary_rebuild_is_correlated_but_does_not_republish_identity() -> None:
     workflow = _workflow("release.yaml")
     script = _read("scripts/release-binaries.py")
