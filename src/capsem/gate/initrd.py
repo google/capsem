@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import crossexec, host
 from .actions import Action, Run, Script
 from .command import GateCommand
 from .config import GateConfig
@@ -24,6 +25,7 @@ from .context import Context
 from .errors import GateError
 from .execution import Step, step
 from .fileactions import AtomicReplace, Copy, MakeDir, Remove
+from .imagebases import MaterializeRustBuilders, Prefetch
 from .plan import Plan
 from .versions import workspace_version
 
@@ -171,6 +173,34 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
 
     previous: tuple = after
     if needs_rebuild(config):
+        if host.on_macos():
+            arch = config.host_arch().name
+            base = phase.add(
+                step(
+                    "guest-base",
+                    Prefetch((arch,), rust_names=(arch,)),
+                    contends=(config.exclusive("docker_daemon"),),
+                ),
+                after=after,
+            )
+            execution = phase.add(
+                step(
+                    "guest-execution",
+                    crossexec.Require((arch,)),
+                    contends=(config.exclusive("docker_daemon"),),
+                ),
+                after=(base,),
+            )
+            previous = (
+                phase.add(
+                    step(
+                        "guest-builder",
+                        MaterializeRustBuilders((arch,)),
+                        contends=(config.exclusive("docker_daemon"),),
+                    ),
+                    after=(execution,),
+                ),
+            )
         previous = (
             phase.add(
                 step(
@@ -178,7 +208,7 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
                     Run([*settings.build, "--arch", config.host_arch().name]),
                     contends=(config.exclusive("docker_daemon"),),
                 ),
-                after=after,
+                after=previous,
             ),
         )
 

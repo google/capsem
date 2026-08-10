@@ -11,6 +11,12 @@ compression_level = 12
 version = "6.18.44"
 sha256 = "0f72d938f06828e82c90405174fe572287db7bfe089e2fc46572a99a7f240d43"
 
+[build.guest_rust_builder]
+dockerfile = "docker/Dockerfile.guest-rust-builder"
+tag_template = "capsem-guest-rust-{arch}:{digest}"
+identity_inputs = ["Cargo.lock", "rust-toolchain.toml"]
+runtime_network = "none"
+
 [build.version_commands]
 node = "node --version 2>&1 | tr -d v"
 npm = "npm --version 2>&1"
@@ -19,6 +25,8 @@ pip = "pip3 --version 2>&1 | awk '{print $2}'"
 
 [build.architectures.arm64]
 base_image = "docker.io/library/debian@sha256:817e6cf99d6fc127ff4ffe8580049b60deba0adfbbb2bd65ddc3ef8fbb7aade0"
+# Exact linux/arm64 child of rust:1.97.1-alpine3.23.
+rust_builder_base_image = "docker.io/library/rust@sha256:ec97f172f73f5ec381a238dad6ddd99e0e9c14fd3709a05beb41ccdf50eb666a"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
 kernel_image = "arch/arm64/boot/Image"
@@ -27,6 +35,8 @@ node_major = 24
 
 [build.architectures.x86_64]
 base_image = "docker.io/library/debian@sha256:362e64223cc0da95422b3b13c045186fc0a81250e765d31c025fbddf257f6143"
+# Exact linux/amd64 child of rust:1.97.1-alpine3.23.
+rust_builder_base_image = "docker.io/library/rust@sha256:83b16fd204613a557527e81ef4f87fd513229187c49635e3c7f96b08dfa43c33"
 docker_platform = "linux/amd64"
 rust_target = "x86_64-unknown-linux-musl"
 kernel_image = "arch/x86_64/boot/bzImage"

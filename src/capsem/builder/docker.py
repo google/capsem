@@ -24,7 +24,8 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader
 
 from capsem.builder.doctor import check_container_runtime
-from capsem.builder.models import ErofsConfig, GuestImageConfig
+from capsem.builder.guestbuilder import image_tag
+from capsem.builder.models import BuildConfig, ErofsConfig, GuestImageConfig
 from capsem.gate import auditfs
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "config" / "docker"
@@ -525,18 +526,20 @@ def experimental_erofs_build_config(
 
 
 def container_compile_agent(
-    rust_target: str,
+    build: BuildConfig,
+    arch_name: str,
     repo_root: Path,
     output_dir: Path,
 ) -> list[Path]:
     """Compile guest agent binaries inside a Linux container.
 
-    Used on macOS to avoid local cross-linker toolchain issues. Builds natively
-    inside a container with per-arch volume caching to prevent cache clobbering
-    between arm64 and x86_64 builds.
+    Used on macOS and for a foreign Linux target. The dependency/toolchain
+    image is materialized before this call; the build itself has no network.
     """
+    arch = build.architectures[arch_name]
+    rust_target = arch.rust_target
     runtime = detect_runtime()
-    platform = "linux/arm64" if "aarch64" in rust_target else "linux/amd64"
+    docker_platform = arch.docker_platform
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Build all shell commands from GUEST_BINARIES constant
@@ -548,48 +551,48 @@ def container_compile_agent(
     chmod_cmds = " ".join(f"/output/{b}" for b in GUEST_BINARIES)
     file_cmds = " && ".join(f"ls -l /output/{b}" for b in GUEST_BINARIES)
 
-    # Pre-pull the image so failures are clear, not buried in a long docker run
-    image = "rust:slim-bookworm"
+    image = image_tag(build, arch_name, repo_root)
     try:
-        run_cmd([runtime, "image", "inspect", image], capture=True, echo=False)
-    except subprocess.CalledProcessError:
-        print(f"  Pulling {image} ({platform}) ...")
-        run_cmd([runtime, "pull", "--platform", platform, image])
+        run_cmd(
+            [runtime, "image", "inspect", "--platform", docker_platform, image],
+            capture=True,
+            echo=False,
+        )
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            f"locked guest Rust builder is missing: {image}; "
+            "materialize the asset build inputs before cross-compiling"
+        ) from error
 
-    print(f"  Container build ({platform}) ...")
+    print(f"  Container build ({docker_platform}) ...")
     # Source is mounted :ro to protect the host. We symlink everything into
-    # a writable /build dir so cargo can generate Cargo.lock without modifying
-    # the host. Every cache below is an anonymous volume: a named one outlives
-    # the run and is state two gates share, which is what this work removes.
+    # a writable /build dir, while Cargo.lock stays the checked-in read-only
+    # input. The image owns the registry and rustup trees; masking either with
+    # an anonymous volume would turn a cold run back into a network build.
     run_cmd(
         [
             runtime,
             "run",
             "--rm",
+            "--network",
+            build.guest_rust_builder.runtime_network,
             "--platform",
-            platform,
+            docker_platform,
             "-v",
             f"{repo_root.resolve()}:/src:ro",
             "-v",
             f"{output_dir.resolve()}:/output",
             "-v",
-            "/usr/local/cargo/registry",
-            "-v",
-            "/usr/local/cargo/git",
-            "-v",
-            "/usr/local/rustup",
-            "-v",
             "/build/target",
             "-w",
             "/build",
             image,
-            "bash",
+            "sh",
             "-c",
-            f'for f in /src/*; do b=$(basename "$f"); [ "$b" != target ] && [ "$b" != Cargo.lock ] && [ "$b" != crates ] && ln -s "$f" /build/; done && '
+            f'for f in /src/*; do b=$(basename "$f"); [ "$b" != target ] && [ "$b" != crates ] && ln -s "$f" /build/; done && '
             f"cp -r /src/crates /build/crates && "
-            f"apt-get update -qq && apt-get install -y -qq musl-tools >/dev/null 2>&1 && "
-            f"rustup target add {rust_target} && "
-            f"cargo build --release --target {rust_target} -p capsem-agent -p capsem-bench && "
+            f"cargo build --locked --offline --release --target {rust_target} "
+            "-p capsem-agent -p capsem-bench && "
             f"rm -f {rm_cmds} && "
             f"{cp_cmds} && chmod 555 {chmod_cmds} && {file_cmds}",
         ]
@@ -609,7 +612,8 @@ def container_compile_agent(
 
 
 def cross_compile_agent(
-    rust_target: str,
+    build: BuildConfig,
+    arch_name: str,
     repo_root: Path,
     output_dir: Path,
 ) -> list[Path]:
@@ -618,16 +622,17 @@ def cross_compile_agent(
     Foreign-architecture builds delegate to container_compile_agent so the C
     toolchain used by transitive Rust dependencies matches the target CPU.
     """
+    rust_target = build.architectures[arch_name].rust_target
     if sys.platform == "darwin":
         print(f"  macOS detected: using container-native build for {rust_target}")
-        return container_compile_agent(rust_target, repo_root, output_dir)
+        return container_compile_agent(build, arch_name, repo_root, output_dir)
 
     if sys.platform.startswith("linux") and not _rust_target_is_native(rust_target):
         print(
             "  Linux foreign target detected "
             f"({platform.machine()} -> {rust_target}): using container-native build"
         )
-        return container_compile_agent(rust_target, repo_root, output_dir)
+        return container_compile_agent(build, arch_name, repo_root, output_dir)
 
     # Native Linux compile.
     # Ensure target installed
@@ -1784,7 +1789,12 @@ def build_image(
         elif template == "rootfs":
             # Cross-compile agent binaries
             print(f"Cross-compiling guest binaries for {arch.rust_target}...")
-            binaries = cross_compile_agent(arch.rust_target, repo_root, context_dir)
+            binaries = cross_compile_agent(
+                config.build,
+                arch_name,
+                repo_root,
+                context_dir,
+            )
             for b in binaries:
                 print(f"  {b.name}: {b.stat().st_size} bytes")
 

@@ -8,6 +8,7 @@ format.
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -56,6 +57,7 @@ class ArchConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     base_image: str = Field(pattern=r"^[^@\s]+@sha256:[0-9a-f]{64}$")
+    rust_builder_base_image: str = Field(pattern=r"^[^@\s]+@sha256:[0-9a-f]{64}$")
     docker_platform: str
     rust_target: str
     kernel_image: str
@@ -70,6 +72,25 @@ class KernelConfig(BaseModel):
 
     version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class GuestRustBuilderConfig(BaseModel):
+    """Input-keyed image cache that owns guest Rust build dependencies."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    dockerfile: str
+    tag_template: str
+    identity_inputs: tuple[str, ...]
+    runtime_network: Literal["none"]
+
+    @model_validator(mode="after")
+    def _identity_is_complete(self):
+        if not self.identity_inputs:
+            raise ValueError("identity_inputs must have at least one entry")
+        if "{arch}" not in self.tag_template or "{digest}" not in self.tag_template:
+            raise ValueError("tag_template must contain {arch} and {digest}")
+        return self
 
 
 class ErofsConfig(BaseModel):
@@ -113,6 +134,7 @@ class BuildConfig(BaseModel):
     compression_level: int = Field(default=15, ge=1, le=22)
     erofs: ErofsConfig = Field(default_factory=ErofsConfig)
     kernel: KernelConfig
+    guest_rust_builder: GuestRustBuilderConfig
     architectures: dict[str, ArchConfig]
     version_commands: dict[str, str] = Field(default_factory=dict)
 

@@ -171,7 +171,7 @@ def test_agent_uses_profile_materialized_architecture(tmp_path: Path) -> None:
     assert result.exit_code == 0
     load_config.assert_called_once_with(guest)
     cross_compile.assert_called_once()
-    assert cross_compile.call_args.args[0] == "aarch64-unknown-linux-musl"
+    assert cross_compile.call_args.args[:2] == (config.build, "arm64")
 
 
 def test_agent_defaults_to_current_image_config() -> None:
@@ -189,7 +189,7 @@ def test_agent_defaults_to_current_image_config() -> None:
     assert result.exit_code == 0
     load_config.assert_called_once_with(Path("config/docker/image"))
     cross_compile.assert_called_once()
-    assert cross_compile.call_args.args[0] == "aarch64-unknown-linux-musl"
+    assert cross_compile.call_args.args[:2] == (config.build, "arm64")
 
 
 def test_agent_fails_when_guest_dir_is_missing(tmp_path: Path) -> None:

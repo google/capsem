@@ -291,14 +291,19 @@ def test_every_guest_builder_base_is_an_exact_platform_child_manifest() -> None:
     root = Path(__file__).resolve().parents[1]
     config = gate_config.load(root)
     build = load_guest_config(root / config.imagebuild.source_config).build
-    refs = {arch.base_image for arch in build.architectures.values()}
+    refs = {
+        image
+        for arch in build.architectures.values()
+        for image in (arch.base_image, arch.rust_builder_base_image)
+    }
 
-    assert len(refs) == len(build.architectures)
+    assert len(refs) == 2 * len(build.architectures)
     for arch in build.architectures.values():
-        repository, digest = arch.base_image.rsplit("@sha256:", 1)
-        assert repository
-        assert len(digest) == 64
-        assert digest == digest.lower()
+        for image in (arch.base_image, arch.rust_builder_base_image):
+            repository, digest = image.rsplit("@sha256:", 1)
+            assert repository
+            assert len(digest) == 64
+            assert digest == digest.lower()
 
 
 def test_host_builder_trusts_the_bind_mounted_source_checkout() -> None:

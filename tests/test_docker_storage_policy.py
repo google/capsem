@@ -90,8 +90,8 @@ def test_policy_declares_last_consumers_before_release_boundaries() -> None:
 
 
 #: The four the sealed parity lane stopped mounting. `capsem-linux-rust-base`
-#: is deliberately absent -- it is the image that replaced them, and it is the
-#: one managed resource keyed by a repository rather than a tag.
+#: is deliberately absent -- it is the image that replaced them, and the first
+#: managed resource keyed by a repository rather than a tag.
 RETIRED_BY_THE_SEALED_LANE = (
     "capsem-linux-rust-target",
     "capsem-linux-rust-cargo-registry",
@@ -515,8 +515,8 @@ def test_an_oversized_log_is_tailed_rather_than_dropped(tmp_path: Path) -> None:
 # Generational images
 # ---------------------------------------------------------------------------
 #
-# `capsem-linux-rust-base` is the one managed image whose Docker name is a
-# repository rather than a tag: `base_tag()` keys it by a blake2b of the three
+# `capsem-linux-rust-base` is a managed image whose Docker name is a repository
+# rather than a tag: `base_tag()` keys it by a blake2b of the three
 # lockfiles that decide its dependencies, so every bump mints a new ~25 GiB tag
 # and nothing retired the old one. Three coexisting tags were observed after a
 # single security bump, on a VM with 54.7 GiB free.

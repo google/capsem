@@ -12,12 +12,13 @@ shell is how `arm64` came to mean two different things in one repository.
 
 from __future__ import annotations
 
+from . import crossexec
 from .actions import Call, Run
 from .command import GateCommand
 from .config import Arch, GateConfig
 from .errors import GateError
 from .execution import Step, step
-from .imagebases import Prefetch
+from .imagebases import MaterializeRustBuilders, Prefetch, required_rust_builder_names
 from .opacity import CallJustification, OpaqueKind
 from .plan import Plan
 
@@ -147,15 +148,38 @@ class BuildAssetsCommand(
         plan = Plan(self.name)
         config = self._config
         wanted = [self._args.profile] if self._args.profile else profiles(config)
+        names = (
+            (config.arch(self._args.arch).name,) if self._args.arch else tuple(config.architectures)
+        )
+        rust_builders = (
+            () if self._args.template == "kernel" else required_rust_builder_names(config, names)
+        )
 
         bases = plan.add(
             step(
                 "base-images",
-                Prefetch(),
+                Prefetch(names, rust_names=rust_builders),
                 contends=(config.exclusive("docker_daemon"),),
             )
         )
         checked = plan.add(doctor(config), after=(bases,))
+        ready = plan.add(
+            step(
+                "guest-execution",
+                crossexec.Require(names),
+                contends=(config.exclusive("docker_daemon"),),
+            ),
+            after=(checked,),
+        )
+        if rust_builders:
+            ready = plan.add(
+                step(
+                    "guest-builders",
+                    MaterializeRustBuilders(rust_builders),
+                    contends=(config.exclusive("docker_daemon"),),
+                ),
+                after=(ready,),
+            )
         for profile in wanted:
             plan.add(
                 build(
@@ -164,7 +188,7 @@ class BuildAssetsCommand(
                     arch=self._args.arch,
                     template=self._args.template,
                 ),
-                after=(checked,),
+                after=(ready,),
             )
         return plan
 
@@ -174,12 +198,7 @@ class CheckAssetsCommand(
     name="check-assets",
     help="build this host's VM assets if they are not already there",
 ):
-    """The gate's own precondition, not a separate opinion about layout.
-
-    The shell version mapped `uname -m` through `sed` and then handled two
-    directory layouts. The mapping is `config.arch`, and a second copy of it in
-    shell is how one architecture name came to mean two things.
-    """
+    """The gate's precondition, using config's one architecture mapping."""
 
     exclusive = True
 
@@ -203,19 +222,38 @@ def check_assets(
         return after
 
     phase = plan.phase("assets")
+    names = (arch.name,)
+    rust_builders = required_rust_builder_names(config, names)
     bases = phase.add(
         step(
             "base-images",
-            Prefetch((arch.name,)),
+            Prefetch(names, rust_names=rust_builders),
             contends=(config.exclusive("docker_daemon"),),
         ),
         after=after,
     )
     checked = phase.add(doctor(config), after=(bases,))
+    ready = phase.add(
+        step(
+            "guest-execution",
+            crossexec.Require(names),
+            contends=(config.exclusive("docker_daemon"),),
+        ),
+        after=(checked,),
+    )
+    if rust_builders:
+        ready = phase.add(
+            step(
+                "guest-builders",
+                MaterializeRustBuilders(rust_builders),
+                contends=(config.exclusive("docker_daemon"),),
+            ),
+            after=(ready,),
+        )
     return tuple(
         phase.add(
             build(config, profile=profile, arch=arch.name, template="all"),
-            after=(checked,),
+            after=(ready,),
         )
         for profile in profiles(config)
     )

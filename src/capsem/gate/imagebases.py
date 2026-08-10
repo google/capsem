@@ -10,14 +10,17 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from capsem.builder.config import load_guest_config
+from capsem.builder.guestbuilder import build_arguments, image_repository, image_tag
 from capsem.builder.models import ArchConfig, BuildConfig
 
+from . import host
 from .actions import Action
 from .config import GateConfig
 from .context import Context
 from .docker import Docker
 from .errors import GateError
 from .proc import Runner
+from .storage import Storage
 
 
 def build_config(config: GateConfig) -> BuildConfig:
@@ -49,25 +52,123 @@ def selected(
     return tuple((name, build.architectures[name]) for name in wanted)
 
 
-def prefetch(runner: Runner, config: GateConfig, names: Iterable[str] | None = None) -> None:
-    """Pull each absent immutable child manifest for its exact platform."""
+def required_rust_builder_names(
+    config: GateConfig,
+    names: Iterable[str] | None = None,
+) -> tuple[str, ...]:
+    """Architectures whose guest binaries actually use a container helper."""
+    requested = tuple(name for name, _arch in selected(config, names))
+    if host.on_macos():
+        return requested
+    if host.on_linux():
+        native = config.host_arch().name
+        return tuple(name for name in requested if name != native)
+    return ()
+
+
+def prefetch(
+    runner: Runner,
+    config: GateConfig,
+    names: Iterable[str] | None = None,
+    *,
+    rust_names: Iterable[str] | None = None,
+) -> None:
+    """Pull each absent exact base through the Docker daemon fetch edge."""
     docker = Docker(runner)
     for name, arch in selected(config, names):
         if docker.image_exists(arch.base_image, platform=arch.docker_platform):
             runner.note(f"exact {name} guest base is already present: {arch.base_image}")
-            continue
-        docker.pull(arch.base_image, platform=arch.docker_platform)
+        else:
+            docker.pull(arch.base_image, platform=arch.docker_platform)
+
+    rust_scope = names if rust_names is None else rust_names
+    for name, arch in selected(config, rust_scope):
+        if docker.image_exists(arch.rust_builder_base_image, platform=arch.docker_platform):
+            runner.note(
+                f"exact {name} Rust builder base is already present: {arch.rust_builder_base_image}"
+            )
+        else:
+            docker.pull(
+                arch.rust_builder_base_image,
+                platform=arch.docker_platform,
+            )
+
+
+def materialize_rust_builders(
+    runner: Runner,
+    config: GateConfig,
+    names: Iterable[str] | None = None,
+) -> None:
+    """Build lockfile-keyed helpers after cross-platform execution is proven."""
+    docker = Docker(runner)
+    storage = Storage(runner)
+    build = build_config(config)
+    for name, arch in selected(config, names):
+        if not docker.image_exists(
+            arch.rust_builder_base_image,
+            platform=arch.docker_platform,
+        ):
+            raise GateError(
+                f"exact {name} Rust builder base is missing: "
+                f"{arch.rust_builder_base_image}; run guest base prefetch first"
+            )
+        builder = image_tag(build, name, config.root)
+        if docker.image_exists(builder, platform=arch.docker_platform):
+            runner.note(f"locked {name} guest Rust builder is already present: {builder}")
+        else:
+            docker.build(
+                tag=builder,
+                dockerfile=config.path(build.guest_rust_builder.dockerfile).as_posix(),
+                context=str(config.root),
+                args=build_arguments(arch),
+                platform=arch.docker_platform,
+            )
+        storage.reclaim(image_repository(build, name), keep=builder)
 
 
 class Prefetch(Action, name="guest-base-prefetch"):
     """A visible, timed cold-host boundary shared by every asset rail."""
+
+    def __init__(
+        self,
+        names: Iterable[str] | None = None,
+        *,
+        rust_names: Iterable[str] | None = None,
+    ) -> None:
+        self._names = tuple(names) if names is not None else None
+        self._rust_names = tuple(rust_names) if rust_names is not None else None
+
+    def render(self) -> str:
+        scope = "all architectures" if self._names is None else ", ".join(self._names)
+        rust_names = self._names if self._rust_names is None else self._rust_names
+        rust_scope = (
+            "all architectures"
+            if rust_names is None
+            else ", ".join(rust_names) or "none"
+        )
+        return (
+            f"materialize exact guest base images ({scope}); "
+            f"Rust builder bases ({rust_scope})"
+        )
+
+    def perform(self, context: Context) -> None:
+        prefetch(
+            context.runner,
+            context.config,
+            self._names,
+            rust_names=self._rust_names,
+        )
+
+
+class MaterializeRustBuilders(Action, name="guest-rust-builder-materialize"):
+    """Build the locked helper images at the preflight's network-open edge."""
 
     def __init__(self, names: Iterable[str] | None = None) -> None:
         self._names = tuple(names) if names is not None else None
 
     def render(self) -> str:
         scope = "all architectures" if self._names is None else ", ".join(self._names)
-        return f"materialize exact guest base images ({scope})"
+        return f"materialize locked guest Rust builders ({scope})"
 
     def perform(self, context: Context) -> None:
-        prefetch(context.runner, context.config, self._names)
+        materialize_rust_builders(context.runner, context.config, self._names)

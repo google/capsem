@@ -15,6 +15,7 @@ from capsem.builder.models import (
     ErofsCompression,
     ErofsConfig,
     GuestImageConfig,
+    GuestRustBuilderConfig,
     KernelConfig,
     McpServerConfig,
     PackageManager,
@@ -39,6 +40,10 @@ def _arch(*, docker_platform="linux/arm64", rust_target="aarch64-unknown-linux-m
           kernel_image="arch/arm64/boot/Image", defconfig="kernel/defconfig.arm64",
           **kw):
     kw.setdefault("base_image", "docker.io/library/debian@sha256:" + "a" * 64)
+    kw.setdefault(
+        "rust_builder_base_image",
+        "docker.io/library/rust@sha256:" + "c" * 64,
+    )
     return ArchConfig(docker_platform=docker_platform, rust_target=rust_target,
                       kernel_image=kernel_image, defconfig=defconfig, **kw)
 
@@ -46,6 +51,12 @@ def _arch(*, docker_platform="linux/arm64", rust_target="aarch64-unknown-linux-m
 def _build(**kw):
     defaults = {
         "kernel": KernelConfig(version="9.9.9", sha256="a" * 64),
+        "guest_rust_builder": GuestRustBuilderConfig(
+            dockerfile="docker/Dockerfile.guest-rust-builder",
+            tag_template="capsem-guest-rust-{arch}:{digest}",
+            identity_inputs=("Cargo.lock", "rust-toolchain.toml"),
+            runtime_network="none",
+        ),
         "architectures": {"arm64": _arch()},
     }
     defaults.update(kw)
@@ -138,6 +149,7 @@ class TestArchConfig:
     def test_defaults(self):
         a = _arch()
         assert a.base_image == "docker.io/library/debian@sha256:" + "a" * 64
+        assert a.rust_builder_base_image == "docker.io/library/rust@sha256:" + "c" * 64
         assert a.node_major == 24
 
     def test_custom_values(self):
@@ -256,6 +268,7 @@ class TestBuildConfig:
     def test_multi_arch(self):
         x86 = ArchConfig(
             base_image="registry.example/debian@sha256:" + "b" * 64,
+            rust_builder_base_image="registry.example/rust@sha256:" + "c" * 64,
             docker_platform="linux/amd64",
             rust_target="x86_64-unknown-linux-musl",
             kernel_image="arch/x86_64/boot/bzImage",

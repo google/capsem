@@ -42,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from stale cache, and the redundant constant `FROM --platform` warning is
   gone.
 
+- Guest Rust cross-builds now derive input-keyed per-architecture helper
+  images from exact `rust:1.97.1-alpine3.23` child manifests and `Cargo.lock`
+  at the guarded Docker prefetch boundary. Those children already contain the
+  exact toolchain, native musl target, headers, and compiler, so materializing
+  the helper performs no apt or rustup installation. The actual build keeps
+  the lockfile, runs Cargo `--locked --offline` with `--network none`, and no
+  longer masks the baked registry/rustup state with empty anonymous volumes or
+  performs live downloads during qualification.
+
 - Guest-kernel construction now uses one exact checked-in release and SHA-256,
   verifies the downloaded source archive before extraction, and no longer
   consults the mutable kernel.org latest-patch feed from inside the sealed
@@ -237,11 +246,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Five named volumes are retired: `capsem-install-target`,
   `-frontend-dist`, `-cargo`, `-rustup` and `-frontend-node-modules`. The
   install lanes copy their source into the image now, so nothing declares
-  them. The ten that remain are kept deliberately -- they are container-local
-  caches with real producers (`builder/docker.py` for the agent and rustup
-  pairs, the package rail for the cargo target dirs), and retiring one without
-  first baking its contents into that lane's base image would not clean
-  anything up, it would only make every run cold.
+  them. The agent registry/rustup pairs are retired too now that the exact
+  per-architecture builder image bakes those inputs, and build directories are
+  anonymous container-local storage reclaimed with their containers.
 
 - No gate lane mounts the checkout any more. The install image, the install
   proof container, the deb proof and the package lane all copy their source in,

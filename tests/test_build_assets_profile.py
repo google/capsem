@@ -24,6 +24,20 @@ def _source_text(relative: str) -> str:
     return (PROJECT_ROOT / relative).read_text(encoding="utf-8")
 
 
+def _command(command: str, **args):
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+
+    return GateCommand.registry[command](
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(dry_run=False, graph=False, timing=False, **args),
+    )
+
+
 def _planned(command: str, **args) -> str:
     """What a command's plan would run, rendered.
 
@@ -32,21 +46,7 @@ def _planned(command: str, **args) -> str:
     stronger question: a text search notices a line that stopped being written,
     while this notices a step that stopped running.
     """
-    import argparse
-
-    from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
-
-    return (
-        GateCommand.registry[command](
-            RecordingRunner(PROJECT_ROOT),
-            argparse.Namespace(dry_run=False, graph=False, timing=False, **args),
-        )
-        ._describe()
-        .describe()
-    )
+    return _command(command, **args)._describe().describe()
 
 
 def _recipe_block(name: str) -> str:
@@ -92,8 +92,44 @@ def test_every_asset_build_rail_materializes_exact_bases_before_building() -> No
     ):
         rendered = _planned(command, **args)
         assert "materialize exact guest base images" in rendered
+        assert "materialize locked guest Rust builders" in rendered
         following = "image build" if command == "build-assets" else "container execution preflight"
         assert rendered.index("materialize exact guest base images") < rendered.index(following)
+        if command == "build-assets":
+            assert "prove Docker can execute arm64 containers" in rendered
+            assert rendered.index("prove Docker can execute arm64 containers") < rendered.index(
+                "materialize locked guest Rust builders"
+            )
+            assert rendered.index("materialize locked guest Rust builders") < rendered.index(
+                following
+            )
+        else:
+            assert rendered.index(following) < rendered.index(
+                "materialize locked guest Rust builders"
+            )
+
+
+def test_kernel_only_asset_build_does_not_materialize_a_rust_helper() -> None:
+    rendered = _planned("build-assets", profile="code", arch="arm64", template="kernel")
+
+    assert "prove Docker can execute arm64 containers" in rendered
+    assert "Rust builder bases (none)" in rendered
+    assert "materialize locked guest Rust builders" not in rendered
+
+
+def test_standalone_asset_build_proves_execution_before_helper_materialization() -> None:
+    command = _command(
+        "build-assets",
+        profile="code",
+        arch="arm64",
+        template="rootfs",
+    )
+    plan = command.plan()
+
+    assert plan.after_of("doctor") == {"base-images"}
+    assert plan.after_of("guest-execution") == {"doctor"}
+    assert plan.after_of("guest-builders") == {"guest-execution"}
+    assert plan.after_of("image.code.rootfs.arm64") == {"guest-builders"}
 
 
 def test_asset_build_primitives_accept_an_isolated_output_root() -> None:

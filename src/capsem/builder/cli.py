@@ -105,12 +105,11 @@ def agent(
         click.echo(f"error: architecture '{arch_name}' not in config", err=True)
         raise SystemExit(1)
 
-    rust_target = config.build.architectures[arch_name].rust_target
     out = Path(output_dir) / arch_name
 
     from capsem.builder.docker import cross_compile_agent
     try:
-        cross_compile_agent(rust_target, repo_root, out)
+        cross_compile_agent(config.build, arch_name, repo_root, out)
     except Exception as e:
         click.echo(f"error: {e}", err=True)
         raise SystemExit(1) from e

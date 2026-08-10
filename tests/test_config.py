@@ -69,8 +69,15 @@ compression_level = 12
 version = "9.9.9"
 sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
+[build.guest_rust_builder]
+dockerfile = "docker/Dockerfile.guest-rust-builder"
+tag_template = "capsem-guest-rust-{arch}:{digest}"
+identity_inputs = ["Cargo.lock", "rust-toolchain.toml"]
+runtime_network = "none"
+
 [build.architectures.arm64]
 base_image = "registry.example/debian@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+rust_builder_base_image = "registry.example/rust@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
 kernel_image = "arch/arm64/boot/Image"
@@ -358,6 +365,7 @@ sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 [build.architectures.arm64]
 base_image = "registry.example/debian@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+rust_builder_base_image = "registry.example/rust@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
 kernel_image = "arch/arm64/boot/Image"
@@ -392,8 +400,15 @@ compression_level = 9
 version = "9.9.9"
 sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
+[build.guest_rust_builder]
+dockerfile = "docker/Dockerfile.guest-rust-builder"
+tag_template = "capsem-guest-rust-{arch}:{digest}"
+identity_inputs = ["Cargo.lock", "rust-toolchain.toml"]
+runtime_network = "none"
+
 [build.architectures.arm64]
 base_image = "registry.example/debian@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+rust_builder_base_image = "registry.example/rust@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
 kernel_image = "arch/arm64/boot/Image"
@@ -401,6 +416,7 @@ defconfig = "kernel/defconfig.arm64"
 
 [build.architectures.x86_64]
 base_image = "registry.example/debian@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+rust_builder_base_image = "registry.example/rust@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 docker_platform = "linux/amd64"
 rust_target = "x86_64-unknown-linux-musl"
 kernel_image = "arch/x86_64/boot/bzImage"

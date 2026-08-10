@@ -19,12 +19,12 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
+from capsem.gate import imagebases
 from capsem.gate.assets import AssetGate
 from capsem.gate.errors import GateError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
-
 
 
 def _run_all(gate) -> None:
@@ -37,6 +37,7 @@ def _run_all(gate) -> None:
     """
     gate.prefetch()
     gate.preflight()
+    imagebases.materialize_rust_builders(gate._runner, gate._config)
     for name in gate._config.architectures:
         gate.lane(name)
     gate.sweep()
@@ -51,6 +52,14 @@ def _checkout(tmp_path: Path, *, profiles: tuple[str, ...] = ("code",)) -> Path:
     image_config = tmp_path / "config" / "docker" / "image"
     image_config.mkdir(parents=True)
     shutil.copy2(PROJECT_ROOT / "config" / "docker" / "image" / "build.toml", image_config)
+    build = imagebases.build_config(gate_config.load(tmp_path))
+    for relative in (
+        build.guest_rust_builder.dockerfile,
+        *build.guest_rust_builder.identity_inputs,
+    ):
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(PROJECT_ROOT / relative, destination)
     for name in profiles:
         directory = tmp_path / "config" / "profiles" / name
         directory.mkdir(parents=True)
@@ -108,6 +117,27 @@ def test_cross_architecture_execution_is_proven_before_any_lane_starts(
     _run_all(gate)
 
     runner.assert_order(r"docker run --rm --network none --platform", r"image build")
+
+
+def test_cross_architecture_execution_is_proven_before_rust_builder_prewarm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Do not spend a cold Cargo prewarm before proving the target can execute."""
+    gate, runner = _gate(
+        tmp_path,
+        monkeypatch,
+        failures=(
+            "docker image inspect --platform linux/arm64 capsem-guest",
+            "docker image inspect --platform linux/amd64 capsem-guest",
+        ),
+    )
+
+    _run_all(gate)
+
+    runner.assert_order(
+        r"docker run --rm --network none --platform",
+        r"docker build .*Dockerfile\.guest-rust-builder",
+    )
 
 
 def test_cold_exact_base_images_are_pulled_before_the_cross_architecture_probe(

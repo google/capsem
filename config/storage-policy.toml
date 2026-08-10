@@ -85,6 +85,22 @@ owner = "none"
 # hand back a volume nobody took.
 reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
+[resources.capsem-guest-rust-arm64]
+kind = "image"
+docker_name = "capsem-guest-rust-arm64"
+retention = "generational"
+owner = "assets"
+keep_previous = 0
+reason = "Only the lockfile-keyed arm64 guest Rust builder has a possible consumer."
+
+[resources.capsem-guest-rust-x86_64]
+kind = "image"
+docker_name = "capsem-guest-rust-x86_64"
+retention = "generational"
+owner = "assets"
+keep_previous = 0
+reason = "Only the lockfile-keyed x86_64 guest Rust builder has a possible consumer."
+
 [resources.capsem-agent-target-arm64]
 kind = "volume"
 retention = "obsolete"

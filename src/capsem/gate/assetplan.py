@@ -17,7 +17,7 @@ from .actions import Call
 from .assets import AssetGate
 from .command import GateCommand
 from .execution import step
-from .imagebases import Prefetch
+from .imagebases import MaterializeRustBuilders, Prefetch, required_rust_builder_names
 from .opacity import CallJustification, Effect, OpaqueKind
 from .plan import Plan
 
@@ -43,11 +43,12 @@ def fragment(plan, config, *, after: tuple = ()):
     phase = plan.phase("assets")
     exclusive = (config.exclusive("docker_daemon"),)
     shared = (config.shared("docker_daemon"),)
+    rust_builders = required_rust_builder_names(config)
 
     ready = phase.add(
         step(
             "preflight",
-            Prefetch(),
+            Prefetch(rust_names=rust_builders),
             Call(
                 "run the container execution preflight, check capacity, and clear the asset tree",
                 lambda ctx: AssetGate(ctx.runner).preflight(),
@@ -55,6 +56,7 @@ def fragment(plan, config, *, after: tuple = ()):
                     OpaqueKind.RUNTIME_DERIVED, PREFLIGHT, "process", "filesystem"
                 ),
             ),
+            MaterializeRustBuilders(rust_builders),
             contends=exclusive,
         ),
         after=after,

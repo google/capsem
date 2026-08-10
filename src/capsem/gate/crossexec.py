@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from . import config as gate_config
 from . import host, imagebases
+from .actions import Action
+from .context import Context
 from .docker import Docker
 from .errors import GateError
 from .proc import Runner
@@ -30,11 +32,21 @@ def other_architecture(config: gate_config.GateConfig, native: gate_config.Arch)
 
 def require(runner: Runner, config: gate_config.GateConfig, native: gate_config.Arch) -> None:
     """Refuse to start if the daemon cannot run the other architecture."""
-    settings = config.assets
     other = other_architecture(config, native)
-    build_arch = imagebases.build_config(config).architectures[other.name]
+    require_architecture(runner, config, native, other)
+
+
+def require_architecture(
+    runner: Runner,
+    config: gate_config.GateConfig,
+    native: gate_config.Arch,
+    target: gate_config.Arch,
+) -> None:
+    """Refuse before target-platform Dockerfile layers if they cannot execute."""
+    settings = config.assets
+    build_arch = imagebases.build_config(config).architectures[target.name]
     platform = build_arch.docker_platform
-    runner.step(f"Ironbank {other.name} container execution preflight")
+    runner.step(f"Ironbank {target.name} container execution preflight")
     # `--network none`: the probe runs `/bin/true` to find out whether the
     # daemon can execute the other architecture at all. Nothing it does needs
     # the network, and saying so is what the wrapper requires of every
@@ -47,9 +59,26 @@ def require(runner: Runner, config: gate_config.GateConfig, native: gate_config.
     ):
         return
 
-    remedy = (
-        "Colima Rosetta may be configured but stale; run 'colima restart' and retry."
-        if host.on_macos()
-        else "Run './bootstrap.sh --yes' outside the gate to install/register binfmt QEMU."
-    )
+    if target.name == native.name:
+        remedy = "Restart the Docker daemon (or Colima on macOS) and retry."
+    elif host.on_macos():
+        remedy = "Colima Rosetta may be configured but stale; run 'colima restart' and retry."
+    else:
+        remedy = "Run './bootstrap.sh --yes' outside the gate to install/register binfmt QEMU."
     raise GateError(f"Docker cannot execute {platform} containers.\n{remedy}")
+
+
+class Require(Action, name="container-execution-require"):
+    """Plan-visible execution proof for the architectures a standalone rail uses."""
+
+    def __init__(self, names: tuple[str, ...]) -> None:
+        self._names = names
+
+    def render(self) -> str:
+        return f"prove Docker can execute {', '.join(self._names)} containers"
+
+    def perform(self, context: Context) -> None:
+        config = context.config
+        native = config.host_arch()
+        for name in self._names:
+            require_architecture(context.runner, config, native, config.arch(name))

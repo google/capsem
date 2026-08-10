@@ -31,11 +31,14 @@ class ImageOperations:
         dockerfile: str,
         context: str,
         args: list[str] | None = None,
+        platform: str | None = None,
         no_cache: bool = False,
     ) -> None:
         """Build an image. The context streams from the CLI, so it does not
         have to be visible inside the Lima VM the way a bind mount does."""
         argv = ["docker", "build", "-t", tag, "-f", dockerfile]
+        if platform is not None:
+            argv += ["--platform", platform]
         if no_cache:
             argv.append("--no-cache")
         for value in args or []:

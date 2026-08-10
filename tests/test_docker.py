@@ -55,7 +55,7 @@ from capsem.builder.docker import (
     run_cmd,
     sync_container_clock,
 )
-from capsem.builder.models import ErofsConfig, KernelConfig
+from capsem.builder.models import ErofsConfig, GuestRustBuilderConfig, KernelConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 EXACT_EROFS_BASE = "registry.example/debian@sha256:" + "e" * 64
@@ -195,6 +195,16 @@ def _profile_guest_config(tmp_path: Path, profile_id: str):
     shutil.copy2(profile_root / "build.sh", guest / "profile-build.sh")
     shutil.copy2(profile_root / "tips.txt", guest / "artifacts" / "tips.txt")
     return load_guest_config(guest)
+
+
+def _seed_guest_rust_builder_inputs(repo_root: Path, config) -> None:
+    for relative in (
+        config.build.guest_rust_builder.dockerfile,
+        *config.build.guest_rust_builder.identity_inputs,
+    ):
+        destination = repo_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(PROJECT_ROOT / relative, destination)
 
 
 @pytest.fixture
@@ -876,6 +886,12 @@ class TestBuildVersionScript:
         config = GuestImageConfig(
             build=BuildConfig(
                 kernel=KernelConfig(version="9.9.9", sha256="a" * 64),
+                guest_rust_builder=GuestRustBuilderConfig(
+                    dockerfile="docker/Dockerfile.guest-rust-builder",
+                    tag_template="capsem-guest-rust-{arch}:{digest}",
+                    identity_inputs=("Cargo.lock", "rust-toolchain.toml"),
+                    runtime_network="none",
+                ),
                 architectures={"arm64": real_arch()},
             ),
         )
@@ -889,6 +905,7 @@ def real_arch():
 
     return ArchConfig(
         base_image="registry.example/debian@sha256:" + "a" * 64,
+        rust_builder_base_image="registry.example/rust@sha256:" + "c" * 64,
         docker_platform="linux/arm64",
         rust_target="aarch64-unknown-linux-musl",
         kernel_image="arch/arm64/boot/Image",
@@ -1438,7 +1455,7 @@ class TestBuildLedger:
     ):
         mock_runtime.return_value = "docker"
 
-        def fake_cross_compile(_rust_target, _repo_root, context_dir):
+        def fake_cross_compile(_build, _arch_name, _repo_root, context_dir):
             copied = []
             for binary in GUEST_BINARIES:
                 path = context_dir / binary
@@ -2145,10 +2162,13 @@ class TestContainerCompileAgent:
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime")
-    def test_arm64_uses_correct_platform_and_volumes(self, mock_detect, mock_run, tmp_path):
+    def test_arm64_uses_correct_platform_and_volumes(
+        self, mock_detect, mock_run, real_config, tmp_path
+    ):
         mock_detect.return_value = "docker"
         repo_root = tmp_path / "repo"
         repo_root.mkdir()
+        _seed_guest_rust_builder_inputs(repo_root, real_config)
         output_dir = tmp_path / "output"
 
         def side_effect(cmd, **kwargs):
@@ -2160,7 +2180,8 @@ class TestContainerCompileAgent:
         mock_run.side_effect = side_effect
 
         binaries = container_compile_agent(
-            "aarch64-unknown-linux-musl",
+            real_config.build,
+            "arm64",
             repo_root,
             output_dir,
         )
@@ -2183,10 +2204,13 @@ class TestContainerCompileAgent:
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime")
-    def test_x86_64_uses_correct_platform_and_volumes(self, mock_detect, mock_run, tmp_path):
+    def test_x86_64_uses_correct_platform_and_volumes(
+        self, mock_detect, mock_run, real_config, tmp_path
+    ):
         mock_detect.return_value = "docker"
         repo_root = tmp_path / "repo"
         repo_root.mkdir()
+        _seed_guest_rust_builder_inputs(repo_root, real_config)
         output_dir = tmp_path / "output"
 
         def side_effect(cmd, **kwargs):
@@ -2196,7 +2220,7 @@ class TestContainerCompileAgent:
 
         mock_run.side_effect = side_effect
 
-        container_compile_agent("x86_64-unknown-linux-musl", repo_root, output_dir)
+        container_compile_agent(real_config.build, "x86_64", repo_root, output_dir)
 
         # Last call is the actual `docker run`; prior calls may include
         # `docker image inspect` preflight.
@@ -2211,27 +2235,30 @@ class TestContainerCompileAgent:
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime")
-    def test_missing_binary_raises(self, mock_detect, mock_run, tmp_path):
+    def test_missing_binary_raises(self, mock_detect, mock_run, real_config, tmp_path):
         mock_detect.return_value = "docker"
         repo_root = tmp_path / "repo"
         repo_root.mkdir()
+        _seed_guest_rust_builder_inputs(repo_root, real_config)
         output_dir = tmp_path / "output"
         # Container runs but doesn't create binaries (simulates build failure)
         mock_run.return_value = MagicMock(stdout="")
 
         with pytest.raises(RuntimeError, match="Expected binary not found"):
             container_compile_agent(
-                "aarch64-unknown-linux-musl",
+                real_config.build,
+                "arm64",
                 repo_root,
                 output_dir,
             )
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime")
-    def test_empty_binary_raises(self, mock_detect, mock_run, tmp_path):
+    def test_empty_binary_raises(self, mock_detect, mock_run, real_config, tmp_path):
         mock_detect.return_value = "docker"
         repo_root = tmp_path / "repo"
         repo_root.mkdir()
+        _seed_guest_rust_builder_inputs(repo_root, real_config)
         output_dir = tmp_path / "output"
 
         def side_effect(cmd, **kwargs):
@@ -2243,28 +2270,31 @@ class TestContainerCompileAgent:
 
         with pytest.raises(RuntimeError, match="Binary is empty"):
             container_compile_agent(
-                "aarch64-unknown-linux-musl",
+                real_config.build,
+                "arm64",
                 repo_root,
                 output_dir,
             )
 
 
 class TestContainerCompileAgentShellScript:
-    """Verify the shell script passed to bash -c in container builds.
+    """Verify the script passed to POSIX sh in container builds.
 
-    The script symlinks most of /src into /build but must exclude certain
-    dirs (target, Cargo.lock, crates) and handle crates via cp -r instead.
+    The script symlinks most of /src into /build, keeps the checked-in lockfile,
+    and handles the writable target/crates trees separately.
     Regression: symlinked crates broke workspace resolution inside the container.
     """
 
-    def _extract_shell_script(self, mock_run, tmp_path):
-        """Run container_compile_agent and return the bash -c script string."""
+    def _extract_shell_script(self, mock_run, real_config, tmp_path):
+        """Run container_compile_agent and return the sh -c script string."""
+        _seed_guest_rust_builder_inputs(tmp_path / "repo", real_config)
         mock_run.side_effect = lambda cmd, **kw: (
             [(tmp_path / "output" / b).write_bytes(b"elf") for b in GUEST_BINARIES]
             or MagicMock(stdout="")
         )
         container_compile_agent(
-            "aarch64-unknown-linux-musl",
+            real_config.build,
+            "arm64",
             tmp_path / "repo",
             tmp_path / "output",
         )
@@ -2272,42 +2302,43 @@ class TestContainerCompileAgentShellScript:
         for call in mock_run.call_args_list:
             cmd = call[0][0]
             if "run" in cmd:
-                return cmd[-1]  # bash -c argument is the last element
+                assert cmd[-3:-1] == ["sh", "-c"]
+                return cmd[-1]  # sh -c argument is the last element
         raise AssertionError("no `docker run` call recorded")
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime", return_value="docker")
-    def test_shell_excludes_crates_from_symlinks(self, _det, mock_run, tmp_path):
+    def test_shell_excludes_crates_from_symlinks(self, _det, mock_run, real_config, tmp_path):
         (tmp_path / "repo").mkdir()
-        script = self._extract_shell_script(mock_run, tmp_path)
+        script = self._extract_shell_script(mock_run, real_config, tmp_path)
         assert '[ "$b" != crates ]' in script
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime", return_value="docker")
-    def test_shell_copies_crates_with_cp(self, _det, mock_run, tmp_path):
+    def test_shell_copies_crates_with_cp(self, _det, mock_run, real_config, tmp_path):
         (tmp_path / "repo").mkdir()
-        script = self._extract_shell_script(mock_run, tmp_path)
+        script = self._extract_shell_script(mock_run, real_config, tmp_path)
         assert "cp -r /src/crates /build/crates" in script
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime", return_value="docker")
-    def test_shell_excludes_target_from_symlinks(self, _det, mock_run, tmp_path):
+    def test_shell_excludes_target_from_symlinks(self, _det, mock_run, real_config, tmp_path):
         (tmp_path / "repo").mkdir()
-        script = self._extract_shell_script(mock_run, tmp_path)
+        script = self._extract_shell_script(mock_run, real_config, tmp_path)
         assert '[ "$b" != target ]' in script
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime", return_value="docker")
-    def test_shell_excludes_cargo_lock_from_symlinks(self, _det, mock_run, tmp_path):
+    def test_shell_includes_checked_in_cargo_lock(self, _det, mock_run, real_config, tmp_path):
         (tmp_path / "repo").mkdir()
-        script = self._extract_shell_script(mock_run, tmp_path)
-        assert '[ "$b" != Cargo.lock ]' in script
+        script = self._extract_shell_script(mock_run, real_config, tmp_path)
+        assert '[ "$b" != Cargo.lock ]' not in script
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime", return_value="docker")
-    def test_shell_copies_all_binaries_to_output(self, _det, mock_run, tmp_path):
+    def test_shell_copies_all_binaries_to_output(self, _det, mock_run, real_config, tmp_path):
         (tmp_path / "repo").mkdir()
-        script = self._extract_shell_script(mock_run, tmp_path)
+        script = self._extract_shell_script(mock_run, real_config, tmp_path)
         for binary in GUEST_BINARIES:
             assert (
                 f"cp target/aarch64-unknown-linux-musl/release/{binary} /output/{binary}" in script
@@ -2315,18 +2346,21 @@ class TestContainerCompileAgentShellScript:
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime", return_value="docker")
-    def test_shell_lists_all_binaries_for_verification(self, _det, mock_run, tmp_path):
+    def test_shell_lists_all_binaries_for_verification(self, _det, mock_run, real_config, tmp_path):
         (tmp_path / "repo").mkdir()
-        script = self._extract_shell_script(mock_run, tmp_path)
+        script = self._extract_shell_script(mock_run, real_config, tmp_path)
         for binary in GUEST_BINARIES:
             assert f"ls -l /output/{binary}" in script
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime", return_value="docker")
-    def test_shell_builds_capsem_agent_package(self, _det, mock_run, tmp_path):
+    def test_shell_builds_capsem_agent_package(self, _det, mock_run, real_config, tmp_path):
         (tmp_path / "repo").mkdir()
-        script = self._extract_shell_script(mock_run, tmp_path)
-        assert "cargo build --release --target aarch64-unknown-linux-musl -p capsem-agent" in script
+        script = self._extract_shell_script(mock_run, real_config, tmp_path)
+        assert (
+            "cargo build --locked --offline --release --target "
+            "aarch64-unknown-linux-musl -p capsem-agent"
+        ) in script
 
 
 class TestPrepareBuildContextArtifacts:
@@ -2432,12 +2466,15 @@ class TestCrossCompileAgent:
 
     @patch("capsem.builder.docker.sys")
     @patch("capsem.builder.docker.container_compile_agent")
-    def test_delegates_to_container_on_darwin(self, mock_container, mock_sys, tmp_path):
+    def test_delegates_to_container_on_darwin(
+        self, mock_container, mock_sys, real_config, tmp_path
+    ):
         mock_sys.platform = "darwin"
         mock_container.return_value = []
-        cross_compile_agent("aarch64-unknown-linux-musl", tmp_path, tmp_path / "out")
+        cross_compile_agent(real_config.build, "arm64", tmp_path, tmp_path / "out")
         mock_container.assert_called_once_with(
-            "aarch64-unknown-linux-musl",
+            real_config.build,
+            "arm64",
             tmp_path,
             tmp_path / "out",
         )
@@ -2452,6 +2489,7 @@ class TestCrossCompileAgent:
         _mock_machine,
         mock_sys,
         mock_container,
+        real_config,
         tmp_path,
     ):
         mock_sys.platform = "linux"
@@ -2463,7 +2501,7 @@ class TestCrossCompileAgent:
         for b in GUEST_BINARIES:
             (release_dir / b).write_bytes(b"dummy")
 
-        cross_compile_agent("aarch64-unknown-linux-musl", tmp_path, tmp_path / "out")
+        cross_compile_agent(real_config.build, "arm64", tmp_path, tmp_path / "out")
 
         # Container path was NOT taken
         mock_container.assert_not_called()
@@ -2490,17 +2528,25 @@ class TestCrossCompileAgent:
         mock_container,
         host_machine,
         rust_target,
+        real_config,
         tmp_path,
     ):
         mock_sys.platform = "linux"
         mock_container.return_value = []
 
+        arch_name = "arm64" if rust_target.startswith("aarch64-") else "x86_64"
         with patch("capsem.builder.docker.platform.machine", return_value=host_machine):
-            result = cross_compile_agent(rust_target, tmp_path, tmp_path / "out")
+            result = cross_compile_agent(
+                real_config.build,
+                arch_name,
+                tmp_path,
+                tmp_path / "out",
+            )
 
         assert result == []
         mock_container.assert_called_once_with(
-            rust_target,
+            real_config.build,
+            arch_name,
             tmp_path,
             tmp_path / "out",
         )
@@ -2524,6 +2570,7 @@ class TestCrossCompileAgent:
         mock_container,
         host_machine,
         rust_target,
+        real_config,
         tmp_path,
     ):
         mock_sys.platform = "linux"
@@ -2539,8 +2586,9 @@ class TestCrossCompileAgent:
             old.write_bytes(b"old")
             old.chmod(0o555)
 
+        arch_name = "arm64" if rust_target.startswith("aarch64-") else "x86_64"
         with patch("capsem.builder.docker.platform.machine", return_value=host_machine):
-            cross_compile_agent(rust_target, tmp_path, output_dir)
+            cross_compile_agent(real_config.build, arch_name, tmp_path, output_dir)
 
         mock_container.assert_not_called()
         for binary in GUEST_BINARIES:

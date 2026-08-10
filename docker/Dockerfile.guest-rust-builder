@@ -1,0 +1,31 @@
+# Dependencies for one architecture's guest Rust binaries, resolved before
+# the hermetic build runs. BASE is the exact rust:1.97.1-alpine3.23 platform
+# child selected by config/docker/image/build.toml. It already carries the
+# checked-in compiler version, its native musl target, musl-dev and gcc.
+ARG BASE
+FROM ${BASE}
+
+ARG RUST_TARGET
+ENV RUSTUP_AUTO_INSTALL=0
+
+WORKDIR /prefetch
+COPY Cargo.toml Cargo.lock rust-toolchain.toml /prefetch/
+COPY crates /prefetch/crates
+
+# Fail rather than letting the rustup proxy install something over the network
+# if the exact base ever drifts from the checked-in toolchain/target contract.
+RUN selected="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)" \
+    && test -n "${selected}" \
+    && rustup toolchain list | grep -F "${selected}-" \
+    && rustup target list --installed | grep -Fx "${RUST_TARGET}"
+
+# Resolve only what Cargo.lock permits. The runtime build uses the same cache
+# with --locked --offline and --network none, so a missing input is a failure
+# at this boundary instead of a download hidden inside qualification.
+RUN cargo fetch --locked --target "${RUST_TARGET}"
+
+# The runtime mounts its checked-in source at /src and assembles a writable
+# workspace at /build. Keep only the materialized toolchain/registry state;
+# stale source from this layer must never shadow the source being qualified.
+RUN rm -rf /prefetch
+WORKDIR /build

@@ -293,7 +293,16 @@ testing available in every shipped profile image that declares the hook.
 
 ## How to: Add a new guest binary
 
-Guest binaries are compiled from `crates/capsem-agent/`. On macOS, `cross_compile_agent()` delegates to `container_compile_agent()` which builds inside a Linux container (docker). On Linux (CI), cargo builds natively.
+Guest binaries are compiled from `crates/capsem-agent/`. On macOS, and on Linux
+when the target is not the host architecture, `cross_compile_agent()` delegates
+to `container_compile_agent()`. The asset preflight first materializes the
+config-selected exact Rust child image plus the checked-in Rust toolchain and
+`Cargo.lock`; the actual container build runs with `--network none` and Cargo
+`--locked --offline`.
+
+Materialize only helpers the command can consume: every requested architecture
+on macOS, foreign requested architectures on Linux, and none for a kernel-only
+build. Immutable Debian guest bases remain architecture-selected separately.
 
 1. Add the binary target in `crates/capsem-agent/Cargo.toml`
 2. Add the binary name to `GUEST_BINARIES` list in `docker.py`
@@ -332,7 +341,9 @@ backend-generated image workspaces.
 ## Build pipeline (what `build_image()` does)
 
 For rootfs:
-1. Build guest agent binaries (`cross_compile_agent` -- on macOS delegates to `container_compile_agent` which builds inside a Linux container; on Linux compiles natively)
+1. Build guest agent binaries (`cross_compile_agent` -- macOS and foreign Linux
+   targets use the pre-materialized, network-denied Rust builder; native Linux
+   compiles directly)
 2. Assemble build context (`prepare_build_context`) -- copies CA cert, shell configs, diagnostics, agent binaries
 3. Render Dockerfile from template
 4. `docker build`
@@ -374,7 +385,28 @@ The resource check lives in `src/capsem/builder/doctor.py`:
 
 ## Container image compatibility
 
-The container builds use `rust:slim-bookworm` -- a minimal Debian image. Many common utilities (`file`, `less`, `vim`, etc.) are NOT available. Any shell commands run inside the container must use only coreutils (`ls`, `cp`, `cat`, `test`, etc.) or tools explicitly installed via `apt-get` in the same `RUN` step.
+Guest cross-build containers use the exact per-platform
+`rust:1.97.1-alpine3.23` child manifests in
+`config/docker/image/build.toml`, never a mutable Rust tag. Those children
+already own the exact toolchain, native musl target, musl headers, and compiler;
+`docker/Dockerfile.guest-rust-builder` only resolves the Cargo.lock graph at the
+guarded asset-prefetch boundary. Do not add package installation, target
+installation, index updates, or downloads to `container_compile_agent()`; its
+runtime network is deliberately `none`.
+
+The local helper tag is an input cache key, not an OCI content digest. Two cold
+Docker builds may have different image IDs because registry/index and layer
+metadata are materialization outputs. Cargo verifies every registry package
+against `Cargo.lock`, and the nightly/release qualification boundary is the
+specific helper image materialized by that run: after this one guarded fetch
+edge, the binary build is locked, offline, and network-denied. Do not claim
+byte-for-byte reproducible helper images unless every remaining registry and
+layer byte is independently pinned.
+
+The selected image is a minimal Alpine image and has no Bash. Many common
+utilities (`file`, `less`, `vim`, etc.) are NOT available. Runtime shell
+commands must be POSIX `sh` and use only the BusyBox tools already present in
+the materialized image.
 
 **Lesson learned**: using `file /output/binary` to verify compiled binaries failed because `file` is not in slim images. Replaced with `ls -l` which is always available and still confirms the copy succeeded. The real validation (existence + non-zero size) is done in Python after the container exits.
 
