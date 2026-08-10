@@ -29,7 +29,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING
 
 from .errors import GateError
-from .faults import Attribution, Event, Fault, facts_of, ignored_here, source_inodes
+from .faults import Attribution, Event, Fault, facts_of, is_source, source_inodes
 from .interception import CURRENT_STEP
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
@@ -239,35 +239,7 @@ class Watch:
                 )
 
     def is_source(self, path: Path) -> bool:
-        from .faults import BUILD_OUTPUT
-
-        # Absolute only. `Path.resolve()` anchors a relative path to the
-        # current working directory, which for the gate is the checkout root --
-        # so a bare `profile.toml` from a `dir_fd` caller resolved into the
-        # source tree and was reported as a mutation of a file the run never
-        # touched. Refusing to judge what was not located keeps that class out
-        # regardless of which caller spells a path loosely; `interception`
-        # resolves the ones it can.
-        if not path.is_absolute():
-            return False
-        try:
-            relative = path.resolve().relative_to(self._source_root)
-        except (ValueError, OSError):
-            return False
-        if not relative.parts or relative.parts[0] in BUILD_OUTPUT:
-            return False
-        # And then git, which knows what a hand-written set cannot. The names
-        # above stay: a fixture is not always a repository, and git answers
-        # nothing outside one -- which would make every path "source" and turn
-        # nine of this file's own tests red. So the two are a union, not a
-        # replacement.
-        #
-        # Without this, nothing nested could ever be recognised, because only
-        # the first component was compared. `crates/capsem-app/gen/` is
-        # gitignored Tauri output and was reported as a source-tree fault on
-        # every run; widening the set is whack-a-mole, since the next generated
-        # directory lands somewhere else again.
-        return not ignored_here(self._source_root, relative.parent)
+        return is_source(path, self._source_root)
 
     # -- state, not moments -------------------------------------------------
 

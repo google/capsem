@@ -59,6 +59,23 @@ def ignored_here(root: Path, directory: Path) -> bool:
     return cache[key]
 
 
+def is_source(path: Path, root: Path) -> bool:
+    """Whether an absolute path is checked-in input rather than build output."""
+    # A relative path can come from an operation using dir_fd. Resolving it
+    # against the gate's cwd would falsely blame an unrelated source path.
+    if not path.is_absolute():
+        return False
+    try:
+        relative = path.resolve().relative_to(root)
+    except (ValueError, OSError):
+        return False
+    if not relative.parts or relative.parts[0] in BUILD_OUTPUT:
+        return False
+    # Ask git about rules, not the paths present at run start: generated,
+    # ignored trees often do not exist until a build creates them.
+    return not ignored_here(root, relative.parent)
+
+
 #: Per checkout, per directory. A run observes one tree; a test may build
 #: several, so this is keyed by root rather than global.
 _IGNORED: dict[Path, dict[str, bool]] = {}
