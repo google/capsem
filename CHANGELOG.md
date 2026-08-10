@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Linux install-test image now inherits `uv` from its locally built host
+  builder instead of resolving a redundant mutable `ghcr.io` stage from inside
+  the sealed gate.
+
 - Linux qualification now keeps the shared signing dependency nodes as honest
   no-ops instead of attempting to launch Apple's `codesign`; Darwin retains
   the complete entitlement-signing actions and artifact ownership.

@@ -24,6 +24,16 @@ def _job_block(workflow: str, name: str) -> str:
     return match.group(0)
 
 
+def test_install_test_inherits_uv_from_its_locally_built_parent() -> None:
+    """One parent owns uv; the sealed child must not resolve a second image."""
+    parent = _read("docker/Dockerfile.host-builder")
+    child = _read("docker/Dockerfile.install-test")
+
+    assert "install -m 555 /root/.local/bin/uv /usr/local/bin/uv" in parent
+    assert "FROM capsem-host-builder:latest" in child
+    assert "astral-sh/uv" not in child
+
+
 def test_just_test_holds_source_state_stable_without_archiving_benchmarks() -> None:
     """Both HEAD and the working-tree digest are captured before and compared
     after: a gate that qualified a HEAD nobody has, or a tree edited halfway

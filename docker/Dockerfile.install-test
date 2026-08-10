@@ -31,8 +31,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN mkdir -p /etc/systemd/system \
     && ln -s /dev/null /etc/systemd/system/systemd-binfmt.service
 
-# Install uv for Python test runner
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# The locally built host-builder parent already installs uv at this path. Keep
+# one owner so a sealed install proof never resolves a second mutable image.
+RUN test -x /usr/local/bin/uv
 
 # Create non-root capsem user (UID 1000 may already exist from base image)
 RUN if getent passwd 1000 >/dev/null 2>&1; then \
