@@ -263,6 +263,15 @@ def test_macos_installers_apply_pkg_before_cleaning_download(tmp_path: Path) -> 
         script = textwrap.dedent(f"""\
             __INSTALL_SH_SOURCED=1
             . "{install_script}"
+            SUDO_USER='capsem-test-user'
+            id() {{
+                if [ "$#" -eq 2 ] && [ "$1" = '-u' ] && [ "$2" = "$SUDO_USER" ]; then
+                    printf '%s\n' '501'
+                    return 0
+                fi
+                echo 'synthetic macOS fixture must not resolve the ambient Linux UID' >&2
+                return 93
+            }}
             mktemp() {{
                 mkdir -p "{install_root}/download"
                 printf '%s\\n' "{install_root}/download"
@@ -301,6 +310,7 @@ def test_macos_installers_apply_pkg_before_cleaning_download(tmp_path: Path) -> 
                             test "$6" = '-m'
                             test "$7" = '0600'
                             test -f "$8"
+                            test "$(cat "$8")" = "$SUDO_USER"
                         fi
                         ;;
                     /usr/sbin/installer)
@@ -385,6 +395,14 @@ fi
 echo 'unexpected GUI installer handoff' >&2
 exit 97
 """,
+        "id": """#!/bin/sh
+if [ "$#" -eq 2 ] && [ "$1" = '-u' ] && [ "$2" = "$SUDO_USER" ]; then
+    echo 501
+    exit 0
+fi
+echo 'synthetic macOS fixture must not resolve the ambient Linux UID' >&2
+exit 93
+""",
         "sudo": """#!/bin/sh
 case "$1" in
     /usr/bin/install)
@@ -403,6 +421,7 @@ case "$1" in
             test "$6" = '-m'
             test "$7" = '0600'
             test -f "$8"
+            test "$(cat "$8")" = "$SUDO_USER"
         fi
         ;;
     /usr/sbin/installer)
@@ -430,6 +449,7 @@ esac
             "FAKE_MANIFEST": str(manifest),
             "INSTALLER_LOG": str(installer_log),
             "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/sbin",
+            "SUDO_USER": "capsem-test-user",
             "TMPDIR": str(temp_dir),
         }
     )
