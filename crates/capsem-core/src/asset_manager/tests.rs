@@ -1047,6 +1047,22 @@ fn cleanup_nonexistent_dir() {
 }
 
 #[test]
+fn cleanup_rejects_unsafe_architecture_directory_before_removing_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let orphan = dir.path().join("vmlinuz-deadbeef12345678");
+    std::fs::write(&orphan, b"old").unwrap();
+    let mut manifest = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+    let release = manifest.assets.releases.get_mut("2026.0415.1").unwrap();
+    let assets = release.arches.remove("arm64").unwrap();
+    release.arches.insert("../outside".into(), assets);
+
+    let error = cleanup_unused_assets(dir.path(), &manifest).unwrap_err();
+
+    assert!(format!("{error:#}").contains("invalid asset architecture directory"));
+    assert!(orphan.exists(), "validation must finish before cleanup starts");
+}
+
+#[test]
 fn copy_missing_local_assets_hydrates_every_profiles_images() {
     // A channel's profiles own their images (`tmp/release-spec.md` §5
     // invariant 7), and the release graph turns each into its own asset

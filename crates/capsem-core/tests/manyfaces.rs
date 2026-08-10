@@ -26,8 +26,8 @@ use std::fs;
 use std::path::Path;
 
 use capsem_core::asset_manager::{
-    cleanup_unused_assets, hash_filename, host_manifest_arch, release_graph_profile_state,
-    ManifestV2,
+    cleanup_unused_assets, cleanup_unused_assets_preserving, hash_filename, host_manifest_arch,
+    release_graph_profile_state, ManifestV2,
 };
 
 /// A distinct BLAKE3 digest per (profile, kind, revision) so any confusion
@@ -124,6 +124,17 @@ fn write_blob(dir: &Path, name: &str, hash: &str) -> std::path::PathBuf {
     fs::create_dir_all(dir).expect("asset dir");
     fs::write(&path, b"blob").expect("write blob");
     path
+}
+
+fn revision_filenames(profile: &str, revision: &str) -> Vec<String> {
+    [
+        ("kernel", "vmlinuz"),
+        ("initrd", "initrd.img"),
+        ("rootfs", "rootfs.erofs"),
+    ]
+    .into_iter()
+    .map(|(kind, name)| hash_filename(name, &digest(profile, kind, revision)))
+    .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -436,6 +447,57 @@ fn removing_the_last_profile_that_pinned_a_kernel_collects_it() {
         !path.exists(),
         "a blob no surviving profile pins must be collected, or nothing ever is"
     );
+}
+
+#[test]
+fn production_layout_cleanup_preserves_three_installed_revisions_and_collects_orphans() {
+    // The service calls cleanup on the asset root, while installed blobs live
+    // under its architecture directory. Three revisions can be live at once:
+    // one in the current catalog and two pinned by persistent VMs.
+    let current_revision = "2030.0303.30";
+    let graph = channel(&[("profile1", "2030.0303.3", current_revision)]);
+    let manifest = ManifestV2::from_json(&graph.to_string()).expect("channel graph is accepted");
+    let temp = tempfile::tempdir().expect("tempdir");
+    let assets_dir = temp.path();
+    let arch_dir = assets_dir.join(host_manifest_arch());
+
+    let revisions = ["2030.0101.10", "2030.0202.20", current_revision];
+    let mut retained = Vec::new();
+    for revision in revisions {
+        for (kind, name) in [
+            ("kernel", "vmlinuz"),
+            ("initrd", "initrd.img"),
+            ("rootfs", "rootfs.erofs"),
+        ] {
+            retained.push(write_blob(
+                &arch_dir,
+                name,
+                &digest("profile1", kind, revision),
+            ));
+        }
+    }
+    let orphan = write_blob(
+        &arch_dir,
+        "vmlinuz",
+        &digest("uninstalled", "kernel", "2030.0000.0"),
+    );
+    let preserved_old_revisions = revisions[..2]
+        .iter()
+        .flat_map(|revision| revision_filenames("profile1", revision))
+        .collect::<Vec<_>>();
+
+    let removed = cleanup_unused_assets_preserving(assets_dir, &manifest, &preserved_old_revisions)
+        .expect("cleanup runs");
+
+    assert_eq!(removed, vec![orphan.clone()]);
+    assert!(!orphan.exists(), "an unreferenced blob must be collected");
+    for path in retained {
+        assert!(
+            path.exists(),
+            "cleanup stranded an installed profile revision: {}",
+            path.display()
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

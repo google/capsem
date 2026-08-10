@@ -1127,7 +1127,9 @@ pub fn cleanup_unused_assets(base_dir: &Path, manifest: &ManifestV2) -> Result<V
 }
 
 /// Remove hash-named asset files not referenced by any non-deprecated release
-/// or explicitly listed in `preserve_filenames`.
+/// or explicitly listed in `preserve_filenames`. Both a direct architecture
+/// directory and an asset root containing manifest-declared architecture
+/// directories are supported.
 ///
 /// `preserve_filenames` is intentionally filename-only. Callers that own
 /// higher-level contracts, such as profiles or saved VMs, translate those
@@ -1142,12 +1144,16 @@ where
     S: AsRef<str>,
 {
     let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut architecture_dirs = BTreeSet::new();
 
     for release in manifest.assets.releases.values() {
         if release.deprecated {
             continue;
         }
-        for assets in release.arches.values() {
+        for (arch, assets) in &release.arches {
+            validate_filename(arch)
+                .with_context(|| format!("invalid asset architecture directory {arch}"))?;
+            architecture_dirs.insert(arch.clone());
             for (name, entry) in assets {
                 referenced.insert(hash_filename(name, &entry.hash));
             }
@@ -1164,7 +1170,24 @@ where
         return Ok(removed);
     }
 
-    for entry in std::fs::read_dir(base_dir)? {
+    cleanup_hash_tagged_assets_in_dir(base_dir, &referenced, &mut removed)?;
+    for arch in architecture_dirs {
+        cleanup_hash_tagged_assets_in_dir(&base_dir.join(arch), &referenced, &mut removed)?;
+    }
+
+    Ok(removed)
+}
+
+fn cleanup_hash_tagged_assets_in_dir(
+    dir: &Path,
+    referenced: &std::collections::HashSet<String>,
+    removed: &mut Vec<PathBuf>,
+) -> Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
@@ -1190,7 +1213,7 @@ where
         }
     }
 
-    Ok(removed)
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
