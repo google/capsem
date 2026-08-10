@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Profile release dispatch now carries a unique workflow correlation identity
+  and waits for that exact GitHub Actions run with failure propagation. This
+  makes serialized profile-then-binary automation safe when the same channel
+  already has queued release work.
+
 ### Added
 
 - `capsem.gate.auditfs` is the one place Python may hardlink a file into

@@ -2868,7 +2868,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
         in docs
     )
     assert (
-        "| `release-assets.yaml` | Dispatch from `capsem-admin release` | Build exactly one channel/profile's images, config, and evidence against the existing channel package |"
+        "| `release-assets.yaml` | Correlated dispatch from `capsem-admin release` | Build exactly one channel/profile's images, config, and evidence against the existing channel package; the public command watches that exact run through success |"
         in docs
     )
     assert (

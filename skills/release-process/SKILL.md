@@ -67,6 +67,7 @@ just release-binaries <channel>
 just release-profile <channel> <profile>
   1. compose and execute the complete `just test` candidate plan in-process
   2. only after success: invoke capsem-admin release for that channel/profile
+  3. correlate and watch that exact profile workflow through terminal success
 ```
 
 The complete gate runs from a private source generation. Prechecks, source-head
@@ -238,6 +239,12 @@ The locked profile workflow:
 6. mutates only the selected profile entry;
 7. deploys immediately when the public package satisfies the profile's
    declared minimum Capsem version.
+
+`capsem-admin release` supplies a unique dispatch identity, finds the workflow
+run with that exact identity, and watches it with failure propagation. The
+public command does not report success merely because GitHub accepted a queued
+dispatch; this preserves serialized profile-then-binary ordering even when the
+same channel already has pending work.
 
 If the public package is too old, publish the immutable profile artifacts and
 persist the staged source-manifest state, but do not deploy that incompatible

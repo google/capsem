@@ -4,6 +4,7 @@ use std::{
     io::{ErrorKind, Read},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    thread,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -577,6 +578,131 @@ struct ReleaseDispatchReport {
     publication_identity: String,
     workflow: &'static str,
     dispatched: bool,
+    run_id: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfileWorkflowRun {
+    #[serde(rename = "databaseId")]
+    database_id: u64,
+    #[serde(rename = "displayTitle")]
+    display_title: String,
+}
+
+trait ProfileWorkflowRunner {
+    fn run(&mut self, args: &[String]) -> Result<()>;
+    fn output(&mut self, args: &[String]) -> Result<String>;
+    fn wait_before_poll(&mut self);
+}
+
+struct GhProfileWorkflowRunner;
+
+impl ProfileWorkflowRunner for GhProfileWorkflowRunner {
+    fn run(&mut self, args: &[String]) -> Result<()> {
+        let status = Command::new("gh")
+            .args(args)
+            .status()
+            .with_context(|| format!("run gh {}", args.join(" ")))?;
+        if !status.success() {
+            return Err(anyhow!("gh {} failed with {}", args.join(" "), status));
+        }
+        Ok(())
+    }
+
+    fn output(&mut self, args: &[String]) -> Result<String> {
+        let output = Command::new("gh")
+            .args(args)
+            .output()
+            .with_context(|| format!("run gh {}", args.join(" ")))?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "gh {} failed with {}: {}",
+                args.join(" "),
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        String::from_utf8(output.stdout).context("gh workflow listing was not UTF-8")
+    }
+
+    fn wait_before_poll(&mut self) {
+        thread::sleep(std::time::Duration::from_secs(2));
+    }
+}
+
+fn dispatch_profile_workflow<R: ProfileWorkflowRunner>(
+    runner: &mut R,
+    workflow: &str,
+    channel: &str,
+    profile: &str,
+    dispatch_id: &str,
+) -> Result<u64> {
+    if dispatch_id.is_empty()
+        || !dispatch_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || ".-_".contains(character))
+    {
+        return Err(anyhow!("profile workflow dispatch id is unsafe"));
+    }
+    let title = format!("Release profile {channel}/{profile} {dispatch_id}");
+    runner.run(&[
+        "workflow".to_string(),
+        "run".to_string(),
+        workflow.to_string(),
+        "--ref".to_string(),
+        "main".to_string(),
+        "-f".to_string(),
+        format!("channel={channel}"),
+        "-f".to_string(),
+        format!("profile={profile}"),
+        "-f".to_string(),
+        "dry_run=false".to_string(),
+        "-f".to_string(),
+        format!("dispatch_id={dispatch_id}"),
+    ])?;
+
+    for poll in 0..60 {
+        let raw = runner.output(&[
+            "run".to_string(),
+            "list".to_string(),
+            "--workflow".to_string(),
+            workflow.to_string(),
+            "--branch".to_string(),
+            "main".to_string(),
+            "--event".to_string(),
+            "workflow_dispatch".to_string(),
+            "--limit".to_string(),
+            "100".to_string(),
+            "--json".to_string(),
+            "databaseId,displayTitle".to_string(),
+        ])?;
+        let runs: Vec<ProfileWorkflowRun> = serde_json::from_str(&raw)
+            .context("GitHub returned invalid profile workflow run JSON")?;
+        let matches = runs
+            .into_iter()
+            .filter(|run| run.display_title == title)
+            .collect::<Vec<_>>();
+        if matches.len() > 1 {
+            return Err(anyhow!(
+                "GitHub returned multiple profile workflow runs for correlation {dispatch_id}"
+            ));
+        }
+        if let Some(run) = matches.first() {
+            runner.run(&[
+                "run".to_string(),
+                "watch".to_string(),
+                run.database_id.to_string(),
+                "--exit-status".to_string(),
+            ])?;
+            return Ok(run.database_id);
+        }
+        if poll < 59 {
+            runner.wait_before_poll();
+        }
+    }
+    Err(anyhow!(
+        "timed out waiting for {workflow} run correlated by {dispatch_id}"
+    ))
 }
 
 #[derive(Debug, Serialize)]
@@ -1156,32 +1282,22 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
     }
 
     let workflow = "release-assets.yaml";
-    let mut command = Command::new("gh");
-    command.args([
-        "workflow",
-        "run",
-        workflow,
-        "--ref",
-        "main",
-        "-f",
-        &format!("channel={}", args.channel),
-        "-f",
-        &format!("profile={}", args.profile),
-        "-f",
-        "dry_run=false",
-    ]);
-    if !args.dry_run {
-        let status = command
-            .status()
-            .context("dispatch serialized profile release with gh")?;
-        if !status.success() {
-            return Err(anyhow!(
-                "GitHub rejected the {}/{} profile release dispatch",
-                args.channel,
-                args.profile
-            ));
-        }
-    }
+    let run_id = if args.dry_run {
+        None
+    } else {
+        let dispatch_id = format!(
+            "capsem-admin-{}-{}",
+            std::process::id(),
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
+        );
+        Some(dispatch_profile_workflow(
+            &mut GhProfileWorkflowRunner,
+            workflow,
+            &args.channel,
+            &args.profile,
+            &dispatch_id,
+        )?)
+    };
     let report = ReleaseDispatchReport {
         schema: "capsem.admin.release_dispatch.v1",
         ok: true,
@@ -1191,12 +1307,13 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
         publication_identity: selection.publication_identity,
         workflow,
         dispatched: !args.dry_run,
+        run_id,
     };
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         println!(
-            "{}: {}/{} revision {} via {}",
+            "{}: {}/{} revision {} via {}{}",
             if report.dispatched {
                 "dispatched"
             } else {
@@ -1205,7 +1322,11 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
             report.channel,
             report.profile,
             report.profile_revision,
-            report.workflow
+            report.workflow,
+            report
+                .run_id
+                .map(|run_id| format!(" run {run_id}"))
+                .unwrap_or_default()
         );
     }
     Ok(())

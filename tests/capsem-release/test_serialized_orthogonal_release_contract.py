@@ -295,6 +295,24 @@ def test_binary_and_profile_workflows_share_channel_transaction_lock() -> None:
         assert "inputs.tag" not in group_line
 
 
+def test_profile_dispatch_is_correlated_and_awaited_before_the_next_lane() -> None:
+    workflow = _workflow("release-assets.yaml")
+    admin = _read("crates/capsem-admin/src/main.rs")
+
+    assert (
+        "run-name: Release profile ${{ inputs.channel }}/${{ inputs.profile }} "
+        "${{ inputs.dispatch_id }}"
+    ) in workflow
+    assert "dispatch_id:" in workflow
+    assert "required: true" in workflow.split("dispatch_id:", maxsplit=1)[1].split(
+        "dry_run:", maxsplit=1
+    )[0]
+    assert 'format!("dispatch_id={dispatch_id}")' in admin
+    assert '"watch".to_string()' in admin
+    assert '"--exit-status".to_string()' in admin
+    assert "run_id: Option<u64>" in admin
+
+
 def test_release_lanes_run_one_reusable_fast_gate_before_builders() -> None:
     reusable = _workflow("fast-gate.yaml")
     assert "workflow_call:" in reusable

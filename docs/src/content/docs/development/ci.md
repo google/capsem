@@ -15,7 +15,7 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 | `security-audit.yaml` | Weekly schedule or manual dispatch | Blocking RustSec and dependency advisories across every JavaScript web workspace |
 | `release-nightly.yaml` | Daily schedule or manual dispatch | Check out current `main` and call `just release-binaries nightly`; tagged `main` is a clean no-op |
 | `release.yaml` | Dispatch from `release-binaries` with `{tag, channel}` | Run one per-channel serialized stable or nightly release: build apps, install-test the exact packages, publish them, update only the selected channel, and run public glow-up checks |
-| `release-assets.yaml` | Dispatch from `capsem-admin release` | Build exactly one channel/profile's images, config, and evidence against the existing channel package |
+| `release-assets.yaml` | Correlated dispatch from `capsem-admin release` | Build exactly one channel/profile's images, config, and evidence against the existing channel package; the public command watches that exact run through success |
 | `release-channel-staging.yaml` | Manual | Build a deterministic staging asset channel fixture, deploy it to a Cloudflare Pages preview branch, and validate the same release-channel contract without invoking `build-assets`, `build-app-macos`, or `build-app-linux` |
 | `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove profile image metadata is unchanged without creating a GitHub release or deploying release.capsem.org |
 | `docs.yaml` | Push to main | Deploy docs.capsem.org on each main merge, then smoke the live docs site |
@@ -140,6 +140,13 @@ Both workflows use `capsem-release-${{ inputs.channel }}` with cancellation
 disabled. The lock is acquired before reading the source manifest and held
 through tests, mutation, generated-distribution assembly, and production
 deployment. Different channels remain independent.
+
+The profile command attaches a unique dispatch identity to `release-assets`
+and watches the matching workflow with failure propagation. A successful
+`just release-profile` therefore means its own run completed, not merely that
+GitHub accepted an unidentified queued dispatch. A following same-channel lane
+cannot accidentally overtake it or cause it to be replaced as an older pending
+run.
 
 An incompatible profile is published once as immutable staged assets but does
 not change the public channel. The following binary lane resolves those exact

@@ -3566,6 +3566,143 @@ fn release_command_has_one_operator_shape() {
     );
 }
 
+#[derive(Default)]
+struct RecordingProfileWorkflowRunner {
+    listings: std::collections::VecDeque<String>,
+    calls: Vec<Vec<String>>,
+    waits: usize,
+    fail_watch: bool,
+}
+
+impl ProfileWorkflowRunner for RecordingProfileWorkflowRunner {
+    fn run(&mut self, args: &[String]) -> Result<()> {
+        self.calls.push(args.to_vec());
+        if self.fail_watch && args.get(0).map(String::as_str) == Some("run") {
+            return Err(anyhow!("watched profile workflow failed"));
+        }
+        Ok(())
+    }
+
+    fn output(&mut self, args: &[String]) -> Result<String> {
+        self.calls.push(args.to_vec());
+        self.listings
+            .pop_front()
+            .ok_or_else(|| anyhow!("unexpected workflow listing"))
+    }
+
+    fn wait_before_poll(&mut self) {
+        self.waits += 1;
+    }
+}
+
+#[test]
+fn profile_release_dispatch_waits_for_its_exact_workflow_run() {
+    let mut runner = RecordingProfileWorkflowRunner {
+        listings: [
+            "[]".to_string(),
+            serde_json::json!([{
+                "databaseId": 42,
+                "displayTitle": "Release profile nightly/code dispatch-7",
+            }])
+            .to_string(),
+        ]
+        .into(),
+        ..Default::default()
+    };
+
+    let run_id = dispatch_profile_workflow(
+        &mut runner,
+        "release-assets.yaml",
+        "nightly",
+        "code",
+        "dispatch-7",
+    )
+    .expect("dispatch is found and watched");
+
+    assert_eq!(run_id, 42);
+    assert_eq!(runner.waits, 1);
+    assert_eq!(
+        runner.calls[0],
+        [
+            "workflow",
+            "run",
+            "release-assets.yaml",
+            "--ref",
+            "main",
+            "-f",
+            "channel=nightly",
+            "-f",
+            "profile=code",
+            "-f",
+            "dry_run=false",
+            "-f",
+            "dispatch_id=dispatch-7",
+        ]
+    );
+    assert_eq!(
+        runner.calls.last().expect("watch call"),
+        &["run", "watch", "42", "--exit-status"]
+    );
+}
+
+#[test]
+fn profile_release_dispatch_ignores_an_unrelated_pending_run() {
+    let mut runner = RecordingProfileWorkflowRunner {
+        listings: [
+            serde_json::json!([{
+                "databaseId": 9,
+                "displayTitle": "Release profile nightly/co-work somebody-else",
+            }])
+            .to_string(),
+            serde_json::json!([{
+                "databaseId": 10,
+                "displayTitle": "Release profile nightly/code ours",
+            }])
+            .to_string(),
+        ]
+        .into(),
+        ..Default::default()
+    };
+
+    let run_id = dispatch_profile_workflow(
+        &mut runner,
+        "release-assets.yaml",
+        "nightly",
+        "code",
+        "ours",
+    )
+    .expect("the correlated run is selected");
+
+    assert_eq!(run_id, 10);
+    assert_eq!(runner.calls.last().expect("watch call")[2], "10");
+}
+
+#[test]
+fn profile_release_dispatch_propagates_the_exact_run_failure() {
+    let mut runner = RecordingProfileWorkflowRunner {
+        listings: [serde_json::json!([{
+            "databaseId": 11,
+            "displayTitle": "Release profile nightly/code ours",
+        }])
+        .to_string()]
+        .into(),
+        fail_watch: true,
+        ..Default::default()
+    };
+
+    let error = dispatch_profile_workflow(
+        &mut runner,
+        "release-assets.yaml",
+        "nightly",
+        "code",
+        "ours",
+    )
+    .expect_err("the public command must fail with its exact workflow run");
+
+    assert!(format!("{error:#}").contains("watched profile workflow failed"));
+    assert_eq!(runner.calls.last().expect("watch call")[2], "11");
+}
+
 #[test]
 fn profile_release_merges_only_selected_profile_and_reports_compatibility() {
     let temp = tempfile::tempdir().expect("tempdir");

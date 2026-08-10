@@ -1,4 +1,5 @@
 name: Release VM Assets
+run-name: Release profile ${{ inputs.channel }}/${{ inputs.profile }} ${{ inputs.dispatch_id }}
 
 on:
   workflow_dispatch:
@@ -12,6 +13,9 @@ on:
           - nightly
       profile:
         description: Profile id that owns the VM image build.
+        required: true
+      dispatch_id:
+        description: Correlation id supplied by capsem-admin.
         required: true
       dry_run:
         description: Build and validate without deploying release.capsem.org.

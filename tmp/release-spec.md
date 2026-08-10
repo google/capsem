@@ -387,9 +387,17 @@ The Capsem project uses `capsem-admin` to:
 First-party release entrypoints are deliberately asymmetric:
 
 - `just release-profile <channel> <profile>` calls `capsem-admin release`
-  directly for the selected channel/profile.
+  directly for the selected channel/profile. The command gives the workflow a
+  unique correlation identity, discovers that exact run, and waits for its
+  terminal status before returning.
 - `just release-binaries <channel>` calls one checked-in, adversarially tested
   binary-release script.
+
+Dispatch acceptance is not release completion. A successful profile command
+MUST mean that its exact profile workflow succeeded; it MUST NOT return after
+merely adding an unidentified run to the same-channel queue. This is what makes
+sequential profile and binary automation safe even when another release is
+already pending.
 
 The first release into a missing first-party channel MUST still obey this
 surface. The serialized profile workflow MAY ask `capsem-admin release` to
@@ -908,6 +916,8 @@ compatible.
 11. Assemble the generated public distribution.
 12. Deploy through the reusable channel deploy lane.
 13. Verify the public channel and automatic profile refresh behavior.
+14. Report success to the caller only after the exact correlated workflow run
+    has succeeded.
 
 This flow MUST NOT invoke Rust release-binary or native-package construction.
 
