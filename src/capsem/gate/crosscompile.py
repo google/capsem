@@ -28,6 +28,9 @@ EMBEDDED = "points the architecture-neutral asset selector at the package target
 SIGNING = "its environment carries the Tauri private key, which a dry run must not print"
 RECORDED = "reads back the exact package basename the builder just wrote"
 PROOF = "installs that package in a systemd container and proves what it produced"
+DELEGATED_PROOF = (
+    "the complete candidate's local install transaction owns a stronger authoritative proof"
+)
 RECLAIM = "what this lane left on disk is only knowable once it has finished"
 
 
@@ -43,7 +46,7 @@ def _because(reason: str, *effects: Effect) -> CallJustification:
     return CallJustification(kind=kind, reason=reason, effects=frozenset(effects))
 
 
-def fragment(plan: Plan, config, target, *, after: tuple = ()):
+def fragment(plan: Plan, config, target, *, after: tuple = (), defer_proof: bool = False):
     """One architecture's package, after the builder image it needs.
 
     The builder is `shared`, so composing several architectures into one plan
@@ -58,6 +61,20 @@ def fragment(plan: Plan, config, target, *, after: tuple = ()):
     built = hostimage.fragment(plan, config)
     phase = plan.phase(f"package.{target.name}")
     docker = (config.exclusive("docker_daemon"),)
+
+    proof = (
+        (
+            "defer exact package proof to the local install transaction",
+            "defer_proof",
+            _because(DELEGATED_PROOF),
+        )
+        if defer_proof
+        else (
+            "prove that exact package in systemd + KVM",
+            "prove",
+            _because(PROOF, "process", "filesystem", "host-state"),
+        )
+    )
 
     #: The lane, in order. A phase the graph cannot see is a phase nothing can
     #: order, time, or name in a failure -- and every storage-ordering defect
@@ -94,9 +111,9 @@ def fragment(plan: Plan, config, target, *, after: tuple = ()):
         ),
         (
             "prove",
-            "prove that exact package in systemd + KVM",
-            "prove",
-            _because(PROOF, "process", "filesystem", "host-state"),
+            proof[0],
+            proof[1],
+            proof[2],
         ),
         (
             "storage-gc",

@@ -263,6 +263,20 @@ class PackageRail:
             channel=self.channel,
         ).run()
 
+    def defer_proof(self) -> None:
+        """Leave the exact native install to the complete local transaction.
+
+        The complete candidate later authors a checked release graph from the
+        assets it just built, hands that graph to this exact package, and runs
+        the broader install, Winterfell, and glow-up proof. Repeating the
+        narrower proof here would instead hydrate from mutable public stable,
+        making a broken channel impossible to repair through a release command.
+        Standalone package rails still call :meth:`prove`.
+        """
+        self._runner.note(
+            "Exact package proof is owned by the later local authoritative install transaction."
+        )
+
     def collect(self) -> None:
         """List what this lane produced, then give its disk back."""
         self._runner.step("Artifacts")

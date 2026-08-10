@@ -80,6 +80,24 @@ def test_the_whole_gate_is_one_plan() -> None:
         _at(labels, phase)
 
 
+def test_local_package_rails_defer_to_the_authoritative_install_transaction() -> None:
+    """The complete gate must not need a mutable public channel to recover one.
+
+    Its final install transaction authors a checked local release graph before
+    installing the exact native package.  Running the narrower package proof
+    first would hydrate from public stable and make a broken channel impossible
+    to repair through the only supported release commands.
+    """
+    plan = _plan()
+
+    for arch in CONFIG.architectures:
+        rendered = "\n".join(plan.step_named(f"package.{arch}.prove").render())
+        assert "defer exact package proof to the local install transaction" in rendered
+
+    installed = "\n".join(plan.step_named("glowup.install").render())
+    assert "install the exact package and prove the installed product" in installed
+
+
 def test_the_phases_run_in_the_order_the_gate_depends_on() -> None:
     """Cheap failures first, and nothing that needs artifacts before they exist.
 

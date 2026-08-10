@@ -135,7 +135,18 @@ def _build_and_prove(plan: Plan, phase, config: GateConfig, after: tuple) -> Ste
     previous: tuple = after
     last = list(config.architectures)[-1]
     for arch in config.architectures:
-        built = crosscompile.fragment(plan, config, config.arch(arch), after=previous)
+        # The final install step below authors a checked local release graph
+        # before installing the exact native package and running the broader
+        # install/glow-up proof. Letting the narrower package phase hydrate
+        # from mutable public stable first makes a broken channel impossible
+        # to recover through either supported release command.
+        built = crosscompile.fragment(
+            plan,
+            config,
+            config.arch(arch),
+            after=previous,
+            defer_proof=True,
+        )
         released = phase.add(storagerelease(config, f"completed-package-{arch}"), after=(built,))
         # Between the two package builds, not after both: the second build
         # needs the headroom the install rail is still reserving.

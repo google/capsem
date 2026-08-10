@@ -14,10 +14,12 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
+from capsem.gate import crosscompile
 from capsem.gate.errors import GateError
 from capsem.gate.packageinputs import pinned_toolchain, resolve_channel
 from capsem.gate.packagerail import PackageRail
 from capsem.gate.packagesigning import signing_key
+from capsem.gate.plan import Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -450,6 +452,18 @@ def test_a_provable_target_runs_the_systemd_kvm_proof(
     assert handed["channel"] == "nightly"
     assert handed["manifest_url"] == "file:///src/m.json"
     assert handed["package"].name == PACKAGE
+
+
+def test_the_standalone_plan_keeps_the_exact_package_proof() -> None:
+    plan = Plan("standalone-package")
+    crosscompile.fragment(plan, CONFIG, CONFIG.host_arch())
+
+    rendered = "\n".join(
+        plan.step_named(f"package.{CONFIG.host_arch().name}.prove").render()
+    )
+
+    assert "prove that exact package in systemd + KVM" in rendered
+    assert "defer exact package proof" not in rendered
 
 
 def test_a_cross_target_skips_the_proof_and_says_why(
