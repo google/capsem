@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Guest-kernel construction now uses one exact checked-in release and SHA-256,
+  verifies the downloaded source archive before extraction, and no longer
+  consults the mutable kernel.org latest-patch feed from inside the sealed
+  candidate gate.
+
 - Release qualification now remains inside Linux Bubblewrap or macOS Seatbelt
   while an authenticated one-time helper serves only the three live advisory
   queries, manifest resolution, exact-main publication, and workflow dispatch.

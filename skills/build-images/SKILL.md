@@ -256,7 +256,8 @@ The data flows through four layers:
 {
     "arch": ArchConfig,
     "arch_name": str,
-    "kernel_version": str,  # e.g. "6.6.130"
+    "kernel_version": str,  # exact checked-in release, e.g. "6.6.130"
+    "kernel_sha256": str,   # verified before the source archive is extracted
 }
 ```
 
@@ -335,10 +336,10 @@ For rootfs:
 8. Clean up container image
 
 For kernel:
-1. Resolve latest kernel version from kernel.org
+1. Read the exact kernel version and SHA-256 from the checked-in build config
 2. Assemble build context (defconfig, capsem-init)
 3. Render Dockerfile from template
-4. `docker build`
+4. `docker build`, verifying the downloaded source archive before extraction
 5. Extract vmlinuz + initrd.img from image
 6. Clean up
 

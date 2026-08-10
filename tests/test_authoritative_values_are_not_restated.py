@@ -52,18 +52,9 @@ def _authorities() -> dict[str, tuple[str, Path]]:
         found[line.group(1)] = ("the release line", release_binaries)
 
     build = PROJECT_ROOT / "config" / "docker" / "image" / "build.toml"
-    branches: set[str] = set()
-
-    def walk(table: dict) -> None:
-        for key, value in table.items():
-            if isinstance(value, dict):
-                walk(value)
-            elif key == "kernel_branch":
-                branches.add(value)
-
-    walk(tomllib.loads(build.read_text(encoding="utf-8")))
-    for branch in branches:
-        found[branch] = ("the guest kernel branch", build)
+    kernel = tomllib.loads(build.read_text(encoding="utf-8"))["build"]["kernel"]
+    found[kernel["version"]] = ("the exact guest kernel version", build)
+    found[kernel["sha256"]] = ("the exact guest kernel source digest", build)
 
     return found
 

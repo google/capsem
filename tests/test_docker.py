@@ -51,11 +51,10 @@ from capsem.builder.docker import (
     is_ci,
     prepare_build_context,
     render_dockerfile,
-    resolve_kernel_version,
     run_cmd,
     sync_container_clock,
 )
-from capsem.builder.models import ErofsConfig
+from capsem.builder.models import ErofsConfig, KernelConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -517,64 +516,47 @@ class TestRootfsVersionExtractability:
 class TestRenderKernel:
     """Kernel Dockerfile renders correctly for both architectures."""
 
-    def test_context_requires_resolved_version(self, real_config):
-        with pytest.raises(ValueError, match="kernel_version is required"):
-            generate_build_context("Dockerfile.kernel.j2", real_config, "arm64")
+    def test_context_uses_checked_in_kernel_source(self, real_config):
+        context = generate_build_context("Dockerfile.kernel.j2", real_config, "arm64")
+        assert context["kernel_version"] == real_config.build.kernel.version
+        assert context["kernel_sha256"] == real_config.build.kernel.sha256
 
     def test_arm64_from(self, real_config):
-        result = render_dockerfile(
-            "Dockerfile.kernel.j2", real_config, "arm64", kernel_version="6.6.127"
-        )
+        result = render_dockerfile("Dockerfile.kernel.j2", real_config, "arm64")
         assert "FROM --platform=linux/arm64" in result
 
     def test_arm64_defconfig(self, real_config):
-        result = render_dockerfile(
-            "Dockerfile.kernel.j2", real_config, "arm64", kernel_version="6.6.127"
-        )
+        result = render_dockerfile("Dockerfile.kernel.j2", real_config, "arm64")
         assert "defconfig.arm64" in result
 
     def test_arm64_kernel_image(self, real_config):
-        result = render_dockerfile(
-            "Dockerfile.kernel.j2", real_config, "arm64", kernel_version="6.6.127"
-        )
+        result = render_dockerfile("Dockerfile.kernel.j2", real_config, "arm64")
         assert "arch/arm64/boot/Image" in result
 
     def test_x86_64_from(self, real_config):
-        result = render_dockerfile(
-            "Dockerfile.kernel.j2", real_config, "x86_64", kernel_version="6.6.127"
-        )
+        result = render_dockerfile("Dockerfile.kernel.j2", real_config, "x86_64")
         assert "FROM --platform=linux/amd64" in result
 
     def test_x86_64_defconfig(self, real_config):
-        result = render_dockerfile(
-            "Dockerfile.kernel.j2", real_config, "x86_64", kernel_version="6.6.127"
-        )
+        result = render_dockerfile("Dockerfile.kernel.j2", real_config, "x86_64")
         assert "defconfig.x86_64" in result
 
     def test_x86_64_kernel_image(self, real_config):
-        result = render_dockerfile(
-            "Dockerfile.kernel.j2", real_config, "x86_64", kernel_version="6.6.127"
-        )
+        result = render_dockerfile("Dockerfile.kernel.j2", real_config, "x86_64")
         assert "arch/x86_64/boot/bzImage" in result
 
     def test_kernel_version_in_url(self, real_config):
-        result = render_dockerfile(
-            "Dockerfile.kernel.j2", real_config, "arm64", kernel_version="6.6.128"
-        )
-        assert "6.6.128" in result
+        result = render_dockerfile("Dockerfile.kernel.j2", real_config, "arm64")
+        assert real_config.build.kernel.version in result
         assert "kernel.org" in result
 
     def test_busybox_and_initrd(self, real_config):
-        result = render_dockerfile(
-            "Dockerfile.kernel.j2", real_config, "arm64", kernel_version="6.6.127"
-        )
+        result = render_dockerfile("Dockerfile.kernel.j2", real_config, "arm64")
         assert "busybox" in result
         assert "initrd" in result.lower()
 
     def test_capsem_init_copied(self, real_config):
-        result = render_dockerfile(
-            "Dockerfile.kernel.j2", real_config, "arm64", kernel_version="6.6.127"
-        )
+        result = render_dockerfile("Dockerfile.kernel.j2", real_config, "arm64")
         assert "capsem-init" in result
 
 
@@ -599,12 +581,11 @@ class TestGenerateBuildContext:
         assert "profile_install_script" not in ctx
 
     def test_kernel_keys(self, real_config):
-        ctx = generate_build_context(
-            "Dockerfile.kernel.j2", real_config, "arm64", kernel_version="6.6.127"
-        )
+        ctx = generate_build_context("Dockerfile.kernel.j2", real_config, "arm64")
         assert "arch" in ctx
         assert "arch_name" in ctx
         assert "kernel_version" in ctx
+        assert "kernel_sha256" in ctx
 
     def test_rootfs_without_npm_package_set(self, real_config):
         package_sets = {
@@ -689,173 +670,6 @@ class TestEdgeCases:
         a = render_dockerfile("Dockerfile.rootfs.j2", real_config, "arm64")
         b = render_dockerfile("Dockerfile.rootfs.j2", real_config, "arm64")
         assert a == b
-
-
-# ---------------------------------------------------------------------------
-# Build execution: resolve_kernel_version
-# ---------------------------------------------------------------------------
-
-
-class TestResolveKernelVersion:
-    @patch("capsem.builder.docker.urllib.request.urlopen")
-    def test_valid_json(self, mock_urlopen):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps(
-            {
-                "releases": [
-                    {"version": "6.6.131", "moniker": "longterm", "iseol": False},
-                    {"version": "6.6.127", "moniker": "longterm", "iseol": False},
-                    {"version": "6.12.5", "moniker": "stable", "iseol": False},
-                ]
-            }
-        ).encode()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
-        result = resolve_kernel_version("6.6")
-        assert result == "6.6.131"
-
-    @patch("capsem.builder.docker.urllib.request.urlopen")
-    def test_explicit_stable_branch(self, mock_urlopen):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps(
-            {
-                "releases": [
-                    {"version": "7.1-rc6", "moniker": "mainline", "iseol": False},
-                    {"version": "7.0.11", "moniker": "stable", "iseol": False},
-                    {"version": "7.0.10", "moniker": "stable", "iseol": False},
-                    {"version": "6.18.34", "moniker": "longterm", "iseol": False},
-                ]
-            }
-        ).encode()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
-        result = resolve_kernel_version("7.0")
-        assert result == "7.0.11"
-
-    @patch("capsem.builder.docker.urllib.request.urlopen")
-    def test_auto_stays_on_lts(self, mock_urlopen):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps(
-            {
-                "releases": [
-                    {"version": "7.0.11", "moniker": "stable", "iseol": False},
-                    {"version": "6.18.34", "moniker": "longterm", "iseol": False},
-                    {"version": "6.12.92", "moniker": "longterm", "iseol": False},
-                ]
-            }
-        ).encode()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
-        result = resolve_kernel_version("auto")
-        assert result == "6.18.34"
-
-    @patch("capsem.builder.docker.urllib.request.urlopen")
-    def test_network_error_fails_closed(self, mock_urlopen):
-        mock_urlopen.side_effect = Exception("network error")
-        with pytest.raises(RuntimeError, match=r"failed to fetch kernel.org releases"):
-            resolve_kernel_version("6.6")
-
-    @patch("capsem.builder.docker.urllib.request.urlopen")
-    def test_no_matching_branch_fails_closed(self, mock_urlopen):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps(
-            {
-                "releases": [
-                    {"version": "6.12.5", "moniker": "stable", "iseol": False},
-                ]
-            }
-        ).encode()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
-        with pytest.raises(RuntimeError, match=r"no non-EOL 6\.6\.x"):
-            resolve_kernel_version("6.6")
-
-    @patch("capsem.builder.docker.urllib.request.urlopen")
-    def test_eol_only_matching_branch_fails_closed(self, mock_urlopen):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps(
-            {
-                "releases": [
-                    {"version": "7.0.11", "moniker": "stable", "iseol": True},
-                    {"version": "6.18.40", "moniker": "longterm", "iseol": False},
-                ]
-            }
-        ).encode()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
-        with pytest.raises(RuntimeError, match=r"no non-EOL 7\.0\.x"):
-            resolve_kernel_version("7.0")
-
-    @patch("capsem.builder.docker.urllib.request.urlopen")
-    def test_invalid_branch_fails_closed(self, mock_urlopen):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps(
-            {
-                "releases": [
-                    {"version": "6.18.40", "moniker": "longterm", "iseol": False},
-                ]
-            }
-        ).encode()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
-        with pytest.raises(RuntimeError, match="invalid kernel_branch"):
-            resolve_kernel_version("latest")
-
-    @patch("capsem.builder.docker.urllib.request.urlopen")
-    def test_empty_supported_feed_fails_closed(self, mock_urlopen):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps(
-            {
-                "releases": [
-                    {"version": "7.0.11", "moniker": "stable", "iseol": True},
-                    {"version": "7.2-rc1", "moniker": "mainline", "iseol": False},
-                ]
-            }
-        ).encode()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
-        with pytest.raises(RuntimeError, match="no non-EOL stable/LTS releases"):
-            resolve_kernel_version("auto")
-
-    @patch("capsem.builder.docker.urllib.request.urlopen")
-    def test_auto_without_longterm_release_fails_closed(self, mock_urlopen):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps(
-            {
-                "releases": [
-                    {"version": "7.1.5", "moniker": "stable", "iseol": False},
-                ]
-            }
-        ).encode()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
-        with pytest.raises(RuntimeError, match="no non-EOL longterm releases"):
-            resolve_kernel_version("auto")
-
-    @patch("capsem.builder.docker.urllib.request.urlopen")
-    def test_eol_versions_skipped(self, mock_urlopen):
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps(
-            {
-                "releases": [
-                    {"version": "6.6.131", "moniker": "longterm", "iseol": True},
-                    {"version": "6.6.127", "moniker": "longterm", "iseol": False},
-                ]
-            }
-        ).encode()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
-        result = resolve_kernel_version("6.6")
-        assert result == "6.6.127"
 
 
 # ---------------------------------------------------------------------------
@@ -1052,7 +866,10 @@ class TestBuildVersionScript:
         from capsem.builder.models import BuildConfig, GuestImageConfig
 
         config = GuestImageConfig(
-            build=BuildConfig(architectures={"arm64": real_arch()}),
+            build=BuildConfig(
+                kernel=KernelConfig(version="9.9.9", sha256="a" * 64),
+                architectures={"arm64": real_arch()},
+            ),
         )
         script = build_version_script(config)
         assert script == ""
@@ -1144,9 +961,7 @@ class TestAptClockSkewOptions:
             )
 
     def test_kernel_template_has_both_options(self, real_config):
-        rendered = render_dockerfile(
-            "Dockerfile.kernel.j2", real_config, "arm64", kernel_version="6.6.127"
-        )
+        rendered = render_dockerfile("Dockerfile.kernel.j2", real_config, "arm64")
         for opt in self.APT_CLOCK_SKEW_OPTIONS:
             assert opt in rendered, (
                 f"Dockerfile.kernel.j2 missing apt option '{opt}' -- "
@@ -1727,7 +1542,6 @@ class TestBuildLedger:
             "arm64",
             template="kernel",
             output_dir=tmp_path,
-            kernel_version="7.0.11",
             repo_root=PROJECT_ROOT,
         )
 
@@ -1737,7 +1551,9 @@ class TestBuildLedger:
         ]
         assert len(records) == 1
         assert records[0]["stage"] == "kernel.assets"
-        assert records[0]["kernel_version"] == "7.0.11"
+        assert records[0]["kernel_version"] == real_config.build.kernel.version
+        assert records[0]["kernel_sha256"] == real_config.build.kernel.sha256
+        assert "build_args" not in _mock_docker_build.call_args.kwargs
         assert {entry["path"] for entry in records[0]["outputs"]} == {
             "vmlinuz",
             "initrd.img",
@@ -1800,19 +1616,35 @@ class TestErofsConfig:
 
 
 class TestKernelConfig:
-    def test_real_config_pins_supported_lts_kernel_branch(self, real_config):
-        # Read from build.toml rather than restated. The literal was the value
-        # the file declares, so moving the pin failed this test instead of
-        # reporting that the parser disagreed with the config.
+    def test_real_config_pins_one_exact_verified_kernel_source(self, real_config):
         declared = tomllib.loads(
             (PROJECT_ROOT / "config/docker/image/build.toml").read_text(encoding="utf-8")
-        )["build"]["architectures"]
+        )["build"]
+        kernel = declared["kernel"]
+
+        assert re.fullmatch(r"\d+\.\d+\.\d+", kernel["version"])
+        assert re.fullmatch(r"[0-9a-f]{64}", kernel["sha256"])
+        assert real_config.build.kernel.version == kernel["version"]
+        assert real_config.build.kernel.sha256 == kernel["sha256"]
+
         for arch in ("arm64", "x86_64"):
-            branch = declared[arch]["kernel_branch"]
-            assert re.fullmatch(r"\d+\.\d+", branch), (
-                f"{arch} kernel_branch {branch!r} is not a MAJOR.MINOR branch"
-            )
-            assert real_config.build.architectures[arch].kernel_branch == branch
+            assert "kernel_branch" not in declared["architectures"][arch]
+
+    def test_kernel_dockerfile_verifies_the_exact_source_digest(self, real_config):
+        kernel = tomllib.loads(
+            (PROJECT_ROOT / "config/docker/image/build.toml").read_text(encoding="utf-8")
+        )["build"]["kernel"]
+        rendered = render_dockerfile(
+            "Dockerfile.kernel.j2",
+            real_config,
+            "arm64",
+        )
+
+        assert kernel["sha256"] in rendered
+        assert "sha256sum -c" in rendered
+        assert rendered.index("sha256sum -c") < rendered.index("tar xf")
+        assert "ARG KERNEL_VERSION" not in rendered
+        assert "ARG KERNEL_SHA256" not in rendered
 
     def test_real_config_defaults_erofs_lz4hc_level_12(self, real_config):
         assert real_config.build.erofs.enabled is True
@@ -1922,7 +1754,6 @@ class TestPrepareBuildContext:
             "Dockerfile.kernel.j2",
             context_dir,
             PROJECT_ROOT,
-            kernel_version="6.6.127",
         )
         assert (context_dir / "Dockerfile").is_file()
         assert (context_dir / "kernel" / "defconfig.arm64").is_file()
@@ -1988,10 +1819,9 @@ class TestPrepareBuildContext:
             "Dockerfile.kernel.j2",
             context_dir,
             PROJECT_ROOT,
-            kernel_version="6.6.131",
         )
         content = (context_dir / "Dockerfile").read_text()
-        assert "6.6.131" in content
+        assert real_config.build.kernel.version in content
 
 
 # ---------------------------------------------------------------------------

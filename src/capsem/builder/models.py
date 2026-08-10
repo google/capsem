@@ -53,16 +53,23 @@ class PackageManager(str, Enum):
 class ArchConfig(BaseModel):
     """Per-architecture build settings."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     base_image: str = "debian:bookworm-slim"
     docker_platform: str
     rust_target: str
-    # "auto" -> resolver picks newest non-EOL LTS from kernel.org; "X.Y" pins.
-    kernel_branch: str = "auto"
     kernel_image: str
     defconfig: str
     node_major: int = 24
+
+
+class KernelConfig(BaseModel):
+    """Immutable guest-kernel source selected by the checked-in build contract."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class ErofsConfig(BaseModel):
@@ -100,11 +107,12 @@ class ErofsConfig(BaseModel):
 class BuildConfig(BaseModel):
     """Top-level build settings from build.toml."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     compression: Compression = Compression.ZSTD
     compression_level: int = Field(default=15, ge=1, le=22)
     erofs: ErofsConfig = Field(default_factory=ErofsConfig)
+    kernel: KernelConfig
     architectures: dict[str, ArchConfig]
     version_commands: dict[str, str] = Field(default_factory=dict)
 

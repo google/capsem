@@ -1286,6 +1286,22 @@ fn image_workspace_materializes_self_contained_profile_config() {
     assert!(args.output.join("workspace.json").is_file());
     let generated_config = args.output.join("guest").join("config");
     assert!(generated_config.join("packages/apt.toml").is_file());
+    let source_build = repo_root.join("config/docker/image/build.toml");
+    let generated_build = generated_config.join("build.toml");
+    assert_eq!(
+        fs::read(&generated_build).expect("materialized build config"),
+        fs::read(&source_build).expect("source build config"),
+        "the image workspace must copy the one authoritative build contract byte-for-byte"
+    );
+    let build_config: toml::Value = toml::from_str(
+        &fs::read_to_string(&generated_build).expect("read materialized build config"),
+    )
+    .expect("parse materialized build config");
+    let kernel = build_config["build"]["kernel"]
+        .as_table()
+        .expect("one common kernel source table");
+    assert!(kernel.get("version").is_some());
+    assert!(kernel.get("sha256").is_some());
     let apt_packages = fs::read_to_string(generated_config.join("packages/apt.toml"))
         .expect("materialized apt packages");
     assert!(

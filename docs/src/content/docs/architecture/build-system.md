@@ -88,7 +88,7 @@ Four outputs are produced:
 
 | File | Model | Purpose | Key Fields |
 |------|-------|---------|------------|
-| `build.toml` | `BuildConfig` | Architectures, compression | `compression`, `compression_level`, `architectures.*` |
+| `build.toml` | `BuildConfig` | Kernel source, architectures, compression | `kernel.version`, `kernel.sha256`, `compression`, `compression_level`, `architectures.*` |
 | `manifest.toml` | `ImageManifestConfig` | Image identity and changelog | `name`, `version`, `description`, `changelog` |
 | `packages/apt.toml` | `PackageSetConfig` | Apt package set | `manager`, `install_cmd`, `packages`, `network` |
 | `packages/python.toml` | `PackageSetConfig` | Python package set | `manager`, `install_cmd`, `packages` |
@@ -112,11 +112,14 @@ enabled = true
 compression = "lz4hc"
 compression_level = 12
 
+[build.kernel]
+version = "X.Y.Z"
+sha256 = "<64 lowercase hex characters>"
+
 [build.architectures.arm64]
 base_image = "debian:bookworm-slim"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
-kernel_branch = "7.0"
 kernel_image = "arch/arm64/boot/Image"
 defconfig = "kernel/defconfig.arm64"
 node_major = 24
@@ -228,8 +231,7 @@ The kernel build follows a parallel path:
 
 ```mermaid
 flowchart TD
-  KLoad["Load build.toml"] --> KResolve["Resolve kernel version\n(kernel.org LTS lookup)"]
-  KResolve --> KRender["Render Dockerfile.kernel.j2"]
+  KLoad["Load exact kernel version + SHA-256\nfrom build.toml"] --> KRender["Render Dockerfile.kernel.j2"]
   KRender --> KBuild["Docker build\n(kernel compile + initrd)"]
   KBuild --> KExtract["Extract vmlinuz + initrd.img"]
 ```
@@ -238,9 +240,10 @@ Key implementation details:
 
 - **Container runtime auto-detection.** Docker CLI.
 - **CI cache integration.** Docker buildx with GitHub Actions cache (`type=gha`) when `GITHUB_ACTIONS` is set.
-- **Kernel version resolution.** Fetches the latest non-EOL version for the
-  configured LTS branch from `kernel.org/releases.json` and fails closed when
-  freshness or support status cannot be established.
+- **Immutable kernel source.** The checked-in build contract selects one exact
+  kernel release and its SHA-256. The Docker build verifies the downloaded
+  source archive before extraction, so the sealed candidate does not consult a
+  mutable “latest patch” feed and identical source selects identical bytes.
 - **Cross-compilation.** Guest agent binaries are cross-compiled with `cargo build --target {rust_target}` using `rust-lld` as the linker (configured in `.cargo/config.toml`).
 - **Clock skew resilience.** All `apt-get update` calls use `-o Acquire::Check-Valid-Until=false` to handle container VM clock drift.
 
@@ -344,7 +347,7 @@ session mutations, workspace writes, or post-boot state.
 | Section | Source | Contents |
 |---------|--------|----------|
 | Assets | `b3sum` output | Filename, BLAKE3 hash, size in bytes |
-| Build ledger | build pipeline | Debug-only rendered Dockerfile/context hashes, profile/package inputs, EROFS settings |
+| Build ledger | build pipeline | Debug-only rendered Dockerfile/context hashes, exact kernel version/source SHA-256, profile/package inputs, EROFS settings |
 | OBOM | cdxgen | Published installed base-image package/component names and versions |
 
 ## Profile Outputs in the Release Graph

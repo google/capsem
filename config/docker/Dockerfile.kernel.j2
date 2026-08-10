@@ -11,8 +11,6 @@
 
 FROM --platform={{ arch.docker_platform }} {{ arch.base_image }} AS build
 
-ARG KERNEL_VERSION={{ kernel_version }}
-
 # Install build tools
 RUN apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && \
     apt-get install -y --no-install-recommends \
@@ -22,9 +20,12 @@ RUN apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false upd
     rm -rf /var/lib/apt/lists/*
 
 # Download kernel source
-RUN MAJOR=$(echo ${KERNEL_VERSION} | cut -d. -f1) && \
+RUN KERNEL_VERSION="{{ kernel_version }}" && \
+    KERNEL_SHA256="{{ kernel_sha256 }}" && \
+    MAJOR=$(echo ${KERNEL_VERSION} | cut -d. -f1) && \
     wget -q "https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz" \
         -O /tmp/linux.tar.xz && \
+    printf '%s  %s\n' "${KERNEL_SHA256}" /tmp/linux.tar.xz | sha256sum -c - && \
     tar xf /tmp/linux.tar.xz -C /usr/src && \
     rm /tmp/linux.tar.xz && \
     ln -s /usr/src/linux-${KERNEL_VERSION} /usr/src/linux

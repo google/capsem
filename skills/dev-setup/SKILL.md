@@ -159,10 +159,10 @@ Release-only local preflight also needs `cdxgen`. Install it with
 ### Kernel version
 
 Kernel selection is part of the profile-derived image build, not a standalone
-developer setting. The build backend resolves the configured kernel branch
-while materializing and building profile assets through `capsem-admin`/`just`.
-Do not add a parallel kernel setting under runtime settings or backend-only
-config.
+developer setting. The build backend reads the exact kernel release and
+SHA-256 from the checked-in build contract, then verifies the source archive
+before extraction while building profile assets through `capsem-admin`/`just`.
+Do not add a parallel kernel setting or a mutable latest-release lookup.
 
 Or step by step:
 

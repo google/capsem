@@ -17,7 +17,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
@@ -133,15 +132,14 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
     }
 
 
-def _kernel_context(
-    config: GuestImageConfig, arch_name: str, kernel_version: str
-) -> dict[str, Any]:
+def _kernel_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
     """Build Jinja context for Dockerfile.kernel.j2."""
     arch = config.build.architectures[arch_name]
     return {
         "arch": arch,
         "arch_name": arch_name,
-        "kernel_version": kernel_version,
+        "kernel_version": config.build.kernel.version,
+        "kernel_sha256": config.build.kernel.sha256,
     }
 
 
@@ -149,7 +147,6 @@ def generate_build_context(
     template_name: str,
     config: GuestImageConfig,
     arch_name: str,
-    **kwargs: Any,
 ) -> dict[str, Any]:
     """Generate the Jinja template context dict for a given template.
 
@@ -157,8 +154,6 @@ def generate_build_context(
         template_name: Template filename (e.g., "Dockerfile.rootfs.j2").
         config: Guest image configuration.
         arch_name: Architecture name (e.g., "arm64", "x86_64").
-        **kwargs: Extra context (e.g., kernel_version for kernel template).
-
     Returns:
         Context dict ready for Jinja rendering.
 
@@ -169,17 +164,10 @@ def generate_build_context(
     if template_name == "Dockerfile.rootfs.j2":
         ctx = _rootfs_context(config, arch_name)
     elif template_name == "Dockerfile.kernel.j2":
-        kernel_version = kwargs.get("kernel_version")
-        if not isinstance(kernel_version, str) or not kernel_version:
-            raise ValueError(
-                "kernel_version is required for Dockerfile.kernel.j2; "
-                "resolve and validate it before rendering"
-            )
-        ctx = _kernel_context(config, arch_name, kernel_version)
+        ctx = _kernel_context(config, arch_name)
     else:
         raise ValueError(f"Unknown template: {template_name}")
 
-    ctx.update(kwargs)
     return ctx
 
 
@@ -187,7 +175,6 @@ def render_dockerfile(
     template_name: str,
     config: GuestImageConfig,
     arch_name: str,
-    **kwargs: Any,
 ) -> str:
     """Render a Dockerfile from a Jinja2 template with config context.
 
@@ -195,8 +182,6 @@ def render_dockerfile(
         template_name: Template filename (e.g., "Dockerfile.rootfs.j2").
         config: Guest image configuration.
         arch_name: Architecture name (e.g., "arm64", "x86_64").
-        **kwargs: Extra context (e.g., kernel_version for kernel template).
-
     Returns:
         Rendered Dockerfile as a string.
 
@@ -204,7 +189,7 @@ def render_dockerfile(
         ValueError: If template_name is not recognized.
         KeyError: If arch_name is not in config.build.architectures.
     """
-    context = generate_build_context(template_name, config, arch_name, **kwargs)
+    context = generate_build_context(template_name, config, arch_name)
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATES_DIR)),
         keep_trailing_newline=True,
@@ -290,68 +275,6 @@ def sync_container_clock() -> None:
         echo=False,
         timeout=15,
     )
-
-
-def resolve_kernel_version(branch: str = "auto") -> str:
-    """Fetch the latest kernel version from kernel.org.
-
-    `branch` controls selection:
-      - "auto" (default): newest non-EOL longterm (LTS) branch, latest patch.
-        Always-fresh; no human bumps required.
-      - "X.Y" (e.g. "7.0" or "6.18"): pin to that stable/LTS branch,
-        latest patch. Use for reproducibility / security freeze.
-
-    Resolution is fail-closed: a build must not continue when freshness or
-    non-EOL status cannot be established from kernel.org.
-    """
-    if branch != "auto" and not re.fullmatch(r"\d+\.\d+", branch):
-        raise RuntimeError(f"invalid kernel_branch {branch!r} (want 'auto' or 'X.Y')")
-
-    try:
-        req = urllib.request.Request(
-            "https://www.kernel.org/releases.json",
-            headers={"User-Agent": "capsem-build/1.0"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-    except Exception as e:
-        raise RuntimeError(f"failed to fetch kernel.org releases: {e}") from e
-
-    # Collect (major, minor, patch) for every non-EOL stable/LTS release with
-    # a strict X.Y.Z version string. Mainline rc releases are deliberately
-    # excluded from reproducible guest builds.
-    stable_or_lts: list[tuple[int, int, int, str]] = []
-    for release in data.get("releases", []):
-        version = release.get("version", "")
-        moniker = release.get("moniker")
-        if moniker not in {"stable", "longterm"} or release.get("iseol"):
-            continue
-        if not re.fullmatch(r"\d+\.\d+\.\d+", version):
-            continue
-        a, b, c = (int(x) for x in version.split("."))
-        stable_or_lts.append((a, b, c, moniker))
-
-    if not stable_or_lts:
-        raise RuntimeError("no non-EOL stable/LTS releases found in kernel.org feed")
-
-    if branch == "auto":
-        # Highest LTS branch (by major, minor), then highest patch on it.
-        lts = [(a, b, c) for (a, b, c, moniker) in stable_or_lts if moniker == "longterm"]
-        if not lts:
-            raise RuntimeError("no non-EOL longterm releases found in kernel.org feed")
-        lts.sort()
-        a, b, _ = lts[-1]
-        patches = sorted(c for (x, y, c) in lts if (x, y) == (a, b))
-        version = f"{a}.{b}.{patches[-1]}"
-        print(f"  Auto-selected newest LTS: {version}")
-        return version
-
-    # Explicit pin: keep only the requested major.minor branch.
-    want_a, want_b = (int(x) for x in branch.split("."))
-    patches = sorted(c for (a, b, c, _) in stable_or_lts if (a, b) == (want_a, want_b))
-    if not patches:
-        raise RuntimeError(f"no non-EOL {branch}.x stable/LTS releases on kernel.org")
-    return f"{want_a}.{want_b}.{patches[-1]}"
 
 
 def get_project_version(repo_root: Path) -> str:
@@ -1661,12 +1584,11 @@ def prepare_build_context(
     template_name: str,
     context_dir: Path,
     repo_root: Path,
-    **kwargs: Any,
 ) -> Path:
     """Write rendered Dockerfile and copy required files into a build context."""
     guest_dir = Path(config.guest_dir_path) if config.guest_dir_path else repo_root / "guest"
     # Render Dockerfile
-    dockerfile_content = render_dockerfile(template_name, config, arch_name, **kwargs)
+    dockerfile_content = render_dockerfile(template_name, config, arch_name)
     dockerfile_path = context_dir / "Dockerfile"
     dockerfile_path.write_text(dockerfile_content)
 
@@ -1745,7 +1667,6 @@ def build_image(
     *,
     template: str = "rootfs",
     output_dir: Path | None = None,
-    kernel_version: str | None = None,
     repo_root: Path | None = None,
 ) -> None:
     """Build a Docker image for the given architecture.
@@ -1792,9 +1713,7 @@ def build_image(
         context_dir = Path(tmpdir)
 
         if template == "kernel":
-            # Resolve kernel version
-            if kernel_version is None:
-                kernel_version = resolve_kernel_version(arch.kernel_branch)
+            kernel_version = config.build.kernel.version
             print(f"Kernel: {kernel_version}")
 
             dockerfile_path = prepare_build_context(
@@ -1803,7 +1722,6 @@ def build_image(
                 template_name,
                 context_dir,
                 repo_root,
-                kernel_version=kernel_version,
             )
             build_inputs = _build_input_record(
                 repo_root=repo_root,
@@ -1822,7 +1740,6 @@ def build_image(
                 context_dir / "Dockerfile",
                 context_dir,
                 arch.docker_platform,
-                build_args={"KERNEL_VERSION": kernel_version},
                 ci_cache=ci,
             )
             vmlinuz, initrd = extract_kernel_assets(
@@ -1838,6 +1755,7 @@ def build_image(
                     "stage": "kernel.assets",
                     "inputs": build_inputs,
                     "kernel_version": kernel_version,
+                    "kernel_sha256": config.build.kernel.sha256,
                     "outputs": [
                         _file_ledger_entry(vmlinuz, base=arch_output),
                         _file_ledger_entry(initrd, base=arch_output),
@@ -1994,7 +1912,6 @@ def build_all_architectures(
     *,
     template: str = "rootfs",
     output_dir: Path | None = None,
-    kernel_version: str | None = None,
     repo_root: Path | None = None,
 ) -> None:
     """Build Docker images for all configured architectures."""
@@ -2010,7 +1927,6 @@ def build_all_architectures(
             arch_name,
             template=template,
             output_dir=output_dir,
-            kernel_version=kernel_version,
             repo_root=repo_root,
         )
 

@@ -20,11 +20,14 @@ MINIMAL_BUILD_TOML = """\
 compression = "zstd"
 compression_level = 15
 
+[build.kernel]
+version = "9.9.9"
+sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 [build.architectures.arm64]
 base_image = "debian:bookworm-slim"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
-kernel_branch = "6.6"
 kernel_image = "arch/arm64/boot/Image"
 defconfig = "kernel/defconfig.arm64"
 node_major = 24
@@ -162,6 +165,12 @@ def test_invalid_toml_is_e002(guest_valid: Path) -> None:
 
 def test_pydantic_validation_error_is_e003(guest_valid: Path) -> None:
     (guest_valid / "config" / "build.toml").write_text("[build]\ncompression = 'zstd'\n")
+    assert "E003" in _codes(validate_guest(guest_valid))
+
+
+def test_legacy_per_arch_kernel_branch_is_e003(guest_valid: Path) -> None:
+    build = guest_valid / "config" / "build.toml"
+    build.write_text(build.read_text() + "kernel_branch = '9.9'\n")
     assert "E003" in _codes(validate_guest(guest_valid))
 
 

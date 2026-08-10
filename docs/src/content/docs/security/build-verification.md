@@ -99,9 +99,11 @@ routes expose the descriptor as profile evidence; local OBOM documents are
 served only after size and BLAKE3 verification.
 
 The per-architecture `build-ledger.log` is separate debug evidence. It records
-the inputs that produced the rootfs, including rendered Dockerfiles, build
-context hashes, EROFS settings, git/project version, profile root and
-install-script inputs, and declared package config. It is not uploaded as the
+the inputs that produced the assets, including the exact kernel version and
+source SHA-256, rendered Dockerfiles, build context hashes, EROFS settings,
+git/project version, profile root and install-script inputs, and declared
+package config. The kernel archive is verified against that SHA-256 before
+extraction. The ledger is not uploaded as the
 release inventory and must not claim installed package state; installed
 component names and versions come from the OBOM.
 

@@ -15,6 +15,7 @@ from capsem.builder.models import (
     ErofsCompression,
     ErofsConfig,
     GuestImageConfig,
+    KernelConfig,
     McpServerConfig,
     PackageManager,
     PackageNetworkConfig,
@@ -42,7 +43,10 @@ def _arch(*, docker_platform="linux/arm64", rust_target="aarch64-unknown-linux-m
 
 
 def _build(**kw):
-    defaults = {"architectures": {"arm64": _arch()}}
+    defaults = {
+        "kernel": KernelConfig(version="9.9.9", sha256="a" * 64),
+        "architectures": {"arm64": _arch()},
+    }
     defaults.update(kw)
     return BuildConfig(**defaults)
 
@@ -133,17 +137,11 @@ class TestArchConfig:
     def test_defaults(self):
         a = _arch()
         assert a.base_image == "debian:bookworm-slim"
-        # "auto" -> resolver picks newest non-EOL longterm kernel from
-        # kernel.org/releases.json. Pinning the digit here would cause this
-        # test to fail every time a new LTS series is released; the resolver
-        # itself is exercised by tests/capsem-builder/test_kernel_resolver.py.
-        assert a.kernel_branch == "auto"
         assert a.node_major == 24
 
     def test_custom_values(self):
-        a = _arch(base_image="ubuntu:24.04", kernel_branch="6.8", node_major=22)
+        a = _arch(base_image="ubuntu:24.04", node_major=22)
         assert a.base_image == "ubuntu:24.04"
-        assert a.kernel_branch == "6.8"
         assert a.node_major == 22
 
     def test_frozen(self):
@@ -171,6 +169,36 @@ class TestBuildConfig:
         assert b.erofs.compression is ErofsCompression.LZ4HC
         assert b.erofs.compression_level == 12
 
+    def test_kernel_source_is_exact_and_digest_verified(self):
+        kernel = _build().kernel
+        assert kernel.version == "9.9.9"
+        assert kernel.sha256 == "a" * 64
+
+    @pytest.mark.parametrize(
+        ("version", "sha256"),
+        [
+            ("9.9", "a" * 64),
+            ("latest", "a" * 64),
+            ("9.9.9", "A" * 64),
+            ("9.9.9", "short"),
+        ],
+    )
+    def test_kernel_source_rejects_mutable_or_unverified_inputs(
+        self, version: str, sha256: str
+    ) -> None:
+        with pytest.raises(ValidationError):
+            KernelConfig(version=version, sha256=sha256)
+
+    def test_legacy_per_arch_kernel_branch_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="kernel_branch"):
+            ArchConfig(
+                docker_platform="linux/arm64",
+                rust_target="aarch64-unknown-linux-musl",
+                kernel_image="arch/arm64/boot/Image",
+                defconfig="kernel/defconfig.arm64",
+                kernel_branch="9.9",
+            )
+
     def test_compression_level_min(self):
         b = _build(compression_level=1)
         assert b.compression_level == 1
@@ -189,7 +217,7 @@ class TestBuildConfig:
 
     def test_empty_architectures_rejected(self):
         with pytest.raises(ValidationError):
-            BuildConfig(architectures={})
+            _build(architectures={})
 
     def test_single_arch(self):
         b = _build()

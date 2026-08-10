@@ -65,11 +65,14 @@ enabled = true
 compression = "lz4hc"
 compression_level = 12
 
+[build.kernel]
+version = "9.9.9"
+sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 [build.architectures.arm64]
 base_image = "debian:bookworm-slim"
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
-kernel_branch = "6.6"
 kernel_image = "arch/arm64/boot/Image"
 defconfig = "kernel/defconfig.arm64"
 node_major = 24
@@ -349,6 +352,10 @@ class TestLoadGuestConfigErrors:
 [build]
 compression_level = 99
 
+[build.kernel]
+version = "9.9.9"
+sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 [build.architectures.arm64]
 docker_platform = "linux/arm64"
 rust_target = "aarch64-unknown-linux-musl"
@@ -379,6 +386,10 @@ class TestLoadGuestConfigEdgeCases:
 [build]
 compression = "gzip"
 compression_level = 9
+
+[build.kernel]
+version = "9.9.9"
+sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 [build.architectures.arm64]
 docker_platform = "linux/arm64"
