@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import shutil
 
+from .egress import Egress
 from .errors import GateError
 from .lifecycle import Resource
 from .proc import Runner
@@ -113,7 +114,9 @@ class Colima(Resource, name="colima"):
             self._runner.note("WARNING: failed to stop Colima started by this gate")
 
 
-def gate_resources(config, runner: Runner, *, mode: str) -> tuple[Resource, ...]:
+def gate_resources(
+    config, runner: Runner, *, mode: str, outside_egress: bool = False
+) -> tuple[Resource, ...]:
     """What anything running the complete gate must hold.
 
     Order is the guarantee: acquired left to right, released in reverse. The
@@ -131,6 +134,7 @@ def gate_resources(config, runner: Runner, *, mode: str) -> tuple[Resource, ...]
         # asked for during teardown is as much a part of the allow-list as
         # what it was asked for during the run.
         SandboxReport(config, runner, mode=mode),
+        Egress(config, enabled=outside_egress and mode != "off"),
         FailureEvidence(config, runner),
         Workspace(config),
         Colima(config, runner),

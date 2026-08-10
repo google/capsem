@@ -30,7 +30,7 @@ from .config import Arch
 from .docker import Docker
 from .dockermount import Mount
 from .errors import GateError
-from .fileactions import copy_tree, make_dir, remove
+from .fileactions import link, make_dir, remove
 from .packageinputs import package_environment, pinned_toolchain, resolve_channel
 from .packagesigning import signing_key
 from .proc import Runner
@@ -98,18 +98,22 @@ class PackageRail:
             self._runner.run(["python3", self._package.clock_script])
 
     def sync_assets(self) -> None:
-        """`assets/current` is what the bundler embeds; point it at this target.
+        """Point the architecture-neutral asset path at this target.
 
-        Through the primitives rather than `rm -rf` and `cp -r`: a raw `rm`
-        with a path built in Python is the one shape the reclaimer guards
-        exist to prevent, and neither showed up in a dry run.
+        The selected architecture already contains canonical and hash-named
+        hardlinks. A copied ``current`` tree breaks that topology and stores
+        every VM blob twice. Keep the pointer relative so the same link works
+        through the package container's read-only ``assets`` bind mount.
         """
         settings = self._config.imagebuild
         current = self.root / settings.output / self._package.current_assets
         built = self.root / settings.output / self.target.name
         remove(current)
         if built.is_dir():
-            copy_tree(built, current)
+            link(current, self.target.name)
+            landed = current.readlink()
+            if landed != Path(self.target.name):
+                raise GateError(f"{current} points at {landed}, not {self.target.name}")
 
     # -- the build ---------------------------------------------------------
 

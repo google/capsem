@@ -47,5 +47,9 @@ class TestDevSetup:
 
     def test_bootstrap_pnpm_install_is_noninteractive(self):
         bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text()
-        assert "CI=true pnpm install --frozen-lockfile" in bootstrap
-        assert "(cd frontend && pnpm install --frozen-lockfile)" not in bootstrap
+        gate = (PROJECT_ROOT / "config/gate.toml").read_text()
+
+        assert "uv run capsem-gate install-node" in bootstrap
+        assert "pnpm install --frozen-lockfile" not in bootstrap
+        assert 'node_env = { CI = "true" }' in gate
+        assert 'node_workspaces = ["frontend", "docs", "site", "release-site"]' in gate

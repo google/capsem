@@ -75,6 +75,15 @@ capture/reconfirmation, and publication target the originating checkout because
 work authored only in the disposable copy would disappear. The source guard
 stops publication if the checkout no longer has the recorded HEAD and bytes.
 
+The complete executor is also kernel-isolated for the entire candidate graph:
+Bubblewrap provides a loopback-only namespace on Linux and Seatbelt provides
+the macOS boundary. Network access is not restored process-wide for release.
+An authenticated helper created immediately before sandbox re-exec serves only
+the explicitly marked manifest-resolution, exact-main confirmation/push, and
+final dispatch actions. Its one-time mode-0600 metadata is deleted before plan
+work; every brokered command remains in the owning `GuardedRunner`, step log,
+and run journal. Never use `outside_sandbox=True` inside the candidate modules.
+
 `just fast-test` remains useful public developer feedback. It *is* the exact
 private `_test-fast` module used by `just test` and release CI, including YAML
 and source syntax, every source/release contract, Clippy, Python lint/type
@@ -164,6 +173,12 @@ workflows then save construction time, never test quality:
 - both lanes stage those exact resolved artifacts into the same test modules
   used locally;
 - source-built substitutes must not replace the resolved complementary family.
+
+The workflow must download and digest-check those immutable inputs and
+materialize every locked language dependency before calling `_test-*`.
+Directly invoked modules enter the same host-kernel sandbox themselves; a cold
+runner discovering a missing dependency after entry is a workflow preparation
+bug, not permission to fetch during qualification.
 
 This is one test architecture with two artifact-preparation modes, not a local
 test path and a forked CI test path. The test modules must not silently choose

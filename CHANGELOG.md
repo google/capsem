@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Release qualification now remains inside Linux Bubblewrap or macOS Seatbelt
+  while an authenticated one-time helper serves only manifest resolution,
+  exact-main publication, and workflow dispatch. Direct release-CI modules
+  enter the same boundary after locked dependencies and immutable inputs are
+  materialized.
+
+- Filesystem source mutations discovered by watchdog now cross back to the
+  plan worker and fail publishing runs after durable fault/journal evidence;
+  transient mutate-and-revert can no longer kill only the observer thread and
+  let a release continue.
+
+- Package asset selection now uses a verified relative `assets/current`
+  symlink instead of copying and de-hardlinking the selected architecture tree,
+  and standalone cross-compile composes the install image its exact package
+  proof requires.
+
+- Linux doctor now proves the Bubblewrap network boundary, build-chain
+  contracts describe platform behavior rather than removed shell mechanisms,
+  and gate/release/setup skills document the current hermetic release model.
+  Bootstrap now installs all four config-owned Node workspaces through the
+  gate instead of provisioning only the frontend by hand.
+
 - Release workflow preflight now treats absent Apple credentials and CI-owned
   SBOM tools as explicitly inapplicable on Linux while remaining fail-closed
   for macOS signing.

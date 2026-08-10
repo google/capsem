@@ -12,9 +12,8 @@ that runs later, which in practice means a thing that runs never: a rule
 evaluated after a sixty-minute gate is a rule nobody acts on until someone
 thinks to read a file.
 
-Two sources feed it. `interception.Instrument` wraps the in-process primitives
-and is exact -- the caller, and the state before the call. A `watchdog`
-observer covers what subprocesses do, which no in-process proxy can see, and
+`interception.Instrument` is exact about in-process callers and prior state. A
+`watchdog` observer covers what subprocesses do, which no proxy can see, and
 is best-effort: it is notified and then stats, so a change reverted inside
 that window is already gone when it looks.
 """
@@ -29,6 +28,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING
 
+from .errors import GateError
 from .faults import Event, Fault, facts_of, ignored_here, source_inodes
 from .interception import CURRENT_STEP
 
@@ -75,6 +75,7 @@ class Watch:
         self._modes: dict[Path, list[int]] = {}
         self._digests: dict[str, Path] = {}
         self._reported: set[tuple[Path, str]] = set()
+        self._refusal: str | None = None
 
     # -- step attribution ---------------------------------------------------
 
@@ -85,6 +86,18 @@ class Watch:
     def left(self, label: str) -> None:
         with self._lock:
             self._live.discard(label)
+
+    def refuse(self, message: str) -> None:
+        """Hand an asynchronous refusal to the thread driving the plan."""
+        with self._lock:
+            self._refusal = self._refusal or message
+
+    def checkpoint(self) -> None:
+        """Raise a fresh exception on the controlling thread at a safe boundary."""
+        with self._lock:
+            refusal = self._refusal
+        if refusal is not None:
+            raise GateError(refusal)
 
     # -- lifecycle ----------------------------------------------------------
 

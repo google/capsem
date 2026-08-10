@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import shlex
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -99,11 +100,19 @@ def _refuse_reentry(argv: tuple[str, ...]) -> None:
 class GuardedRunner(Runner):
     """Refuses gate re-entry, records everything it runs, and keeps its output."""
 
-    def __init__(self, inner: Runner, *, journal: Journal, tail_lines: int = 0) -> None:
+    def __init__(
+        self,
+        inner: Runner,
+        *,
+        journal: Journal,
+        tail_lines: int = 0,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__(inner.root)
         self._inner = inner
         self._journal = journal
         self._tail_lines = tail_lines
+        self._checkpoint = checkpoint or (lambda: None)
 
     def filed(self, command: Command) -> Command:
         """Send output to the log of whichever step is running.
@@ -136,6 +145,7 @@ class GuardedRunner(Runner):
 
     def execute(self, command: Command) -> Completed:
         _refuse_reentry(command.argv)
+        self._checkpoint()
         # Where this command's output will start. Read before it runs, because
         # afterwards the only thing the file can say is how much is in it
         # altogether -- and a step's log is shared by every command the step
@@ -156,6 +166,12 @@ class GuardedRunner(Runner):
             duration_ms=(time.monotonic() - started) * 1000,
             output=_span(command.log, started_at),
         )
+        # The watchdog callback runs on its own dispatcher thread. It records
+        # there and refuses here, after this command's own evidence is durable.
+        # Keep the command's own failure primary. A source finding alongside
+        # it is already durable, and this action is stopping either way.
+        if completed.returncode == 0 or not command.check:
+            self._checkpoint()
         return completed
 
     def launch(
@@ -173,6 +189,7 @@ class GuardedRunner(Runner):
         """
         rendered = tuple(str(part) for part in argv)
         _refuse_reentry(rendered)
+        self._checkpoint()
         started = time.monotonic()
         pid = self._inner.launch(argv, env=env, cwd=cwd, secret_env=secret_env)
         evidence = Command(argv=rendered, env=dict(env or {}), secret_env=secret_env)
@@ -183,6 +200,10 @@ class GuardedRunner(Runner):
             pid=pid,
             duration_ms=(time.monotonic() - started) * 1000,
         )
+        # The action that asked for this launch must first persist the PID it
+        # will use for teardown. Raising here would strand the process between
+        # launch evidence and lifecycle registration; Step checkpoints as soon
+        # as the action returns instead.
         return pid
 
     # -- reporting belongs to whoever owns the terminal --------------------

@@ -110,6 +110,9 @@ path; rerun the checked-in bootstrap so its udev rules remain the authority.
 ```
 
 `just doctor` checks these resources automatically and fails if below minimum.
+On Linux it also proves Bubblewrap can create the exact loopback-only gate
+namespace; when doctor is already running inside a gate, it verifies that only
+`lo` is visible instead of attempting a nested namespace.
 
 ## First-time setup
 
@@ -137,7 +140,8 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 | 1 | `rustup` (stable, minimal profile) | `sh.rustup.rs` |
 | 1 | `just` | `just.systems` -> `~/.local/bin` |
 | 2 | `uv` | `astral.sh/uv` -> `~/.local/bin` |
-| 2 | Python deps | `uv sync` |
+| 2 | Python deps | `uv sync --frozen` |
+| 2 | Rust workspace deps | `cargo fetch --locked` before sandboxed qualification |
 | 2 (Linux) | native compiler/Tauri libs, `cpio`, Docker/Buildx, Bubblewrap | apt or dnf |
 | 2 (Linux) | configured Node major + pnpm 10 | SHA256-verified official Node archive + npm |
 | 2 (Linux) | Docker/KVM/vhost-vsock current-session access | groups + checked-in udev policy and narrow socket/vhost ACL |
@@ -145,7 +149,7 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 | 2 (macOS) | `tart`, `sshpass` | `brew` |
 | 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` (+ symlink into `~/.docker/cli-plugins`) |
 | 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` |
-| 2 | Frontend deps | `pnpm install --frozen-lockfile` |
+| 2 | Frontend, docs, site, and release-site deps | config-driven `capsem-gate install-node` with frozen lockfiles |
 | 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` -- Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`, build VM assets, pack initrd |
 
 Release-only local preflight also needs `cdxgen`. Install it with
@@ -334,7 +338,7 @@ Registry order (each depends on the ones above it):
 2. `llvm-tools` -- rust-lld linker
 3. `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` -- cargo tools
 4. `entitlements`, `cargo-config`, `run-signed` -- git checkout config files
-5. `pnpm-install` -- frontend deps
+5. `pnpm-install` -- every locked Node workspace, through `capsem-gate install-node`
 6. `build-assets` -- VM kernel + rootfs (needs docker)
 7. `pack-initrd` -- guest binaries (needs assets)
 

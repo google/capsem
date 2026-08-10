@@ -4953,16 +4953,36 @@ def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
     }
 
 
-def test_just_test_owns_linux_rust_platform_coverage_through_docker() -> None:
+def test_just_test_owns_linux_rust_platform_coverage_through_docker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from helpers.gate import gate_issued, gate_plan
+
     canonical_gate = _recipe_block("test:")
-    linux_rust_gate = _recipe_block("_gate-linux-rust:")
+    linux_rust_recipe = _recipe_body("_gate-linux-rust:")
     linux_ci = _workflow_job_block("test-linux")
     runner = _source_text("scripts/test-linux-rust.sh")
     host_builder = _source_text("docker/Dockerfile.host-builder")
 
+    # Linux owns its cfg(target_os = "linux") coverage natively. macOS owns
+    # the same checked-in runner through the sealed Docker lane, including the
+    # builder/base dependency chain. Exercise both real plans instead of
+    # asking the current host's Just recipe to contain the other platform.
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    native = gate_plan("linux-rust")
+    assert native.labels == ("linux-rust",)
+    assert "test-linux-rust.sh" in native.step_named("linux-rust").render()[0]
+
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    sealed = gate_plan("linux-rust")
+    assert {"host-image", "warm-base", "linux-rust"} <= set(sealed.labels)
+    assert sealed.after_of("warm-base") == {"host-image"}
+    assert sealed.after_of("linux-rust") == {"warm-base"}
+    linux_rust_gate = gate_issued("linux-rust")
+
     assert "capsem-host-builder" in canonical_gate
     assert "test-linux-rust.sh" in canonical_gate
-    assert "test-linux-rust.sh" in linux_rust_gate
+    assert "capsem-gate linux-rust" in linux_rust_recipe
     assert "capsem-host-builder:latest" in linux_rust_gate
 
     # Reimplemented, not deleted. Six assertions here pinned the mechanism --

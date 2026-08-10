@@ -31,9 +31,11 @@ Two facts that are easy to get wrong and expensive to rediscover:
 
 from __future__ import annotations
 
+import os
 import shutil
 import socket
 import subprocess
+import sys
 from pathlib import Path
 
 from . import host
@@ -48,6 +50,28 @@ _COMMENT = ";;"
 #: denies the network and most commands are short reads that gain nothing from
 #: it; `report` measures without refusing; `enforce` refuses.
 OFF, REPORT, ENFORCE = "off", "report", "enforce"
+
+
+def prepare_egress(config: GateConfig) -> None:
+    """Create the one-time release capability before entering the sandbox."""
+    from . import egress
+
+    metadata = egress.prepare(config, config.path(config.runlog.root))
+    os.environ[config.sandbox.egress_metadata_variable] = str(metadata)
+
+
+def reexec(config: GateConfig, runner, *, default: str, requested: str | None):
+    """The current gate invocation under its declared kernel boundary."""
+    chosen = mode(default, requested)
+    if chosen == OFF or active(config):
+        return None
+    return applied(
+        config,
+        runner,
+        default=chosen,
+        requested=None,
+        argv=(sys.executable, "-m", "capsem.gate", *sys.argv[1:]),
+    )
 
 
 def profile(config: GateConfig, *, report: bool) -> str:

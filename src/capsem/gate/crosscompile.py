@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 
-from . import hostimage
+from . import hostimage, installimage
 from .actions import Call
 from .command import GateCommand
 from .execution import step
@@ -24,7 +24,7 @@ from .plan import Plan
 RAILS = "which rails the assets finished with is resolved from the policy at run time"
 HEADROOM = "reads the daemon's free space before an hour of compilation spends it"
 CLOCK = "Colima's clock drift is a property of the machine this runs on"
-EMBEDDED = "points the embedded asset tree at whichever architecture is building"
+EMBEDDED = "points the architecture-neutral asset selector at the package target"
 SIGNING = "its environment carries the Tauri private key, which a dry run must not print"
 RECORDED = "reads back the exact package basename the builder just wrote"
 PROOF = "installs that package in a systemd container and proves what it produced"
@@ -74,7 +74,7 @@ def fragment(plan: Plan, config, target, *, after: tuple = ()):
         ("clock", "sync the container clock", "sync_clock", _because(CLOCK, "process")),
         (
             "sync-assets",
-            f"point the embedded assets at {target.name}",
+            f"point the asset selector at {target.name}",
             "sync_assets",
             _because(EMBEDDED, "filesystem"),
         ),
@@ -159,5 +159,14 @@ class CrossCompileCommand(
         config = self._config
         target = config.arch(self._args.arch) if self._args.arch else config.host_arch()
         plan = Plan(self.name)
-        fragment(plan, config, target)
+        # The complete candidate composes `install-image` in its static phase
+        # before it reaches the package lanes. This standalone command has no
+        # such caller, yet a native package's `prove` phase boots the exact deb
+        # in that image. Own the prerequisite here so a clean machine cannot
+        # build the package and then fail by trying to pull our local-only
+        # `capsem-install-test` tag from a registry.
+        after = ()
+        if target == config.host_arch():
+            after = (installimage.fragment(plan, config),)
+        fragment(plan, config, target, after=after)
         return plan

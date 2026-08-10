@@ -131,10 +131,31 @@ def test_linux_candidate_gets_the_kernel_enforced_network_wrapper(monkeypatch) -
 
 
 @pytest.mark.parametrize("name", ["release-binaries", "release-profile"])
-def test_linux_release_command_keeps_its_declared_network(name, monkeypatch) -> None:
+def test_linux_release_qualification_gets_the_kernel_wrapper(name, monkeypatch) -> None:
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/bwrap")
+    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: False)
+    monkeypatch.setattr("capsem.gate.sandbox.prepare_egress", lambda *_args: None)
 
-    assert _command(name, **COMPLETE_GATE[name]).reexec() is None
+    replacement = _command(name, **COMPLETE_GATE[name]).reexec()
+
+    assert replacement is not None
+    assert replacement[0] == CONFIG.sandbox.linux_command
+    assert "--unshare-net" in replacement
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "test-fast",
+        "test-static",
+        "test-artifacts",
+        "test-functional",
+        "test-glowup",
+    ],
+)
+def test_release_ci_modules_declare_the_same_kernel_boundary(name) -> None:
+    assert GateCommand.registry[name].sandboxed == sandbox.ENFORCE
 
 
 def test_linux_kernel_wrapper_is_applied_exactly_once(monkeypatch) -> None:

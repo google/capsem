@@ -64,6 +64,12 @@ tool_hint() {
                 dnf) echo "sudo dnf install docker-buildx-plugin" ;;
                 *)   echo "install docker-buildx-plugin" ;;
             esac ;;
+        bwrap)
+            case "$pkg" in
+                apt) echo "sudo apt install bubblewrap" ;;
+                dnf) echo "sudo dnf install bubblewrap" ;;
+                *)   echo "install bubblewrap" ;;
+            esac ;;
         musl-tools)
             case "$pkg" in
                 apt) echo "sudo apt install musl-tools" ;;
@@ -109,7 +115,25 @@ check_linux_musl_toolchain() {
 }
 
 check_platform() {
+    local interfaces
     section "Platform (Linux)"
+
+    if ! command -v bwrap &>/dev/null; then
+        fail "Bubblewrap not found -- install: $(tool_hint bwrap); or run ./bootstrap.sh"
+    elif [[ -n "${CAPSEM_GATE_RUN:-}" ]]; then
+        interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf '%f\n' \
+            2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')
+        if [[ "$interfaces" == "lo" ]]; then
+            pass "Bubblewrap gate network namespace active (loopback only)"
+        else
+            fail "gate claims to be sandboxed but sees interfaces: ${interfaces:-unknown}"
+        fi
+    elif bwrap --unshare-net --die-with-parent --new-session --bind / / -- true \
+        >/dev/null 2>&1; then
+        pass "Bubblewrap gate network namespace"
+    else
+        fail "Bubblewrap cannot create the gate network namespace -- run ./bootstrap.sh"
+    fi
 
     # KVM and its guest/host communication transport are one runtime boundary.
     # A readable /dev/kvm alone can create a VM that immediately dies opening

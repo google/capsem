@@ -11,11 +11,11 @@ report, and the journal so `runs` can answer it later.
 from __future__ import annotations
 
 import sys
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 
 from .config import GateConfig
-from .errors import GateError
 from .faultlog import FaultLog
 from .faults import Fault
 from .observation import SOURCE_TREE, Watch
@@ -50,31 +50,39 @@ def observing(
         keep=settings.error_log_keep,
     )
     seen: list[Fault] = []
+    reporting = threading.Lock()
 
     def report(fault: Fault) -> None:
-        seen.append(fault)
-        if publishes and fault.reason == SOURCE_TREE:
-            raise GateError(
+        fatal = publishes and fault.reason == SOURCE_TREE
+        with reporting:
+            seen.append(fault)
+            level = "FATAL" if fatal else "OBSERVATION"
+            print(f"HERMETICITY {level} {fault.render()}", file=sys.stderr, flush=True)
+            errors(fault)
+            note = getattr(log, "note", None)
+            if note is not None:
+                note(f"fault {fault.reason}: {fault.path}")
+            if not fatal:
+                return
+            watch.refuse(
                 f"the source tree changed during a release: {fault.render()}. "
                 "This run would publish an artifact whose recorded provenance "
                 "claims a tree that did not hold still, and no later check can "
                 "tell the difference. Re-run with the checkout left alone."
             )
-        print(f"FAULT {fault.render()}", file=sys.stderr, flush=True)
-        errors(fault)
-        note = getattr(log, "note", None)
-        if note is not None:
-            note(f"fault {fault.reason}: {fault.path}")
 
     declared = {
         step.label: frozenset(resource.name for resource in step.contends) for step in plan.steps
     }
     roots = [config.path(name) for name in settings.observed_roots]
+    watch = Watch(roots, source_root=config.root, declared=declared, on_fault=report)
     try:
-        with Watch(roots, source_root=config.root, declared=declared, on_fault=report) as watch:
-            with Instrument(watch, fd_path_template=settings.fd_path_template):
-                yield watch
-            watch.sweep()
+        with watch, Instrument(watch, fd_path_template=settings.fd_path_template):
+            yield watch
+        # After the observer is stopped, so no callback can race the final
+        # sweep/checkpoint and land after a publishing plan was accepted.
+        watch.sweep()
+        watch.checkpoint()
     finally:
         errors.close()
         if seen:

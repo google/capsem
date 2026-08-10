@@ -72,6 +72,29 @@ def test_everything_that_needs_the_builder_waits_for_it(name, args) -> None:
     )
 
 
+def test_standalone_cross_compile_builds_the_image_its_exact_proof_runs() -> None:
+    """The command has no candidate static phase to supply this dependency."""
+    native = CONFIG.host_arch().name
+    plan = _plan("cross-compile", arch=native)
+    order = list(plan.labels)
+
+    assert order.count("install-image") == 1
+    assert order.index("install-image") < order.index(f"package.{native}.prove")
+    assert order.count(hostimage.STEP) == 1
+
+
+def test_standalone_cross_compile_skips_the_unused_proof_image_for_cross_arch() -> None:
+    """The selector skips exact package proof when the target cannot boot here."""
+    cross = next(
+        arch.name for arch in CONFIG.architectures.values() if arch != CONFIG.host_arch()
+    )
+
+    plan = _plan("cross-compile", arch=cross)
+
+    assert "install-image" not in plan.labels
+    assert hostimage.STEP in plan.labels, "the package builder image is still required"
+
+
 def test_two_lanes_in_one_plan_build_the_builder_once() -> None:
     """The diamond `shared` exists for.
 

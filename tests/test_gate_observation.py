@@ -392,6 +392,38 @@ def test_identical_bytes_under_two_names_are_named(tmp_path: Path) -> None:
     assert "duplicate-content" in {fault.reason for fault in watch.faults}
 
 
+def test_copying_a_hardlinked_alias_tree_is_a_real_duplicate_fault(tmp_path: Path) -> None:
+    """Canonical/hash aliases are zero-copy until a tree copy breaks them.
+
+    This is the exact shape the package asset selector used. Keep the generic
+    detector honest: the producer must use a pointer rather than teaching the
+    observer that two newly materialized files are somehow one artifact.
+    """
+    from capsem.gate.interception import CURRENT_STEP, Instrument
+
+    source = tmp_path / "assets" / "x86_64"
+    source.mkdir(parents=True)
+    canonical = source / "software-inventory.json"
+    alias = source / "software-inventory-deadbeefdeadbeef.json"
+    canonical.write_bytes(b"inventory")
+    alias.hardlink_to(canonical)
+    assert canonical.samefile(alias)
+
+    watch = Watch([], source_root=tmp_path)
+    token = CURRENT_STEP.set("package.x86_64.sync-assets")
+    try:
+        with Instrument(watch, fd_path_template=FD_PATH_TEMPLATE):
+            shutil.copytree(source, tmp_path / "assets" / "current")
+    finally:
+        CURRENT_STEP.reset(token)
+
+    duplicate = [fault for fault in watch.faults if fault.reason == "duplicate-content"]
+    assert duplicate, "copying the aliases into distinct inodes went unreported"
+    assert duplicate[0].steps == ("package.x86_64.sync-assets",)
+    copied = tmp_path / "assets" / "current"
+    assert not (copied / canonical.name).samefile(copied / alias.name)
+
+
 # ---------------------------------------------------------------------------
 # Observable by construction
 # ---------------------------------------------------------------------------

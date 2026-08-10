@@ -109,8 +109,8 @@ def _inspection() -> argparse.ArgumentParser:
         default=None,
         metavar="MODE",
         help=(
-            "run under the macOS sandbox: `report` permits and logs every rule, "
-            "`enforce` denies. Defaults to what the command declares."
+            "run under the host kernel sandbox: `enforce` uses Linux Bubblewrap "
+            "or macOS Seatbelt; `report` is macOS-only. Defaults to the command."
         ),
     )
     shared.add_argument(

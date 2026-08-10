@@ -48,9 +48,15 @@ class Step:
         against what it was supposed to produce.
         """
         for action in self.actions:
+            if context.watch is not None:
+                context.watch.checkpoint()
             with context.journal.action(action):
                 action.perform(context)
+            if context.watch is not None:
+                context.watch.checkpoint()
         for artifact in self.produces:
+            if context.watch is not None:
+                context.watch.checkpoint()
             # Bracketed like every other action. Hashing a multi-gigabyte
             # rootfs is real time, and outside the bracket it was time the
             # timing report could not see -- so "the gate is slow" resolved to
@@ -58,6 +64,8 @@ class Step:
             hashing = Hash(artifact)
             with context.journal.action(hashing):
                 hashing.perform(context)
+            if context.watch is not None:
+                context.watch.checkpoint()
 
 
 def step(

@@ -56,7 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync
+      - run: uv sync --frozen
 
       - name: Select exact public-before manifest
         id: public-before
@@ -632,7 +632,7 @@ jobs:
           key: release-channel-binary-author
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync
+      - run: uv sync --frozen
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -908,7 +908,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync
+      - run: uv sync --frozen
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
@@ -929,6 +929,12 @@ jobs:
           toolchain: 1.97.1
           components: llvm-tools
           targets: aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
+
+      - name: Prepare hermetic qualification boundary
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          cargo fetch --locked
 
       - name: Enable KVM for complete functional proof
         run: |

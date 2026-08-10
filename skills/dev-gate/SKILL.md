@@ -9,9 +9,10 @@ The justfile dispatches; `src/capsem/gate/` decides. No recipe carries a shell
 body, none exceeds five lines, and both are contract tests rather than
 conventions.
 
-`just test` is **one process, one machine lock, one workspace, one plan** — 64
-steps and 91 actions in a single graph. Both release commands *contain* that
-same plan rather than launching it.
+`just test` is **one process, one machine lock, one workspace, one plan** — 83
+steps and 112 actions in the current graph. Both release commands *contain*
+that same plan rather than launching it. Trust the plan header when the graph
+evolves; do not maintain a second count in code.
 
 ## The rule everything else follows from
 
@@ -81,6 +82,28 @@ Never overridden — a contract test fails if a subclass defines it. In order:
 4. `reexec()`, outside the lock.
 5. `RunLog.open` → `GuardedRunner` → `held(*resources)` → `plan.run(context)`.
 6. `_summarize` — outside the log's context, so `run.end` is on disk first.
+
+## The host kernel owns the network boundary
+
+Candidate, both release commands, and directly invoked private test modules
+run under Bubblewrap on Linux or Seatbelt on macOS. Linux receives loopback and
+the configured UNIX sockets but no external interface; macOS uses the generated
+profile. Linux `report` mode is deliberately refused because it cannot produce
+the Seatbelt-style attempted-egress ledger.
+
+A release cannot resolve or publish while trapped in that namespace, so it
+starts one authenticated helper immediately before re-exec. Only `Run` and
+`Script` actions declared with `outside_sandbox=True` receive that runner. The
+mode-0600 metadata is consumed and deleted before the first plan action, and
+the helper owns no plan, lock, workspace, or release state. Its commands still
+pass through the same `GuardedRunner`, step log, journal, watcher checkpoints,
+and re-entry refusal.
+
+The allowed local release edges are exact and contract-tested: binary
+`channel-source`, both `confirm-head` steps, and each final `release` step.
+Never mark a candidate/module action outside the sandbox or hand the external
+runner to ordinary qualification work. Release CI downloads immutable inputs
+and materializes locked dependencies before invoking its sandboxed modules.
 
 ## Declaring a command
 
@@ -193,6 +216,8 @@ repoint `latest` at the question.
 | `test_gate_cancellation.py` | Ctrl-C stops pending, running and waiting work |
 | `test_just_argument_boundary.py` | every recipe parameter crosses one exact argv boundary |
 | `test_gate_candidate.py` | the source state belongs to a run; observing a plan leaves the checkout alone |
+| `test_gate_sandbox.py` | Bubblewrap/Seatbelt policy and the authenticated one-time release egress boundary |
+| `test_gate_release_isolation.py` | only the named release edges may render outside the kernel sandbox |
 
 ## Testing a command
 

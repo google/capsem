@@ -145,6 +145,8 @@ def test_linux_bootstrap_owns_host_packages_node_docker_and_kvm_access() -> None
 
     doctor = _read("scripts/doctor-linux.sh")
     assert 'for device in /dev/kvm /dev/vhost-vsock' in doctor
+    assert "bwrap --unshare-net --die-with-parent --new-session --bind / / -- true" in doctor
+    assert "gate network namespace active (loopback only)" in doctor
     assert "run ./bootstrap.sh" in doctor
 
     # Linux does not accept whatever Node happens to be in the distribution.
@@ -160,6 +162,10 @@ def test_linux_bootstrap_owns_host_packages_node_docker_and_kvm_access() -> None
     assert 'PNPM_MAJOR=${PNPM_VERSION%%.*}' in bootstrap
     assert '"$PNPM_MAJOR" = 10' in bootstrap
     assert "pnpm 10 is required after bootstrap" in bootstrap
+    assert "uv run capsem-gate install-node" in bootstrap
+    assert "uv sync --frozen" in bootstrap
+    assert "cargo fetch --locked" in bootstrap
+    assert "cd frontend && CI=true pnpm install" not in bootstrap
 
     # Daemon activation and a new socket are asynchronous on a fresh host.
     # Bootstrap waits for both the socket and post-ACL client access instead

@@ -59,6 +59,17 @@ jobs:
         with:
           tool: cargo-audit@0.22.1,cargo-llvm-cov@0.8.5,b3sum@1.8.5,cargo-sbom@0.10.0,tauri-cli@2.11.1
 
+      # The checked-in modules enter Bubblewrap before their first plan step.
+      # Resolve only locked dependencies here; qualification itself must have
+      # no route back to a registry on a cold runner.
+      - name: Materialize locked qualification dependencies
+        run: |
+          uv sync --frozen
+          cargo fetch --locked
+          for workspace in frontend docs site release-site; do
+            pnpm --dir "$workspace" install --frozen-lockfile
+          done
+
       - name: Run complete shared fast module
         run: just _test-fast
 

@@ -151,11 +151,14 @@ if ! command -v uv >/dev/null 2>&1; then
     fi
 fi
 if command -v uv >/dev/null 2>&1; then
-    printf "  Python deps (uv sync)...\n"
-    uv sync
+    printf "  Python deps (uv sync --frozen)...\n"
+    uv sync --frozen
 else
     printf "  [SKIP] Python deps (uv not installed -- some just recipes will fail)\n"
 fi
+
+printf "  Rust workspace deps (cargo fetch --locked)...\n"
+cargo fetch --locked
 
 # flock: multi-agent coordination lock for heavy just recipes.
 # Linux ships it in util-linux; macOS needs brew install flock.
@@ -228,10 +231,7 @@ if command -v pnpm >/dev/null 2>&1; then
         PNPM_READY=1
     fi
 fi
-if [ "$PNPM_READY" -eq 1 ]; then
-    printf "  Frontend deps (pnpm install)...\n"
-    (cd frontend && CI=true pnpm install --frozen-lockfile)
-else
+if [ "$PNPM_READY" -ne 1 ]; then
     case "$(uname -s)" in
         Darwin)
             if command -v brew >/dev/null 2>&1 && confirm "pnpm (Node package manager, via brew)"; then
@@ -244,21 +244,22 @@ else
                 npm install --global pnpm@10 --prefix "$HOME/.local"
             fi ;;
     esac
-    if command -v pnpm >/dev/null 2>&1; then
-        if [ "$(uname -s)" = "Linux" ]; then
-            PNPM_VERSION=$(pnpm --version 2>/dev/null || true)
-            PNPM_MAJOR=${PNPM_VERSION%%.*}
-            if [ "$PNPM_MAJOR" != 10 ]; then
-                printf "  [FAIL] pnpm 10 is required after bootstrap; found %s\n" \
-                    "${PNPM_VERSION:-unknown}" >&2
-                exit 1
-            fi
+fi
+
+if command -v pnpm >/dev/null 2>&1; then
+    if [ "$(uname -s)" = "Linux" ]; then
+        PNPM_VERSION=$(pnpm --version 2>/dev/null || true)
+        PNPM_MAJOR=${PNPM_VERSION%%.*}
+        if [ "$PNPM_MAJOR" != 10 ]; then
+            printf "  [FAIL] pnpm 10 is required after bootstrap; found %s\n" \
+                "${PNPM_VERSION:-unknown}" >&2
+            exit 1
         fi
-        printf "  Frontend deps (pnpm install)...\n"
-        (cd frontend && CI=true pnpm install --frozen-lockfile)
-    else
-        printf "  [SKIP] Frontend deps (pnpm not installed -- doctor will catch this)\n"
     fi
+    printf "  Locked Node workspaces...\n"
+    uv run capsem-gate install-node
+else
+    printf "  [SKIP] Node workspace deps (pnpm not installed -- doctor will catch this)\n"
 fi
 
 # Container runtime. Required by `just build-assets` (kernel/rootfs are built

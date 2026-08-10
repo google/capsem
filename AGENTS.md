@@ -50,6 +50,15 @@ just release-profile <channel> <profile>
   marker that says so. A same-size edit inside one timestamp tick otherwise
   leaves a valid-looking `.pyc`, and the source guard digests the bytes on disk
   rather than the bytes being executed.
+- Candidate, both release commands, and every directly invoked private test
+  module execute under the host kernel's network boundary: Bubblewrap with
+  loopback only on Linux, Seatbelt on macOS. A local release keeps only its
+  manifest resolution, exact-main publication, and workflow dispatch outside
+  that boundary through the authenticated one-time egress resource; those
+  commands still pass through the same `GuardedRunner` and run journal. Release
+  CI materializes locked dependencies and immutable manifest-selected inputs
+  before entering its module boundary. Never widen the whole release process
+  merely because one edge needs the network.
 - Every pairing that becomes public must pass the complete functional and
   glow-up modules. Saving build time never means skipping tests.
 - Binary and profile releases share the workflow-level
@@ -100,9 +109,9 @@ The justfile dispatches; `src/capsem/gate/` decides. No recipe carries a shell
 body and none exceeds five lines, both held by contract tests rather than
 convention.
 
-`just test` is **one process, one machine lock, one workspace, one plan** -- 64
-steps in a single graph. Both release commands contain that same plan rather
-than launching it.
+`just test` is **one process, one machine lock, one workspace, one plan** -- 83
+steps and 112 actions in the current graph. Both release commands contain that
+same plan rather than launching it.
 
 Six rules, each with a guard:
 

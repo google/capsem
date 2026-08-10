@@ -51,6 +51,15 @@ RELEASES = [
 #: else in a release plan is the gate.
 PUBLICATION = ("precheck", "record-head", "confirm-head", "release")
 
+# The only steps in either local release command allowed to execute outside
+# the kernel network boundary. Prechecks and the source-head capture are local
+# filesystem/git reads; resolution, source publication and dispatch genuinely
+# need the network.
+NETWORKED = {
+    "release-binaries": ("channel-source", "confirm-head", "release"),
+    "release-profile": ("confirm-head", "release"),
+}
+
 
 def _plan(name: str, **args):
     return built_command(PROJECT_ROOT, name, tuple(args.items()))._describe()
@@ -169,4 +178,25 @@ def test_no_receipt_authority_was_invented() -> None:
     assert "receipt" not in settings, (
         "a release receipt is a parallel release ledger; the manifest is the "
         "bible and confirm-head is the fail-stop"
+    )
+
+
+@pytest.mark.parametrize(("name", "args"), RELEASES)
+def test_only_networked_release_edges_cross_the_kernel_boundary(name, args) -> None:
+    """Qualification stays sandboxed while the irreducible network edges do not.
+
+    The marker is part of the action's dry-run rendering, so this assertion is
+    over the real composed plan rather than a second list maintained beside it.
+    """
+    plan = _plan(name, **args)
+    marked = {
+        step.label
+        for step in plan.steps
+        if any("[outside kernel sandbox]" in line for line in step.render())
+    }
+
+    assert marked == set(NETWORKED[name])
+    assert not any(
+        label.startswith(("fast.", "static.", "artifacts.", "functional.", "glowup."))
+        for label in marked
     )

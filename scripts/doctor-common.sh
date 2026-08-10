@@ -75,6 +75,15 @@ _doctor_pack_initrd() {
     just _pack-initrd
 }
 
+_doctor_install_node_workspaces() {
+    if [ -n "${CAPSEM_GATE_RUN:-}" ]; then
+        printf "  [SKIP] Node workspace install (inside %s; its plan owns it)\n" \
+            "$CAPSEM_GATE_RUN"
+        return 0
+    fi
+    uv run capsem-gate install-node
+}
+
 # Order matters: tools before builds, builds before assets
 _reg rustup-targets   "rustup target add aarch64-unknown-linux-musl x86_64-unknown-linux-musl" \
                       "Install Rust cross-compile targets"
@@ -98,8 +107,8 @@ _reg run-signed       "git checkout scripts/run_signed.sh && chmod +x scripts/ru
                       "Restore scripts/run_signed.sh"
 _reg run-signed-chmod "chmod +x scripts/run_signed.sh" \
                       "Make scripts/run_signed.sh executable"
-_reg pnpm-install     "cd frontend && pnpm install --frozen-lockfile" \
-                      "Install frontend deps"
+_reg pnpm-install     "_doctor_install_node_workspaces" \
+                      "Install every locked Node workspace"
 _reg build-assets     "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 _doctor_build_assets_all_profiles" \
                       "Build VM assets (kernel + rootfs)"
 _reg pack-initrd      "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 _doctor_pack_initrd" \

@@ -75,6 +75,7 @@ class Run(Action, name="run"):
         env: dict[str, str] | None = None,
         check: bool = True,
         log: Path | None = None,
+        outside_sandbox: bool = False,
     ) -> None:
         self._command = Command(
             argv=tuple(str(part) for part in argv),
@@ -83,6 +84,7 @@ class Run(Action, name="run"):
             check=check,
             log=log,
         )
+        self._outside_sandbox = outside_sandbox
 
     def render(self) -> str:
         """The command, and where it runs if that is not the checkout root.
@@ -92,13 +94,16 @@ class Run(Action, name="run"):
         printing them.
         """
         rendered = str(self._command)
-        if self._command.cwd is None:
-            return rendered
-        return f"(in {self._command.cwd.name}) {rendered}"
+        if self._command.cwd is not None:
+            rendered = f"(in {self._command.cwd.name}) {rendered}"
+        if self._outside_sandbox:
+            rendered = f"{rendered} [outside kernel sandbox]"
+        return rendered
 
     def perform(self, context: Context) -> None:
         command = self._command
-        context.runner.run(
+        runner = context.external_runner if self._outside_sandbox else context.runner
+        runner.run(
             command.argv,
             cwd=command.cwd,
             # The action's own environment wins: a context sets what a whole
@@ -124,12 +129,14 @@ class Script(Action, name="script"):
         root: Path | None = None,
         env: dict[str, str] | None = None,
         check: bool = True,
+        outside_sandbox: bool = False,
     ) -> None:
         self._relative = relative
         self._args = tuple(str(arg) for arg in args)
         self._root = root
         self._env = dict(env or {})
         self._check = check
+        self._outside_sandbox = outside_sandbox
 
     def render(self) -> str:
         """The relative path, because the checkout it sits in is implied.
@@ -145,21 +152,24 @@ class Script(Action, name="script"):
                 env=self._env,
             )
         )
-        if self._root is None:
-            return rendered
-        return f"(in {self._root.name}) {rendered}"
+        if self._root is not None:
+            rendered = f"(in {self._root.name}) {rendered}"
+        if self._outside_sandbox:
+            rendered = f"{rendered} [outside kernel sandbox]"
+        return rendered
 
     def perform(self, context: Context) -> None:
         env = {**context.env, **self._env}
+        runner = context.external_runner if self._outside_sandbox else context.runner
         if self._root is None:
-            context.runner.script(self._relative, *self._args, env=env, check=self._check)
+            runner.script(self._relative, *self._args, env=env, check=self._check)
             return
         # Not `runner.script`, which resolves against the tree this process is
         # running in. Both the script and the working directory come from the
         # named checkout: these scripts take their repository from their own
         # `__file__`, so running this tree's copy elsewhere would still stamp,
         # commit and push here.
-        context.runner.run(
+        runner.run(
             ["uv", "run", "python", str(self._root / self._relative), *self._args],
             cwd=self._root,
             env=env,

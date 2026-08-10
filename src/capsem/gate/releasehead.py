@@ -80,7 +80,7 @@ class ConfirmHead(Action, name="confirm-head"):
     def render(self) -> str:
         return (
             f"(in {self._checkout.name}) uv run python {self._script} "
-            f"--expected-head $(cat {self._source.name})"
+            f"--expected-head $(cat {self._source.name}) [outside kernel sandbox]"
         )
 
     def perform(self, context: Context) -> None:
@@ -98,4 +98,10 @@ class ConfirmHead(Action, name="confirm-head"):
         # named checkout" has one spelling. This one fast-forward-pushes, and a
         # push issued from the private copy would reach a `.git` reclaimed
         # minutes later.
-        Script(self._script, "--expected-head", head, root=self._checkout).perform(context)
+        Script(
+            self._script,
+            "--expected-head",
+            head,
+            root=self._checkout,
+            outside_sandbox=True,
+        ).perform(context)

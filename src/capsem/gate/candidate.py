@@ -85,6 +85,8 @@ class CompleteGate:
     sandboxed: str
     """Provided by `GateCommand`; declared so the mixin type-checks alone."""
 
+    outside_egress = False
+
     private_checkout = True
     """The complete gate reads a copy of the checkout, never the checkout.
 
@@ -109,6 +111,7 @@ class CompleteGate:
             self._config,
             runner,
             mode=sandbox.mode(self.sandboxed, getattr(self._args, "sandbox", None)),
+            outside_egress=self.outside_egress,
         )
 
     def reexec(self) -> tuple[str, ...] | None:
@@ -147,6 +150,8 @@ class CompleteGate:
         # than anywhere later, because a profile is inherited by every child
         # and cannot be dropped. See `sandbox.applied`.
         if needs_sandbox:
+            if self.outside_egress:
+                sandbox.prepare_egress(self._config)
             return sandbox.applied(
                 self._config,
                 self._runner,

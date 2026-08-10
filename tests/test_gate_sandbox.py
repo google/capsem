@@ -22,7 +22,9 @@ from helpers.gate import RecordingRunner
 from pydantic import ValidationError
 
 from capsem.gate import config as gate_config
-from capsem.gate import sandbox
+from capsem.gate import egress, sandbox
+from capsem.gate.actions import Run
+from capsem.gate.context import Context
 from capsem.gate.errors import GateError
 from capsem.gate.harnessschema import SandboxConfig
 
@@ -384,3 +386,46 @@ def test_off_is_the_default_so_a_short_command_keeps_its_network() -> None:
     # And an explicit request wins over the declaration, which is what makes
     # report mode a measurement rather than an edit.
     assert sandbox.mode(sandbox.OFF, sandbox.REPORT) == sandbox.REPORT
+
+
+def test_an_outside_action_uses_only_the_capability_runner() -> None:
+    ordinary = RecordingRunner(PROJECT_ROOT)
+    capability = RecordingRunner(PROJECT_ROOT)
+
+    Run(("python3", "-c", "print('networked')"), outside_sandbox=True).perform(
+        Context(ordinary, CONFIG, outside_runner=capability)
+    )
+
+    assert ordinary.commands == []
+    assert capability.rendered == ["python3 -c 'print('\"'\"'networked'\"'\"')'"]
+
+
+@linux_only
+def test_the_egress_broker_crosses_the_boundary_without_giving_children_its_capability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The plan executor keeps one narrow capability; its children do not.
+
+    Host interface enumeration is deterministic and needs no public network:
+    the ordinary command sees only the Bubblewrap namespace while the marked
+    command is executed by the helper that existed before the boundary.
+    """
+    metadata = egress.prepare(CONFIG, tmp_path)
+    monkeypatch.setenv(CONFIG.sandbox.egress_metadata_variable, str(metadata))
+    resource = egress.Egress(CONFIG, enabled=True)
+    resource.acquire()
+    try:
+        probe = "import socket; print(','.join(n for _, n in socket.if_nameindex()))"
+        inside = subprocess.run(
+            sandbox.linux_wrap(CONFIG, (sys.executable, "-c", probe)),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        outside = resource.runner.capture((sys.executable, "-c", probe))
+
+        assert inside == "lo"
+        assert set(outside.split(",")) != {"lo"}
+        assert not metadata.exists(), "the child-readable capability survived acquisition"
+    finally:
+        resource.release()

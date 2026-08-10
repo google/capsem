@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from typing import ClassVar
 
 from . import config as gate_config
-from . import prefix, preflight, resume
+from . import prefix, preflight, resume, sandbox
 from .context import Context
 from .errors import GateError
 from .funnel import GuardedRunner
@@ -62,7 +62,7 @@ class GateCommand(Recorded, ABC):
     """
 
     sandboxed: ClassVar[str] = "off"
-    """Whether this command runs under the macOS sandbox, and how.
+    """Whether this command runs under the host kernel sandbox, and how.
 
     Off by default and overridable with `--sandbox`; see `capsem.gate.sandbox`
     for what a mode means and why `reexec` is where one is applied.
@@ -171,9 +171,12 @@ class GateCommand(Recorded, ABC):
         the held resources deadlocks: the child asks for the machine lock its
         own parent is holding, and waits out the full timeout for it.
 
-        Return `None` -- the default -- to run normally.
-        """
-        return None
+        Module commands share the complete gate's host wrapper, so direct
+        release-CI fragment invocations retain the qualification boundary."""
+        return sandbox.reexec(
+            self._config, self._runner, default=self.sandboxed,
+            requested=getattr(self._args, "sandbox", None),
+        )
 
     @abstractmethod
     def plan(self) -> Plan:
@@ -253,6 +256,7 @@ class GateCommand(Recorded, ABC):
                 self._runner,
                 journal=log,
                 tail_lines=self._config.runlog.failure_tail_lines,
+                checkpoint=None if watch is None else watch.checkpoint,
             )
             acquiring = preflight.holdings(
                 self._config,
@@ -261,11 +265,20 @@ class GateCommand(Recorded, ABC):
                 declared=self.resources(runner),
             )
             with held(*acquiring) as acquired:
+                from .egress import guarded_runner_of
+
+                outside_runner = guarded_runner_of(
+                    acquired,
+                    journal=log,
+                    tail_lines=self._config.runlog.failure_tail_lines,
+                    checkpoint=None if watch is None else watch.checkpoint,
+                )
                 plan.run(
                     Context(
                         runner,
                         self._config,
                         journal=log,
+                        outside_runner=outside_runner,
                         env=environment_of(acquired),
                         watch=watch,
                         carried=carried,
@@ -285,4 +298,3 @@ class GateCommand(Recorded, ABC):
         """
         with sealed():
             return self.plan()
-

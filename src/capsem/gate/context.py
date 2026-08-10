@@ -44,6 +44,9 @@ class StepObserver(Protocol):
     def left(self, label: str) -> None:
         """It is not."""
 
+    def checkpoint(self) -> None:
+        """Raise a pending asynchronous fault on this worker thread."""
+
 
 class Journal(Protocol):
     """What a run is recorded into, as the rest of the package sees it.
@@ -219,6 +222,9 @@ class Context:
     config: GateConfig
     journal: Journal = field(default_factory=NullJournal)
 
+    outside_runner: Runner | None = None
+    """Authenticated pre-sandbox runner for explicitly networked edges."""
+
     watch: StepObserver | None = None
     """The run's filesystem observer, when one is running.
 
@@ -265,6 +271,11 @@ class Context:
     def root(self) -> Path:
         """The checkout the gate is running against."""
         return self.config.root
+
+    @property
+    def external_runner(self) -> Runner:
+        """The narrow outside runner, or the ordinary one when none is held."""
+        return self.outside_runner or self.runner
 
     def path(self, relative: str) -> Path:
         return self.config.path(relative)

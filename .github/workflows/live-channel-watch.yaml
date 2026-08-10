@@ -42,7 +42,7 @@ jobs:
       # The contract check hashes artifacts with blake3, which is a project
       # dependency rather than a stdlib module.
       - name: Install Python dependencies
-        run: uv sync
+        run: uv sync --frozen
 
       - name: Validate stable and nightly resolve end to end
         env:

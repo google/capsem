@@ -9,7 +9,7 @@ different reasons, and this one has a lifecycle rule none of the others share.
 
 from __future__ import annotations
 
-from . import pytestsuite, toolchain
+from . import pytestsuite, sandbox, toolchain
 from .command import GateCommand
 from .config import GateConfig
 from .errors import GateError
@@ -39,6 +39,8 @@ class ReleaseContractsModule(
     step where the graph can act on them. A command that *runs tests* is not a
     command that mutates shared artifacts, whatever the general rule says.
     """
+
+    sandboxed = sandbox.ENFORCE
 
     def plan(self) -> Plan:
         plan = Plan(self.name)

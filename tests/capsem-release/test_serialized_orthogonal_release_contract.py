@@ -6,6 +6,7 @@ Artifact correctness remains covered by the executable lane and glow-up suites.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -443,7 +444,7 @@ def test_profile_lane_installs_pulled_package_runtime_dependencies() -> None:
 
     assert resolve_package < install_dependencies < functional
     assert "sudo dpkg -i" not in pairing
-    assert "sudo apt-get install" not in pairing
+    assert not re.search(r"sudo apt-get install[^\n]*(?:\$package|\.deb)", pairing)
 
 
 def test_binary_candidate_manifest_is_authored_once_before_pairing() -> None:

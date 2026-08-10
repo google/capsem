@@ -313,8 +313,8 @@ manifest_variable = "CAPSEM_INSTALL_MANIFEST_URL"
 channel_variable = "CAPSEM_INSTALL_CHANNEL"
 require_proof_variable = "CAPSEM_REQUIRE_LINUX_DEB_PROOF"
 
-# What the Tauri bundler embeds: one directory the build points at the
-# architecture being packaged.
+# Architecture-neutral compatibility path used by package tooling. It is a
+# verified relative symlink into this same assets tree, never a copied image.
 current_assets = "current"
 builder_image = "capsem-host-builder:latest"
 build_script = "scripts/build-linux-package.sh"
@@ -677,6 +677,13 @@ direct_machine_access = [
     # that lifetime, and it needs `Popen` rather than the runner's exec
     # accounting to get it.
     "sandboxreport.py",
+    # Release qualification is sandboxed, but immutable-input resolution and
+    # publication cannot be. `egress` creates and owns the one-time capability
+    # before the sandbox exists; `egressbroker` is its deliberately planless
+    # process half. Commands still pass through a GuardedRunner in the owning
+    # plan, so their argv, timing and output remain in the same journal.
+    "egress.py",
+    "egressbroker.py",
     # `auditfs.py` is the audited place a file may be hardlinked into
     # published output from. It has to touch the machine: deciding between a
     # link and a copy *is* a filesystem question, and routing it through an
@@ -762,7 +769,7 @@ run_marker = "CAPSEM_GATE_RUN"
 # Every entry is idempotent: present means nothing happens. Written as eight
 # near-identical `if ! ... ; then ... fi` blocks in shell, where the only thing
 # that varied was the probe and the install.
-sync = ["uv", "sync"]
+sync = ["uv", "sync", "--frozen"]
 node_workspaces = ["frontend", "docs", "site", "release-site"]
 # CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
 # prompt, which hangs an unattended gate when the store layout drifts from the
@@ -1117,6 +1124,7 @@ blocks_clippy = "frontend"
 # neither.
 source_contract = [
     "tests/test_gate_observation.py",
+    "tests/test_gate_observation_propagation.py",
     "tests/test_gate_plan_purity.py",
     "tests/test_gate_docker_boundary.py",
     "tests/test_gate_linuxrust_hermetic.py",
@@ -1418,6 +1426,20 @@ linux_command = "bwrap"
 # explicitly declared container fetches; direct host-gate egress has no route.
 linux_args = ["--unshare-net", "--die-with-parent", "--new-session", "--bind", "/", "/"]
 profile_name = "gate.sb"
+
+# A release has three irreducibly networked edges: resolve the serialized
+# source manifest, publish the exact tested main HEAD, and dispatch the owning
+# release workflow. The plan executor remains inside the kernel sandbox; a
+# helper born immediately before the sandbox accepts only authenticated,
+# explicitly marked commands for those edges. The one-time metadata is deleted
+# before the first plan action, so ordinary qualification children never
+# inherit the capability.
+egress_metadata_variable = "CAPSEM_GATE_EGRESS_METADATA"
+egress_socket_template = "/tmp/capsem-egress-{pid}-{nonce}.sock"
+egress_metadata_template = ".egress-{pid}-{nonce}.json"
+egress_start_timeout = 5.0
+egress_stop_timeout = 5.0
+egress_max_message_bytes = 8388608
 
 network_reason = "No mid-run fetch. This is the rule the whole profile exists for."
 socket_reason = "`(deny network*)` covers AF_UNIX too, so these come back explicitly."

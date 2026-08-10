@@ -306,6 +306,51 @@ def test_the_container_clock_is_synced_only_on_macos(
         assert runner.ran(r"sync-container-clock\.py") is expected
 
 
+def test_asset_sync_points_at_the_selected_arch_without_copying_its_tree(tmp_path: Path) -> None:
+    """The package selector is a pointer, not another multi-gigabyte asset tree.
+
+    Asset preparation deliberately keeps canonical and hash-named paths as
+    hardlinks. Copying that directory into ``assets/current`` breaks the link
+    topology and materializes every blob twice; a relative pointer preserves
+    the exact selected tree and remains valid inside the ``assets`` bind mount.
+    """
+    root = _checkout(tmp_path)
+    selected = root / CONFIG.imagebuild.output / TARGET.name
+    canonical = selected / "software-inventory.json"
+    alias = selected / "software-inventory-deadbeefdeadbeef.json"
+    canonical.write_bytes(b"inventory")
+    alias.hardlink_to(canonical)
+
+    # A prior package run used a real copied directory. The forward fix must
+    # migrate that state safely rather than requiring a hand cleanup.
+    current = root / CONFIG.imagebuild.output / CONFIG.package.current_assets
+    current.mkdir()
+    (current / "stale").write_text("old copied tree", encoding="utf-8")
+
+    _rail(RecordingRunner(root)).sync_assets()
+
+    assert current.is_symlink(), "the architecture selector was materialized as another tree"
+    assert current.readlink() == Path(TARGET.name), "the pointer must stay relative to assets/"
+    assert (current / canonical.name).samefile(canonical)
+    assert (current / alias.name).samefile(alias)
+    assert canonical.samefile(alias), "syncing the selector rewrote the selected asset tree"
+
+
+def test_asset_sync_refuses_an_absolute_pointer_that_would_break_in_the_container(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _checkout(tmp_path)
+    selected = root / CONFIG.imagebuild.output / TARGET.name
+
+    def absolute_link(path: Path, _target: str) -> None:
+        path.symlink_to(selected)
+
+    monkeypatch.setattr("capsem.gate.packagerail.link", absolute_link)
+
+    with pytest.raises(GateError, match=r"points at .* not arm64"):
+        _rail(RecordingRunner(root)).sync_assets()
+
+
 # ---------------------------------------------------------------------------
 # Which package got built
 # ---------------------------------------------------------------------------

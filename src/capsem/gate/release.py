@@ -24,7 +24,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from . import candidateplan, imagebuild, prefix
+from . import candidateplan, imagebuild, prefix, sandbox
 from .actions import Run, Script
 from .candidate import CompleteGate
 from .command import GateCommand
@@ -86,6 +86,8 @@ class ReleaseBinariesCommand(
     exclusive = True
     publishes = True
     uses_qualification = True
+    sandboxed = sandbox.ENFORCE
+    outside_egress = True
 
     @classmethod
     def add_arguments(cls, parser) -> None:
@@ -129,6 +131,7 @@ class ReleaseBinariesCommand(
                     "--require-profile-membership",
                     "--output",
                     settings.channel_source,
+                    outside_sandbox=True,
                 ),
             ),
             after=(checked,),
@@ -146,7 +149,11 @@ class ReleaseBinariesCommand(
         # dispatches. All of that belongs to the checkout; the copy exists to
         # be measured, not to author a release.
         plan.add(
-            step("release", Script(settings.binaries, channel, root=checkout)), after=(confirmed,)
+            step(
+                "release",
+                Script(settings.binaries, channel, root=checkout, outside_sandbox=True),
+            ),
+            after=(confirmed,),
         )
         return plan
 
@@ -160,6 +167,8 @@ class ReleaseProfileCommand(
     exclusive = True
     publishes = True
     uses_qualification = True
+    sandboxed = sandbox.ENFORCE
+    outside_egress = True
 
     @classmethod
     def add_arguments(cls, parser) -> None:
@@ -211,6 +220,7 @@ class ReleaseProfileCommand(
                         self._args.profile,
                     ],
                     cwd=checkout,
+                    outside_sandbox=True,
                 ),
             ),
             after=(confirmed,),

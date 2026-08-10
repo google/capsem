@@ -24,6 +24,7 @@ from . import (
     hostpackage,
     installimage,
     pytestsuite,
+    sandbox,
     sourcechecks,
     storage,
     toolchain,
@@ -47,6 +48,7 @@ class InWorkspace:
     """
 
     exclusive = True
+    sandboxed = sandbox.ENFORCE
 
     # And against an isolated *checkout*. These are the modules long enough
     # that someone edits the tree while they run -- which has killed four

@@ -570,7 +570,9 @@ def test_exact_linux_deb_proof_uses_systemd_and_proves_guest_shell() -> None:
     )
 
 
-def test_systemd_install_image_cannot_flush_host_binfmt_registrations() -> None:
+def test_systemd_install_image_cannot_flush_host_binfmt_registrations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A privileged systemd container can remove Colima's Rosetta binfmt entry.
 
     The damage outlives the run -- every later x86 build on the machine breaks,
@@ -591,8 +593,25 @@ def test_systemd_install_image_cannot_flush_host_binfmt_registrations() -> None:
     assert "require_rosetta" in container and "verify_rosetta_survived" in container
     assert "removed Colima's Rosetta" in container
 
-    issued = _planned("install")
-    assert issued.count(config.install.rosetta_binfmt) >= 1
+    # This is a host-capability check, not an unconditional command in the
+    # plan. A Linux dry run must not pretend it will use Colima, while an
+    # active macOS Colima gets one probe before and one after the privileged
+    # container. Exercise the decision rather than looking for a macOS argv in
+    # whatever host happens to be running this suite.
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate.installcontainer import InstallContainer
+
+    monkeypatch.setattr("capsem.gate.installcontainer.shutil.which", lambda _name: "/colima")
+    for system, expected_checks in (("Linux", 0), ("Darwin", 2)):
+        monkeypatch.setattr("capsem.gate.host.system", lambda system=system: system)
+        runner = RecordingRunner(PROJECT_ROOT)
+        install = InstallContainer(runner)
+
+        install.require_rosetta()
+        install.verify_rosetta_survived()
+
+        assert len(runner.matching(re.escape(config.install.rosetta_binfmt))) == expected_checks
 
 
 def test_binary_release_requires_exact_linux_deb_proof() -> None:
@@ -1151,7 +1170,9 @@ def test_package_boundary_releases_only_completed_docker_rail_volumes() -> None:
         )
 
 
-def test_the_parity_lane_holds_no_build_tree_for_the_assets_to_wait_on() -> None:
+def test_the_parity_lane_holds_no_build_tree_for_the_assets_to_wait_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The parity lane's build tree is gone, so nothing has to hand it back.
 
     This asserted an ordering -- lane, then `storage.completed-linux-rust-target`,
@@ -1164,12 +1185,21 @@ def test_the_parity_lane_holds_no_build_tree_for_the_assets_to_wait_on() -> None
     assets cannot be starved by a tree the lane never holds. Asserting the old
     sequence would only prove the ceremony came back.
     """
-    order = _gate_order()
+    from helpers.gate import gate_plan
 
-    assert _at(order, "linux-rust") < _at(order, "assets.preflight")
-    assert not [name for name in order if "completed-linux-rust-target" in name], (
-        "a step exists to release a volume the sealed lane never mounts"
-    )
+    # Native Linux coverage already executes Linux cfg branches. macOS alone
+    # needs the sealed Docker parity lane, and the asset phase must wait for
+    # it there. Assert both plans explicitly so the contract means the same
+    # thing regardless of which host collected it.
+    for system, expected in (("Linux", False), ("Darwin", True)):
+        monkeypatch.setattr("capsem.gate.host.system", lambda system=system: system)
+        plan = gate_plan("candidate")
+
+        assert ("linux-rust" in plan.labels) is expected
+        assert ("linux-rust" in plan.after_of("assets.preflight")) is expected
+        assert not [name for name in plan.labels if "completed-linux-rust-target" in name], (
+            "a step exists to release a volume the sealed lane never mounts"
+        )
 
     from capsem.gate import config as gate_config
 
@@ -1260,6 +1290,11 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
 
 def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> None:
     """The whole storage arc, as one ordering rather than a dozen call sites."""
+    from helpers.gate import gate_plan
+
+    from capsem.gate import host
+
+    plan = gate_plan("candidate")
     order = _gate_order()
 
     assert (
@@ -1267,7 +1302,15 @@ def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> N
         < _at(order, "storage.install-preflight")
         < _at(order, "package.arm64")
     )
-    assert _at(order, "linux-rust") < _at(order, "assets.preflight")
+    static_leaves = {
+        "static.storage.install-preflight",
+        "static.guest-binary-contracts",
+        "static.sign",
+    }
+    if host.on_macos():
+        static_leaves.add("linux-rust")
+    assert static_leaves <= plan.after_of("assets.preflight")
+    assert ("linux-rust" in plan.labels) is host.on_macos()
     assert (
         _at(order, "assets.preflight")
         < _at(order, "package.arm64")
@@ -2805,10 +2848,30 @@ def test_asset_build_recipes_skip_kvm_only_for_build_prereq_doctor() -> None:
     from capsem.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    doctor_linux = (PROJECT_ROOT / "scripts/doctor-linux.sh").read_text()
-
-    assert "CAPSEM_SKIP_KVM_CHECK" in doctor_linux
-    assert 'skip "/dev/kvm (CAPSEM_SKIP_KVM_CHECK set)"' in doctor_linux
+    doctor_probe = subprocess.run(
+        [
+            "bash",
+            "-c",
+            """
+set -eu
+source scripts/doctor-linux.sh
+section() { :; }
+pass() { printf 'PASS:%s\\n' "$1"; }
+fail() { printf 'FAIL:%s\\n' "$1"; }
+warn() { printf 'WARN:%s\\n' "$1"; }
+skip() { printf 'SKIP:%s\\n' "$1"; }
+check_platform
+""",
+        ],
+        cwd=PROJECT_ROOT,
+        env={**os.environ, "CAPSEM_SKIP_KVM_CHECK": "1"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    platform_lines = doctor_probe.stdout.splitlines()
+    assert "SKIP:/dev/kvm (CAPSEM_SKIP_KVM_CHECK set)" in platform_lines
+    assert "SKIP:/dev/vhost-vsock (CAPSEM_SKIP_KVM_CHECK set)" in platform_lines
 
     assert dict(config.imagebuild.doctor_skips) == {
         "CAPSEM_SKIP_ASSET_CHECK": "1",
@@ -2839,11 +2902,50 @@ def test_only_systemd_package_proof_receives_kvm_devices() -> None:
     assert "vm_devices" in container
 
 
-def test_cross_compile_clock_sync_uses_bounded_colima_command() -> None:
-    cross_compile = _just_recipe_block("_cross-compile")
+def test_cross_compile_clock_sync_uses_bounded_colima_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from helpers.gate import RecordingRunner
 
-    assert "python3 scripts/sync-container-clock.py" in cross_compile
-    assert "docker run --rm --privileged alpine date" not in cross_compile
+    from capsem.gate import config as gate_config
+    from capsem.gate.packagerail import PackageRail
+
+    config = gate_config.load(PROJECT_ROOT)
+    target = config.arch("arm64")
+
+    # Clock drift belongs to Colima's VM. Linux package builds keep the same
+    # graph phase for stable timing/evidence, but the phase must issue no
+    # command on a native Linux daemon.
+    for system, expected in (("Linux", False), ("Darwin", True)):
+        monkeypatch.setattr("capsem.gate.host.system", lambda system=system: system)
+        runner = RecordingRunner(PROJECT_ROOT)
+
+        PackageRail(runner, target).sync_clock()
+
+        assert runner.ran(re.escape(config.package.clock_script)) is expected
+
+    # Prove the configured helper is actually bounded and reaches Colima
+    # directly; a source-string check in the Just dispatcher went stale as
+    # soon as the work moved into the package rail.
+    clock_path = PROJECT_ROOT / config.package.clock_script
+    spec = importlib.util.spec_from_file_location("install_payload_clock_sync", clock_path)
+    assert spec is not None and spec.loader is not None
+    clock = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(clock)
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def record(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout="synced\n", stderr="")
+
+    monkeypatch.setattr(clock.subprocess, "run", record)
+    clock.sync_container_clock(timeout_seconds=7)
+
+    command, options = calls[0]
+    assert command[:3] == ["colima", "ssh", "--"]
+    assert "docker" not in command
+    assert options["timeout"] == 7
+    assert options["check"] is True
 
 
 def test_security_event_rows_go_through_security_engine_emitter() -> None:
