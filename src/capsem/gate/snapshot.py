@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -123,9 +124,7 @@ def digest(tree: Path, config: GateConfig) -> str:
     """
     return subprocess.run(
         [
-            "uv",
-            "run",
-            "python",
+            sys.executable,
             str(config.path(config.candidate.source_digest_script)),
             "--root",
             str(tree),

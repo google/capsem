@@ -26,11 +26,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from contextlib import suppress
 from pathlib import Path
 
 import pytest
-from helpers.gate import RecordingJournal, RecordingRunner, built_command, gate_issued
+from helpers.gate import RecordingJournal, RecordingRunner, gate_issued
 
 from capsem.gate import cli  # noqa: F401 - imported so every command registers
 from capsem.gate import config as gate_config
@@ -421,9 +420,6 @@ def test_interrogating_the_gate_plan_leaves_the_checkout_alone() -> None:
     # Inside `target/`, so it is build output rather than tracked source, and
     # per-process, so four xdist workers cannot collide on it either.
     probe = f"{config.candidate.source_state_file}.probe-{os.getpid()}"
-    observed = config.model_copy(
-        update={"candidate": config.candidate.model_copy(update={"source_state_file": probe})}
-    )
     recorded = config.path(probe)
     shared = config.path(config.candidate.source_state_file)
     shared_before = shared.read_bytes() if shared.exists() else None
@@ -432,12 +428,7 @@ def test_interrogating_the_gate_plan_leaves_the_checkout_alone() -> None:
     recorded.parent.mkdir(parents=True, exist_ok=True)
     recorded.write_bytes(sentinel)
     try:
-        command = built_command(PROJECT_ROOT, "candidate")
-        plan = command._describe()
-        # A step that needs a machine fails here; what it did before failing is
-        # still what this asserts on.
-        with suppress(Exception):
-            plan.run(Context(command._runner, observed, observing=True))
+        gate_issued("candidate")
 
         assert recorded.read_bytes() == sentinel, (
             "reading the plan rewrote the gate's own source state"
@@ -471,9 +462,14 @@ def test_issued_command_introspection_cannot_clear_live_asset_outputs(
     marker.write_text('id = "proof"\n', encoding="utf-8")
     inspections = tmp_path / "inspections"
     inspections.mkdir()
+    uv_cache = tmp_path / "empty-uv-cache"
+    uv_cache.mkdir()
     monkeypatch.setattr("helpers.gate.tempfile.tempdir", str(inspections))
+    monkeypatch.setenv("UV_CACHE_DIR", str(uv_cache))
+    monkeypatch.setenv("UV_OFFLINE", "1")
 
     gate_issued("assets", root=checkout)
 
     assert marker.read_text(encoding="utf-8") == 'id = "proof"\n'
+    assert not (checkout / ".venv").exists(), "inspection synced a project environment"
     assert not list(inspections.iterdir()), "the expendable inspection checkout was retained"
