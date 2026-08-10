@@ -50,7 +50,8 @@ def test_just_python_entrypoints_load_under_the_host_python(script_path):
     assert "usage:" in result.stdout.lower()
 
 
-def test_integration_script_uses_materialized_profiles_dir():
+def test_integration_script_uses_materialized_profiles_dir(monkeypatch):
+    monkeypatch.delenv("CAPSEM_PROFILES_DIR", raising=False)
     module = load_integration_script()
 
     assert module.default_materialized_profiles_dir().endswith("target/config/profiles")
