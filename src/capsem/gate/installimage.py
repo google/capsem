@@ -97,11 +97,12 @@ def prepare(runner: Runner) -> None:
 def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
     """The install-test image, after the builder image it derives from.
 
-    `after` reaches this step, not the shared image beneath it: groundwork
-    several lanes share cannot be sequenced behind any one of them without
-    making a cycle out of the next lane that needs it.
+    This is the first consumer in the complete candidate, so its prerequisites
+    also gate the shared image.  Later package lanes reuse that image without
+    adding their own chain as prerequisites; doing that would make the second
+    package depend on itself through the shared builder.
     """
-    built = hostimage.fragment(plan, config)
+    built = hostimage.fragment(plan, config, after=after)
     return plan.add(
         step(
             "install-image",

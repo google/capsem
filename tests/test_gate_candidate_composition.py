@@ -152,6 +152,25 @@ def test_preparation_waits_for_every_fast_leaf_and_not_one_incidental_step() -> 
     )
 
 
+def test_shared_host_image_waits_for_canonical_preparation() -> None:
+    """Sealing the gate must not race Docker work ahead of bootstrap.
+
+    The install-image preflight was correctly ordered after preparation, but
+    the shared host image it derives from was not.  It therefore started in
+    the first wave, before both the cheap checks and canonical bootstrap, and
+    tried to resolve a registry from the gate's no-egress namespace.
+    """
+    plan = _plan()
+    prerequisites = ancestors(plan, "host-image")
+    fast = {label for label in plan.labels if label.startswith(("fast.", "python."))}
+
+    assert "prepare.bootstrap" in prerequisites
+    assert fast <= prerequisites, (
+        "these fast checks can still race the host image: "
+        + ", ".join(sorted(fast - prerequisites))
+    )
+
+
 # ---------------------------------------------------------------------------
 # What must happen even when the gate fails
 # ---------------------------------------------------------------------------
