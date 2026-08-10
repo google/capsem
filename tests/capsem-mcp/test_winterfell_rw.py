@@ -6,7 +6,6 @@ The full "the north remembers" lifecycle via MCP tools:
   delete -> list (gone) -> resume (fails)
 """
 
-import contextlib
 import uuid
 
 import pytest
@@ -124,6 +123,7 @@ def test_winterfell_rw(mcp_session):
         )
 
     except Exception:
-        with contextlib.suppress(Exception):
-            mcp_session.call_tool("capsem_delete", {"id": vm_id or name})
+        # The session fixture owns its isolated home and preserves it on a
+        # failed test. Deleting here erased the process/serial logs before that
+        # preservation hook could capture the resume failure.
         raise

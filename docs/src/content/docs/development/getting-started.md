@@ -22,7 +22,7 @@ sidebar:
 |-------------|--------|
 | **Debian/Ubuntu** | apt-based distro (for .deb install) |
 | **x86_64 or arm64** | Both architectures supported |
-| **KVM** | `/dev/kvm` must be accessible. Load `kvm-intel` or `kvm-amd` module. |
+| **KVM + vhost-vsock** | `/dev/kvm` and `/dev/vhost-vsock` must be accessible. Bootstrap loads and provisions both. |
 | **Docker** | Installed/started by bootstrap; needed for `just build-assets code` |
 | **Bubblewrap** | Installed/proved by bootstrap; gives `just test` a loopback-only host network namespace |
 
@@ -37,8 +37,9 @@ git clone https://github.com/google/capsem.git && cd capsem
 `bootstrap.sh` lives at the repo root. It walks the dependency tree top-down,
 asking before installing anything, and exits clean when everything is already
 in place. On Linux it owns system package installation, native Docker/Buildx,
-the configured Node major, pnpm, and current-session Docker/KVM access; a
-logout is not required for the bootstrap run to complete.
+the configured Node major, pnpm, and durable current-session
+Docker/KVM/vhost-vsock access; a logout is not required for repeated VM
+lifecycles in the bootstrap run.
 
 ### What bootstrap installs
 
@@ -49,7 +50,7 @@ logout is not required for the bootstrap run to complete.
 | 1 | `just` | `just.systems` installer → `~/.local/bin` | Recipe runner — used by every other build step |
 | 1 (Linux) | compiler/Tauri libraries, `cpio`, Docker/Buildx, Bubblewrap | apt or dnf | Native gate, initrd repack, image builds, and kernel-enforced host egress isolation |
 | 1 (Linux) | Node 24 + pnpm 10 | SHA256-verified Node archive + npm | Matches CI and the immutable host builder |
-| 1 (Linux) | Docker/KVM access | durable groups + current-session ACL | Lets the same bootstrap process build and boot without a logout |
+| 1 (Linux) | Docker/KVM/vhost-vsock access | durable groups + udev policy and current-session ACL | Lets the same bootstrap process build and run repeated VM lifecycles without a logout |
 | 2 | `uv` | `astral.sh/uv` installer → `~/.local/bin` | Python deps for `capsem-builder` |
 | 2 | Python deps | `uv sync` | Locked via `uv.lock` |
 | 2 (macOS) | `flock`, `pnpm` | `brew` | flock = multi-agent recipe lock; pnpm = frontend deps |

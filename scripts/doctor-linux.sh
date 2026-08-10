@@ -111,17 +111,23 @@ check_linux_musl_toolchain() {
 check_platform() {
     section "Platform (Linux)"
 
-    # KVM
+    # KVM and its guest/host communication transport are one runtime boundary.
+    # A readable /dev/kvm alone can create a VM that immediately dies opening
+    # vhost-vsock, so report and repair them as one pair.
     if [[ -n "${CAPSEM_SKIP_KVM_CHECK:-}" ]]; then
-        skip "/dev/kvm (CAPSEM_SKIP_KVM_CHECK set)"
-    elif [[ -e /dev/kvm ]]; then
-        if [[ -r /dev/kvm ]] && [[ -w /dev/kvm ]]; then
-            pass "/dev/kvm (accessible)"
-        else
-            fail "/dev/kvm exists but not accessible -- fix: sudo usermod -aG kvm $USER"
-        fi
+        for device in /dev/kvm /dev/vhost-vsock; do
+            skip "$device (CAPSEM_SKIP_KVM_CHECK set)"
+        done
     else
-        warn "/dev/kvm not found -- VM features require KVM"
+        for device in /dev/kvm /dev/vhost-vsock; do
+            if [[ -e "$device" ]] && [[ -r "$device" ]] && [[ -w "$device" ]]; then
+                pass "$device (accessible)"
+            elif [[ -e "$device" ]]; then
+                fail "$device exists but is not accessible -- run ./bootstrap.sh"
+            else
+                warn "$device not found -- VM features require it; run ./bootstrap.sh"
+            fi
+        done
     fi
 
     skip "codesigning (macOS-only, Linux uses KVM)"

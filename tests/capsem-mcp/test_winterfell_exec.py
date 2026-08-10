@@ -4,7 +4,6 @@ Same lifecycle as test_winterfell_rw but uses capsem_exec to write and read
 files via shell commands instead of the write_file/read_file API.
 """
 
-import contextlib
 import uuid
 
 import pytest
@@ -129,6 +128,7 @@ def test_winterfell_exec(mcp_session):
         )
 
     except Exception:
-        with contextlib.suppress(Exception):
-            mcp_session.call_tool("capsem_delete", {"id": vm_id or name})
+        # The session fixture owns its isolated home and preserves it on a
+        # failed test. Deleting here erased the process/serial logs before that
+        # preservation hook could capture the resume failure.
         raise

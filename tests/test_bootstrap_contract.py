@@ -124,16 +124,28 @@ def test_linux_bootstrap_owns_host_packages_node_docker_and_kvm_access() -> None
     assert "apt-get install" in linux
     assert "systemctl enable --now docker" in linux
 
-    # Durable group membership helps future shells; a narrow device/socket ACL
-    # makes this bootstrap process usable immediately without a logout.
+    # Durable group membership helps future shells. vhost-vsock keeps a narrow
+    # current-user ACL. KVM follows the mode used in Linux CI because logind
+    # removes named KVM ACLs on the first VM lifecycle, before a second VM can
+    # start in the same bootstrap session.
     assert 'usermod -aG docker "$CAPSEM_BOOTSTRAP_USER"' in linux
     assert 'usermod -aG kvm "$CAPSEM_BOOTSTRAP_USER"' in linux
     assert 'setfacl -m "u:$CAPSEM_BOOTSTRAP_USER:rw" /var/run/docker.sock' in linux
-    assert 'setfacl -m "u:$CAPSEM_BOOTSTRAP_USER:rw" /dev/kvm' in linux
+    assert "chmod 0666 /dev/kvm" in linux
+    assert 'setfacl -m "u:$CAPSEM_BOOTSTRAP_USER:rw" /dev/vhost-vsock' in linux
+    assert 'KERNEL=="kvm", GROUP="kvm", MODE="0666", TAG-="uaccess"' in linux
+    assert 'KERNEL=="vhost-vsock", GROUP="kvm", MODE="0660", TAG-="uaccess"' in linux
+    assert "modprobe vhost_vsock" in linux
+    assert "udevadm control --reload-rules" in linux
     assert "docker info" in linux
     assert "docker buildx version" in linux
     assert "bwrap --unshare-net" in linux
     assert '[ -r /dev/kvm ] && [ -w /dev/kvm ]' in linux
+    assert '[ -r /dev/vhost-vsock ] && [ -w /dev/vhost-vsock ]' in linux
+
+    doctor = _read("scripts/doctor-linux.sh")
+    assert 'for device in /dev/kvm /dev/vhost-vsock' in doctor
+    assert "run ./bootstrap.sh" in doctor
 
     # Linux does not accept whatever Node happens to be in the distribution.
     # The required major comes from the profile image config and the fetched

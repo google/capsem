@@ -7,7 +7,7 @@ description: Setting up a Capsem development environment from scratch. Use when 
 
 ## Prerequisites
 
-- **Linux**: supported Debian/Ubuntu or dnf-based host, x86_64/arm64, sudo/root for initial packages, and `/dev/kvm` for VM execution
+- **Linux**: supported Debian/Ubuntu or dnf-based host, x86_64/arm64, sudo/root for initial packages, and `/dev/kvm` plus `/dev/vhost-vsock` for VM execution and guest communication
 - **macOS 13+** (Ventura or later) -- required for Virtualization.framework
 - **Apple Silicon** (arm64) -- primary macOS target. Intel Macs are not supported for VM features.
 - **Docker** (native on Linux, Colima on macOS) -- needed for `just _build-assets` (kernel + rootfs builds)
@@ -98,8 +98,12 @@ blocker. Record the exact failed command and the Docker/Colima output.
 
 Docker runs natively on Linux -- no Colima or memory tuning needed. Canonical
 bootstrap installs the native build libraries, Docker/Buildx, and Bubblewrap;
-enables the daemon; adds durable `docker`/`kvm` group membership; and applies a
-narrow ACL so the current process can finish without requiring a logout.
+enables the daemon; loads KVM and vhost-vsock; and provisions both device nodes
+for repeated VM lifecycles in the current shell. KVM uses the same durable mode
+as Linux release CI because systemd-logind can remove a named ACL after the
+first VM exits. vhost-vsock remains group-owned with a narrow current-user ACL.
+Do not hand-provision either device or weaken the separate macOS VZ/Seatbelt
+path; rerun the checked-in bootstrap so its udev rules remain the authority.
 
 ```bash
 ./bootstrap.sh --yes
@@ -136,7 +140,7 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 | 2 | Python deps | `uv sync` |
 | 2 (Linux) | native compiler/Tauri libs, `cpio`, Docker/Buildx, Bubblewrap | apt or dnf |
 | 2 (Linux) | configured Node major + pnpm 10 | SHA256-verified official Node archive + npm |
-| 2 (Linux) | Docker/KVM current-session access | groups + narrow socket/device ACL |
+| 2 (Linux) | Docker/KVM/vhost-vsock current-session access | groups + checked-in udev policy and narrow socket/vhost ACL |
 | 2 (macOS) | `flock`, `pnpm` | `brew` |
 | 2 (macOS) | `tart`, `sshpass` | `brew` |
 | 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` (+ symlink into `~/.docker/cli-plugins`) |

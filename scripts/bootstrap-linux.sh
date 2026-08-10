@@ -357,24 +357,69 @@ capsem_linux_prepare_docker() {
     printf "  [ok]   Docker daemon + Buildx (current-session access)\n"
 }
 
-capsem_linux_prepare_kvm() {
+capsem_linux_prepare_vm_devices() {
     CAPSEM_BOOTSTRAP_USER=$(capsem_linux_bootstrap_user)
-    if [ ! -e /dev/kvm ]; then
-        printf "  [WARN] /dev/kvm not found; VM boot tests require KVM\n"
-        return 0
+    if command -v modprobe >/dev/null 2>&1; then
+        # A stale /dev/vhost-vsock node can outlive its module and makes an
+        # existence check lie. Module loading is idempotent; do it before
+        # inspecting either device so sysfs and the character node agree.
+        capsem_linux_as_root modprobe kvm || true
+        capsem_linux_as_root modprobe vhost_vsock || true
     fi
+
+    # systemd-logind's stock uaccess rule can remove a manually applied ACL
+    # after the first KVM lifecycle. Install a later rule that keeps both VM
+    # devices group-owned and outside that transient seat policy, then apply it
+    # before adding the current-session ACL below.
+    if command -v udevadm >/dev/null 2>&1; then
+        capsem_linux_as_root tee /etc/udev/rules.d/99-capsem-vm-devices.rules \
+            >/dev/null <<'EOF'
+KERNEL=="kvm", GROUP="kvm", MODE="0666", TAG-="uaccess"
+KERNEL=="vhost-vsock", GROUP="kvm", MODE="0660", TAG-="uaccess"
+EOF
+        capsem_linux_as_root udevadm control --reload-rules
+        if [ -e /dev/kvm ]; then
+            capsem_linux_as_root udevadm trigger --name-match=kvm
+        fi
+        if [ -e /dev/vhost-vsock ]; then
+            capsem_linux_as_root udevadm trigger --name-match=vhost-vsock
+        fi
+    else
+        printf "  [WARN] udevadm not found; VM device ACLs cannot be made durable\n"
+    fi
+
     if [ "$(id -u "$CAPSEM_BOOTSTRAP_USER")" -ne 0 ] \
         && getent group kvm >/dev/null 2>&1; then
         capsem_linux_as_root usermod -aG kvm "$CAPSEM_BOOTSTRAP_USER"
     fi
-    if ! { [ -r /dev/kvm ] && [ -w /dev/kvm ]; }; then
-        capsem_linux_as_root setfacl -m "u:$CAPSEM_BOOTSTRAP_USER:rw" /dev/kvm
+
+    if [ -e /dev/kvm ]; then
+        # logind removes named KVM ACLs when the first VM lifecycle changes the
+        # device. Match the release CI mode so a second VM in this shell stays
+        # usable; KVM itself does not grant raw host-memory access.
+        capsem_linux_as_root chmod 0666 /dev/kvm
     fi
-    if ! { [ -r /dev/kvm ] && [ -w /dev/kvm ]; }; then
+    if [ -e /dev/vhost-vsock ]; then
+        capsem_linux_as_root setfacl -m "u:$CAPSEM_BOOTSTRAP_USER:rw" /dev/vhost-vsock
+    fi
+
+    if [ ! -e /dev/kvm ]; then
+        printf "  [WARN] /dev/kvm not found; VM boot tests require KVM\n"
+    elif ! { [ -r /dev/kvm ] && [ -w /dev/kvm ]; }; then
         printf "  [FAIL] /dev/kvm is not readable and writable after provisioning\n" >&2
         return 1
+    else
+        printf "  [ok]   /dev/kvm (durable current-session access)\n"
     fi
-    printf "  [ok]   /dev/kvm (current-session access)\n"
+
+    if [ ! -e /dev/vhost-vsock ]; then
+        printf "  [WARN] /dev/vhost-vsock not found; VM guest communication requires vhost_vsock\n"
+    elif ! { [ -r /dev/vhost-vsock ] && [ -w /dev/vhost-vsock ]; }; then
+        printf "  [FAIL] /dev/vhost-vsock is not readable and writable after provisioning\n" >&2
+        return 1
+    else
+        printf "  [ok]   /dev/vhost-vsock (durable current-session access)\n"
+    fi
 }
 
 bootstrap_linux() {
@@ -394,5 +439,5 @@ bootstrap_linux() {
     capsem_linux_prepare_bubblewrap
     capsem_linux_install_node "$CAPSEM_LINUX_PROJECT_ROOT" "$CAPSEM_LINUX_ASSUME_YES"
     capsem_linux_prepare_docker
-    capsem_linux_prepare_kvm
+    capsem_linux_prepare_vm_devices
 }
