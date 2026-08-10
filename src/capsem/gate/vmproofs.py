@@ -37,7 +37,13 @@ def _profiles_dir(config: GateConfig) -> str:
     return str(Path(root) / settings.profiles_subdir)
 
 
-def injection(config: GateConfig, *, profile: str) -> Step:
+def injection(
+    config: GateConfig,
+    *,
+    profile: str,
+    assets: str | None = None,
+    profiles_dir: str | None = None,
+) -> Step:
     """Prove the guest refuses what it is supposed to refuse."""
     settings = config.functional
     return step(
@@ -47,9 +53,9 @@ def injection(config: GateConfig, *, profile: str) -> Step:
             "--binary",
             _binary(config),
             "--assets",
-            _assets(config),
+            assets or _assets(config),
             "--profiles-dir",
-            _profiles_dir(config),
+            profiles_dir or _profiles_dir(config),
             "--profile",
             profile,
         ),
@@ -57,7 +63,13 @@ def injection(config: GateConfig, *, profile: str) -> Step:
     )
 
 
-def integration(config: GateConfig, *, profile: str) -> Step:
+def integration(
+    config: GateConfig,
+    *,
+    profile: str,
+    assets: str | None = None,
+    profiles_dir: str | None = None,
+) -> Step:
     """Boot a real VM and drive it the way a user would."""
     settings = config.functional
     return step(
@@ -67,9 +79,10 @@ def integration(config: GateConfig, *, profile: str) -> Step:
             "--binary",
             _binary(config),
             "--assets",
-            _assets(config),
+            assets or _assets(config),
             "--profile",
             profile,
+            env=config.environment.content(profiles=profiles_dir or _profiles_dir(config)),
         ),
         contends=(config.exclusive("apple_vz"),),
     )

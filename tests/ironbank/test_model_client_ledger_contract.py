@@ -19,7 +19,14 @@ from pathlib import Path
 
 import blake3
 import pytest
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.constants import (
+    ASSETS_DIR,
+    CODE_PROFILE_ID,
+    DEFAULT_CPUS,
+    DEFAULT_RAM_MB,
+    EXEC_READY_TIMEOUT,
+    PROFILES_DIR,
+)
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
@@ -49,8 +56,6 @@ from log_streams import log_stream_files
 pytestmark = pytest.mark.integration
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-ASSETS_DIR = PROJECT_ROOT / "assets"
-PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 
 
 def _eventually(query, predicate, *, timeout_s: float = 10.0, interval_s: float = 0.25):

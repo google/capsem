@@ -126,6 +126,35 @@ def test_every_suite_carries_the_profile_it_is_proving() -> None:
         assert build(CONFIG, profile="co-work").environment(CONFIG)[variable] == "co-work"
 
 
+def test_vm_suites_do_not_bypass_the_manifest_content_selector() -> None:
+    """Every VM fixture runs in a subprocess with CAPSEM_ASSETS_DIR and
+    CAPSEM_PROFILES_DIR. A module-level checkout literal silently opts that
+    fixture out and makes a profile lane boot the stale canonical tree."""
+    roots = (
+        "capsem-bootstrap",
+        "capsem-e2e",
+        "capsem-mcp",
+        "capsem-security",
+        "capsem-service",
+        "ironbank",
+    )
+    forbidden = (
+        'ASSETS_DIR = PROJECT_ROOT / "assets"',
+        'PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"',
+    )
+    offenders = [
+        f"{path.relative_to(PROJECT_ROOT)}: {needle}"
+        for root in roots
+        for path in (PROJECT_ROOT / "tests" / root).rglob("*.py")
+        for needle in forbidden
+        if needle in path.read_text(encoding="utf-8")
+    ]
+
+    assert not offenders, "VM suites bypass the selected manifest input:\n  " + "\n  ".join(
+        offenders
+    )
+
+
 def test_only_the_broad_suite_measures_coverage() -> None:
     """Four suites all writing `codecov-python.xml` would each overwrite the
     last, and the file would report whichever finished last."""

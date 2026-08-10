@@ -20,7 +20,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from helpers.constants import EXEC_READY_TIMEOUT
+from helpers.constants import ASSETS_DIR, EXEC_READY_TIMEOUT, PROFILES_DIR
 from helpers.service import make_capsem_tmp_dir, preserve_tmp_dir_on_failure
 from helpers.sign import sign_binary
 from log_streams import read_log_stream
@@ -30,8 +30,6 @@ SERVICE_BINARY = PROJECT_ROOT / "target/debug/capsem-service"
 PROCESS_BINARY = PROJECT_ROOT / "target/debug/capsem-process"
 CLI_BINARY = PROJECT_ROOT / "target/debug/capsem"
 MCP_BINARY = PROJECT_ROOT / "target/debug/capsem-mcp"
-ASSETS_DIR = PROJECT_ROOT / "assets"
-PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 
 pytestmark = pytest.mark.e2e
 

@@ -13,7 +13,14 @@ import uuid
 from pathlib import Path
 
 import pytest
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.constants import (
+    ASSETS_DIR,
+    CODE_PROFILE_ID,
+    DEFAULT_CPUS,
+    DEFAULT_RAM_MB,
+    EXEC_READY_TIMEOUT,
+    PROFILES_DIR,
+)
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
@@ -22,8 +29,6 @@ from ironbank.model_client_config import HERMETIC_ANTHROPIC_MODEL, HERMETIC_OPEN
 pytestmark = pytest.mark.integration
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-ASSETS_DIR = PROJECT_ROOT / "assets"
-PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 
 RAW_SDK_SECRET = "capsem_test_sdk_api_key_repeat_0123456789abcdef"
 RAW_CODEX_SECRET = "capsem_test_codex_cli_key_0123456789abcdef"

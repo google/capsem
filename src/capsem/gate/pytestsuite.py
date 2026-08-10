@@ -46,6 +46,8 @@ class Suite:
     coverage: bool = False
     stop_at_first_failure: bool = True
     profile: str = ""
+    assets_dir: str = ""
+    profiles_dir: str = ""
     require_artifacts: bool = True
     contends: tuple[Exclusive, ...] = field(default_factory=tuple)
 
@@ -77,6 +79,15 @@ class Suite:
             env[settings.require_artifacts] = "1"
         if self.profile:
             env[settings.profile_variable] = self.profile
+        if self.assets_dir or self.profiles_dir:
+            if not self.assets_dir or not self.profiles_dir:
+                raise ValueError("a pytest content selection requires both assets and profiles")
+            env.update(
+                config.environment.content(
+                    assets=self.assets_dir,
+                    profiles=self.profiles_dir,
+                )
+            )
         return env
 
     def as_step(self, config: GateConfig) -> Step:

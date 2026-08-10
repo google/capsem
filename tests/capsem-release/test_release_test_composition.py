@@ -414,11 +414,11 @@ def test_functional_module_materializes_its_gitignored_settings_fixture() -> Non
 
     # Signing moved into the module, where it is conditional on the same
     # release-input variable and ordered by an edge rather than by position.
-    planned = _planned("test-functional")
-    # Composed rather than dispatched: the same codesign invocations, in the
-    # same place, without starting a second gate to reach them.
-    assert "codesign" in planned
-    assert planned.index("codesign") < planned.index("pytest.broad")
+    labels = _planned_labels("test-functional")
+    # Composed rather than dispatched: one platform-shaped signing step stays
+    # in the graph before the broad suite. Linux keeps the edge with no action;
+    # the synthetic macOS contract separately proves the codesign actions.
+    assert labels.index("functional.sign") < labels.index("functional.pytest.broad.code")
     for forbidden in (
         "_build-assets",
         "_build-kernel",
@@ -748,6 +748,37 @@ def test_functional_module_runs_every_selected_profile_without_rebuilding() -> N
     assert "tests/ironbank/test_route_health.py" in functional
     assert "tests/capsem-serial/test_capsem_bench_baseline.py" in functional
     assert "build-assets" not in functional
+
+
+def test_release_functional_keeps_the_manifest_staged_input_selector() -> None:
+    """The private IronBank tree is local-build output, never a release input."""
+    for lane in (BINARY_LANE, PROFILE_LANE):
+        functional = _planned("test-functional", lane)
+        assert CONFIG.assets.test_root not in functional
+
+
+def test_release_integration_follows_the_declared_staged_config_root(
+    monkeypatch,
+) -> None:
+    """The legacy integration driver gets the same pulled catalog as pytest."""
+    from capsem.gate import vmproofs
+
+    config_root = PROJECT_ROOT / "target" / "synthetic-release-config"
+    monkeypatch.setenv(CONFIG.functional.config_root_variable, str(config_root))
+
+    rendered = "\n".join(
+        vmproofs.integration(CONFIG, profile=CONFIG.suites.pytest.base_profile).render()
+    )
+
+    expected = config_root / CONFIG.functional.profiles_subdir
+    assert f"{CONFIG.environment.profiles_dir}={expected}" in rendered
+
+
+def test_standalone_local_functional_uses_its_declared_canonical_inputs() -> None:
+    """Only the composed candidate owns the private IronBank build fragment."""
+    functional = _planned("test-functional")
+
+    assert CONFIG.assets.test_root not in functional
 
 
 def test_release_functional_helpers_never_hide_host_binary_builds() -> None:

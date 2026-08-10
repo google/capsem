@@ -5,9 +5,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from helpers.constants import ASSETS_DIR
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-ASSETS_DIR = PROJECT_ROOT / "assets"
 
 GUEST_BINARIES = ["capsem-pty-agent", "capsem-net-proxy", "capsem-mcp-server"]
 

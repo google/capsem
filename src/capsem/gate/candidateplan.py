@@ -93,7 +93,13 @@ def compose_modules(
     prepared = _prepare(plan, config, after=after)
     static = testmodules.static(plan, config, after=(prepared,))
     artifacts = vmmodules.artifacts(plan, config, qualification=qualification, after=static)
-    functional = vmmodules.functional(plan, config, qualification=qualification, after=(artifacts,))
+    functional = vmmodules.functional(
+        plan,
+        config,
+        qualification=qualification,
+        after=(artifacts,),
+        isolated_assets=not qualification.pulled,
+    )
     glowup = vmmodules.glowup(plan, config, qualification=qualification, after=(functional,))
 
     return plan.add(step("recipes", Run(config.candidate.recipe_suite)), after=(glowup,))

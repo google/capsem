@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-ASSETS_DIR = PROJECT_ROOT / "assets"
 JUSTFILE = PROJECT_ROOT / "justfile"
 
 pytestmark = pytest.mark.bootstrap

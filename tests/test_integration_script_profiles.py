@@ -57,6 +57,13 @@ def test_integration_script_uses_materialized_profiles_dir():
     assert module._profile_env()["CAPSEM_PROFILES_DIR"] == module.default_materialized_profiles_dir()
 
 
+def test_integration_script_honors_selected_profiles_dir(monkeypatch):
+    monkeypatch.setenv("CAPSEM_PROFILES_DIR", "/verified/profile/catalog")
+    module = load_integration_script()
+
+    assert module.default_materialized_profiles_dir() == "/verified/profile/catalog"
+
+
 def test_integration_script_pins_every_cli_run_to_the_selected_profile():
     module = load_integration_script()
 

@@ -1414,7 +1414,7 @@ carried = [".git", "private"]
 
 # What must come back out before the prefix is reclaimed. A release publishes
 # from these, and without the export they die with the copy that made them.
-exports = ["dist", "packages", "assets", "target/gate-runs"]
+exports = ["dist", "packages", "assets", "target/config", "target/gate-runs"]
 
 # ---------------------------------------------------------------------------
 # The host-kernel sandbox

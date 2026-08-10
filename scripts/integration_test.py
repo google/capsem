@@ -116,7 +116,10 @@ SERVICE_PIDFILE = INTEGRATION_RUN_DIR / "service.pid"
 
 def default_materialized_profiles_dir() -> str:
     """Return the generated profile catalog used by packages, CI, and install."""
-    return str(PROJECT_ROOT / "target" / "config" / "profiles")
+    return os.environ.get(
+        "CAPSEM_PROFILES_DIR",
+        str(PROJECT_ROOT / "target" / "config" / "profiles"),
+    )
 
 
 def _profile_env() -> dict[str, str]:

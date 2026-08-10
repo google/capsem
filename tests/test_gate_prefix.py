@@ -388,6 +388,59 @@ def test_the_copy_is_independent_of_the_tree_it_came_from(source: Path) -> None:
     assert os.stat(source / "tracked.txt").st_ino != os.stat(target / "tracked.txt").st_ino
 
 
+def test_export_materializes_the_selected_assets_without_copying_current(
+    tmp_path: Path,
+) -> None:
+    """The private gate selects a verified profile with a top-level symlink.
+
+    Export must dereference that one selector into the checkout while retaining
+    the self-contained ``assets/current`` architecture selector. Dereferencing
+    both materializes a second multi-gigabyte asset tree.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate import prefix
+
+    checkout = tmp_path / "checkout"
+    private = tmp_path / "private"
+    for root in (checkout, private):
+        (root / "config").mkdir(parents=True)
+        (root / "config" / "gate.toml").write_text(
+            (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+    selected = private / "target" / "ironbank-assets" / "code" / "assets"
+    architecture = selected / "x86_64"
+    architecture.mkdir(parents=True)
+    (architecture / "rootfs.erofs").write_bytes(b"fresh")
+    (selected / "manifest.json").write_text('{"fresh":true}\n')
+    (selected / "current").symlink_to("x86_64")
+    (private / "assets").symlink_to("target/ironbank-assets/code/assets")
+    private_config = private / "target" / "config"
+    private_config_manifest = private_config / "assets" / "manifest.json"
+    private_config_manifest.parent.mkdir(parents=True)
+    private_config_manifest.write_text('{"fresh":true}\n')
+
+    old = checkout / "assets"
+    (old / "current").mkdir(parents=True)
+    (old / "current" / "stale").write_text("stale\n")
+    (old / "stale").write_text("stale\n")
+    old_config = checkout / "target" / "config"
+    old_config_manifest = old_config / "assets" / "manifest.json"
+    old_config_manifest.parent.mkdir(parents=True)
+    old_config_manifest.write_text('{"stale":true}\n')
+    (old_config / "retired").mkdir()
+
+    prefix.export(private, checkout, gate_config.load(private))
+
+    assert not old.is_symlink()
+    assert not (old / "stale").exists()
+    assert (old / "manifest.json").read_text() == '{"fresh":true}\n'
+    assert (old / "current").is_symlink()
+    assert (old / "current").readlink() == Path("x86_64")
+    assert old_config_manifest.read_text() == '{"fresh":true}\n'
+    assert not (old_config / "retired").exists()
+
+
 # -- giving it back ----------------------------------------------------------
 
 
@@ -545,7 +598,7 @@ def test_the_export_list_covers_what_a_release_publishes() -> None:
     """
     exports = set(_config().prefix.exports)
 
-    assert {"dist", "packages", "assets"} <= exports
+    assert {"dist", "packages", "assets", "target/config"} <= exports
     assert any(export.startswith("target/gate-runs") for export in exports), (
         "the run log is the evidence a failure is argued from, and it is written inside the prefix"
     )

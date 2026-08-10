@@ -23,6 +23,7 @@ hermetic.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from . import assetevidence, crossexec, imagebases, pidfiles
@@ -30,10 +31,12 @@ from . import config as gate_config
 from .assetlanes import AssetLanes, Profile, discover_profiles
 from .errors import GateError
 from .fileactions import (
+    copy_tree,
     discard,
     link,
     make_dir,
     merge_tree,
+    remove,
     scratch_dir,
 )
 from .proc import Runner
@@ -170,6 +173,55 @@ class AssetGate:
             pidfiles.stop_gate_service(run_dir, self._config.pidfiles)
             discard(run_dir)
 
+    def _select_base(self, profiles: list[Profile]) -> None:
+        """Make later local phases consume the base profile IronBank proved.
+
+        The per-profile trees stay private so functional can select each one.
+        The canonical asset root is only a relative selector while this private
+        checkout is alive; prefix export materializes it back into the caller.
+        Generated profile configuration is small and copied, so it never
+        becomes a dangling link when the private asset tree is reclaimed.
+        """
+        base_name = self._config.suites.pytest.base_profile
+        base = next((profile for profile in profiles if profile.name == base_name), None)
+        if base is None:
+            raise GateError(f"base profile {base_name!r} was not built by the asset gate")
+
+        profile_root = self._profile_root(base)
+        assets = profile_root / self._assets.merged_assets_dir
+        config_root = profile_root / self._assets.merged_config_dir
+        profiles_dir = config_root / self._assets.materialized_profiles_dir
+        manifest = assets / self._config.install.manifest_name
+        config_manifest = config_root / self._config.suites.pytest.test_manifest
+        if not manifest.is_file():
+            raise GateError(f"verified base asset manifest is missing: {manifest}")
+        if not profiles_dir.is_dir():
+            raise GateError(f"verified base profile catalog is missing: {profiles_dir}")
+        if not config_manifest.is_file():
+            raise GateError(f"verified base config manifest is missing: {config_manifest}")
+        if config_manifest.read_bytes() != manifest.read_bytes():
+            raise GateError(
+                f"verified base config manifest {config_manifest} does not match {manifest}"
+            )
+        for arch in self._config.architectures:
+            if not (assets / arch).is_dir():
+                raise GateError(f"verified base assets are missing architecture {arch}: {assets}")
+
+        canonical_assets = self._config.path(self._config.functional.assets_dir)
+        relative = os.path.relpath(assets, canonical_assets.parent)
+        remove(canonical_assets)
+        link(canonical_assets, relative)
+        if canonical_assets.resolve() != assets.resolve():
+            raise GateError(
+                f"canonical assets selected {canonical_assets.resolve()}, not {assets.resolve()}"
+            )
+
+        canonical_config = self._config.path(self._config.functional.config_root)
+        copy_tree(config_root, canonical_config)
+        self._runner.note(
+            f"Selected Ironbank profile {base_name} for build-chain, packaging, and glow-up."
+        )
+
     def preflight(self) -> None:
         """Refuse a build the daemon cannot finish, and clear the tree."""
         crossexec.require(self._runner, self._config, self.host_arch)
@@ -210,6 +262,8 @@ class AssetGate:
             manifest_uri = self._publish(assets)
             config_root = self._materialize(profile, assets, manifest_uri)
             self._prove(profile, assets, config_root)
+
+        self._select_base(profiles)
 
         self._runner.note(
             "Ironbank VM asset build and boot gate passed for every profile and architecture."

@@ -33,6 +33,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from helpers.constants import ASSETS_DIR as _SELECTED_ASSETS_DIR
+
 # Every service this suite starts spawns a real capsem-tray: the spawn falls
 # back to `find_sibling_binary("capsem-tray")` when --tray-binary is omitted,
 # and the tray's singleton lock lives under CAPSEM_RUN_DIR, which each service
@@ -176,8 +178,8 @@ _REQUIRED_ARTIFACTS = {
     # production reader -- capsem-service boot, capsem setup, gen_manifest,
     # release workflow -- and the builder's generate_checksums writer agree
     # on this path. A per-arch entry here never resolved on a real build.
-    "assets/manifest.json": _PROJECT_ROOT / "assets" / "manifest.json",
-    "assets/<arch>/initrd.img": _PROJECT_ROOT / "assets" / _ARCH / "initrd.img",
+    "assets/manifest.json": _SELECTED_ASSETS_DIR / "manifest.json",
+    "assets/<arch>/initrd.img": _SELECTED_ASSETS_DIR / _ARCH / "initrd.img",
     "entitlements.plist": _PROJECT_ROOT / "entitlements.plist",
     "target/linux-agent/<arch>": _PROJECT_ROOT / "target" / "linux-agent" / _ARCH,
 }

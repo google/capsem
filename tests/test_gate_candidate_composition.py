@@ -135,6 +135,41 @@ def test_the_phases_run_in_the_order_the_gate_depends_on() -> None:
     assert _at(labels, "functional.") < _at(labels, "glowup.")
 
 
+def test_every_local_functional_vm_step_selects_its_exact_ironbank_profile() -> None:
+    """Diagnostic continuation may start at any VM step, so selection travels
+    with every step rather than relying on one earlier mutable selector."""
+    from capsem.gate import profiles as gate_profiles
+
+    plan = _plan()
+    names = CONFIG.environment
+
+    for profile in gate_profiles.selected(CONFIG):
+        assets = CONFIG.path(CONFIG.assets.test_root) / profile / CONFIG.assets.merged_assets_dir
+        profiles = (
+            CONFIG.path(CONFIG.assets.test_root)
+            / profile
+            / CONFIG.assets.merged_config_dir
+            / CONFIG.assets.materialized_profiles_dir
+        )
+        labels = [
+            label
+            for label in plan.labels
+            if label.startswith("functional.") and label.endswith(f".{profile}")
+        ]
+        assert labels
+        for label in labels:
+            rendered = "\n".join(plan.step_named(label).render())
+            if ".pytest." in label:
+                assert f"{names.assets_dir}={assets}" in rendered, label
+                assert f"{names.profiles_dir}={profiles}" in rendered, label
+            else:
+                assert f"--assets {assets}" in rendered, label
+                if ".injection." in label:
+                    assert f"--profiles-dir {profiles}" in rendered, label
+                else:
+                    assert f"{names.profiles_dir}={profiles}" in rendered, label
+
+
 def test_the_source_state_is_recorded_first_and_re_asserted_last() -> None:
     """A gate that qualified a HEAD nobody has proved nothing about anything."""
     labels = list(_plan().labels)
@@ -187,9 +222,8 @@ def test_shared_host_image_waits_for_canonical_preparation() -> None:
     fast = {label for label in plan.labels if label.startswith(("fast.", "python."))}
 
     assert "prepare.bootstrap" in prerequisites
-    assert fast <= prerequisites, (
-        "these fast checks can still race the host image: "
-        + ", ".join(sorted(fast - prerequisites))
+    assert fast <= prerequisites, "these fast checks can still race the host image: " + ", ".join(
+        sorted(fast - prerequisites)
     )
 
 

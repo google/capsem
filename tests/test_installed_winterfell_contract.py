@@ -65,6 +65,24 @@ def test_default_winterfell_roots_preserve_the_development_suite() -> None:
     assert roots.assets_dir.parent == PROJECT_ROOT / "assets"
 
 
+def test_development_winterfell_honours_the_functional_content_selector(
+    tmp_path: Path,
+) -> None:
+    assets = tmp_path / "verified-assets"
+    profiles = tmp_path / "verified-profiles"
+    roots = service.resolve_winterfell_artifact_roots(
+        {
+            "CAPSEM_ASSETS_DIR": str(assets),
+            "CAPSEM_PROFILES_DIR": str(profiles),
+        }
+    )
+
+    architecture = "arm64" if os.uname().machine == "arm64" else "x86_64"
+    assert roots.installed is False
+    assert roots.assets_dir == assets / architecture
+    assert roots.profiles_dir == profiles
+
+
 @pytest.mark.parametrize(
     "present",
     [

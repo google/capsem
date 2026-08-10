@@ -14,7 +14,13 @@ from pathlib import Path
 
 from log_streams import read_log_stream
 
-from .constants import EXEC_READY_TIMEOUT
+from .constants import (
+    ASSETS_DIR,
+    EXEC_READY_TIMEOUT,
+    PROFILES_DIR,
+    content_assets_root,
+    content_profiles_root,
+)
 from .sign import sign_binary
 from .uds_client import UdsHttpClient
 
@@ -23,8 +29,6 @@ SERVICE_BINARY = PROJECT_ROOT / "target/debug/capsem-service"
 PROCESS_BINARY = PROJECT_ROOT / "target/debug/capsem-process"
 GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
 TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
-ASSETS_DIR = PROJECT_ROOT / "assets"
-PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 LINUX_TEST_TMP_PARENT = Path("/var/tmp/capsem-tests")
 WINTERFELL_ROOT_ENV = {
     "binary_dir": "CAPSEM_WINTERFELL_BIN_DIR",
@@ -101,8 +105,8 @@ def resolve_winterfell_artifact_roots(
         architecture = "arm64" if os.uname().machine == "arm64" else "x86_64"
         return WinterfellArtifactRoots(
             binary_dir=PROJECT_ROOT / "target" / "debug",
-            assets_dir=PROJECT_ROOT / "assets" / architecture,
-            profiles_dir=PROFILES_DIR,
+            assets_dir=content_assets_root(environment) / architecture,
+            profiles_dir=content_profiles_root(environment),
             installed=False,
         )
     if len(present) != len(WINTERFELL_ROOT_ENV) or any(

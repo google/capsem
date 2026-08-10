@@ -86,6 +86,15 @@ class Gating(RecordingRunner):
         if "manifest generate" in rendered:
             Path(command.argv[-1]).mkdir(parents=True, exist_ok=True)
             (Path(command.argv[-1]) / "manifest.json").write_text("{}")
+        if "profile materialize" in rendered:
+            output = Path(command.argv[command.argv.index("--output-root") + 1])
+            profile = Path(command.argv[command.argv.index("--profile") + 1]).parent.name
+            materialized = output / "profiles" / profile
+            materialized.mkdir(parents=True, exist_ok=True)
+            (materialized / "profile.toml").write_text(f'id = "{profile}"\n')
+            manifest = output / "assets" / "manifest.json"
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            manifest.write_text("{}")
         return completed
 
 
@@ -94,11 +103,12 @@ def _gate(
     monkeypatch: pytest.MonkeyPatch,
     *,
     runner_class: type[Gating] = Gating,
+    profiles: tuple[str, ...] = ("code",),
     **kwargs,
 ) -> tuple[AssetGate, Gating]:
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
     monkeypatch.setattr("capsem.gate.pidfiles.stop_gate_service", lambda *_a: None)
-    runner = runner_class(_checkout(tmp_path), **kwargs)
+    runner = runner_class(_checkout(tmp_path, profiles=profiles), **kwargs)
     return AssetGate(runner), runner
 
 
@@ -287,6 +297,45 @@ def test_the_boot_proof_runs_against_this_profile_s_own_assets(
     proof = runner.matching(r"prove-installed-shell\.py")[0]
     assert f"CAPSEM_ASSETS_DIR={gate.test_root}/code/assets" in proof
     assert "CAPSEM_RUN_DIR=/" in proof
+
+
+def test_verified_base_profile_becomes_the_canonical_following_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Build-chain, packaging and glow-up must consume the bytes IronBank booted.
+
+    A warm canonical tree used to survive the private profile build. IronBank
+    proved ``target/ironbank-assets/code`` and the following modules silently
+    opened the older ``assets/`` and ``target/config/profiles`` instead.
+    """
+    gate, _ = _gate(tmp_path, monkeypatch, profiles=("co-work", "code"))
+    root = gate.root
+    stale_assets = root / CONFIG.functional.assets_dir
+    stale_assets.mkdir(parents=True)
+    (stale_assets / "manifest.json").write_text('{"stale":true}\n')
+    stale_profiles = root / CONFIG.functional.config_root / CONFIG.functional.profiles_subdir
+    stale_profiles.mkdir(parents=True)
+    (stale_profiles / "stale.toml").write_text("stale = true\n")
+    stale_config = root / CONFIG.functional.config_root
+    stale_config_manifest = stale_config / CONFIG.suites.pytest.test_manifest
+    stale_config_manifest.parent.mkdir(parents=True, exist_ok=True)
+    stale_config_manifest.write_text('{"stale":true}\n')
+    stale_sibling = stale_config / "retired" / "stale.toml"
+    stale_sibling.parent.mkdir(parents=True)
+    stale_sibling.write_text("stale = true\n")
+    _run_all(gate)
+
+    selected_assets = gate.test_root / CONFIG.suites.pytest.base_profile / "assets"
+    assert stale_assets.is_symlink()
+    assert stale_assets.resolve() == selected_assets.resolve()
+    assert (stale_assets / "manifest.json").read_text() == "{}"
+    assert not (stale_profiles / "stale.toml").exists()
+    assert stale_config_manifest.read_text() == "{}"
+    assert not stale_sibling.exists()
+    assert sorted(path.parent.name for path in stale_profiles.glob("*/profile.toml")) == [
+        "co-work",
+        "code",
+    ]
 
 
 # ---------------------------------------------------------------------------

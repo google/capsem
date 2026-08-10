@@ -13,15 +13,20 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 
 import pytest
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.constants import (
+    ASSETS_DIR,
+    CODE_PROFILE_ID,
+    DEFAULT_CPUS,
+    DEFAULT_RAM_MB,
+    EXEC_READY_TIMEOUT,
+    PROFILES_DIR,
+)
 from helpers.mcp import content_text, kill_mcp_proc
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MCP_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-mcp"
-ASSETS_DIR = PROJECT_ROOT / "assets"
-PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 
 pytestmark = pytest.mark.integration
 

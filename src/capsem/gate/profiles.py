@@ -95,7 +95,12 @@ def selected(config: GateConfig) -> list[str]:
     return sorted(imagebuild.profiles(config), key=lambda identity: (identity != base, identity))
 
 
-def agree(config: GateConfig) -> None:
+def agree(
+    config: GateConfig,
+    *,
+    profiles_dir: Path | None = None,
+    manifest: Path | None = None,
+) -> None:
     """Check the materialized catalog matches the source axis and the manifest.
 
     The check `selected()` used to make inline, moved to where it can run: after
@@ -103,14 +108,16 @@ def agree(config: GateConfig) -> None:
     """
     settings = config.suites.pytest
     source = sorted(selected(config))
-    present = sorted(materialized(config.path(settings.materialized_profiles)))
+    selected_profiles = profiles_dir or config.path(settings.materialized_profiles)
+    selected_manifest = manifest or config.path(settings.test_manifest)
+    present = sorted(materialized(selected_profiles))
     if source != present:
         raise GateError(
             "the materialized profile catalog does not match the checked-in "
             f"profiles: config/profiles={source}, materialized={present}"
         )
 
-    wanted = declared(config.path(settings.test_manifest))
+    wanted = declared(selected_manifest)
     if wanted is not None and sorted(wanted) != present:
         raise GateError(
             "the materialized profile catalog does not match the manifest under "
