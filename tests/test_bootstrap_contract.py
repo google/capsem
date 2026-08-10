@@ -145,7 +145,8 @@ def test_linux_bootstrap_owns_host_packages_node_docker_and_kvm_access() -> None
 
     doctor = _read("scripts/doctor-linux.sh")
     assert 'for device in /dev/kvm /dev/vhost-vsock' in doctor
-    assert "bwrap --unshare-net --die-with-parent --new-session --bind / / -- true" in doctor
+    assert "--bind / / --dev-bind /dev /dev -- sh -c ': > /dev/null'" in linux
+    assert "--bind / / --dev-bind /dev /dev -- sh -c ': > /dev/null'" in doctor
     assert "gate network namespace active (loopback only)" in doctor
     assert "run ./bootstrap.sh" in doctor
 

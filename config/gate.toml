@@ -1424,7 +1424,16 @@ linux_command = "bwrap"
 # sockets, but give the whole gate a network namespace with loopback only.
 # Docker still answers over /var/run/docker.sock and its daemon may perform the
 # explicitly declared container fetches; direct host-gate egress has no route.
-linux_args = ["--unshare-net", "--die-with-parent", "--new-session", "--bind", "/", "/"]
+linux_args = [
+    "--unshare-net",
+    "--die-with-parent",
+    "--new-session",
+    "--bind", "/", "/",
+    # A root bind alone leaves device nodes visible but unusable in Bubblewrap's
+    # user namespace (`open(/dev/null)` returns EACCES). Preserve the host device
+    # mount explicitly so pytest capture and the KVM/vhost VM proofs both work.
+    "--dev-bind", "/dev", "/dev",
+]
 profile_name = "gate.sb"
 
 # A release has three irreducibly networked edges: resolve the serialized

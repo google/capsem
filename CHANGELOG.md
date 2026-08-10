@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Bootstrap now installs all four config-owned Node workspaces through the
   gate instead of provisioning only the frontend by hand.
 
+- Linux Bubblewrap qualification now explicitly preserves the host device
+  mount. A root bind alone exposed `/dev/null`, KVM, and vhost nodes but left
+  them unusable inside the user namespace, causing pytest to fail before it
+  could collect the first sandboxed suite.
+
 - Release workflow preflight now treats absent Apple credentials and CI-owned
   SBOM tools as explicitly inapplicable on Linux while remaining fail-closed
   for macOS signing.

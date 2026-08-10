@@ -210,6 +210,9 @@ def test_linux_enforcement_uses_bubblewrap_network_namespace(monkeypatch) -> Non
     assert wrapped[
         wrapped.index("--bind") : wrapped.index("--bind") + 3
     ] == ("--bind", "/", "/")
+    assert wrapped[
+        wrapped.index("--dev-bind") : wrapped.index("--dev-bind") + 3
+    ] == ("--dev-bind", "/dev", "/dev")
     assert wrapped[-3:] == ("python3", "-c", "print('inside')")
 
 
@@ -219,6 +222,7 @@ def test_linux_enforcement_uses_bubblewrap_network_namespace(monkeypatch) -> Non
         ("--die-with-parent", "--new-session", "--bind", "/", "/"),
         ("--unshare-net", "--new-session", "--bind", "/", "/"),
         ("--unshare-net", "--die-with-parent", "--new-session"),
+        ("--unshare-net", "--die-with-parent", "--new-session", "--bind", "/", "/"),
     ],
 )
 def test_linux_sandbox_config_cannot_remove_an_enforcement_property(
@@ -274,6 +278,27 @@ except OSError:
     pass
 else:
     raise AssertionError("external AF_INET connection escaped the Linux gate boundary")
+"""
+    argv = sandbox.applied(
+        CONFIG,
+        RecordingRunner(PROJECT_ROOT),
+        default=sandbox.ENFORCE,
+        requested=None,
+        argv=(sys.executable, "-c", probe),
+    )
+
+    completed = subprocess.run(argv, capture_output=True, text=True, timeout=10)
+
+    assert completed.returncode == 0, completed.stderr
+
+
+@linux_only
+def test_linux_kernel_boundary_preserves_usable_devices() -> None:
+    probe = """
+import os
+
+with open(os.devnull, "wb") as sink:
+    sink.write(b"gate device probe")
 """
     argv = sandbox.applied(
         CONFIG,

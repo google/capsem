@@ -296,12 +296,14 @@ capsem_linux_install_node() {
 }
 
 capsem_linux_prepare_bubblewrap() {
-    if ! bwrap --unshare-net --bind / / -- true >/dev/null 2>&1; then
-        printf "  [FAIL] Bubblewrap cannot create the Linux gate network namespace\n" >&2
+    if ! bwrap --unshare-net --die-with-parent --new-session \
+        --bind / / --dev-bind /dev /dev -- sh -c ': > /dev/null' \
+        >/dev/null 2>&1; then
+        printf "  [FAIL] Bubblewrap cannot create a usable Linux gate namespace\n" >&2
         printf "         Check that unprivileged user namespaces are enabled.\n" >&2
         return 1
     fi
-    printf "  [ok]   Bubblewrap network namespace\n"
+    printf "  [ok]   Bubblewrap network namespace and device mount\n"
 }
 
 capsem_linux_prepare_docker() {

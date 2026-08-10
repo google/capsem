@@ -128,11 +128,12 @@ check_platform() {
         else
             fail "gate claims to be sandboxed but sees interfaces: ${interfaces:-unknown}"
         fi
-    elif bwrap --unshare-net --die-with-parent --new-session --bind / / -- true \
+    elif bwrap --unshare-net --die-with-parent --new-session \
+        --bind / / --dev-bind /dev /dev -- sh -c ': > /dev/null' \
         >/dev/null 2>&1; then
-        pass "Bubblewrap gate network namespace"
+        pass "Bubblewrap gate network namespace and device mount"
     else
-        fail "Bubblewrap cannot create the gate network namespace -- run ./bootstrap.sh"
+        fail "Bubblewrap cannot create a usable gate namespace -- run ./bootstrap.sh"
     fi
 
     # KVM and its guest/host communication transport are one runtime boundary.

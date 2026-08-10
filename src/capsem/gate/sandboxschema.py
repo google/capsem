@@ -50,6 +50,13 @@ class SandboxConfig(Strict):
             for index in range(max(0, len(self.linux_args) - 2))
         ):
             raise ValueError("linux_args must preserve the host filesystem with --bind / /")
+        if not any(
+            self.linux_args[index : index + 3] == ("--dev-bind", "/dev", "/dev")
+            for index in range(max(0, len(self.linux_args) - 2))
+        ):
+            raise ValueError(
+                "linux_args must preserve usable host devices with --dev-bind /dev /dev"
+            )
         for required in ("--die-with-parent", "--new-session"):
             if required not in self.linux_args:
                 raise ValueError(f"linux_args must contain {required}")
