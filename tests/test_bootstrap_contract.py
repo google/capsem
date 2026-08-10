@@ -227,6 +227,54 @@ capsem_linux_prepare_bubblewrap "$3"
     assert marker.read_text(encoding="utf-8") == "called\n"
 
 
+def test_linux_bootstrap_verifies_in_gate_and_provisions_only_on_host(
+    tmp_path: Path,
+) -> None:
+    loopback = tmp_path / "loopback-net-dev"
+    loopback.write_text(
+        "Inter-| Receive | Transmit\n"
+        " face |bytes packets|bytes packets\n"
+        "    lo: 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0\n",
+        encoding="utf-8",
+    )
+    host = tmp_path / "host-net-dev"
+    host.write_text(
+        loopback.read_text(encoding="utf-8")
+        + "  eth0: 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0\n",
+        encoding="utf-8",
+    )
+    script = PROJECT_ROOT / "scripts/bootstrap-linux.sh"
+    command = """
+. "$1"
+capsem_linux_install_apt_packages() { :; }
+capsem_linux_prepare_bubblewrap() { :; }
+capsem_linux_install_node() { :; }
+capsem_linux_verify_docker() { printf 'verify-docker\n'; }
+capsem_linux_verify_vm_devices() { printf 'verify-devices\n'; }
+capsem_linux_prepare_docker() { printf 'provision-docker\n'; }
+capsem_linux_prepare_vm_devices() { printf 'provision-devices\n'; }
+bootstrap_linux "$2" 1 "$3"
+"""
+
+    active = subprocess.run(
+        ["sh", "-c", command, "sh", str(script), str(PROJECT_ROOT), str(loopback)],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert "verify-docker\nverify-devices\n" in active.stdout
+    assert "provision-" not in active.stdout
+
+    ordinary = subprocess.run(
+        ["sh", "-c", command, "sh", str(script), str(PROJECT_ROOT), str(host)],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert "provision-docker\nprovision-devices\n" in ordinary.stdout
+    assert "verify-" not in ordinary.stdout
+
+
 def test_linux_bootstrap_node_major_parser_requires_one_shared_value() -> None:
     command = (
         '. scripts/bootstrap-linux.sh; '

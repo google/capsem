@@ -37,7 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   avoids re-entering the Node installer from bootstrap already owned by a
   running gate. Bootstrap and doctor now read the namespace-aware Linux
   interface ledger when recognizing that loopback-only gate instead of trying
-  to nest Bubblewrap using the host-visible sysfs interface tree.
+  to nest Bubblewrap using the host-visible sysfs interface tree. Once inside,
+  bootstrap verifies existing Docker, Buildx, KVM, and vhost-vsock access
+  without depending on online username lookup or attempting host mutation.
 
 - Linux Bubblewrap qualification now explicitly preserves the host device
   mount. A root bind alone exposed `/dev/null`, KVM, and vhost nodes but left

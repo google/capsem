@@ -384,6 +384,42 @@ capsem_linux_prepare_docker() {
     printf "  [ok]   Docker daemon + Buildx (current-session access)\n"
 }
 
+capsem_linux_verify_docker() {
+    if ! docker info >/dev/null 2>&1; then
+        printf "  [FAIL] Docker daemon is not accessible inside the Linux gate\n" >&2
+        printf "         Run ./bootstrap.sh outside the gate to provision host access.\n" >&2
+        return 1
+    fi
+    if ! docker buildx version >/dev/null 2>&1; then
+        printf "  [FAIL] docker buildx is not available inside the Linux gate\n" >&2
+        printf "         Run ./bootstrap.sh outside the gate to provision it.\n" >&2
+        return 1
+    fi
+    printf "  [ok]   Docker daemon + Buildx (existing gate access)\n"
+}
+
+capsem_linux_verify_vm_devices() {
+    if [ ! -e /dev/kvm ]; then
+        printf "  [WARN] /dev/kvm not found; VM boot tests require KVM\n"
+    elif ! { [ -r /dev/kvm ] && [ -w /dev/kvm ]; }; then
+        printf "  [FAIL] /dev/kvm is not readable and writable\n" >&2
+        printf "         Run ./bootstrap.sh outside the gate to provision host access.\n" >&2
+        return 1
+    else
+        printf "  [ok]   /dev/kvm (durable current-session access)\n"
+    fi
+
+    if [ ! -e /dev/vhost-vsock ]; then
+        printf "  [WARN] /dev/vhost-vsock not found; VM guest communication requires vhost_vsock\n"
+    elif ! { [ -r /dev/vhost-vsock ] && [ -w /dev/vhost-vsock ]; }; then
+        printf "  [FAIL] /dev/vhost-vsock is not readable and writable\n" >&2
+        printf "         Run ./bootstrap.sh outside the gate to provision host access.\n" >&2
+        return 1
+    else
+        printf "  [ok]   /dev/vhost-vsock (durable current-session access)\n"
+    fi
+}
+
 capsem_linux_prepare_vm_devices() {
     CAPSEM_BOOTSTRAP_USER=$(capsem_linux_bootstrap_user)
     if command -v modprobe >/dev/null 2>&1; then
@@ -430,28 +466,13 @@ EOF
         capsem_linux_as_root setfacl -m "u:$CAPSEM_BOOTSTRAP_USER:rw" /dev/vhost-vsock
     fi
 
-    if [ ! -e /dev/kvm ]; then
-        printf "  [WARN] /dev/kvm not found; VM boot tests require KVM\n"
-    elif ! { [ -r /dev/kvm ] && [ -w /dev/kvm ]; }; then
-        printf "  [FAIL] /dev/kvm is not readable and writable after provisioning\n" >&2
-        return 1
-    else
-        printf "  [ok]   /dev/kvm (durable current-session access)\n"
-    fi
-
-    if [ ! -e /dev/vhost-vsock ]; then
-        printf "  [WARN] /dev/vhost-vsock not found; VM guest communication requires vhost_vsock\n"
-    elif ! { [ -r /dev/vhost-vsock ] && [ -w /dev/vhost-vsock ]; }; then
-        printf "  [FAIL] /dev/vhost-vsock is not readable and writable after provisioning\n" >&2
-        return 1
-    else
-        printf "  [ok]   /dev/vhost-vsock (durable current-session access)\n"
-    fi
+    capsem_linux_verify_vm_devices
 }
 
 bootstrap_linux() {
     CAPSEM_LINUX_PROJECT_ROOT=$1
     CAPSEM_LINUX_ASSUME_YES=$2
+    CAPSEM_NET_DEV=${3:-/proc/net/dev}
 
     printf "\n== Provisioning Linux host ==\n"
     if command -v apt-get >/dev/null 2>&1; then
@@ -463,8 +484,13 @@ bootstrap_linux() {
         return 1
     fi
 
-    capsem_linux_prepare_bubblewrap
+    capsem_linux_prepare_bubblewrap "$CAPSEM_NET_DEV"
     capsem_linux_install_node "$CAPSEM_LINUX_PROJECT_ROOT" "$CAPSEM_LINUX_ASSUME_YES"
-    capsem_linux_prepare_docker
-    capsem_linux_prepare_vm_devices
+    if capsem_linux_loopback_only "$CAPSEM_NET_DEV"; then
+        capsem_linux_verify_docker
+        capsem_linux_verify_vm_devices
+    else
+        capsem_linux_prepare_docker
+        capsem_linux_prepare_vm_devices
+    fi
 }
