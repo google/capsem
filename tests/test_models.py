@@ -161,11 +161,13 @@ class TestArchConfig:
 
     def test_base_image_is_required(self) -> None:
         with pytest.raises(ValidationError, match="base_image"):
-            ArchConfig(  # ty: ignore[missing-argument]
-                docker_platform="linux/arm64",
-                rust_target="aarch64-unknown-linux-musl",
-                kernel_image="arch/arm64/boot/Image",
-                defconfig="kernel/defconfig.arm64",
+            ArchConfig.model_validate(
+                {
+                    "docker_platform": "linux/arm64",
+                    "rust_target": "aarch64-unknown-linux-musl",
+                    "kernel_image": "arch/arm64/boot/Image",
+                    "defconfig": "kernel/defconfig.arm64",
+                }
             )
 
     def test_frozen(self):
@@ -215,13 +217,15 @@ class TestBuildConfig:
 
     def test_legacy_per_arch_kernel_branch_is_rejected(self) -> None:
         with pytest.raises(ValidationError, match="kernel_branch"):
-            ArchConfig(
-                base_image="registry.example/debian@sha256:" + "a" * 64,
-                docker_platform="linux/arm64",
-                rust_target="aarch64-unknown-linux-musl",
-                kernel_image="arch/arm64/boot/Image",
-                defconfig="kernel/defconfig.arm64",
-                kernel_branch="9.9",  # ty: ignore[unknown-argument]
+            ArchConfig.model_validate(
+                {
+                    "base_image": "registry.example/debian@sha256:" + "a" * 64,
+                    "docker_platform": "linux/arm64",
+                    "rust_target": "aarch64-unknown-linux-musl",
+                    "kernel_image": "arch/arm64/boot/Image",
+                    "defconfig": "kernel/defconfig.arm64",
+                    "kernel_branch": "9.9",
+                }
             )
 
     def test_compression_level_min(self):

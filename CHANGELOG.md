@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Clean qualification now derives the guest-base architecture comparison from
+  authoritative config and keeps adversarial model tests out of the Python
+  suppression budget, so exact source-contract ratchets remain green without
+  accepting new type debt.
+
 - Canonical Linux bootstrap now installs the distro-owned QEMU user/binfmt
   package for the host's opposite architecture, refreshes only the distro
   registration service, and proves an enabled executable interpreter with the

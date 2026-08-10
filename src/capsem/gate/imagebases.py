@@ -28,10 +28,11 @@ def build_config(config: GateConfig) -> BuildConfig:
         raise GateError(f"guest image config has no base for: {', '.join(missing)}")
     for name, gate_arch in config.architectures.items():
         platform = build.architectures[name].docker_platform
-        expected = f"linux/{gate_arch.dpkg}"
-        if platform != expected:
+        platform_arch = platform.rpartition("/")[2]
+        if platform_arch != gate_arch.dpkg:
             raise GateError(
-                f"guest image architecture {name} uses {platform}, expected {expected}"
+                f"guest image architecture {name} uses {platform}, expected the "
+                f"configured {gate_arch.dpkg} architecture"
             )
     return build
 
