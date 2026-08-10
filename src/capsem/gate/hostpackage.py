@@ -56,6 +56,11 @@ def sign_step(config: GateConfig, *, label: str = "sign"):
     need signing, at different points -- once after the coverage build and
     again before the VM suites -- and a plan cannot hold two steps of one name.
     """
+    if not host.on_macos():
+        # Keep the shared graph shape and its ordering edge without pretending
+        # a Linux no-op rewrote or produced the host binaries.
+        return step(label)
+
     settings = config.signing
     return step(
         label,

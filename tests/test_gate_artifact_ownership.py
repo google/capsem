@@ -18,13 +18,15 @@ from pathlib import Path
 
 import pytest
 
+from capsem.gate import host
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 #: Producers the complete gate must declare. Each is a path a later step, a
 #: release lane, or an operator reads -- which is what makes "who wrote this"
 #: a question worth being able to answer.
 EXPECTED = {
-    "prepare.sign",
+    "prepare.sign" if host.on_macos() else "prepare.build-binaries",
     "static.guest-agents",
     "initrd.repack",
     "source.record",

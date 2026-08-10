@@ -80,6 +80,28 @@ def test_the_whole_gate_is_one_plan() -> None:
         _at(labels, phase)
 
 
+def test_linux_signing_steps_preserve_the_graph_without_launching_apple_tools() -> None:
+    """Linux still follows the same dependencies, but never execs codesign."""
+    signing = [step for step in _plan().steps if step.label.endswith(".sign")]
+
+    assert signing
+    assert all(not step.actions for step in signing)
+    assert all(not step.produces for step in signing)
+
+
+def test_macos_signing_step_keeps_codesign_and_artifact_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from capsem.gate import host, hostpackage
+
+    monkeypatch.setattr(host, "on_macos", lambda: True)
+    signing = hostpackage.sign_step(CONFIG)
+
+    assert signing.actions
+    assert all("codesign" in action.render() for action in signing.actions)
+    assert signing.produces == tuple(CONFIG.path(path) for path in CONFIG.signing.binaries)
+
+
 def test_local_package_rails_defer_to_the_authoritative_install_transaction() -> None:
     """The complete gate must not need a mutable public channel to recover one.
 

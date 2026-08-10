@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux qualification now keeps the shared signing dependency nodes as honest
+  no-ops instead of attempting to launch Apple's `codesign`; Darwin retains
+  the complete entitlement-signing actions and artifact ownership.
+
 - Clean qualification now derives the guest-base architecture comparison from
   authoritative config and keeps adversarial model tests out of the Python
   suppression budget, so exact source-contract ratchets remain green without
