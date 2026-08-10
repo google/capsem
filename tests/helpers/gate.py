@@ -86,6 +86,12 @@ def _cargo_tool_probe_replies(root: Path) -> dict[tuple[str, ...], str]:
     return {crate.probe: crate.expected for crate in settings.crates}
 
 
+@cache
+def _cargo_tool_probe_executables() -> frozenset[str]:
+    """Executables that can be a config-owned Cargo tool version probe."""
+    return frozenset(probe[0] for probe in _cargo_tool_probe_replies(PROJECT_ROOT))
+
+
 class RecordingRunner(Runner):
     """Records every command; answers with canned output.
 
@@ -124,7 +130,11 @@ class RecordingRunner(Runner):
                 stdout = _git_common_dir(self.root)
             elif IMAGE_ID_PROBE in rendered:
                 stdout = RECORDED_IMAGE_ID
-            elif command.argv in _cargo_tool_probe_replies(self.root):
+            elif (
+                command.argv
+                and command.argv[0] in _cargo_tool_probe_executables()
+                and command.argv in _cargo_tool_probe_replies(self.root)
+            ):
                 stdout = _cargo_tool_probe_replies(self.root)[command.argv]
         return subprocess.CompletedProcess(
             args=list(command.argv), returncode=status, stdout=stdout, stderr=""
