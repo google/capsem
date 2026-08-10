@@ -6143,7 +6143,10 @@ def test_guest_runtime_doctor_apt_https_trust_probe_is_hermetic_release_gate() -
 
     assert "def test_apt_https_trust_is_readable_by_sandbox_user" in source
     assert "runuser -u _apt -- test -r /etc/ssl/certs/ca-certificates.crt" in source
-    assert "https://deb.debian.org" in source
+    assert "/etc/apt/sources.list.d 2>/dev/null || true" in source
+    assert "/etc/apt/sources.list 2>/dev/null || true" in source
+    assert ") | \"\n        \"grep -F 'https://deb.debian.org'" in source
+    assert "/etc/apt/sources.list /etc/apt/sources.list.d" not in source
     assert "def _bounded_remote_apt" not in source
     assert "apt-get update" not in source
 

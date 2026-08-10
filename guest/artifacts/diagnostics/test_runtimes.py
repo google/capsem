@@ -190,8 +190,11 @@ def test_apt_install_works(output_dir):
 def test_apt_https_trust_is_readable_by_sandbox_user():
     """Apt must retain HTTPS sources and `_apt` access to the real CA bundle."""
     sources = run(
-        "grep -Rhs '^URIs: https://deb.debian.org' "
-        "/etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null"
+        "(grep -Rhs '^URIs: https://deb.debian.org' "
+        "/etc/apt/sources.list.d 2>/dev/null || true; "
+        "grep -hs '^deb .*https://deb.debian.org' "
+        "/etc/apt/sources.list 2>/dev/null || true) | "
+        "grep -F 'https://deb.debian.org'"
     )
     assert sources.returncode == 0, (
         f"runtime apt sources are not HTTPS debian.org sources:\n{sources.stdout}"
