@@ -121,8 +121,8 @@ check_platform() {
     if ! command -v bwrap &>/dev/null; then
         fail "Bubblewrap not found -- install: $(tool_hint bwrap); or run ./bootstrap.sh"
     elif [[ -n "${CAPSEM_GATE_RUN:-}" ]]; then
-        interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf '%f\n' \
-            2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')
+        interfaces=$(capsem_linux_network_interfaces \
+            | tr '\n' ' ' | sed 's/ $//')
         if [[ "$interfaces" == "lo" ]]; then
             pass "Bubblewrap gate network namespace active (loopback only)"
         else

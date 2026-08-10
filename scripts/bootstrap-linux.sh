@@ -295,7 +295,32 @@ capsem_linux_install_node() {
         "$(node --version)"
 }
 
+capsem_linux_network_interfaces() {
+    CAPSEM_NET_DEV=${1:-/proc/net/dev}
+    [ -r "$CAPSEM_NET_DEV" ] || return 1
+    awk -F: '
+        NR > 2 {
+            interface = $1
+            gsub(/[[:space:]]/, "", interface)
+            if (interface != "") print interface
+        }
+    ' "$CAPSEM_NET_DEV" | sort
+}
+
+capsem_linux_loopback_only() {
+    [ "$(capsem_linux_network_interfaces "${1:-/proc/net/dev}")" = lo ]
+}
+
 capsem_linux_prepare_bubblewrap() {
+    CAPSEM_NET_DEV=${1:-/proc/net/dev}
+    if capsem_linux_loopback_only "$CAPSEM_NET_DEV"; then
+        if ! { : > /dev/null; } 2>/dev/null; then
+            printf "  [FAIL] active Linux gate namespace cannot use /dev/null\n" >&2
+            return 1
+        fi
+        printf "  [ok]   Bubblewrap network namespace already active (loopback only)\n"
+        return 0
+    fi
     if ! bwrap --unshare-net --die-with-parent --new-session \
         --bind / / --dev-bind /dev /dev -- sh -c ': > /dev/null' \
         >/dev/null 2>&1; then

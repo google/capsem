@@ -35,7 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of trusting an ambient `cargo` shim or default toolchain. It also exposes
   every config-owned Cargo gate tool to subsequent hermetic processes and
   avoids re-entering the Node installer from bootstrap already owned by a
-  running gate.
+  running gate. Bootstrap and doctor now read the namespace-aware Linux
+  interface ledger when recognizing that loopback-only gate instead of trying
+  to nest Bubblewrap using the host-visible sysfs interface tree.
 
 - Linux Bubblewrap qualification now explicitly preserves the host device
   mount. A root bind alone exposed `/dev/null`, KVM, and vhost nodes but left

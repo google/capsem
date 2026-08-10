@@ -148,6 +148,8 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert "--bind / / --dev-bind /dev /dev -- sh -c ': > /dev/null'" in linux
     assert "--bind / / --dev-bind /dev /dev -- sh -c ': > /dev/null'" in doctor
     assert "gate network namespace active (loopback only)" in doctor
+    assert "capsem_linux_network_interfaces" in doctor
+    assert "/sys/class/net" not in doctor
     assert "run ./bootstrap.sh" in doctor
 
     # Linux does not accept whatever Node happens to be in the distribution.
@@ -177,6 +179,52 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     # of racing systemd and failing a valid installation.
     assert "CAPSEM_DOCKER_WAIT" in linux
     assert "CAPSEM_DOCKER_ACCESS_WAIT" in linux
+
+
+def test_linux_bubblewrap_probe_does_not_nest_an_active_namespace(tmp_path: Path) -> None:
+    """Kernel state, not a forgeable gate marker, decides whether to nest."""
+    loopback = tmp_path / "loopback-net-dev"
+    loopback.write_text(
+        "Inter-| Receive | Transmit\n"
+        " face |bytes packets|bytes packets\n"
+        "    lo: 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0\n",
+        encoding="utf-8",
+    )
+    marker = tmp_path / "bwrap-called"
+    script = PROJECT_ROOT / "scripts/bootstrap-linux.sh"
+    command = """
+. "$1"
+CAPSEM_BWRAP_MARKER=$2
+bwrap() { printf 'called\n' > "$CAPSEM_BWRAP_MARKER"; return 0; }
+capsem_linux_prepare_bubblewrap "$3"
+"""
+
+    active = subprocess.run(
+        ["sh", "-c", command, "sh", str(script), str(marker), str(loopback)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert active.returncode == 0, active.stderr
+    assert "already active (loopback only)" in active.stdout
+    assert not marker.exists(), "bootstrap tried to nest Bubblewrap inside Bubblewrap"
+
+    host = tmp_path / "host-net-dev"
+    host.write_text(
+        loopback.read_text(encoding="utf-8")
+        + "  eth0: 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0\n",
+        encoding="utf-8",
+    )
+    ordinary = subprocess.run(
+        ["sh", "-c", command, "sh", str(script), str(marker), str(host)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert ordinary.returncode == 0
+    assert marker.read_text(encoding="utf-8") == "called\n"
 
 
 def test_linux_bootstrap_node_major_parser_requires_one_shared_value() -> None:
