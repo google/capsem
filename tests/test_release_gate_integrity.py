@@ -264,6 +264,15 @@ def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
     assert "run: python3 scripts/audit-pnpm-bulk.py" in security_audit
 
 
+def test_host_builder_base_images_are_immutable() -> None:
+    """A sealed rebuild must resolve exact bytes, not refresh mutable tags."""
+    builder = _read("docker/Dockerfile.host-builder")
+    bases = [line.split()[1] for line in builder.splitlines() if line.startswith("FROM ")]
+
+    assert bases
+    assert all("@sha256:" in base for base in bases), bases
+
+
 def test_host_builder_trusts_the_bind_mounted_source_checkout() -> None:
     """On Linux CI the checkout's owner is not the image's user, so git rejects
     the mount as dubious ownership -- and `build.rs` answers that by embedding

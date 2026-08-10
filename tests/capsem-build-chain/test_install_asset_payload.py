@@ -1357,7 +1357,6 @@ def test_cross_compile_does_not_bypass_apt_date_validation() -> None:
 
 def test_cross_compile_apt_sources_are_encrypted_retried_and_fail_closed() -> None:
     sources = (PROJECT_ROOT / "docker/sources-multiarch.sh").read_text()
-    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
 
     mirror_assignments = [
         line.strip()
@@ -1372,6 +1371,10 @@ def test_cross_compile_apt_sources_are_encrypted_retried_and_fail_closed() -> No
     assert 'Acquire::https::Timeout "30";' in sources
     assert 'APT::Update::Error-Mode "any";' in sources
 
+
+def test_host_builder_bootstraps_https_trust_before_ubuntu_package_fetches() -> None:
+    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+
     trust_stage = (
         "FROM alpine:3.22@sha256:"
         "14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce "
@@ -1383,10 +1386,14 @@ def test_cross_compile_apt_sources_are_encrypted_retried_and_fail_closed() -> No
     )
     sources_copy = "COPY sources-multiarch.sh /tmp/"
     first_update = "RUN apt-get update && apt-get install"
+    ubuntu_stage = next(
+        line for line in host_builder.splitlines() if line.startswith("FROM ubuntu:24.04")
+    )
     assert trust_stage in host_builder
-    assert host_builder.index(trust_stage) < host_builder.index("FROM ubuntu:24.04")
+    assert "@sha256:" in ubuntu_stage
+    assert host_builder.index(trust_stage) < host_builder.index(ubuntu_stage)
     assert (
-        host_builder.index("FROM ubuntu:24.04")
+        host_builder.index(ubuntu_stage)
         < host_builder.index(trust_copy)
         < host_builder.index(sources_copy)
         < host_builder.index(first_update)
