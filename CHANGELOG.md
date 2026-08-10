@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rust MITM integration coverage now routes its allowed TLS/SNI cases to a
+  loopback upstream override while preserving policy, telemetry, method/path,
+  and keep-alive assertions, so the complete sealed gate no longer depends on
+  public DNS or `elie.net` availability.
+
 - The Linux install-test image now inherits `uv` from its locally built host
   builder instead of resolving a redundant mutable `ghcr.io` stage from inside
   the sealed gate.

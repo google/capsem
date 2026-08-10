@@ -6,14 +6,13 @@
 /// - Denied domains are rejected before TLS handshake completes
 /// - Telemetry records correct decisions, methods, and status codes
 ///
-/// Requires internet access (the proxy connects upstream to real servers).
 use std::collections::BTreeMap;
 use std::os::unix::io::IntoRawFd;
 use std::sync::Arc;
 
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::mitm_proxy::{self, MitmProxyConfig};
-use capsem_core::net::policy::NetworkMechanics;
+use capsem_core::net::policy::{NetworkMechanics, UpstreamOverride, UpstreamOverrideProtocol};
 use capsem_logger::{DbWriter, Decision};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
@@ -24,6 +23,7 @@ use tokio_rustls::TlsConnector;
 
 const CA_KEY: &str = include_str!("../../../security/keys/capsem-ca.key");
 const CA_CERT: &str = include_str!("../../../security/keys/capsem-ca.crt");
+const HERMETIC_UPSTREAM_DOMAIN: &str = "fixture.capsem.test";
 
 /// Build a proxy config from allow/block lists for integration tests.
 ///
@@ -146,9 +146,37 @@ fn make_proxy_config_with_security_rules(
     security_rules: capsem_core::net::policy_config::SecurityRuleSet,
     http_ports: &[u16],
 ) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
-    let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
     let mut policy_inner = NetworkMechanics::new();
     policy_inner.http_upstream_ports = http_ports.to_vec();
+    make_proxy_config_with_mechanics(security_rules, policy_inner)
+}
+
+/// Preserve a real guest-facing TLS/SNI connection while routing the upstream
+/// leg to a deterministic loopback HTTP fixture. The override changes only
+/// transport routing; policy and telemetry continue to observe `domain:443`.
+fn make_proxy_config_with_local_http_upstream(
+    domain: &str,
+    upstream_port: u16,
+) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
+    let mut policy_inner = NetworkMechanics::new();
+    policy_inner.upstream_overrides.insert(
+        format!("{domain}:443"),
+        UpstreamOverride {
+            dial: format!("127.0.0.1:{upstream_port}"),
+            protocol: UpstreamOverrideProtocol::Http,
+        },
+    );
+    make_proxy_config_with_mechanics(
+        security_rules_for_proxy(&[domain], &[], false),
+        policy_inner,
+    )
+}
+
+fn make_proxy_config_with_mechanics(
+    security_rules: capsem_core::net::policy_config::SecurityRuleSet,
+    policy_inner: NetworkMechanics,
+) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
+    let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
     let policy = Arc::new(std::sync::RwLock::new(Arc::new(policy_inner)));
     let dir = tempfile::tempdir().unwrap();
     let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
@@ -233,14 +261,26 @@ async fn spawn_proxy(
 }
 
 #[tokio::test]
-async fn mitm_proxy_allows_elie_net() {
-    let (config, db) = make_proxy_config(&["elie.net"], &[], false);
+async fn mitm_proxy_allows_hermetic_upstream() {
+    let (upstream_port, upstream_task) = spawn_fake_upstream(|mut sock| {
+        Box::pin(async move {
+            let request = read_http11_request(&mut sock).await;
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
+            sock.flush().await.unwrap();
+            request
+        })
+    })
+    .await;
+    let (config, db) =
+        make_proxy_config_with_local_http_upstream(HERMETIC_UPSTREAM_DOMAIN, upstream_port);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     // Connect through the proxy with TLS trusting our MITM CA.
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
-    let domain = ServerName::try_from("elie.net").unwrap();
+    let domain = ServerName::try_from(HERMETIC_UPSTREAM_DOMAIN).unwrap();
     let tls = connector
         .connect(domain, tcp)
         .await
@@ -254,19 +294,22 @@ async fn mitm_proxy_allows_elie_net() {
     let req = hyper::Request::builder()
         .method("HEAD")
         .uri("/")
-        .header("host", "elie.net")
+        .header("host", HERMETIC_UPSTREAM_DOMAIN)
         .body(Full::new(Bytes::new()))
         .unwrap();
     let resp = sender.send_request(req).await.unwrap();
     let status = resp.status().as_u16();
-    assert!(
-        status < 500,
-        "expected success/redirect from elie.net, got {status}"
-    );
+    assert_eq!(status, 200, "expected success from local fixture");
 
     // Close the connection so the proxy finishes and records telemetry.
     drop(sender);
+    let upstream_request = upstream_task.await.unwrap();
     proxy_task.await.unwrap();
+
+    assert!(
+        upstream_request.starts_with(b"HEAD / HTTP/1.1\r\n"),
+        "local upstream did not receive the intercepted HEAD request"
+    );
 
     // Make DB-owned accepted writes visible before opening the reader.
     db.flush().await;
@@ -275,7 +318,7 @@ async fn mitm_proxy_allows_elie_net() {
     let reader = db.reader().unwrap();
     let events = reader.recent_net_events(10).unwrap();
     assert!(!events.is_empty(), "should have recorded a telemetry event");
-    assert_eq!(events[0].domain, "elie.net");
+    assert_eq!(events[0].domain, HERMETIC_UPSTREAM_DOMAIN);
     assert_eq!(events[0].decision, Decision::Allowed);
     assert_eq!(events[0].method.as_deref(), Some("HEAD"));
     assert!(events[0].status_code.is_some());
@@ -369,12 +412,25 @@ async fn mitm_proxy_denies_default_deny_unlisted_domain() {
 
 #[tokio::test]
 async fn mitm_proxy_records_http_method_and_path() {
-    let (config, db) = make_proxy_config(&["elie.net"], &[], false);
+    let (upstream_port, upstream_task) = spawn_fake_upstream(|mut sock| {
+        Box::pin(async move {
+            let request = read_http11_request(&mut sock).await;
+            let body = b"fixture-about";
+            let response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
+            sock.write_all(response.as_bytes()).await.unwrap();
+            sock.write_all(body).await.unwrap();
+            sock.flush().await.unwrap();
+            request
+        })
+    })
+    .await;
+    let (config, db) =
+        make_proxy_config_with_local_http_upstream(HERMETIC_UPSTREAM_DOMAIN, upstream_port);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
-    let domain = ServerName::try_from("elie.net").unwrap();
+    let domain = ServerName::try_from(HERMETIC_UPSTREAM_DOMAIN).unwrap();
     let tls = connector.connect(domain, tcp).await.unwrap();
 
     let io = TokioIo::new(tls);
@@ -384,7 +440,7 @@ async fn mitm_proxy_records_http_method_and_path() {
     let req = hyper::Request::builder()
         .method("GET")
         .uri("/about")
-        .header("host", "elie.net")
+        .header("host", HERMETIC_UPSTREAM_DOMAIN)
         .body(Full::new(Bytes::new()))
         .unwrap();
     let resp = sender.send_request(req).await.unwrap();
@@ -392,7 +448,13 @@ async fn mitm_proxy_records_http_method_and_path() {
     let _ = resp.into_body().collect().await;
 
     drop(sender);
+    let upstream_request = upstream_task.await.unwrap();
     proxy_task.await.unwrap();
+
+    assert!(
+        upstream_request.starts_with(b"GET /about HTTP/1.1\r\n"),
+        "local upstream did not receive the intercepted method and path"
+    );
 
     db.flush().await;
 
@@ -400,7 +462,7 @@ async fn mitm_proxy_records_http_method_and_path() {
     let events = reader.recent_net_events(10).unwrap();
     assert!(!events.is_empty());
     assert_eq!(events[0].method.as_deref(), Some("GET"));
-    assert!(events[0].path.is_some());
+    assert_eq!(events[0].path.as_deref(), Some("/about"));
 }
 
 #[tokio::test]
@@ -2144,12 +2206,28 @@ async fn mitm_proxy_streams_large_payload() {
 /// This verifies the per-connection pooling produces correct telemetry for each request.
 #[tokio::test]
 async fn multiple_requests_reuse_upstream_connection() {
-    let (config, db) = make_proxy_config(&["elie.net"], &[], false);
+    let (upstream_port, upstream_task) = spawn_fake_upstream(|mut sock| {
+        Box::pin(async move {
+            let mut requests = Vec::new();
+            for _ in 0..3 {
+                requests.extend_from_slice(&read_http11_request(&mut sock).await);
+                sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                    .await
+                    .unwrap();
+                sock.flush().await.unwrap();
+            }
+            let _ = sock.shutdown().await;
+            requests
+        })
+    })
+    .await;
+    let (config, db) =
+        make_proxy_config_with_local_http_upstream(HERMETIC_UPSTREAM_DOMAIN, upstream_port);
     let (proxy_task, addr) = spawn_proxy(config).await;
 
     let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
     let connector = TlsConnector::from(Arc::new(make_tls_client_config()));
-    let domain = ServerName::try_from("elie.net").unwrap();
+    let domain = ServerName::try_from(HERMETIC_UPSTREAM_DOMAIN).unwrap();
     let tls = connector.connect(domain, tcp).await.unwrap();
 
     let io = TokioIo::new(tls);
@@ -2161,7 +2239,7 @@ async fn multiple_requests_reuse_upstream_connection() {
         let req = hyper::Request::builder()
             .method("HEAD")
             .uri(path)
-            .header("host", "elie.net")
+            .header("host", HERMETIC_UPSTREAM_DOMAIN)
             .body(Full::new(Bytes::new()))
             .unwrap();
         let resp = sender.send_request(req).await.unwrap();
@@ -2174,7 +2252,16 @@ async fn multiple_requests_reuse_upstream_connection() {
     }
 
     drop(sender);
+    let upstream_requests = upstream_task.await.unwrap();
     proxy_task.await.unwrap();
+
+    let upstream_requests = String::from_utf8(upstream_requests).unwrap();
+    for path in ["/", "/about", "/contact"] {
+        assert!(
+            upstream_requests.contains(&format!("HEAD {path} HTTP/1.1\r\n")),
+            "local upstream did not receive {path} on the reused connection"
+        );
+    }
 
     db.flush().await;
 
@@ -2186,8 +2273,9 @@ async fn multiple_requests_reuse_upstream_connection() {
         "3 keep-alive requests should produce 3 telemetry events"
     );
     for event in &events {
-        assert_eq!(event.domain, "elie.net");
+        assert_eq!(event.domain, HERMETIC_UPSTREAM_DOMAIN);
         assert_eq!(event.decision, Decision::Allowed);
         assert_eq!(event.method.as_deref(), Some("HEAD"));
+        assert_eq!(event.conn_type.as_deref(), Some("https-mitm"));
     }
 }
