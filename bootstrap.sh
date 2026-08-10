@@ -271,8 +271,13 @@ if command -v pnpm >/dev/null 2>&1; then
             exit 1
         fi
     fi
-    printf "  Locked Node workspaces...\n"
-    uv run capsem-gate install-node
+    if [ -n "${CAPSEM_GATE_RUN:-}" ]; then
+        printf "  [SKIP] Locked Node workspaces (inside %s; fast.toolchain.node already owns every locked workspace)\n" \
+            "$CAPSEM_GATE_RUN"
+    else
+        printf "  Locked Node workspaces...\n"
+        uv run capsem-gate install-node
+    fi
 else
     printf "  [SKIP] Node workspace deps (pnpm not installed -- doctor will catch this)\n"
 fi
@@ -352,6 +357,14 @@ echo ""
 echo "== Running doctor (with auto-fix) =="
 echo ""
 "$SCRIPT_DIR/scripts/doctor-common.sh" --fix
+
+# The gate runs in a fresh process whose PATH cannot inherit this script's
+# earlier export. Linux exposes exactly the config-owned Cargo tools through
+# the same managed ~/.local/bin boundary as rustup; macOS keeps its existing
+# Rustup/profile layout unchanged.
+if [ "$(uname -s)" = "Linux" ]; then
+    capsem_expose_gate_cargo_tools "$SCRIPT_DIR/config/gate.toml"
+fi
 
 echo ""
 echo "========================"

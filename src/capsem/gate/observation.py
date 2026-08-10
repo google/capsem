@@ -29,7 +29,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING
 
 from .errors import GateError
-from .faults import Event, Fault, facts_of, ignored_here, source_inodes
+from .faults import Attribution, Event, Fault, facts_of, ignored_here, source_inodes
 from .interception import CURRENT_STEP
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
@@ -149,10 +149,23 @@ class Watch:
         step = CURRENT_STEP.get()
         if step is not None:
             steps: tuple[str, ...] = (step,)
+            attribution: Attribution = "exact"
         else:
             with self._lock:
                 steps = tuple(sorted(self._live))
-        event = Event(at=time.time(), kind=kind, path=path, steps=steps, facts=facts_of(path))
+            # Watchdog dispatches on its own thread, so the ContextVar cannot
+            # name the writer. One live step is the only possible gate writer;
+            # two or more are diagnostic candidates, not a claim that every
+            # one touched the path.
+            attribution = "exact" if len(steps) <= 1 else "candidates"
+        event = Event(
+            at=time.time(),
+            kind=kind,
+            path=path,
+            steps=steps,
+            facts=facts_of(path),
+            attribution=attribution,
+        )
         self.events.append(event)
         if before is not None:
             history = self._modes.setdefault(path, [])
@@ -213,7 +226,7 @@ class Watch:
             if first != event.path and event.inode is not None:
                 self._fault(event, "duplicate-content", f"identical bytes already at {first}")
 
-        if len(event.steps) >= 2 and not source:
+        if event.attribution == "exact" and len(event.steps) >= 2 and not source:
             shared = set.intersection(
                 *(set(self._declared.get(step, frozenset())) for step in event.steps)
             )

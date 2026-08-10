@@ -3577,7 +3577,7 @@ struct RecordingProfileWorkflowRunner {
 impl ProfileWorkflowRunner for RecordingProfileWorkflowRunner {
     fn run(&mut self, args: &[String]) -> Result<()> {
         self.calls.push(args.to_vec());
-        if self.fail_watch && args.get(0).map(String::as_str) == Some("run") {
+        if self.fail_watch && args.first().map(String::as_str) == Some("run") {
             return Err(anyhow!("watched profile workflow failed"));
         }
         Ok(())

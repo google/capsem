@@ -37,6 +37,42 @@ capsem_rust_toolchain() {
     ' "$CAPSEM_RUST_PIN_FILE"
 }
 
+capsem_gate_cargo_tools() {
+    CAPSEM_GATE_CONFIG=$1
+    awk -F= '
+        /^[[:space:]]*\[\[toolchain[.]crates\]\][[:space:]]*$/ {
+            in_crate = 1
+            next
+        }
+        /^[[:space:]]*\[/ {
+            in_crate = 0
+        }
+        in_crate && $1 ~ /^[[:space:]]*name[[:space:]]*$/ {
+            value = $2
+            sub(/[[:space:]]*#.*/, "", value)
+            gsub(/^[[:space:]]*"|"[[:space:]]*$/, "", value)
+            if (value !~ /^[A-Za-z0-9_-]+$/ || seen[value]) {
+                printf "invalid or duplicate toolchain crate name in %s: %s\n", FILENAME, value > "/dev/stderr"
+                invalid = 1
+                next
+            }
+            seen[value] = 1
+            names[++count] = value
+        }
+        END {
+            if (invalid || count == 0) {
+                if (!invalid) {
+                    printf "no [[toolchain.crates]] names in %s\n", FILENAME > "/dev/stderr"
+                }
+                exit 2
+            }
+            for (position = 1; position <= count; position++) {
+                print names[position]
+            }
+        }
+    ' "$CAPSEM_GATE_CONFIG"
+}
+
 capsem_ensure_rust_toolchain() {
     CAPSEM_RUST_TOOLCHAIN=$1
     if ! rustup run "$CAPSEM_RUST_TOOLCHAIN" rustc --version >/dev/null 2>&1; then
@@ -54,20 +90,29 @@ capsem_ensure_rust_toolchain() {
     printf "  [ok]   Rust %s (checked-in toolchain)\n" "$CAPSEM_RUST_TOOLCHAIN"
 }
 
-capsem_expose_rustup_tools() {
+_capsem_rustup_bin_dir() {
     CAPSEM_RUSTUP_BIN=$(command -v rustup)
-    CAPSEM_RUSTUP_BIN_DIR=$(dirname "$CAPSEM_RUSTUP_BIN")
+    if [ "$(uname -s)" = "Linux" ]; then
+        CAPSEM_RUSTUP_BIN=$(readlink -f "$CAPSEM_RUSTUP_BIN")
+    fi
+    dirname "$CAPSEM_RUSTUP_BIN"
+}
+
+_capsem_cargo_bin_dir() {
+    printf '%s\n' "${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}/bin"
+}
+
+_capsem_expose_managed_tools() {
+    CAPSEM_RUSTUP_BIN_DIR=$1
+    shift
     mkdir -p "$HOME/.local/bin"
 
-    # Bootstrap itself prepends ~/.cargo/bin, but a child script cannot change
-    # the invoking agent's PATH. ~/.local/bin is already Capsem's user-level
-    # tool home, so expose the Rustup proxies there for the immediately
-    # following private-copy gate and for later shells.
-    for CAPSEM_RUST_TOOL in rustup rustc cargo; do
+    for CAPSEM_RUST_TOOL in "$@"; do
         CAPSEM_RUST_SOURCE="$CAPSEM_RUSTUP_BIN_DIR/$CAPSEM_RUST_TOOL"
         CAPSEM_RUST_LINK="$HOME/.local/bin/$CAPSEM_RUST_TOOL"
-        if [ ! -e "$CAPSEM_RUST_SOURCE" ]; then
-            printf "  [FAIL] rustup proxy missing: %s\n" "$CAPSEM_RUST_SOURCE" >&2
+        if [ ! -f "$CAPSEM_RUST_SOURCE" ] || [ ! -x "$CAPSEM_RUST_SOURCE" ]; then
+            printf "  [FAIL] managed Rust tool missing or not executable: %s\n" \
+                "$CAPSEM_RUST_SOURCE" >&2
             return 1
         fi
         if [ -L "$CAPSEM_RUST_LINK" ]; then
@@ -86,4 +131,24 @@ capsem_expose_rustup_tools() {
         ln -sfn "$CAPSEM_RUST_SOURCE" "$CAPSEM_RUST_LINK"
     done
     hash -r 2>/dev/null || true
+}
+
+capsem_expose_rustup_tools() {
+    CAPSEM_RUSTUP_BIN_DIR=$(_capsem_rustup_bin_dir)
+
+    # Bootstrap itself prepends ~/.cargo/bin, but a child script cannot change
+    # the invoking agent's PATH. ~/.local/bin is already Capsem's user-level
+    # tool home, so expose the Rustup proxies there for the immediately
+    # following private-copy gate and for later shells.
+    _capsem_expose_managed_tools "$CAPSEM_RUSTUP_BIN_DIR" rustup rustc cargo
+}
+
+capsem_expose_gate_cargo_tools() {
+    CAPSEM_GATE_CONFIG=$1
+    CAPSEM_CARGO_BIN_DIR=$(_capsem_cargo_bin_dir)
+    CAPSEM_GATE_CARGO_TOOL_LIST=$(capsem_gate_cargo_tools "$CAPSEM_GATE_CONFIG")
+    # Names are restricted to shell-safe words by capsem_gate_cargo_tools.
+    # shellcheck disable=SC2086
+    _capsem_expose_managed_tools \
+        "$CAPSEM_CARGO_BIN_DIR" $CAPSEM_GATE_CARGO_TOOL_LIST
 }

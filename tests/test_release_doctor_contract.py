@@ -1273,7 +1273,9 @@ def test_cdxgen_release_tool_prerequisite_is_documented() -> None:
     assert "CDXGEN_ACTUAL_VERSION=$(cdxgen --version" in release_preflight
     assert 'if [ "$CDXGEN_ACTUAL_VERSION" = "$CDXGEN_VERSION" ]' in release_preflight
     assert "npm install -g @cyclonedx/cdxgen@12.7.0" in release_preflight
-    assert "for tool in gh openssl cargo-sbom cdxgen" in doctor
+    assert "for tool in gh openssl cdxgen" in doctor
+    assert "capsem_gate_cargo_tools" in doctor
+    assert 'name = "cargo-sbom"' in _source_text("config/gate.toml")
     assert 'skip "$tool (only needed for releases)"' in doctor
     assert "npm install -g @cyclonedx/cdxgen@12.7.0" in asset_workflow
     assert "@cyclonedx/cdxgen@latest" not in asset_workflow

@@ -11,6 +11,7 @@ import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 #: Directories under the checkout a run may write. Everything else is input:
 #: the gate reads it, and changing it mid-run means the thing being qualified
@@ -62,6 +63,8 @@ def ignored_here(root: Path, directory: Path) -> bool:
 #: several, so this is keyed by root rather than global.
 _IGNORED: dict[Path, dict[str, bool]] = {}
 
+Attribution = Literal["exact", "candidates"]
+
 
 #: Hash files up to this size. Digests answer "are these the same bytes under
 #: two names", which matters for seeds and manifests; a multi-gigabyte rootfs
@@ -88,13 +91,15 @@ class Facts:
 
 @dataclass(frozen=True, slots=True)
 class Event:
-    """One observed change and who caused it."""
+    """One observed change and its exact writer or live-step candidates."""
 
     at: float
     kind: str
     path: Path
     steps: tuple[str, ...]
     facts: Facts = Facts()
+    attribution: Attribution = "exact"
+    """Whether ``steps`` are writers or merely the steps live at notification."""
 
     @property
     def mode(self) -> int | None:

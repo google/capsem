@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Filesystem source mutations discovered by watchdog now cross back to the
   plan worker and fail publishing runs after durable fault/journal evidence;
   transient mutate-and-revert can no longer kill only the observer thread and
-  let a release continue.
+  let a release continue. Watchdog-thread events also keep concurrent steps as
+  candidates instead of falsely claiming every live step wrote the path.
 
 - Package asset selection now uses a verified relative `assets/current`
   symlink instead of copying and de-hardlinking the selected architecture tree,
@@ -31,7 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Bootstrap now installs all four config-owned Node workspaces through the
   gate instead of provisioning only the frontend by hand, and derives,
   installs, exposes, and verifies the exact checked-in Rust toolchain instead
-  of trusting an ambient `cargo` shim or default toolchain.
+  of trusting an ambient `cargo` shim or default toolchain. It also exposes
+  every config-owned Cargo gate tool to subsequent hermetic processes and
+  avoids re-entering the Node installer from bootstrap already owned by a
+  running gate.
 
 - Linux Bubblewrap qualification now explicitly preserves the host device
   mount. A root bind alone exposed `/dev/null`, KVM, and vhost nodes but left

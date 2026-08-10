@@ -238,14 +238,58 @@ def test_source_writable_beyond_its_owner_is_named() -> None:
     assert "over-permission" in {fault.reason for fault in watch.faults}
 
 
-def test_two_overlapping_steps_touching_one_build_path_is_named() -> None:
-    """Build output, because a source path is the graver finding and is
-    reported as that instead."""
+def test_two_exact_writers_touching_one_build_path_are_named() -> None:
+    """An exact multi-writer event may still prove undeclared contention."""
     watch = Watch([], source_root=Path("/repo"), declared={"a": frozenset(), "b": frozenset()})
     watch._judge(
-        Event(at=1.0, kind="modified", path=Path("/repo/target/store.db"), steps=("a", "b"))
+        Event(
+            at=1.0,
+            kind="modified",
+            path=Path("/repo/target/store.db"),
+            steps=("a", "b"),
+            attribution="exact",
+        )
     )
     assert "undeclared-contention" in {fault.reason for fault in watch.faults}
+
+
+def test_an_async_change_does_not_turn_live_steps_into_claimed_writers() -> None:
+    """Watchdog runs on its own thread, where only candidate steps are known."""
+    watch = Watch([], source_root=Path("/repo"), declared={"a": frozenset(), "b": frozenset()})
+    watch.entered("a")
+    watch.entered("b")
+
+    watch.observed("modified", Path("/repo/target/store.db"))
+
+    assert watch.events[-1].steps == ("a", "b")
+    assert watch.events[-1].attribution == "candidates"
+    assert "undeclared-contention" not in {fault.reason for fault in watch.faults}
+
+
+def test_one_live_step_is_still_attributed_exactly() -> None:
+    watch = Watch([], source_root=Path("/repo"))
+    watch.entered("build")
+
+    watch.observed("modified", Path("/repo/target/output"))
+
+    assert watch.events[-1].steps == ("build",)
+    assert watch.events[-1].attribution == "exact"
+
+
+def test_interception_names_the_exact_step_among_live_candidates() -> None:
+    from capsem.gate.interception import CURRENT_STEP
+
+    watch = Watch([], source_root=Path("/repo"))
+    watch.entered("a")
+    watch.entered("b")
+    token = CURRENT_STEP.set("a")
+    try:
+        watch.observed("write", Path("/repo/target/output"))
+    finally:
+        CURRENT_STEP.reset(token)
+
+    assert watch.events[-1].steps == ("a",)
+    assert watch.events[-1].attribution == "exact"
 
 
 def test_a_declared_shared_resource_is_not_a_fault() -> None:
@@ -257,7 +301,13 @@ def test_a_declared_shared_resource_is_not_a_fault() -> None:
         declared={"a": frozenset({"asset_tree"}), "b": frozenset({"asset_tree"})},
     )
     watch._judge(
-        Event(at=1.0, kind="modified", path=Path("/repo/target/assets/x"), steps=("a", "b"))
+        Event(
+            at=1.0,
+            kind="modified",
+            path=Path("/repo/target/assets/x"),
+            steps=("a", "b"),
+            attribution="exact",
+        )
     )
     assert watch.faults == []
 

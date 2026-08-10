@@ -91,7 +91,7 @@ def test_bootstrap_waits_for_container_dns_after_colima_restart() -> None:
     assert "for attempt in $(seq 1 30)" in bootstrap
 
 
-def test_linux_bootstrap_owns_host_packages_node_docker_and_kvm_access() -> None:
+def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -> None:
     bootstrap = _read("bootstrap.sh")
     linux = _read("scripts/bootstrap-linux.sh")
 
@@ -167,6 +167,10 @@ def test_linux_bootstrap_owns_host_packages_node_docker_and_kvm_access() -> None
     assert "uv sync --frozen" in bootstrap
     assert "cargo fetch --locked" in bootstrap
     assert "cd frontend && CI=true pnpm install" not in bootstrap
+    assert 'if [ -n "${CAPSEM_GATE_RUN:-}" ]; then' in bootstrap
+    assert "fast.toolchain.node already owns every locked workspace" in bootstrap
+    assert bootstrap.index('if [ -n "${CAPSEM_GATE_RUN:-}" ]; then') \
+        < bootstrap.index("uv run capsem-gate install-node")
 
     # Daemon activation and a new socket are asynchronous on a fresh host.
     # Bootstrap waits for both the socket and post-ACL client access instead
@@ -221,7 +225,8 @@ def test_bootstrap_installs_and_proves_the_exact_checked_in_rust_toolchain() -> 
     assert bootstrap.rfind('if [ "$(uname -s)" = "Linux" ]', 0, expose) >= 0
     assert 'rustup toolchain install "$CAPSEM_RUST_TOOLCHAIN" --profile minimal' in rust
     assert 'rustup run "$CAPSEM_RUST_TOOLCHAIN" rustc --version' in rust
-    assert 'for CAPSEM_RUST_TOOL in rustup rustc cargo' in rust
+    assert '_capsem_expose_managed_tools "$CAPSEM_RUSTUP_BIN_DIR" rustup rustc cargo' in rust
+    assert 'for CAPSEM_RUST_TOOL in "$@"' in rust
     assert '"$HOME/.local/bin/$CAPSEM_RUST_TOOL"' in rust
     assert "refusing to replace unmanaged" in rust
 
@@ -291,6 +296,205 @@ def test_bootstrap_refuses_to_replace_an_unmanaged_rust_tool(tmp_path: Path) -> 
 
     assert completed.returncode != 0
     assert "refusing to replace unmanaged file" in completed.stderr
+
+
+def test_rust_bootstrap_reads_the_complete_gate_cargo_tool_inventory() -> None:
+    completed = subprocess.run(
+        [
+            "sh",
+            "-c",
+            ". scripts/bootstrap-rust.sh; "
+            "capsem_gate_cargo_tools config/gate.toml",
+        ],
+        cwd=PROJECT_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.splitlines() == [
+        "cargo-llvm-cov",
+        "b3sum",
+        "cargo-audit",
+        "cargo-sbom",
+        "cargo-tauri",
+    ]
+
+
+def test_rust_bootstrap_rejects_missing_or_duplicate_cargo_tool_inventory(
+    tmp_path: Path,
+) -> None:
+    cases = {
+        "missing.toml": "[toolchain]\nrust_targets = []\n",
+        "duplicate.toml": (
+            '[[toolchain.crates]]\nname = "cargo-one"\n'
+            '[[toolchain.crates]]\nname = "cargo-one"\n'
+        ),
+    }
+    for filename, content in cases.items():
+        config = tmp_path / filename
+        config.write_text(content, encoding="utf-8")
+        completed = subprocess.run(
+            [
+                "sh",
+                "-c",
+                ". scripts/bootstrap-rust.sh; "
+                f"capsem_gate_cargo_tools {config}",
+            ],
+            cwd=PROJECT_ROOT,
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+
+        assert completed.returncode != 0
+        assert str(config) in completed.stderr
+
+
+def test_bootstrap_and_doctor_install_then_expose_config_owned_cargo_tools() -> None:
+    bootstrap = _read("bootstrap.sh")
+    doctor = _read("scripts/doctor-common.sh")
+
+    assert '_doctor_install_gate_tools' in doctor
+    assert 'uv run capsem-gate install-tools' in doctor
+    assert 'capsem_gate_cargo_tools "$PROJECT_ROOT/config/gate.toml"' in doctor
+    assert 'capsem_expose_gate_cargo_tools "$PROJECT_ROOT/config/gate.toml"' in doctor
+    assert "cargo-sbom (only needed for releases)" not in doctor
+
+    expose = bootstrap.rindex("capsem_expose_gate_cargo_tools")
+    doctor_run = bootstrap.index('"$SCRIPT_DIR/scripts/doctor-common.sh" --fix')
+    assert doctor_run < expose
+    assert bootstrap.rfind('if [ "$(uname -s)" = "Linux" ]', 0, expose) >= 0
+
+
+def test_gate_cargo_tool_exposure_is_limited_to_the_configured_inventory(
+    tmp_path: Path,
+) -> None:
+    rust_bin = tmp_path / "rustup-bin"
+    cargo_home = tmp_path / "cargo-home"
+    cargo_bin = cargo_home / "bin"
+    home = tmp_path / "home"
+    config = tmp_path / "gate.toml"
+    rust_bin.mkdir()
+    cargo_bin.mkdir(parents=True)
+    config.write_text(
+        '[[toolchain.crates]]\nname = "cargo-one"\ninstall = ["cargo"]\n'
+        '[[toolchain.crates]]\nname = "cargo-two"\ninstall = ["cargo"]\n',
+        encoding="utf-8",
+    )
+    rustup = rust_bin / "rustup"
+    rustup.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    rustup.chmod(0o755)
+    for tool in ("cargo-one", "cargo-two", "not-configured"):
+        binary = cargo_bin / tool
+        binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        binary.chmod(0o755)
+
+    subprocess.run(
+        [
+            "sh",
+            "-c",
+            ". scripts/bootstrap-rust.sh; "
+            f"capsem_expose_gate_cargo_tools {config}",
+        ],
+        cwd=PROJECT_ROOT,
+        env={
+            "CARGO_HOME": str(cargo_home),
+            "HOME": str(home),
+            "PATH": f"{rust_bin}:/usr/bin:/bin",
+        },
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    local_bin = home / ".local" / "bin"
+    assert (local_bin / "cargo-one").is_symlink()
+    assert (local_bin / "cargo-two").is_symlink()
+    assert not (local_bin / "not-configured").exists()
+
+
+def test_managed_tool_exposure_requires_a_regular_executable(tmp_path: Path) -> None:
+    rust_bin = tmp_path / "cargo-bin"
+    home = tmp_path / "home"
+    rust_bin.mkdir()
+    tool = rust_bin / "cargo-broken"
+    tool.write_text("not executable\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "sh",
+            "-c",
+            ". scripts/bootstrap-rust.sh; "
+            f"_capsem_expose_managed_tools {rust_bin} cargo-broken",
+        ],
+        cwd=PROJECT_ROOT,
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.returncode != 0
+    assert "managed Rust tool missing or not executable" in completed.stderr
+    assert not (home / ".local" / "bin" / "cargo-broken").exists()
+
+
+def test_linux_managed_tool_exposure_is_idempotent_with_only_local_bin_on_path(
+    tmp_path: Path,
+) -> None:
+    rust_bin = tmp_path / "cargo-bin"
+    home = tmp_path / "home"
+    local_bin = home / ".local" / "bin"
+    rust_bin.mkdir()
+    for tool in ("rustup", "rustc", "cargo"):
+        binary = rust_bin / tool
+        binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        binary.chmod(0o755)
+
+    first = subprocess.run(
+        ["sh", "-c", ". scripts/bootstrap-rust.sh; capsem_expose_rustup_tools"],
+        cwd=PROJECT_ROOT,
+        env={"HOME": str(home), "PATH": f"{rust_bin}:/usr/bin:/bin"},
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    second = subprocess.run(
+        ["sh", "-c", ". scripts/bootstrap-rust.sh; capsem_expose_rustup_tools"],
+        cwd=PROJECT_ROOT,
+        env={"HOME": str(home), "PATH": f"{local_bin}:/usr/bin:/bin"},
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert first.stderr == second.stderr == ""
+    assert all((local_bin / tool).is_symlink() for tool in ("rustup", "rustc", "cargo"))
+
+
+def test_darwin_rustup_path_does_not_require_gnu_readlink(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    for tool, body in {
+        "uname": "#!/bin/sh\nprintf 'Darwin\\n'\n",
+        "readlink": "#!/bin/sh\nexit 97\n",
+        "rustup": "#!/bin/sh\nexit 0\n",
+    }.items():
+        binary = fake_bin / tool
+        binary.write_text(body, encoding="utf-8")
+        binary.chmod(0o755)
+
+    completed = subprocess.run(
+        ["sh", "-c", ". scripts/bootstrap-rust.sh; _capsem_rustup_bin_dir"],
+        cwd=PROJECT_ROOT,
+        env={"HOME": str(tmp_path / "home"), "PATH": f"{fake_bin}:/usr/bin:/bin"},
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.strip() == str(fake_bin)
 
 
 def test_linux_doctor_uses_ubuntu_buildx_name_and_enforces_node_major() -> None:

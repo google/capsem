@@ -87,6 +87,24 @@ _doctor_install_node_workspaces() {
     uv run capsem-gate install-node
 }
 
+_doctor_install_gate_tools() {
+    if [ -n "${CAPSEM_GATE_RUN:-}" ]; then
+        printf "  [FAIL] Cargo gate tools must be installed before entering %s\n" \
+            "$CAPSEM_GATE_RUN" >&2
+        printf "         Run ./bootstrap.sh on the host, then retry the gate.\n" >&2
+        return 1
+    fi
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        local rustup_bin cargo_bin
+        rustup_bin=$(readlink -f "$(command -v rustup)")
+        cargo_bin=$(dirname "$rustup_bin")
+        PATH="$cargo_bin:$PATH" uv run capsem-gate install-tools
+        capsem_expose_gate_cargo_tools "$PROJECT_ROOT/config/gate.toml"
+    else
+        uv run capsem-gate install-tools
+    fi
+}
+
 # Order matters: tools before builds, builds before assets
 _reg rustup-targets   "rustup target add --toolchain $CAPSEM_RUST_TOOLCHAIN aarch64-unknown-linux-musl x86_64-unknown-linux-musl" \
                       "Install Rust cross-compile targets"
@@ -94,14 +112,8 @@ _reg llvm-tools       "rustup component add --toolchain $CAPSEM_RUST_TOOLCHAIN l
                       "Install llvm-tools (provides rust-lld)"
 _reg linux-musl-tools "_doctor_install_linux_musl_tools" \
                       "Install Linux musl C compiler/linker (musl-tools)"
-_reg cargo-llvm-cov   "cargo install cargo-llvm-cov" \
-                      "Install cargo-llvm-cov"
-_reg cargo-audit      "cargo install cargo-audit" \
-                      "Install cargo-audit"
-_reg b3sum            "cargo install b3sum --locked" \
-                      "Install b3sum"
-_reg cargo-tauri      "cargo install tauri-cli --locked" \
-                      "Install cargo-tauri (tauri-cli crate)"
+_reg gate-cargo-tools "_doctor_install_gate_tools" \
+                      "Install every config-owned Cargo gate tool"
 _reg entitlements     "git checkout entitlements.plist" \
                       "Restore entitlements.plist"
 _reg cargo-config     "git checkout .cargo/config.toml" \
@@ -254,10 +266,11 @@ _check_cargo_tool() {
         fixable "$fix_id" "$tool not found"
     fi
 }
-_check_cargo_tool cargo-llvm-cov cargo-llvm-cov
-_check_cargo_tool cargo-audit    cargo-audit
-_check_cargo_tool b3sum          b3sum
-_check_cargo_tool cargo-tauri    cargo-tauri
+while IFS= read -r tool; do
+    _check_cargo_tool "$tool" gate-cargo-tools
+done <<EOF
+$(capsem_gate_cargo_tools "$PROJECT_ROOT/config/gate.toml")
+EOF
 
 section "Container Tools"
 if command -v docker &>/dev/null; then
@@ -330,7 +343,7 @@ else
 fi
 
 section "Release Tools"
-for tool in gh openssl cargo-sbom cdxgen; do
+for tool in gh openssl cdxgen; do
     if command -v "$tool" &>/dev/null; then
         pass "$tool"
     else
