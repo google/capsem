@@ -14,7 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carry a bounded, versioned backend payload and reject replaced paths,
   escaped or malformed state, changed share identity, and inconsistent MMIO
   topology before activation, so a resumed guest can keep using `/root` and
-  descriptors opened before suspend instead of hanging on its next exec.
+  descriptors opened before suspend instead of hanging on its next exec. The
+  vhost-vsock backend is also stopped behind its vring barriers before RAM is
+  copied, records both queue positions, and must restart successfully from
+  those positions before a restored VM is allowed to run.
 
 - Fresh bootstrap, reusable fast CI, both orthogonal release pairing jobs, and
   the Linux host-builder now provision the same exact `cargo-nextest` version.

@@ -127,6 +127,7 @@ pub(super) const VHOST_SET_MEM_TABLE: u64 = _iow(VHOST, 0x03, 8); // sizeof(vhos
 pub(super) const VHOST_SET_VRING_NUM: u64 = _iow(VHOST, 0x10, 8); // sizeof(vhost_vring_state)
 pub(super) const VHOST_SET_VRING_ADDR: u64 = _iow(VHOST, 0x11, 40); // sizeof(vhost_vring_addr)
 pub(super) const VHOST_SET_VRING_BASE: u64 = _iow(VHOST, 0x12, 8); // sizeof(vhost_vring_state)
+pub(super) const VHOST_GET_VRING_BASE: u64 = _iowr(VHOST, 0x12, 8); // sizeof(vhost_vring_state)
 pub(super) const VHOST_SET_VRING_KICK: u64 = _iow(VHOST, 0x20, 8); // sizeof(vhost_vring_file)
 pub(super) const VHOST_SET_VRING_CALL: u64 = _iow(VHOST, 0x21, 8); // sizeof(vhost_vring_file)
 pub(super) const VHOST_VSOCK_SET_GUEST_CID: u64 = _iow(VHOST, 0x60, 8); // sizeof(u64)

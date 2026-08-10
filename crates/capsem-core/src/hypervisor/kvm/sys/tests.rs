@@ -241,6 +241,13 @@ fn vhost_set_vring_addr_value() {
 }
 
 #[test]
+fn vhost_get_vring_base_value() {
+    assert_eq!(VHOST_GET_VRING_BASE, 0xC008_AF12);
+    assert_ne!(VHOST_GET_VRING_BASE & (1 << 30), 0); // write direction
+    assert_ne!(VHOST_GET_VRING_BASE & (1 << 31), 0); // read direction
+}
+
+#[test]
 fn vhost_features_values() {
     let get = VHOST_GET_FEATURES;
     assert_eq!(get & 0xFF, 0x00);

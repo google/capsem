@@ -9,16 +9,16 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use super::memory::{self, GuestMemoryRef};
 use super::sys::{
     self, VhostMemoryRegion, VhostVringAddr, VhostVringFile, VhostVringState, VHOST_GET_FEATURES,
-    VHOST_SET_FEATURES, VHOST_SET_MEM_TABLE, VHOST_SET_OWNER, VHOST_SET_VRING_ADDR,
-    VHOST_SET_VRING_BASE, VHOST_SET_VRING_CALL, VHOST_SET_VRING_KICK, VHOST_SET_VRING_NUM,
-    VHOST_VSOCK_SET_GUEST_CID, VHOST_VSOCK_SET_RUNNING,
+    VHOST_GET_VRING_BASE, VHOST_SET_FEATURES, VHOST_SET_MEM_TABLE, VHOST_SET_OWNER,
+    VHOST_SET_VRING_ADDR, VHOST_SET_VRING_BASE, VHOST_SET_VRING_CALL, VHOST_SET_VRING_KICK,
+    VHOST_SET_VRING_NUM, VHOST_VSOCK_SET_GUEST_CID, VHOST_VSOCK_SET_RUNNING,
 };
 use super::virtio_mmio::{QueueConfig, VirtioDevice};
 use crate::hypervisor::VsockConnection;
@@ -34,6 +34,8 @@ const VSOCK_NUM_QUEUES: usize = 3; // rx, tx, event
                                    // virtio-vsock device still exposes the event queue, but it is not passed to
                                    // VHOST_SET_VRING_* ioctls because the kernel backend has vqs[2].
 const VHOST_VSOCK_BACKEND_QUEUES: usize = 2;
+const VSOCK_CHECKPOINT_VERSION: u32 = 1;
+const VSOCK_CHECKPOINT_BYTES: usize = std::mem::size_of::<u32>() * (1 + VHOST_VSOCK_BACKEND_QUEUES);
 
 /// Reserved CIDs: 0 = hypervisor, 1 = reserved, 2 = host.
 const MIN_GUEST_CID: u32 = 3;
@@ -62,6 +64,20 @@ pub(super) struct VhostVsockDevice {
     kick_fds: [OwnedFd; VSOCK_NUM_QUEUES],
     call_fds: [OwnedFd; VSOCK_NUM_QUEUES],
     activated: bool,
+    checkpoint_state: Option<Vec<u8>>,
+    restore_vring_bases: Option<[u32; VHOST_VSOCK_BACKEND_QUEUES]>,
+}
+
+trait VhostIoctl {
+    fn call(&mut self, fd: RawFd, request: u64, arg: u64) -> Result<()>;
+}
+
+struct KernelVhostIoctl;
+
+impl VhostIoctl for KernelVhostIoctl {
+    fn call(&mut self, fd: RawFd, request: u64, arg: u64) -> Result<()> {
+        vhost_ioctl(fd, request, arg)
+    }
 }
 
 /// Validate that a guest CID is usable.
@@ -107,6 +123,8 @@ impl VhostVsockDevice {
             kick_fds,
             call_fds,
             activated: false,
+            checkpoint_state: None,
+            restore_vring_bases: None,
         };
 
         Ok((dev, call_raw))
@@ -114,6 +132,17 @@ impl VhostVsockDevice {
 
     /// Configure the vhost-vsock backend with queue addresses from the guest.
     fn configure_vhost(&mut self, mem: &GuestMemoryRef, queues: &[QueueConfig]) -> Result<()> {
+        let mut ioctl = KernelVhostIoctl;
+        self.configure_vhost_with(mem, queues, None, &mut ioctl)
+    }
+
+    fn configure_vhost_with<I: VhostIoctl + ?Sized>(
+        &mut self,
+        mem: &GuestMemoryRef,
+        queues: &[QueueConfig],
+        restore_vring_bases: Option<[u32; VHOST_VSOCK_BACKEND_QUEUES]>,
+        ioctl: &mut I,
+    ) -> Result<()> {
         let vhost_fd = self
             .vhost_fd
             .as_ref()
@@ -121,22 +150,26 @@ impl VhostVsockDevice {
             .as_raw_fd();
 
         // 1. Set owner
-        vhost_ioctl(vhost_fd, VHOST_SET_OWNER, 0).context("VHOST_SET_OWNER")?;
+        ioctl
+            .call(vhost_fd, VHOST_SET_OWNER, 0)
+            .context("VHOST_SET_OWNER")?;
 
         let mut backend_features = 0u64;
-        vhost_ioctl(
-            vhost_fd,
-            VHOST_GET_FEATURES,
-            &mut backend_features as *mut u64 as u64,
-        )
-        .context("VHOST_GET_FEATURES")?;
+        ioctl
+            .call(
+                vhost_fd,
+                VHOST_GET_FEATURES,
+                &mut backend_features as *mut u64 as u64,
+            )
+            .context("VHOST_GET_FEATURES")?;
         let enabled_features = backend_features & self.features();
-        vhost_ioctl(
-            vhost_fd,
-            VHOST_SET_FEATURES,
-            &enabled_features as *const u64 as u64,
-        )
-        .context("VHOST_SET_FEATURES")?;
+        ioctl
+            .call(
+                vhost_fd,
+                VHOST_SET_FEATURES,
+                &enabled_features as *const u64 as u64,
+            )
+            .context("VHOST_SET_FEATURES")?;
         debug!(
             backend_features = format_args!("{backend_features:#x}"),
             enabled_features = format_args!("{enabled_features:#x}"),
@@ -159,7 +192,8 @@ impl VhostVsockDevice {
                 );
             }
         }
-        vhost_ioctl(vhost_fd, VHOST_SET_MEM_TABLE, mem_table.as_ptr() as u64)
+        ioctl
+            .call(vhost_fd, VHOST_SET_MEM_TABLE, mem_table.as_ptr() as u64)
             .context("VHOST_SET_MEM_TABLE")?;
 
         if queues.len() < VHOST_VSOCK_BACKEND_QUEUES {
@@ -177,36 +211,45 @@ impl VhostVsockDevice {
                 index: i as u32,
                 num: queue.size as u32,
             };
-            vhost_ioctl(
-                vhost_fd,
-                VHOST_SET_VRING_NUM,
-                &vring_state as *const _ as u64,
-            )
-            .context("VHOST_SET_VRING_NUM")?;
+            ioctl
+                .call(
+                    vhost_fd,
+                    VHOST_SET_VRING_NUM,
+                    &vring_state as *const _ as u64,
+                )
+                .context("VHOST_SET_VRING_NUM")?;
 
             // Set base index to the next descriptor vhost should consume.
             // On warm restore, the guest driver will not rebuild the rings.
             // RX descriptors completed before suspend must not be reused, but
             // TX needs to wait for the next guest submission instead of
             // resuming from stale used-ring state.
-            let used_idx = queue_used_idx(mem, queue).context("read vhost-vsock used ring idx")?;
-            let avail_idx =
-                queue_avail_idx(mem, queue).context("read vhost-vsock avail ring idx")?;
-            let base = if i == 0 { used_idx } else { avail_idx };
+            let base = if let Some(bases) = restore_vring_bases {
+                bases[i]
+            } else {
+                let used_idx =
+                    queue_used_idx(mem, queue).context("read vhost-vsock used ring idx")?;
+                let avail_idx =
+                    queue_avail_idx(mem, queue).context("read vhost-vsock avail ring idx")?;
+                let base = if i == 0 { used_idx } else { avail_idx };
+                debug!(
+                    queue_index = i,
+                    base, used_idx, avail_idx, "vhost-vsock vring base derived"
+                );
+                base
+            };
             let vring_base = VhostVringState {
                 index: i as u32,
                 num: base,
             };
-            debug!(
-                queue_index = i,
-                base, used_idx, avail_idx, "vhost-vsock vring base restored"
-            );
-            vhost_ioctl(
-                vhost_fd,
-                VHOST_SET_VRING_BASE,
-                &vring_base as *const _ as u64,
-            )
-            .context("VHOST_SET_VRING_BASE")?;
+            debug!(queue_index = i, base, "vhost-vsock vring base configured");
+            ioctl
+                .call(
+                    vhost_fd,
+                    VHOST_SET_VRING_BASE,
+                    &vring_base as *const _ as u64,
+                )
+                .context("VHOST_SET_VRING_BASE")?;
 
             // Translate GPA -> HVA for vring addresses
             let desc_hva = mem
@@ -227,57 +270,171 @@ impl VhostVsockDevice {
                 avail_user_addr: avail_hva,
                 log_guest_addr: 0,
             };
-            vhost_ioctl(
-                vhost_fd,
-                VHOST_SET_VRING_ADDR,
-                &vring_addr as *const _ as u64,
-            )
-            .context("VHOST_SET_VRING_ADDR")?;
+            ioctl
+                .call(
+                    vhost_fd,
+                    VHOST_SET_VRING_ADDR,
+                    &vring_addr as *const _ as u64,
+                )
+                .context("VHOST_SET_VRING_ADDR")?;
 
             // Set kick eventfd (guest -> vhost notification)
             let kick_file = VhostVringFile {
                 index: i as u32,
                 fd: self.kick_fds[i].as_raw_fd(),
             };
-            vhost_ioctl(
-                vhost_fd,
-                VHOST_SET_VRING_KICK,
-                &kick_file as *const _ as u64,
-            )
-            .context("VHOST_SET_VRING_KICK")?;
+            ioctl
+                .call(
+                    vhost_fd,
+                    VHOST_SET_VRING_KICK,
+                    &kick_file as *const _ as u64,
+                )
+                .context("VHOST_SET_VRING_KICK")?;
 
             // Set call eventfd (vhost -> guest interrupt)
             let call_file = VhostVringFile {
                 index: i as u32,
                 fd: self.call_fds[i].as_raw_fd(),
             };
-            vhost_ioctl(
-                vhost_fd,
-                VHOST_SET_VRING_CALL,
-                &call_file as *const _ as u64,
-            )
-            .context("VHOST_SET_VRING_CALL")?;
+            ioctl
+                .call(
+                    vhost_fd,
+                    VHOST_SET_VRING_CALL,
+                    &call_file as *const _ as u64,
+                )
+                .context("VHOST_SET_VRING_CALL")?;
         }
 
         // 4. Set guest CID
         let cid = self.guest_cid;
-        vhost_ioctl(
-            vhost_fd,
-            VHOST_VSOCK_SET_GUEST_CID,
-            &cid as *const u64 as u64,
-        )
-        .context("VHOST_VSOCK_SET_GUEST_CID")?;
+        ioctl
+            .call(
+                vhost_fd,
+                VHOST_VSOCK_SET_GUEST_CID,
+                &cid as *const u64 as u64,
+            )
+            .context("VHOST_VSOCK_SET_GUEST_CID")?;
 
         let running: libc::c_int = 1;
-        vhost_ioctl(
-            vhost_fd,
-            VHOST_VSOCK_SET_RUNNING,
-            &running as *const libc::c_int as u64,
-        )
-        .context("VHOST_VSOCK_SET_RUNNING")?;
+        ioctl
+            .call(
+                vhost_fd,
+                VHOST_VSOCK_SET_RUNNING,
+                &running as *const libc::c_int as u64,
+            )
+            .context("VHOST_VSOCK_SET_RUNNING=1")?;
 
         Ok(())
     }
+
+    fn quiesce_with<I: VhostIoctl + ?Sized>(&mut self, ioctl: &mut I) -> Result<()> {
+        if !self.activated {
+            self.checkpoint_state = Some(Vec::new());
+            return Ok(());
+        }
+        let vhost_fd = self
+            .vhost_fd
+            .as_ref()
+            .context("vhost-vsock fd not available")?
+            .as_raw_fd();
+
+        // VHOST_VSOCK_SET_RUNNING=0 detaches both backends while holding each
+        // vring mutex. It therefore waits for active handlers to leave guest
+        // memory, and later queued handlers observe no backend. It must
+        // complete before GET_VRING_BASE and before the caller copies RAM.
+        let running: libc::c_int = 0;
+        ioctl
+            .call(
+                vhost_fd,
+                VHOST_VSOCK_SET_RUNNING,
+                &running as *const libc::c_int as u64,
+            )
+            .context("VHOST_VSOCK_SET_RUNNING=0")?;
+
+        let mut vring_bases = [0u32; VHOST_VSOCK_BACKEND_QUEUES];
+        for (index, base) in vring_bases.iter_mut().enumerate() {
+            let mut state = VhostVringState {
+                index: index as u32,
+                num: 0,
+            };
+            ioctl
+                .call(
+                    vhost_fd,
+                    VHOST_GET_VRING_BASE,
+                    &mut state as *mut VhostVringState as u64,
+                )
+                .with_context(|| format!("VHOST_GET_VRING_BASE queue {index}"))?;
+            ensure!(
+                state.num <= u16::MAX as u32,
+                "vhost-vsock queue {index} returned invalid vring base {}",
+                state.num
+            );
+            *base = state.num;
+        }
+
+        self.checkpoint_state = Some(encode_vsock_checkpoint(vring_bases));
+        debug!(
+            event_name = "virtio.vsock.quiesce",
+            rx_base = vring_bases[0],
+            tx_base = vring_bases[1],
+            "vhost-vsock backend stopped and vring state captured"
+        );
+        Ok(())
+    }
+
+    fn restore_activate_with<I: VhostIoctl + ?Sized>(
+        &mut self,
+        mem: GuestMemoryRef,
+        queues: &[QueueConfig],
+        ioctl: &mut I,
+    ) -> Result<()> {
+        ensure!(!self.activated, "vhost-vsock backend is already active");
+        let vring_bases = self
+            .restore_vring_bases
+            .context("missing vhost-vsock checkpoint state for warm restore")?;
+        self.configure_vhost_with(&mem, queues, Some(vring_bases), ioctl)
+            .context("restore vhost-vsock backend")?;
+        self.activated = true;
+        info!(
+            guest_cid = self.guest_cid,
+            rx_base = vring_bases[0],
+            tx_base = vring_bases[1],
+            "vhost-vsock restored and restarted"
+        );
+        Ok(())
+    }
+}
+
+fn encode_vsock_checkpoint(vring_bases: [u32; VHOST_VSOCK_BACKEND_QUEUES]) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(VSOCK_CHECKPOINT_BYTES);
+    encoded.extend_from_slice(&VSOCK_CHECKPOINT_VERSION.to_le_bytes());
+    for base in vring_bases {
+        encoded.extend_from_slice(&base.to_le_bytes());
+    }
+    encoded
+}
+
+fn decode_vsock_checkpoint(encoded: &[u8]) -> Result<[u32; VHOST_VSOCK_BACKEND_QUEUES]> {
+    ensure!(
+        encoded.len() == VSOCK_CHECKPOINT_BYTES,
+        "invalid vhost-vsock checkpoint length: {}",
+        encoded.len()
+    );
+    let version = u32::from_le_bytes(encoded[0..4].try_into().unwrap());
+    ensure!(
+        version == VSOCK_CHECKPOINT_VERSION,
+        "unsupported vhost-vsock checkpoint version: {version}"
+    );
+    let mut vring_bases = [0u32; VHOST_VSOCK_BACKEND_QUEUES];
+    for (index, base) in vring_bases.iter_mut().enumerate() {
+        let offset = std::mem::size_of::<u32>() * (index + 1);
+        *base = u32::from_le_bytes(encoded[offset..offset + 4].try_into().unwrap());
+        ensure!(
+            *base <= u16::MAX as u32,
+            "invalid vhost-vsock queue {index} vring base: {base}"
+        );
+    }
+    Ok(vring_bases)
 }
 
 fn queue_used_idx(mem: &GuestMemoryRef, queue: &QueueConfig) -> Result<u32> {
@@ -335,7 +492,11 @@ pub(super) fn spawn_call_irq_bridges(
                 if let Err(e) =
                     call_irq_bridge_loop(queue_index, call_fd, irq_fd, interrupt_status, shutdown)
                 {
-                    warn!(queue_index, error = format!("{e:#}"), "vhost-vsock call irq bridge stopped");
+                    warn!(
+                        queue_index,
+                        error = format!("{e:#}"),
+                        "vhost-vsock call irq bridge stopped"
+                    );
                 }
             })
             .context("failed to spawn vhost-vsock call irq bridge")?;
@@ -549,6 +710,43 @@ impl VirtioDevice for VhostVsockDevice {
         }
         false
     }
+
+    fn quiesce(&mut self) -> Result<()> {
+        let mut ioctl = KernelVhostIoctl;
+        self.quiesce_with(&mut ioctl)
+    }
+
+    fn checkpoint_state(&mut self) -> Result<Vec<u8>> {
+        if let Some(state) = self.checkpoint_state.as_ref() {
+            return Ok(state.clone());
+        }
+        ensure!(
+            !self.activated,
+            "vhost-vsock must be quiesced before checkpoint state is read"
+        );
+        Ok(Vec::new())
+    }
+
+    fn restore_checkpoint_state(&mut self, state: &[u8]) -> Result<()> {
+        ensure!(
+            !self.activated,
+            "cannot restore vhost-vsock checkpoint state after activation"
+        );
+        if state.is_empty() {
+            self.checkpoint_state = Some(Vec::new());
+            self.restore_vring_bases = None;
+            return Ok(());
+        }
+        let vring_bases = decode_vsock_checkpoint(state)?;
+        self.checkpoint_state = Some(state.to_vec());
+        self.restore_vring_bases = Some(vring_bases);
+        Ok(())
+    }
+
+    fn restore_activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) -> Result<()> {
+        let mut ioctl = KernelVhostIoctl;
+        self.restore_activate_with(mem, queues, &mut ioctl)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -757,7 +955,12 @@ pub(super) fn spawn_vsock_listeners(
             .name(format!("vsock-listen-{physical_port}"))
             .spawn(move || {
                 if let Err(e) = vsock_listener_loop(listener, &tx, &shutdown) {
-                    warn!(logical_port, physical_port, error = format!("{e:#}"), "vsock listener failed");
+                    warn!(
+                        logical_port,
+                        physical_port,
+                        error = format!("{e:#}"),
+                        "vsock listener failed"
+                    );
                 }
             })
             .expect("failed to spawn vsock listener thread");

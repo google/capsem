@@ -1,6 +1,97 @@
 use super::super::memory::{GuestMemory, RAM_BASE};
 use super::*;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RecordedIoctl {
+    Request(u64),
+    Running(i32),
+    SetBase { index: u32, base: u32 },
+    GetBase { index: u32 },
+}
+
+struct RecordingIoctl {
+    events: Vec<RecordedIoctl>,
+    vring_bases: [u32; VHOST_VSOCK_BACKEND_QUEUES],
+    fail_request: Option<u64>,
+}
+
+impl RecordingIoctl {
+    fn new(vring_bases: [u32; VHOST_VSOCK_BACKEND_QUEUES]) -> Self {
+        Self {
+            events: Vec::new(),
+            vring_bases,
+            fail_request: None,
+        }
+    }
+
+    fn failing(request: u64) -> Self {
+        Self {
+            events: Vec::new(),
+            vring_bases: [0; VHOST_VSOCK_BACKEND_QUEUES],
+            fail_request: Some(request),
+        }
+    }
+}
+
+impl VhostIoctl for RecordingIoctl {
+    fn call(&mut self, _fd: RawFd, request: u64, arg: u64) -> Result<()> {
+        match request {
+            VHOST_GET_FEATURES => unsafe {
+                *(arg as *mut u64) = u64::MAX;
+                self.events.push(RecordedIoctl::Request(request));
+            },
+            VHOST_VSOCK_SET_RUNNING => {
+                let running = unsafe { *(arg as *const libc::c_int) };
+                self.events.push(RecordedIoctl::Running(running));
+            }
+            VHOST_SET_VRING_BASE => {
+                let state = unsafe { *(arg as *const VhostVringState) };
+                self.events.push(RecordedIoctl::SetBase {
+                    index: state.index,
+                    base: state.num,
+                });
+            }
+            VHOST_GET_VRING_BASE => {
+                let state = unsafe { &mut *(arg as *mut VhostVringState) };
+                self.events
+                    .push(RecordedIoctl::GetBase { index: state.index });
+                state.num = self.vring_bases[state.index as usize];
+            }
+            _ => self.events.push(RecordedIoctl::Request(request)),
+        }
+
+        if self.fail_request == Some(request) {
+            anyhow::bail!("injected ioctl failure for 0x{request:x}");
+        }
+        Ok(())
+    }
+}
+
+fn active_dummy_device() -> VhostVsockDevice {
+    let mut device = dummy_device();
+    device.vhost_fd = Some(create_eventfd().unwrap());
+    device.activated = true;
+    device
+}
+
+fn configured_queues() -> (GuestMemory, Vec<QueueConfig>) {
+    let mem = GuestMemory::new(0x20_000).unwrap();
+    let queues = (0..VSOCK_NUM_QUEUES)
+        .map(|index| {
+            let offset = 0x1000 + index as u64 * 0x4000;
+            QueueConfig {
+                desc_addr: RAM_BASE + offset,
+                driver_addr: RAM_BASE + offset + 0x1000,
+                device_addr: RAM_BASE + offset + 0x2000,
+                size: 256,
+                warm_restore: true,
+                event_idx: false,
+            }
+        })
+        .collect();
+    (mem, queues)
+}
+
 // -----------------------------------------------------------------------
 // CID validation
 // -----------------------------------------------------------------------
@@ -63,6 +154,8 @@ fn dummy_device() -> VhostVsockDevice {
             create_eventfd().unwrap(),
         ],
         activated: false,
+        checkpoint_state: None,
+        restore_vring_bases: None,
     }
 }
 
@@ -146,6 +239,132 @@ fn queue_avail_idx_reads_vring_avail_index() {
 }
 
 #[test]
+fn checkpoint_quiesce_stops_backend_before_capturing_vring_bases() {
+    let mut device = active_dummy_device();
+    let mut ioctl = RecordingIoctl::new([37, 91]);
+
+    device.quiesce_with(&mut ioctl).unwrap();
+
+    assert_eq!(
+        ioctl.events,
+        vec![
+            RecordedIoctl::Running(0),
+            RecordedIoctl::GetBase { index: 0 },
+            RecordedIoctl::GetBase { index: 1 },
+        ]
+    );
+    let encoded = device.checkpoint_state().unwrap();
+    assert_eq!(decode_vsock_checkpoint(&encoded).unwrap(), [37, 91]);
+}
+
+#[test]
+fn checkpoint_quiesce_fails_before_capturing_state_when_stop_fails() {
+    let mut device = active_dummy_device();
+    let mut ioctl = RecordingIoctl::failing(VHOST_VSOCK_SET_RUNNING);
+
+    let error = device.quiesce_with(&mut ioctl).unwrap_err();
+
+    assert!(error.to_string().contains("VHOST_VSOCK_SET_RUNNING=0"));
+    assert_eq!(ioctl.events, vec![RecordedIoctl::Running(0)]);
+    assert!(device.checkpoint_state.is_none());
+}
+
+#[test]
+fn warm_restore_applies_captured_bases_before_restarting_backend() {
+    let mut device = dummy_device();
+    device.vhost_fd = Some(create_eventfd().unwrap());
+    device
+        .restore_checkpoint_state(&encode_vsock_checkpoint([17, 29]))
+        .unwrap();
+    let (mem, queues) = configured_queues();
+    let mut ioctl = RecordingIoctl::new([0, 0]);
+
+    device
+        .restore_activate_with(mem.clone_ref(RAM_BASE), &queues, &mut ioctl)
+        .unwrap();
+
+    let lifecycle: Vec<_> = ioctl
+        .events
+        .into_iter()
+        .filter(|event| {
+            matches!(
+                event,
+                RecordedIoctl::SetBase { .. } | RecordedIoctl::Running(_)
+            )
+        })
+        .collect();
+    assert_eq!(
+        lifecycle,
+        vec![
+            RecordedIoctl::SetBase { index: 0, base: 17 },
+            RecordedIoctl::SetBase { index: 1, base: 29 },
+            RecordedIoctl::Running(1),
+        ]
+    );
+    assert!(device.activated);
+}
+
+#[test]
+fn warm_restore_restart_failure_is_returned_and_device_stays_inactive() {
+    let mut device = dummy_device();
+    device.vhost_fd = Some(create_eventfd().unwrap());
+    device
+        .restore_checkpoint_state(&encode_vsock_checkpoint([17, 29]))
+        .unwrap();
+    let (mem, queues) = configured_queues();
+    let mut ioctl = RecordingIoctl::failing(VHOST_VSOCK_SET_RUNNING);
+
+    let error = device
+        .restore_activate_with(mem.clone_ref(RAM_BASE), &queues, &mut ioctl)
+        .unwrap_err();
+
+    assert!(format!("{error:#}").contains("VHOST_VSOCK_SET_RUNNING=1"));
+    assert!(!device.activated);
+    assert_eq!(ioctl.events.last(), Some(&RecordedIoctl::Running(1)));
+}
+
+#[test]
+fn warm_restore_rejects_malformed_backend_state_before_any_ioctl() {
+    let mut device = dummy_device();
+
+    let error = device.restore_checkpoint_state(&[1, 0, 0]).unwrap_err();
+
+    assert!(error.to_string().contains("vhost-vsock checkpoint"));
+    assert!(!device.activated);
+}
+
+#[test]
+fn warm_restore_rejects_trailing_backend_state_bytes() {
+    let mut device = dummy_device();
+    let mut encoded = encode_vsock_checkpoint([17, 29]);
+    encoded.push(0);
+
+    let error = device.restore_checkpoint_state(&encoded).unwrap_err();
+
+    assert!(error.to_string().contains("checkpoint length"));
+    assert!(device.restore_vring_bases.is_none());
+}
+
+#[test]
+fn warm_restore_requires_captured_bases_before_any_ioctl() {
+    let mut device = dummy_device();
+    device.vhost_fd = Some(create_eventfd().unwrap());
+    device.restore_checkpoint_state(&[]).unwrap();
+    let (mem, queues) = configured_queues();
+    let mut ioctl = RecordingIoctl::new([0, 0]);
+
+    let error = device
+        .restore_activate_with(mem.clone_ref(RAM_BASE), &queues, &mut ioctl)
+        .unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("missing vhost-vsock checkpoint state"));
+    assert!(ioctl.events.is_empty());
+    assert!(!device.activated);
+}
+
+#[test]
 fn vhost_memory_table_single_region_below_x86_pci_hole() {
     let hva = 0x1000_0000;
     let regions = build_vhost_memory_regions_from_parts(64 * 1024 * 1024, hva).unwrap();
@@ -186,6 +405,8 @@ fn config_space_guest_cid() {
             create_eventfd().unwrap(),
         ],
         activated: false,
+        checkpoint_state: None,
+        restore_vring_bases: None,
     };
     let mut buf = [0u8; 8];
     dev.read_config(0, &mut buf);
@@ -208,6 +429,8 @@ fn config_space_partial_read() {
             create_eventfd().unwrap(),
         ],
         activated: false,
+        checkpoint_state: None,
+        restore_vring_bases: None,
     };
     // Read just the first 4 bytes
     let mut buf = [0u8; 4];
@@ -239,6 +462,8 @@ fn config_space_offset_within_cid() {
             create_eventfd().unwrap(),
         ],
         activated: false,
+        checkpoint_state: None,
+        restore_vring_bases: None,
     };
     let mut buf = [0u8; 2];
     dev.read_config(3, &mut buf);

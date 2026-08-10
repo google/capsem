@@ -113,6 +113,13 @@ pub(super) trait VirtioDevice: Send {
         }
         Ok(())
     }
+    /// Activate restored queues, returning backend reconstruction failures to
+    /// the checkpoint loader. Cold activation remains best-effort for the
+    /// guest-driven DRIVER_OK transition.
+    fn restore_activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) -> Result<()> {
+        self.activate(mem, queues);
+        Ok(())
+    }
     /// Whether the transport should raise the virtio-mmio used-buffer IRQ
     /// after queue processing. Vhost-backed devices wire their own callfd.
     fn uses_mmio_interrupt(&self) -> bool {
@@ -412,7 +419,7 @@ impl VirtioMmioTransport {
                     event_idx: snapshot.driver_features & VIRTIO_RING_F_EVENT_IDX != 0,
                 })
                 .collect();
-            state.device.activate(mem, &queue_configs);
+            state.device.restore_activate(mem, &queue_configs)?;
             tracing::info!(
                 event_name = "virtio.mmio.restore_activate",
                 device_type = state.device.device_type(),
