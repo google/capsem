@@ -219,10 +219,14 @@ fn worker_loop(
         event_name = "virtio.fs.worker_start",
         "virtio-fs worker started"
     );
+    let mut hiprio_processed_total = 0u64;
+    let mut request_processed_total = 0u64;
     while let Ok(command) = rx.recv() {
         match command {
             WorkerCommand::Notify(0) => {
                 let processed = drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem);
+                hiprio_processed_total =
+                    hiprio_processed_total.saturating_add(u64::from(processed));
                 let should_interrupt = hiprio_queue.prepare_kick();
                 log_queue_drain("hiprio", processed, should_interrupt);
                 if should_interrupt {
@@ -231,6 +235,8 @@ fn worker_loop(
             }
             WorkerCommand::Notify(1) => {
                 let processed = drain_request_queue(&mut proc, &mut request_queue, &mem);
+                request_processed_total =
+                    request_processed_total.saturating_add(u64::from(processed));
                 let should_interrupt = request_queue.prepare_kick();
                 log_queue_drain("request", processed, should_interrupt);
                 if should_interrupt {
@@ -241,6 +247,9 @@ fn worker_loop(
             WorkerCommand::Checkpoint { tag, done } => {
                 let hiprio = drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem);
                 let request = drain_request_queue(&mut proc, &mut request_queue, &mem);
+                hiprio_processed_total = hiprio_processed_total.saturating_add(u64::from(hiprio));
+                request_processed_total =
+                    request_processed_total.saturating_add(u64::from(request));
                 let hiprio_interrupt = hiprio_queue.prepare_kick();
                 let request_interrupt = request_queue.prepare_kick();
                 if hiprio_interrupt || request_interrupt {
@@ -250,6 +259,8 @@ fn worker_loop(
                     event_name = "virtio.fs.quiesce",
                     hiprio_processed = hiprio,
                     request_processed = request,
+                    hiprio_processed_total,
+                    request_processed_total,
                     hiprio_should_interrupt = hiprio_interrupt,
                     request_should_interrupt = request_interrupt,
                     "virtio-fs queues quiesced"
@@ -327,20 +338,13 @@ fn drain_request_queue(
 }
 
 fn log_queue_drain(queue: &'static str, processed: u32, should_interrupt: bool) {
-    if processed == 0 {
-        trace!(
-            event_name = "virtio.fs.queue_drain",
-            queue,
-            processed,
-            should_interrupt,
-            "virtio-fs queue drained"
-        );
-    } else {
-        debug!(
-            event_name = "virtio.fs.queue_drain",
-            queue, processed, should_interrupt, "virtio-fs queue drained"
-        );
-    }
+    trace!(
+        event_name = "virtio.fs.queue_drain",
+        queue,
+        processed,
+        should_interrupt,
+        "virtio-fs queue drained"
+    );
 }
 
 fn signal_irq(irq_fd: RawFd, interrupt_status: &AtomicU32) {

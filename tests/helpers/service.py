@@ -539,8 +539,9 @@ class ServiceInstance:
         )
 
     def _preserve_failure_evidence_before_delete(self):
-        """Archive a failing test's VM evidence before cleanup destroys it."""
-        if self._failure_evidence_preserved or sys.exc_info()[0] is None:
+        """Archive required VM evidence before destructive test cleanup."""
+        forced = bool(os.environ.get("CAPSEM_TEST_PRESERVE_ALWAYS"))
+        if self._failure_evidence_preserved or (sys.exc_info()[0] is None and not forced):
             return
         preserve_tmp_dir_on_failure(self.home_dir, force=True)
         self._failure_evidence_preserved = True

@@ -328,6 +328,14 @@ fn empty_notification_and_checkpoint_keep_only_structured_evidence() {
     assert_eq!(quiesce[0].fields.get("hiprio_processed").unwrap(), "0");
     assert_eq!(quiesce[0].fields.get("request_processed").unwrap(), "0");
     assert_eq!(
+        quiesce[0].fields.get("hiprio_processed_total").unwrap(),
+        "0"
+    );
+    assert_eq!(
+        quiesce[0].fields.get("request_processed_total").unwrap(),
+        "0"
+    );
+    assert_eq!(
         quiesce[0].fields.get("hiprio_should_interrupt").unwrap(),
         "false"
     );
@@ -338,7 +346,7 @@ fn empty_notification_and_checkpoint_keep_only_structured_evidence() {
 }
 
 #[test]
-fn nonempty_notification_emits_one_debug_drain_with_irq_decision() {
+fn nonempty_notification_is_trace_and_aggregated_at_quiesce() {
     let dir = temp_share("nonempty-notify-structured-log");
     let harness = worker_harness();
     enqueue_hiprio_request(&harness, 0);
@@ -346,12 +354,23 @@ fn nonempty_notification_emits_one_debug_drain_with_irq_decision() {
         run_worker_notification(harness, &dir, 0);
     });
     let drains = events_named(&events, "virtio.fs.queue_drain");
+    let quiesce = events_named(&events, "virtio.fs.quiesce");
 
     assert_eq!(drains.len(), 1, "{events:#?}");
-    assert_eq!(drains[0].level, Level::DEBUG);
+    assert_eq!(drains[0].level, Level::TRACE);
     assert_eq!(drains[0].fields.get("queue").unwrap(), "hiprio");
     assert_eq!(drains[0].fields.get("processed").unwrap(), "1");
     assert_eq!(drains[0].fields.get("should_interrupt").unwrap(), "true");
+    assert_eq!(quiesce.len(), 1, "{events:#?}");
+    assert_eq!(quiesce[0].level, Level::DEBUG);
+    assert_eq!(
+        quiesce[0].fields.get("hiprio_processed_total").unwrap(),
+        "1"
+    );
+    assert_eq!(
+        quiesce[0].fields.get("request_processed_total").unwrap(),
+        "0"
+    );
 }
 
 #[test]

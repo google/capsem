@@ -163,6 +163,32 @@ def test_service_client_preserves_failure_evidence_before_delete(
         service.stop()
 
 
+def test_service_client_preserves_explicit_diagnostic_evidence_before_delete(tmp_path, monkeypatch):
+    """Forced diagnostic capture must run before a successful VM DELETE.
+
+    Waiting for service teardown is too late: the VM session containing
+    process.log and serial.log has already been removed by then.
+    """
+    preserved = []
+
+    def _record_preserve(path, *, force=False):
+        preserved.append((Path(path), force))
+
+    monkeypatch.setenv("CAPSEM_TEST_PRESERVE_ALWAYS", "1")
+    monkeypatch.setattr(svc_mod, "preserve_tmp_dir_on_failure", _record_preserve)
+    service = svc_mod.ServiceInstance()
+    client = service.client()
+    monkeypatch.setattr(client, "_curl", lambda *_args, **_kwargs: {"success": True})
+
+    try:
+        client.delete("/vms/first/delete")
+        client.delete("/vms/second/delete")
+
+        assert preserved == [(service.home_dir, True)]
+    finally:
+        service.stop()
+
+
 def test_no_op_when_no_failures(artifact_env, tmp_path, monkeypatch):
     # Override artifact_env's FAILED_NODEIDS to be empty.
     monkeypatch.setattr(tests_conftest, "FAILED_NODEIDS", [])
