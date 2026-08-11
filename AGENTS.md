@@ -10,6 +10,20 @@ Before code changes, load the relevant project skill from `skills/`. For tests
 and release gates, load `/dev-testing` and `/ironbank`. For debugging, load
 `/dev-debugging`. For architecture changes, load `/site-architecture`.
 
+## Bound Direct Diagnostics
+
+Any direct development command that can block, build, launch children, or wait
+on input must run through:
+
+```text
+python3 scripts/run-bounded-command.py --timeout-seconds <finite> -- <command>
+```
+
+The wrapper closes stdin and owns a process group so timeout or interruption
+cannot leave a Docker client, compiler, test runner, or helper behind. Do not
+use it around `just test` or either release command: the gate's config-owned
+timeouts, journal, resource teardown, and resumable graph remain authoritative.
+
 ## Serialized Orthogonal Releases
 
 The governing contract is `tmp/release-spec.md`. Capsem has exactly two release

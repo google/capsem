@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Direct development diagnostics now have a portable bounded-process wrapper
+  that closes stdin and owns the complete child process group. A blocked
+  Docker client, compiler, test runner, or helper is terminated on timeout or
+  interruption instead of surviving its owning agent command; complete gate
+  and release runs retain their separate config-owned timeout and resume
+  contracts.
+
 - The package-lane Dockerfile now carries a narrow BuildKit waiver for its
   deliberately required base argument. The composed gate still supplies the
   exact locally materialized host-builder image, with no default or fallback,

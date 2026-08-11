@@ -17,6 +17,7 @@ import contextlib
 import importlib.util
 import json
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -27,6 +28,7 @@ from helpers.sign import sign_binary
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "check-orphan-processes.py"
+BOUNDED = ROOT / "scripts" / "run-bounded-command.py"
 JUSTFILE = ROOT / "justfile"
 
 SPEC = importlib.util.spec_from_file_location("check_orphan_processes_guard", SCRIPT)
@@ -34,6 +36,149 @@ assert SPEC is not None and SPEC.loader is not None
 ORPHANS = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = ORPHANS
 SPEC.loader.exec_module(ORPHANS)
+
+
+def _pid_is_alive(pid: int) -> bool:
+    result = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "stat="],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def test_direct_development_commands_cannot_wait_on_terminal_stdin() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(BOUNDED),
+            "--timeout-seconds",
+            "2",
+            "--",
+            sys.executable,
+            "-c",
+            "import sys; raise SystemExit(0 if sys.stdin.read() == '' else 91)",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_direct_development_timeout_reaps_the_complete_process_group(tmp_path: Path) -> None:
+    pids = tmp_path / "pids"
+    child = (
+        "import os,signal,subprocess,sys,time; "
+        "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(300)']); "
+        f"open({str(pids)!r},'w').write(f'{{os.getpid()}} {{p.pid}}'); "
+        "signal.signal(signal.SIGTERM,lambda *_:(p.wait(),sys.exit(0))); "
+        "time.sleep(300)"
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(BOUNDED),
+            "--timeout-seconds",
+            "0.5",
+            "--grace-seconds",
+            "2",
+            "--",
+            sys.executable,
+            "-c",
+            child,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 124
+    assert "terminating process group" in result.stderr
+    parent_pid, child_pid = (int(value) for value in pids.read_text().split())
+    assert not _pid_is_alive(parent_pid)
+    assert not _pid_is_alive(child_pid)
+
+
+def test_direct_development_wrapper_reaps_a_helper_after_its_leader_exits(
+    tmp_path: Path,
+) -> None:
+    child_pid_file = tmp_path / "child-pid"
+    leader = (
+        "import subprocess,sys; "
+        "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(300)']); "
+        f"open({str(child_pid_file)!r},'w').write(str(p.pid))"
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(BOUNDED),
+            "--timeout-seconds",
+            "2",
+            "--grace-seconds",
+            "0.2",
+            "--",
+            sys.executable,
+            "-c",
+            leader,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not _pid_is_alive(int(child_pid_file.read_text()))
+
+
+def test_interrupting_the_wrapper_reaps_its_complete_process_group(tmp_path: Path) -> None:
+    pids = tmp_path / "interrupted-pids"
+    child = (
+        "import os,signal,subprocess,sys,time; "
+        "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(300)']); "
+        f"open({str(pids)!r},'w').write(f'{{os.getpid()}} {{p.pid}}'); "
+        "signal.signal(signal.SIGTERM,lambda *_:(p.wait(),sys.exit(0))); "
+        "time.sleep(300)"
+    )
+    wrapper = subprocess.Popen(
+        [
+            sys.executable,
+            str(BOUNDED),
+            "--timeout-seconds",
+            "30",
+            "--grace-seconds",
+            "2",
+            "--",
+            sys.executable,
+            "-c",
+            child,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 2
+        while not pids.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert pids.exists(), "the fixture process group never started"
+
+        wrapper.terminate()
+        _stdout, stderr = wrapper.communicate(timeout=5)
+        assert wrapper.returncode == 128 + signal.SIGTERM, stderr
+        parent_pid, child_pid = (int(value) for value in pids.read_text().split())
+        assert not _pid_is_alive(parent_pid)
+        assert not _pid_is_alive(child_pid)
+    finally:
+        if wrapper.poll() is None:
+            wrapper.kill()
+            wrapper.wait()
 
 
 def _gate_issues(name: str | None = None) -> str:
@@ -69,7 +214,11 @@ def _accounting():
 
     runner = RecordingRunner(ROOT)
     config = gate_config.load(ROOT)
-    return OrphanAccounting(config, runner), runner, gate_resources(config, runner, mode=sandbox.OFF)
+    return (
+        OrphanAccounting(config, runner),
+        runner,
+        gate_resources(config, runner, mode=sandbox.OFF),
+    )
 
 
 # ---------------------------------------------------------------------------

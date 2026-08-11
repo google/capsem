@@ -32,6 +32,20 @@ work. Use `just vm-smoke` for focused integration feedback, and
 `just fast-test` for the fast gate itself. Use a clean
 `just test` only when the forward fix is ready for complete qualification.
 
+Direct diagnostics which may block, build, launch children, or wait on input
+must use the portable bounded-process wrapper rather than a bare shell command:
+
+```bash
+python3 scripts/run-bounded-command.py --timeout-seconds 1800 -- <command> <args...>
+```
+
+The wrapper closes stdin, creates a dedicated process group, and terminates the
+whole group on timeout or interruption. This prevents a PTY-backed `docker
+build -f -`, compiler, test runner, or child helper from surviving its owning
+diagnostic. Pick a finite timeout appropriate to the focused operation; do not
+wrap `just test` or a release command, whose config-owned step timeouts,
+journal, teardown, and resumable graph are the authority.
+
 ### Diagnostic continuation for a late gate failure
 
 When a clean candidate fails after expensive predecessors have succeeded, use
