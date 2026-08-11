@@ -106,8 +106,13 @@ impl FuseProcessor {
     }
 
     fn checkpoint_snapshot(&mut self, tag: [u8; TAG_LEN]) -> Result<VirtioFsBackendSnapshot> {
-        let inodes = self.inodes.checkpoint()?;
         let file_handles = self.file_handles.checkpoint(&self.inodes)?;
+        let handle_inodes = file_handles
+            .handles
+            .iter()
+            .map(|handle| handle.inode)
+            .collect();
+        let inodes = self.inodes.checkpoint(&handle_inodes)?;
         Ok(VirtioFsBackendSnapshot {
             tag,
             read_only: self.read_only,

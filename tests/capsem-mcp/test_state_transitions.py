@@ -12,6 +12,20 @@ from helpers.service import make_service_home_run_dirs
 pytestmark = pytest.mark.mcp
 
 
+def _leave_unlinked_virtiofs_inode_cached(mcp_session, vm_name):
+    """Exercise the lookup-without-FORGET shape that uv temporary dirs create."""
+    mcp_session.call_tool(
+        "capsem_exec",
+        {
+            "id": vm_name,
+            "command": (
+                "p=/root/.cache/uv/.capsem-checkpoint-stale; "
+                'mkdir -p "$p"; ls -ld "$p" >/dev/null; rmdir "$p"'
+            ),
+        },
+    )
+
+
 def test_mcp_service_dirs_isolate_session_index_databases():
     """Each service fixture must derive a private sessions/main.db path."""
     home_a, run_a = make_service_home_run_dirs()
@@ -41,6 +55,7 @@ def test_suspend_and_resume_persistent(fresh_vm, mcp_session):
         "path": "/root/marker.txt",
         "content": "persisted-through-suspend",
     })
+    _leave_unlinked_virtiofs_inode_cached(mcp_session, vm_name)
 
     mcp_session.call_tool("capsem_suspend", {"id": vm_name})
 
@@ -89,6 +104,7 @@ def test_suspend_and_resume_persistent_repeat(fresh_vm, mcp_session, run):
         "path": "/root/marker.txt",
         "content": f"persisted-through-suspend-{run}",
     })
+    _leave_unlinked_virtiofs_inode_cached(mcp_session, vm_name)
 
     mcp_session.call_tool("capsem_suspend", {"id": vm_name})
     info = parse_content(mcp_session.call_tool("capsem_info", {"id": vm_name}))

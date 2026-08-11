@@ -179,7 +179,7 @@ impl InodeTable {
         }
     }
 
-    pub(crate) fn checkpoint(&self) -> Result<InodeTableSnapshot> {
+    pub(crate) fn checkpoint(&self, handle_inodes: &HashSet<u64>) -> Result<InodeTableSnapshot> {
         ensure!(
             self.entries.len() <= MAX_CHECKPOINT_INODES,
             "VirtioFS inode checkpoint count exceeds limit"
@@ -200,12 +200,29 @@ impl InodeTable {
                 relative_path.len() <= MAX_CHECKPOINT_PATH_BYTES,
                 "VirtioFS inode {ino} checkpoint path exceeds limit"
             );
-            let metadata = std::fs::symlink_metadata(&entry.host_path).with_context(|| {
-                format!(
-                    "VirtioFS inode {ino} is not reopenable: {}",
-                    entry.host_path.display()
-                )
-            })?;
+            let metadata = match std::fs::symlink_metadata(&entry.host_path) {
+                Ok(metadata) => metadata,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound
+                        && ino != 1
+                        && !handle_inodes.contains(&ino) =>
+                {
+                    tracing::debug!(
+                        inode = ino,
+                        path = %entry.host_path.display(),
+                        "omitting unlinked cache-only VirtioFS inode from checkpoint"
+                    );
+                    continue;
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "VirtioFS inode {ino} is not reopenable: {}",
+                            entry.host_path.display()
+                        )
+                    });
+                }
+            };
             entries.push(InodeSnapshot {
                 ino,
                 relative_path,

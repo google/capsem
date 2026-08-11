@@ -785,6 +785,37 @@ fn checkpoint_rejects_open_but_unlinked_file() {
 }
 
 #[test]
+fn checkpoint_omits_unlinked_cache_only_inode_without_reusing_its_id() {
+    let dir = temp_share("checkpoint-state-unlinked-cache-only");
+    let stale_path = dir.join("uv-temporary-directory");
+    std::fs::create_dir(&stale_path).unwrap();
+    let mut proc = test_processor(&dir);
+    let stale_ino = lookup(&mut proc, 1, "uv-temporary-directory").unwrap();
+    std::fs::remove_dir(&stale_path).unwrap();
+
+    let encoded = proc.encode_checkpoint().unwrap();
+    let decoded = VirtioFsBackendSnapshot::decode(&encoded).unwrap();
+    assert!(
+        decoded
+            .inodes
+            .entries
+            .iter()
+            .all(|entry| entry.ino != stale_ino),
+        "an unreachable cache-only inode must not block or enter the checkpoint"
+    );
+    let expected_next_ino = decoded.inodes.next_ino;
+
+    let mut restored = FuseProcessor::restore_checkpoint(&dir, false, &encoded).unwrap();
+    assert!(restored.inodes.get(stale_ino).is_none());
+    std::fs::create_dir(&stale_path).unwrap();
+    assert_eq!(
+        lookup(&mut restored, 1, "uv-temporary-directory").unwrap(),
+        expected_next_ino,
+        "a path recreated after resume must get a fresh inode identity"
+    );
+}
+
+#[test]
 fn checkpoint_restore_rejects_replaced_cached_root_inode() {
     let dir = temp_share("checkpoint-state-replaced-root");
     let moved = dir.with_extension("original");

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- KVM warm checkpoints now discard deleted cache-only VirtioFS inode entries
+  that have no live file or directory handle while preserving the monotonic
+  guest inode allocator. Open-unlinked handles remain fail-closed, and a typed
+  suspend-failure IPC result reports checkpoint errors distinctly from real
+  45-second confirmation timeouts.
+
 - `release-binaries` and `release-profile` now reject `--from` from their own
   publishing authority, even before a release workflow environment exists.
   Candidate retained-prefix continuation remains diagnostic-only and cannot

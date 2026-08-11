@@ -64,6 +64,9 @@ When changing KVM checkpoint or VirtioFS state:
   activation;
 - keep checkpoint lengths/counts bounded before allocation and reject changed
   device/share identity;
+- permit a deleted cache-only inode to leave the snapshot only when no open
+  file/directory handle references it, and preserve `next_ino` so a recreated
+  path cannot inherit the stale guest node ID;
 - test a real guest process that holds both a file FD and directory FD under
   `/root` across suspend, then uses both after resume without sleeps or retries;
 - rebuild `capsem-process` before black-box testing, because it owns the KVM

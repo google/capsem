@@ -182,6 +182,26 @@ fn state_changed_roundtrip() {
 }
 
 #[test]
+fn suspend_failed_bincode_roundtrip_preserves_exact_cause() {
+    let msg = ProcessToService::SuspendFailed {
+        id: "vm-checkpoint".into(),
+        error: "VirtioFS inode 41 is not reopenable".into(),
+    };
+
+    let bytes = bincode::serialize(&msg).expect("serialize suspend failure");
+    let decoded: ProcessToService =
+        bincode::deserialize(&bytes).expect("deserialize suspend failure");
+
+    match decoded {
+        ProcessToService::SuspendFailed { id, error } => {
+            assert_eq!(id, "vm-checkpoint");
+            assert_eq!(error, "VirtioFS inode 41 is not reopenable");
+        }
+        other => panic!("expected typed suspend failure, got {other:?}"),
+    }
+}
+
+#[test]
 fn exec_result_roundtrip() {
     let msg = ProcessToService::ExecResult {
         id: 42,

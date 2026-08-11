@@ -717,6 +717,17 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         // as crash and will not write a checkpoint marker.
                         let _ = std::fs::remove_file(&complete_path);
                         let _ = std::fs::remove_file(&full_path);
+                        let suspend_error = match suspend_result {
+                            Ok(()) => unreachable!("successful suspend exits above"),
+                            Err(error) => format!("{error:#}"),
+                        };
+                        capsem_core::try_send!(
+                            "ipc_suspend_failed",
+                            i_tx.send(ProcessToService::SuspendFailed {
+                                id: v_id,
+                                error: suspend_error
+                            })
+                        );
                         warn!("suspend did not complete; exiting without Suspended marker");
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                         crate::drain_background_owners(&shutdown).await;

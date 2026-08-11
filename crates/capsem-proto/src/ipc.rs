@@ -154,6 +154,9 @@ pub enum ProcessToService {
         event_id: Option<String>,
         error: Option<String>,
     },
+    /// Warm suspend failed before the durable checkpoint marker was written.
+    /// Kept at the end so existing bincode variant indexes remain stable.
+    SuspendFailed { id: String, error: String },
 }
 
 /// Status of an MCP server as reported through IPC.

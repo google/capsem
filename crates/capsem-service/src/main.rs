@@ -58,6 +58,42 @@ const AUTOMATIC_UPDATE_MAX_BACKOFF_SECS: u64 = 24 * 60 * 60;
 const AUTOMATIC_UPDATE_INITIAL_DELAY_ENV: &str = "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS";
 const AUTOMATIC_UPDATE_POLL_ENV: &str = "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS";
 
+#[derive(Debug, PartialEq, Eq)]
+enum SuspendConfirmation {
+    Suspended,
+    Failed(String),
+    ChannelClosed,
+    TimedOut,
+}
+
+fn observe_suspend_message(message: ProcessToService) -> Option<SuspendConfirmation> {
+    match message {
+        ProcessToService::StateChanged { state, .. } if state == "Suspended" => {
+            Some(SuspendConfirmation::Suspended)
+        }
+        ProcessToService::SuspendFailed { error, .. } => Some(SuspendConfirmation::Failed(error)),
+        _ => None,
+    }
+}
+
+fn suspend_failure(confirmation: SuspendConfirmation) -> Option<(&'static str, String)> {
+    match confirmation {
+        SuspendConfirmation::Suspended => None,
+        SuspendConfirmation::Failed(error) => Some((
+            "failed",
+            format!("suspend failed before checkpoint completion: {error} (process killed)"),
+        )),
+        SuspendConfirmation::ChannelClosed => Some((
+            "channel-closed",
+            "suspend process exited before checkpoint confirmation (process killed)".into(),
+        )),
+        SuspendConfirmation::TimedOut => Some((
+            "timed-out",
+            "suspend timed out: VM did not confirm suspended state (process killed)".into(),
+        )),
+    }
+}
+
 use capsem_core::paths::checkpoint_complete_path;
 
 /// Owns `$run_dir/service.pid` -- the only handle a harness has on a detached
@@ -11697,22 +11733,31 @@ async fn handle_suspend(
     // right before exiting. We must wait for full exit to avoid a race condition where
     // a subsequent resume request fails with permission denied because the old process
     // hasn't released the checkpoint file yet.
-    let mut suspended = false;
-    let _ = tokio::time::timeout(
+    let confirmation = match tokio::time::timeout(
         std::time::Duration::from_secs(SUSPEND_CONFIRM_TIMEOUT_SECS),
         async {
-            while let Ok(msg) = rx.recv().await {
-                if let ProcessToService::StateChanged { state, .. } = msg {
-                    if state == "Suspended" {
-                        suspended = true;
+            loop {
+                match rx.recv().await {
+                    Ok(message) => {
+                        if let Some(confirmation) = observe_suspend_message(message) {
+                            return confirmation;
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "suspend IPC channel closed before confirmation");
+                        return SuspendConfirmation::ChannelClosed;
                     }
                 }
             }
         },
     )
-    .await;
+    .await
+    {
+        Ok(confirmation) => confirmation,
+        Err(_) => SuspendConfirmation::TimedOut,
+    };
 
-    if !suspended {
+    if let Some((outcome, error)) = suspend_failure(confirmation) {
         // The guest never acknowledged suspend. Leaving the process alive
         // would leak a wedged Apple VZ instance (seen in the wild: 945
         // orphan temp dirs accumulated over one test run). SIGKILL the
@@ -11723,14 +11768,11 @@ async fn handle_suspend(
                 nix::sys::signal::Signal::SIGKILL,
             );
         }
-        tracing::warn!(id, "handle_suspend (timeout) removing instance");
+        tracing::warn!(id, outcome, "handle_suspend removing failed instance");
         state.instances.lock().unwrap().remove(&id);
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
-        return Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "suspend timed out: VM did not confirm suspended state (process killed)".into(),
-        ));
+        return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, error));
     }
 
     // Poll for process exit (up to 500ms) instead of unconditional sleep.
