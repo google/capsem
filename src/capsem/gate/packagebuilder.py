@@ -161,7 +161,7 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
                 f"ORT_URL={ort.ort_url}",
                 f"ORT_SHA256={ort.ort_sha256}",
                 f"ORT_LIB_LOCATION={settings.ort_lib_location}",
-                f"INPUT_KEY={tag}",
+                f"INPUT_IDENTITY={tag}",
             ],
             platform=host_arch.docker_platform,
             network=settings.materialize_build_network,

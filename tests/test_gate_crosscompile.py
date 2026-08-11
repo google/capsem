@@ -436,6 +436,10 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     assert 'test -n "${APT_SNAPSHOT_BASE}"' in dockerfile
     assert 'test -n "${APT_SNAPSHOT_ID}"' in dockerfile
     assert 'swap-dev-libs "${DPKG_ARCH}" "${APT_SNAPSHOT_BASE}" "${APT_SNAPSHOT_ID}"' in dockerfile
+    assert "COPY --chmod=555 docker/swap-dev-libs.sh /usr/local/bin/swap-dev-libs" in dockerfile
+    assert "ARG INPUT_IDENTITY" in dockerfile
+    assert "org.capsem.package-builder.input-key=${INPUT_IDENTITY}" in dockerfile
+    assert "ARG INPUT_KEY" not in dockerfile
 
     swap = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text(encoding="utf-8")
     assert 'SNAPSHOT_URL="${APT_SNAPSHOT_BASE%/}/${APT_SNAPSHOT_ID}"' in swap
@@ -706,6 +710,8 @@ def test_package_helper_is_host_native_and_target_specific(
     assert f"CARGO_STORE={config.package.builder.cargo_store}" in build
     assert f"PNPM_STORE={config.package.builder.pnpm_store}" in build
     assert CONFIG.package.builder.targets["arm64"].ort_sha256 in build
+    assert "INPUT_IDENTITY=capsem-package-builder-arm64:" in build
+    assert "INPUT_KEY=" not in build
     assert any("sha256:" in note for note in runner.notes)
     assert identity.input_key.startswith("capsem-package-builder-arm64:")
     assert identity.image_id == "sha256:" + "d" * 64
