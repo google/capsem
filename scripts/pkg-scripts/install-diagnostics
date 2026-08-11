@@ -39,9 +39,6 @@ capsem_install_report_failure() {
 capsem_install_on_exit() {
     local status=$?
     trap - EXIT
-    if [ -n "${CAPSEM_INSTALL_MANIFEST_REQUEST:-}" ]; then
-        rm -f "$CAPSEM_INSTALL_MANIFEST_REQUEST" || true
-    fi
     if [ "$status" -ne 0 ]; then
         capsem_install_report_failure "$status" || true
     fi

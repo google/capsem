@@ -41,7 +41,10 @@ def test_the_handoff_is_cleared_once_the_install_has_succeeded() -> None:
     """It is still single-use -- just not single-*attempt*."""
     source = POSTINSTALL.read_text(encoding="utf-8")
 
-    assert 'rm -f "$CAPSEM_INSTALL_MANIFEST_REQUEST"' in source, (
+    assert (
+        'rm -f "$CAPSEM_INSTALL_MANIFEST_REQUEST" '
+        '"$CAPSEM_INSTALL_MANIFEST_PAYLOAD"' in source
+    ), (
         "a request that is never cleared is inherited by the next install"
     )
 

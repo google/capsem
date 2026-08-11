@@ -1,7 +1,6 @@
 #!/bin/bash
 # Install and exercise the shared Capsem package inside a clean Tart macOS VM.
 set -euo pipefail
-
 VERSION="${1:?usage: macos_tart_guest.sh VERSION MANIFEST_URL CHANNEL PACKAGE}"
 MANIFEST_URL="${2:?missing manifest URL}"
 CHANNEL="${3:?missing channel}"
@@ -12,6 +11,7 @@ CAPSEM_BIN_DIR="$CAPSEM_HOME/bin"
 CAPSEM="$CAPSEM_BIN_DIR/capsem"
 VERIFY="$SHARE/verify-installed-release.py"
 INSTALL_USER_REQUEST="$SHARE/macos-install-user-request.sh"
+INSTALL_MANIFEST_REQUEST="$SHARE/install-manifest-request.sh"
 REPORT="$SHARE/report.json"
 INSTALLED_EVIDENCE="$SHARE/installed-evidence.json"
 PRESERVED_INSTALLED_EVIDENCE="$SHARE/preserved-installed-evidence.json"
@@ -23,7 +23,6 @@ INSTALLED_METADATA="$CAPSEM_HOME/assets/manifest-metadata.json"
 MANIFEST_BEFORE_REJECTION="$SHARE/manifest-before-rejection.json"
 METADATA_BEFORE_REJECTION="$SHARE/manifest-metadata-before-rejection.json"
 SERVICE_LOG_DIR="$CAPSEM_HOME/run"
-
 # `service.log` names a daily-rotated stream, so the bare name is an empty
 # file the moment the service has rotated. Reading it directly polled
 # nothing for three minutes while the rejection this proof waits for sat in
@@ -51,10 +50,8 @@ BINARIES=(
     capsem-mock-server
     capsem-bench-rs
 )
-
 exec > >(tee "$SHARE/guest.log") 2>&1
 export PATH="$CAPSEM_BIN_DIR:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
 case "$CHANNEL" in
     stable|nightly) ;;
     *) echo "ERROR: channel must be stable or nightly (got: $CHANNEL)" >&2; exit 2 ;;
@@ -63,6 +60,7 @@ esac
 test -s "$PKG"
 test -f "$VERIFY"
 test -f "$INSTALL_USER_REQUEST"
+test -f "$INSTALL_MANIFEST_REQUEST"
 test -s "$ORIGINAL_MANIFEST"
 test -s "$TAMPERED_MANIFEST"
 test -s "$REMOTE_MANIFEST"
@@ -85,6 +83,7 @@ test ! -e "$CAPSEM_HOME"
 
 clear_install_user_request() {
     bash "$INSTALL_USER_REQUEST" clear >/dev/null 2>&1 || true
+    bash "$INSTALL_MANIFEST_REQUEST" clear >/dev/null 2>&1 || true
 }
 cleanup_guest() {
     clear_install_user_request
@@ -141,6 +140,7 @@ start_release_http_server
 
 echo "=== Installing exact shared package ==="
 bash "$INSTALL_USER_REQUEST" write admin
+bash "$INSTALL_MANIFEST_REQUEST" write "$REMOTE_MANIFEST" "$MANIFEST_URL"
 sudo /usr/sbin/installer -pkg "$PKG" -target /
 clear_install_user_request
 
@@ -168,7 +168,7 @@ verify_binary_cohort() {
     done
 }
 verify_binary_cohort
-
+read -r PACKAGE_CHANNEL PACKAGE_MANIFEST_URL < <(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["channel"],m["manifest_url"])' "$INSTALLED_METADATA")
 verify_channel() {
     local channel="$1"
     local manifest_url="$2"
@@ -176,6 +176,7 @@ verify_channel() {
     python3 "$VERIFY" \
         --capsem "$CAPSEM" \
         --manifest-url "$manifest_url" \
+        --metadata-manifest-url "$PACKAGE_MANIFEST_URL" \
         --channel "$channel" \
         --package-version "$VERSION" \
         --artifact "$PKG" \
@@ -183,9 +184,8 @@ verify_channel() {
         --architecture arm64 \
         --evidence-out "$evidence_out"
 }
-
 echo "=== Verifying initially installed channel ==="
-verify_channel "$CHANNEL" "$MANIFEST_URL" "$INSTALLED_EVIDENCE"
+verify_channel "$PACKAGE_CHANNEL" "$MANIFEST_URL" "$INSTALLED_EVIDENCE"
 
 profile_tree_digest() {
     python3 - "$CAPSEM_HOME/profiles" <<'PY'

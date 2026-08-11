@@ -704,7 +704,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/macos-install-user-request.sh write "$(id -un)"
-          bash scripts/install-manifest-request.sh write "$PREACTIVATION_MANIFEST_PATH"
+          bash scripts/install-manifest-request.sh write "$PREACTIVATION_MANIFEST_PATH" "$PREACTIVATION_MANIFEST"
           test "$(sudo stat -f '%u' /var/run/capsem/install-manifest)" = "0"
           test "$(sudo stat -f '%Lp' /var/run/capsem/install-manifest)" = "600"
 
@@ -812,7 +812,7 @@ jobs:
           package=$(find release-test-package -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$package"
           python3 scripts/install-deb-runtime-dependencies.py "$package" --config config/gate.toml
-          bash scripts/install-manifest-request.sh write "$PREACTIVATION_MANIFEST_PATH"
+          bash scripts/install-manifest-request.sh write "$PREACTIVATION_MANIFEST_PATH" "$PREACTIVATION_MANIFEST"
           VERSION="${RELEASE_TAG#v}"
           sudo dpkg -i "$package"
           test ! -e /var/run/capsem/install-manifest

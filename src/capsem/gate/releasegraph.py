@@ -245,7 +245,8 @@ class ReleaseGraph:
             )
         self._docker.shell(
             self._container,
-            f"bash {self._mount}/{self._config.request_script} write {absolute}",
+            f"bash {self._mount}/{self._config.request_script} write "
+            f"{absolute} {self._config.file_url_scheme}{absolute}",
         )
         self._handoff_written = True
         self.handed_off = f"{self._config.file_url_scheme}{absolute}"

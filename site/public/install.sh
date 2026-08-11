@@ -10,6 +10,8 @@ CAPSEM_RELEASE_BASE_URL="${CAPSEM_RELEASE_BASE_URL:-https://release.capsem.org}"
 CAPSEM_MANIFEST_URL="${CAPSEM_MANIFEST_URL:-${CAPSEM_RELEASE_BASE_URL}/assets/${CAPSEM_CHANNEL}/manifest.json}"
 CAPSEM_INSTALL_USER_REQUEST_DIR="/var/run/capsem"
 CAPSEM_INSTALL_USER_REQUEST="$CAPSEM_INSTALL_USER_REQUEST_DIR/install-user"
+CAPSEM_INSTALL_MANIFEST_PAYLOAD="$CAPSEM_INSTALL_USER_REQUEST_DIR/install-manifest.json"
+CAPSEM_INSTALL_MANIFEST_REQUEST="$CAPSEM_INSTALL_USER_REQUEST_DIR/install-manifest"
 
 # -- Testable functions ------------------------------------------------------
 # These functions can be unit-tested by sourcing this script with
@@ -250,11 +252,51 @@ verify_package() {
 }
 
 fetch_release_manifest() {
+    _manifest_path="$1"
     if [ -z "$CAPSEM_MANIFEST_URL" ]; then
         echo "Error: CAPSEM_MANIFEST_URL is empty." >&2
         return 1
     fi
-    curl -fsSL "$CAPSEM_MANIFEST_URL"
+    curl -fsSL -o "$_manifest_path" "$CAPSEM_MANIFEST_URL"
+}
+
+ensure_install_workspace() {
+    if [ -z "${TMPDIR_INSTALL:-}" ]; then
+        TMPDIR_INSTALL="$(mktemp -d)"
+    fi
+    MANIFEST_PATH="${MANIFEST_PATH:-${TMPDIR_INSTALL}/manifest.json}"
+}
+
+prepare_install_manifest() {
+    if [ ! -f "$MANIFEST_PATH" ] || [ -L "$MANIFEST_PATH" ]; then
+        echo "Error: verified release manifest is not a regular local file." >&2
+        return 1
+    fi
+    _request_source="${TMPDIR_INSTALL}/install-manifest"
+    printf '%s\nfile://%s\n' \
+        "$CAPSEM_MANIFEST_URL" "$CAPSEM_INSTALL_MANIFEST_PAYLOAD" > "$_request_source"
+    chmod 0600 "$_request_source"
+    sudo /usr/bin/install -d -o root -m 0700 "$CAPSEM_INSTALL_USER_REQUEST_DIR"
+    sudo /usr/bin/install -o root -m 0600 \
+        "$MANIFEST_PATH" "$CAPSEM_INSTALL_MANIFEST_PAYLOAD"
+    INSTALL_MANIFEST_REQUEST_WRITTEN=1
+    sudo /usr/bin/install -o root -m 0600 \
+        "$_request_source" "$CAPSEM_INSTALL_MANIFEST_REQUEST"
+}
+
+clear_install_manifest_request() {
+    if [ "${INSTALL_MANIFEST_REQUEST_WRITTEN:-0}" = "1" ]; then
+        sudo rm -f "$CAPSEM_INSTALL_MANIFEST_REQUEST" "$CAPSEM_INSTALL_MANIFEST_PAYLOAD"
+        INSTALL_MANIFEST_REQUEST_WRITTEN=0
+    fi
+}
+
+cleanup_install() {
+    clear_macos_install_user_request || true
+    clear_install_manifest_request || true
+    if [ -n "${TMPDIR_INSTALL:-}" ]; then
+        rm -rf "$TMPDIR_INSTALL"
+    fi
 }
 
 prepare_macos_install_user() {
@@ -290,20 +332,16 @@ install_macos() {
     _expected_sha256="$4"
     _package_name="$5"
 
-    TMPDIR_INSTALL="$(mktemp -d)"
+    ensure_install_workspace
     PKG_PATH="${TMPDIR_INSTALL}/Capsem.pkg"
-
-    cleanup_macos() {
-        clear_macos_install_user_request || true
-        rm -rf "$TMPDIR_INSTALL"
-    }
-    trap cleanup_macos EXIT
+    trap cleanup_install EXIT
 
     echo "Downloading $_pkg_url..."
     curl -fSL --progress-bar -o "$PKG_PATH" "$_pkg_url"
     verify_package "$PKG_PATH" "$_package_name" "$_expected_bytes" "$_expected_sha256"
 
     echo "Installing .pkg package (may prompt for sudo password)..."
+    prepare_install_manifest
     prepare_macos_install_user
     MACOS_INSTALL_USER_REQUEST_WRITTEN=1
     sudo /usr/sbin/installer -pkg "$PKG_PATH" -target /
@@ -321,19 +359,16 @@ install_linux() {
     _expected_sha256="$4"
     _package_name="$5"
 
-    TMPDIR_INSTALL="$(mktemp -d)"
+    ensure_install_workspace
     DEB_PATH="${TMPDIR_INSTALL}/capsem.deb"
-
-    cleanup_linux() {
-        rm -rf "$TMPDIR_INSTALL"
-    }
-    trap cleanup_linux EXIT
+    trap cleanup_install EXIT
 
     echo "Downloading $_deb_url..."
     curl -fSL --progress-bar -o "$DEB_PATH" "$_deb_url"
     verify_package "$DEB_PATH" "$_package_name" "$_expected_bytes" "$_expected_sha256"
 
     echo "Installing .deb package (may prompt for sudo password)..."
+    prepare_install_manifest
     sudo apt install -y "$DEB_PATH"
 
     echo ""
@@ -378,7 +413,10 @@ esac
 # Fetch stable release-channel manifest. The asset lane may be newer than the
 # binary lane, so do not use GitHub's "latest release" endpoint here.
 echo "Fetching Capsem ${CAPSEM_CHANNEL} release channel..."
-RELEASE_MANIFEST="$(fetch_release_manifest)"
+ensure_install_workspace
+trap cleanup_install EXIT
+fetch_release_manifest "$MANIFEST_PATH"
+RELEASE_MANIFEST="$(cat "$MANIFEST_PATH")"
 
 # Find the right asset
 find_asset_url "$RELEASE_MANIFEST" "$OS" "$ARCH"

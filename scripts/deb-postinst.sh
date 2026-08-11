@@ -15,7 +15,7 @@ if ! declare -F capsem_resolve_install_manifest >/dev/null; then
 fi
 
 CAPSEM_INSTALL_MANIFEST_REQUEST="/var/run/capsem/install-manifest"
-trap 'rm -f "$CAPSEM_INSTALL_MANIFEST_REQUEST"' EXIT
+CAPSEM_INSTALL_MANIFEST_PAYLOAD="/var/run/capsem/install-manifest.json"
 
 # Determine the real user (not root from sudo)
 if [ -n "${SUDO_USER:-}" ]; then
@@ -77,9 +77,11 @@ if [ -z "$MANIFEST_SOURCE" ]; then
     echo "capsem: packaged manifest-metadata.json has no manifest_url" >&2
     exit 1
 fi
-MANIFEST_SOURCE=$(capsem_resolve_install_manifest \
+MANIFEST_SELECTION=$(capsem_resolve_install_manifest \
     "$MANIFEST_SOURCE" \
     "$CAPSEM_INSTALL_MANIFEST_REQUEST")
+MANIFEST_SOURCE=$(printf '%s\n' "$MANIFEST_SELECTION" | sed -n '1p')
+MANIFEST_PAYLOAD=$(printf '%s\n' "$MANIFEST_SELECTION" | sed -n '2p')
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_source source=$MANIFEST_SOURCE"
 
 CAPSEM_INSTALL_PHASE="install_profiles"
@@ -106,7 +108,14 @@ chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR"
 
 CAPSEM_INSTALL_PHASE="hydrate_assets"
 if [ -x "$CAPSEM_DIR/bin/capsem" ]; then
-    if ! su "$TARGET_USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets --manifest \"$MANIFEST_SOURCE\""; then
+    if [ -n "$MANIFEST_PAYLOAD" ]; then
+        MANIFEST_PAYLOAD_PATH="${MANIFEST_PAYLOAD#file://}"
+        HYDRATE_COMMAND="CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets --manifest \"$MANIFEST_SOURCE\" --install-manifest-stdin"
+        su "$TARGET_USER" -c "$HYDRATE_COMMAND" < "$MANIFEST_PAYLOAD_PATH" || HYDRATE_FAILED=1
+    else
+        su "$TARGET_USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets --manifest \"$MANIFEST_SOURCE\"" || HYDRATE_FAILED=1
+    fi
+    if [ "${HYDRATE_FAILED:-0}" = "1" ]; then
         echo "capsem: asset hydration failed" >&2
         echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=asset_hydration_failed"
         exit 1
@@ -114,7 +123,10 @@ if [ -x "$CAPSEM_DIR/bin/capsem" ]; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=assets_hydrated"
 fi
 
-case "$MANIFEST_SOURCE" in
+case "$MANIFEST_SELECTION" in
+    *$'\n'*)
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=update_status_refresh_skipped source=$MANIFEST_SOURCE reason=preverified_install_payload"
+        ;;
     http://*|https://*)
         CAPSEM_INSTALL_PHASE="refresh_update_status"
         if ! su "$TARGET_USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --check"; then
@@ -175,4 +187,5 @@ fi
 
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=complete"
 CAPSEM_INSTALL_PHASE="complete"
+rm -f "$CAPSEM_INSTALL_MANIFEST_REQUEST" "$CAPSEM_INSTALL_MANIFEST_PAYLOAD"
 exit 0

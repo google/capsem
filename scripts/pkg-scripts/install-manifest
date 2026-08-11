@@ -11,8 +11,14 @@ capsem_manifest_request_mode() {
 
 capsem_requested_install_manifest() {
     local request="$1"
-    local owner mode candidate line_count local_path
-    [ -e "$request" ] || return 1
+    local owner mode candidate payload line_count local_path payload_owner payload_mode
+    if [ ! -e "$request" ]; then
+        if [ -e "${request}.json" ]; then
+            echo "capsem: orphan install-manifest payload has no request: ${request}.json" >&2
+            return 2
+        fi
+        return 1
+    fi
     if [ ! -f "$request" ] || [ -L "$request" ]; then
         echo "capsem: secure install-manifest request must be a regular file: $request" >&2
         return 2
@@ -31,35 +37,80 @@ capsem_requested_install_manifest() {
     fi
     line_count=$(wc -l < "$request" | tr -d '[:space:]')
     candidate=$(sed -n '1p' "$request")
+    payload=$(sed -n '2p' "$request")
+    if [ "$line_count" != "1" ] && [ "$line_count" != "2" ]; then
+        echo "capsem: secure install-manifest request must contain one source or one source/payload pair: $request" >&2
+        return 2
+    fi
     case "$candidate" in
-        file:///*) ;;
+        file:///*|http://*|https://*) ;;
         *)
-            echo "capsem: secure install-manifest request must select one local file URL: $request" >&2
+            echo "capsem: secure install-manifest request has an invalid logical source: $request" >&2
             return 2
             ;;
     esac
-    if [ "$line_count" != "1" ] || [[ "$candidate" == *"%"* ]]; then
-        echo "capsem: secure install-manifest request must contain one unescaped local file URL: $request" >&2
+    if [[ "$candidate" == *"%"* ]] || [[ "$candidate" == *[!A-Za-z0-9/:._+-]* ]]; then
+        echo "capsem: secure install-manifest logical source contains unsafe characters: $request" >&2
         return 2
     fi
-    local_path="${candidate#file://}"
+    if [ "$line_count" = "1" ]; then
+        case "$candidate" in
+            file:///*) ;;
+            *)
+                echo "capsem: one-line install-manifest request must select a local file URL: $request" >&2
+                return 2
+                ;;
+        esac
+        payload="$candidate"
+    else
+        case "$payload" in
+            file:///*) ;;
+            *)
+                echo "capsem: secure install-manifest payload must be a local file URL: $request" >&2
+                return 2
+                ;;
+        esac
+        if [[ "$payload" == *"%"* ]]; then
+            echo "capsem: secure install-manifest payload must be unescaped: $request" >&2
+            return 2
+        fi
+    fi
+    local_path="${payload#file://}"
     if [ ! -f "$local_path" ] || [ -L "$local_path" ]; then
         echo "capsem: secure install-manifest target must be a regular local file: $local_path" >&2
         return 2
     fi
+    if [ "$line_count" = "2" ]; then
+        if [ "$local_path" != "${request}.json" ]; then
+            echo "capsem: paired install-manifest payload must use ${request}.json" >&2
+            return 2
+        fi
+        payload_owner=$(capsem_manifest_request_owner_uid "$local_path") || return 2
+        payload_mode=$(capsem_manifest_request_mode "$local_path") || return 2
+        if [ "$payload_owner" != "$(id -u)" ] || [ "$payload_mode" != "600" ]; then
+            echo "capsem: paired install-manifest payload must be owned by the package-script user with mode 0600: $local_path" >&2
+            return 2
+        fi
+    elif [ -e "${request}.json" ]; then
+        echo "capsem: one-line install-manifest request has an orphan paired payload: ${request}.json" >&2
+        return 2
+    fi
     printf '%s\n' "$candidate"
+    if [ "$line_count" = "2" ]; then
+        printf '%s\n' "$payload"
+    fi
 }
 
 capsem_resolve_install_manifest() {
     local packaged="${1:?capsem_resolve_install_manifest <packaged> [request]}"
     local request="${2:-/var/run/capsem/install-manifest}"
     local requested_status selected
-    if [ -e "$request" ]; then
-        selected=$(capsem_requested_install_manifest "$request")
-        requested_status=$?
-        [ "$requested_status" -eq 0 ] || return "$requested_status"
+    if selected=$(capsem_requested_install_manifest "$request"); then
         printf '%s\n' "$selected"
         return 0
+    else
+        requested_status=$?
     fi
+    [ "$requested_status" -eq 1 ] || return "$requested_status"
     printf '%s\n' "$packaged"
 }

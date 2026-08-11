@@ -1491,6 +1491,7 @@ probe_installed_transition() {{
   artifact="$5"
   platform="$6"
   architecture="$7"
+  metadata_manifest_url="${{8:-$manifest_url}}"
   wait_for_service
   check_binary_versions "$package_version"
   dpkg-query -W -f='${{Version}}' capsem | grep -Fx "$package_version"
@@ -1498,6 +1499,7 @@ probe_installed_transition() {{
     --capsem "$CAPSEM_BIN" \
     --capsem-home "$CAPSEM_HOME_DIR" \
     --manifest-url "$manifest_url" \
+    --metadata-manifest-url "$metadata_manifest_url" \
     --channel "$channel" \
     --package-version "$package_version" \
     --artifact "$artifact" \
@@ -1968,10 +1970,8 @@ def run_installed_glowup(
     packaged_identity: dict[str, str] | None = None,
     evidence_out: Path | None = None,
 ) -> None:
-    # A fresh install records what the package declares. Only a repacked
-    # fixture carries the hermetic URLs; the exact publishable package keeps
-    # its own channel, and asserting otherwise would demand that install-time
-    # input override it -- the very redirect the resolver refuses.
+    # Exact selected bytes and package-owned future polling provenance are
+    # separate authorities during hermetic native installation.
     fresh_manifest_url = (
         packaged_identity["manifest_url"] if packaged_identity else stable_manifest_url
     )
@@ -2030,14 +2030,14 @@ grep -F {fresh_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
 grep -F '"package_version": "{package_version}"' "$HOME/.capsem/assets/manifest-metadata.json"
 stable_manifest_sha=$(sha256sum "$HOME/.capsem/assets/manifest.json" | cut -d' ' -f1)
 probe_installed_transition fresh-stable \
-  {fresh_manifest_url} {fresh_stable_channel} {package_version} \
-  {shlex.quote(str(stable_package))} linux {shlex.quote(package_architecture)}
+  {stable_manifest_url} {fresh_stable_channel} {package_version} \
+  {shlex.quote(str(stable_package))} linux {shlex.quote(package_architecture)} {fresh_manifest_url}
 test -f "$HOME/.capsem/logs/install.log"
-grep -F "event=manifest_source source={fresh_manifest_url}" "$HOME/.capsem/logs/install.log"
+grep -F "event=manifest_source source={stable_manifest_url}" "$HOME/.capsem/logs/install.log"
 grep -F '"package_version": "{package_version}"' "$HOME/.capsem/logs/install.log"
 grep -F "event=assets_hydrated" "$HOME/.capsem/logs/install.log"
 grep -F "event=service_install_invoked" "$HOME/.capsem/logs/install.log"
-check_update_log asset_update_complete {fresh_manifest_url}
+check_update_log asset_update_complete {stable_manifest_url}
 dpkg-query -W -f='${{Version}}' capsem | grep -Fx {package_version}
 CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL="$release_channels_url" "$HOME/.capsem/bin/capsem" update --yes --channel nightly
 grep -F {nightly_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
@@ -2089,8 +2089,8 @@ curl -fsSL {install_script_url} | CAPSEM_CHANNEL=nightly CAPSEM_RELEASE_BASE_URL
 grep -F {fresh_nightly_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
 grep -F '"package_version": "{package_version}"' "$HOME/.capsem/assets/manifest-metadata.json"
 probe_installed_transition final-nightly \
-  {fresh_nightly_manifest_url} {fresh_nightly_channel} {package_version} \
-  {shlex.quote(str(nightly_package))} linux {shlex.quote(package_architecture)}
+  {nightly_manifest_url} {fresh_nightly_channel} {package_version} \
+  {shlex.quote(str(nightly_package))} linux {shlex.quote(package_architecture)} {fresh_nightly_manifest_url}
 cp "$EVIDENCE_DIR/final-nightly-installed.json" {evidence_arg}
 """
     run(["bash", "-lc", script])

@@ -323,6 +323,8 @@ def test_guest_installs_and_verifies_the_exact_shared_package() -> None:
     assert "/Applications/Capsem.app" in source
     assert 'CAPSEM_BIN_DIR="$CAPSEM_HOME/bin"' in source
     assert "verify-installed-release.py" in source
+    assert "--metadata-manifest-url" in source
+    assert "install-manifest-request.sh" in source
     assert "--artifact" in source
     assert "--platform macos" in source
     assert "--architecture arm64" in source

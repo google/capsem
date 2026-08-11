@@ -69,6 +69,7 @@ def _run(
     platform: str = "linux",
     architecture: str = "amd64",
     package_version: str = "1.5.9",
+    metadata_manifest_url: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = [
         sys.executable,
@@ -84,6 +85,8 @@ def _run(
         "--package-version",
         package_version,
     ]
+    if metadata_manifest_url is not None:
+        command.extend(["--metadata-manifest-url", metadata_manifest_url])
     if artifact is not None:
         command.extend(
             [
@@ -138,6 +141,25 @@ def test_installed_release_gate_accepts_exact_manifest_metadata_and_ready_profil
 
     assert result.returncode == 0, result.stderr
     assert "verified installed stable release 1.5.9: 2/2 profiles ready" in result.stdout
+
+
+def test_installed_release_gate_separates_selected_bytes_from_polling_provenance(
+    tmp_path: Path,
+) -> None:
+    home, manifest, capsem = _write_fixture(tmp_path)
+    polling = "https://release.capsem.org/assets/stable/manifest.json"
+    metadata_path = home / "assets" / "manifest-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["manifest_url"] = polling
+    metadata_path.write_text(json.dumps(metadata) + "\n", encoding="utf-8")
+    capsem.write_text(
+        capsem.read_text(encoding="utf-8").replace(manifest.resolve().as_uri(), polling),
+        encoding="utf-8",
+    )
+
+    result = _run(home, manifest, capsem, metadata_manifest_url=polling)
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_installed_release_gate_accepts_manifest_selected_legacy_x86_64_deb(

@@ -553,7 +553,7 @@ enum MiscCommands {
         #[arg(long, short)]
         yes: bool,
         /// Check the release channel and refresh update status without applying changes.
-        #[arg(long, conflicts_with_all = ["yes", "assets", "manifest", "corp"])]
+        #[arg(long, conflicts_with_all = ["yes", "assets", "manifest", "install_manifest_stdin", "corp"])]
         check: bool,
         /// Refresh only VM assets (kernel/initrd/rootfs) from the release URL.
         /// Useful when an asset-only release ships independently of binaries.
@@ -565,6 +565,15 @@ enum MiscCommands {
         /// Override the asset manifest endpoint for this update.
         #[arg(long, value_name = "URL", value_parser = validate_update_manifest_url)]
         manifest: Option<String>,
+        /// Read preverified manifest bytes from stdin while --manifest remains
+        /// their logical URL. Reserved for the native package handoff.
+        #[arg(
+            long,
+            requires_all = ["manifest", "assets"],
+            conflicts_with_all = ["yes", "check", "channel", "corp"],
+            hide = true
+        )]
+        install_manifest_stdin: bool,
         /// Fetch and install corporate policy config from this URL.
         #[arg(long, value_name = "URL", value_parser = validate_update_corp_url, conflicts_with = "assets")]
         corp: Option<String>,
@@ -1695,6 +1704,7 @@ async fn main() -> Result<()> {
             assets,
             channel,
             manifest,
+            install_manifest_stdin,
             corp,
         }) => {
             update::run_update(
@@ -1703,6 +1713,7 @@ async fn main() -> Result<()> {
                 *assets,
                 channel.as_deref(),
                 manifest.as_deref(),
+                *install_manifest_stdin,
                 corp.as_deref(),
             )
             .await?;

@@ -1047,6 +1047,7 @@ fn parse_update() {
             assets,
             channel,
             manifest,
+            install_manifest_stdin,
             corp,
         }) => {
             assert!(!yes);
@@ -1054,6 +1055,7 @@ fn parse_update() {
             assert!(!assets);
             assert_eq!(channel, None);
             assert_eq!(manifest, None);
+            assert!(!install_manifest_stdin);
             assert_eq!(corp, None);
         }
         _ => panic!("expected Update"),
@@ -1070,6 +1072,7 @@ fn parse_update_yes() {
             assets,
             channel,
             manifest,
+            install_manifest_stdin,
             corp,
         }) => {
             assert!(yes);
@@ -1077,6 +1080,7 @@ fn parse_update_yes() {
             assert!(!assets);
             assert_eq!(channel, None);
             assert_eq!(manifest, None);
+            assert!(!install_manifest_stdin);
             assert_eq!(corp, None);
         }
         _ => panic!("expected Update"),
@@ -1093,6 +1097,7 @@ fn parse_update_check() {
             assets,
             channel,
             manifest,
+            install_manifest_stdin,
             corp,
         }) => {
             assert!(!yes);
@@ -1100,6 +1105,7 @@ fn parse_update_check() {
             assert!(!assets);
             assert_eq!(channel, None);
             assert_eq!(manifest, None);
+            assert!(!install_manifest_stdin);
             assert_eq!(corp, None);
         }
         _ => panic!("expected Update"),
@@ -1134,6 +1140,59 @@ fn parse_update_check_rejects_mutating_options() {
 }
 
 #[test]
+fn parse_hidden_install_manifest_stdin_requires_the_exact_asset_handoff_shape() {
+    let cli = Cli::parse_from([
+        "capsem",
+        "update",
+        "--assets",
+        "--manifest",
+        "https://release.capsem.org/assets/nightly/manifest.json",
+        "--install-manifest-stdin",
+    ]);
+    match cli.command.unwrap() {
+        Commands::Misc(MiscCommands::Update {
+            assets,
+            manifest,
+            install_manifest_stdin,
+            ..
+        }) => {
+            assert!(assets);
+            assert!(manifest.is_some());
+            assert!(install_manifest_stdin);
+        }
+        _ => panic!("expected Update"),
+    }
+
+    for args in [
+        vec!["capsem", "update", "--install-manifest-stdin"],
+        vec![
+            "capsem",
+            "update",
+            "--manifest",
+            "file:///tmp/manifest.json",
+            "--install-manifest-stdin",
+        ],
+        vec![
+            "capsem",
+            "update",
+            "--assets",
+            "--manifest",
+            "file:///tmp/manifest.json",
+            "--install-manifest-stdin",
+            "--corp",
+            "file:///tmp/corp.toml",
+        ],
+    ] {
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+    let help = match Cli::try_parse_from(["capsem", "update", "--help"]) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("--help must stop parsing"),
+    };
+    assert!(!help.contains("install-manifest-stdin"));
+}
+
+#[test]
 fn parse_update_assets() {
     let cli = Cli::parse_from(["capsem", "update", "--assets"]);
     match cli.command.unwrap() {
@@ -1143,6 +1202,7 @@ fn parse_update_assets() {
             assets,
             channel,
             manifest,
+            install_manifest_stdin,
             corp,
         }) => {
             assert!(!yes);
@@ -1150,6 +1210,7 @@ fn parse_update_assets() {
             assert!(assets);
             assert_eq!(channel, None);
             assert_eq!(manifest, None);
+            assert!(!install_manifest_stdin);
             assert_eq!(corp, None);
         }
         _ => panic!("expected Update"),

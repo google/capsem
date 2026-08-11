@@ -59,6 +59,7 @@ def main() -> int:
     parser.add_argument("--capsem", required=True, type=Path)
     parser.add_argument("--capsem-home", default=Path.home() / ".capsem", type=Path)
     parser.add_argument("--manifest-url", required=True)
+    parser.add_argument("--metadata-manifest-url")
     parser.add_argument("--channel", required=True)
     parser.add_argument("--package-version", required=True)
     parser.add_argument("--artifact", type=Path)
@@ -66,6 +67,7 @@ def main() -> int:
     parser.add_argument("--architecture")
     parser.add_argument("--evidence-out", type=Path)
     args = parser.parse_args()
+    metadata_manifest_url = args.metadata_manifest_url or args.manifest_url
     artifact_options = (args.artifact, args.platform, args.architecture)
     if any(value is not None for value in artifact_options) and not all(
         value is not None for value in artifact_options
@@ -118,7 +120,7 @@ def main() -> int:
 
     expected_metadata = {
         "schema": METADATA_SCHEMA,
-        "manifest_url": args.manifest_url,
+        "manifest_url": metadata_manifest_url,
         "checked_url": args.manifest_url,
         "channel": args.channel,
         "package_version": args.package_version,
@@ -159,7 +161,7 @@ def main() -> int:
         "Service:   ok",
         "Gateway:   ok",
         "  status:  valid",
-        f"  source:  {args.manifest_url}",
+        f"  source:  {metadata_manifest_url}",
     ):
         if required not in status:
             fail(f"capsem status is missing {required!r}")
@@ -188,6 +190,7 @@ def main() -> int:
                     "package_version": args.package_version,
                     "channel": args.channel,
                     "manifest_url": args.manifest_url,
+                    "metadata_manifest_url": metadata_manifest_url,
                     "installed": True,
                     "running": True,
                     "service": "ok",

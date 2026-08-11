@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Native Linux and macOS installers now carry the exact manifest bytes selected
+  by the public installer into the network-sealed postinstall, alongside their
+  logical source URL. Relative assets resolve against that source without a
+  second manifest fetch, package-owned stable/nightly polling provenance stays
+  intact, and failed package-manager runs retain the secure paired handoff for
+  retry while successful installs remove it.
+
 - KVM warm checkpoints now discard deleted cache-only VirtioFS inode entries
   that have no live file or directory handle while preserving the monotonic
   guest inode allocator. Open-unlinked handles remain fail-closed, and a typed

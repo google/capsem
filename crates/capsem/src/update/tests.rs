@@ -2150,14 +2150,15 @@ async fn corrupt_cached_binary_installer_is_discarded_and_refetched() {
 #[tokio::test(flavor = "current_thread")]
 async fn update_check_rejects_mutating_options_programmatically() {
     for result in [
-        run_update(true, true, false, None, None, None).await,
-        run_update(false, true, true, None, None, None).await,
+        run_update(true, true, false, None, None, false, None).await,
+        run_update(false, true, true, None, None, false, None).await,
         run_update(
             false,
             true,
             false,
             None,
             Some("https://release.capsem.org/assets/stable/manifest.json"),
+            false,
             None,
         )
         .await,
@@ -2167,6 +2168,7 @@ async fn update_check_rejects_mutating_options_programmatically() {
             false,
             None,
             None,
+            false,
             Some("https://corp.example/capsem/corp.json"),
         )
         .await,
@@ -2201,6 +2203,7 @@ async fn update_assets_rejects_corp_policy_source_programmatically() {
         true,
         None,
         None,
+        false,
         Some("https://corp.example/capsem/corp.toml"),
     )
     .await;
@@ -2390,6 +2393,102 @@ fn public_channel_switch_is_allowed_in_both_directions_and_persisted() {
     assert_eq!(origin["channel"], "stable");
     assert_eq!(origin["channel_kind"], "public");
     assert_eq!(origin["channel_locked"], false);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn preverified_install_payload_updates_check_state_without_rebranding_package() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("installed-assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    let packaged_source = "https://release.capsem.org/assets/stable/manifest.json";
+    std::fs::write(
+        assets_dir.join("manifest-metadata.json"),
+        serde_json::json!({
+            "schema": "capsem.manifest_metadata.v1",
+            "origin": "package",
+            "manifest_url": packaged_source,
+            "channel": "stable",
+            "channel_kind": "public",
+            "channel_locked": false,
+            "package_version": env!("CARGO_PKG_VERSION"),
+            "packaged_at": "2026-08-11T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let payload = serde_json::to_vec(&test_manifest(
+        env!("CARGO_PKG_VERSION"),
+        "2026.0811.1",
+        env!("CARGO_PKG_VERSION"),
+        "2026.0811.1",
+    ))
+    .unwrap();
+    let selected_source = "http://127.0.0.1:43123/assets/nightly/manifest.json";
+
+    let transition =
+        channel_transition_for_preverified_install_payload(&assets_dir, selected_source, &payload)
+            .unwrap();
+    assert_eq!(transition, ChannelTransition::PreservePackageOrigin);
+    install_manifest_bytes(
+        &assets_dir,
+        selected_source,
+        &payload,
+        transition.manifest_metadata_policy(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read(assets_dir.join("manifest.json")).unwrap(),
+        payload
+    );
+    let metadata = installed_manifest_metadata(&assets_dir).unwrap().unwrap();
+    assert_eq!(metadata["origin"], "package");
+    assert_eq!(metadata["manifest_url"], packaged_source);
+    assert_eq!(metadata["channel"], "stable");
+    assert_eq!(metadata["channel_kind"], "public");
+    assert_eq!(metadata["channel_locked"], false);
+    assert_eq!(metadata["package_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(metadata["checked_url"], selected_source);
+    assert_eq!(metadata["validation_status"], "valid");
+    assert_eq!(metadata["channel_hash"], channel_payload_hash(&payload));
+    assert!(metadata["installed_at"].as_u64().unwrap() > 0);
+    assert!(metadata["refreshed_at"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn preverified_install_payload_rejects_a_different_package_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("installed-assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    std::fs::write(
+        assets_dir.join("manifest-metadata.json"),
+        serde_json::json!({
+            "schema": "capsem.manifest_metadata.v1",
+            "origin": "package",
+            "manifest_url": "https://release.capsem.org/assets/stable/manifest.json",
+            "package_version": env!("CARGO_PKG_VERSION")
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let payload = serde_json::to_vec(&test_manifest(
+        "9.9.9",
+        "2026.0811.1",
+        "9.9.9",
+        "2026.0811.1",
+    ))
+    .unwrap();
+
+    let error = channel_transition_for_preverified_install_payload(
+        &assets_dir,
+        "http://127.0.0.1:43123/assets/nightly/manifest.json",
+        &payload,
+    )
+    .unwrap_err();
+
+    assert!(format!("{error:#}").contains("installed package metadata selects"));
+    assert!(!assets_dir.join("manifest.json").exists());
 }
 
 #[test]

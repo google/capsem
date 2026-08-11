@@ -255,6 +255,77 @@ def test_installer_uses_release_channel_manifest_not_github_latest() -> None:
     assert "releases/latest" not in script
 
 
+def test_selected_manifest_is_handed_to_both_native_installers_as_exact_local_bytes(
+    tmp_path: Path,
+) -> None:
+    """Postinstall must hydrate the manifest that selected the exact package.
+
+    The request itself is root-owned and names a root-owned local copy.  That
+    lets a network-sealed native installer consume the already selected bytes
+    without falling back to the package's baked public URL.
+    """
+    for install_script in (INSTALL_SH, DOCS_INSTALL_SH):
+        fixture = tmp_path / install_script.parents[1].name
+        fixture.mkdir()
+        manifest = fixture / "manifest.json"
+        manifest.write_bytes(b'{"channel":"nightly","sentinel":"exact-bytes"}\n')
+        calls = fixture / "sudo-calls"
+        script = textwrap.dedent(f"""\
+            __INSTALL_SH_SOURCED=1
+            . "{install_script}"
+            TMPDIR_INSTALL="{fixture}"
+            MANIFEST_PATH="{manifest}"
+            sudo() {{
+                printf '%s\n' "$*" >> "{calls}"
+                case "$1" in
+                    /usr/bin/install)
+                        if [ "$2" != '-d' ]; then
+                            test -f "$6"
+                            case "$7" in
+                                */install-manifest.json)
+                                    cmp -s "$MANIFEST_PATH" "$6"
+                                    ;;
+                                */install-manifest)
+                                    test "$(sed -n '1p' "$6")" = "$CAPSEM_MANIFEST_URL"
+                                    test "$(sed -n '2p' "$6")" = \
+                                      'file:///var/run/capsem/install-manifest.json'
+                                    ;;
+                                *) return 97 ;;
+                            esac
+                        fi
+                        ;;
+                    *) return 98 ;;
+                esac
+            }}
+            prepare_install_manifest
+        """)
+
+        result = _run_shell(script)
+
+        assert result.returncode == 0, result.stderr
+        assert calls.read_text(encoding="utf-8").splitlines() == [
+            "/usr/bin/install -d -o root -m 0700 /var/run/capsem",
+            (
+                f"/usr/bin/install -o root -m 0600 {manifest} "
+                "/var/run/capsem/install-manifest.json"
+            ),
+            (
+                f"/usr/bin/install -o root -m 0600 {fixture}/install-manifest "
+                "/var/run/capsem/install-manifest"
+            ),
+        ]
+
+
+def test_manifest_handoff_precedes_linux_and_macos_package_application() -> None:
+    for install_script in (INSTALL_SH, DOCS_INSTALL_SH):
+        source = install_script.read_text(encoding="utf-8")
+        linux = source[source.index("install_linux()") : source.index("# -- Main entry")]
+        macos = source[source.index("install_macos()") : source.index("install_linux()")]
+
+        assert linux.index("prepare_install_manifest") < linux.index("sudo apt install")
+        assert macos.index("prepare_install_manifest") < macos.index("/usr/sbin/installer")
+
+
 def test_macos_installers_apply_pkg_before_cleaning_download(tmp_path: Path) -> None:
     """The curl installer must synchronously apply the pkg, not hand off a temp file."""
     for install_script in (INSTALL_SH, DOCS_INSTALL_SH):
@@ -274,6 +345,8 @@ def test_macos_installers_apply_pkg_before_cleaning_download(tmp_path: Path) -> 
             }}
             mktemp() {{
                 mkdir -p "{install_root}/download"
+                printf '{{"channel":"stable"}}\\n' > \
+                  "{install_root}/download/manifest.json"
                 printf '%s\\n' "{install_root}/download"
             }}
             curl() {{
@@ -295,23 +368,7 @@ def test_macos_installers_apply_pkg_before_cleaning_download(tmp_path: Path) -> 
             sudo() {{
                 case "$1" in
                     /usr/bin/install)
-                        if [ "$2" = '-d' ]; then
-                            test "$3" = '-o'
-                            test "$4" = 'root'
-                            test "$5" = '-g'
-                            test "$6" = 'wheel'
-                            test "$7" = '-m'
-                            test "$8" = '0700'
-                        else
-                            test "$2" = '-o'
-                            test "$3" = 'root'
-                            test "$4" = '-g'
-                            test "$5" = 'wheel'
-                            test "$6" = '-m'
-                            test "$7" = '0600'
-                            test -f "$8"
-                            test "$(cat "$8")" = "$SUDO_USER"
-                        fi
+                        return 0
                         ;;
                     /usr/sbin/installer)
                         printf '%s\\n' "$*" > "{call_log}"
@@ -385,11 +442,10 @@ while [ "$#" -gt 0 ]; do
     fi
     shift
 done
-if [ -n "$output" ]; then
-    printf 'fake signed package\n' > "$output"
-else
-    /bin/cat "$FAKE_MANIFEST"
-fi
+case "$output" in
+    */manifest.json) /bin/cat "$FAKE_MANIFEST" > "$output" ;;
+    *) printf 'fake signed package\n' > "$output" ;;
+esac
 """,
         "open": """#!/bin/sh
 echo 'unexpected GUI installer handoff' >&2
@@ -405,25 +461,7 @@ exit 93
 """,
         "sudo": """#!/bin/sh
 case "$1" in
-    /usr/bin/install)
-        if [ "$2" = '-d' ]; then
-            test "$3" = '-o'
-            test "$4" = 'root'
-            test "$5" = '-g'
-            test "$6" = 'wheel'
-            test "$7" = '-m'
-            test "$8" = '0700'
-        else
-            test "$2" = '-o'
-            test "$3" = 'root'
-            test "$4" = '-g'
-            test "$5" = 'wheel'
-            test "$6" = '-m'
-            test "$7" = '0600'
-            test -f "$8"
-            test "$(cat "$8")" = "$SUDO_USER"
-        fi
-        ;;
+    /usr/bin/install) exit 0 ;;
     /usr/sbin/installer)
         printf '%s\n' "$*" > "$INSTALLER_LOG"
         test "$2" = '-pkg'
@@ -510,18 +548,22 @@ while [ "$#" -gt 0 ]; do
     fi
     shift
 done
-if [ -n "$output" ]; then
-    printf 'fake deb package\n' > "$output"
-else
-    /bin/cat "$FAKE_MANIFEST"
-fi
+case "$output" in
+    */manifest.json) /bin/cat "$FAKE_MANIFEST" > "$output" ;;
+    *) printf 'fake deb package\n' > "$output" ;;
+esac
 """,
         "sudo": """#!/bin/sh
-printf '%s\n' "$*" > "$INSTALLER_LOG"
-test "$1" = 'apt'
-test "$2" = 'install'
-test "$3" = '-y'
-test -f "$4"
+case "$1" in
+    /usr/bin/install|rm) exit 0 ;;
+    apt)
+        printf '%s\n' "$*" > "$INSTALLER_LOG"
+        test "$2" = 'install'
+        test "$3" = '-y'
+        test -f "$4"
+        ;;
+    *) exit 98 ;;
+esac
 """,
     }
     for name, body in commands.items():

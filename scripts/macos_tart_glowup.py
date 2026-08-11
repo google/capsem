@@ -531,11 +531,11 @@ def main() -> int:
         PROJECT_ROOT / "scripts" / "macos-install-user-request.sh",
         share / "macos-install-user-request.sh",
     )
+    stage_file(PROJECT_ROOT / "scripts" / "install-manifest-request.sh", share / "install-manifest-request.sh")
     stage_file(
         PROJECT_ROOT / "scripts" / "release_glowup.py",
         share / "release_glowup.py",
     )
-
     vm_name = f"{OWNED_VM_PREFIX}{os.getpid()}-{int(time.time())}"
     require_owned_vm(vm_name)
     runner: subprocess.Popen[str] | None = None

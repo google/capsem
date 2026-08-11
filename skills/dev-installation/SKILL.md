@@ -83,6 +83,13 @@ memory; it must never serialize that view over the installed release graph.
 state. CLI status and About Capsem both read the service's canonical
 `GET /system/status` response, which includes those exact two JSON documents.
 
+The public installer fetches the selected manifest once and hands postinstall
+two identities: its logical URL and root-owned exact payload bytes. The hidden
+preactivation rail consumes those bytes through stdin, uses the logical URL for
+relative assets and `checked_url`, and preserves the package-owned polling URL,
+channel, and origin. The request and payload remain paired for package-manager
+retry after failure; postinstall removes both only after success.
+
 ## Package maintainer scripts
 
 - macOS `.pkg`: `scripts/pkg-scripts/preinstall` unloads the LaunchAgent, kills

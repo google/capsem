@@ -11,7 +11,7 @@ mod runtime_contract_tests;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fs::OpenOptions,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -27,6 +27,7 @@ use capsem_core::net::policy_config::{ProfileCatalog, ProfileConfigFile};
 
 const RELEASE_HTTP_ATTEMPTS: usize = 4;
 const RELEASE_HTTP_INITIAL_BACKOFF_MS: u64 = 250;
+const INSTALL_MANIFEST_STDIN_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Cached update check result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,8 +125,32 @@ struct BinaryInstallerApplyPlan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ChannelTransition {
     Preserve,
+    PreservePackageOrigin,
     Public(String),
     Corporate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManifestMetadataPolicy {
+    RecordSource,
+    PreservePackageOrigin,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExplicitManifestInput<'a> {
+    source: &'a str,
+    payload: Option<Vec<u8>>,
+}
+
+impl ChannelTransition {
+    fn manifest_metadata_policy(&self) -> ManifestMetadataPolicy {
+        match self {
+            Self::PreservePackageOrigin => ManifestMetadataPolicy::PreservePackageOrigin,
+            Self::Preserve | Self::Public(_) | Self::Corporate => {
+                ManifestMetadataPolicy::RecordSource
+            }
+        }
+    }
 }
 
 impl BinaryInstallerApplyPlan {
@@ -2669,10 +2694,45 @@ pub async fn run_update(
     assets: bool,
     channel: Option<&str>,
     manifest_source: Option<&str>,
+    install_manifest_stdin: bool,
     corp_source: Option<&str>,
 ) -> Result<()> {
+    if install_manifest_stdin
+        && (!assets || manifest_source.is_none() || channel.is_some() || corp_source.is_some())
+    {
+        anyhow::bail!(
+            "--install-manifest-stdin requires --assets and --manifest and cannot select another source"
+        );
+    }
+    let explicit_manifest = match (manifest_source, install_manifest_stdin) {
+        (Some(source), false) => Some(ExplicitManifestInput {
+            source,
+            payload: None,
+        }),
+        (Some(source), true) => {
+            let mut payload = Vec::new();
+            std::io::stdin()
+                .take(INSTALL_MANIFEST_STDIN_MAX_BYTES + 1)
+                .read_to_end(&mut payload)
+                .context("read preverified install manifest from stdin")?;
+            if payload.is_empty() {
+                anyhow::bail!("--install-manifest-stdin received an empty manifest");
+            }
+            if payload.len() as u64 > INSTALL_MANIFEST_STDIN_MAX_BYTES {
+                anyhow::bail!(
+                    "--install-manifest-stdin exceeds {INSTALL_MANIFEST_STDIN_MAX_BYTES} bytes"
+                );
+            }
+            Some(ExplicitManifestInput {
+                source,
+                payload: Some(payload),
+            })
+        }
+        (None, false) => None,
+        (None, true) => anyhow::bail!("--install-manifest-stdin requires --manifest"),
+    };
     let layout = platform::detect_install_layout();
-    if check_only && (yes || assets || manifest_source.is_some() || corp_source.is_some()) {
+    if check_only && (yes || assets || explicit_manifest.is_some() || corp_source.is_some()) {
         anyhow::bail!("--check cannot be combined with mutating update options");
     }
     if assets && corp_source.is_some() {
@@ -2680,7 +2740,7 @@ pub async fn run_update(
             "--assets cannot be combined with --corp; use --manifest for corporate asset channels"
         );
     }
-    if channel.is_some() && manifest_source.is_some() {
+    if channel.is_some() && explicit_manifest.is_some() {
         anyhow::bail!("--channel cannot be combined with --manifest");
     }
 
@@ -2689,10 +2749,10 @@ pub async fn run_update(
             .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
         channel_transition_for_request(&assets_dir, Some(channel), None)?
     } else {
-        if let Some(source) = manifest_source {
+        if let Some(input) = explicit_manifest.as_ref() {
             let assets_dir = capsem_core::asset_manager::default_assets_dir()
                 .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
-            channel_transition_for_request(&assets_dir, None, Some(source))?;
+            channel_transition_for_request(&assets_dir, None, Some(input.source))?;
         }
         ChannelTransition::Preserve
     };
@@ -2708,21 +2768,13 @@ pub async fn run_update(
         did_work = true;
     }
 
-    if assets || manifest_source.is_some() {
-        let selected_source = selected_channel
-            .as_ref()
-            .map(|selection| selection.url.as_str());
+    if assets || explicit_manifest.is_some() {
         if let Some(selection) = selected_channel.as_ref() {
             let (body, check) = fetch_selected_channel_update_check(&layout, selection).await?;
-            refresh_assets(
-                manifest_source.or(selected_source),
-                Some(selection),
-                Some(&body),
-            )
-            .await?;
+            refresh_assets(None, Some(selection), Some(&body)).await?;
             write_cache(&check).context("write selected channel status cache")?;
         } else {
-            refresh_assets(manifest_source, None, None).await?;
+            refresh_assets(explicit_manifest.as_ref(), None, None).await?;
         }
         return Ok(());
     }
@@ -3290,14 +3342,16 @@ fn validate_hex_digest(value: &str, expected_len: usize, field: &str) -> Result<
 
 /// Pull any missing / hash-mismatched VM assets from the release URL.
 async fn refresh_assets(
-    manifest_source: Option<&str>,
+    explicit_manifest: Option<&ExplicitManifestInput<'_>>,
     selected_channel: Option<&ResolvedReleaseChannelManifest>,
     selected_payload: Option<&[u8]>,
 ) -> Result<()> {
     let assets_dir = capsem_core::asset_manager::default_assets_dir()
         .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
-    let refresh_source = if let Some(source) = manifest_source {
-        Some(source.to_string())
+    let refresh_source = if let Some(input) = explicit_manifest {
+        Some(input.source.to_string())
+    } else if let Some(selection) = selected_channel {
+        Some(selection.url.clone())
     } else {
         remote_manifest_asset_source(&assets_dir)?
     };
@@ -3313,15 +3367,25 @@ async fn refresh_assets(
             "previous": previous_state
         }));
         let refresh_result: Result<()> = async {
-            let fetched_payload = if selected_payload.is_none() && manifest_source.is_some() {
-                Some(read_manifest_source(&source).await?)
+            let fetched_payload = if selected_payload.is_none() && explicit_manifest.is_some() {
+                let input = explicit_manifest.context("explicit manifest input disappeared")?;
+                match input.payload.as_deref() {
+                    Some(payload) => Some(payload.to_vec()),
+                    None => Some(read_manifest_source(&source).await?),
+                }
             } else {
                 None
             };
             let payload = selected_payload.or(fetched_payload.as_deref());
             let transition = if let Some(selection) = selected_channel {
                 channel_transition_for_request(&assets_dir, Some(selection.channel.as_str()), None)?
-            } else if manifest_source.is_some() {
+            } else if explicit_manifest.is_some_and(|input| input.payload.is_some()) {
+                channel_transition_for_preverified_install_payload(
+                    &assets_dir,
+                    &source,
+                    payload.context("preverified install manifest payload was not read")?,
+                )?
+            } else if explicit_manifest.is_some() {
                 channel_transition_for_explicit_manifest_payload(
                     &assets_dir,
                     &source,
@@ -3334,7 +3398,13 @@ async fn refresh_assets(
                 if let Some(selection) = selected_channel {
                     verify_selected_channel_manifest(selection, bytes)?;
                 }
-                install_manifest_bytes(&assets_dir, &source, bytes).await?;
+                install_manifest_bytes(
+                    &assets_dir,
+                    &source,
+                    bytes,
+                    transition.manifest_metadata_policy(),
+                )
+                .await?;
             } else {
                 install_manifest_source(&assets_dir, &source).await?;
             }
@@ -3515,6 +3585,40 @@ fn channel_transition_for_explicit_manifest_payload(
     channel_transition_for_request(assets_dir, None, Some(source))
 }
 
+fn channel_transition_for_preverified_install_payload(
+    assets_dir: &Path,
+    source: &str,
+    payload: &[u8],
+) -> Result<ChannelTransition> {
+    let metadata = installed_manifest_metadata(assets_dir)?
+        .context("preverified install manifest requires packaged manifest metadata")?;
+    if metadata.get("origin").and_then(serde_json::Value::as_str) != Some("package") {
+        anyhow::bail!("preverified install manifest requires package-origin metadata");
+    }
+    let package_version = metadata
+        .get("package_version")
+        .and_then(serde_json::Value::as_str)
+        .context("package-origin metadata has no package_version")?;
+    let check = update_check_from_release_payload(
+        payload,
+        &platform::detect_install_layout(),
+        source,
+        Some(channel_payload_hash(payload)),
+    )
+    .with_context(|| format!("validate preverified install manifest from {source}"))?;
+    let selected_version = check
+        .latest_version
+        .as_deref()
+        .context("preverified install manifest selects no package version")?;
+    if selected_version != package_version || package_version != env!("CARGO_PKG_VERSION") {
+        anyhow::bail!(
+            "preverified install manifest selects package {selected_version}, but installed package metadata selects {package_version} and binary is {}",
+            env!("CARGO_PKG_VERSION")
+        );
+    }
+    Ok(ChannelTransition::PreservePackageOrigin)
+}
+
 fn installed_manifest_metadata(assets_dir: &Path) -> Result<Option<serde_json::Value>> {
     let path = assets_dir.join("manifest-metadata.json");
     let Some(bytes) = read_optional_file(&path)? else {
@@ -3575,7 +3679,10 @@ fn channel_transition_for_request(
 }
 
 fn persist_channel_transition(assets_dir: &Path, transition: &ChannelTransition) -> Result<()> {
-    if matches!(transition, ChannelTransition::Preserve) {
+    if matches!(
+        transition,
+        ChannelTransition::Preserve | ChannelTransition::PreservePackageOrigin
+    ) {
         return Ok(());
     }
     let path = assets_dir.join("manifest-metadata.json");
@@ -3595,7 +3702,7 @@ fn persist_channel_transition(assets_dir: &Path, transition: &ChannelTransition)
             object.insert("channel_kind".to_string(), serde_json::json!("corporate"));
             object.insert("channel_locked".to_string(), serde_json::json!(true));
         }
-        ChannelTransition::Preserve => unreachable!(),
+        ChannelTransition::Preserve | ChannelTransition::PreservePackageOrigin => unreachable!(),
     }
     let bytes = serde_json::to_vec_pretty(&metadata).context("serialize manifest metadata")?;
     atomic_write(&path, &bytes)
@@ -3929,6 +4036,7 @@ async fn install_release_channel_profile_manifest(
     assets_dir: &Path,
     source: &str,
     body: &str,
+    metadata_policy: ManifestMetadataPolicy,
 ) -> Result<()> {
     let arch = capsem_core::asset_manager::host_manifest_arch();
     let graph = manifest_from_release_channel_profile_graph(body, arch)?;
@@ -3941,7 +4049,12 @@ async fn install_release_channel_profile_manifest(
     std::fs::create_dir_all(assets_dir)
         .with_context(|| format!("cannot create {}", assets_dir.display()))?;
     atomic_write(&assets_dir.join("manifest.json"), body.as_bytes())?;
-    write_installed_manifest_metadata(assets_dir, source, body.as_bytes())?;
+    write_installed_manifest_metadata_with_policy(
+        assets_dir,
+        source,
+        body.as_bytes(),
+        metadata_policy,
+    )?;
     println!("Installed asset manifest from {source}.");
     Ok(())
 }
@@ -4369,20 +4482,27 @@ fn finish_release_channel_asset_download(
 
 async fn install_manifest_source(assets_dir: &std::path::Path, source: &str) -> Result<()> {
     let bytes = read_manifest_source(source).await?;
-    install_manifest_bytes(assets_dir, source, &bytes).await
+    install_manifest_bytes(
+        assets_dir,
+        source,
+        &bytes,
+        ManifestMetadataPolicy::RecordSource,
+    )
+    .await
 }
 
 async fn install_manifest_bytes(
     assets_dir: &std::path::Path,
     source: &str,
     bytes: &[u8],
+    metadata_policy: ManifestMetadataPolicy,
 ) -> Result<()> {
     let body = std::str::from_utf8(bytes)
         .with_context(|| format!("manifest URL did not return UTF-8 JSON: {source}"))?;
     let document: serde_json::Value =
         serde_json::from_str(body).with_context(|| format!("parse manifest JSON from {source}"))?;
     if document.get("format").is_none() && document.get("profiles").is_some() {
-        install_release_channel_profile_manifest(assets_dir, source, body)
+        install_release_channel_profile_manifest(assets_dir, source, body, metadata_policy)
             .await
             .with_context(|| format!("install release channel profile graph from {source}"))?;
         return Ok(());
@@ -4393,7 +4513,7 @@ async fn install_manifest_bytes(
     std::fs::create_dir_all(assets_dir)
         .with_context(|| format!("cannot create {}", assets_dir.display()))?;
     atomic_write(&assets_dir.join("manifest.json"), bytes)?;
-    write_installed_manifest_metadata(assets_dir, source, bytes)?;
+    write_installed_manifest_metadata_with_policy(assets_dir, source, bytes, metadata_policy)?;
     println!("Installed asset manifest from {source}.");
     Ok(())
 }
@@ -4423,12 +4543,51 @@ fn write_manifest_metadata(assets_dir: &Path, source: &str) -> Result<()> {
     Ok(())
 }
 
+fn write_install_timestamps(assets_dir: &Path) -> Result<()> {
+    let metadata_path = assets_dir.join("manifest-metadata.json");
+    let mut metadata = read_manifest_metadata_value(&metadata_path)?
+        .context("package manifest metadata disappeared during preactivation")?;
+    let object = metadata
+        .as_object_mut()
+        .context("manifest metadata must be a JSON object")?;
+    let now = now_secs();
+    object.insert("refreshed_at".to_string(), serde_json::json!(now));
+    object
+        .entry("installed_at".to_string())
+        .or_insert_with(|| serde_json::json!(now));
+    let metadata_bytes = serde_json::to_vec_pretty(&metadata)?;
+    atomic_write(&metadata_path, &metadata_bytes)
+}
+
 fn write_installed_manifest_metadata(
     assets_dir: &Path,
     source: &str,
     manifest_bytes: &[u8],
 ) -> Result<()> {
-    write_manifest_metadata(assets_dir, source)?;
+    write_installed_manifest_metadata_with_policy(
+        assets_dir,
+        source,
+        manifest_bytes,
+        ManifestMetadataPolicy::RecordSource,
+    )
+}
+
+fn write_installed_manifest_metadata_with_policy(
+    assets_dir: &Path,
+    source: &str,
+    manifest_bytes: &[u8],
+    metadata_policy: ManifestMetadataPolicy,
+) -> Result<()> {
+    if metadata_policy == ManifestMetadataPolicy::RecordSource {
+        write_manifest_metadata(assets_dir, source)?;
+    } else {
+        let metadata = installed_manifest_metadata(assets_dir)?
+            .context("package manifest metadata disappeared during preactivation")?;
+        if metadata.get("origin").and_then(serde_json::Value::as_str) != Some("package") {
+            anyhow::bail!("preactivation can preserve only package-origin manifest metadata");
+        }
+        write_install_timestamps(assets_dir)?;
+    }
     let check = update_check_from_release_payload(
         manifest_bytes,
         &platform::detect_install_layout(),

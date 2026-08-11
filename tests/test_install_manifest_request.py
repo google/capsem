@@ -52,6 +52,43 @@ def test_absent_request_preserves_packaged_public_manifest(tmp_path: Path) -> No
     assert result.stdout.strip() == packaged
 
 
+def test_secure_pair_preserves_logical_source_and_exact_local_payload(tmp_path: Path) -> None:
+    request = tmp_path / "install-manifest"
+    payload = tmp_path / "install-manifest.json"
+    logical = "http://127.0.0.1:43123/assets/nightly/manifest.json"
+    payload.write_text('{"channel":"nightly"}\n', encoding="utf-8")
+    payload.chmod(0o600)
+    request.write_text(f"{logical}\n{payload.resolve().as_uri()}\n", encoding="utf-8")
+    request.chmod(0o600)
+
+    result = _resolve("https://release.capsem.org/assets/stable/manifest.json", request)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [logical, payload.resolve().as_uri()]
+
+
+def test_paired_request_rejects_weak_symlinked_and_orphan_payloads(tmp_path: Path) -> None:
+    request = tmp_path / "install-manifest"
+    payload = tmp_path / "install-manifest.json"
+    logical = "http://127.0.0.1:43123/assets/nightly/manifest.json"
+    payload.write_text("{}\n", encoding="utf-8")
+    request.write_text(f"{logical}\n{payload.resolve().as_uri()}\n", encoding="utf-8")
+    request.chmod(0o600)
+
+    payload.chmod(0o644)
+    assert _resolve(logical, request).returncode != 0
+
+    payload.unlink()
+    target = tmp_path / "payload-target"
+    target.write_text("{}\n", encoding="utf-8")
+    target.chmod(0o600)
+    os.symlink(target, payload)
+    assert _resolve(logical, request).returncode != 0
+
+    request.unlink()
+    assert _resolve(logical, request).returncode != 0
+
+
 def test_request_rejects_remote_bare_multiline_and_weak_mode(tmp_path: Path) -> None:
     manifest = tmp_path / "manifest.json"
     manifest.write_text("{}\n", encoding="utf-8")
@@ -124,4 +161,4 @@ exit "$5"
     )
 
     assert result.returncode == exit_status
-    assert not request.exists()
+    assert request.exists(), "failed postinstall must preserve the handoff for retry"
