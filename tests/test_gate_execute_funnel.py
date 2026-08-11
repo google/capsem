@@ -388,6 +388,68 @@ def test_every_subprocess_is_recorded_once(journal) -> None:
     ]
 
 
+def _recorded_command_policy(command: GateCommand, monkeypatch) -> str:
+    """Drive a real command class through the funnel with one inert action."""
+    runner = command._runner
+    probe = Plan(command.name)
+    probe.add(step("policy", Run(["doctor-policy-probe"])))
+    monkeypatch.setattr(command, "plan", lambda: probe)
+    monkeypatch.setattr(command, "resources", lambda _runner: ())
+    monkeypatch.setattr(command, "reexec", lambda: None)
+    monkeypatch.setattr(command, "exclusive", False)
+    monkeypatch.setattr(command, "private_checkout", False)
+
+    command.execute()
+
+    return runner.commands[0].env[CONFIG.environment.command_sandbox_mode]
+
+
+def test_candidate_overwrites_a_forged_ambient_sandbox_policy(journal, monkeypatch) -> None:
+    """Doctor learns policy from the command, never from the invoking shell."""
+    from capsem.gate import candidate, sandbox
+    from capsem.gate.qualification import LocalQualification
+
+    command = candidate.CandidateCommand(
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
+        qualification=LocalQualification(bin_dir=CONFIG.modules.default_bin_dir),
+    )
+    monkeypatch.setenv(CONFIG.environment.command_sandbox_mode, sandbox.OFF.value)
+
+    assert _recorded_command_policy(command, monkeypatch) == sandbox.ENFORCE.value
+
+
+@pytest.mark.parametrize(
+    ("requested", "ambient", "expected"),
+    [
+        (None, "enforce", "off"),
+        ("enforce", "off", "enforce"),
+    ],
+)
+def test_build_assets_exports_its_effective_sandbox_policy(
+    journal, monkeypatch, requested: str | None, ambient: str, expected: str
+) -> None:
+    """Default build-assets stays open; an explicit enforcing override wins."""
+    from capsem.gate import imagebuild, sandbox
+
+    parsed = None if requested is None else sandbox.SandboxMode(requested)
+    command = imagebuild.BuildAssetsCommand(
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(
+            dry_run=False,
+            graph=False,
+            timing=False,
+            sandbox=parsed,
+            profile=None,
+            arch=None,
+            template="all",
+        ),
+    )
+    monkeypatch.setenv(CONFIG.environment.command_sandbox_mode, ambient)
+
+    assert _recorded_command_policy(command, monkeypatch) == expected
+
+
 def test_a_recorded_command_carries_what_a_diagnosis_needs(journal) -> None:
     runner = RecordingRunner(PROJECT_ROOT)
     command = _probe(runner, steps=(step("one", Run(["cargo", "build"])),))
@@ -422,7 +484,10 @@ def test_the_recorded_environment_is_the_delta_not_the_machines(journal) -> None
     command.execute()
 
     (recorded,) = journal.execs
-    assert recorded["env"] == {"CAPSEM_MARK": "1"}
+    assert recorded["env"] == {
+        "CAPSEM_MARK": "1",
+        CONFIG.environment.command_sandbox_mode: "off",
+    }
 
 
 # ---------------------------------------------------------------------------

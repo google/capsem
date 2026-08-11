@@ -34,6 +34,7 @@ from .qualification import Qualification
 from .qualification import from_environment as qualification_for
 from .qualification import is_release as qualification_is_release
 from .recording import Recorded
+from .scopeenv import command_environment
 
 
 class GateCommand(Recorded, ABC):
@@ -59,7 +60,7 @@ class GateCommand(Recorded, ABC):
     is running.
     """
 
-    sandboxed: ClassVar[str] = "off"
+    sandboxed: ClassVar[sandbox.SandboxMode] = sandbox.OFF
     """Whether this command runs under the host kernel sandbox, and how.
 
     Off by default and overridable with `--sandbox`; see `capsem.gate.sandbox`
@@ -110,12 +111,9 @@ class GateCommand(Recorded, ABC):
         # say which channel it attempted is a run nobody can read back.
         self._invocation = invocation
         self._config = gate_config.for_root(runner.root)
-        # Read once, here, so no module below decides for itself whether it is
-        # in a release lane -- three did, from three different variables, and
-        # nothing compared their answers. Eagerly, so a broken environment
-        # stops the run before it spends an hour rather than when the module
-        # that happens to look reaches it -- but only for the commands whose
-        # plan depends on the answer.
+        self._sandbox_mode = sandbox.mode(self.sandboxed, getattr(args, "sandbox", None))
+        # Read once so modules cannot disagree, and early so malformed release
+        # state fails before the hour-long work, only for plans that need it.
         self._qualification = qualification
         if qualification is None and self.uses_qualification:
             self._qualification = qualification_for(self._config)
@@ -173,8 +171,7 @@ class GateCommand(Recorded, ABC):
         Module commands share the complete gate's host wrapper, so direct
         release-CI fragment invocations retain the qualification boundary."""
         return sandbox.reexec(
-            self._config, self._runner, default=self.sandboxed,
-            requested=getattr(self._args, "sandbox", None),
+            self._config, self._runner, default=self._sandbox_mode, requested=None,
             outside_egress=self.outside_egress,
         )
 
@@ -279,7 +276,9 @@ class GateCommand(Recorded, ABC):
                         self._config,
                         journal=log,
                         outside_runner=outside_runner,
-                        env=environment_of(acquired),
+                        env=command_environment(
+                            self._config, environment_of(acquired), self._sandbox_mode
+                        ),
                         watch=watch,
                         carried=carried,
                     )

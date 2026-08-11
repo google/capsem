@@ -2,6 +2,8 @@
 
 from capsem.gate.installimage import _step_label
 from capsem.gate.opacity import machine_effects
+from capsem.gate.sandbox import mode
 
 machine_effects("process")
 _step_label("install.capacity")
+mode("off", None)

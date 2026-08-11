@@ -115,18 +115,34 @@ check_linux_musl_toolchain() {
 }
 
 check_platform() {
-    local interfaces
+    local interfaces sandbox_policy sandbox_policy_valid
     section "Platform (Linux)"
+
+    sandbox_policy="${CAPSEM_GATE_COMMAND_SANDBOX_MODE:-}"
+    sandbox_policy_valid=1
+    case "$sandbox_policy" in
+        ""|off|enforce) ;;
+        report)
+            fail "Linux gate sandbox report mode is unsupported"
+            sandbox_policy_valid=0
+            ;;
+        *)
+            fail "unknown gate sandbox policy: $sandbox_policy"
+            sandbox_policy_valid=0
+            ;;
+    esac
 
     if ! command -v bwrap &>/dev/null; then
         fail "Bubblewrap not found -- install: $(tool_hint bwrap); or run ./bootstrap.sh"
-    elif [[ -n "${CAPSEM_GATE_RUN:-}" ]]; then
+    elif [[ "$sandbox_policy_valid" -eq 0 ]]; then
+        :
+    elif [[ "$sandbox_policy" == "enforce" ]]; then
         interfaces=$(capsem_linux_network_interfaces \
             | tr '\n' ' ' | sed 's/ $//')
         if [[ "$interfaces" == "lo" ]]; then
             pass "Bubblewrap gate network namespace active (loopback only)"
         else
-            fail "gate claims to be sandboxed but sees interfaces: ${interfaces:-unknown}"
+            fail "enforcing gate sandbox sees interfaces: ${interfaces:-unknown}"
         fi
     elif bwrap --unshare-net --die-with-parent --new-session \
         --bind / / --dev-bind /dev /dev -- sh -c ': > /dev/null' \

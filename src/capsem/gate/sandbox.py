@@ -36,6 +36,7 @@ import shutil
 import socket
 import subprocess
 import sys
+from enum import StrEnum
 from pathlib import Path
 
 from . import host
@@ -46,10 +47,15 @@ from .errors import GateError
 #: whoever reads it out of a failed run's directory.
 _COMMENT = ";;"
 
-#: The three modes, spelled once. `off` is the default because the profile
-#: denies the network and most commands are short reads that gain nothing from
-#: it; `report` measures without refusing; `enforce` refuses.
-OFF, REPORT, ENFORCE = "off", "report", "enforce"
+class SandboxMode(StrEnum):
+    """The closed set of host-kernel boundary policies a command may declare."""
+
+    OFF = "off"
+    REPORT = "report"
+    ENFORCE = "enforce"
+
+
+OFF, REPORT, ENFORCE = SandboxMode
 
 
 def prepare_egress(config: GateConfig) -> None:
@@ -64,8 +70,8 @@ def reexec(
     config: GateConfig,
     runner,
     *,
-    default: str,
-    requested: str | None,
+    default: SandboxMode,
+    requested: SandboxMode | None,
     outside_egress: bool = False,
 ):
     """The current gate invocation under its declared kernel boundary."""
@@ -143,13 +149,18 @@ def _sockets(config: GateConfig) -> tuple[str, ...]:
     return tuple(str(Path(path).expanduser()) for path in config.sandbox.sockets)
 
 
-def mode(command_default: str, requested: str | None) -> str:
+def mode(
+    command_default: SandboxMode, requested: SandboxMode | None
+) -> SandboxMode:
     """What this run uses: what was asked for, else what the command declares.
 
     A flag rather than only a declaration because report mode is a
     *measurement* -- the point is to run the ordinary gate and collect what it
     reached for, without editing the command to do it.
     """
+    for value in (command_default, requested):
+        if value is not None and not isinstance(value, SandboxMode):
+            raise TypeError(f"expected SandboxMode enum, got {value!r}")
     return requested or command_default
 
 
@@ -243,8 +254,8 @@ def applied(
     config: GateConfig,
     runner,
     *,
-    default: str,
-    requested: str | None,
+    default: SandboxMode,
+    requested: SandboxMode | None,
     argv: tuple[str, ...],
 ) -> tuple[str, ...]:
     """`argv`, wrapped in this host's kernel sandbox, or unchanged when off.

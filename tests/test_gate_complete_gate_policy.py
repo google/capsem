@@ -34,6 +34,12 @@ COMPLETE_GATE = {
 }
 
 
+@pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
+def test_every_complete_gate_keeps_the_enforcing_policy(name: str) -> None:
+    """Candidate and both macOS/Linux release wrappers share one declaration."""
+    assert GateCommand.registry[name].sandboxed is sandbox.ENFORCE
+
+
 def _command(name: str, **args):
     return GateCommand.registry[name](
         RecordingRunner(PROJECT_ROOT),

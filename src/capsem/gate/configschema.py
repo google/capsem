@@ -114,6 +114,7 @@ class EnvironmentConfig(Strict):
     benchmark_root: str
     coverage_file: str
     source_checkout: str
+    command_sandbox_mode: str
     install: InstallEnvironment
     package: PackageEnvironment
     release_site: ReleaseSiteEnvironment

@@ -283,6 +283,11 @@ coverage_file = "COVERAGE_FILE"
 # the *source* checkout's path, because a run in a prefix still has to be able
 # to name the tree it is qualifying.
 source_checkout = "CAPSEM_GATE_SOURCE_CHECKOUT"
+# The effective typed owning-command policy, injected into ordinary plan
+# actions and cleared at explicitly outside-sandbox edges. Doctor uses it to
+# distinguish an enforcing candidate from a network-open standalone build
+# without guessing from the lock.
+command_sandbox_mode = "CAPSEM_GATE_COMMAND_SANDBOX_MODE"
 
 # What the install-test image's smoke check is told. `UV_PROJECT_ENVIRONMENT`
 # is uv's own convention rather than a Capsem rail, but it is named here for

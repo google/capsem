@@ -9,17 +9,105 @@ run and reads as a product defect rather than an installation one.
 
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
-from capsem.gate import doctor
+from capsem.gate import doctor, sandbox
 from capsem.gate.context import Context
 from capsem.gate.errors import GateError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CONFIG = gate_config.load(PROJECT_ROOT)
+
+
+def _linux_platform(*, policy: str | None, interfaces: str = "eth0 lo") -> list[str]:
+    """Exercise Doctor's shell contract independently of the current host."""
+    script = r"""
+set -eu
+source scripts/doctor-linux.sh
+section() { :; }
+pass() { printf 'PASS:%s\n' "$1"; }
+fail() { printf 'FAIL:%s\n' "$1"; }
+warn() { printf 'WARN:%s\n' "$1"; }
+skip() { printf 'SKIP:%s\n' "$1"; }
+bwrap() { return 0; }
+capsem_linux_network_interfaces() { printf '%s\n' ${CAPSEM_TEST_INTERFACES}; }
+check_platform
+"""
+    environment = {
+        **os.environ,
+        "CAPSEM_SKIP_KVM_CHECK": "1",
+        "CAPSEM_TEST_INTERFACES": interfaces,
+    }
+    variable = CONFIG.environment.command_sandbox_mode
+    environment.pop(variable, None)
+    if policy is not None:
+        environment[variable] = policy
+    completed = subprocess.run(
+        ["bash", "-c", script],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return completed.stdout.splitlines()
+
+
+@pytest.mark.parametrize("policy", [None, sandbox.OFF.value])
+def test_linux_doctor_probes_bubblewrap_for_network_open_commands(policy: str | None) -> None:
+    lines = _linux_platform(policy=policy)
+
+    assert "PASS:Bubblewrap gate network namespace and device mount" in lines
+    assert not any("network namespace active" in line for line in lines)
+
+
+def test_linux_doctor_enforce_policy_proves_the_live_kernel_boundary() -> None:
+    good = _linux_platform(policy=sandbox.ENFORCE.value, interfaces="lo")
+    escaped = _linux_platform(policy=sandbox.ENFORCE.value)
+
+    assert "PASS:Bubblewrap gate network namespace active (loopback only)" in good
+    assert any(line.startswith("FAIL:enforcing gate sandbox sees interfaces:") for line in escaped)
+
+
+def test_linux_doctor_refuses_report_and_unknown_gate_policy() -> None:
+    assert "FAIL:Linux gate sandbox report mode is unsupported" in _linux_platform(
+        policy=sandbox.REPORT.value
+    )
+    assert "FAIL:unknown gate sandbox policy: forged" in _linux_platform(policy="forged")
+
+
+def test_gate_lock_marker_alone_never_claims_kernel_enforcement(monkeypatch) -> None:
+    monkeypatch.setenv(CONFIG.locks.gate.run_marker, "capsem-gate build-assets")
+
+    lines = _linux_platform(policy=None)
+
+    assert "PASS:Bubblewrap gate network namespace and device mount" in lines
+    assert not any("network namespace active" in line for line in lines)
+
+
+def test_bootstrap_and_doctor_keep_lock_ownership_separate_from_sandbox_policy() -> None:
+    linux = (PROJECT_ROOT / "scripts/doctor-linux.sh").read_text(encoding="utf-8")
+    common = (PROJECT_ROOT / "scripts/doctor-common.sh").read_text(encoding="utf-8")
+    bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text(encoding="utf-8")
+    variable = CONFIG.environment.command_sandbox_mode
+
+    assert variable == "CAPSEM_GATE_COMMAND_SANDBOX_MODE"
+    assert variable in linux
+    assert CONFIG.locks.gate.run_marker not in linux
+    assert CONFIG.locks.gate.run_marker in common
+    assert CONFIG.locks.gate.run_marker in bootstrap
+
+
+def test_macos_doctor_does_not_interpret_the_linux_command_policy() -> None:
+    macos = (PROJECT_ROOT / "scripts/doctor-macos.sh").read_text(encoding="utf-8")
+
+    assert CONFIG.environment.command_sandbox_mode not in macos
 
 
 def _checkout(tmp_path: Path, *, gate_toml: str | None = None) -> Path:
@@ -124,7 +212,6 @@ def test_every_declared_console_script_is_runnable() -> None:
     before importing the package -- and a string comparison would have been
     green for a launcher that never reached the CLI at the other end.
     """
-    import subprocess
     import tomllib
 
     declared = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[

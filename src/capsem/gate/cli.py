@@ -36,6 +36,7 @@ from . import (
     project_root,
     release,
     runs,
+    sandbox,
     service,
     smoke,
     storage,
@@ -105,7 +106,8 @@ def _inspection() -> argparse.ArgumentParser:
     )
     shared.add_argument(
         "--sandbox",
-        choices=("off", "report", "enforce"),
+        type=sandbox.SandboxMode,
+        choices=tuple(sandbox.SandboxMode),
         default=None,
         metavar="MODE",
         help=(

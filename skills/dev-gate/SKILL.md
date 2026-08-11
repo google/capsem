@@ -91,6 +91,11 @@ the configured UNIX sockets but no external interface; macOS uses the generated
 profile. Linux `report` mode is deliberately refused because it cannot produce
 the Seatbelt-style attempted-egress ledger.
 
+`GateCommand` computes its effective typed sandbox mode once and exports it to
+ordinary actions through the config-owned environment name. Outside-sandbox
+actions clear it. Host Doctor combines owning-command policy with live kernel
+state; the machine-lock marker proves only lock ownership, never enforcement.
+
 A release cannot resolve or publish while trapped in that namespace, so it
 starts one authenticated helper immediately before re-exec. Only `Run` and
 `Script` actions declared with `outside_sandbox=True` receive that runner. The

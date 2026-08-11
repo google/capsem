@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux Doctor now distinguishes the machine-lock ancestry marker from the
+  typed sandbox policy of its owning gate command. Enforcing candidates still
+  prove a loopback-only kernel namespace, while standalone asset builds can
+  retain their declared network without falsely claiming Bubblewrap escaped.
+
 - Candidate and static qualification no longer schedule storage-release phases
   that owned no working resource. Their real capacity checks and sealed install
   lifecycle remain ordered, while CI no longer provisions an unused host pnpm

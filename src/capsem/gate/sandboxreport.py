@@ -48,7 +48,7 @@ from pathlib import Path
 
 from .lifecycle import Resource
 from .proc import Runner
-from .sandbox import REPORT
+from .sandbox import REPORT, SandboxMode
 
 #: `Sandbox: <process>(<pid>) <decision> <operation> <resource>`. The resource
 #: is optional -- a bare `allow network-outbound` carries no path -- and the
@@ -69,7 +69,7 @@ class SandboxReport(Resource, name="sandbox-report"):
     there stops the run, which is louder than any log line.
     """
 
-    def __init__(self, config, runner: Runner, *, mode: str) -> None:
+    def __init__(self, config, runner: Runner, *, mode: SandboxMode) -> None:
         self._settings = config.sandbox
         self._runner = runner
         self._mode = mode

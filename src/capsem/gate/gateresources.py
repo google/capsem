@@ -21,6 +21,7 @@ from .egress import Egress
 from .errors import GateError
 from .lifecycle import Resource
 from .proc import Runner
+from .sandbox import OFF, SandboxMode
 from .sandboxreport import SandboxReport
 from .storage import Storage
 from .workspace import Workspace
@@ -115,7 +116,7 @@ class Colima(Resource, name="colima"):
 
 
 def gate_resources(
-    config, runner: Runner, *, mode: str, outside_egress: bool = False
+    config, runner: Runner, *, mode: SandboxMode, outside_egress: bool = False
 ) -> tuple[Resource, ...]:
     """What anything running the complete gate must hold.
 
@@ -134,7 +135,7 @@ def gate_resources(
         # asked for during teardown is as much a part of the allow-list as
         # what it was asked for during the run.
         SandboxReport(config, runner, mode=mode),
-        Egress(config, enabled=outside_egress and mode != "off"),
+        Egress(config, enabled=outside_egress and mode != OFF),
         FailureEvidence(config, runner),
         Workspace(config),
         Colima(config, runner),

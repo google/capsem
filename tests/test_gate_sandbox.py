@@ -23,7 +23,7 @@ from pydantic import ValidationError
 
 from capsem.gate import config as gate_config
 from capsem.gate import egress, sandbox
-from capsem.gate.actions import Run
+from capsem.gate.actions import Run, Script
 from capsem.gate.config import GateConfig
 from capsem.gate.context import Context
 from capsem.gate.errors import GateError
@@ -422,16 +422,36 @@ def test_off_is_the_default_so_a_short_command_keeps_its_network() -> None:
     assert sandbox.mode(sandbox.OFF, sandbox.REPORT) == sandbox.REPORT
 
 
+def test_sandbox_mode_rejects_untyped_callers_at_runtime() -> None:
+    """A dynamic string must not cross the same closed seam Ty protects."""
+    from typing import Any, cast
+
+    dynamic_mode = cast(Any, sandbox.mode)
+    with pytest.raises(TypeError, match="SandboxMode enum"):
+        dynamic_mode("off", None)
+
+
 def test_an_outside_action_uses_only_the_capability_runner() -> None:
     ordinary = RecordingRunner(PROJECT_ROOT)
     capability = RecordingRunner(PROJECT_ROOT)
+    variable = CONFIG.environment.command_sandbox_mode
 
-    Run(("python3", "-c", "print('networked')"), outside_sandbox=True).perform(
-        Context(ordinary, CONFIG, outside_runner=capability)
+    context = Context(
+        ordinary,
+        CONFIG,
+        outside_runner=capability,
+        env={variable: sandbox.ENFORCE.value},
     )
+    Run(
+        ("python3", "-c", "print('networked')"),
+        env={variable: sandbox.REPORT.value},
+        outside_sandbox=True,
+    ).perform(context)
+    Script("scripts/networked.py", outside_sandbox=True).perform(context)
 
     assert ordinary.commands == []
-    assert capability.rendered == ["python3 -c 'print('\"'\"'networked'\"'\"')'"]
+    assert len(capability.commands) == 2
+    assert all(command.env[variable] == "" for command in capability.commands)
 
 
 @pytest.mark.parametrize(

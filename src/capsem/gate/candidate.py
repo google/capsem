@@ -82,7 +82,8 @@ class CompleteGate:
     _config: gate_config.GateConfig
     _runner: Runner
     _args: argparse.Namespace
-    sandboxed: str
+    sandboxed: sandbox.SandboxMode
+    _sandbox_mode: sandbox.SandboxMode
     """Provided by `GateCommand`; declared so the mixin type-checks alone."""
 
     outside_egress = False
@@ -110,7 +111,7 @@ class CompleteGate:
         return gate_resources(
             self._config,
             runner,
-            mode=sandbox.mode(self.sandboxed, getattr(self._args, "sandbox", None)),
+            mode=self._sandbox_mode,
             outside_egress=self.outside_egress,
         )
 
@@ -136,9 +137,7 @@ class CompleteGate:
         stopped in three seconds.
         """
         awake_wrapper = keep_awake(self._runner)
-        sandbox_mode = sandbox.mode(
-            self.sandboxed, getattr(self._args, "sandbox", None)
-        )
+        sandbox_mode = self._sandbox_mode
         needs_sandbox = sandbox_mode != sandbox.OFF and not sandbox.active(self._config)
         if awake_wrapper is None and not needs_sandbox:
             return None
@@ -215,7 +214,7 @@ class CandidateModulesCommand(
         return gate_resources(
             self._config,
             runner,
-            mode=sandbox.mode(self.sandboxed, getattr(self._args, "sandbox", None)),
+            mode=self._sandbox_mode,
         )
 
     def plan(self) -> Plan:

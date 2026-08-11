@@ -26,6 +26,7 @@ from typing import ClassVar
 from .context import Context
 from .invocation import Command
 from .opacity import CallJustification
+from .scopeenv import action_environment
 
 
 class Action(ABC):
@@ -108,7 +109,12 @@ class Run(Action, name="run"):
             cwd=command.cwd,
             # The action's own environment wins: a context sets what a whole
             # scope shares, and the narrower scope is the one that meant it.
-            env={**context.env, **command.env},
+            env=action_environment(
+                context.config,
+                context.env,
+                command.env,
+                outside_sandbox=self._outside_sandbox,
+            ),
             check=command.check,
             log=command.log,
         )
@@ -159,7 +165,12 @@ class Script(Action, name="script"):
         return rendered
 
     def perform(self, context: Context) -> None:
-        env = {**context.env, **self._env}
+        env = action_environment(
+            context.config,
+            context.env,
+            self._env,
+            outside_sandbox=self._outside_sandbox,
+        )
         runner = context.external_runner if self._outside_sandbox else context.runner
         if self._root is None:
             runner.script(self._relative, *self._args, env=env, check=self._check)

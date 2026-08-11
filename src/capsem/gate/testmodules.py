@@ -59,6 +59,7 @@ class InWorkspace:
     private_checkout = True
 
     _config: GateConfig
+    _sandbox_mode: sandbox.SandboxMode
     """Supplied by `GateCommand`, declared here so the mixin type-checks."""
 
     def resources(self, runner: Runner) -> tuple[Resource, ...]:
@@ -83,9 +84,8 @@ class FastModule(
     outside_egress = True
 
     def resources(self, runner: Runner) -> tuple[Resource, ...]:
-        chosen = sandbox.mode(self.sandboxed, getattr(self._args, "sandbox", None))
         return (
-            Egress(self._config, enabled=chosen != sandbox.OFF),
+            Egress(self._config, enabled=self._sandbox_mode != sandbox.OFF),
             Workspace(self._config),
         )
 
