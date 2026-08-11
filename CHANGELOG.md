@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The package-lane Dockerfile now carries a narrow BuildKit waiver for its
+  deliberately required base argument. The composed gate still supplies the
+  exact locally materialized host-builder image, with no default or fallback,
+  while clean Docker/Colima checks no longer report a misleading empty-base
+  warning.
+
 - Failed one-shot VM startup now assigns post-mortem preservation to the
   single teardown path that atomically removes the live instance. A racing
   child watcher and provisioning failure can no longer rename the same

@@ -1,3 +1,7 @@
+# check=skip=InvalidDefaultArgInFrom
+# BASE is deliberately required. The gate is the sole caller and supplies the
+# exact locally materialized host-builder identity; a default would create an
+# unguarded fallback to a stale or mutable image.
 # The package lane's source, copied rather than mounted.
 #
 # The mount this replaces had to stay read-write, and not by choice: the

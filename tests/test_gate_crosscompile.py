@@ -144,6 +144,45 @@ def test_an_unknown_channel_is_refused_before_anything_is_built() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_the_package_dockerfile_waives_only_its_required_base_check() -> None:
+    """BuildKit cannot infer the base which the package graph must supply.
+
+    A default would make an uncomposed direct build silently consume a mutable
+    or stale image.  Keep the argument required and waive only the generic
+    check whose premise is that every Dockerfile must build with no arguments.
+    Parser directives must be the first physical line to take effect.
+    """
+    lines = (PROJECT_ROOT / CONFIG.package.lane_dockerfile).read_text(encoding="utf-8").splitlines()
+
+    assert lines[0] == "# check=skip=InvalidDefaultArgInFrom"
+    assert "ARG BASE" in lines
+    assert not any(line.startswith("ARG BASE=") for line in lines)
+    assert "FROM ${BASE}" in lines
+
+
+def test_the_package_lane_supplies_its_exact_host_builder_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The targeted Dockerfile waiver is safe only while this is indivisible."""
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
+
+    _run_lane(_rail(runner))
+
+    build = next(
+        command
+        for command in runner.commands
+        if command.argv[:2] == ("docker", "build")
+        and any(value.endswith(f"/{CONFIG.package.lane_dockerfile}") for value in command.argv)
+    )
+    supplied = [
+        build.argv[index + 1] for index, value in enumerate(build.argv) if value == "--build-arg"
+    ]
+    assert CONFIG.package.builder_image == CONFIG.hostimage.tag
+    assert supplied == [f"BASE={CONFIG.package.builder_image}"]
+
+
 def test_the_builder_receives_every_name_for_the_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -458,9 +497,7 @@ def test_the_standalone_plan_keeps_the_exact_package_proof() -> None:
     plan = Plan("standalone-package")
     crosscompile.fragment(plan, CONFIG, CONFIG.host_arch())
 
-    rendered = "\n".join(
-        plan.step_named(f"package.{CONFIG.host_arch().name}.prove").render()
-    )
+    rendered = "\n".join(plan.step_named(f"package.{CONFIG.host_arch().name}.prove").render())
 
     assert "prove that exact package in systemd + KVM" in rendered
     assert "defer exact package proof" not in rendered
