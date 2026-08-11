@@ -7,7 +7,7 @@ use std::io::{Seek, SeekFrom};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::sync::atomic::AtomicU32;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::layer::Context as LayerContext;
@@ -15,6 +15,13 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::Layer;
 
 static EVENT_CAPTURE_LOCK: Mutex<()> = Mutex::new(());
+static EVENT_CAPTURE: OnceLock<EventCaptureState> = OnceLock::new();
+
+struct EventCaptureState {
+    dispatcher: tracing::Dispatch,
+    _interest_guard: tracing::Dispatch,
+    events: Arc<Mutex<Vec<CapturedEvent>>>,
+}
 
 #[derive(Clone, Default)]
 struct EventCapture {
@@ -68,11 +75,26 @@ where
 
 fn capture_events(run: impl FnOnce()) -> Vec<CapturedEvent> {
     let _capture_guard = EVENT_CAPTURE_LOCK.lock().unwrap();
-    let capture = EventCapture::default();
-    let events = Arc::clone(&capture.events);
-    tracing::subscriber::with_default(tracing_subscriber::registry().with(capture), run);
-    let captured = std::mem::take(&mut *events.lock().unwrap());
-    captured
+    let state = EVENT_CAPTURE.get_or_init(|| {
+        let capture = EventCapture::default();
+        let events = Arc::clone(&capture.events);
+        let dispatcher = tracing::Dispatch::new(tracing_subscriber::registry().with(capture));
+        let interest_guard = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+        EventCaptureState {
+            dispatcher,
+            _interest_guard: interest_guard,
+            events,
+        }
+    });
+
+    // Tracing's callsite interest cache is process-global. Keeping two
+    // dispatchers registered for the parallel test process forces tracing-core
+    // to consult its dispatcher registry instead of whichever thread first
+    // registers a callsite. The capture dispatcher's interest therefore cannot
+    // be replaced by an unrelated test thread's no-subscriber default.
+    state.events.lock().unwrap().clear();
+    tracing::dispatcher::with_default(&state.dispatcher, run);
+    std::mem::take(&mut *state.events.lock().unwrap())
 }
 
 fn events_named<'a>(events: &'a [CapturedEvent], name: &str) -> Vec<&'a CapturedEvent> {
@@ -80,6 +102,13 @@ fn events_named<'a>(events: &'a [CapturedEvent], name: &str) -> Vec<&'a Captured
         .iter()
         .filter(|event| event.fields.get("event_name").map(String::as_str) == Some(name))
         .collect()
+}
+
+fn emit_capture_probe() {
+    debug!(
+        event_name = "virtio.fs.capture_probe",
+        "structured capture probe"
+    );
 }
 
 fn temp_share(name: &str) -> PathBuf {
@@ -307,6 +336,18 @@ fn queue_notification_is_trace_only() {
     assert_eq!(notify.len(), 1, "{events:#?}");
     assert_eq!(notify[0].level, Level::TRACE);
     assert_eq!(notify[0].fields.get("queue_index").unwrap(), "1");
+}
+
+#[test]
+fn structured_capture_keeps_interest_for_callsite_registered_on_parallel_thread() {
+    capture_events(|| {});
+    std::thread::spawn(emit_capture_probe).join().unwrap();
+
+    let events = capture_events(emit_capture_probe);
+    let probes = events_named(&events, "virtio.fs.capture_probe");
+
+    assert_eq!(probes.len(), 1, "{events:#?}");
+    assert_eq!(probes[0].level, Level::DEBUG);
 }
 
 #[test]
