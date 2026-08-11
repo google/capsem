@@ -158,6 +158,23 @@ same package on the physical Mac and boots a real Capsem guest from its exact
 binary/profile payload to a shell marker. Both focused scripts remain
 debugging tools; `just test` is the release gate that owns them.
 
+The Linux qualification image is a visible four-step graph: capacity,
+dependency materialization, sealed source build, and sealed smoke. Only the
+input-keyed materializer may use BuildKit's ordinary network; it consumes the
+exact host-platform parent, immutable Ubuntu snapshot, locked uv environment,
+and frozen pnpm store. Source build, smoke, and the privileged systemd runtime
+all use networking disabled. They bind the runnable input-keyed tag to the
+exact platform-child ID before use; the child ID is evidence but is not itself
+runnable on every containerd store. Do not repair a failure with runtime apt,
+pnpm, uv sync, a second build, or an unverified image tag.
+
+Manifest-selected profile content includes a verified immutable input subtree
+under the same `ProfileContent` root as assets and materialized config. Mount
+that root read-only, reverify it inside the container, and use the extracted
+`capsem-admin` from the exact package to author the checked local package/profile
+graph before the single `dpkg -i`. The narrower Debian proof uses the same graph
+primitive and secure handoff; neither proof may fall back to a public URL.
+
 The local `.pkg` is intentionally unsigned. Its installer postinstall applies
 ad-hoc signatures and the required entitlements to executable payloads, which
 the Tart guest verifies before service and gateway checks. Local installation

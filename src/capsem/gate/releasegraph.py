@@ -36,18 +36,57 @@ from .errors import GateError
 class ReleaseGraph:
     """Authors and publishes a local channel from inside the gate container."""
 
-    def __init__(self, docker: Docker, config: gate_config.GateConfig) -> None:
+    def __init__(
+        self,
+        docker: Docker,
+        config: gate_config.GateConfig,
+        *,
+        container: str | None = None,
+    ) -> None:
         self._docker = docker
         self._config = config.install
         self._site = config.environment.release_site
-        self._install_environment = config.environment.install
-        self._container = self._config.container
+        self._container = container or self._config.container
         self._mount = self._config.mount
         self._handoff_written = False
         self.handed_off: str | None = None
         """The manifest URL the postinst was pointed at, for reading back."""
 
     # -- breaking the circular dependency ----------------------------------
+
+    def author_exact_package(
+        self,
+        *,
+        package: str,
+        version: str,
+        assets_manifest: str,
+        candidate_base: str,
+        assets_dir: str,
+        profiles_dir: str,
+        channel: str,
+        manifest_version: str,
+        out_dir: str,
+    ) -> None:
+        """Build, check, and hand off one graph around the exact package."""
+        admin = self.extract_admin(package)
+        self.record_binary(
+            admin,
+            package=package,
+            version=version,
+            assets_manifest=assets_manifest,
+            candidate_base=candidate_base,
+        )
+        manifest = self.build_channel(
+            admin,
+            assets_dir=assets_dir,
+            profiles_dir=profiles_dir,
+            channel=channel,
+            manifest_version=manifest_version,
+            out_dir=out_dir,
+        )
+        self.build_site(dist=out_dir)
+        self.check_channel(admin, channel=channel, dist=out_dir, manifest=manifest)
+        self.hand_off(manifest)
 
     def extract_admin(self, package: str) -> str:
         """Unpack the package without installing it, and return its admin binary.
@@ -153,14 +192,9 @@ class ReleaseGraph:
         """Render the release site over the generated distribution."""
         self._docker.shell(
             self._container,
-            "pnpm install --frozen-lockfile",
+            "test -x node_modules/.bin/astro",
             user=self._config.guest_user.name,
             cwd=f"{self._mount}/{self._config.release_site_dir}",
-            # Non-interactive, because there is no terminal and no operator.
-            # Without it pnpm stops rather than purge a `node_modules` it did
-            # not create -- which the cross-run volume mounted over the image's
-            # `release-site/` regularly is.
-            env={self._install_environment.ci: "true"},
         )
         self._docker.shell(
             self._container,

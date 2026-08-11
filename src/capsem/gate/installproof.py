@@ -24,14 +24,21 @@ from .proc import Runner
 class InstallProof:
     """Stages inputs, installs the package, and runs the proofs against it."""
 
-    def __init__(self, runner: Runner, config: gate_config.GateConfig, *, sleep=time.sleep) -> None:
+    def __init__(
+        self,
+        runner: Runner,
+        config: gate_config.GateConfig,
+        *,
+        container: str | None = None,
+        sleep=time.sleep,
+    ) -> None:
         self._runner = runner
         self._docker = Docker(runner)
         self._settings = config.install
         self._config = config
         self._guest = self._settings.guest_user
         self._suite = self._settings.suite
-        self._container = self._settings.container
+        self._container = container or self._settings.container
         self._layout = self._settings.layout
         self._mount = self._settings.mount
         self._environment = config.environment.install_proof
@@ -39,10 +46,25 @@ class InstallProof:
 
     # -- staging -----------------------------------------------------------
 
+    def verify_selected_inputs(self, input_dir: Path) -> None:
+        """Rehash the immutable transport through the container's mount view."""
+        self._docker.shell(
+            self._container,
+            f"{self._settings.venv_python} {self._config.modules.verify_inputs_script} "
+            f'--input-dir "{input_dir.resolve()}"',
+            user=self._guest.name,
+            cwd=self._mount,
+        )
+
     def stage_content(self, content: ProfileContent) -> None:
         """Copy the one mounted, prevalidated content pair into writable staging."""
-        assets = self._config.functional.assets_dir
-        content_config = self._config.functional.config_root
+        self.stage_content_from(
+            assets=self._config.functional.assets_dir,
+            content_config=self._config.functional.config_root,
+        )
+
+    def stage_content_from(self, *, assets: str, content_config: str) -> None:
+        """Copy a read-only content projection into the proof's writable layout."""
         profiles = f"{content_config}/{self._config.functional.profiles_subdir}"
         config_manifest = f"{content_config}/{self._config.suites.pytest.test_manifest}"
         self._docker.shell(
@@ -65,7 +87,13 @@ class InstallProof:
         )
 
     def start_local_server(self) -> None:
-        """Serve the staged local graph; selected public content needs no server."""
+        """Serve the exact local graph over container loopback.
+
+        Selected profile bytes still need this server: the package under test
+        is recorded into a fresh checked graph before installation, so its
+        postinst never falls back to the packaged public URL while networking
+        is denied.
+        """
         self._docker.shell(
             self._container,
             f'rm -rf "{self._layout.channel}" && mkdir -p "{self._layout.channel}" '
@@ -95,9 +123,24 @@ class InstallProof:
     def packaged_version(self, package: str) -> str:
         return self._docker.capture(self._container, ["dpkg-deb", "-f", package, "Version"])
 
+    def verify_package_dependencies(self, package: str) -> None:
+        """Refuse a package whose Depends field is not the helper's exact authority."""
+        self._docker.exec(
+            self._container,
+            [
+                self._settings.venv_python,
+                f"{self._mount}/{self._suite.runtime_dependencies_script}",
+                package,
+                "--config",
+                f"{self._mount}/{self._suite.runtime_dependencies_config}",
+                "--verify-only",
+            ],
+        )
+
     def install(self, package: str, *, expected: str, manifest: str | None = None) -> None:
         self._runner.note(f"Installing exact release package via dpkg: {package}")
-        self._docker.shell(self._container, f'dpkg -i "{package}" 2>&1 || apt-get install -f -y')
+        self.verify_package_dependencies(package)
+        self._docker.shell(self._container, f'dpkg -i "{package}"')
         installed = self._docker.capture(
             self._container,
             ["dpkg-query", "-W", "-f=${Version}", self._suite.package_name],
@@ -110,12 +153,10 @@ class InstallProof:
     def verify_manifest_source(self, manifest: str) -> None:
         """Prove the installed product was hydrated from the channel handed over.
 
-        `dpkg -i ... || apt-get install -f -y` runs the postinst a second time,
-        and the postinst used to consume the handoff on its way out of a failed
-        first attempt -- so the retry hydrated from the public channel. The
-        error then named production while the failure was local, and a retry
-        that happened to succeed would have qualified an install nobody asked
-        for. Both are invisible unless the source is read back.
+        The sealed image preinstalls every declared package dependency, so
+        `dpkg -i` runs exactly once. Read the source back anyway: an absent or
+        stale handoff otherwise lets the postinst hydrate from the public
+        channel while the gate claims it proved the selected graph.
         """
         recorded = self._docker.shell_capture(
             self._container,
@@ -130,9 +171,7 @@ class InstallProof:
         if f"source={manifest}" not in recorded:
             raise GateError(
                 f"the install hydrated from a channel the gate did not hand it: "
-                f"{recorded}; expected source={manifest}. A failed first attempt "
-                "followed by `apt-get install -f` will do this when the postinst "
-                "consumes the handoff."
+                f"{recorded}; expected source={manifest}."
             )
         self._runner.note(f"Installed product hydrated from {manifest}")
 
@@ -143,7 +182,7 @@ class InstallProof:
         proof = self._environment
         self._docker.shell(
             self._container,
-            f"mkdir -p {self._guest.tmp} && uv run python -m pytest "
+            f"mkdir -p {self._guest.tmp} && {self._settings.venv_python} -m pytest "
             f"{self._suite.path} -v --tb=short -o cache_dir={self._guest.pytest_cache}",
             user=self._guest.name,
             cwd=self._mount,
@@ -174,7 +213,8 @@ class InstallProof:
                 "nested ARM VM boot..."
             )
         glowup = (
-            f'uv run python {self._suite.glowup_script} --input-deb "{package}" '
+            f"{self._settings.venv_python} {self._suite.glowup_script} "
+            f'--input-deb "{package}" '
             f'--bin-dir {self._settings.bin_dir} --assets-dir "{self._layout.assets}" '
             f'--config-root "{self._layout.config}" '
             f"--work-dir {self._layout.glowup} --package-ready"

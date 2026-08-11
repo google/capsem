@@ -9,7 +9,7 @@ from .config import Arch, GateConfig
 from .errors import GateError
 from .execution import Step, step
 from .imagebases import MaterializeRustBuilders, Prefetch, required_rust_builder_names
-from .opacity import CallJustification, OpaqueKind
+from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 
 
@@ -55,7 +55,7 @@ def doctor(config: GateConfig) -> Step:
             justification=CallJustification(
                 kind=OpaqueKind.PURE_INSPECTION,
                 reason="reports every wiring problem it can find and changes nothing at all",
-                effects=frozenset({"process"}),
+                effects=machine_effects(Effect.PROCESS),
             ),
         ),
         Run(

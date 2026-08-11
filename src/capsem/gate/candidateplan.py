@@ -31,7 +31,7 @@ from . import (
 from .actions import Call, Run, Script
 from .config import GateConfig
 from .execution import Step, step
-from .opacity import CallJustification, OpaqueKind
+from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .qualification import Qualification
 from .sourcestate import (
@@ -195,6 +195,6 @@ def _ensure_space(config: GateConfig):
         justification=CallJustification(
             kind=OpaqueKind.PURE_INSPECTION,
             reason="reads the daemon's free space and refuses a gate it has no room to finish",
-            effects=frozenset({"process"}),
+            effects=machine_effects(Effect.PROCESS),
         ),
     )

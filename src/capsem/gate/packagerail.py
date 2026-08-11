@@ -174,6 +174,9 @@ class PackageRail:
             network=self._package.builder.source_build_network,
             console=ConsoleMode.LOG_ONLY,
         )
+        # A local FROM tag is portable across Docker and Colima; bind it to
+        # the same exact helper image on both sides of the sealed build.
+        packagebuilder.require_local_image(self._runner, self._config, self.target)
         docker.create(
             name=container,
             image=self._package.lane_image,

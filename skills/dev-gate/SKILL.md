@@ -167,6 +167,13 @@ Treat a profile's assets and materialized configuration as one typed
 fragments; never rediscover its halves from ambient variables or mutable
 checkout selectors at a Docker/Colima boundary.
 
+Machine effects and stable lifecycle labels are closed `StrEnum` vocabularies.
+Constructor seams accept those enum types, not `str`, and reject dynamic raw
+strings at runtime. Keep a negative Ty fixture proving the wrong string does
+not type-check; never widen the signature or raise the diagnostic ratchet to
+make a new call fit. This is a correctness boundary: BuildKit and container
+network modes once shared strings and sent `bridge` to `docker build`.
+
 ## Secrets are declared on the invocation
 
 A `Command` that names credentials in `secret_env` cannot render them — not

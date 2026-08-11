@@ -14,6 +14,7 @@ sequence, which is why these tests assert on the sequence.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -92,6 +93,31 @@ def _local_content(root: Path) -> ProfileContent:
     return content
 
 
+def _selected_content(root: Path) -> SelectedInstallContent:
+    """Add the verified immutable transport required by a release cohort."""
+    config = gate_config.load(root)
+    content = _local_content(root)
+    inputs = content.root / config.install.selected_inputs_dir
+    inputs.mkdir()
+    payload = inputs / "profile-payload.bin"
+    payload.write_bytes(b"selected profile bytes")
+    manifest = {
+        "assets": {
+            "current": "test",
+            "releases": {
+                "test": {"arches": {name: {} for name in config.architectures}},
+            },
+        },
+        "payload": {"url": payload.as_uri()},
+    }
+    manifest_bytes = json.dumps(manifest).encode()
+    (content.assets / config.install.manifest_name).write_bytes(manifest_bytes)
+    (content.config / config.suites.pytest.test_manifest).write_bytes(manifest_bytes)
+    (inputs / config.install.manifest_name).write_bytes(manifest_bytes)
+    (inputs / config.package.release_inputs_name).write_text("{}\n")
+    return SelectedInstallContent(content)
+
+
 @pytest.fixture
 def gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[InstallGate, RecordingRunner]:
     """A gate on a fake checkout, whose every command is recorded, not run.
@@ -116,16 +142,20 @@ def _macos_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A checkout on a macOS host with no colima, the local-proof shape."""
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
     monkeypatch.setattr("shutil.which", lambda _name: None)
+    # Image identity/materialization has its own focused contracts. These
+    # tests own only the transaction order after that graph prerequisite has
+    # produced an exact image.
+    monkeypatch.setattr(
+        "capsem.gate.installimage.require_local_image",
+        lambda _runner, _config: "sha256:" + "1" * 64,
+    )
     return _checkout(tmp_path, dpkg_arch=CONFIG.host_arch().dpkg)
 
 
 #: What a healthy postinst records: the channel it actually hydrated from.
 #: Read back after `dpkg -i`, because `|| apt-get install -f -y` runs the
 #: postinst again and a retry must not install from somewhere else.
-HYDRATED = (
-    f"event=manifest_source source={INSTALL.file_url_scheme}"
-    f"{INSTALL.mount}/{AUTHORITATIVE}"
-)
+HYDRATED = f"event=manifest_source source={INSTALL.file_url_scheme}{INSTALL.mount}/{AUTHORITATIVE}"
 
 
 def _recording(root: Path, *, hydrated: str = HYDRATED) -> RecordingRunner:
@@ -160,6 +190,15 @@ def test_the_manifest_handoff_is_written_before_the_package_is_installed(
         r"install-manifest-request\.sh write",
         r"dpkg -i",
     )
+
+
+def test_package_dependency_authority_is_verified_before_install(
+    gate: tuple[InstallGate, RecordingRunner],
+) -> None:
+    built, runner = gate
+    built.run()
+
+    runner.assert_order(r"install-deb-runtime-dependencies\.py .*--verify-only", r"dpkg -i")
 
 
 def test_the_graph_exists_before_anything_points_at_it(
@@ -296,35 +335,34 @@ def test_clearing_a_handoff_that_was_never_written_does_nothing(tmp_path: Path) 
 # ---------------------------------------------------------------------------
 
 
-def test_a_release_lane_stages_verified_inputs_and_hands_over_nothing(
+def test_a_release_lane_stages_verified_inputs_and_authors_the_exact_package_graph(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Profile inputs a manifest already resolved carry no graph for us to publish.
-
-    Handing over the staged v2 manifest instead is the failure above, so this
-    path deliberately writes no request and lets the packaged URL apply.
-    """
+    """Selected profiles and the exact package become one offline install graph."""
     root = _macos_checkout(tmp_path, monkeypatch)
     runner = _recording(root)
-    content = _local_content(root)
+    selected = _selected_content(root)
+    content = selected.content
 
     InstallGate(
         runner,
-        content=SelectedInstallContent(content),
+        content=selected,
         macos_glowup_report=str(root / "report.json"),
     ).run()
 
     assert runner.matching(r"cp -R .*assets/\.")
     assert not runner.ran(r"stage-release-test-inputs\.py")
-    assert not runner.ran(r"serve-release-test-root\.py")
-    assert not runner.ran(r"install-manifest-request\.sh write")
-    assert not runner.ran(r"assets channel build")
-    assert not runner.ran(r"assets channel record-binary")
-    assert not runner.ran(r"dpkg-deb --extract")
+    assert runner.ran(r"serve-release-test-root\.py")
+    assert runner.ran(r"verify-release-inputs\.py")
+    assert runner.ran(r"install-manifest-request\.sh write")
+    assert runner.ran(r"assets channel build")
+    assert runner.ran(r"assets channel record-binary")
+    assert runner.ran(r"dpkg-deb --extract")
     assert runner.ran(r"dpkg -i")
     started = runner.matching(r"docker run -d")[0]
     assert f"-v {content.assets}:/src/assets:ro" in started
     assert f"-v {content.config}:/src/target/config:ro" in started
+    assert f"-v {content.root}:{content.root}:ro" in started
 
 
 def test_local_install_mounts_only_the_selected_content_pair(
@@ -523,8 +561,7 @@ def test_an_install_that_hydrated_from_elsewhere_is_refused(
     runner = _recording(
         root,
         hydrated=(
-            "event=manifest_source "
-            "source=https://release.capsem.org/assets/stable/manifest.json"
+            "event=manifest_source source=https://release.capsem.org/assets/stable/manifest.json"
         ),
     )
 

@@ -58,6 +58,32 @@ boot. Local Apple Silicon `just test` owns that VZ proof. Hosted macOS owns
 signing, notarization, stapling, installation, and structural verification of
 the final publishable package. Neither substitutes for the other.
 
+Linux install qualification separates four observable graph boundaries:
+
+1. reserve the config-owned Docker/storage headroom;
+2. materialize locked uv/pnpm and snapshot-owned OS inputs from the exact
+   host-platform builder child;
+3. build the source image with BuildKit networking disabled;
+4. bind the input-keyed local tag to its exact platform-child ID, then smoke
+   and run that verified tag with container networking disabled. Containerd
+   stores do not necessarily accept the child ID itself as a runnable image.
+
+Only step 2 may use the ordinary BuildKit network. A warm helper must carry the
+matching input-key label; source build, smoke, Debian proof, and full systemd
+install never repair missing inputs with apt, pnpm, uv sync, another build, or
+an unverified tag. The shared host-builder is an explicit prerequisite; sealing
+that upstream materializer is separate tracked work, so do not describe a cold
+daemon as globally one-egress until that prerequisite is also closed.
+
+Selected profile bytes travel beside assets/config in one verified read-only
+`ProfileContent` root. Qualification rechecks those immutable inputs inside the
+container, extracts `capsem-admin` from the exact package, authors one checked
+local graph containing both artifact families, securely hands it to postinst,
+and executes one `dpkg -i`. The standalone Debian proof uses that same graph
+primitive. Native release jobs prepare the package's exact dependency
+constraints from the shared immutable Ubuntu snapshot; `apt-get install -f`
+and ambient runner indexes are not release proof.
+
 The installed source of truth remains the exact verified
 `assets/manifest.json`, byte-for-byte. Installation and update code must not
 rewrite it into a reduced runtime schema. The only metadata sidecar is

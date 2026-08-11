@@ -180,14 +180,15 @@ def test_justfile_uses_named_rails_and_keeps_builder_until_packages_finish() -> 
 
 
 def test_the_install_rails_reserve_headroom_before_and_during_the_proof() -> None:
-    """These two reservations moved into `capsem.gate.install` with the recipe.
+    """The visible image rail and install transaction own their reservations.
 
     They are the reason ENOSPC surfaces here, with a disk recommendation,
     rather than hours later inside a fixture on an otherwise-green run.
     """
+    install_image = (ROOT / "src" / "capsem" / "gate" / "installimage.py").read_text()
     install = (ROOT / "src" / "capsem" / "gate" / "install.py").read_text()
 
-    assert 'ensure_space("install-preflight")' in install
+    assert 'ensure_space("install-preflight")' in install_image
     assert 'ensure_space("install")' in install
 
     # The package rail owns its own headroom the same way, and reserves it

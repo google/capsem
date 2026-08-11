@@ -129,13 +129,7 @@ class ImageOperations:
             raise GateError(f"docker has no image tagged {tag}, so nothing can be keyed by it")
         return found
 
-    def image_reference(self, tag: str) -> str:
-        """Return the immutable repository-qualified digest behind a local tag.
-
-        A bare image ID works for `docker run` but not in Dockerfile `FROM`:
-        BuildKit parses `sha256:<hex>` as a repository and tries to pull it.
-        The local RepoDigest names the same exact index in valid FROM syntax.
-        """
+    def _repository_references(self, tag: str) -> tuple[str, list[object], set[str]]:
         raw = self._runner.capture(
             ["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", tag]
         ).strip()
@@ -144,7 +138,7 @@ class ImageOperations:
         except json.JSONDecodeError:
             candidates = None
         if not isinstance(candidates, list):
-            candidates = []
+            raise GateError(f"docker image {tag} returned malformed RepoDigests {raw!r}")
         name = tag.split("@", 1)[0]
         if name.rfind(":") > name.rfind("/"):
             name = name.rsplit(":", 1)[0]
@@ -155,6 +149,27 @@ class ImageOperations:
             and candidate.startswith(f"{name}@")
             and re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", candidate)
         }
+        return raw, candidates, matches
+
+    def image_reference(self, tag: str) -> str:
+        """Return the unique repository-qualified digest behind an image."""
+        raw, _candidates, matches = self._repository_references(tag)
+        if len(matches) != 1:
+            raise GateError(
+                f"docker image {tag} has no unique matching repository digest; found {raw!r}"
+            )
+        return matches.pop()
+
+    def build_reference(self, tag: str) -> str:
+        """Return a valid FROM reference, including a verified local-only tag.
+
+        Plain Docker and Colima builds commonly have no RepoDigest. Their
+        input-keyed tag is the only portable local FROM syntax; callers bind
+        it to an exact image ID before and after the child build.
+        """
+        raw, candidates, matches = self._repository_references(tag)
+        if not candidates:
+            return tag
         if len(matches) != 1:
             raise GateError(
                 f"docker image {tag} has no unique matching repository digest; found {raw!r}"

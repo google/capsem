@@ -8,6 +8,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "install-deb-runtime-dependencies.py"
+CONFIG = ROOT / "config" / "gate.toml"
 SPEC = importlib.util.spec_from_file_location(
     "install_deb_runtime_dependencies",
     SCRIPT,
@@ -49,13 +50,20 @@ class FakeRunner:
 def test_installs_dependencies_declared_by_exact_package(tmp_path: Path) -> None:
     package = tmp_path / "Capsem_1.2.3_amd64.deb"
     package.write_bytes(b"exact package")
-    runner = FakeRunner("libgtk-3-0, libxdo3 (>= 1:3.20160805.1)\n")
+    runner = FakeRunner("libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3 (>= 1:3.20160805.1)\n")
 
     dependencies = INSTALL.install_runtime_dependencies(package, runner=runner)
 
-    assert dependencies == "libgtk-3-0, libxdo3 (>= 1:3.20160805.1)"
+    assert dependencies == ("libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3 (>= 1:3.20160805.1)")
     assert runner.commands == [
         ("dpkg-deb", "--field", str(package.resolve()), "Depends"),
+        (
+            "sudo",
+            "bash",
+            str((ROOT / "scripts" / "configure-apt-snapshot.sh").resolve()),
+            "https://snapshot.ubuntu.com/ubuntu",
+            "20260810T000000Z",
+        ),
         ("sudo", "apt-get", "update"),
         (
             "sudo",
@@ -68,15 +76,16 @@ def test_installs_dependencies_declared_by_exact_package(tmp_path: Path) -> None
     ]
 
 
-def test_empty_dependency_field_does_not_invoke_apt(tmp_path: Path) -> None:
+def test_empty_dependency_field_is_dependency_drift_and_does_not_invoke_apt(
+    tmp_path: Path,
+) -> None:
     package = tmp_path / "Capsem_1.2.3_amd64.deb"
     package.write_bytes(b"exact package")
     runner = FakeRunner()
 
-    assert INSTALL.install_runtime_dependencies(package, runner=runner) == ""
-    assert runner.commands == [
-        ("dpkg-deb", "--field", str(package.resolve()), "Depends")
-    ]
+    with pytest.raises(ValueError, match="differ from config authority"):
+        INSTALL.install_runtime_dependencies(package, runner=runner)
+    assert runner.commands == [("dpkg-deb", "--field", str(package.resolve()), "Depends")]
 
 
 def test_missing_package_fails_before_any_privileged_command(tmp_path: Path) -> None:
@@ -94,9 +103,45 @@ def test_missing_package_fails_before_any_privileged_command(tmp_path: Path) -> 
 def test_package_path_is_passed_as_one_argument(tmp_path: Path) -> None:
     package = tmp_path / "candidate; touch SHOULD_NOT_EXIST.deb"
     package.write_bytes(b"exact package")
-    runner = FakeRunner("libgtk-3-0")
+    runner = FakeRunner("libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3")
 
     INSTALL.install_runtime_dependencies(package, runner=runner)
 
     assert runner.commands[0][2] == str(package.resolve())
     assert not (tmp_path / "SHOULD_NOT_EXIST").exists()
+
+
+def test_dependency_drift_fails_before_snapshot_or_apt_mutation(tmp_path: Path) -> None:
+    package = tmp_path / "Capsem_1.2.3_amd64.deb"
+    package.write_bytes(b"exact package")
+    runner = FakeRunner("libgtk-3-0, unexpected-runtime")
+
+    with pytest.raises(ValueError, match="differ from config authority"):
+        INSTALL.install_runtime_dependencies(package, config_path=CONFIG, runner=runner)
+
+    assert runner.commands == [("dpkg-deb", "--field", str(package.resolve()), "Depends")]
+
+
+def test_verify_only_uses_the_same_authority_without_mutating_apt(tmp_path: Path) -> None:
+    package = tmp_path / "Capsem_1.2.3_amd64.deb"
+    package.write_bytes(b"exact package")
+    declared = "libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3"
+    runner = FakeRunner(declared)
+
+    assert (
+        INSTALL.verify_runtime_dependencies(package, config_path=CONFIG, runner=runner) == declared
+    )
+    assert runner.commands == [("dpkg-deb", "--field", str(package.resolve()), "Depends")]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "libgtk-3-0 | libgtk-4-0",
+        "libgtk-3-0, libgtk-3-0",
+        "libgtk-3-0; touch /tmp/nope",
+    ],
+)
+def test_ambiguous_or_malformed_dependency_authority_is_refused(value: str) -> None:
+    with pytest.raises(ValueError):
+        INSTALL.dependency_names(value)

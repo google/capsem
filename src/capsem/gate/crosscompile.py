@@ -16,7 +16,7 @@ from .actions import Call
 from .command import GateCommand
 from .content import ProfileContent
 from .execution import step
-from .opacity import CallJustification, Effect, OpaqueKind
+from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .packagerail import PackageRail
 from .plan import Plan
 
@@ -43,10 +43,10 @@ def _because(reason: str, *effects: Effect) -> CallJustification:
         OpaqueKind.SECRET_BEARING
         if reason is SIGNING
         else OpaqueKind.PURE_INSPECTION
-        if not effects or effects == ("process",)
+        if not effects or effects == (Effect.PROCESS,)
         else OpaqueKind.RUNTIME_DERIVED
     )
-    return CallJustification(kind=kind, reason=reason, effects=frozenset(effects))
+    return CallJustification(kind=kind, reason=reason, effects=machine_effects(*effects))
 
 
 def fragment(
@@ -83,7 +83,7 @@ def fragment(
         else (
             "prove that exact package in systemd + KVM",
             "prove",
-            _because(PROOF, "process", "filesystem", "host-state"),
+            _because(PROOF, Effect.PROCESS, Effect.FILESYSTEM, Effect.HOST_STATE),
         )
     )
 
@@ -96,10 +96,20 @@ def fragment(
             "storage-release",
             "hand back the rails the assets finished with",
             "release_rails",
-            _because(RAILS, "process", "host-state"),
+            _because(RAILS, Effect.PROCESS, Effect.HOST_STATE),
         ),
-        ("space", "reserve the package rail's headroom", "reserve", _because(HEADROOM, "process")),
-        ("clock", "sync the container clock", "sync_clock", _because(CLOCK, "process")),
+        (
+            "space",
+            "reserve the package rail's headroom",
+            "reserve",
+            _because(HEADROOM, Effect.PROCESS),
+        ),
+        (
+            "clock",
+            "sync the container clock",
+            "sync_clock",
+            _because(CLOCK, Effect.PROCESS),
+        ),
         (
             "content",
             f"verify paired package content for {target.name}",
@@ -110,7 +120,7 @@ def fragment(
             "materialize",
             f"materialize locked package dependencies for {target.name}",
             "materialize",
-            _because(MATERIALIZE, "process", "host-state", "network"),
+            _because(MATERIALIZE, Effect.PROCESS, Effect.HOST_STATE, Effect.NETWORK),
         ),
         # The one instance the class docstring used to describe as though it
         # were all of them: this environment carries the Tauri private key.
@@ -118,7 +128,7 @@ def fragment(
             "build",
             f"build the Linux release package for {target.name}",
             "build",
-            _because(SIGNING, "process", "filesystem"),
+            _because(SIGNING, Effect.PROCESS, Effect.FILESYSTEM),
         ),
         (
             "resolve",
@@ -136,7 +146,7 @@ def fragment(
             "storage-gc",
             "list the artifacts and reclaim this lane's disk",
             "collect",
-            _because(RECLAIM, "process", "filesystem", "host-state"),
+            _because(RECLAIM, Effect.PROCESS, Effect.FILESYSTEM, Effect.HOST_STATE),
         ),
     )
 
@@ -182,7 +192,7 @@ def _phase(target, method: str, content: ProfileContent):
         if method == "materialize":
             context.journal.note(
                 f"package helper {target.name}: input key {result.input_key}; "
-                f"exact image {result.image_id}; immutable reference {result.image_reference}"
+                f"exact image {result.image_id}; build reference {result.image_reference}"
             )
 
     return perform

@@ -1881,8 +1881,10 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert 'grep -F "Gateway:   ok" /tmp/capsem-status.txt' in linux
     assert "scripts/verify-installed-release.py" in linux
     assert "Enable KVM for exact-package VM proof" in linux
+    assert linux.count("if: matrix.arch == 'x86_64'") == 2
     assert "test -r /dev/kvm -a -w /dev/kvm" in linux
     assert "scripts/prove-installed-shell.py" in linux
+    assert "--session-name release-exact-shell-x86_64" in linux
     assert "CAPSEM_EXACT_PACKAGE_SHELL_OK" in linux
     assert "/usr/bin/capsem run" not in linux
     assert "run: just test" not in workflow
@@ -1895,7 +1897,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
 
 
 def test_install_preflight_releases_base_after_derived_image_is_verified() -> None:
-    """The ~6 GiB base tag is released only once everything needing it is done.
+    """The exact install-image graph finishes before its rail is released.
 
     Releasing it earlier makes the rebuild-on-smoke-failure path cold, and
     releasing it never starves the package rails that follow. It used to be a
@@ -1910,12 +1912,10 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
     config = gate_config.load(PROJECT_ROOT)
     source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installimage.py").read_text()
 
-    # Through the Docker wrapper now, so the build is a call rather than an
-    # argv literal. The ordering this test is about -- build, then smoke -- is
-    # what it always was.
-    build = source.index("docker.build(tag=settings.image")
-    smoke = source.index("_smoke_passes(runner, settings)")
-    assert build < smoke
+    # The plan now names each boundary separately, so its log can distinguish
+    # the sole egress phase from the sealed source build and smoke proof.
+    for member in ("CAPACITY", "MATERIALIZE", "BUILD", "SMOKE"):
+        assert f"_step_label(InstallImageStep.{member})" in source
     assert "release(" not in source, (
         "the preflight reclaims nothing: the rail belongs to the parity lane, "
         "whose own step hands it back"
@@ -1929,7 +1929,14 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
     # way out of that proof -- is the first point at which nothing needs it.
     labels = list(_gate_labels())
     release = labels.index("glowup.install")
-    for consumer in ("install-image", "cache-ownership", "linux-rust"):
+    for consumer in (
+        "install.capacity",
+        "install.materialize",
+        "install.image-build",
+        "install.image-smoke",
+        "cache-ownership",
+        "linux-rust",
+    ):
         if consumer in labels:
             assert labels.index(consumer) < release
     # The lane is eight phases now; the build is the one that runs the image.
@@ -1941,9 +1948,10 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
     phase = config.storage.phases["after-install"]
     assert (phase.boundary, phase.rail) == ("after-install", "install")
 
-    # An image that merely exists is not an image that works: checking the tag
-    # lets a stale local build hide a new prerequisite.
-    assert "docker image inspect" not in source
+    # An image that merely exists is not current: every later phase revalidates
+    # its input-key label and exact platform child before use.
+    assert "require_input_key(" in source
+    assert "exact_image_id(" in source
     assert "Building missing capsem-host-builder base image" not in source
 
 

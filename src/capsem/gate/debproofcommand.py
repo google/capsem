@@ -16,7 +16,7 @@ from .command import GateCommand
 from .content import ProfileContent
 from .debproof import DebProof
 from .execution import step
-from .opacity import CallJustification, OpaqueKind
+from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 
 
@@ -66,7 +66,9 @@ class ProveDebCommand(
                     justification=CallJustification(
                         kind=OpaqueKind.DOMAIN_TRANSACTION,
                         reason="start a systemd container, install the exact package, and prove what it produced",
-                        effects=frozenset({"process", "filesystem", "host-state"}),
+                        effects=machine_effects(
+                            Effect.PROCESS, Effect.FILESYSTEM, Effect.HOST_STATE
+                        ),
                     ),
                 ),
                 contends=(self._config.exclusive("docker_daemon"),),

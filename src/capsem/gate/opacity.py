@@ -13,7 +13,7 @@ Two of the four kinds are an invitation to stop being a `Call` at all.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated
 
 from pydantic import StringConstraints, model_validator
 
@@ -47,9 +47,20 @@ class OpaqueKind(StrEnum):
     not a design."""
 
 
-#: What a call is allowed to touch. Declared so a reader can tell an inspection
-#: that genuinely inspects from one that quietly writes.
-Effect = Literal["process", "filesystem", "network", "host-state"]
+class Effect(StrEnum):
+    """The closed set of machine surfaces an opaque call may touch."""
+
+    PROCESS = "process"
+    FILESYSTEM = "filesystem"
+    NETWORK = "network"
+    HOST_STATE = "host-state"
+
+
+def machine_effects(*items: Effect) -> frozenset[Effect]:
+    """Build an effect set through a Ty-enforced closed-vocabulary seam."""
+    if any(not isinstance(item, Effect) for item in items):
+        raise TypeError("machine_effects accepts only Effect enum members")
+    return frozenset(items)
 
 
 class CallJustification(Strict):
@@ -73,9 +84,10 @@ class CallJustification(Strict):
         letting it declare a filesystem effect would make it a synonym for
         "opaque" and lose the distinction entirely.
         """
-        if self.kind is OpaqueKind.PURE_INSPECTION and self.effects - {"process"}:
+        if self.kind is OpaqueKind.PURE_INSPECTION and self.effects - {Effect.PROCESS}:
             raise ValueError(
-                f"a pure inspection may not declare {sorted(self.effects - {'process'})}; "
+                "a pure inspection may not declare "
+                f"{sorted(self.effects - {Effect.PROCESS})}; "
                 "it decides or reports, and anything else is a transaction"
             )
         return self

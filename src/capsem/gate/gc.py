@@ -17,7 +17,7 @@ from .command import GateCommand
 from .context import Context
 from .disk import footprint, reclaim
 from .execution import step
-from .opacity import CallJustification, OpaqueKind
+from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .runhistory import free_gb
 from .storage import Storage
@@ -70,7 +70,7 @@ class GcCommand(GateCommand, name="gc", help="reclaim the disk the gate is holdi
                     justification=CallJustification(
                         kind=OpaqueKind.RUNTIME_DERIVED,
                         reason="which trees exist and what they occupy is only knowable when the reclaim runs",
-                        effects=frozenset({"filesystem"}),
+                        effects=machine_effects(Effect.FILESYSTEM),
                     ),
                 ),
             )
@@ -85,7 +85,7 @@ class GcCommand(GateCommand, name="gc", help="reclaim the disk the gate is holdi
                         justification=CallJustification(
                             kind=OpaqueKind.RUNTIME_DERIVED,
                             reason="the Docker rails and build cache to release depend on what the daemon holds now",
-                            effects=frozenset({"process", "host-state"}),
+                            effects=machine_effects(Effect.PROCESS, Effect.HOST_STATE),
                         ),
                     ),
                     contends=(self._config.exclusive("docker_daemon"),),

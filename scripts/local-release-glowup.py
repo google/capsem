@@ -1082,7 +1082,7 @@ def stage_package_ready_artifact(input_deb: Path, output_deb: Path) -> None:
 
 def generate_sbom(output: Path, deb: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    run(["python3", "scripts/generate-host-binary-sbom.py", "--output", str(output), str(deb)])
+    run([sys.executable, "scripts/generate-host-binary-sbom.py", "--output", str(output), str(deb)])
 
 
 def record_binary(
@@ -1450,8 +1450,7 @@ def release_profile_artifacts(manifest: dict[str, object]) -> list[dict[str, obj
 
 
 def _exact_installed_probe_shell(evidence_dir: Path) -> str:
-    return f"""
-CAPSEM_BIN="$HOME/.capsem/bin/capsem"
+    return f"""CAPSEM_BIN="$HOME/.capsem/bin/capsem"
 CAPSEM_HOME_DIR="$HOME/.capsem"
 EVIDENCE_DIR={shlex.quote(str(evidence_dir))}
 mkdir -p "$EVIDENCE_DIR"
@@ -1495,7 +1494,7 @@ probe_installed_transition() {{
   wait_for_service
   check_binary_versions "$package_version"
   dpkg-query -W -f='${{Version}}' capsem | grep -Fx "$package_version"
-  python3 scripts/verify-installed-release.py \
+  {shlex.quote(sys.executable)} scripts/verify-installed-release.py \
     --capsem "$CAPSEM_BIN" \
     --capsem-home "$CAPSEM_HOME_DIR" \
     --manifest-url "$manifest_url" \
@@ -1525,7 +1524,7 @@ probe_installed_transition() {{
   fi
   printf '%s\n' '{{"schema":"capsem.installed_doctor.v1","passed":true}}' \
     > "$EVIDENCE_DIR/$label-doctor.json"
-  uv run python scripts/run-installed-winterfell.py \
+  {shlex.quote(sys.executable)} scripts/run-installed-winterfell.py \
     --bin-dir "$CAPSEM_HOME_DIR/bin" \
     --assets-dir "$CAPSEM_HOME_DIR/assets" \
     --profiles-dir "$CAPSEM_HOME_DIR/profiles" \
@@ -1995,7 +1994,7 @@ export DEBIAN_FRONTEND=noninteractive
 check_update_log() {{
   event="$1"
   source="$2"
-  python3 - "$event" "$source" "$HOME/.capsem/logs/update.log" <<'PY'
+  {shlex.quote(sys.executable)} - "$event" "$source" "$HOME/.capsem/logs/update.log" <<'PY'
 import json
 import pathlib
 import sys
@@ -2009,7 +2008,8 @@ check_origin_channel() {{
   channel="$1"
   source="$2"
   locked="$3"
-  python3 - "$channel" "$source" "$locked" "$HOME/.capsem/assets/manifest-metadata.json" <<'PY'
+  {shlex.quote(sys.executable)} - "$channel" "$source" "$locked" \
+    "$HOME/.capsem/assets/manifest-metadata.json" <<'PY'
 import json
 import pathlib
 import sys

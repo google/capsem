@@ -35,8 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   materializer receives BuildKit's ordinary network, while source construction
   and package execution remain network-denied and cross-vocabulary values are
   refused before Docker or Colima starts work. The network-open helper parent
-  uses a repository-qualified immutable digest; the network-denied source
-  build consumes the verified local input-key tag. Warm helpers are keyed to
+  is bound to its exact platform-child ID; a repository digest is used when
+  available, while plain local Docker/Colima images use an input-keyed tag
+  checked before and after the child build. The network-denied source build
+  uses the same checked local reference. Warm helpers are keyed to
   the exact host-platform child image rather than a provenance index whose
   attestation can change without changing the executable base. Cross-target
   helpers prefetch both the publishable target graph and the build-host graph,
@@ -46,11 +48,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Package, Debian, macOS, pulled-release, and final install proof now carry one
   typed profile-content root whose assets and materialized configuration are
   validated and mounted as a pair. Docker/Colima never receives the mutable
-  checkout asset selector, selected release content is never re-authored as a
-  local graph, and ordinary install CI stages the same manifest-selected pair
-  before both package construction and glow-up. The macOS proof preserves its
-  Tart, physical VZ, Doctor, and Winterfell coverage while consuming that same
-  pair and no longer rematerializes stale checkout configuration.
+  checkout asset selector. Selected release profile inputs are reverified from
+  their immutable transport and combined with the exact package into one
+  checked local install graph, rather than rematerialized from checkout state
+  or allowed to fall back to a public URL. Ordinary install CI stages the same
+  manifest-selected pair before both package construction and glow-up. The
+  macOS proof preserves its Tart, physical VZ, Doctor, and Winterfell coverage
+  while consuming that same pair and no longer rematerializes stale checkout
+  configuration.
+
+- Linux exact-package qualification now names its dependency materializer,
+  network-denied source image build, network-denied smoke, and capacity proof
+  as separate gate steps. The input-keyed helper consumes the exact
+  host-platform builder child, an immutable Ubuntu snapshot, locked uv and
+  pnpm stores, and config-owned runtime packages; every later phase revalidates
+  and runs the exact image ID with networking disabled. Selected profile bytes
+  travel in a verified read-only subtree, Debian proof authors the same exact
+  local package/profile graph before its one `dpkg -i`, and release runners
+  prepare native package dependencies from the same snapshot without a repair
+  install or mutable apt fallback. Both container proofs verify the exact
+  package `Depends` tuple against that helper authority before their sole
+  `dpkg -i`, and the narrow Debian proof copies its read-only profile cohort
+  into writable staging before `capsem-admin` records the candidate binary.
+  The helper hands its frozen pnpm store to the unprivileged build user, and
+  containerd platform-child IDs remain exact evidence while the verified
+  input-keyed tag supplies the portable runnable reference.
 
 - Direct development diagnostics now have a portable bounded-process wrapper
   that closes stdin and owns the complete child process group. A blocked

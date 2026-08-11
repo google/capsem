@@ -22,8 +22,8 @@ import time
 from pathlib import Path
 
 from . import config as gate_config
-from . import host
-from .content import ProfileContent
+from . import host, installimage
+from .content import InstallContent, SelectedInstallContent
 from .docker import Docker, Mount
 from .errors import GateError
 from .proc import Runner
@@ -36,7 +36,7 @@ class InstallContainer:
         self,
         runner: Runner,
         *,
-        content: ProfileContent | None = None,
+        content: InstallContent | None = None,
         sleep=time.sleep,
     ) -> None:
         self._runner = runner
@@ -99,14 +99,15 @@ class InstallContainer:
     def start(self, *, options: list[str]) -> None:
         self._runner.note("Starting systemd container...")
         cgroup = self._settings.cgroup_path
+        image = installimage.require_local_image(self._runner, self._config)
         # A stable name plus a preemptive removal is what recovers from a
         # predecessor that died before its own cleanup -- a cargo SIGTERM under
         # a Colima OOM, for instance.
         self._docker.remove(self.name)
         self._docker.run_detached(
-            network=self._settings.network,
+            network=self._settings.runtime_network,
             name=self.name,
-            image=self._settings.image,
+            image=image,
             command=[self._settings.systemd_command],
             options=["--privileged", "--cgroupns=host", *options, *self._tmpfs()],
             mounts=[
@@ -116,9 +117,7 @@ class InstallContainer:
                 # was built. Read-only, so the proof cannot alter the artifact
                 # it exists to verify.
                 *(
-                    Mount.generated(
-                        str(self._config.root / name), f"{self._settings.mount}/{name}"
-                    )
+                    Mount.generated(str(self._config.root / name), f"{self._settings.mount}/{name}")
                     for name in self._settings.generated_inputs
                     if (self._config.root / name).exists()
                 ),
@@ -135,16 +134,24 @@ class InstallContainer:
         if self._content is None:
             return ()
         mount = self._settings.mount
-        return (
+        profile = self._content.content
+        mounts = [
             Mount.generated(
-                str(self._content.assets),
+                str(profile.assets),
                 f"{mount}/{self._config.functional.assets_dir}",
             ),
             Mount.generated(
-                str(self._content.config),
+                str(profile.config),
                 f"{mount}/{self._config.functional.config_root}",
             ),
-        )
+        ]
+        if isinstance(self._content, SelectedInstallContent):
+            # stage-release-test-inputs writes absolute file:// URLs. Mounting
+            # the one paired root at the same address keeps those immutable
+            # bytes resolvable without exposing the checkout or public egress.
+            root = self._content.content.root.resolve()
+            mounts.append(Mount.generated(str(root), str(root)))
+        return tuple(mounts)
 
     def _await_systemd(self) -> None:
         await_systemd(

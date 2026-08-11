@@ -18,7 +18,7 @@ from .command import GateCommand
 from .context import Context
 from .errors import GateError
 from .execution import step
-from .opacity import CallJustification, OpaqueKind
+from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .runhistory import read, runs
 from .timing import measure, report
@@ -54,7 +54,7 @@ class RunsCommand(GateCommand, name="runs", help="list recorded gate runs, or ex
                     justification=CallJustification(
                         kind=OpaqueKind.RUNTIME_DERIVED,
                         reason="which run to read and what it contains is a question about the history on disk",
-                        effects=frozenset({"filesystem"}),
+                        effects=machine_effects(Effect.FILESYSTEM),
                     ),
                 ),
             )

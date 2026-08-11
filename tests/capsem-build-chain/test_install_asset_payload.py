@@ -124,6 +124,10 @@ def _selected_content(tmp_path: Path) -> str:
 
     config = gate_config.load(PROJECT_ROOT)
     content = ProfileContent.isolated(config, tmp_path / "selected-content")
+    inputs = content.root / config.install.selected_inputs_dir
+    inputs.mkdir(parents=True)
+    selected = inputs / "profile.tar.zst"
+    selected.write_bytes(b"immutable selected profile")
     manifest = {
         "assets": {
             "current": "test",
@@ -131,8 +135,11 @@ def _selected_content(tmp_path: Path) -> str:
                 "test": {"arches": {name: {} for name in config.architectures}},
             },
         },
+        "profiles": {"code": {"url": selected.resolve().as_uri()}},
     }
     payload = json.dumps(manifest).encode()
+    (inputs / config.package.release_inputs_name).write_text("{}")
+    (inputs / config.install.manifest_name).write_bytes(payload)
     content.assets.mkdir(parents=True)
     (content.assets / config.install.manifest_name).write_bytes(payload)
     for arch in config.architectures:
@@ -576,6 +583,7 @@ def test_exact_linux_deb_proof_uses_systemd_and_proves_guest_shell() -> None:
     config = gate_config.load(PROJECT_ROOT)
     proof = config.package.proof
     source = (PROJECT_ROOT / "src/capsem/gate/debproof.py").read_text(encoding="utf-8")
+    graph = (PROJECT_ROOT / "src/capsem/gate/releasegraph.py").read_text(encoding="utf-8")
 
     assert config.install.systemd_command == "/usr/lib/systemd/systemd"
     assert config.install.vm_devices == ("/dev/kvm", "/dev/vhost-vsock")
@@ -583,10 +591,14 @@ def test_exact_linux_deb_proof_uses_systemd_and_proves_guest_shell() -> None:
     assert proof.shell_marker == "CAPSEM_QUALIFIED_DEB_SHELL_OK"
     assert proof.verify_script == "scripts/verify-installed-release.py"
 
-    # Installed by dpkg, with its dependencies resolved, and the version of
-    # every packaged binary checked against what the package declares.
-    for fragment in ("dpkg", "-i", "apt-get", "install", "-f", "dpkg-query"):
+    # The sealed helper already contains every declared dependency. The proof
+    # authors and hands over its exact graph, invokes dpkg exactly once, and
+    # checks every packaged binary against the package's own version.
+    for fragment in ("record_binary", "build_channel", "hand_off"):
+        assert fragment in graph
+    for fragment in ("author_exact_package", "dpkg", "-i", "dpkg-query"):
         assert fragment in source
+    assert "apt-get" not in source
     assert proof.binaries, "no binaries are checked at all"
     for requirement in proof.status_requires:
         assert requirement in source or requirement in str(proof.status_requires)
@@ -612,7 +624,7 @@ def test_systemd_install_image_cannot_flush_host_binfmt_registrations(
     from capsem.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    dockerfile = (PROJECT_ROOT / config.install.dockerfile).read_text(encoding="utf-8")
+    dockerfile = (PROJECT_ROOT / config.install.builder.dockerfile).read_text(encoding="utf-8")
     container = (PROJECT_ROOT / "src/capsem/gate/installcontainer.py").read_text(encoding="utf-8")
 
     assert "/etc/systemd/system/systemd-binfmt.service" in dockerfile
@@ -657,6 +669,12 @@ def test_binary_release_requires_exact_linux_deb_proof() -> None:
     )
     assert "scripts/verify-installed-release.py" in native
     assert "scripts/prove-installed-shell.py" in native
+    # Both native runners install and exercise their exact package. GitHub's
+    # ARM64 runner has no KVM device, so only the x86_64 row owns the additional
+    # guest-shell marker.
+    assert "runner: ubuntu-24.04-arm" in native
+    assert native.count("if: matrix.arch == 'x86_64'") == 2
+    assert "release-exact-shell-x86_64" in native
     assert "just _test-functional" in workflow
     assert "just _test-glowup" in workflow
 
@@ -704,7 +722,7 @@ def test_linux_deb_proof_selector_fails_closed_for_native_package_without_kvm() 
     assert "native Linux package proof requires KVM and vhost-vsock" in result.stderr
 
 
-def test_release_matrix_installs_both_architectures_and_keeps_kvm_proof_mandatory() -> None:
+def test_release_matrix_installs_both_architectures_and_uses_available_kvm() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
     linux = _workflow_job_blocks(workflow)["test-native-linux-package"]
 
@@ -714,6 +732,7 @@ def test_release_matrix_installs_both_architectures_and_keeps_kvm_proof_mandator
     assert "Enable KVM for exact-package VM proof" in linux
     assert "Prove exact-package guest shell execution" in linux
     assert "CAPSEM_EXACT_PACKAGE_SHELL_OK" in linux
+    assert "release-exact-shell-x86_64" in linux
 
 
 def test_install_test_restores_host_workspace_ownership(tmp_path: Path) -> None:
@@ -912,9 +931,66 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
 
 
 def test_local_release_glowup_has_zstd_extraction_support_in_install_image() -> None:
-    dockerfile = (PROJECT_ROOT / "docker" / "Dockerfile.install-test").read_text()
+    from capsem.gate import config as gate_config
 
-    assert "zstd" in dockerfile
+    config = gate_config.load(PROJECT_ROOT)
+    dockerfile = (PROJECT_ROOT / config.install.builder.dockerfile).read_text()
+
+    assert "zstd" in config.install.builder.apt_packages
+    assert "APT_PACKAGES" in dockerfile
+    assert "materialize-install-os" in dockerfile
+
+
+def test_install_image_has_one_network_open_materializer_and_no_runtime_repairs() -> None:
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    helper = (PROJECT_ROOT / config.install.builder.dockerfile).read_text(encoding="utf-8")
+    image = (PROJECT_ROOT / config.install.dockerfile).read_text(encoding="utf-8")
+    image_gate = (PROJECT_ROOT / "src/capsem/gate/installimage.py").read_text(encoding="utf-8")
+    install = (PROJECT_ROOT / "src/capsem/gate/installproof.py").read_text(encoding="utf-8")
+    deb = (PROJECT_ROOT / "src/capsem/gate/debproof.py").read_text(encoding="utf-8")
+    graph = (PROJECT_ROOT / "src/capsem/gate/releasegraph.py").read_text(encoding="utf-8")
+
+    assert "uv sync --locked --no-install-project" in helper
+    assert "pnpm fetch --frozen-lockfile" in helper
+    assert "COPY --from=dependency-fetch --chown=capsem:capsem /capsem-deps/pnpm" in helper
+    assert "APT_SNAPSHOT_BASE" in helper and "APT_SNAPSHOT_ID" in helper
+    assert "org.capsem.install-builder.input-key" in helper
+    assert image.splitlines()[0] == "# check=skip=InvalidDefaultArgInFrom"
+    assert "ARG BASE" in image and "FROM ${BASE}" in image
+    assert "apt-get" not in image
+    assert "pnpm install --offline --frozen-lockfile" in image
+    assert "uv run" not in image_gate
+    assert "uv run" not in install
+    assert "apt-get install -f" not in install
+    assert "apt-get install -f" not in deb
+    assert "pnpm install" not in graph
+
+
+def test_installed_glowup_uses_the_materialized_python_without_project_sync(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    glowup = _load_local_release_glowup()
+    interpreter = "/opt/capsem venv/bin/python"
+    monkeypatch.setattr(glowup.sys, "executable", interpreter)
+
+    probe = glowup._exact_installed_probe_shell(tmp_path)
+    quoted = "'/opt/capsem venv/bin/python'"
+    assert f"{quoted} scripts/verify-installed-release.py" in probe
+    assert f"{quoted} scripts/run-installed-winterfell.py" in probe
+    assert "uv run" not in probe
+
+    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(encoding="utf-8")
+    assert "uv run" not in source
+    assert "python3" not in "\n".join(source.splitlines()[1:])
+
+
+def test_install_transaction_does_not_rebuild_the_prequalified_image() -> None:
+    install = (PROJECT_ROOT / "src/capsem/gate/install.py").read_text(encoding="utf-8")
+
+    assert "installimage.prepare" not in install
 
 
 def test_install_recipe_invokes_pytest_as_a_module_inside_container(tmp_path: Path) -> None:
@@ -929,12 +1005,12 @@ def test_install_recipe_invokes_pytest_as_a_module_inside_container(tmp_path: Pa
     issued = _planned("install", selected_content_root=_selected_content(tmp_path))
 
     assert f"UV_PROJECT_ENVIRONMENT={config.install.venv}" in issued
-    assert "uv run python -m pytest" in issued
+    assert f"{config.install.venv}/bin/python -m pytest" in issued
     assert "uv run pytest " not in issued
 
 
 def test_install_recipe_runs_release_glowup_in_clean_project_environment() -> None:
-    """Through uv, never a bare `python3`.
+    """Through the materialized interpreter, never ambient Python or uv sync.
 
     The interpreter on PATH is whatever the image happens to have; the one the
     lockfile pins is the one the product is tested against.
@@ -942,7 +1018,8 @@ def test_install_recipe_runs_release_glowup_in_clean_project_environment() -> No
     proof = (PROJECT_ROOT / "src/capsem/gate/installproof.py").read_text(encoding="utf-8")
 
     assert "python3 scripts/local-release-glowup.py" not in proof
-    assert "uv run" in proof
+    assert "uv run" not in proof
+    assert "self._settings.venv_python" in proof
 
 
 def test_native_packages_make_full_doctor_mock_server_self_contained() -> None:
@@ -1031,24 +1108,24 @@ def test_full_gate_runs_fast_checks_before_install_harness_preflight() -> None:
     order = _gate_order()
     preflight = _planned("install-image")
 
-    assert _at(order, "fast.clippy") < _at(order, "install-image")
-    assert _at(order, "fast.web.frontend") < _at(order, "install-image")
+    assert _at(order, "fast.clippy") < _at(order, "install.materialize")
+    assert _at(order, "fast.web.frontend") < _at(order, "install.materialize")
+    assert _at(order, "install.materialize") < _at(order, "install.image-build")
+    assert _at(order, "install.image-build") < _at(order, "install.image-smoke")
 
     assert "docker/Dockerfile.install-test" in preflight
     assert "source /src/scripts/doctor-linux.sh" in preflight
     assert "linux_musl_toolchain_available" in preflight
     assert "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test" in preflight
     assert "CAPSEM_TEST_OUTPUT_ROOT=/tmp/capsem-test-output" in preflight
-    assert "uv run python -m pytest --version" in preflight
+    assert "/home/capsem/.venv-install-test/bin/python -m pytest --version" in preflight
     assert "sudo -n true" in preflight
 
-    # One cacheless retry, and only one: a second failure is a Dockerfile
-    # defect rather than a stale layer.
+    # A sealed smoke failure is a materialization defect. It cannot repair
+    # itself by rebuilding without the cache or reopening the network.
     image = (PROJECT_ROOT / "src/capsem/gate/installimage.py").read_text(encoding="utf-8")
-    # Through the Docker wrapper now, so the retry asks for it by name rather
-    # than splicing the flag into an argv it built itself.
-    assert "no_cache=True" in image
-    assert "cacheless rebuild" in image
+    assert "no_cache=True" not in image
+    assert "cacheless rebuild" not in image
 
 
 def test_local_linux_preflight_contains_asset_ci_release_tools() -> None:
@@ -1065,7 +1142,7 @@ def test_local_linux_preflight_contains_asset_ci_release_tools() -> None:
     # the preflight calls -- `just _build-host-image` never existed.
     from capsem.gate import hostimage
 
-    assert _at(order, hostimage.STEP) < _at(order, "install-image")
+    assert _at(order, hostimage.STEP) < _at(order, "install.materialize")
 
 
 def test_cross_arch_tauri_swap_covers_every_native_dev_package() -> None:
@@ -1337,7 +1414,7 @@ def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> N
     order = _gate_order()
 
     assert (
-        _at(order, "install-image")
+        _at(order, "install.image-smoke")
         < _at(order, "storage.install-preflight")
         < _at(order, "package.arm64")
     )
@@ -2843,7 +2920,8 @@ def test_ci_install_job_pulls_existing_profiles_before_building_packages() -> No
     assert fetch_pos < stage_pos < materialize_pos < package_pos < gate_pos
     assert "kind: profiles" in install_job
     assert "architecture: x86_64" in install_job
-    assert "output: target/ci-install-profile-inputs" in install_job
+    assert "output: target/ci-install-content/inputs" in install_job
+    assert "--input-dir target/ci-install-content/inputs" in install_job
     assert "Build exact native release package" in install_job
     assert (
         "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json"

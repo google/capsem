@@ -18,7 +18,7 @@ from .actions import Call
 from .command import GateCommand
 from .errors import GateError
 from .execution import Step, step
-from .opacity import CallJustification, OpaqueKind
+from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .proc import Runner
 
@@ -105,7 +105,7 @@ def release_action(phase: str) -> Call:
         justification=CallJustification(
             kind=OpaqueKind.RUNTIME_DERIVED,
             reason="which rails a boundary releases is resolved from the storage policy at run time",
-            effects=frozenset({"process", "host-state"}),
+            effects=machine_effects(Effect.PROCESS, Effect.HOST_STATE),
         ),
     )
 
@@ -169,7 +169,7 @@ class StorageCommand(
                     justification=CallJustification(
                         kind=OpaqueKind.RUNTIME_DERIVED,
                         reason="which rails a boundary releases is resolved from the storage policy at run time",
-                        effects=frozenset({"process", "host-state"}),
+                        effects=machine_effects(Effect.PROCESS, Effect.HOST_STATE),
                     ),
                 ),
                 contends=(self._config.exclusive("docker_daemon"),),

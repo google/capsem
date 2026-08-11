@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Arch, GateConfig
 from .docker import Docker
 from .errors import GateError
+from .imageidentity import (
+    exact_image_id,
+    exact_image_reference,
+    require_exact_image,
+    require_input_key,
+)
 from .invocation import ConsoleMode
 from .proc import Runner
 from .storage import Storage
@@ -25,10 +30,12 @@ class PackageBuilderIdentity:
 
 
 def _exact_image_id(docker: Docker, image: str, *, platform: str | None = None) -> str:
-    found = docker.image_id(image, platform=platform)
-    if re.fullmatch(r"sha256:[0-9a-f]{64}", found) is None:
-        raise GateError(f"package helper dependency {image} has invalid image ID {found!r}")
-    return found
+    return exact_image_id(
+        docker,
+        image,
+        platform=platform,
+        subject="package helper dependency",
+    )
 
 
 def _exact_image_reference(
@@ -39,14 +46,13 @@ def _exact_image_reference(
     expected_id: str | None = None,
 ) -> str:
     expected = expected_id or _exact_image_id(docker, image, platform=platform)
-    reference = docker.image_reference(image)
-    resolved = _exact_image_id(docker, reference, platform=platform)
-    if resolved != expected:
-        raise GateError(
-            f"package helper dependency {image} moved while resolving its immutable reference: "
-            f"expected {expected}, but {reference} resolves to {resolved}"
-        )
-    return reference
+    return exact_image_reference(
+        docker,
+        image,
+        platform=platform,
+        expected_id=expected,
+        subject="package helper dependency",
+    )
 
 
 def _identity_files(config: GateConfig) -> tuple[Path, ...]:
@@ -101,8 +107,8 @@ def image_tag(
         settings.materialize_build_network,
         settings.source_build_network,
         settings.runtime_network,
-        settings.apt_snapshot_base,
-        settings.apt_snapshot_id,
+        config.apt_snapshot.base,
+        config.apt_snapshot.id,
         settings.cargo_store,
         settings.pnpm_store,
         settings.ort_lib_location,
@@ -117,11 +123,12 @@ def image_repository(config: GateConfig, target: Arch) -> str:
 
 
 def _require_input_key(docker: Docker, tag: str) -> None:
-    found = docker.image_label(tag, INPUT_KEY_LABEL)
-    if found != tag:
-        raise GateError(
-            f"package helper tag {tag} carries input key {found!r}; refusing a poisoned warm tag"
-        )
+    require_input_key(
+        docker,
+        tag,
+        label=INPUT_KEY_LABEL,
+        subject="package helper",
+    )
 
 
 def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuilderIdentity:
@@ -156,8 +163,8 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
                 f"RUST_TARGET={target.rust_target}",
                 f"HOST_RUST_TARGET={host_arch.rust_target}",
                 f"DPKG_ARCH={target.dpkg}",
-                f"APT_SNAPSHOT_BASE={settings.apt_snapshot_base}",
-                f"APT_SNAPSHOT_ID={settings.apt_snapshot_id}",
+                f"APT_SNAPSHOT_BASE={config.apt_snapshot.base}",
+                f"APT_SNAPSHOT_ID={config.apt_snapshot.id}",
                 f"CARGO_STORE={settings.cargo_store}",
                 f"PNPM_STORE={settings.pnpm_store}",
                 f"ORT_URL={ort.ort_url}",
@@ -169,6 +176,13 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
             network=settings.materialize_build_network,
             console=ConsoleMode.LOG_ONLY,
         )
+        require_exact_image(
+            docker,
+            parent_reference,
+            platform=host_arch.docker_platform,
+            expected_id=parent_id,
+            subject="package helper dependency during materialization",
+        )
         _require_input_key(docker, tag)
     exact_id = _exact_image_id(docker, tag, platform=host_arch.docker_platform)
     exact_reference = _exact_image_reference(
@@ -179,7 +193,7 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
     )
     runner.note(
         f"Package helper {target.name}: input key {tag}; exact image {exact_id}; "
-        f"immutable reference {exact_reference}"
+        f"build reference {exact_reference}"
     )
     Storage(runner).reclaim(image_repository(config, target), keep=tag)
     return PackageBuilderIdentity(
@@ -192,11 +206,9 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
 def require_local_image(runner: Runner, config: GateConfig, target: Arch) -> str:
     """Resolve and verify the input-keyed local FROM tag without warming it.
 
-    A repository digest is the immutable parent for the network-open helper
-    build. The source build is network-denied, however, and BuildKit still
-    consults a registry for `repo@digest`; its already-local, input-keyed tag
-    is the only reference it can consume without egress. The exact child and
-    matching RepoDigest are verified immediately before returning that tag.
+    The source build is network-denied, so its already-local, input-keyed tag
+    is the portable FROM reference on Docker and Colima. The exact child and
+    any available repository digest are verified before returning that tag.
     """
     docker = Docker(runner)
     host_arch = config.host_arch()
@@ -213,6 +225,6 @@ def require_local_image(runner: Runner, config: GateConfig, target: Arch) -> str
     )
     runner.note(
         f"Using package helper {target.name}: input key {tag}; exact image {exact_id}; "
-        f"immutable reference {exact_reference}"
+        f"build reference {exact_reference}"
     )
     return tag

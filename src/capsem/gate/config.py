@@ -64,6 +64,7 @@ from .harnessschema import (
     WorkspaceConfig,
 )
 from .productschema import (
+    AptSnapshotConfig,
     ArtifactsConfig,
     AssetsConfig,
     InstallConfig,
@@ -81,6 +82,7 @@ class GateConfig(Strict):
     and was then read with the wrong meaning, which is worse than refusing it.
     """
     architectures: dict[str, Arch]
+    apt_snapshot: AptSnapshotConfig
     storage: StorageConfig
     pidfiles: PidfileConfig
     install: InstallConfig

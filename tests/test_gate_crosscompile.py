@@ -370,8 +370,8 @@ def test_package_helper_inputs_and_ort_are_config_authoritative() -> None:
     assert builder.materialize_build_network == "default"
     assert builder.source_build_network == "none"
     assert builder.runtime_network == "none"
-    assert builder.apt_snapshot_base.startswith("https://snapshot.ubuntu.com/")
-    assert re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", builder.apt_snapshot_id)
+    assert CONFIG.apt_snapshot.base.startswith("https://snapshot.ubuntu.com/")
+    assert re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", CONFIG.apt_snapshot.id)
     assert builder.cargo_store.startswith("/opt/capsem/")
     assert builder.pnpm_store.startswith("/opt/capsem/")
     assert set(builder.targets) == set(CONFIG.architectures)
@@ -720,8 +720,8 @@ def test_package_helper_is_host_native_and_target_specific(
     assert f"RUST_TARGET={target.rust_target}" in build
     assert f"HOST_RUST_TARGET={host.rust_target}" in build
     assert f"DPKG_ARCH={target.dpkg}" in build
-    assert f"APT_SNAPSHOT_BASE={config.package.builder.apt_snapshot_base}" in build
-    assert f"APT_SNAPSHOT_ID={config.package.builder.apt_snapshot_id}" in build
+    assert f"APT_SNAPSHOT_BASE={config.apt_snapshot.base}" in build
+    assert f"APT_SNAPSHOT_ID={config.apt_snapshot.id}" in build
     assert f"CARGO_STORE={config.package.builder.cargo_store}" in build
     assert f"PNPM_STORE={config.package.builder.pnpm_store}" in build
     assert CONFIG.package.builder.targets[target.name].ort_sha256 in build
@@ -731,6 +731,9 @@ def test_package_helper_is_host_native_and_target_specific(
     assert identity.input_key.startswith(f"capsem-package-builder-{target.name}:")
     assert identity.image_id == "sha256:" + "d" * 64
     assert identity.image_reference == (f"capsem-package-builder-{target.name}@sha256:{'0' * 64}")
+    assert runner.last_index_of(
+        r"--format '\{\{\.Id\}\}' capsem-host-builder@sha256:"
+    ) > runner.index_of(r"docker build .*Dockerfile\.package-builder")
     from capsem.gate.invocation import ConsoleMode
 
     assert build_command.console is ConsoleMode.LOG_ONLY
@@ -804,9 +807,10 @@ def test_package_helper_snapshot_authority_changes_the_input_key(
     monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
     root = _checkout(tmp_path)
     config = gate_config.load(root)
-    changed_builder = config.package.builder.model_copy(update=changed_authority)
+    renamed = {"apt_snapshot_id": "id", "apt_snapshot_base": "base"}
+    snapshot_update = {renamed[name]: value for name, value in changed_authority.items()}
     changed = config.model_copy(
-        update={"package": config.package.model_copy(update={"builder": changed_builder})}
+        update={"apt_snapshot": config.apt_snapshot.model_copy(update=snapshot_update)}
     )
     docker = Docker(RecordingRunner(root))
 
@@ -866,7 +870,7 @@ def test_package_helper_exact_identity_is_written_to_the_run_journal(
     (recorded,) = [note for note in journal.notes if note.startswith("package helper arm64:")]
     assert "input key capsem-package-builder-arm64:" in recorded
     assert "exact image sha256:" in recorded
-    assert "immutable reference capsem-package-builder-arm64@sha256:" in recorded
+    assert "build reference capsem-package-builder-arm64@sha256:" in recorded
 
 
 def test_package_source_image_and_runtime_are_network_none(

@@ -27,7 +27,7 @@ from .command import GateCommand
 from .errors import GateError
 from .execution import step
 from .fileactions import write_text
-from .opacity import CallJustification, OpaqueKind
+from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .proc import Runner
 
@@ -139,7 +139,7 @@ class StampCommand(
                     justification=CallJustification(
                         kind=OpaqueKind.RUNTIME_DERIVED,
                         reason="every file carrying the version is rewritten from the workspace value it reads",
-                        effects=frozenset({"filesystem"}),
+                        effects=machine_effects(Effect.FILESYSTEM),
                     ),
                 ),
             )
@@ -166,7 +166,7 @@ class VersionCommand(GateCommand, name="version", help="print the workspace vers
                     justification=CallJustification(
                         kind=OpaqueKind.PURE_INSPECTION,
                         reason="prints the workspace version from its one authority and writes nothing",
-                        effects=frozenset(),
+                        effects=machine_effects(),
                     ),
                 ),
             )

@@ -17,7 +17,7 @@ from .command import GateCommand
 from .config import GateConfig
 from .content import LocalInstallContent, ProfileContent
 from .execution import Step, step
-from .opacity import CallJustification, OpaqueKind
+from .opacity import CallJustification, OpaqueKind, machine_effects
 from .plan import Plan
 from .qualification import Qualification
 from .testmodules import InWorkspace, storagerelease
@@ -91,7 +91,7 @@ def _prove_pulled_package(
                 justification=CallJustification(
                     kind=OpaqueKind.PURE_INSPECTION,
                     reason="release glow-up consumes one inseparable assets/config cohort",
-                    effects=frozenset(),
+                    effects=machine_effects(),
                 ),
             ),
         ),

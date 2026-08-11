@@ -20,7 +20,7 @@ from .assets import AssetGate
 from .command import GateCommand
 from .execution import step
 from .imagebases import MaterializeRustBuilders, Prefetch, required_rust_builder_names
-from .opacity import CallJustification, Effect, OpaqueKind
+from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 
 #: One reason per phase of the asset gate. Hoisted so the plan below reads as
@@ -32,7 +32,7 @@ ASSEMBLE = "merge, publish, materialise and boot each profile, as one indivisibl
 
 
 def _because(kind: OpaqueKind, reason: str, *effects: Effect) -> CallJustification:
-    return CallJustification(kind=kind, reason=reason, effects=frozenset(effects))
+    return CallJustification(kind=kind, reason=reason, effects=machine_effects(*effects))
 
 
 def fragment(plan, config, *, after: tuple = ()):
@@ -55,7 +55,10 @@ def fragment(plan, config, *, after: tuple = ()):
                 "run the container execution preflight, check capacity, and clear the asset tree",
                 lambda ctx: AssetGate(ctx.runner).preflight(),
                 justification=_because(
-                    OpaqueKind.RUNTIME_DERIVED, PREFLIGHT, "process", "filesystem"
+                    OpaqueKind.RUNTIME_DERIVED,
+                    PREFLIGHT,
+                    Effect.PROCESS,
+                    Effect.FILESYSTEM,
                 ),
             ),
             MaterializeRustBuilders(rust_builders),
@@ -71,7 +74,10 @@ def fragment(plan, config, *, after: tuple = ()):
                     f"build every profile's assets for {name}",
                     _lane(name),
                     justification=_because(
-                        OpaqueKind.DOMAIN_TRANSACTION, LANE, "process", "filesystem"
+                        OpaqueKind.DOMAIN_TRANSACTION,
+                        LANE,
+                        Effect.PROCESS,
+                        Effect.FILESYSTEM,
                     ),
                 ),
                 contends=shared,
@@ -86,7 +92,12 @@ def fragment(plan, config, *, after: tuple = ()):
             Call(
                 "remove containers the lanes left",
                 lambda ctx: AssetGate(ctx.runner).sweep(),
-                justification=_because(OpaqueKind.RUNTIME_DERIVED, SWEEP, "process", "host-state"),
+                justification=_because(
+                    OpaqueKind.RUNTIME_DERIVED,
+                    SWEEP,
+                    Effect.PROCESS,
+                    Effect.HOST_STATE,
+                ),
             ),
             contends=exclusive,
         ),
@@ -108,7 +119,10 @@ def fragment(plan, config, *, after: tuple = ()):
                 "merge, publish, materialise and boot each profile",
                 lambda ctx: AssetGate(ctx.runner).assemble(),
                 justification=_because(
-                    OpaqueKind.DOMAIN_TRANSACTION, ASSEMBLE, "process", "filesystem"
+                    OpaqueKind.DOMAIN_TRANSACTION,
+                    ASSEMBLE,
+                    Effect.PROCESS,
+                    Effect.FILESYSTEM,
                 ),
             ),
             contends=exclusive,

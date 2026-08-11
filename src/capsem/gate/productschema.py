@@ -13,7 +13,10 @@ manifest, and the three files a bootable tree is made of.
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Literal
+
+from pydantic import model_validator
 
 from .configschema import Strict
 
@@ -65,21 +68,41 @@ class InstallSuite(Strict):
     serve_script: str
     sbom_script: str
     web_surface_script: str
+    runtime_dependencies_script: str
+    runtime_dependencies_config: str
     package_name: str
 
 
+class AptSnapshotConfig(Strict):
+    """The one immutable Ubuntu archive selected by every helper rail."""
+
+    base: str
+    id: str
+    configure_script: str
+
+
+class InstallBuilderConfig(Strict):
+    dockerfile: str
+    tag_template: str
+    source_tag_template: str
+    identity_inputs: tuple[str, ...]
+    materialize_build_network: Literal["default"]
+    source_build_network: Literal["none"]
+    pnpm_store: str
+    apt_packages: tuple[str, ...]
+
+
 class InstallConfig(Strict):
+    builder: InstallBuilderConfig
     container: str
     generated_inputs: tuple[str, ...]
     image: str
     dockerfile: str
     context: str
-    smoke_network: str
+    smoke_network: Literal["none"]
     venv: str
     mount: str
-    #: Declared rather than defaulted: every container had outbound access by
-    #: omission, and this lane is the one that genuinely still needs it.
-    network: str
+    runtime_network: Literal["none"]
     channel: str
     manifest_version: str
     systemd_ready_attempts: int
@@ -109,13 +132,47 @@ class InstallConfig(Strict):
     request_script: str
     graph_manifest: str
     legacy_projection: str
+    selected_inputs_dir: str
+    proof_content_mount: str
+    proof_assets_name: str
+    proof_config_name: str
+    package_runtime_packages: tuple[str, ...]
     layout: InstallLayout
     guest_user: GuestUser
     suite: InstallSuite
 
+    @model_validator(mode="after")
+    def _sealed_input_authority_is_consistent(self) -> InstallConfig:
+        runtime = self.package_runtime_packages
+        if not runtime or len(runtime) != len(set(runtime)):
+            raise ValueError("install package_runtime_packages must be non-empty and unique")
+        missing = tuple(name for name in runtime if name not in self.builder.apt_packages)
+        if missing:
+            raise ValueError(
+                "install helper apt_packages omit package runtime dependencies: "
+                + ", ".join(missing)
+            )
+        inputs = self.selected_inputs_dir
+        if not inputs or inputs.startswith("/") or ".." in inputs.split("/"):
+            raise ValueError("install selected_inputs_dir must stay beneath its content root")
+        return self
+
     @property
     def preinstall_admin(self) -> str:
         return f"{self.preinstall_root}/{self.admin_relative}"
+
+    @property
+    def venv_python(self) -> str:
+        """The exact interpreter materialized inside the sealed helper."""
+        return str(PurePosixPath(self.venv) / "bin" / "python")
+
+    @property
+    def proof_assets_mount(self) -> str:
+        return str(PurePosixPath(self.proof_content_mount) / self.proof_assets_name)
+
+    @property
+    def proof_config_mount(self) -> str:
+        return str(PurePosixPath(self.proof_content_mount) / self.proof_config_name)
 
 
 class PackageProof(Strict):
@@ -171,8 +228,6 @@ class PackageBuilderConfig(Strict):
     materialize_build_network: Literal["default"]
     source_build_network: Literal["none"]
     runtime_network: Literal["none"]
-    apt_snapshot_base: str
-    apt_snapshot_id: str
     cargo_store: str
     pnpm_store: str
     ort_script: str

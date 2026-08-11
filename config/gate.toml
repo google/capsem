@@ -88,27 +88,25 @@ proc_stat_template = "/proc/{pid}/stat"
 # The native install and glow-up proof
 # ---------------------------------------------------------------------------
 
+[apt_snapshot]
+# One signed immutable Ubuntu archive for every network-open helper. Sharing
+# the authority prevents package and install qualification from selecting two
+# different OS cohorts under the same source revision.
+base = "https://snapshot.ubuntu.com/ubuntu"
+id = "20260810T000000Z"
+configure_script = "scripts/configure-apt-snapshot.sh"
+
 [install]
-# Explicit, because nothing in the gate passed `--network` at all and every
-# container therefore had outbound access by omission. This lane genuinely
-# needs it -- `dpkg -i || apt-get install -f`, and a pnpm install -- so it
-# says so until those inputs are baked into the image.
-network = "bridge"
+# The source image, smoke, and privileged systemd runtime are all sealed. The
+# only egress is the input-keyed helper materializer below.
+runtime_network = "none"
 container = "capsem-install-test"
 image = "capsem-install-test"
 dockerfile = "docker/Dockerfile.install-test"
 # The build context. `.` -- the checkout root -- because the Dockerfile copies
 # from it; named here so the wrapper is told rather than assuming.
 context = "."
-# The smoke check needs it, and assuming otherwise cost a gate run. It shells
-# `uv run`, which syncs the project environment inside the container rather
-# than merely invoking a tool the image already has -- 51 packages, measured.
-# Under `--network none` it fails while reporting a dependency hint, which
-# reads like a broken Dockerfile rather than a missing network.
-#
-# This is one of the fetches Phase 5's install-lane work has to bake into
-# `Dockerfile.install-test` before Phase 8b can deny the network here.
-smoke_network = "bridge"
+smoke_network = "none"
 venv = "/home/capsem/.venv-install-test"
 mount = "/src"
 channel = "local"
@@ -157,8 +155,8 @@ storage_ledger = "target/storage"
 test_output_root = "/tmp/capsem-test-output"
 
 # Where the postinst records which channel it hydrated from. Read back after
-# `dpkg -i`, because `|| apt-get install -f -y` runs the postinst a second time
-# and a retry must not install from somewhere else.
+# `dpkg -i`: the sealed image has no repair/fetch rail, and a stale handoff
+# must not let the package hydrate from somewhere else.
 install_log_glob = "$HOME/.capsem/logs/install-*.log"
 preinstall_root = "/tmp/capsem-preinstall"
 admin_relative = "usr/bin/capsem-admin"
@@ -169,6 +167,55 @@ request_script = "scripts/install-manifest-request.sh"
 # install that looks fine and carries the wrong manifest.
 graph_manifest = "assets/local/manifest.json"
 legacy_projection = "manifest.json"
+# Manifest-selected release inputs are retained beneath the paired content
+# root so every rewritten file:// URL remains available inside the sealed
+# install container.  The whole root is mounted read-only at the same absolute
+# address; assets and config are still mounted at their product-facing paths.
+selected_inputs_dir = "inputs"
+# The narrow exact-package proof mounts its immutable content here, then copies
+# it into writable staging before capsem-admin records the candidate binary.
+proof_content_mount = "/mnt/capsem-proof-content"
+proof_assets_name = "assets"
+proof_config_name = "config"
+# The package's complete runtime dependency names.  Release hosts verify the
+# actual Depends field against this tuple before installing from apt_snapshot.
+package_runtime_packages = [
+    "libwebkit2gtk-4.1-0",
+    "libgtk-3-0",
+    "libxdo3",
+]
+
+[install.builder]
+dockerfile = "docker/Dockerfile.install-builder"
+tag_template = "capsem-install-builder:{digest}"
+source_tag_template = "capsem-install-test:{digest}"
+identity_inputs = [
+    "pyproject.toml",
+    "uv.lock",
+    "release-site/package.json",
+    "release-site/pnpm-lock.yaml",
+    "release-site/pnpm-workspace.yaml",
+    "docker/Dockerfile.install-builder",
+    "docker/materialize-install-os.sh",
+    "scripts/configure-apt-snapshot.sh",
+]
+materialize_build_network = "default"
+source_build_network = "none"
+pnpm_store = "/opt/capsem/install-pnpm"
+# Includes both the real systemd harness and every dependency declared by the
+# publishable Debian package. They are reinstalled from `apt_snapshot` so
+# `dpkg -i` succeeds once; qualification never repairs through apt.
+apt_packages = [
+    "systemd",
+    "systemd-container",
+    "dbus",
+    "dbus-user-session",
+    "sudo",
+    "zstd",
+    "libwebkit2gtk-4.1-0",
+    "libgtk-3-0",
+    "libxdo3",
+]
 
 # The unprivileged user the container runs proofs as. Every one of these paths
 # has to stay off the bind mount: /src belongs to the host uid, so anything
@@ -189,6 +236,8 @@ macos_report_check = "scripts/check-macos-native-glowup.py"
 serve_script = "scripts/serve-release-test-root.py"
 sbom_script = "scripts/generate-host-binary-sbom.py"
 web_surface_script = "scripts/check-web-surface.sh"
+runtime_dependencies_script = "scripts/install-deb-runtime-dependencies.py"
+runtime_dependencies_config = "config/gate.toml"
 # The Debian package name, as dpkg-query reports it.
 package_name = "capsem"
 
@@ -385,12 +434,6 @@ identity_globs = ["crates/*/Cargo.toml"]
 materialize_build_network = "default"
 source_build_network = "none"
 runtime_network = "none"
-# Ubuntu's archive is mutable even when Cargo/pnpm are locked. Dependency
-# maintenance advances this timestamp deliberately; every cold materializer
-# otherwise sees the same signed archive bytes from the official snapshot
-# service, on both amd64 and arm64.
-apt_snapshot_base = "https://snapshot.ubuntu.com/ubuntu"
-apt_snapshot_id = "20260810T000000Z"
 cargo_store = "/opt/capsem/package-cargo"
 pnpm_store = "/opt/capsem/package-pnpm"
 ort_script = "scripts/materialize-package-ort.py"

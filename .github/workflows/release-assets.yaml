@@ -393,7 +393,7 @@ jobs:
             --input-dir target/profile-public-before/packages \
             --print-package-path)
           test -n "$package"
-          uv run python scripts/install-deb-runtime-dependencies.py "$package"
+          uv run python scripts/install-deb-runtime-dependencies.py "$package" --config config/gate.toml
           {
             echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package"
             echo "CAPSEM_RELEASE_BIN_DIR=$PWD/target/debug"

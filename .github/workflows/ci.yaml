@@ -395,12 +395,12 @@ jobs:
           manifest-url: https://release.capsem.org/assets/stable/manifest.json
           kind: profiles
           architecture: x86_64
-          output: target/ci-install-profile-inputs
+          output: target/ci-install-content/inputs
 
       - name: Stage one exact install content pair
         run: |
           uv run python scripts/stage-release-test-inputs.py \
-            --input-dir target/ci-install-profile-inputs \
+            --input-dir target/ci-install-content/inputs \
             --assets-dir target/ci-install-content/assets \
             --config-root target/ci-install-source-config \
             --shared-config-root config

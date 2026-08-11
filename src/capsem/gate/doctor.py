@@ -24,7 +24,7 @@ from .actions import Call
 from .command import GateCommand
 from .errors import GateError
 from .execution import step
-from .opacity import CallJustification, OpaqueKind
+from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .proc import Runner
 
@@ -150,7 +150,7 @@ class DoctorCommand(
                     justification=CallJustification(
                         kind=OpaqueKind.PURE_INSPECTION,
                         reason="reports every wiring problem it can find and changes nothing at all",
-                        effects=frozenset({"process"}),
+                        effects=machine_effects(Effect.PROCESS),
                     ),
                 ),
             )

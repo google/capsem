@@ -811,7 +811,7 @@ jobs:
           trap 'bash scripts/install-manifest-request.sh clear || true' EXIT
           package=$(find release-test-package -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$package"
-          python3 scripts/install-deb-runtime-dependencies.py "$package"
+          python3 scripts/install-deb-runtime-dependencies.py "$package" --config config/gate.toml
           bash scripts/install-manifest-request.sh write "$PREACTIVATION_MANIFEST_PATH"
           VERSION="${RELEASE_TAG#v}"
           sudo dpkg -i "$package"
@@ -948,7 +948,7 @@ jobs:
           set -euo pipefail
           package=$(find release-test-package -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$package"
-          uv run python scripts/install-deb-runtime-dependencies.py "$package"
+          uv run python scripts/install-deb-runtime-dependencies.py "$package" --config config/gate.toml
           before_package=$(uv run python scripts/stage-release-test-inputs.py \
             --input-dir target/binary-public-before/packages \
             --print-package-path)

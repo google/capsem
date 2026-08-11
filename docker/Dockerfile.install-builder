@@ -1,0 +1,66 @@
+# check=skip=InvalidDefaultArgInFrom
+# Network-open, input-keyed dependencies for the install qualification image.
+ARG BASE
+FROM ${BASE} AS dependency-fetch
+
+ARG INSTALL_VENV
+ARG PNPM_STORE
+
+COPY pyproject.toml uv.lock /prefetch/
+COPY release-site/package.json release-site/pnpm-lock.yaml \
+    release-site/pnpm-workspace.yaml /prefetch/release-site/
+
+WORKDIR /prefetch
+RUN UV_PROJECT_ENVIRONMENT="${INSTALL_VENV}" uv sync --locked --no-install-project
+RUN cd release-site && pnpm fetch --frozen-lockfile --store-dir /capsem-deps/pnpm
+
+FROM ${BASE}
+
+ARG APT_SNAPSHOT_BASE
+ARG APT_SNAPSHOT_ID
+ARG APT_PACKAGES
+ARG INSTALL_VENV
+ARG PNPM_STORE
+ARG INPUT_IDENTITY
+
+LABEL org.capsem.install-builder.input-key=${INPUT_IDENTITY}
+
+COPY --chmod=555 scripts/configure-apt-snapshot.sh /usr/local/bin/configure-apt-snapshot
+COPY --chmod=555 docker/materialize-install-os.sh /usr/local/bin/materialize-install-os
+RUN test -n "${APT_SNAPSHOT_BASE}" \
+    && test -n "${APT_SNAPSHOT_ID}" \
+    && test -n "${APT_PACKAGES}" \
+    && test -n "${INSTALL_VENV}" \
+    && test -n "${PNPM_STORE}" \
+    && materialize-install-os "${APT_SNAPSHOT_BASE}" "${APT_SNAPSHOT_ID}" ${APT_PACKAGES}
+
+# The privileged proof needs a real systemd userspace but must not disturb
+# Colima's host-owned Rosetta binfmt registration when PID 1 starts.
+RUN mkdir -p /etc/systemd/system \
+    && ln -s /dev/null /etc/systemd/system/systemd-binfmt.service
+
+RUN if getent passwd 1000 >/dev/null 2>&1; then \
+        userdel -r "$(getent passwd 1000 | cut -d: -f1)" 2>/dev/null || true; \
+    fi \
+    && useradd -m -s /bin/bash -u 1000 capsem \
+    && echo "capsem ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/capsem
+
+COPY --from=dependency-fetch ${INSTALL_VENV} ${INSTALL_VENV}
+COPY --from=dependency-fetch --chown=capsem:capsem /capsem-deps/pnpm ${PNPM_STORE}
+
+RUN dbus-daemon --system --fork 2>/dev/null; \
+    loginctl enable-linger capsem 2>/dev/null || \
+    mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/capsem
+
+RUN mkdir -p /home/capsem/.capsem/bin \
+             /home/capsem/.capsem/assets \
+             /home/capsem/.capsem/run \
+             /home/capsem/.config/systemd/user \
+             /run/user/1000 \
+    && chown -R capsem:capsem /home/capsem/.capsem /home/capsem/.config /run/user/1000
+
+ENV XDG_RUNTIME_DIR=/run/user/1000
+ENV UV_PROJECT_ENVIRONMENT=${INSTALL_VENV}
+ENV UV_OFFLINE=true
+ENV PYTHONPATH=/src/src
+ENV CAPSEM_INSTALL_PNPM_STORE=${PNPM_STORE}

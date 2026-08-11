@@ -27,6 +27,7 @@ import ast
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -293,3 +294,62 @@ def test_secret_bearing_work_is_only_the_package_build() -> None:
     )
 
     assert secretive == ["package.arm64.build", "package.x86_64.build"]
+
+
+def test_closed_gate_vocabularies_refuse_raw_strings_at_runtime() -> None:
+    """Untyped callers cannot bypass the enum-only constructor seams."""
+    from typing import Any, cast
+
+    from capsem.gate.installimage import _step_label
+    from capsem.gate.opacity import machine_effects
+
+    dynamic_effects = cast(Any, machine_effects)
+    dynamic_label = cast(Any, _step_label)
+    with pytest.raises(TypeError, match="Effect enum"):
+        dynamic_effects("process")
+    with pytest.raises(TypeError, match="InstallImageStep enum"):
+        dynamic_label("install.capacity")
+
+
+def test_ty_refuses_raw_strings_at_closed_gate_vocabulary_seams(tmp_path: Path) -> None:
+    """The enum seams fail before runtime for every statically typed caller."""
+    fixture = PROJECT_ROOT / "tests" / "fixtures" / "typecheck" / "gate_vocabulary_strings.py.txt"
+    probe = tmp_path / "gate_vocabulary_strings.py"
+    probe.write_bytes(fixture.read_bytes())
+
+    checked = subprocess.run(
+        [
+            "uv",
+            "run",
+            "ty",
+            "check",
+            "--output-format",
+            "concise",
+            "--color",
+            "never",
+            "--python-platform",
+            CONFIG.lint.python_platform,
+            "--python",
+            sys.executable,
+            "--extra-search-path",
+            str(PROJECT_ROOT / "src"),
+            str(probe),
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    evidence = checked.stdout + checked.stderr
+    assert checked.returncode != 0, evidence
+    assert evidence.count("invalid-argument-type") == 2, evidence
+    assert 'Expected `Effect`, found `Literal["process"]`' in evidence
+    assert 'Expected `InstallImageStep`, found `Literal["install.capacity"]`' in evidence
+
+
+def test_install_lifecycle_labels_flow_through_the_enum_converter() -> None:
+    source = (GATE_PACKAGE / "installimage.py").read_text(encoding="utf-8")
+
+    for member in ("CAPACITY", "MATERIALIZE", "BUILD", "SMOKE"):
+        assert f"_step_label(InstallImageStep.{member})" in source
+    assert 'step(\n            "install.' not in source

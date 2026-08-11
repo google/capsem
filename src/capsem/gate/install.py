@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from . import config as gate_config
-from . import hostimage, installimage
+from . import installimage
 from .actions import Call
 from .command import GateCommand
 from .content import InstallContent, LocalInstallContent, ProfileContent, SelectedInstallContent
@@ -31,7 +31,7 @@ from .execution import step
 from .fileactions import remove
 from .installcontainer import InstallContainer
 from .installproof import InstallProof
-from .opacity import CallJustification, OpaqueKind
+from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .proc import Runner
 from .releasegraph import ReleaseGraph
@@ -55,7 +55,7 @@ class InstallGate:
         self._layout = self._settings.layout
         self._storage = Storage(runner)
         self._content = content
-        self._container = InstallContainer(runner, content=content.content if content else None)
+        self._container = InstallContainer(runner, content=content)
         self._proof = InstallProof(runner, self._config)
         self._graph = ReleaseGraph(Docker(runner), self._config)
         self._macos_report = macos_glowup_report or None
@@ -86,11 +86,6 @@ class InstallGate:
         # `completed-package-*` -- are steps in the phase that composes this,
         # hanging off the builds that fill them. Released from here they had no
         # edges, so nothing could order them against another lane's work.
-        # The verified derived image pins roughly 6 GiB until this proof
-        # finishes. Reserve that budget before materialising it.
-        self._storage.ensure_space("install-preflight")
-        installimage.prepare(self._runner)
-
         # A failed site overlay can leave write-only partial HTML on a macOS
         # bind mount. The host owns this generated tree, so clear it before the
         # container exists; profile artifacts are regenerated from the manifest.
@@ -122,6 +117,13 @@ class InstallGate:
         arches = None
         if isinstance(self._content, SelectedInstallContent):
             arches = (self.arch,)
+            self._content.require_complete(self._config, arches=arches)
+            self._runner.script(
+                self._config.modules.verify_inputs_script,
+                "--input-dir",
+                self._content.inputs(self._config),
+            )
+            return
         self._content.content.require_complete(self._config, arches=arches)
 
     def _prove(self, package: str) -> None:
@@ -133,21 +135,25 @@ class InstallGate:
             )
 
         self._runner.note("Staging real profile assets for installed VM proofs...")
-        authoritative_graph = self._stage()
+        self._stage()
 
-        if authoritative_graph:
-            # Before dpkg, and from the package under test: this breaks the
-            # circle between the graph and the binary that authors it.
-            admin = self._graph.extract_admin(package)
-            self._runner.note("Authoring exact candidate manifest for the installed package...")
-            self._graph.record_binary(
-                admin,
-                package=package,
-                version=self.version,
-                assets_manifest=f"{self._layout.assets}/{self._settings.manifest_name}",
-                candidate_base=f"{self._settings.mount}/{self._layout.packages}",
-            )
-            self._publish_local_channel(admin)
+        # Before dpkg, and from the package under test: this breaks the circle
+        # between the selected profile graph and the exact binary being
+        # qualified. Even release-selected profile content needs this graph;
+        # handing its raw projection to postinst would leave the package URL
+        # public and make network-none fail for the wrong reason.
+        self._runner.note("Authoring exact candidate manifest for the installed package...")
+        self._graph.author_exact_package(
+            package=package,
+            version=self.version,
+            assets_manifest=f"{self._layout.assets}/{self._settings.manifest_name}",
+            candidate_base=f"{self._settings.mount}/{self._layout.packages}",
+            assets_dir=self._layout.assets,
+            profiles_dir=f"{self._layout.config}/{self._config.assets.materialized_profiles_dir}",
+            channel=self._settings.channel,
+            manifest_version=self._settings.manifest_version,
+            out_dir=self._layout.channel,
+        )
 
         # The manifest handed over, read back from what the postinst recorded.
         self._proof.install(package, expected=self.version, manifest=self._graph.handed_off)
@@ -171,41 +177,15 @@ class InstallGate:
             )
         self._proof.prove_glowup(package, boots_a_guest=self._container.boots_a_guest)
 
-    def _stage(self) -> bool:
-        """Stage assets, and report whether a local graph must be published.
-
-        Selected content is already manifest-resolved and carries no local
-        graph to hand over. A local gate authors one from freshly built assets.
-        """
+    def _stage(self) -> None:
+        """Stage the paired cohort and prepare its checked local graph root."""
         content = self._content
         if content is None:
             raise GateError("install content was not validated before staging")
-        self._proof.stage_content(content.content)
         if isinstance(content, SelectedInstallContent):
-            return False
+            self._proof.verify_selected_inputs(content.inputs(self._config))
+        self._proof.stage_content(content.content)
         self._proof.start_local_server()
-        return True
-
-    def _publish_local_channel(self, admin: str) -> None:
-        self._runner.note("Generating authoritative local release graph...")
-        manifest = self._graph.build_channel(
-            admin,
-            assets_dir=self._layout.assets,
-            profiles_dir=f"{self._layout.config}/{self._config.assets.materialized_profiles_dir}",
-            channel=self._settings.channel,
-            manifest_version=self._settings.manifest_version,
-            out_dir=self._layout.channel,
-        )
-        self._graph.build_site(dist=self._layout.channel)
-        self._graph.check_channel(
-            admin,
-            channel=self._settings.channel,
-            dist=self._layout.channel,
-            manifest=manifest,
-        )
-        # Last thing before dpkg, and only once the graph it names has been
-        # built and checked.
-        self._graph.hand_off(manifest)
 
 
 def install_step(config, *, content: InstallContent):
@@ -223,7 +203,12 @@ def install_step(config, *, content: InstallContent):
             justification=CallJustification(
                 kind=OpaqueKind.DOMAIN_TRANSACTION,
                 reason="install the exact package and prove the installed product, as one transaction",
-                effects=frozenset({"process", "filesystem", "network", "host-state"}),
+                effects=machine_effects(
+                    Effect.PROCESS,
+                    Effect.FILESYSTEM,
+                    Effect.NETWORK,
+                    Effect.HOST_STATE,
+                ),
             ),
         ),
         contends=(config.exclusive("docker_daemon"),),
@@ -246,12 +231,9 @@ class InstallCommand(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        # `docker/Dockerfile.install-test` is `FROM capsem-host-builder:latest`
-        # and this lane rebuilds that derived image itself, so the base is a
-        # prerequisite it owns rather than one an earlier phase happens to
-        # leave behind. `shared`, so composing this into the complete gate
-        # makes it a dependant of the one build rather than a second one.
-        base = hostimage.fragment(plan, self._config)
+        # Own the sealed image prerequisite. In the complete plan this shares
+        # the static preflight step; standalone install builds it once here.
+        image = installimage.fragment(plan, self._config)
         selected = getattr(self._args, "selected_content_root", None)
         if selected:
             root = Path(selected)
@@ -261,7 +243,7 @@ class InstallCommand(
             )
         else:
             content = LocalInstallContent(ProfileContent.standalone(self._config))
-        plan.add(install_step(self._config, content=content), after=(base,))
+        plan.add(install_step(self._config, content=content), after=(image,))
         return plan
 
 

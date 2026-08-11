@@ -194,12 +194,19 @@ reason = "No lane mounts a named volume: the base image carries the toolchain an
 
 [resources.capsem-install-test]
 kind = "image"
-docker_name = "capsem-install-test:latest"
-retention = "working"
+docker_name = "capsem-install-test"
+retention = "generational"
 owner = "install"
-last_consumer = "install"
-release_boundaries = ["after-install-preflight", "after-install", "candidate-boundary"]
-reason = "Derived systemd test image is rebuilt from retained BuildKit layers."
+keep_previous = 0
+reason = "Only the current helper/source-keyed install qualification image has a consumer."
+
+[resources.capsem-install-builder]
+kind = "image"
+docker_name = "capsem-install-builder"
+retention = "generational"
+owner = "install"
+keep_previous = 0
+reason = "Only the current lock/snapshot/parent-keyed install helper has a consumer."
 
 [resources.capsem-cargo-registry]
 kind = "volume"

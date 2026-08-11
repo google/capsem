@@ -25,6 +25,15 @@ PROOF = CONFIG.package.proof
 VERSION = "9.9.9"
 
 
+@pytest.fixture(autouse=True)
+def _qualified_install_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DebProof tests own the transaction, not install-image provenance."""
+    monkeypatch.setattr(
+        "capsem.gate.installimage.require_local_image",
+        lambda _runner, _config: "sha256:" + "0" * 64,
+    )
+
+
 def _checkout(tmp_path: Path) -> Path:
     (tmp_path / "config").mkdir(parents=True)
     (tmp_path / "config" / "gate.toml").write_text(
@@ -163,6 +172,55 @@ def test_the_checkout_is_not_mounted_at_all(
     # over virtiofs, which is what killed a release run. The image carries the
     # source now, so there is nothing to share.
     assert f"-v {proof.root}:" not in started, f"the checkout is mounted again: {started}"
+
+
+def test_exact_package_graph_is_checked_and_handed_off_before_dpkg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof, runner = _proof(tmp_path, monkeypatch)
+
+    proof.run()
+
+    transcript = "\n".join(runner.rendered)
+    extract = transcript.index("dpkg-deb --extract")
+    record = transcript.index("record-binary")
+    build = transcript.index("assets channel build")
+    check = transcript.index("assets channel check")
+    handoff = transcript.index("install-manifest-request.sh write")
+    install = transcript.index("dpkg -i")
+    assert extract < record < build < check < handoff < install
+    assert "--network none" in runner.matching(r"docker run -d")[0]
+
+
+def test_read_only_content_is_staged_before_record_binary_mutates_the_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof, runner = _proof(tmp_path, monkeypatch)
+
+    proof.run()
+
+    started = runner.matching(r"docker run -d")[0]
+    assert f":{CONFIG.install.proof_assets_mount}:ro" in started
+    assert f":{CONFIG.install.proof_config_mount}:ro" in started
+    record = runner.matching(r"assets channel record-binary")[0]
+    assert (
+        f"--manifest-path {CONFIG.install.layout.assets}/{CONFIG.install.manifest_name}" in record
+    )
+    assert (
+        f"--manifest-path {CONFIG.install.proof_assets_mount}/{CONFIG.install.manifest_name}"
+        not in record
+    )
+    assert not runner.ran(r"docker exec(?: [^ ]+)* capsem-install-test(?: |$)")
+
+
+def test_runtime_dependency_authority_is_verified_before_dpkg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof, runner = _proof(tmp_path, monkeypatch)
+
+    proof.run()
+
+    runner.assert_order(r"install-deb-runtime-dependencies\.py .*--verify-only", r"dpkg -i")
 
 
 def test_every_shipped_binary_must_report_the_package_version(
@@ -306,6 +364,4 @@ def test_the_container_is_removed_even_when_the_proof_fails(
     with pytest.raises(GateError):
         proof.run()
 
-    assert runner.last_index_of(rf"docker rm -f -v {PROOF.container}") > runner.index_of(
-        r"dpkg -i"
-    )
+    assert runner.last_index_of(rf"docker rm -f -v {PROOF.container}") > runner.index_of(r"dpkg -i")

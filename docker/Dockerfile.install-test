@@ -1,90 +1,22 @@
-# Dockerfile.install-test -- e2e install test environment
-# Extends capsem-host-builder with systemd + non-root user for testing
-# the installed layout on Linux.
-#
-# Must be run with:
-#   docker run --privileged --cgroupns=host \
-#     -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
-#     --tmpfs /run --tmpfs /tmp \
-#     capsem-install-test /usr/lib/systemd/systemd
-#
-# Tests exec into the container as the capsem user:
-#   docker exec -u capsem <container> ...
+# check=skip=InvalidDefaultArgInFrom
+# Source-bearing, network-denied image for exact Debian install qualification.
+ARG BASE
+FROM ${BASE}
+ARG INPUT_IDENTITY
+LABEL org.capsem.install-image.input-key=${INPUT_IDENTITY}
 
-FROM capsem-host-builder:latest
-
-# Install systemd and dbus for user session support
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    systemd \
-    systemd-container \
-    dbus \
-    dbus-user-session \
-    sudo \
-    zstd \
-    python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-
-# The container runs systemd with --privileged and shares the host's binfmt
-# filesystem. systemd-binfmt would otherwise flush the Colima VM's Rosetta
-# registration and replace it with registrations from this Ubuntu image.
-# Mask it before PID 1 starts; install tests do not need to register formats.
-RUN mkdir -p /etc/systemd/system \
-    && ln -s /dev/null /etc/systemd/system/systemd-binfmt.service
-
-# The locally built host-builder parent already installs uv at this path. Keep
-# one owner so a sealed install proof never resolves a second mutable image.
-RUN test -x /usr/local/bin/uv
-
-# Create non-root capsem user (UID 1000 may already exist from base image)
-RUN if getent passwd 1000 >/dev/null 2>&1; then \
-        userdel -r $(getent passwd 1000 | cut -d: -f1) 2>/dev/null || true; \
-    fi \
-    && useradd -m -s /bin/bash -u 1000 capsem \
-    && echo "capsem ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/capsem
-
-# Enable lingering so systemd user session starts at boot
-# (dbus must be running for loginctl, so we start it inline)
-RUN dbus-daemon --system --fork 2>/dev/null; \
-    loginctl enable-linger capsem 2>/dev/null || \
-    mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/capsem
-
-# Pre-create capsem directories owned by capsem user
-RUN mkdir -p /home/capsem/.capsem/bin \
-             /home/capsem/.capsem/assets \
-             /home/capsem/.capsem/run \
-             /home/capsem/.config/systemd/user \
-    && chown -R capsem:capsem /home/capsem/.capsem /home/capsem/.config
-
-# Set XDG_RUNTIME_DIR (required for systemctl --user)
-ENV XDG_RUNTIME_DIR=/run/user/1000
-
-# Ensure the runtime dir exists with correct ownership at boot
-RUN mkdir -p /run/user/1000 && chown capsem:capsem /run/user/1000
-
-# The source, copied rather than mounted. A `-v <repo_root>:/src` let a host
-# step churning hardlinks and this container reading the same inodes over
-# virtiofs share a filesystem neither declared, and a release run died on the
-# resulting intermittent `Permission denied`.
-#
-# Owned by the container user: this lane writes its test output under /src, so
-# a root-owned copy fails with EACCES on Linux and only on Linux -- the shape
-# four separate release-gate failures already had.
+# The helper owns the systemd harness, exact OS cohort, Python environment and
+# pnpm store. This layer owns only the source revision being qualified.
 COPY --chown=capsem:capsem . /src
 WORKDIR /src
 
-# The release-site dependencies, resolved once here instead of every run.
-#
-# They used to live in a cross-run named volume, mounted over this directory
-# because the source arrived as a bind mount and `pnpm install` would otherwise
-# have written into the developer's checkout. The source is a layer now, so
-# that reason is gone -- and what was left was worse than the problem: a volume
-# from an earlier run mounted over a *different* `release-site/`, which pnpm
-# correctly refused to reconcile without being asked
-# (`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`).
-#
-# Baked, the runtime `pnpm install --frozen-lockfile` finds a tree that already
-# matches the lockfile and does nothing, which is both faster and the only
-# arrangement where the two cannot disagree.
+# Materialize the source-specific release-site links from the locked helper
+# store without registry access. Runtime rendering performs no install/sync.
 USER capsem
-RUN cd /src/release-site && pnpm install --frozen-lockfile
+RUN cd /src/release-site \
+    && pnpm install --offline --frozen-lockfile \
+        --store-dir "${CAPSEM_INSTALL_PNPM_STORE}"
 USER root
+
+RUN test -x "${UV_PROJECT_ENVIRONMENT}/bin/python" \
+    && test -x /src/release-site/node_modules/.bin/astro

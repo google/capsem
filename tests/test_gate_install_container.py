@@ -9,6 +9,7 @@ every later x86 build on the machine, not just the run that caused it.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -16,6 +17,7 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
+from capsem.gate.content import ProfileContent, SelectedInstallContent
 from capsem.gate.errors import GateError
 from capsem.gate.installcontainer import InstallContainer
 
@@ -44,9 +46,7 @@ def test_a_linux_host_with_virtualisation_devices_boots_a_guest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _on(monkeypatch, "Linux")
-    monkeypatch.setattr(
-        "capsem.gate.host.device_available", lambda path: path != "/dev/vsock"
-    )
+    monkeypatch.setattr("capsem.gate.host.device_available", lambda path: path != "/dev/vsock")
     container, _ = _container()
 
     options = container.runtime_options()
@@ -74,9 +74,7 @@ def test_a_linux_host_without_kvm_refuses_rather_than_proving_less(
     failing, because the gate would then report a pass for a proof it did not
     run."""
     _on(monkeypatch, "Linux")
-    monkeypatch.setattr(
-        "capsem.gate.host.device_available", lambda path: path != "/dev/kvm"
-    )
+    monkeypatch.setattr("capsem.gate.host.device_available", lambda path: path != "/dev/kvm")
     container, _ = _container()
 
     with pytest.raises(GateError, match="/dev/kvm"):
@@ -139,9 +137,7 @@ def test_a_registration_removed_by_the_container_is_attributed_to_it(
         container.verify_rosetta_survived()
 
 
-def test_a_stopped_colima_is_not_a_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_stopped_colima_is_not_a_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _on(monkeypatch, "Darwin")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/local/bin/colima")
     container, _ = _container(failures=["colima status"])
@@ -166,9 +162,7 @@ def test_a_predecessor_is_removed_before_the_container_starts(
     runner.assert_order(r"docker rm -f", r"docker run -d")
 
 
-def test_only_cgroups_are_mounted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_only_cgroups_are_mounted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _on(monkeypatch, "Darwin")
     container, runner = _container()
 
@@ -183,6 +177,73 @@ def test_only_cgroups_are_mounted(
     assert "--privileged --cgroupns=host" in started
 
 
+def test_selected_release_transport_is_mounted_read_only_at_its_absolute_address(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rewritten file URLs stay resolvable without mounting the checkout."""
+    _on(monkeypatch, "Darwin")
+    root = tmp_path / "selected"
+    content = SelectedInstallContent(ProfileContent.isolated(CONFIG, root))
+    runner = RecordingRunner(PROJECT_ROOT, replies={"systemctl is-system-running": "running"})
+    container = InstallContainer(runner, content=content, sleep=lambda _seconds: None)
+
+    container.start(options=[])
+
+    started = runner.matching(r"docker run -d")[0]
+    resolved = root.resolve()
+    assert f"-v {resolved}:{resolved}:ro" in started
+    assert f"-v {resolved / CONFIG.assets.merged_assets_dir}:/src/assets:ro" in started
+    assert f"-v {resolved / CONFIG.assets.merged_config_dir}:/src/target/config:ro" in started
+
+
+def _complete_selected_content(tmp_path: Path) -> SelectedInstallContent:
+    root = tmp_path / "selected"
+    selected = SelectedInstallContent(ProfileContent.isolated(CONFIG, root))
+    inputs = selected.inputs(CONFIG)
+    inputs.mkdir(parents=True)
+    payload = inputs / "payload.bin"
+    payload.write_bytes(b"immutable")
+    manifest = {
+        "assets": {
+            "current": "selected",
+            "releases": {
+                "selected": {"arches": {CONFIG.host_arch().name: {}}},
+            },
+        },
+        "profiles": {"code": {"url": payload.resolve().as_uri()}},
+    }
+    encoded = json.dumps(manifest).encode()
+    (inputs / CONFIG.package.release_inputs_name).write_text("{}")
+    (inputs / CONFIG.install.manifest_name).write_bytes(encoded)
+    selected.content.assets.mkdir(parents=True)
+    (selected.content.assets / CONFIG.install.manifest_name).write_bytes(encoded)
+    (selected.content.assets / CONFIG.host_arch().name).mkdir()
+    config_manifest = selected.content.config / CONFIG.suites.pytest.test_manifest
+    config_manifest.parent.mkdir(parents=True)
+    config_manifest.write_bytes(encoded)
+    profile = selected.content.profiles(CONFIG) / "code/profile.toml"
+    profile.parent.mkdir(parents=True)
+    profile.write_text("name = 'code'\n")
+    return selected
+
+
+def test_selected_release_transport_refuses_payload_outside_its_paired_root(
+    tmp_path: Path,
+) -> None:
+    selected = _complete_selected_content(tmp_path)
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"not selected")
+    manifest = selected.content.assets / CONFIG.install.manifest_name
+    document = json.loads(manifest.read_text())
+    document["profiles"]["code"]["url"] = outside.resolve().as_uri()
+    encoded = json.dumps(document).encode()
+    manifest.write_bytes(encoded)
+    (selected.content.config / CONFIG.suites.pytest.test_manifest).write_bytes(encoded)
+
+    with pytest.raises(GateError, match="escapes its content root"):
+        selected.require_complete(CONFIG, arches=(CONFIG.host_arch(),))
+
+
 def test_systemd_that_never_comes_up_fails_with_the_wait_it_gave(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -194,9 +255,7 @@ def test_systemd_that_never_comes_up_fails_with_the_wait_it_gave(
         container.start(options=[])
 
 
-def test_a_degraded_system_is_accepted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_degraded_system_is_accepted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A container with one failed unit still installs packages; refusing it
     would fail the gate on something it does not test."""
     _on(monkeypatch, "Darwin")
@@ -275,6 +334,109 @@ def test_the_image_is_always_rebuilt_then_smoked(tmp_path: Path) -> None:
     )
 
 
+def test_install_dependency_materialization_is_the_only_network_open_phase() -> None:
+    settings = CONFIG.install
+
+    assert settings.builder.materialize_build_network == "default"
+    assert settings.builder.source_build_network == "none"
+    assert settings.smoke_network == "none"
+    assert settings.runtime_network == "none"
+
+
+def test_install_helper_materializes_locked_inputs_before_the_sealed_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from capsem.gate import installbuilder, installimage
+
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    runner = RecordingRunner(
+        PROJECT_ROOT,
+        failures=("docker image inspect --platform linux/amd64 capsem-install-builder:",),
+    )
+
+    identity = installbuilder.materialize(runner, CONFIG)
+    installimage.build_source_image(runner, CONFIG, identity=identity)
+
+    helper = next(
+        command
+        for command in runner.commands
+        if command.argv[:2] == ("docker", "build")
+        and any(value.endswith("/Dockerfile.install-builder") for value in command.argv)
+    )
+    source = next(
+        command
+        for command in runner.commands
+        if command.argv[:2] == ("docker", "build")
+        and any(value.endswith("/Dockerfile.install-test") for value in command.argv)
+    )
+    assert "--platform linux/amd64" in str(helper)
+    assert "--network default" in str(helper)
+    assert f"BASE=capsem-host-builder@sha256:{'0' * 64}" in str(helper)
+    assert f"APT_SNAPSHOT_BASE={CONFIG.apt_snapshot.base}" in str(helper)
+    assert f"APT_SNAPSHOT_ID={CONFIG.apt_snapshot.id}" in str(helper)
+    assert "INPUT_IDENTITY=capsem-install-builder:" in str(helper)
+    assert "--platform linux/amd64" in str(source)
+    assert "--network none" in str(source)
+    assert f"BASE={identity.input_key}" in str(source)
+    assert identity.image_id == "sha256:" + "0" * 64
+    assert runner.last_index_of(
+        r"docker image inspect --platform linux/amd64 --format '\{\{\.Id\}\}' "
+        r"capsem-host-builder@sha256:"
+    ) > runner.index_of(r"docker build .*Dockerfile\.install-builder")
+    assert runner.last_index_of(
+        r"--format '\{\{\.Id\}\}' capsem-install-builder:"
+    ) > runner.index_of(r"docker build .*Dockerfile\.install-test")
+
+
+def test_install_helper_accepts_a_local_parent_without_repository_digests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from capsem.gate import installbuilder
+
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    runner = RecordingRunner(
+        PROJECT_ROOT,
+        failures=("docker image inspect --platform linux/amd64 capsem-install-builder:",),
+        replies={"{{json .RepoDigests}}": "[]"},
+    )
+
+    identity = installbuilder.materialize(runner, CONFIG)
+
+    helper = next(
+        str(command)
+        for command in runner.commands
+        if command.argv[:2] == ("docker", "build")
+        and any(value.endswith("/Dockerfile.install-builder") for value in command.argv)
+    )
+    assert "BASE=capsem-host-builder:latest" in helper
+    assert identity.image_reference == identity.input_key
+
+
+def test_install_source_image_and_smoke_are_sealed_without_retry() -> None:
+    from capsem.gate import installimage
+
+    runner = RecordingRunner(PROJECT_ROOT)
+
+    installimage.prepare(runner)
+
+    source = next(
+        str(command)
+        for command in runner.commands
+        if command.argv[:2] == ("docker", "build")
+        and any(value.endswith("/Dockerfile.install-test") for value in command.argv)
+    )
+    smoke = next(
+        str(command) for command in runner.commands if command.argv[:3] == ("docker", "run", "--rm")
+    )
+    assert "--network none" in source
+    assert "--network none" in smoke
+    assert "capsem-install-test:" in smoke
+    assert "sha256:" not in smoke, (
+        "containerd platform-child IDs are evidence, not runnable local image references"
+    )
+    assert "--no-cache" not in "\n".join(map(str, runner.commands))
+
+
 def test_the_install_image_is_built_after_the_builder_it_derives_from() -> None:
     """The other half of the claim above, now that the builder is a step.
 
@@ -296,43 +458,23 @@ def test_the_install_image_is_built_after_the_builder_it_derives_from() -> None:
         argparse.Namespace(dry_run=False, graph=False, timing=False),
     )._describe()
 
-    assert (hostimage.STEP, "install-image") in plan.edges
+    assert (hostimage.STEP, "install.capacity") in plan.edges
+    assert ("install.capacity", "install.materialize") in plan.edges
+    assert ("install.materialize", "install.image-build") in plan.edges
+    assert ("install.image-build", "install.image-smoke") in plan.edges
 
 
-def test_a_failing_smoke_check_earns_exactly_one_cacheless_rebuild(
-    tmp_path: Path,
-) -> None:
-    """A cached layer can satisfy `docker build` and still be missing a tool."""
-    from capsem.gate import installimage
-
-    class RepairedByRebuild(RecordingRunner):
-        """The smoke check starts failing and stops once the cache is bypassed."""
-
-        def execute(self, command):
-            completed = super().execute(command)
-            if "--no-cache" in str(command):
-                self.fail_on()
-            return completed
-
-    runner = RepairedByRebuild(PROJECT_ROOT, failures=["docker run --rm"])
-
-    installimage.prepare(runner)
-
-    assert len(runner.matching(r"--no-cache")) == 1
-    assert len(runner.matching(r"docker run --rm")) == 2, (
-        "the image must be re-smoked after the rebuild, not assumed fixed"
-    )
-
-
-def test_a_smoke_check_that_fails_twice_is_a_dockerfile_defect(tmp_path: Path) -> None:
+def test_a_failing_sealed_smoke_check_is_not_repaired_by_a_second_build() -> None:
+    """Missing materialized input is a defect, not permission to fetch again."""
     from capsem.gate import installimage
 
     runner = RecordingRunner(PROJECT_ROOT, failures=["docker run --rm"])
 
-    with pytest.raises(GateError, match="cannot run the install gate's tools"):
+    with pytest.raises(GateError, match="sealed image"):
         installimage.prepare(runner)
 
-    assert len(runner.matching(r"--no-cache")) == 1, "a third attempt proves nothing"
+    assert len(runner.matching(r"docker run --rm")) == 1
+    assert not runner.ran(r"--no-cache")
 
 
 def test_the_virtualisation_devices_are_reachable_from_inside(

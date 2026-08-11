@@ -1,20 +1,4 @@
-"""Install the exact `.deb` into a clean container and prove it works.
-
-Distinct from the install gate: that one authors a release graph and runs the
-whole glow-up, while this answers a narrower question about a package the
-cross-compile rail just produced -- does it install, does every binary it
-claims to ship exist and report the version on the tin, does the service come
-up, is every profile ready, and can it open a real guest shell.
-
-The checkout is mounted read-only on purpose. This proof must not be able to
-influence the tree it is proving, and a package that only works because it
-wrote something back into `/src` is not a package that works.
-
-The narrow assertion worth keeping in view is the version check on each binary.
-A `.deb` can install cleanly while carrying binaries from an earlier build --
-the package metadata and the ELF inside it are stamped separately -- and every
-file-existence check in the world passes on that package.
-"""
+"""Install one exact `.deb` into sealed systemd and boot a real guest shell."""
 
 from __future__ import annotations
 
@@ -23,12 +7,14 @@ import time
 from pathlib import Path
 
 from . import config as gate_config
-from . import host
+from . import host, installimage
 from .content import ProfileContent
 from .docker import Docker, Mount
 from .errors import GateError
 from .installcontainer import await_systemd
+from .installproof import InstallProof
 from .proc import Runner
+from .releasegraph import ReleaseGraph
 
 # `Profiles: 3/3 ready`, whose two numbers must match and must not be zero.
 PROFILE_READY = re.compile(r"^Profiles:\s+(\d+)/(\d+) ready", re.M)
@@ -52,6 +38,14 @@ class DebProof:
         self._config = gate_config.for_root(runner.root)
         self._proof = self._config.package.proof
         self._install = self._config.install
+        self._staging = InstallProof(
+            runner, self._config, container=self._proof.container, sleep=sleep
+        )
+        self._graph = ReleaseGraph(
+            self._docker,
+            self._config,
+            container=self._proof.container,
+        )
         self._content = content
         self.root = self._config.root
         self.package = self._resolve(package)
@@ -113,12 +107,18 @@ class DebProof:
 
         try:
             self._start(devices)
+            self._staging.stage_content_from(
+                assets=self._install.proof_assets_mount,
+                content_config=self._install.proof_config_mount,
+            )
+            self._prepare_handoff(container_deb, expected)
             self._install_package(container_deb, expected)
             self._require_binaries(expected)
             ready, total = self._require_status()
             self._verify_release(expected)
             self._prove_shell()
         finally:
+            self._graph.clear_handoff()
             self._docker.remove(self._proof.container)
 
         self._runner.note(
@@ -128,12 +128,13 @@ class DebProof:
     def _start(self, devices: list[str]) -> None:
         self._runner.note("Starting clean systemd container for exact package proof...")
         cgroup = self._install.cgroup_path
+        image = installimage.require_local_image(self._runner, self._config)
         tmpfs = [f for path in self._install.tmpfs_paths for f in ("--tmpfs", path)]
         self._docker.remove(self._proof.container)
         self._docker.run_detached(
-            network=self._install.network,
+            network=self._install.runtime_network,
             name=self._proof.container,
-            image=self._install.image,
+            image=image,
             command=[self._install.systemd_command],
             options=[
                 "--privileged",
@@ -145,11 +146,7 @@ class DebProof:
             ],
             mounts=[
                 Mount(cgroup, cgroup, "rw"),
-                # The package this proves is written by an earlier step, after
-                # the image was built, so the image cannot carry it. Read-only:
-                # a proof that can write into what it is proving proves nothing,
-                # which is the point the module docstring already makes about
-                # anything writing back into /src.
+                # Generated after the image; read-only so proof cannot alter it.
                 *(
                     Mount.generated(str(self.root / name), f"{self._install.mount}/{name}")
                     for name in self._install.generated_inputs
@@ -157,11 +154,11 @@ class DebProof:
                 ),
                 Mount.generated(
                     str(self._content.assets),
-                    f"{self._install.mount}/{self._config.functional.assets_dir}",
+                    self._install.proof_assets_mount,
                 ),
                 Mount.generated(
                     str(self._content.config),
-                    f"{self._install.mount}/{self._config.functional.config_root}",
+                    self._install.proof_config_mount,
                 ),
             ],
         )
@@ -175,11 +172,27 @@ class DebProof:
         for device in self._install.vm_devices:
             self._docker.exec(self._proof.container, ["test", "-r", device, "-a", "-w", device])
 
+    def _prepare_handoff(self, package: str, version: str) -> None:
+        """Author the exact local graph before the package's postinst runs."""
+        layout = self._install.layout
+        self._graph.author_exact_package(
+            package=package,
+            version=version,
+            assets_manifest=f"{layout.assets}/{self._install.manifest_name}",
+            candidate_base=f"{self._install.mount}/{layout.packages}",
+            assets_dir=layout.assets,
+            profiles_dir=f"{layout.config}/{self._config.functional.profiles_subdir}",
+            channel=self.channel,
+            manifest_version=self._install.manifest_version,
+            out_dir=layout.channel,
+        )
+
     def _install_package(self, container_deb: str, expected: str) -> None:
         self._runner.note(f"Installing exact package: {self.package}")
+        self._staging.verify_package_dependencies(container_deb)
         self._docker.shell(
             self._proof.container,
-            f'dpkg -i "{container_deb}" 2>&1 || apt-get install -f -y',
+            f'dpkg -i "{container_deb}"',
         )
         name = self._install.suite.package_name
         state = self._docker.capture(
@@ -241,6 +254,9 @@ class DebProof:
         return ready, total
 
     def _verify_release(self, expected: str) -> None:
+        manifest = self._graph.handed_off
+        if manifest is None:
+            raise GateError("exact Debian package proof has no authoritative manifest handoff")
         guest = self._install.guest_user
         self._docker.exec(
             self._proof.container,
@@ -252,7 +268,7 @@ class DebProof:
                 "--capsem-home",
                 f"{guest.home}/{self._install.capsem_home}",
                 "--manifest-url",
-                self.manifest_url,
+                manifest,
                 "--channel",
                 self.channel,
                 "--package-version",

@@ -206,6 +206,25 @@ def test_image_reference_refuses_a_digest_for_a_different_repository(tmp_path: P
         Docker(runner).image_reference("capsem-host-builder:latest")
 
 
+def test_exact_build_reference_accepts_a_locally_built_image_without_repo_digests(
+    tmp_path: Path,
+) -> None:
+    from capsem.gate.imageidentity import exact_image_reference
+
+    runner = RecordingRunner(tmp_path, replies={"{{json .RepoDigests}}": "[]"})
+
+    assert (
+        exact_image_reference(
+            Docker(runner),
+            "capsem-host-builder:latest",
+            platform="linux/amd64",
+            expected_id="sha256:" + "0" * 64,
+            subject="local build",
+        )
+        == "capsem-host-builder:latest"
+    )
+
+
 @pytest.mark.parametrize("operation", ["read", "run_detached", "run_once", "probe", "create"])
 def test_every_container_adapter_rejects_a_buildkit_only_mode(
     tmp_path: Path, operation: str
