@@ -115,11 +115,10 @@ channel = "local"
 manifest_version = "1.0.0"
 
 # Build output the install proof reads, which the image cannot carry because
-# it is produced *after* the image is built: the package rail writes
-# `dist/*.deb` and the asset rail fills `assets/`, and `.dockerignore` excludes
-# both from any build context. Mounted read-only -- an install proof that could
-# rewrite the package it is proving would be proving nothing.
-generated_inputs = ["dist", "assets", "target/config"]
+# it is produced *after* the image is built. ProfileContent supplies its exact
+# assets/config pair separately. Mounted read-only -- an install proof that
+# could rewrite the package it is proving would be proving nothing.
+generated_inputs = ["dist"]
 systemd_ready_attempts = 30
 systemd_ready_interval_seconds = 0.5
 serve_ready_file = "/tmp/capsem-install-release.json"
@@ -161,10 +160,6 @@ test_output_root = "/tmp/capsem-test-output"
 # `dpkg -i`, because `|| apt-get install -f -y` runs the postinst a second time
 # and a retry must not install from somewhere else.
 install_log_glob = "$HOME/.capsem/logs/install-*.log"
-# The rail's inputs, named once. A release lane sets these; renaming one meant
-# finding every literal by hand across Python, shell and workflow YAML.
-profile_inputs_variable = "CAPSEM_INSTALL_PROFILE_INPUTS"
-
 preinstall_root = "/tmp/capsem-preinstall"
 admin_relative = "usr/bin/capsem-admin"
 request_script = "scripts/install-manifest-request.sh"
@@ -191,7 +186,6 @@ asset_manifest = "/home/capsem/.capsem/assets/manifest.json"
 path = "tests/capsem-install/"
 glowup_script = "scripts/local-release-glowup.py"
 macos_report_check = "scripts/check-macos-native-glowup.py"
-stage_inputs_script = "scripts/stage-release-test-inputs.py"
 serve_script = "scripts/serve-release-test-root.py"
 sbom_script = "scripts/generate-host-binary-sbom.py"
 web_surface_script = "scripts/check-web-surface.sh"
@@ -766,7 +760,7 @@ max_lines = 300
 "scripts/fetch-release-artifacts.py" = 353
 "scripts/integration_test.py" = 1191
 "scripts/local-release-glowup.py" = 2120
-"scripts/macos_release_glowup.py" = 460
+"scripts/macos_release_glowup.py" = 421
 "scripts/macos_tart_glowup.py" = 622
 "scripts/macos_tart_guest.sh" = 341
 "scripts/preflight.sh" = 338

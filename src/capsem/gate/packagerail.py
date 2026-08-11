@@ -259,6 +259,7 @@ class PackageRail:
         debproof.DebProof(
             self._runner,
             package=package,
+            content=self.content,
             manifest_url=self.manifest_url,
             channel=self.channel,
         ).run()

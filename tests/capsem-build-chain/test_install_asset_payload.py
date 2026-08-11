@@ -117,6 +117,35 @@ def _planned(command: str, **args) -> str:
     return _planned_cached(command, tuple(sorted(args.items())))
 
 
+def _selected_content(tmp_path: Path) -> str:
+    """A complete paired cohort for executing opaque install-plan callbacks."""
+    from capsem.gate import config as gate_config
+    from capsem.gate.content import ProfileContent
+
+    config = gate_config.load(PROJECT_ROOT)
+    content = ProfileContent.isolated(config, tmp_path / "selected-content")
+    manifest = {
+        "assets": {
+            "current": "test",
+            "releases": {
+                "test": {"arches": {name: {} for name in config.architectures}},
+            },
+        },
+    }
+    payload = json.dumps(manifest).encode()
+    content.assets.mkdir(parents=True)
+    (content.assets / config.install.manifest_name).write_bytes(payload)
+    for arch in config.architectures:
+        (content.assets / arch).mkdir()
+    config_manifest = content.config / config.suites.pytest.test_manifest
+    config_manifest.parent.mkdir(parents=True)
+    config_manifest.write_bytes(payload)
+    profile = content.profiles(config) / "code/profile.toml"
+    profile.parent.mkdir(parents=True)
+    profile.write_text("name = 'code'\n")
+    return str(content.root)
+
+
 @functools.cache
 def _planned_cached(command: str, args: tuple) -> str:
     """Every command a gate command actually issues, with real argv.
@@ -687,7 +716,7 @@ def test_release_matrix_installs_both_architectures_and_keeps_kvm_proof_mandator
     assert "CAPSEM_EXACT_PACKAGE_SHELL_OK" in linux
 
 
-def test_install_test_restores_host_workspace_ownership() -> None:
+def test_install_test_restores_host_workspace_ownership(tmp_path: Path) -> None:
     """Everything the container wrote as its own user is handed back.
 
     `/src` is a bind mount of the host checkout. On Linux the host UID does not
@@ -698,7 +727,7 @@ def test_install_test_restores_host_workspace_ownership() -> None:
     from capsem.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    issued = _planned("install")
+    issued = _planned("install", selected_content_root=_selected_content(tmp_path))
     owned = config.install.layout.owned_paths(config.install.mount)
 
     assert "chown -R" in issued
@@ -766,13 +795,13 @@ def test_install_test_does_not_rebuild_frontend_and_owns_release_site_scratch() 
     assert "/src/release-site/dist" in owned
 
 
-def test_install_test_removes_stale_container_before_controller_preflight() -> None:
+def test_install_test_removes_stale_container_before_controller_preflight(tmp_path: Path) -> None:
     """A predecessor is cleared before anything starts, not after it collides."""
     from capsem.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     container = config.install.container
-    issued = _planned("install")
+    issued = _planned("install", selected_content_root=_selected_content(tmp_path))
 
     # `-v` since the wrapper takes anonymous volumes with the container it
     # removes; the ordering this test is about is unchanged.
@@ -813,9 +842,11 @@ def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> No
 
     assert layout.assets == "target/install-test-assets"
     assert layout.config == "target/install-test-config"
-    assert config.install.suite.stage_inputs_script == "scripts/stage-release-test-inputs.py"
+    assert config.install.generated_inputs == ("dist",)
     assert config.install.suite.serve_script == "scripts/serve-release-test-root.py"
-    assert "requires rebuilt local assets" in proof or "stage_local_assets" in proof
+    assert "stage_content" in proof
+    assert "cmp -s" in proof
+    assert "stage-release-test-inputs" not in proof
 
     # Build the graph, render the site over it, then check it.
     build = graph.index("def build_channel")
@@ -886,7 +917,7 @@ def test_local_release_glowup_has_zstd_extraction_support_in_install_image() -> 
     assert "zstd" in dockerfile
 
 
-def test_install_recipe_invokes_pytest_as_a_module_inside_container() -> None:
+def test_install_recipe_invokes_pytest_as_a_module_inside_container(tmp_path: Path) -> None:
     """`python -m pytest`, in the container's own project environment.
 
     A bare `pytest` resolves to whatever is first on PATH, which inside this
@@ -895,7 +926,7 @@ def test_install_recipe_invokes_pytest_as_a_module_inside_container() -> None:
     from capsem.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    issued = _planned("install")
+    issued = _planned("install", selected_content_root=_selected_content(tmp_path))
 
     assert f"UV_PROJECT_ENVIRONMENT={config.install.venv}" in issued
     assert "uv run python -m pytest" in issued
@@ -1448,7 +1479,7 @@ def test_host_builder_uses_digest_pinned_prebuilt_node_runtime() -> None:
     assert "deb.nodesource.com" not in host_builder
 
 
-def test_standalone_install_gate_preflights_privileged_helper() -> None:
+def test_standalone_install_gate_preflights_privileged_helper(tmp_path: Path) -> None:
     """Capacity and the harness image come before the privileged container.
 
     Proving the clean container can launch its runner takes a minute;
@@ -1457,7 +1488,7 @@ def test_standalone_install_gate_preflights_privileged_helper() -> None:
     from capsem.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    issued = _planned("install")
+    issued = _planned("install", selected_content_root=_selected_content(tmp_path))
 
     capacity = issued.index("ensure-docker-space.sh install-preflight")
     image = issued.index(f"docker build -t {config.install.image}")
@@ -2792,7 +2823,7 @@ def test_ci_install_job_sets_up_uv_before_the_shared_install_gate() -> None:
     install_job = _workflow_job_blocks(workflow)["test-install"]
 
     setup_pos = install_job.find("astral-sh/setup-uv@")
-    install_pos = install_job.find("just _gate-install")
+    install_pos = install_job.find("uv run capsem-gate install")
     assert setup_pos != -1, "test-install invokes uv-backed Just helpers without setup-uv"
     assert setup_pos < install_pos, "test-install sets up uv after the shared install gate"
 
@@ -2805,9 +2836,11 @@ def test_ci_install_job_pulls_existing_profiles_before_building_packages() -> No
     ).read_text()
 
     fetch_pos = install_job.index("./.github/actions/fetch-release-inputs")
-    package_pos = install_job.index("just _cross-compile x86_64")
-    gate_pos = install_job.index("just _gate-install")
-    assert fetch_pos < package_pos < gate_pos
+    stage_pos = install_job.index("scripts/stage-release-test-inputs.py")
+    materialize_pos = install_job.index("bash scripts/materialize-config.sh")
+    package_pos = install_job.index("uv run capsem-gate cross-compile x86_64")
+    gate_pos = install_job.index("uv run capsem-gate install")
+    assert fetch_pos < stage_pos < materialize_pos < package_pos < gate_pos
     assert "kind: profiles" in install_job
     assert "architecture: x86_64" in install_job
     assert "output: target/ci-install-profile-inputs" in install_job
@@ -2825,9 +2858,9 @@ def test_ci_install_job_pulls_existing_profiles_before_building_packages() -> No
     assert "steps.fetch.outputs.cache-misses != '0'" in fetch_action
     assert "inputs.manifest-url" not in fetch_action.split("key:", 1)[1].splitlines()[0]
     assert "inputs.channel" not in fetch_action
-    assert (
-        "CAPSEM_INSTALL_PROFILE_INPUTS=target/ci-install-profile-inputs just _gate-install"
-    ) in install_job
+    assert install_job.count("--content-root target/ci-install-content") == 1
+    assert install_job.count("--selected-content-root target/ci-install-content") == 1
+    assert "CAPSEM_INSTALL_PROFILE_INPUTS" not in install_job
     assert "scripts/prepare-install-test-assets.sh" not in install_job
 
 

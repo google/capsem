@@ -23,6 +23,7 @@ from . import config as gate_config
 from . import hostimage, installimage
 from .actions import Call
 from .command import GateCommand
+from .content import InstallContent, LocalInstallContent, ProfileContent, SelectedInstallContent
 from .docker import Docker
 from .dockermount import container_path
 from .errors import GateError
@@ -45,7 +46,7 @@ class InstallGate:
         self,
         runner: Runner,
         *,
-        profile_inputs: str | None = None,
+        content: InstallContent | None = None,
         macos_glowup_report: str | None = None,
     ) -> None:
         self._runner = runner
@@ -53,10 +54,10 @@ class InstallGate:
         self._settings = self._config.install
         self._layout = self._settings.layout
         self._storage = Storage(runner)
-        self._container = InstallContainer(runner)
+        self._content = content
+        self._container = InstallContainer(runner, content=content.content if content else None)
         self._proof = InstallProof(runner, self._config)
         self._graph = ReleaseGraph(Docker(runner), self._config)
-        self._profile_inputs = profile_inputs or None
         self._macos_report = macos_glowup_report or None
         self.root = runner.root
         self.version = workspace_version(runner.root)
@@ -78,6 +79,7 @@ class InstallGate:
 
     def run(self) -> None:
         package = self._require_package()
+        self._require_content()
         options = self._container.runtime_options()
 
         # The rails this used to release -- `deferred-install-target` and both
@@ -111,6 +113,17 @@ class InstallGate:
 
         self._container.verify_rosetta_survived()
 
+    def _require_content(self) -> None:
+        if self._content is None:
+            raise GateError(
+                "install proof requires one selected profile content bundle; "
+                "pass --selected-content-root for manifest-selected content"
+            )
+        arches = None
+        if isinstance(self._content, SelectedInstallContent):
+            arches = (self.arch,)
+        self._content.content.require_complete(self._config, arches=arches)
+
     def _prove(self, package: str) -> None:
         packaged = self._proof.packaged_version(package)
         if packaged != self.version:
@@ -119,23 +132,21 @@ class InstallGate:
                 f"checkout is {self.version}"
             )
 
-        # Before dpkg, and from the package under test: this is what breaks the
-        # circle between the graph and the binary that authors it.
-        admin = self._graph.extract_admin(package)
-
         self._runner.note("Staging real profile assets for installed VM proofs...")
         authoritative_graph = self._stage()
 
-        self._runner.note("Authoring exact candidate manifest for the installed package...")
-        self._graph.record_binary(
-            admin,
-            package=package,
-            version=self.version,
-            assets_manifest=f"{self._layout.assets}/{self._settings.manifest_name}",
-            candidate_base=f"{self._settings.mount}/{self._layout.packages}",
-        )
-
         if authoritative_graph:
+            # Before dpkg, and from the package under test: this breaks the
+            # circle between the graph and the binary that authors it.
+            admin = self._graph.extract_admin(package)
+            self._runner.note("Authoring exact candidate manifest for the installed package...")
+            self._graph.record_binary(
+                admin,
+                package=package,
+                version=self.version,
+                assets_manifest=f"{self._layout.assets}/{self._settings.manifest_name}",
+                candidate_base=f"{self._settings.mount}/{self._layout.packages}",
+            )
             self._publish_local_channel(admin)
 
         # The manifest handed over, read back from what the postinst recorded.
@@ -163,14 +174,16 @@ class InstallGate:
     def _stage(self) -> bool:
         """Stage assets, and report whether a local graph must be published.
 
-        A release lane's profile inputs are already manifest-resolved and
-        verified, and carry no authoritative graph for this checkout to hand
-        over. A local gate publishes one from its own freshly built assets.
+        Selected content is already manifest-resolved and carries no local
+        graph to hand over. A local gate authors one from freshly built assets.
         """
-        if self._profile_inputs:
-            self._proof.stage_verified_inputs(self._profile_inputs)
+        content = self._content
+        if content is None:
+            raise GateError("install content was not validated before staging")
+        self._proof.stage_content(content.content)
+        if isinstance(content, SelectedInstallContent):
             return False
-        self._proof.stage_local_assets()
+        self._proof.start_local_server()
         return True
 
     def _publish_local_channel(self, admin: str) -> None:
@@ -195,7 +208,7 @@ class InstallGate:
         self._graph.hand_off(manifest)
 
 
-def install_step(config):
+def install_step(config, *, content: InstallContent):
     """Install the exact package and prove the installed product.
 
     Claims the Docker daemon explicitly. It always drove a privileged container
@@ -206,7 +219,7 @@ def install_step(config):
         "install",
         Call(
             "install the exact package and prove the installed product",
-            _install,
+            lambda context: _install(context, content=content),
             justification=CallJustification(
                 kind=OpaqueKind.DOMAIN_TRANSACTION,
                 reason="install the exact package and prove the installed product, as one transaction",
@@ -224,6 +237,13 @@ class InstallCommand(
 ):
     exclusive = True
 
+    @classmethod
+    def add_arguments(cls, parser) -> None:
+        parser.add_argument(
+            "--selected-content-root",
+            help="paired assets/config root already selected from a release manifest",
+        )
+
     def plan(self) -> Plan:
         plan = Plan(self.name)
         # `docker/Dockerfile.install-test` is `FROM capsem-host-builder:latest`
@@ -232,7 +252,16 @@ class InstallCommand(
         # leave behind. `shared`, so composing this into the complete gate
         # makes it a dependant of the one build rather than a second one.
         base = hostimage.fragment(plan, self._config)
-        plan.add(install_step(self._config), after=(base,))
+        selected = getattr(self._args, "selected_content_root", None)
+        if selected:
+            root = Path(selected)
+            root = root if root.is_absolute() else self._config.path(str(root))
+            content: InstallContent = SelectedInstallContent(
+                ProfileContent.isolated(self._config, root)
+            )
+        else:
+            content = LocalInstallContent(ProfileContent.standalone(self._config))
+        plan.add(install_step(self._config, content=content), after=(base,))
         return plan
 
 
@@ -258,10 +287,10 @@ def macos_report(config, environ: Mapping[str, str] | None = None) -> str | None
     return str(written) if written.is_file() else None
 
 
-def _install(context) -> None:
+def _install(context, *, content: InstallContent) -> None:
     config = context.config
     InstallGate(
         context.runner,
-        profile_inputs=os.environ.get(config.install.profile_inputs_variable),
+        content=content,
         macos_glowup_report=macos_report(config),
     ).run()

@@ -23,6 +23,7 @@ from pathlib import Path
 
 from . import config as gate_config
 from . import host
+from .content import ProfileContent
 from .docker import Docker, Mount
 from .errors import GateError
 from .proc import Runner
@@ -31,11 +32,18 @@ from .proc import Runner
 class InstallContainer:
     """A systemd container, its host prerequisites, and its file ownership."""
 
-    def __init__(self, runner: Runner, *, sleep=time.sleep) -> None:
+    def __init__(
+        self,
+        runner: Runner,
+        *,
+        content: ProfileContent | None = None,
+        sleep=time.sleep,
+    ) -> None:
         self._runner = runner
         self._docker = Docker(runner)
         self._config = gate_config.for_root(runner.root)
         self._settings = self._config.install
+        self._content = content
         self.name = self._settings.container
         self._owned = self._settings.layout.owned_paths(self._settings.mount)
         self._sleep = sleep
@@ -114,6 +122,7 @@ class InstallContainer:
                     for name in self._settings.generated_inputs
                     if (self._config.root / name).exists()
                 ),
+                *self._content_mounts(),
             ],
         )
         if self.boots_a_guest:
@@ -121,6 +130,21 @@ class InstallContainer:
                 self._docker.exec(self.name, ["test", "-r", device, "-a", "-w", device])
         self._await_systemd()
         self._claim_paths()
+
+    def _content_mounts(self) -> tuple[Mount, ...]:
+        if self._content is None:
+            return ()
+        mount = self._settings.mount
+        return (
+            Mount.generated(
+                str(self._content.assets),
+                f"{mount}/{self._config.functional.assets_dir}",
+            ),
+            Mount.generated(
+                str(self._content.config),
+                f"{mount}/{self._config.functional.config_root}",
+            ),
+        )
 
     def _await_systemd(self) -> None:
         await_systemd(

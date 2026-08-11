@@ -6,19 +6,18 @@ the local lane builds one per architecture and proves that.
 
 from __future__ import annotations
 
-import os
-
 from . import (
     crosscompile,
     host,
     hostpackage,
     install,
 )
-from .actions import Script
+from .actions import Call, Script
 from .command import GateCommand
 from .config import GateConfig
-from .content import ProfileContent
+from .content import LocalInstallContent, ProfileContent
 from .execution import Step, step
+from .opacity import CallJustification, OpaqueKind
 from .plan import Plan
 from .qualification import Qualification
 from .testmodules import InWorkspace, storagerelease
@@ -79,8 +78,34 @@ def _prove_pulled_package(
     rather than inherit what it was told.
     """
     settings = config.modules
+    content = ProfileContent.standalone(config)
+    verified = phase.add(
+        step(
+            "content",
+            Call(
+                "verify one paired manifest-selected content bundle",
+                lambda _context: content.require_complete(
+                    config,
+                    arches=(config.host_arch(),),
+                ),
+                justification=CallJustification(
+                    kind=OpaqueKind.PURE_INSPECTION,
+                    reason="release glow-up consumes one inseparable assets/config cohort",
+                    effects=frozenset(),
+                ),
+            ),
+        ),
+        after=after,
+    )
     staged = phase.add(
-        _glowup_step(config, "package", qualification, settings.glowup_work_dir), after=after
+        _glowup_step(
+            config,
+            "package",
+            qualification,
+            settings.glowup_work_dir,
+            content,
+        ),
+        after=(verified,),
     )
     return phase.add(
         _glowup_step(
@@ -88,6 +113,7 @@ def _prove_pulled_package(
             "channel-switch",
             qualification,
             settings.channel_switch_work_dir,
+            content,
             clear=settings.channel_switch_cleared,
         ),
         after=(staged,),
@@ -99,11 +125,11 @@ def _glowup_step(
     label: str,
     qualification: Qualification,
     work_dir: str,
+    content: ProfileContent,
     *,
     clear: tuple = (),
 ) -> Step:
     settings = config.modules
-    functional_settings = config.functional
     return step(
         label,
         Script(
@@ -113,11 +139,9 @@ def _glowup_step(
             "--bin-dir",
             qualification.bin_dir,
             "--assets-dir",
-            os.environ.get(functional_settings.assets_variable, functional_settings.assets_dir),
+            content.assets,
             "--config-root",
-            os.environ.get(
-                functional_settings.config_root_variable, functional_settings.config_root
-            ),
+            content.config,
             "--work-dir",
             work_dir,
             "--package-ready",
@@ -171,7 +195,11 @@ def _build_and_prove(plan: Plan, phase, config: GateConfig, after: tuple) -> Ste
             phase.add(
                 step(
                     "macos-package",
-                    Script(config.modules.macos_glowup_script),
+                    Script(
+                        config.modules.macos_glowup_script,
+                        "--content-root",
+                        content.root,
+                    ),
                     contends=(config.exclusive("apple_vz"),),
                 ),
                 after=previous,
@@ -179,4 +207,7 @@ def _build_and_prove(plan: Plan, phase, config: GateConfig, after: tuple) -> Ste
         )
 
     sbom = phase.add(hostpackage.sbom_step(config), after=previous)
-    return phase.add(install.install_step(config), after=(sbom,))
+    return phase.add(
+        install.install_step(config, content=LocalInstallContent(content)),
+        after=(sbom,),
+    )

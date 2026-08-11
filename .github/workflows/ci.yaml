@@ -397,14 +397,33 @@ jobs:
           architecture: x86_64
           output: target/ci-install-profile-inputs
 
+      - name: Stage one exact install content pair
+        run: |
+          uv run python scripts/stage-release-test-inputs.py \
+            --input-dir target/ci-install-profile-inputs \
+            --assets-dir target/ci-install-content/assets \
+            --config-root target/ci-install-source-config \
+            --shared-config-root config
+          CAPSEM_ASSET_MANIFEST="$PWD/target/ci-install-content/assets/manifest.json" \
+          CAPSEM_ASSETS_PATH="$PWD/target/ci-install-content/assets" \
+          CAPSEM_CONFIG_ROOT="$PWD/target/ci-install-source-config" \
+          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/ci-install-content/config" \
+          CAPSEM_ARCH=x86_64 \
+            bash scripts/materialize-config.sh
+
       - name: Build exact native release package
         env:
           CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json
           CAPSEM_INSTALL_CHANNEL: stable
-        run: just _cross-compile x86_64
+        run: |
+          uv run capsem-gate cross-compile x86_64 \
+            --content-root target/ci-install-content \
+            --defer-proof
 
       - name: Run install e2e tests
-        run: CAPSEM_INSTALL_PROFILE_INPUTS=target/ci-install-profile-inputs just _gate-install
+        run: |
+          uv run capsem-gate install \
+            --selected-content-root target/ci-install-content
 
       - name: Upload install and glow-up evidence on failure
         if: failure()

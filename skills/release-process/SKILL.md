@@ -188,6 +188,13 @@ preparation may differ—local builds both families, a release lane downloads th
 unchanged family—but the resulting manifest-addressed bundle enters the same
 module implementations.
 
+Assets and materialized configuration travel as one `ProfileContent` root.
+Package construction, Debian proof, macOS Tart/physical-VZ proof, and final
+install/glow-up must derive both paths from that one value and validate it
+before Docker or Colima. Release CI stages raw manifest inputs into the paired
+root on the host; the sealed proof never rematerializes them or falls back to
+checkout `assets`/`target/config` selectors.
+
 Before public activation, the resulting pairing must pass manifest/artifact
 integrity, every VM suite, Winterfell and MCP lifecycle, IronBank, injection,
 integration, benchmarks, full `capsem-doctor`, native install, and update

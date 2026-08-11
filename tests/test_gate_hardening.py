@@ -249,7 +249,12 @@ def test_no_command_touches_the_machine_while_building_its_plan() -> None:
         "release-profile": {"channel": "nightly", "profile": "code"},
         "cross-compile": {"arch": "arm64"},
         "storage": {"action": "gc", "rail": None},
-        "prove-deb": {"package": "x.deb", "manifest_url": "file:///m", "channel": "nightly"},
+        "prove-deb": {
+            "package": "x.deb",
+            "content_root": "target/content",
+            "manifest_url": "file:///m",
+            "channel": "nightly",
+        },
         "build-assets": {"profile": "code", "arch": "arm64", "template": "all"},
         "dev": {"surface": "ui", "args": []},
         "logs": {"target": ""},

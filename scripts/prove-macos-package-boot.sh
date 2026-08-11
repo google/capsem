@@ -3,8 +3,33 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-PKG="${1:?usage: prove-macos-package-boot.sh PACKAGE VERSION}"
-VERSION="${2:?missing package version}"
+PKG=""
+VERSION=""
+ASSETS_DIR=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --package)
+            PKG="${2:?--package requires a value}"
+            shift 2
+            ;;
+        --version)
+            VERSION="${2:?--version requires a value}"
+            shift 2
+            ;;
+        --assets-dir)
+            ASSETS_DIR="${2:?--assets-dir requires a value}"
+            shift 2
+            ;;
+        *)
+            echo "usage: $0 --package PKG --version VERSION --assets-dir DIR" >&2
+            exit 2
+            ;;
+    esac
+done
+[ -n "$PKG" ] && [ -n "$VERSION" ] && [ -n "$ASSETS_DIR" ] || {
+    echo "ERROR: package, version, and selected assets are required" >&2
+    exit 2
+}
 WORK_ROOT="$ROOT/target/macos-package-boot"
 EXPANDED="$WORK_ROOT/expanded"
 CAPSEM_HOME_DIR="$WORK_ROOT/home"
@@ -54,7 +79,7 @@ CAPSEM_HOME="$CAPSEM_HOME_DIR" \
 CAPSEM_RUN_DIR="$RUN_DIR" \
     bash "$ROOT/scripts/simulate-install.sh" \
         "$PKG_SHARE/bin" \
-        "$ROOT/assets" \
+        "$ASSETS_DIR" \
         "$PKG_SHARE"
 
 for binary in "$PKG_SHARE"/bin/capsem*; do

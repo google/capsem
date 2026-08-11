@@ -13,10 +13,16 @@ from pathlib import Path
 
 from .actions import Call
 from .command import GateCommand
+from .content import ProfileContent
 from .debproof import DebProof
 from .execution import step
 from .opacity import CallJustification, OpaqueKind
 from .plan import Plan
+
+
+def _content(config, value: str) -> ProfileContent:
+    root = Path(value)
+    return ProfileContent.isolated(config, root if root.is_absolute() else config.path(value))
 
 
 class ProveDebCommand(
@@ -38,6 +44,7 @@ class ProveDebCommand(
         container start.
         """
         parser.add_argument("package", help="the exact .deb to install")
+        parser.add_argument("--content-root", required=True)
         parser.add_argument("--manifest-url", required=True)
         parser.add_argument("--channel", required=True)
 
@@ -52,6 +59,7 @@ class ProveDebCommand(
                     lambda ctx: DebProof(
                         ctx.runner,
                         package=Path(args.package),
+                        content=_content(ctx.config, args.content_root),
                         manifest_url=args.manifest_url,
                         channel=args.channel,
                     ).run(),

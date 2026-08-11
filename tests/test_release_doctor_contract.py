@@ -506,11 +506,14 @@ def test_install_e2e_reuses_exact_package_and_materialized_profile_config() -> N
     ):
         assert builder not in source + proof, f"the install gate must not run {builder}"
 
-    # Both staging shapes, and the refusal that names the rail owning the build.
-    assert config.install.suite.stage_inputs_script.endswith("stage-release-test-inputs.py")
-    assert "stage_inputs_script" in proof
-    assert 'cp -R assets/. "{self._layout.assets}/"' in proof
-    assert 'cp -R target/config/. "{self._layout.config}/"' in proof
+    # One typed, prevalidated assets/config pair reaches the container. Raw
+    # manifest inputs are staged on the host and never transformed mid-proof.
+    assert config.install.generated_inputs == ("dist",)
+    assert "stage_content" in proof
+    assert "stage_inputs_script" not in proof
+    assert "stage-release-test-inputs" not in proof
+    assert 'cp -R "{assets}/." "{self._layout.assets}/"' in proof
+    assert 'cp -R "{content_config}/." "{self._layout.config}/"' in proof
     assert "missing exact release-mode Debian package" in source
     assert "just _cross-compile" in source
 
@@ -3024,7 +3027,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     assert "_build-kernel arch" in just
     assert "_build-rootfs arch" in just
 
-    assert "just _gate-install" in ci
+    assert "uv run capsem-gate install" in ci
     assert "_gate-install:" in just
     install_job = ci.split("  test-install:", 1)[1].split("\n  #", 1)[0]
     assert "runs-on: ubuntu-24.04" in install_job

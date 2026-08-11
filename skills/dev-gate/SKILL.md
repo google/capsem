@@ -162,6 +162,11 @@ Reach for the builders rather than assembling dictionaries:
 under `[environment.package]`, `[environment.release_site]`,
 `[environment.install_proof]`.
 
+Treat a profile's assets and materialized configuration as one typed
+`ProfileContent` root. Pass that value through composed package/install/glow-up
+fragments; never rediscover its halves from ambient variables or mutable
+checkout selectors at a Docker/Colima boundary.
+
 ## Secrets are declared on the invocation
 
 A `Command` that names credentials in `secret_env` cannot render them — not

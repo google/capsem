@@ -20,6 +20,7 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
+from capsem.gate.content import LocalInstallContent, ProfileContent, SelectedInstallContent
 from capsem.gate.docker import Docker
 from capsem.gate.errors import GateError
 from capsem.gate.install import InstallGate
@@ -62,6 +63,35 @@ def _checkout(tmp_path: Path, *, dpkg_arch: str) -> Path:
     return tmp_path
 
 
+def _local_content(root: Path) -> ProfileContent:
+    """One internally consistent local cohort, separate from canonical paths."""
+    config = gate_config.load(root)
+    content = ProfileContent.isolated(
+        config,
+        root / config.assets.test_root / config.suites.pytest.base_profile,
+    )
+    manifest = {
+        "assets": {
+            "current": "test",
+            "releases": {
+                "test": {"arches": {name: {} for name in config.architectures}},
+            },
+        },
+    }
+    payload = __import__("json").dumps(manifest).encode()
+    content.assets.mkdir(parents=True)
+    (content.assets / config.install.manifest_name).write_bytes(payload)
+    for arch in config.architectures:
+        (content.assets / arch).mkdir()
+    config_manifest = content.config / config.suites.pytest.test_manifest
+    config_manifest.parent.mkdir(parents=True)
+    config_manifest.write_bytes(payload)
+    profile = content.profiles(config) / config.suites.pytest.base_profile / "profile.toml"
+    profile.parent.mkdir(parents=True)
+    profile.write_text("name = 'code'\n")
+    return content
+
+
 @pytest.fixture
 def gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[InstallGate, RecordingRunner]:
     """A gate on a fake checkout, whose every command is recorded, not run.
@@ -72,7 +102,14 @@ def gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[InstallGate, 
     """
     root = _macos_checkout(tmp_path, monkeypatch)
     runner = _recording(root)
-    return InstallGate(runner, macos_glowup_report=str(root / "report.json")), runner
+    return (
+        InstallGate(
+            runner,
+            content=LocalInstallContent(_local_content(root)),
+            macos_glowup_report=str(root / "report.json"),
+        ),
+        runner,
+    )
 
 
 def _macos_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -269,17 +306,68 @@ def test_a_release_lane_stages_verified_inputs_and_hands_over_nothing(
     """
     root = _macos_checkout(tmp_path, monkeypatch)
     runner = _recording(root)
+    content = _local_content(root)
 
     InstallGate(
         runner,
-        profile_inputs="target/ci-install-profile-inputs",
+        content=SelectedInstallContent(content),
         macos_glowup_report=str(root / "report.json"),
     ).run()
 
-    assert runner.matching(r"stage-release-test-inputs\.py")
+    assert runner.matching(r"cp -R .*assets/\.")
+    assert not runner.ran(r"stage-release-test-inputs\.py")
+    assert not runner.ran(r"serve-release-test-root\.py")
     assert not runner.ran(r"install-manifest-request\.sh write")
     assert not runner.ran(r"assets channel build")
+    assert not runner.ran(r"assets channel record-binary")
+    assert not runner.ran(r"dpkg-deb --extract")
     assert runner.ran(r"dpkg -i")
+    started = runner.matching(r"docker run -d")[0]
+    assert f"-v {content.assets}:/src/assets:ro" in started
+    assert f"-v {content.config}:/src/target/config:ro" in started
+
+
+def test_local_install_mounts_only_the_selected_content_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Docker never sees the mutable checkout selector that it can replace."""
+    root = _macos_checkout(tmp_path, monkeypatch)
+    content = _local_content(root)
+    selected = content.assets
+    (root / "assets").symlink_to(selected.relative_to(root))
+    canonical = root / "target/config"
+    canonical.mkdir(parents=True)
+    sentinel = canonical / "stale"
+    sentinel.write_text("untouched")
+    runner = _recording(root)
+
+    InstallGate(
+        runner,
+        content=LocalInstallContent(content),
+        macos_glowup_report=str(root / "report.json"),
+    ).run()
+
+    started = runner.matching(r"docker run -d")[0]
+    assert f"-v {content.assets}:/src/assets:ro" in started
+    assert f"-v {content.config}:/src/target/config:ro" in started
+    assert f"-v {root / 'assets'}:/src/assets:ro" not in started
+    assert f"-v {canonical}:/src/target/config:ro" not in started
+    assert (root / "assets").is_symlink()
+    assert (root / "assets").readlink() == selected.relative_to(root)
+    assert sentinel.read_text() == "untouched"
+
+
+def test_local_install_without_a_selected_content_pair_fails_before_docker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _macos_checkout(tmp_path, monkeypatch)
+    runner = _recording(root)
+
+    with pytest.raises(GateError, match="selected profile content"):
+        InstallGate(runner, macos_glowup_report=str(root / "report.json")).run()
+
+    assert not runner.ran(r"docker build")
+    assert not runner.ran(r"docker run -d")
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +408,7 @@ def test_a_package_from_another_version_is_refused(
     )
 
     with pytest.raises(GateError, match=f"declares version 1.2.3, but this checkout is {VERSION}"):
-        InstallGate(runner).run()
+        InstallGate(runner, content=LocalInstallContent(_local_content(root))).run()
 
     assert not runner.ran(r"dpkg -i"), "nothing may be installed after the refusal"
 
@@ -339,7 +427,11 @@ def test_dpkg_reporting_a_different_installed_version_fails(
     )
 
     with pytest.raises(GateError, match=r"dpkg reports capsem 0.0.1 installed"):
-        InstallGate(runner, macos_glowup_report="report.json").run()
+        InstallGate(
+            runner,
+            content=LocalInstallContent(_local_content(root)),
+            macos_glowup_report="report.json",
+        ).run()
 
 
 def test_a_macos_run_without_its_glowup_report_fails(
@@ -350,7 +442,10 @@ def test_a_macos_run_without_its_glowup_report_fails(
     root = _macos_checkout(tmp_path, monkeypatch)
 
     with pytest.raises(GateError, match="requires the native glow-up report"):
-        InstallGate(_recording(root)).run()
+        InstallGate(
+            _recording(root),
+            content=LocalInstallContent(_local_content(root)),
+        ).run()
 
 
 def test_a_local_server_that_never_reports_ready_fails(
@@ -362,7 +457,8 @@ def test_a_local_server_that_never_reports_ready_fails(
     proof = InstallProof(runner, CONFIG, sleep=lambda _seconds: None)
 
     with pytest.raises(GateError, match="never reported itself ready"):
-        proof.stage_local_assets()
+        proof.stage_content(ProfileContent.standalone(CONFIG))
+        proof.start_local_server()
 
 
 def test_the_container_is_torn_down_even_when_the_proof_fails(
@@ -381,7 +477,11 @@ def test_the_container_is_torn_down_even_when_the_proof_fails(
     )
 
     with pytest.raises(GateError):
-        InstallGate(runner, macos_glowup_report="report.json").run()
+        InstallGate(
+            runner,
+            content=LocalInstallContent(_local_content(root)),
+            macos_glowup_report="report.json",
+        ).run()
 
     # The first `docker rm -f` clears a predecessor before the container
     # starts; the teardown is the last one, and it is the one under test.
@@ -429,7 +529,11 @@ def test_an_install_that_hydrated_from_elsewhere_is_refused(
     )
 
     with pytest.raises(GateError, match="a channel the gate did not hand it"):
-        InstallGate(runner, macos_glowup_report=str(root / "report.json")).run()
+        InstallGate(
+            runner,
+            content=LocalInstallContent(_local_content(root)),
+            macos_glowup_report=str(root / "report.json"),
+        ).run()
 
 
 def test_an_install_that_recorded_no_source_is_refused(
@@ -442,7 +546,11 @@ def test_an_install_that_recorded_no_source_is_refused(
     runner = _recording(root, hydrated="")
 
     with pytest.raises(GateError, match="recorded no manifest source"):
-        InstallGate(runner, macos_glowup_report=str(root / "report.json")).run()
+        InstallGate(
+            runner,
+            content=LocalInstallContent(_local_content(root)),
+            macos_glowup_report=str(root / "report.json"),
+        ).run()
 
 
 # ---------------------------------------------------------------------------

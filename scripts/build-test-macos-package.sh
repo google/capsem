@@ -9,6 +9,8 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 VERSION=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
 MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/stable/manifest.json}"
+ASSETS_DIR=""
+CONFIG_ROOT=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -20,12 +22,29 @@ while [ "$#" -gt 0 ]; do
             MANIFEST_URL="${2:?--manifest-url requires a value}"
             shift 2
             ;;
+        --assets-dir)
+            ASSETS_DIR="${2:?--assets-dir requires a value}"
+            shift 2
+            ;;
+        --config-root)
+            CONFIG_ROOT="${2:?--config-root requires a value}"
+            shift 2
+            ;;
         *)
-            echo "usage: $0 [--version VERSION] [--manifest-url URL]" >&2
+            echo "usage: $0 [--version VERSION] [--manifest-url URL] --assets-dir DIR --config-root DIR" >&2
             exit 2
             ;;
     esac
 done
+
+[ -n "$ASSETS_DIR" ] && [ -n "$CONFIG_ROOT" ] || {
+    echo "ERROR: --assets-dir and --config-root are required as one content pair" >&2
+    exit 2
+}
+[ -d "$ASSETS_DIR" ] && [ -d "$CONFIG_ROOT" ] || {
+    echo "ERROR: selected macOS package content is incomplete" >&2
+    exit 1
+}
 
 [ "$(uname -s)" = "Darwin" ] || {
     echo "ERROR: macOS package proof requires macOS" >&2
@@ -53,8 +72,8 @@ bash scripts/build-pkg.sh \
     --manifest "$MANIFEST_URL" \
     "$ROOT/target/release/bundle/macos/Capsem.app" \
     "$ROOT/target/release" \
-    "$ROOT/assets" \
-    "$ROOT/target/config" \
+    "$ASSETS_DIR" \
+    "$CONFIG_ROOT" \
     "$VERSION"
 
 PKG="$ROOT/packages/Capsem-$VERSION.pkg"

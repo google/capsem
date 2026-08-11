@@ -24,6 +24,7 @@ from pathlib import Path
 
 from . import config as gate_config
 from . import host
+from .content import ProfileContent
 from .docker import Docker, Mount
 from .errors import GateError
 from .installcontainer import await_systemd
@@ -41,6 +42,7 @@ class DebProof:
         runner: Runner,
         *,
         package: Path,
+        content: ProfileContent,
         manifest_url: str,
         channel: str,
         sleep=time.sleep,
@@ -50,6 +52,7 @@ class DebProof:
         self._config = gate_config.for_root(runner.root)
         self._proof = self._config.package.proof
         self._install = self._config.install
+        self._content = content
         self.root = self._config.root
         self.package = self._resolve(package)
         self.manifest_url = manifest_url
@@ -98,6 +101,10 @@ class DebProof:
     # -- the run -----------------------------------------------------------
 
     def run(self) -> None:
+        self._content.require_complete(
+            self._config,
+            arches=(self._config.host_arch(),),
+        )
         devices = self._require_virtualisation()
         container_deb = f"{self._install.mount}/{self.package.relative_to(self.root)}"
         expected = self._runner.capture(["dpkg-deb", "-f", str(self.package), "Version"])
@@ -147,6 +154,14 @@ class DebProof:
                     Mount.generated(str(self.root / name), f"{self._install.mount}/{name}")
                     for name in self._install.generated_inputs
                     if (self.root / name).exists()
+                ),
+                Mount.generated(
+                    str(self._content.assets),
+                    f"{self._install.mount}/{self._config.functional.assets_dir}",
+                ),
+                Mount.generated(
+                    str(self._content.config),
+                    f"{self._install.mount}/{self._config.functional.config_root}",
                 ),
             ],
         )

@@ -62,7 +62,6 @@ class InstallSuite(Strict):
     path: str
     glowup_script: str
     macos_report_check: str
-    stage_inputs_script: str
     serve_script: str
     sbom_script: str
     web_surface_script: str
@@ -105,7 +104,6 @@ class InstallConfig(Strict):
     storage_ledger: str
     test_output_root: str
     install_log_glob: str
-    profile_inputs_variable: str
     preinstall_root: str
     admin_relative: str
     request_script: str

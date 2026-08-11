@@ -38,6 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so host-compiled build scripts and procedural macros cannot discover a
   missing conditional crate after the package lane has sealed its network.
 
+- Package, Debian, macOS, pulled-release, and final install proof now carry one
+  typed profile-content root whose assets and materialized configuration are
+  validated and mounted as a pair. Docker/Colima never receives the mutable
+  checkout asset selector, selected release content is never re-authored as a
+  local graph, and ordinary install CI stages the same manifest-selected pair
+  before both package construction and glow-up. The macOS proof preserves its
+  Tart, physical VZ, Doctor, and Winterfell coverage while consuming that same
+  pair and no longer rematerializes stale checkout configuration.
+
 - Direct development diagnostics now have a portable bounded-process wrapper
   that closes stdin and owns the complete child process group. A blocked
   Docker client, compiler, test runner, or helper is terminated on timeout or

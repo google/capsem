@@ -114,6 +114,23 @@ class ProfileContent:
             raise GateError(f"profile content catalog has no materialized profiles: {profiles}")
 
 
+@dataclass(frozen=True)
+class LocalInstallContent:
+    """Fresh local content whose checked graph is authored during install."""
+
+    content: ProfileContent
+
+
+@dataclass(frozen=True)
+class SelectedInstallContent:
+    """Manifest-selected content whose packaged channel remains authoritative."""
+
+    content: ProfileContent
+
+
+InstallContent = LocalInstallContent | SelectedInstallContent
+
+
 def _declared_arches(path: Path, payload: bytes) -> frozenset[str]:
     try:
         manifest = json.loads(payload)

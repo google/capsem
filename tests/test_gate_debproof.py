@@ -8,12 +8,14 @@ file-existence check in the world passes on that package, and it ships.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
+from capsem.gate.content import ProfileContent
 from capsem.gate.debproof import DebProof
 from capsem.gate.errors import GateError
 
@@ -32,6 +34,32 @@ def _checkout(tmp_path: Path) -> Path:
     package = tmp_path / "dist" / f"Capsem_{VERSION}_arm64.deb"
     package.write_text("package bytes")
     return tmp_path
+
+
+def _content(root: Path) -> ProfileContent:
+    config = gate_config.load(root)
+    content = ProfileContent.standalone(config)
+    payload = json.dumps(
+        {
+            "assets": {
+                "current": "test",
+                "releases": {
+                    "test": {"arches": {name: {} for name in config.architectures}},
+                },
+            },
+        }
+    ).encode()
+    content.assets.mkdir(parents=True)
+    (content.assets / config.install.manifest_name).write_bytes(payload)
+    for arch in config.architectures:
+        (content.assets / arch).mkdir()
+    config_manifest = content.config / config.suites.pytest.test_manifest
+    config_manifest.parent.mkdir(parents=True)
+    config_manifest.write_bytes(payload)
+    profile = content.profiles(config) / "code/profile.toml"
+    profile.parent.mkdir(parents=True)
+    profile.write_text("name = 'code'\n")
+    return content
 
 
 def _replies(*, version: str = VERSION, status: str | None = None) -> dict[str, str]:
@@ -60,6 +88,7 @@ def _proof(
     built = DebProof(
         runner,
         package=root / "dist" / f"Capsem_{VERSION}_arm64.deb",
+        content=_content(root),
         manifest_url="file:///src/m.json",
         channel="nightly",
         sleep=lambda _seconds: None,
@@ -85,6 +114,7 @@ def test_only_a_package_this_checkout_built_is_accepted(
         DebProof(
             RecordingRunner(root),
             package=elsewhere,
+            content=_content(root),
             manifest_url="file:///src/m.json",
             channel="nightly",
         )
@@ -97,6 +127,7 @@ def test_an_unknown_channel_is_refused(tmp_path: Path) -> None:
         DebProof(
             RecordingRunner(root),
             package=root / "dist" / f"Capsem_{VERSION}_arm64.deb",
+            content=_content(root),
             manifest_url="file:///src/m.json",
             channel="prod",
         )
@@ -173,6 +204,7 @@ def test_a_binary_carrying_an_older_build_fails(
     proof = DebProof(
         runner,
         package=root / "dist" / f"Capsem_{VERSION}_arm64.deb",
+        content=_content(root),
         manifest_url="file:///src/m.json",
         channel="nightly",
         sleep=lambda _seconds: None,
@@ -195,6 +227,7 @@ def test_an_installed_version_that_disagrees_with_the_package_fails(
         DebProof(
             runner,
             package=root / "dist" / f"Capsem_{VERSION}_arm64.deb",
+            content=_content(root),
             manifest_url="file:///src/m.json",
             channel="nightly",
             sleep=lambda _seconds: None,
@@ -218,6 +251,7 @@ def test_a_status_line_that_is_missing_fails_the_proof(
         DebProof(
             runner,
             package=root / "dist" / f"Capsem_{VERSION}_arm64.deb",
+            content=_content(root),
             manifest_url="file:///src/m.json",
             channel="nightly",
             sleep=lambda _seconds: None,
@@ -243,6 +277,7 @@ def test_profiles_must_all_be_ready(
         DebProof(
             runner,
             package=root / "dist" / f"Capsem_{VERSION}_arm64.deb",
+            content=_content(root),
             manifest_url="file:///src/m.json",
             channel="nightly",
             sleep=lambda _seconds: None,

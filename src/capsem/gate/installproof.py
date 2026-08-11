@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 from . import config as gate_config
+from .content import ProfileContent
 from .docker import Docker
 from .errors import GateError
 from .proc import Runner
@@ -27,55 +28,44 @@ class InstallProof:
         self._runner = runner
         self._docker = Docker(runner)
         self._settings = config.install
+        self._config = config
         self._guest = self._settings.guest_user
         self._suite = self._settings.suite
         self._container = self._settings.container
         self._layout = self._settings.layout
         self._mount = self._settings.mount
-        self._inputs_name = config.package.release_inputs_name
         self._environment = config.environment.install_proof
         self._sleep = sleep
 
     # -- staging -----------------------------------------------------------
 
-    def stage_verified_inputs(self, inputs: str) -> None:
-        """Use the profile inputs a release lane resolved from its manifest."""
+    def stage_content(self, content: ProfileContent) -> None:
+        """Copy the one mounted, prevalidated content pair into writable staging."""
+        assets = self._config.functional.assets_dir
+        content_config = self._config.functional.config_root
+        profiles = f"{content_config}/{self._config.functional.profiles_subdir}"
+        config_manifest = f"{content_config}/{self._config.suites.pytest.test_manifest}"
         self._docker.shell(
             self._container,
-            f'test -f "{inputs}/{self._settings.manifest_name}" '
-            f'&& test -f "{inputs}/{self._inputs_name}"',
+            f'test -f "{assets}/{self._settings.manifest_name}" '
+            f'&& test -f "{config_manifest}" '
+            f'&& cmp -s "{assets}/{self._settings.manifest_name}" "{config_manifest}"',
             user=self._guest.name,
             cwd=self._mount,
         )
         self._docker.shell(
             self._container,
-            f'rm -rf "{self._layout.assets}" "{self._layout.config}" && uv run python '
-            f'{self._suite.stage_inputs_script} --input-dir "{inputs}" '
-            f'--assets-dir "{self._layout.assets}" --config-root "{self._layout.config}"',
+            f'test -d "{profiles}" '
+            f'&& rm -rf "{self._layout.assets}" '
+            f'"{self._layout.config}" && mkdir -p "{self._layout.assets}" '
+            f'"{self._layout.config}" && cp -R "{assets}/." "{self._layout.assets}/" '
+            f'&& cp -R "{content_config}/." "{self._layout.config}/"',
             user=self._guest.name,
             cwd=self._mount,
-            env={"UV_PROJECT_ENVIRONMENT": self._settings.venv},
         )
 
-    def stage_local_assets(self) -> None:
-        """Copy this checkout's built assets, and serve them over a local URL."""
-        self._docker.shell(
-            self._container,
-            "test -f assets/manifest.json || { echo 'ERROR: installed VM proof "
-            "requires rebuilt local assets or verified pulled profile inputs' >&2; "
-            "exit 1; }",
-            user=self._guest.name,
-            cwd=self._mount,
-        )
-        self._docker.shell(
-            self._container,
-            f'test -d target/config/profiles && rm -rf "{self._layout.assets}" '
-            f'"{self._layout.config}" && mkdir -p "{self._layout.assets}" '
-            f'"{self._layout.config}" && cp -R assets/. "{self._layout.assets}/" '
-            f'&& cp -R target/config/. "{self._layout.config}/"',
-            user=self._guest.name,
-            cwd=self._mount,
-        )
+    def start_local_server(self) -> None:
+        """Serve the staged local graph; selected public content needs no server."""
         self._docker.shell(
             self._container,
             f'rm -rf "{self._layout.channel}" && mkdir -p "{self._layout.channel}" '

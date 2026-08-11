@@ -702,17 +702,28 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke(
     # And the whole gate is the only thing that boots a Tart VM -- `just smoke`
     # dispatches a different command, whose plan cannot reach the script.
     assert "macos_release_glowup.py" in _gate_issues("candidate")
+    config = gate_config.load(PROJECT_ROOT)
+    content_root = Path(config.assets.test_root) / config.suites.pytest.base_profile
+    assert "--content-root " in _gate_issues("candidate")
+    assert f"/{content_root}" in _gate_issues("candidate")
     assert "macos_release_glowup.py" not in _gate_issues("test-fast")
     assert "tart" not in _gate_issues("test-fast").lower()
 
 
 def test_standalone_glowup_owns_build_tart_install_and_physical_boot() -> None:
     source = GLOWUP.read_text()
+    build = LOCAL_PACKAGE_BUILD.read_text()
+    physical = HOST_BOOT.read_text()
 
     assert '"scripts/build-test-macos-package.sh"' in source
     assert '"scripts/macos_tart_glowup.py"' in source
     assert '"scripts/prove-macos-package-boot.sh"' in source
-    assert '"scripts/materialize-config.sh"' in source
+    assert '"scripts/materialize-config.sh"' not in source
+    assert '"--content-root"' in source
+    assert '"--assets-dir"' in source and '"--config-root"' in source
+    assert '"$ROOT/assets"' not in build
+    assert '"$ROOT/target/config"' not in build
+    assert '"$ROOT/assets"' not in physical
 
 
 def test_local_package_proof_uses_ad_hoc_payload_signing_without_release_keys() -> None:
