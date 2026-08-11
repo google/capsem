@@ -446,6 +446,32 @@ def test_install_source_image_and_smoke_are_sealed_without_retry() -> None:
     assert "--no-cache" not in "\n".join(map(str, runner.commands))
 
 
+def test_generated_asset_selector_identity_is_stable(tmp_path: Path) -> None:
+    """The exact image built before assets assemble is the one install uses."""
+    from capsem.gate import installimage
+
+    subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
+    (tmp_path / ".gitignore").write_bytes((PROJECT_ROOT / ".gitignore").read_bytes())
+    script = tmp_path / CONFIG.candidate.source_digest_script
+    script.parent.mkdir(parents=True)
+    script.write_bytes((PROJECT_ROOT / CONFIG.candidate.source_digest_script).read_bytes())
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("source\n", encoding="utf-8")
+    subprocess.run(
+        ("git", "add", ".gitignore", str(script.relative_to(tmp_path)), "tracked.txt"),
+        cwd=tmp_path,
+        check=True,
+    )
+    config = CONFIG.model_copy(update={"root": tmp_path})
+
+    before = installimage.source_image_tag(config, helper_id="sha256:helper")
+    selected = tmp_path / "target" / "ironbank-assets" / "code" / "assets"
+    selected.mkdir(parents=True)
+    (tmp_path / "assets").symlink_to("target/ironbank-assets/code/assets")
+
+    assert installimage.source_image_tag(config, helper_id="sha256:helper") == before
+
+
 def test_the_install_image_is_built_after_the_builder_it_derives_from() -> None:
     """The other half of the claim above, now that the builder is a step.
 

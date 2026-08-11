@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The generated checkout-root asset selector is now explicitly ignored as
+  build output, matching the Docker context that already excludes asset trees.
+  Creating the selector after asset qualification can no longer change the
+  source digest and make final install proof request a different exact sealed
+  image from the one the same gate built and smoked.
+
 - Retained-prefix continuation no longer carries a source-keyed install image
   merely because functional VM work resumes. The image lifecycle runs as an
   independent branch and remains a hard prerequisite of exact install proof,

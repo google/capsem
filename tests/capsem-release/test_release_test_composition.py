@@ -881,3 +881,26 @@ def test_source_state_digest_covers_dirty_and_untracked_nonignored_files(
     if os.name != "nt":
         untracked.chmod(0o755)
         assert module.source_state_digest(tmp_path) != with_untracked
+
+
+def test_source_state_digest_ignores_the_generated_asset_selector(tmp_path: Path) -> None:
+    """Asset selection is build output, not a mid-gate source mutation.
+
+    ``AssetGate`` creates the checkout-root ``assets`` symlink only after the
+    sealed install image has been built.  The Docker context already excludes
+    every assets tree, so the shared source subject must exclude that selector
+    too; otherwise the exact install-image key changes between build and use.
+    """
+    subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
+    (tmp_path / ".gitignore").write_bytes((PROJECT_ROOT / ".gitignore").read_bytes())
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("source\n", encoding="utf-8")
+    subprocess.run(("git", "add", ".gitignore", "tracked.txt"), cwd=tmp_path, check=True)
+    module = _source_digest_module()
+
+    before = module.source_state_digest(tmp_path)
+    selected = tmp_path / "target" / "ironbank-assets" / "code" / "assets"
+    selected.mkdir(parents=True)
+    (tmp_path / "assets").symlink_to("target/ironbank-assets/code/assets")
+
+    assert module.source_state_digest(tmp_path) == before

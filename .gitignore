@@ -68,8 +68,10 @@ target/
 # Git worktrees
 worktrees/
 
-# VM assets (built by capsem-builder)
-assets/*
+# VM assets and the root selector produced by AssetGate. Docker excludes the
+# same tree with `**/assets`; neither the bytes nor this generated symlink are
+# source inputs, so they must not change the mid-gate source/image identity.
+/assets
 
 # Built packages (.pkg, .deb)
 packages/
