@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../crates/capsem-app/icons/icon.svg" alt="Capsem" width="120" />
+  <img src="../../crates/capsem-app/icons/icon.svg" alt="Capsem" width="120" />
 </p>
 
 <h1 align="center">Capsem</h1>
@@ -56,4 +56,4 @@ This project is not an official Google project. It is not supported by Google an
 
 ## License
 
-See [LICENSE](../LICENSE).
+See [LICENSE](../../LICENSE).
