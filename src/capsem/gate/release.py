@@ -24,7 +24,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from . import candidateplan, imagebuild, prefix, sandbox
+from . import candidateplan, imagebuild, prefix
 from .actions import Run, Script
 from .candidate import CompleteGate
 from .command import GateCommand
@@ -86,7 +86,6 @@ class ReleaseBinariesCommand(
     exclusive = True
     publishes = True
     uses_qualification = True
-    sandboxed = sandbox.ENFORCE
     outside_egress = True
 
     @classmethod
@@ -167,7 +166,6 @@ class ReleaseProfileCommand(
     exclusive = True
     publishes = True
     uses_qualification = True
-    sandboxed = sandbox.ENFORCE
     outside_egress = True
 
     @classmethod

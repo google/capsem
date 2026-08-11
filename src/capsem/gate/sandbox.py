@@ -7,10 +7,9 @@ here that a mistake in the gate's own code cannot talk its way past. macOS uses
 Seatbelt. Linux uses Bubblewrap to enter a network namespace with loopback but
 no external interface while preserving the filesystem and AF_UNIX sockets.
 
-Shaped by measurement, not by preference. `(deny default)` widened by
-enumerated allows was tried and abandoned: every read list produced a silent
-`SIGABRT` -- exit 134, no stdout, no stderr -- and the kernel's denial log
-needs sudo to read, so each iteration cost a rebuild to learn nothing. The
+Shaped by measurement, not preference. `(deny default)` widened by enumerated
+allows produced a silent `SIGABRT`, while the kernel's denial log needs sudo;
+each iteration cost a rebuild to learn nothing. The
 viable shape is `(allow default)` narrowed by targeted denials. That is also
 where the value is: every failure this work chased was a write, a link or a
 fetch, and denying reads buys little for a great deal of undiagnosable
@@ -162,6 +161,15 @@ def mode(
         if value is not None and not isinstance(value, SandboxMode):
             raise TypeError(f"expected SandboxMode enum, got {value!r}")
     return requested or command_default
+
+
+def require_complete_qualification(name: str, chosen: SandboxMode, complete: bool) -> None:
+    """Refuse permissive modes before a complete gate can describe or act."""
+    if complete and chosen is not ENFORCE:
+        raise GateError(
+            f"{name} is a complete qualification command and requires --sandbox enforce; "
+            f"--sandbox {chosen.value} is diagnostic-only"
+        )
 
 
 def written_to(config: GateConfig, directory: Path, *, report: bool) -> Path:

@@ -41,11 +41,9 @@ class GateCommand(Recorded, ABC):
     publishes: ClassVar[bool] = False
     """Whether this command can make something other people see.
 
-    Only the two release commands set it. It is what turns a source-tree fault
-    from a line in `errors.log` into a refusal: a developer who edits during a
-    gate can read the report and judge, but a run that is about to publish
-    would otherwise ship an artifact whose recorded provenance names a tree
-    that did not hold still -- and nothing downstream can tell.
+    Only releases set it. It turns a source-tree fault from an `errors.log`
+    report into a refusal; otherwise publication could ship an artifact whose
+    provenance names a tree that did not hold still.
     """
 
     name: ClassVar[str]
@@ -63,18 +61,18 @@ class GateCommand(Recorded, ABC):
     sandboxed: ClassVar[sandbox.SandboxMode] = sandbox.OFF
     """Whether this command runs under the host kernel sandbox, and how.
 
-    Off by default and overridable with `--sandbox`; see `capsem.gate.sandbox`
-    for what a mode means and why `reexec` is where one is applied.
+    Off by default. `--sandbox` may override incomplete commands; complete
+    qualification is checked at the first line of `execute`.
     """
+    complete_qualification: ClassVar[bool] = False
     outside_egress: ClassVar[bool] = False
 
     private_checkout: ClassVar[bool] = False
     """Whether this runs from a private copy of the checkout instead of it.
 
     Declared per command rather than inferred: the copy starts with no
-    `target/`, so a command too short to be raced would pay a cold build to
-    avoid a race it was never going to lose. See `capsem.gate.prefix` for the
-    four release runs that establish why the long ones need it.
+    `target/`, so a short command would pay a cold build to avoid a race it was
+    never going to lose. See `capsem.gate.prefix` for the release failures.
     """
 
     uses_qualification: ClassVar[bool] = False
@@ -191,6 +189,9 @@ class GateCommand(Recorded, ABC):
         The order is the contract. Each line is here because the alternative
         arrangement was tried and broke something.
         """
+        sandbox.require_complete_qualification(
+            self.name, self._sandbox_mode, self.complete_qualification
+        )
         # A plan describes; it does not act. Built against a runner that
         # refuses everything, so `--dry-run` cannot touch the machine on the
         # way to telling you it would not.

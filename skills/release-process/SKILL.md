@@ -74,6 +74,10 @@ manifest resolution, exact-main confirmation/push, and final dispatch. Every
 brokered command remains runner-guarded and journaled. Never widen the whole
 release because one edge needs network.
 
+Candidate and both release commands accept only the enforcing sandbox mode;
+`off` and `report` are diagnostic modes for incomplete modules and can never
+produce complete qualification evidence.
+
 Local `just test` rebuilds every package and checked-in profile and runs the
 same six private modules used by both release lanes:
 

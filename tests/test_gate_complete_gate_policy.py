@@ -22,6 +22,8 @@ from helpers.gate import RecordingRunner
 from capsem.gate import candidate, cli, sandbox  # noqa: F401 - importing registers commands
 from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
+from capsem.gate.errors import GateError
+from capsem.gate.qualification import LocalQualification
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -33,18 +35,160 @@ COMPLETE_GATE = {
     "release-profile": {"channel": "nightly", "profile": "code"},
 }
 
+PRIVATE_MODULES = (
+    "test-fast",
+    "test-static",
+    "test-artifacts",
+    "test-functional",
+    "test-glowup",
+    "test-release-contracts",
+)
+
 
 @pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
 def test_every_complete_gate_keeps_the_enforcing_policy(name: str) -> None:
     """Candidate and both macOS/Linux release wrappers share one declaration."""
-    assert GateCommand.registry[name].sandboxed is sandbox.ENFORCE
+    command = GateCommand.registry[name]
+
+    assert issubclass(command, candidate.CompleteGate)
+    assert command.complete_qualification is True
+    assert command.sandboxed is sandbox.ENFORCE
+
+
+def test_the_complete_qualification_declaration_inventory_is_exact() -> None:
+    """The declaration and mixin are one policy, not two drifting lists."""
+    declared = {
+        name for name, command in GateCommand.registry.items() if command.complete_qualification
+    }
+    composed = {
+        name
+        for name, command in GateCommand.registry.items()
+        if issubclass(command, candidate.CompleteGate)
+    }
+
+    assert declared == composed == set(COMPLETE_GATE)
 
 
 def _command(name: str, **args):
     return GateCommand.registry[name](
         RecordingRunner(PROJECT_ROOT),
         argparse.Namespace(dry_run=False, graph=False, timing=False, **args),
+        qualification=LocalQualification(bin_dir=CONFIG.modules.default_bin_dir),
     )
+
+
+@pytest.mark.parametrize("mode", [sandbox.OFF, sandbox.REPORT])
+@pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
+def test_complete_qualification_refuses_unenforced_sandbox_before_planning(
+    name: str,
+    mode: sandbox.SandboxMode,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Permissive measurement can never leave evidence named qualification."""
+    reached: list[str] = []
+    command = _command(name, sandbox=mode, **COMPLETE_GATE[name])
+
+    def unexpected(label: str):
+        def reached_boundary(*_args, **_kwargs):
+            reached.append(label)
+            raise AssertionError(f"{label} ran before the sandbox refusal")
+
+        return reached_boundary
+
+    monkeypatch.setattr(command, "_describe", unexpected("plan"))
+    monkeypatch.setattr(command, "reexec", unexpected("reexec"))
+    monkeypatch.setattr(command, "resources", unexpected("resources"))
+
+    with pytest.raises(GateError, match=rf"{name}.*complete qualification.*enforce"):
+        command.execute()
+
+    assert reached == []
+    assert command._runner.commands == []
+
+
+def test_complete_qualification_defaults_to_enforcement() -> None:
+    """The safe mode is declaration-owned, not an operator convention."""
+    commands = tuple(_command(name, **arguments) for name, arguments in COMPLETE_GATE.items())
+
+    assert all(command.complete_qualification for command in commands)
+    assert all(command._sandbox_mode is sandbox.ENFORCE for command in commands)
+
+
+@pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
+def test_complete_qualification_accepts_explicit_enforcement(
+    name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refusal distinguishes enforcement from both permissive modes."""
+    command = _command(name, sandbox=sandbox.ENFORCE, **COMPLETE_GATE[name])
+
+    class PlanReached(Exception):
+        pass
+
+    def reached_plan():
+        raise PlanReached
+
+    monkeypatch.setattr(command, "_describe", reached_plan)
+
+    with pytest.raises(PlanReached):
+        command.execute()
+
+    assert command._runner.commands == []
+
+
+@pytest.mark.parametrize("name", ["test-fast", "test-static"])
+@pytest.mark.parametrize("mode", [sandbox.OFF, sandbox.REPORT])
+def test_a_module_can_still_measure_without_claiming_complete_qualification(
+    name: str,
+    mode: sandbox.SandboxMode,
+) -> None:
+    """Report/off remain diagnostic modes for explicitly incomplete evidence."""
+    command = _command(name, sandbox=mode)
+
+    assert command.complete_qualification is False
+    assert command._sandbox_mode is mode
+    sandbox.require_complete_qualification(
+        command.name, command._sandbox_mode, command.complete_qualification
+    )
+    command._describe()
+
+
+def _just_recipe(name: str) -> str:
+    lines = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8").splitlines()
+    start = next(index for index, line in enumerate(lines) if line.startswith(f"{name}:"))
+    end = next(
+        (
+            index
+            for index in range(start + 1, len(lines))
+            if lines[index] and not lines[index][0].isspace()
+        ),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
+def test_private_just_module_entrypoints_do_not_override_the_sandbox() -> None:
+    for module in PRIVATE_MODULES:
+        recipe = _just_recipe(f"_{module}")
+        assert f"capsem-gate {module}" in recipe
+        assert "--sandbox" not in recipe, f"_{module} overrides its command-owned boundary"
+
+
+def test_ci_module_entrypoints_do_not_override_the_sandbox() -> None:
+    inspected: list[str] = []
+    for workflow in sorted((PROJECT_ROOT / ".github" / "workflows").glob("*.yaml")):
+        source = workflow.read_text(encoding="utf-8")
+        if not any(
+            f"just _{module}" in source or f"capsem-gate {module}" in source
+            for module in PRIVATE_MODULES
+        ):
+            continue
+        inspected.append(workflow.name)
+        assert "--sandbox" not in source, (
+            f"{workflow.name} overrides the command-owned module sandbox boundary"
+        )
+
+    assert inspected, "no workflow module entrypoints were inspected"
 
 
 @pytest.fixture
@@ -150,16 +294,7 @@ def test_linux_release_qualification_gets_the_kernel_wrapper(name, monkeypatch) 
     assert "--unshare-net" in replacement
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "test-fast",
-        "test-static",
-        "test-artifacts",
-        "test-functional",
-        "test-glowup",
-    ],
-)
+@pytest.mark.parametrize("name", PRIVATE_MODULES)
 def test_release_ci_modules_declare_the_same_kernel_boundary(name) -> None:
     assert GateCommand.registry[name].sandboxed == sandbox.ENFORCE
 

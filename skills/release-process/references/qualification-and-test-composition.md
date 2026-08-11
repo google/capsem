@@ -63,6 +63,11 @@ stops publication if the checkout no longer has the recorded HEAD and bytes.
 The complete executor is also kernel-isolated for the entire candidate graph:
 Bubblewrap provides a loopback-only namespace on Linux and Seatbelt provides
 the macOS boundary. Network access is not restored process-wide for release.
+Candidate and both release commands refuse explicit `--sandbox off` and
+`--sandbox report` before constructing a plan, re-executing, or acquiring a
+resource. Report-mode measurement remains available only on directly invoked
+incomplete modules, so permissive evidence cannot be mistaken for complete
+qualification.
 An authenticated helper created immediately before sandbox re-exec serves only
 the explicitly marked RustSec, npm bulk, and OSV advisory queries plus
 manifest-resolution, exact-main confirmation/push, and final dispatch actions.

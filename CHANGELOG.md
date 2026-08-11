@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Candidate and both release commands now refuse `--sandbox off` and
+  `--sandbox report` before plan construction, re-exec, resource acquisition,
+  or action execution. Their shared complete-qualification declaration remains
+  enforcing by default, while incomplete module commands retain explicit
+  permissive modes for diagnostic sandbox measurement.
+
 - Linux Doctor now distinguishes the machine-lock ancestry marker from the
   typed sandbox policy of its owning gate command. Enforcing candidates still
   prove a loopback-only kernel namespace, while standalone asset builds can

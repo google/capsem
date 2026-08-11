@@ -95,6 +95,11 @@ the Seatbelt-style attempted-egress ledger.
 ordinary actions through the config-owned environment name. Outside-sandbox
 actions clear it. Host Doctor combines owning-command policy with live kernel
 state; the machine-lock marker proves only lock ownership, never enforcement.
+Candidate and both release commands declare complete qualification through one
+mixin. They accept only `enforce`: explicit `off` or `report` is refused before
+plan construction, re-exec, or resource acquisition. Measure a changing rule
+through a directly invoked incomplete module, whose evidence cannot be called
+complete qualification.
 
 A release cannot resolve or publish while trapped in that namespace, so it
 starts one authenticated helper immediately before re-exec. Only `Run` and

@@ -82,11 +82,17 @@ class CompleteGate:
     _config: gate_config.GateConfig
     _runner: Runner
     _args: argparse.Namespace
-    sandboxed: sandbox.SandboxMode
+    sandboxed: sandbox.SandboxMode = sandbox.ENFORCE
     _sandbox_mode: sandbox.SandboxMode
     """Provided by `GateCommand`; declared so the mixin type-checks alone."""
 
     outside_egress = False
+    complete_qualification = True
+    """Its success may be accepted as complete qualification.
+
+    `GateCommand.execute` therefore requires an enforcing sandbox before it
+    constructs this mixin's plan or reaches any lifecycle boundary.
+    """
 
     private_checkout = True
     """The complete gate reads a copy of the checkout, never the checkout.
@@ -169,7 +175,6 @@ class CandidateCommand(
 ):
     exclusive = True
     uses_qualification = True
-    sandboxed = sandbox.ENFORCE
     outside_egress = True
     """Phase 8b: the complete local gate refuses the network.
 
@@ -178,8 +183,8 @@ class CandidateCommand(
     command whose whole claim is that nothing was downloaded mid-run, which is
     worth nothing while it is merely believed.
 
-    `--sandbox report` still overrides it, which is how the allow-list gets
-    measured after a rule turns out to be too narrow.
+    Complete qualification accepts only enforcement. Run an individual module
+    in report mode to measure a rule without creating qualification evidence.
     """
 
     # The run this whole mechanism was built for. `just test` is this command,
