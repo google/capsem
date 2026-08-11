@@ -32,7 +32,10 @@ fn header_roundtrips() {
     let decoded = CheckpointHeader::decode(&header.encode()).unwrap();
     assert_eq!(decoded, header);
     assert_eq!(decoded.version, VERSION);
-    assert_eq!(decoded.version, 8, "VirtioFS backend state requires v8");
+    assert_eq!(
+        decoded.version, 9,
+        "complete virtio device graph identity requires v9"
+    );
     assert_eq!(decoded.ram_bytes, 4096);
     assert_eq!(decoded.vcpu_count, 2);
     #[cfg(target_arch = "x86_64")]
@@ -48,6 +51,27 @@ fn header_rejects_bad_magic() {
     encoded[0] = b'X';
     let err = CheckpointHeader::decode(&encoded).unwrap_err();
     assert!(err.to_string().contains("bad checkpoint magic"));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restore_rejects_version_8_checkpoint() {
+    let mut header = test_header();
+    header.version = 8;
+
+    let err = validate_header(
+        &header,
+        header.ram_bytes,
+        header.vcpu_count,
+        header.mmio_device_count,
+    )
+    .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("unsupported KVM checkpoint version: got 8, expected 9"),
+        "{err:#}"
+    );
 }
 
 #[cfg(target_arch = "x86_64")]

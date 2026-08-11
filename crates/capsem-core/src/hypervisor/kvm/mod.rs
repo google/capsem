@@ -604,6 +604,7 @@ impl Hypervisor for KvmHypervisor {
         let shutdown = Arc::new(AtomicBool::new(false));
         let mut vsock_listener_handles = Vec::new();
         let mut vsock_irq_handles = Vec::new();
+        let mut pending_vsock_workers = None;
 
         if let Some(vsock_bindings) = vsock_bindings {
             let guest_cid = vsock_bindings.guest_cid();
@@ -633,36 +634,32 @@ impl Hypervisor for KvmHypervisor {
                 vm.irqfd(irq_fd.as_raw_fd(), vsock_gsi)?;
                 irq_fds.push(irq_fd);
             }
+            pending_vsock_workers =
+                Some((vsock_bindings, call_fds, irq_fds, vsock_interrupt_status));
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        if let Some(restored) = restored_checkpoint.as_ref() {
+            restore_mmio_device_graph(&mmio_transports, &restored.mmio_devices)?;
+        }
+
+        // Listener and IRQ bridge threads retain shutdown/device resources.
+        // Start them only after the complete restored device graph has been
+        // prepared and activated successfully.
+        if let Some((vsock_bindings, call_fds, irq_fds, vsock_interrupt_status)) =
+            pending_vsock_workers
+        {
             vsock_irq_handles = virtio_vsock::spawn_call_irq_bridges(
                 &call_fds,
                 irq_fds,
                 vsock_interrupt_status,
                 Arc::clone(&shutdown),
             )?;
-
             vsock_listener_handles = virtio_vsock::spawn_vsock_listeners(
                 vsock_bindings,
                 vsock_tx,
                 Arc::clone(&shutdown),
             );
-        }
-
-        #[cfg(target_arch = "x86_64")]
-        if let Some(restored) = restored_checkpoint.as_ref() {
-            let live_slots: Vec<u32> = mmio_transports.iter().map(|(slot, _)| *slot).collect();
-            validate_mmio_slot_topology(&live_slots, &restored.mmio_devices)?;
-            for snapshot in &restored.mmio_devices {
-                let Some((_slot, transport)) = mmio_transports
-                    .iter()
-                    .find(|(slot, _transport)| *slot == snapshot.slot)
-                else {
-                    anyhow::bail!(
-                        "checkpoint MMIO slot {} does not exist in restored VM",
-                        snapshot.slot
-                    );
-                };
-                transport.restore(&snapshot.transport)?;
-            }
         }
 
         // -- Shared: spawn vCPU threads -----------------------------------
@@ -939,29 +936,101 @@ impl VmHandle for KvmHandle {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn validate_mmio_slot_topology(
-    live_slots: &[u32],
+fn validate_mmio_topology(
+    live_devices: &[(u32, u32)],
     snapshots: &[checkpoint::MmioDeviceSnapshot],
 ) -> Result<()> {
-    use std::collections::HashSet;
+    use std::collections::BTreeMap;
 
-    let live: HashSet<u32> = live_slots.iter().copied().collect();
-    ensure!(
-        live.len() == live_slots.len(),
-        "restored VM contains duplicate live MMIO slots"
-    );
-    let mut checkpoint = HashSet::with_capacity(snapshots.len());
+    let mut live = BTreeMap::new();
+    for &(slot, device_type) in live_devices {
+        ensure!(
+            live.insert(slot, device_type).is_none(),
+            "restored VM contains duplicate live MMIO slot {slot}"
+        );
+    }
+    let mut checkpoint = BTreeMap::new();
     for snapshot in snapshots {
         ensure!(
-            checkpoint.insert(snapshot.slot),
+            checkpoint
+                .insert(snapshot.slot, snapshot.transport.device_type)
+                .is_none(),
             "checkpoint contains duplicate MMIO slot {}",
             snapshot.slot
         );
     }
     ensure!(
-        checkpoint == live,
-        "checkpoint MMIO slot topology mismatch: checkpoint={checkpoint:?}, vm={live:?}"
+        checkpoint.keys().eq(live.keys()),
+        "checkpoint MMIO slot topology mismatch: checkpoint={:?}, vm={:?}",
+        checkpoint.keys().collect::<Vec<_>>(),
+        live.keys().collect::<Vec<_>>()
     );
+    for (&slot, &device_type) in &live {
+        let checkpoint_type = checkpoint[&slot];
+        ensure!(
+            checkpoint_type == device_type,
+            "checkpoint MMIO topology mismatch at slot {slot}: device type checkpoint={checkpoint_type}, vm={device_type}"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_arch = "x86_64")]
+fn restore_mmio_device_graph(
+    transports: &[(u32, Arc<virtio_mmio::VirtioMmioTransport>)],
+    snapshots: &[checkpoint::MmioDeviceSnapshot],
+) -> Result<()> {
+    let live_devices: Vec<(u32, u32)> = transports
+        .iter()
+        .map(|(slot, transport)| (*slot, transport.device_type()))
+        .collect();
+    validate_mmio_topology(&live_devices, snapshots)?;
+    validate_mmio_queue_nonoverlap(snapshots)?;
+
+    for snapshot in snapshots {
+        let transport = transports
+            .iter()
+            .find_map(|(slot, transport)| (*slot == snapshot.slot).then_some(transport))
+            .context("validated checkpoint MMIO slot disappeared during preparation")?;
+        transport.prepare_restore(&snapshot.transport)?;
+    }
+    for snapshot in snapshots {
+        let transport = transports
+            .iter()
+            .find_map(|(slot, transport)| (*slot == snapshot.slot).then_some(transport))
+            .context("validated checkpoint MMIO slot disappeared during activation")?;
+        transport.activate_restored()?;
+    }
+    Ok(())
+}
+
+#[cfg(target_arch = "x86_64")]
+fn validate_mmio_queue_nonoverlap(snapshots: &[checkpoint::MmioDeviceSnapshot]) -> Result<()> {
+    let mut ranges = Vec::new();
+    for snapshot in snapshots {
+        for range in virtio_mmio::ready_queue_memory_ranges(&snapshot.transport)? {
+            ranges.push((
+                range.start,
+                range.end,
+                snapshot.slot,
+                range.queue,
+                range.name,
+            ));
+        }
+    }
+    ranges.sort_unstable_by_key(|range| (range.0, range.1));
+    for pair in ranges.windows(2) {
+        ensure!(
+            pair[0].1 <= pair[1].0,
+            "checkpoint MMIO queue memory overlap: slot {} queue {} {} overlaps slot {} queue {} {}",
+            pair[0].2,
+            pair[0].3,
+            pair[0].4,
+            pair[1].2,
+            pair[1].3,
+            pair[1].4
+        );
+    }
     Ok(())
 }
 

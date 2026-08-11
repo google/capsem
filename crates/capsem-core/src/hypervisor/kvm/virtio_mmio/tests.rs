@@ -2,6 +2,9 @@ use super::super::memory::{GuestMemory, RAM_BASE};
 use super::*;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
+#[cfg(target_arch = "x86_64")]
+type QueueSnapshotMutation = fn(&mut QueueSnapshot);
+
 struct DummyDevice {
     activated: std::sync::Arc<std::sync::atomic::AtomicBool>,
     notify_count: std::sync::Arc<std::sync::atomic::AtomicU32>,
@@ -50,6 +53,14 @@ impl VirtioDevice for DummyDevice {
     fn activate(&mut self, _mem: GuestMemoryRef, _queues: &[QueueConfig]) {
         self.activated
             .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    fn restore_activate(
+        &mut self,
+        mem: GuestMemoryRef,
+        queues: &[QueueConfig],
+    ) -> anyhow::Result<()> {
+        self.activate(mem, queues);
+        Ok(())
     }
     fn queue_notify(&mut self, _queue_index: u32) -> bool {
         self.notify_count
@@ -231,7 +242,7 @@ fn restore_rehydrates_state_and_activates_device() {
         device_state: Vec::new(),
         status: STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
         features_sel: 1,
-        driver_features: 0x1000_0001,
+        driver_features: 0x1_0000_0001,
         driver_features_sel: 0,
         queue_sel: 1,
         queues: vec![
@@ -261,7 +272,10 @@ fn restore_rehydrates_state_and_activates_device() {
         activated: true,
     };
 
-    t.restore(&snapshot).unwrap();
+    t.prepare_restore(&snapshot).unwrap();
+
+    assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
+    t.activate_restored().unwrap();
 
     assert!(activated.load(std::sync::atomic::Ordering::SeqCst));
     assert_eq!(t.snapshot().unwrap(), snapshot);
@@ -287,7 +301,7 @@ fn restore_rejects_wrong_queue_count() {
         activated: false,
     };
 
-    let err = t.restore(&snapshot).unwrap_err();
+    let err = t.prepare_restore(&snapshot).unwrap_err();
 
     assert!(err.to_string().contains("queue count mismatch"));
 }
@@ -297,9 +311,9 @@ fn valid_restored_snapshot() -> VirtioMmioSnapshot {
     VirtioMmioSnapshot {
         device_type: 3,
         device_state: Vec::new(),
-        status: STATUS_DRIVER_OK,
+        status: STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
         features_sel: 0,
-        driver_features: 0,
+        driver_features: VIRTIO_F_VERSION_1,
         driver_features_sel: 0,
         queue_sel: 1,
         queues: vec![
@@ -337,7 +351,7 @@ fn restore_rejects_invalid_queue_selector_size_and_guest_memory_span() {
 
     let mut invalid_selector = valid_restored_snapshot();
     invalid_selector.queue_sel = 2;
-    let err = transport.restore(&invalid_selector).unwrap_err();
+    let err = transport.prepare_restore(&invalid_selector).unwrap_err();
     assert!(
         err.to_string().contains("selector is out of range"),
         "{err:#}"
@@ -345,20 +359,20 @@ fn restore_rejects_invalid_queue_selector_size_and_guest_memory_span() {
 
     let mut zero_size = valid_restored_snapshot();
     zero_size.queues[0].num = 0;
-    let err = transport.restore(&zero_size).unwrap_err();
-    assert!(err.to_string().contains("nonzero size"), "{err:#}");
+    let err = transport.prepare_restore(&zero_size).unwrap_err();
+    assert!(err.to_string().contains("zero size"), "{err:#}");
 
     let mut too_large = valid_restored_snapshot();
     too_large.queues[0].num = 257;
-    let err = transport.restore(&too_large).unwrap_err();
+    let err = transport.prepare_restore(&too_large).unwrap_err();
     assert!(
         err.to_string().contains("exceeds device maximum"),
         "{err:#}"
     );
 
     let mut outside_memory = valid_restored_snapshot();
-    outside_memory.queues[0].desc_lo = 4090;
-    let err = transport.restore(&outside_memory).unwrap_err();
+    outside_memory.queues[0].desc_lo = 4080;
+    let err = transport.prepare_restore(&outside_memory).unwrap_err();
     assert!(err.to_string().contains("outside guest memory"), "{err:#}");
     assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
 }
@@ -370,7 +384,7 @@ fn restore_rejects_driver_ok_status_without_activation() {
     let mut snapshot = valid_restored_snapshot();
     snapshot.activated = false;
 
-    let err = transport.restore(&snapshot).unwrap_err();
+    let err = transport.prepare_restore(&snapshot).unwrap_err();
 
     assert!(err.to_string().contains("DRIVER_OK"), "{err:#}");
     assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
@@ -383,7 +397,7 @@ fn restore_rejects_activation_without_driver_ok_status() {
     let mut snapshot = valid_restored_snapshot();
     snapshot.status &= !STATUS_DRIVER_OK;
 
-    let err = transport.restore(&snapshot).unwrap_err();
+    let err = transport.prepare_restore(&snapshot).unwrap_err();
 
     assert!(err.to_string().contains("DRIVER_OK"), "{err:#}");
     assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
@@ -396,7 +410,7 @@ fn stateless_device_rejects_nonempty_checkpoint_state_before_activation() {
     let mut snapshot = valid_restored_snapshot();
     snapshot.device_state = b"unexpected".to_vec();
 
-    let err = transport.restore(&snapshot).unwrap_err();
+    let err = transport.prepare_restore(&snapshot).unwrap_err();
 
     assert!(
         err.to_string().contains("stateless virtio device"),
@@ -423,7 +437,7 @@ fn restore_rejects_wrong_device_type_before_activation() {
         activated: true,
     };
 
-    let err = t.restore(&snapshot).unwrap_err();
+    let err = t.prepare_restore(&snapshot).unwrap_err();
 
     assert!(err.to_string().contains("device type mismatch"), "{err:#}");
     assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
@@ -441,7 +455,7 @@ fn restore_rehydrates_device_state_before_queue_activation() {
             99
         }
         fn features(&self) -> u64 {
-            0
+            VIRTIO_F_VERSION_1
         }
         fn queue_max_sizes(&self) -> &[u16] {
             &[8]
@@ -450,6 +464,14 @@ fn restore_rehydrates_device_state_before_queue_activation() {
         fn write_config(&self, _offset: u64, _data: &[u8]) {}
         fn activate(&mut self, _mem: GuestMemoryRef, _queues: &[QueueConfig]) {
             self.events.lock().unwrap().push("activate");
+        }
+        fn restore_activate(
+            &mut self,
+            mem: GuestMemoryRef,
+            queues: &[QueueConfig],
+        ) -> anyhow::Result<()> {
+            self.activate(mem, queues);
+            Ok(())
         }
         fn queue_notify(&mut self, _queue_index: u32) -> bool {
             false
@@ -475,19 +497,19 @@ fn restore_rehydrates_device_state_before_queue_activation() {
     let snapshot = VirtioMmioSnapshot {
         device_type: 99,
         device_state: b"saved".to_vec(),
-        status: STATUS_DRIVER_OK,
+        status: STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
         features_sel: 0,
-        driver_features: 0,
+        driver_features: VIRTIO_F_VERSION_1,
         driver_features_sel: 0,
         queue_sel: 0,
         queues: vec![QueueSnapshot {
             num: 8,
             ready: true,
-            desc_lo: 0,
+            desc_lo: 0x100,
             desc_hi: 0,
-            driver_lo: 0,
+            driver_lo: 0x300,
             driver_hi: 0,
-            device_lo: 0,
+            device_lo: 0x500,
             device_hi: 0,
         }],
         interrupt_status: 0,
@@ -495,9 +517,158 @@ fn restore_rehydrates_device_state_before_queue_activation() {
         activated: true,
     };
 
-    transport.restore(&snapshot).unwrap();
+    transport.prepare_restore(&snapshot).unwrap();
+    assert_eq!(*events.lock().unwrap(), vec!["restore"]);
+    transport.activate_restored().unwrap();
 
     assert_eq!(*events.lock().unwrap(), vec!["restore", "activate"]);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restore_rejects_unsupported_selectors_and_feature_bits_before_activation() {
+    let (transport, activated, _) = make_transport();
+
+    let mut features_selector = valid_restored_snapshot();
+    features_selector.features_sel = 2;
+    let err = transport.prepare_restore(&features_selector).unwrap_err();
+    assert!(
+        err.to_string().contains("device feature selector"),
+        "{err:#}"
+    );
+
+    let mut driver_selector = valid_restored_snapshot();
+    driver_selector.driver_features_sel = 2;
+    let err = transport.prepare_restore(&driver_selector).unwrap_err();
+    assert!(
+        err.to_string().contains("driver feature selector"),
+        "{err:#}"
+    );
+
+    let mut unsupported = valid_restored_snapshot();
+    unsupported.driver_features |= 1 << 7;
+    let err = transport.prepare_restore(&unsupported).unwrap_err();
+    assert!(err.to_string().contains("unsupported feature"), "{err:#}");
+
+    let mut missing_version = valid_restored_snapshot();
+    missing_version.driver_features &= !VIRTIO_F_VERSION_1;
+    let err = transport.prepare_restore(&missing_version).unwrap_err();
+    assert!(err.to_string().contains("VERSION_1"), "{err:#}");
+    assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restore_rejects_unknown_or_out_of_order_status_and_interrupt_bits() {
+    let (transport, activated, _) = make_transport();
+
+    let mut unknown_status = valid_restored_snapshot();
+    unknown_status.status |= 1 << 5;
+    let err = transport.prepare_restore(&unknown_status).unwrap_err();
+    assert!(err.to_string().contains("unknown status"), "{err:#}");
+
+    let mut missing_driver = valid_restored_snapshot();
+    missing_driver.status &= !STATUS_DRIVER;
+    let err = transport.prepare_restore(&missing_driver).unwrap_err();
+    assert!(err.to_string().contains("status dependency"), "{err:#}");
+
+    let mut invalid_interrupt = valid_restored_snapshot();
+    invalid_interrupt.interrupt_status = 4;
+    let err = transport.prepare_restore(&invalid_interrupt).unwrap_err();
+    assert!(err.to_string().contains("interrupt status"), "{err:#}");
+    assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restore_rejects_ready_queue_shape_alignment_and_overlap() {
+    let (transport, activated, _) = make_transport();
+
+    let mut non_power_of_two = valid_restored_snapshot();
+    non_power_of_two.queues[0].num = 7;
+    let err = transport.prepare_restore(&non_power_of_two).unwrap_err();
+    assert!(err.to_string().contains("power of two"), "{err:#}");
+
+    let mut not_ready = valid_restored_snapshot();
+    not_ready.queues[0].ready = false;
+    let err = transport.prepare_restore(&not_ready).unwrap_err();
+    assert!(err.to_string().contains("is not ready"), "{err:#}");
+
+    let alignment_mutations: &[(&str, QueueSnapshotMutation)] = &[
+        ("descriptor", |queue: &mut QueueSnapshot| queue.desc_lo += 1),
+        ("available ring", |queue: &mut QueueSnapshot| {
+            queue.driver_lo += 1
+        }),
+        ("used ring", |queue: &mut QueueSnapshot| {
+            queue.device_lo += 2
+        }),
+    ];
+    for (field, mutate) in alignment_mutations {
+        let mut unaligned = valid_restored_snapshot();
+        mutate(&mut unaligned.queues[0]);
+        let err = transport.prepare_restore(&unaligned).unwrap_err();
+        assert!(err.to_string().contains(field), "{err:#}");
+        assert!(err.to_string().contains("aligned"), "{err:#}");
+    }
+
+    let mut within_queue_overlap = valid_restored_snapshot();
+    within_queue_overlap.queues[0].driver_lo = within_queue_overlap.queues[0].desc_lo;
+    let err = transport
+        .prepare_restore(&within_queue_overlap)
+        .unwrap_err();
+    assert!(err.to_string().contains("overlap"), "{err:#}");
+
+    let mut overlap = valid_restored_snapshot();
+    overlap.queues[1].desc_lo = overlap.queues[0].desc_lo;
+    let err = transport.prepare_restore(&overlap).unwrap_err();
+    assert!(err.to_string().contains("overlap"), "{err:#}");
+    assert!(!activated.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restored_activation_error_is_propagated() {
+    struct FailingDevice;
+
+    impl VirtioDevice for FailingDevice {
+        fn device_type(&self) -> u32 {
+            99
+        }
+        fn features(&self) -> u64 {
+            VIRTIO_F_VERSION_1
+        }
+        fn queue_max_sizes(&self) -> &[u16] {
+            &[8]
+        }
+        fn read_config(&self, _offset: u64, _data: &mut [u8]) {}
+        fn write_config(&self, _offset: u64, _data: &[u8]) {}
+        fn activate(&mut self, _mem: GuestMemoryRef, _queues: &[QueueConfig]) {}
+        fn restore_activate(
+            &mut self,
+            _mem: GuestMemoryRef,
+            _queues: &[QueueConfig],
+        ) -> anyhow::Result<()> {
+            anyhow::bail!("backend reconstruction failed")
+        }
+        fn queue_notify(&mut self, _queue_index: u32) -> bool {
+            false
+        }
+    }
+
+    let mem = GuestMemory::new(4096).unwrap();
+    let transport = VirtioMmioTransport::new(Box::new(FailingDevice), mem.clone_ref(RAM_BASE));
+    let mut snapshot = valid_restored_snapshot();
+    snapshot.device_type = 99;
+    snapshot.queues.truncate(1);
+    snapshot.queue_sel = 0;
+
+    transport.prepare_restore(&snapshot).unwrap();
+    let err = transport.activate_restored().unwrap_err();
+
+    assert!(
+        err.to_string().contains("backend reconstruction failed"),
+        "{err:#}"
+    );
 }
 
 // -----------------------------------------------------------------------

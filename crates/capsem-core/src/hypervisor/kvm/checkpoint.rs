@@ -21,7 +21,7 @@ use super::sys::{
 use super::virtio_mmio::{QueueSnapshot, VirtioMmioSnapshot};
 
 const MAGIC: &[u8; 16] = b"CAPSEM-KVM-CKPT\0";
-const VERSION: u32 = 8;
+const VERSION: u32 = 9;
 const HEADER_LEN: u64 = 16 + 4 + 4 + 8 + 4 + 4 + 4;
 const COPY_CHUNK_SIZE: usize = 1024 * 1024;
 const CHECKPOINT_PROGRESS_INTERVAL: u64 = 1024 * 1024 * 1024;

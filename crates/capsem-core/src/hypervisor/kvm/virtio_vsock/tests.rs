@@ -92,6 +92,17 @@ fn configured_queues() -> (GuestMemory, Vec<QueueConfig>) {
     (mem, queues)
 }
 
+fn checkpoint_fixture(guest_cid: u64, bases_present: u8, vring_bases: &[u32]) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(&VSOCK_CHECKPOINT_VERSION.to_le_bytes());
+    encoded.extend_from_slice(&guest_cid.to_le_bytes());
+    encoded.push(bases_present);
+    for base in vring_bases {
+        encoded.extend_from_slice(&base.to_le_bytes());
+    }
+    encoded
+}
+
 // -----------------------------------------------------------------------
 // CID validation
 // -----------------------------------------------------------------------
@@ -239,6 +250,88 @@ fn queue_avail_idx_reads_vring_avail_index() {
 }
 
 #[test]
+fn vsock_checkpoint_codec_version_tracks_cid_bound_shape() {
+    assert_eq!(VSOCK_CHECKPOINT_VERSION, 2);
+}
+
+#[test]
+fn vsock_checkpoint_inactive_state_is_nonempty_and_cid_bound() {
+    let mut device = dummy_device();
+    device.guest_cid = 41;
+    let expected = checkpoint_fixture(41, 0, &[]);
+
+    assert_eq!(device.checkpoint_state().unwrap(), expected);
+    device
+        .quiesce_with(&mut RecordingIoctl::new([0, 0]))
+        .unwrap();
+    let encoded = device.checkpoint_state().unwrap();
+
+    assert_eq!(encoded, expected);
+}
+
+#[test]
+fn vsock_checkpoint_active_state_binds_cid_and_both_bases() {
+    let mut device = active_dummy_device();
+    device.guest_cid = 41;
+    let mut ioctl = RecordingIoctl::new([37, 91]);
+
+    device.quiesce_with(&mut ioctl).unwrap();
+    let encoded = device.checkpoint_state().unwrap();
+
+    assert_eq!(encoded, checkpoint_fixture(41, 1, &[37, 91]));
+}
+
+#[test]
+fn vsock_checkpoint_restore_rejects_wrong_cid_without_mutation() {
+    let mut device = dummy_device();
+    let encoded = checkpoint_fixture(42, 1, &[17, 29]);
+
+    let error = device.restore_checkpoint_state(&encoded).unwrap_err();
+
+    assert!(
+        error.to_string().contains("CID identity mismatch"),
+        "{error:#}"
+    );
+    assert!(device.checkpoint_state.is_none());
+    assert!(device.restore_vring_bases.is_none());
+}
+
+#[test]
+fn vsock_checkpoint_restore_rejects_non_boolean_bases_presence() {
+    for invalid in [2, u8::MAX] {
+        let mut device = dummy_device();
+        let encoded = checkpoint_fixture(device.guest_cid, invalid, &[]);
+
+        let error = device.restore_checkpoint_state(&encoded).unwrap_err();
+
+        assert!(
+            error.to_string().contains("bases-present flag"),
+            "invalid={invalid}: {error:#}"
+        );
+        assert!(device.checkpoint_state.is_none());
+        assert!(device.restore_vring_bases.is_none());
+    }
+}
+
+#[test]
+fn vsock_checkpoint_restore_rejects_presence_payload_mismatch() {
+    let device = dummy_device();
+    let malformed = [
+        checkpoint_fixture(device.guest_cid, 0, &[17, 29]),
+        checkpoint_fixture(device.guest_cid, 1, &[]),
+    ];
+
+    for encoded in malformed {
+        let mut restored = dummy_device();
+        let error = restored.restore_checkpoint_state(&encoded).unwrap_err();
+
+        assert!(error.to_string().contains("checkpoint length"), "{error:#}");
+        assert!(restored.checkpoint_state.is_none());
+        assert!(restored.restore_vring_bases.is_none());
+    }
+}
+
+#[test]
 fn checkpoint_quiesce_stops_backend_before_capturing_vring_bases() {
     let mut device = active_dummy_device();
     let mut ioctl = RecordingIoctl::new([37, 91]);
@@ -254,7 +347,13 @@ fn checkpoint_quiesce_stops_backend_before_capturing_vring_bases() {
         ]
     );
     let encoded = device.checkpoint_state().unwrap();
-    assert_eq!(decode_vsock_checkpoint(&encoded).unwrap(), [37, 91]);
+    assert_eq!(
+        decode_vsock_checkpoint(&encoded).unwrap(),
+        VsockCheckpointState {
+            guest_cid: device.guest_cid,
+            vring_bases: Some([37, 91]),
+        }
+    );
 }
 
 #[test]
@@ -273,9 +372,8 @@ fn checkpoint_quiesce_fails_before_capturing_state_when_stop_fails() {
 fn warm_restore_applies_captured_bases_before_restarting_backend() {
     let mut device = dummy_device();
     device.vhost_fd = Some(create_eventfd().unwrap());
-    device
-        .restore_checkpoint_state(&encode_vsock_checkpoint([17, 29]))
-        .unwrap();
+    let state = encode_vsock_checkpoint(device.guest_cid, Some([17, 29]));
+    device.restore_checkpoint_state(&state).unwrap();
     let (mem, queues) = configured_queues();
     let mut ioctl = RecordingIoctl::new([0, 0]);
 
@@ -308,9 +406,8 @@ fn warm_restore_applies_captured_bases_before_restarting_backend() {
 fn warm_restore_restart_failure_is_returned_and_device_stays_inactive() {
     let mut device = dummy_device();
     device.vhost_fd = Some(create_eventfd().unwrap());
-    device
-        .restore_checkpoint_state(&encode_vsock_checkpoint([17, 29]))
-        .unwrap();
+    let state = encode_vsock_checkpoint(device.guest_cid, Some([17, 29]));
+    device.restore_checkpoint_state(&state).unwrap();
     let (mem, queues) = configured_queues();
     let mut ioctl = RecordingIoctl::failing(VHOST_VSOCK_SET_RUNNING);
 
@@ -336,7 +433,7 @@ fn warm_restore_rejects_malformed_backend_state_before_any_ioctl() {
 #[test]
 fn warm_restore_rejects_trailing_backend_state_bytes() {
     let mut device = dummy_device();
-    let mut encoded = encode_vsock_checkpoint([17, 29]);
+    let mut encoded = encode_vsock_checkpoint(device.guest_cid, Some([17, 29]));
     encoded.push(0);
 
     let error = device.restore_checkpoint_state(&encoded).unwrap_err();
@@ -349,7 +446,8 @@ fn warm_restore_rejects_trailing_backend_state_bytes() {
 fn warm_restore_requires_captured_bases_before_any_ioctl() {
     let mut device = dummy_device();
     device.vhost_fd = Some(create_eventfd().unwrap());
-    device.restore_checkpoint_state(&[]).unwrap();
+    let state = encode_vsock_checkpoint(device.guest_cid, None);
+    device.restore_checkpoint_state(&state).unwrap();
     let (mem, queues) = configured_queues();
     let mut ioctl = RecordingIoctl::new([0, 0]);
 

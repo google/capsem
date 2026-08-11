@@ -56,7 +56,17 @@ const STATUS_ACKNOWLEDGE: u32 = 1;
 const STATUS_DRIVER: u32 = 2;
 const STATUS_FEATURES_OK: u32 = 8;
 const STATUS_DRIVER_OK: u32 = 4;
+const STATUS_DEVICE_NEEDS_RESET: u32 = 64;
 const STATUS_FAILED: u32 = 128;
+const STATUS_KNOWN_MASK: u32 = STATUS_ACKNOWLEDGE
+    | STATUS_DRIVER
+    | STATUS_DRIVER_OK
+    | STATUS_FEATURES_OK
+    | STATUS_DEVICE_NEEDS_RESET
+    | STATUS_FAILED;
+
+const VIRTIO_F_VERSION_1: u64 = 1 << 32;
+const INTERRUPT_KNOWN_MASK: u32 = 0b11;
 
 // ---------------------------------------------------------------------------
 // VirtioDevice trait
@@ -116,10 +126,7 @@ pub(super) trait VirtioDevice: Send {
     /// Activate restored queues, returning backend reconstruction failures to
     /// the checkpoint loader. Cold activation remains best-effort for the
     /// guest-driven DRIVER_OK transition.
-    fn restore_activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) -> Result<()> {
-        self.activate(mem, queues);
-        Ok(())
-    }
+    fn restore_activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) -> Result<()>;
     /// Whether the transport should raise the virtio-mmio used-buffer IRQ
     /// after queue processing. Vhost-backed devices wire their own callfd.
     fn uses_mmio_interrupt(&self) -> bool {
@@ -251,6 +258,8 @@ struct TransportState {
     interrupt_status: Arc<AtomicU32>,
     config_generation: u32,
     activated: bool,
+    restore_prepared: bool,
+    restore_activation_pending: bool,
     mem: GuestMemoryRef,
     interrupt_fd: Option<OwnedFd>,
 }
@@ -277,6 +286,8 @@ impl VirtioMmioTransport {
                 interrupt_status: Arc::new(AtomicU32::new(0)),
                 config_generation: 0,
                 activated: false,
+                restore_prepared: false,
+                restore_activation_pending: false,
                 mem,
                 interrupt_fd: None,
             }),
@@ -341,8 +352,16 @@ impl VirtioMmioTransport {
     }
 
     #[cfg(target_arch = "x86_64")]
-    pub fn restore(&self, snapshot: &VirtioMmioSnapshot) -> Result<()> {
+    pub fn device_type(&self) -> u32 {
+        self.state.lock().unwrap().device.device_type()
+    }
+
+    /// Validate and rehydrate checkpoint state without starting any device
+    /// backend. KVM prepares every transport before activating the first one.
+    #[cfg(target_arch = "x86_64")]
+    pub fn prepare_restore(&self, snapshot: &VirtioMmioSnapshot) -> Result<()> {
         let mut state = self.state.lock().unwrap();
+        ensure_restore_not_started(&state)?;
         if snapshot.device_type != state.device.device_type() {
             bail!(
                 "virtio-mmio device type mismatch: checkpoint={}, device={}",
@@ -350,6 +369,7 @@ impl VirtioMmioTransport {
                 state.device.device_type()
             );
         }
+        validate_restore_registers(&state, snapshot)?;
         let driver_ok = snapshot.status & STATUS_DRIVER_OK != 0;
         if snapshot.activated != driver_ok {
             bail!(
@@ -371,6 +391,7 @@ impl VirtioMmioTransport {
             );
         }
         let max_sizes = state.device.queue_max_sizes();
+        let mut ranges = Vec::new();
         for (index, queue) in snapshot.queues.iter().enumerate() {
             if queue.num > max_sizes[index] {
                 bail!(
@@ -379,13 +400,20 @@ impl VirtioMmioTransport {
                     max_sizes[index]
                 );
             }
-            if snapshot.activated {
-                if queue.num == 0 || !queue.ready {
-                    bail!("activated virtio-mmio queue {index} is not ready with nonzero size");
+            if snapshot.activated && !queue.ready {
+                bail!("activated virtio-mmio queue {index} is not ready");
+            }
+            if queue.ready {
+                if queue.num == 0 {
+                    bail!("ready virtio-mmio queue {index} has zero size");
                 }
-                validate_queue_memory(&state.mem, index, queue)?;
+                if !queue.num.is_power_of_two() {
+                    bail!("ready virtio-mmio queue {index} size is not a power of two");
+                }
+                ranges.extend(validate_queue_memory(&state.mem, index, queue)?);
             }
         }
+        validate_queue_nonoverlap(&mut ranges)?;
 
         // A device backend must be fully reconstructed before activation can
         // observe the restored virtqueue addresses.
@@ -404,8 +432,24 @@ impl VirtioMmioTransport {
             .store(snapshot.interrupt_status, Ordering::SeqCst);
         state.config_generation = snapshot.config_generation;
         state.activated = snapshot.activated;
+        state.restore_prepared = true;
+        state.restore_activation_pending = snapshot.activated;
 
-        if state.activated {
+        Ok(())
+    }
+
+    /// Activate a transport previously prepared by `prepare_restore`.
+    #[cfg(target_arch = "x86_64")]
+    pub fn activate_restored(&self) -> Result<()> {
+        let mut state = self.state.lock().unwrap();
+        if !state.restore_prepared {
+            bail!("virtio-mmio restore activation requested before preparation");
+        }
+        let should_activate = state.restore_activation_pending;
+        state.restore_prepared = false;
+        state.restore_activation_pending = false;
+
+        if should_activate {
             let mem = state.mem.clone();
             let queue_configs: Vec<QueueConfig> = state
                 .queues
@@ -416,10 +460,13 @@ impl VirtioMmioTransport {
                     device_addr: q.device_addr(),
                     size: q.num,
                     warm_restore: true,
-                    event_idx: snapshot.driver_features & VIRTIO_RING_F_EVENT_IDX != 0,
+                    event_idx: state.driver_features & VIRTIO_RING_F_EVENT_IDX != 0,
                 })
                 .collect();
-            state.device.restore_activate(mem, &queue_configs)?;
+            if let Err(error) = state.device.restore_activate(mem, &queue_configs) {
+                state.activated = false;
+                return Err(error);
+            }
             tracing::info!(
                 event_name = "virtio.mmio.restore_activate",
                 device_type = state.device.device_type(),
@@ -433,9 +480,108 @@ impl VirtioMmioTransport {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn validate_queue_memory(mem: &GuestMemoryRef, index: usize, queue: &QueueSnapshot) -> Result<()> {
+fn ensure_restore_not_started(state: &TransportState) -> Result<()> {
+    if state.activated || state.restore_prepared {
+        bail!("virtio-mmio transport is already activated or prepared for restore");
+    }
+    Ok(())
+}
+
+#[cfg(target_arch = "x86_64")]
+fn validate_restore_registers(state: &TransportState, snapshot: &VirtioMmioSnapshot) -> Result<()> {
+    if snapshot.features_sel > 1 {
+        bail!(
+            "virtio-mmio device feature selector is unsupported: {}",
+            snapshot.features_sel
+        );
+    }
+    if snapshot.driver_features_sel > 1 {
+        bail!(
+            "virtio-mmio driver feature selector is unsupported: {}",
+            snapshot.driver_features_sel
+        );
+    }
+    let unsupported = snapshot.driver_features & !state.device.features();
+    if unsupported != 0 {
+        bail!("virtio-mmio driver negotiated unsupported feature bits: {unsupported:#x}");
+    }
+    if snapshot.status & !STATUS_KNOWN_MASK != 0 {
+        bail!(
+            "virtio-mmio checkpoint contains unknown status bits: {:#x}",
+            snapshot.status & !STATUS_KNOWN_MASK
+        );
+    }
+    let dependencies = [
+        (STATUS_DRIVER, STATUS_ACKNOWLEDGE),
+        (STATUS_FEATURES_OK, STATUS_ACKNOWLEDGE | STATUS_DRIVER),
+        (
+            STATUS_DRIVER_OK,
+            STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK,
+        ),
+    ];
+    for (bit, required) in dependencies {
+        if snapshot.status & bit != 0 && snapshot.status & required != required {
+            bail!("virtio-mmio status dependency violation: bit {bit:#x} requires {required:#x}");
+        }
+    }
+    if snapshot.status & STATUS_FEATURES_OK != 0
+        && snapshot.driver_features & VIRTIO_F_VERSION_1 == 0
+    {
+        bail!("virtio-mmio FEATURES_OK checkpoint did not negotiate VIRTIO_F_VERSION_1");
+    }
+    if snapshot.interrupt_status & !INTERRUPT_KNOWN_MASK != 0 {
+        bail!(
+            "virtio-mmio checkpoint contains unknown interrupt status bits: {:#x}",
+            snapshot.interrupt_status & !INTERRUPT_KNOWN_MASK
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_arch = "x86_64")]
+#[derive(Debug)]
+pub(super) struct QueueMemoryRange {
+    pub(super) start: u64,
+    pub(super) end: u64,
+    pub(super) queue: usize,
+    pub(super) name: &'static str,
+}
+
+#[cfg(target_arch = "x86_64")]
+fn validate_queue_memory(
+    mem: &GuestMemoryRef,
+    index: usize,
+    queue: &QueueSnapshot,
+) -> Result<[QueueMemoryRange; 3]> {
+    let addresses = [
+        (queue.desc_addr(), 16, "descriptor"),
+        (queue.driver_addr(), 2, "available ring"),
+        (queue.device_addr(), 4, "used ring"),
+    ];
+    for (address, alignment, name) in addresses {
+        if address % alignment != 0 {
+            bail!("virtio-mmio queue {index} {name} address is not {alignment}-byte aligned");
+        }
+    }
+    let ranges = queue_memory_ranges(index, queue)?;
+    for range in &ranges {
+        if mem
+            .gpa_range_to_host(range.start, range.end - range.start)
+            .is_none()
+        {
+            bail!(
+                "virtio-mmio queue {index} {} is outside guest memory",
+                range.name
+            );
+        }
+    }
+    Ok(ranges)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn queue_memory_ranges(index: usize, queue: &QueueSnapshot) -> Result<[QueueMemoryRange; 3]> {
     let size = u64::from(queue.num);
-    let ranges = [
+    let spans = [
         (
             queue.desc_addr(),
             size.checked_mul(16).context("descriptor span overflow")?,
@@ -456,9 +602,50 @@ fn validate_queue_memory(mem: &GuestMemoryRef, index: usize, queue: &QueueSnapsh
             "used ring",
         ),
     ];
-    for (address, len, name) in ranges {
-        if mem.gpa_range_to_host(address, len).is_none() {
-            bail!("virtio-mmio queue {index} {name} is outside guest memory");
+    let validate_range =
+        |(address, len, name): (u64, u64, &'static str)| -> Result<QueueMemoryRange> {
+            let end = address
+                .checked_add(len)
+                .with_context(|| format!("virtio-mmio queue {index} {name} address overflow"))?;
+            Ok(QueueMemoryRange {
+                start: address,
+                end,
+                queue: index,
+                name,
+            })
+        };
+    Ok([
+        validate_range(spans[0])?,
+        validate_range(spans[1])?,
+        validate_range(spans[2])?,
+    ])
+}
+
+#[cfg(target_arch = "x86_64")]
+pub(super) fn ready_queue_memory_ranges(
+    snapshot: &VirtioMmioSnapshot,
+) -> Result<Vec<QueueMemoryRange>> {
+    let mut ranges = Vec::new();
+    for (index, queue) in snapshot.queues.iter().enumerate() {
+        if queue.ready {
+            ranges.extend(queue_memory_ranges(index, queue)?);
+        }
+    }
+    Ok(ranges)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn validate_queue_nonoverlap(ranges: &mut [QueueMemoryRange]) -> Result<()> {
+    ranges.sort_unstable_by_key(|range| (range.start, range.end));
+    for pair in ranges.windows(2) {
+        if pair[0].end > pair[1].start {
+            bail!(
+                "virtio-mmio queue memory overlap: queue {} {} overlaps queue {} {}",
+                pair[0].queue,
+                pair[0].name,
+                pair[1].queue,
+                pair[1].name
+            );
         }
     }
     Ok(())

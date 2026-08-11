@@ -7,12 +7,13 @@
 use std::collections::HashMap;
 use std::io::{Seek, SeekFrom, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Once};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use io_uring::{opcode, types, IoUring};
 use metrics::{describe_counter, describe_histogram, Unit};
 
@@ -31,6 +32,10 @@ const SECTOR_SIZE: u64 = 512;
 
 /// Maximum device ID length (virtio spec).
 const VIRTIO_BLK_ID_LEN: usize = 20;
+
+const BLOCK_CHECKPOINT_MAGIC: &[u8; 8] = b"CPSBLK\0\0";
+const BLOCK_CHECKPOINT_VERSION: u32 = 1;
+const BLOCK_CHECKPOINT_STATE_LEN: usize = 8 + 4 + 8 + 8 + 8 + 8 + 1 + VIRTIO_BLK_ID_LEN;
 
 /// Size of one virtio discard segment.
 const DISCARD_SEGMENT_SIZE: usize = 16;
@@ -77,8 +82,12 @@ static DESCRIBE_METRICS: Once = Once::new();
 pub(super) struct VirtioBlockDevice {
     file: std::fs::File,
     read_only: bool,
+    backing_device: u64,
+    backing_inode: u64,
+    backing_len: u64,
     capacity_sectors: u64,
     device_id: [u8; VIRTIO_BLK_ID_LEN],
+    restore_identity_validated: bool,
     queue: Option<VirtQueue>,
     mem: Option<GuestMemoryRef>,
     irq_fd: Option<RawFd>,
@@ -86,6 +95,72 @@ pub(super) struct VirtioBlockDevice {
     notify_fd: Option<OwnedFd>,
     control_tx: Option<mpsc::Sender<BlockWorkerCommand>>,
     worker_handle: Option<std::thread::JoinHandle<()>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BlockCheckpointState {
+    backing_device: u64,
+    backing_inode: u64,
+    backing_len: u64,
+    capacity_sectors: u64,
+    read_only: bool,
+    device_id: [u8; VIRTIO_BLK_ID_LEN],
+}
+
+impl BlockCheckpointState {
+    fn encode(&self) -> Vec<u8> {
+        let mut encoded = Vec::with_capacity(BLOCK_CHECKPOINT_STATE_LEN);
+        encoded.extend_from_slice(BLOCK_CHECKPOINT_MAGIC);
+        encoded.extend_from_slice(&BLOCK_CHECKPOINT_VERSION.to_le_bytes());
+        encoded.extend_from_slice(&self.backing_device.to_le_bytes());
+        encoded.extend_from_slice(&self.backing_inode.to_le_bytes());
+        encoded.extend_from_slice(&self.backing_len.to_le_bytes());
+        encoded.extend_from_slice(&self.capacity_sectors.to_le_bytes());
+        encoded.push(u8::from(self.read_only));
+        encoded.extend_from_slice(&self.device_id);
+        debug_assert_eq!(encoded.len(), BLOCK_CHECKPOINT_STATE_LEN);
+        encoded
+    }
+
+    fn decode(encoded: &[u8]) -> Result<Self> {
+        ensure!(
+            encoded.len() == BLOCK_CHECKPOINT_STATE_LEN,
+            "invalid virtio-blk checkpoint length: {}",
+            encoded.len()
+        );
+        ensure!(
+            &encoded[..BLOCK_CHECKPOINT_MAGIC.len()] == BLOCK_CHECKPOINT_MAGIC,
+            "bad virtio-blk checkpoint magic"
+        );
+        let version = read_checkpoint_u32(encoded, 8);
+        ensure!(
+            version == BLOCK_CHECKPOINT_VERSION,
+            "unsupported virtio-blk checkpoint version: {version}"
+        );
+        let read_only = match encoded[44] {
+            0 => false,
+            1 => true,
+            value => bail!("invalid virtio-blk checkpoint boolean: {value}"),
+        };
+        let mut device_id = [0u8; VIRTIO_BLK_ID_LEN];
+        device_id.copy_from_slice(&encoded[45..]);
+        Ok(Self {
+            backing_device: read_checkpoint_u64(encoded, 12),
+            backing_inode: read_checkpoint_u64(encoded, 20),
+            backing_len: read_checkpoint_u64(encoded, 28),
+            capacity_sectors: read_checkpoint_u64(encoded, 36),
+            read_only,
+            device_id,
+        })
+    }
+}
+
+fn read_checkpoint_u32(encoded: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes(encoded[offset..offset + 4].try_into().unwrap())
+}
+
+fn read_checkpoint_u64(encoded: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes(encoded[offset..offset + 8].try_into().unwrap())
 }
 
 enum BlockWorkerCommand {
@@ -106,10 +181,10 @@ impl VirtioBlockDevice {
             .open(path)
             .with_context(|| format!("open block device: {}", path.display()))?;
 
-        let file_size = file
+        let metadata = file
             .metadata()
-            .with_context(|| format!("stat block device: {}", path.display()))?
-            .len();
+            .with_context(|| format!("stat block device: {}", path.display()))?;
+        let file_size = metadata.len();
         let capacity_sectors = file_size / SECTOR_SIZE;
 
         let mut device_id = [0u8; VIRTIO_BLK_ID_LEN];
@@ -122,8 +197,12 @@ impl VirtioBlockDevice {
         Ok(Self {
             file,
             read_only,
+            backing_device: metadata.dev(),
+            backing_inode: metadata.ino(),
+            backing_len: file_size,
             capacity_sectors,
             device_id,
+            restore_identity_validated: false,
             queue: None,
             mem: None,
             irq_fd: None,
@@ -132,6 +211,137 @@ impl VirtioBlockDevice {
             control_tx: None,
             worker_handle: None,
         })
+    }
+
+    fn validate_open_backing_file(&self) -> Result<()> {
+        let metadata = self
+            .file
+            .metadata()
+            .context("stat opened virtio-blk backing file")?;
+        ensure!(
+            metadata.dev() == self.backing_device && metadata.ino() == self.backing_inode,
+            "opened virtio-blk backing file identity changed"
+        );
+        ensure!(
+            metadata.len() == self.backing_len,
+            "opened virtio-blk backing file length changed: expected={}, actual={}",
+            self.backing_len,
+            metadata.len()
+        );
+        ensure!(
+            self.capacity_sectors == self.backing_len / SECTOR_SIZE,
+            "virtio-blk backing capacity is inconsistent with its exact length"
+        );
+        let flags = unsafe { libc::fcntl(self.file.as_raw_fd(), libc::F_GETFL) };
+        if flags < 0 {
+            return Err(std::io::Error::last_os_error())
+                .context("read opened virtio-blk backing file access mode");
+        }
+        let access_mode = flags & libc::O_ACCMODE;
+        let expected_mode = if self.read_only {
+            libc::O_RDONLY
+        } else {
+            libc::O_RDWR
+        };
+        ensure!(
+            access_mode == expected_mode,
+            "opened virtio-blk backing file access mode drifted"
+        );
+        Ok(())
+    }
+
+    fn activate_inner(
+        &mut self,
+        mem: GuestMemoryRef,
+        queues: &[QueueConfig],
+        fail_closed: bool,
+    ) -> Result<()> {
+        let Some(q) = queues.first().filter(|q| q.size > 0) else {
+            if fail_closed {
+                bail!("restored virtio-blk request queue is unavailable");
+            }
+            self.mem = Some(mem);
+            return Ok(());
+        };
+        let queue = if q.warm_restore {
+            VirtQueue::new_restored_with_event_idx(
+                mem.clone(),
+                q.desc_addr,
+                q.driver_addr,
+                q.device_addr,
+                q.size,
+                q.event_idx,
+            )
+        } else {
+            VirtQueue::new_with_event_idx(
+                mem.clone(),
+                q.desc_addr,
+                q.driver_addr,
+                q.device_addr,
+                q.size,
+                q.event_idx,
+            )
+        };
+
+        if let (Some(irq_fd), Some(interrupt_status), Some(notify_fd)) = (
+            self.irq_fd,
+            self.interrupt_status.as_ref().cloned(),
+            self.notify_fd.as_ref(),
+        ) {
+            match (self.file.try_clone(), dup_owned_fd(notify_fd.as_raw_fd())) {
+                (Ok(file), Ok(worker_notify_fd)) => {
+                    let (tx, rx) = mpsc::channel();
+                    let read_only = self.read_only;
+                    let capacity_sectors = self.capacity_sectors;
+                    let device_id = self.device_id;
+                    let worker_mem = mem.clone();
+                    let spawn_result = std::thread::Builder::new()
+                        .name("virtio-blk-ioeventfd".into())
+                        .spawn(move || {
+                            block_worker_loop(BlockWorker {
+                                file,
+                                read_only,
+                                capacity_sectors,
+                                device_id,
+                                mem: worker_mem,
+                                queue,
+                                notify_fd: worker_notify_fd,
+                                rx,
+                                irq_fd,
+                                interrupt_status,
+                            })
+                        });
+                    let handle = if fail_closed {
+                        spawn_result.context("spawn restored virtio-blk ioeventfd worker")?
+                    } else {
+                        spawn_result.expect("failed to spawn virtio-blk ioeventfd worker")
+                    };
+                    self.control_tx = Some(tx);
+                    self.worker_handle = Some(handle);
+                    self.queue = None;
+                }
+                (file_result, notify_result) => {
+                    let file_error = file_result.err();
+                    let notify_error = notify_result.err();
+                    if fail_closed {
+                        bail!(
+                            "restore virtio-blk ioeventfd worker resources: file={file_error:?}, notify={notify_error:?}"
+                        );
+                    }
+                    tracing::warn!(
+                        event_name = "virtio.blk.worker_disabled",
+                        ?file_error,
+                        ?notify_error,
+                        "virtio-blk ioeventfd worker disabled"
+                    );
+                    self.queue = Some(queue);
+                }
+            }
+        } else {
+            self.queue = Some(queue);
+        }
+        self.mem = Some(mem);
+        Ok(())
     }
 
     pub fn with_async_notify(
@@ -1301,77 +1511,8 @@ impl VirtioDevice for VirtioBlockDevice {
     }
 
     fn activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) {
-        if let Some(q) = queues.first() {
-            if q.size > 0 {
-                let queue = if q.warm_restore {
-                    VirtQueue::new_restored_with_event_idx(
-                        mem.clone(),
-                        q.desc_addr,
-                        q.driver_addr,
-                        q.device_addr,
-                        q.size,
-                        q.event_idx,
-                    )
-                } else {
-                    VirtQueue::new_with_event_idx(
-                        mem.clone(),
-                        q.desc_addr,
-                        q.driver_addr,
-                        q.device_addr,
-                        q.size,
-                        q.event_idx,
-                    )
-                };
-
-                if let (Some(irq_fd), Some(interrupt_status), Some(notify_fd)) = (
-                    self.irq_fd,
-                    self.interrupt_status.as_ref().cloned(),
-                    self.notify_fd.as_ref(),
-                ) {
-                    match (self.file.try_clone(), dup_owned_fd(notify_fd.as_raw_fd())) {
-                        (Ok(file), Ok(worker_notify_fd)) => {
-                            let (tx, rx) = mpsc::channel();
-                            let read_only = self.read_only;
-                            let capacity_sectors = self.capacity_sectors;
-                            let device_id = self.device_id;
-                            let worker_mem = mem.clone();
-                            let handle = std::thread::Builder::new()
-                                .name("virtio-blk-ioeventfd".into())
-                                .spawn(move || {
-                                    block_worker_loop(BlockWorker {
-                                        file,
-                                        read_only,
-                                        capacity_sectors,
-                                        device_id,
-                                        mem: worker_mem,
-                                        queue,
-                                        notify_fd: worker_notify_fd,
-                                        rx,
-                                        irq_fd,
-                                        interrupt_status,
-                                    })
-                                })
-                                .expect("failed to spawn virtio-blk ioeventfd worker");
-                            self.control_tx = Some(tx);
-                            self.worker_handle = Some(handle);
-                            self.queue = None;
-                        }
-                        (file_result, notify_result) => {
-                            tracing::warn!(
-                                event_name = "virtio.blk.worker_disabled",
-                                file_error = ?file_result.err(),
-                                notify_error = ?notify_result.err(),
-                                "virtio-blk ioeventfd worker disabled"
-                            );
-                            self.queue = Some(queue);
-                        }
-                    }
-                } else {
-                    self.queue = Some(queue);
-                }
-            }
-        }
-        self.mem = Some(mem);
+        self.activate_inner(mem, queues, false)
+            .expect("cold virtio-blk activation is infallible");
     }
 
     fn queue_notify(&mut self, queue_index: u32) -> bool {
@@ -1445,6 +1586,69 @@ impl VirtioDevice for VirtioBlockDevice {
         ::metrics::histogram!(METRIC_QUIESCE_DRAIN_DURATION_MS, "backend" => "ioeventfd")
             .record(duration_ms(started.elapsed()));
         result.map(|_| ())
+    }
+
+    fn checkpoint_state(&mut self) -> Result<Vec<u8>> {
+        self.validate_open_backing_file()?;
+        Ok(BlockCheckpointState {
+            backing_device: self.backing_device,
+            backing_inode: self.backing_inode,
+            backing_len: self.backing_len,
+            capacity_sectors: self.capacity_sectors,
+            read_only: self.read_only,
+            device_id: self.device_id,
+        }
+        .encode())
+    }
+
+    fn restore_checkpoint_state(&mut self, encoded: &[u8]) -> Result<()> {
+        ensure!(
+            self.queue.is_none()
+                && self.mem.is_none()
+                && self.control_tx.is_none()
+                && self.worker_handle.is_none(),
+            "cannot restore virtio-blk checkpoint identity after activation"
+        );
+        self.restore_identity_validated = false;
+        let checkpoint = BlockCheckpointState::decode(encoded)?;
+        self.validate_open_backing_file()?;
+        ensure!(
+            checkpoint.backing_device == self.backing_device
+                && checkpoint.backing_inode == self.backing_inode,
+            "virtio-blk backing file identity mismatch"
+        );
+        ensure!(
+            checkpoint.backing_len == self.backing_len,
+            "virtio-blk backing file length mismatch: checkpoint={}, current={}",
+            checkpoint.backing_len,
+            self.backing_len
+        );
+        ensure!(
+            checkpoint.capacity_sectors == self.capacity_sectors,
+            "virtio-blk backing capacity mismatch: checkpoint={}, current={}",
+            checkpoint.capacity_sectors,
+            self.capacity_sectors
+        );
+        ensure!(
+            checkpoint.read_only == self.read_only,
+            "virtio-blk read-only role mismatch"
+        );
+        ensure!(
+            checkpoint.device_id == self.device_id,
+            "virtio-blk guest-visible device ID mismatch"
+        );
+        self.restore_identity_validated = true;
+        Ok(())
+    }
+
+    fn restore_activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) -> Result<()> {
+        ensure!(
+            self.restore_identity_validated,
+            "virtio-blk checkpoint identity was not validated before activation"
+        );
+        self.validate_open_backing_file()?;
+        self.restore_identity_validated = false;
+        self.activate_inner(mem, queues, true)
     }
 
     fn uses_mmio_interrupt(&self) -> bool {

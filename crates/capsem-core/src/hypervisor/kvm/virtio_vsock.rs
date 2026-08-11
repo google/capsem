@@ -34,8 +34,12 @@ const VSOCK_NUM_QUEUES: usize = 3; // rx, tx, event
                                    // virtio-vsock device still exposes the event queue, but it is not passed to
                                    // VHOST_SET_VRING_* ioctls because the kernel backend has vqs[2].
 const VHOST_VSOCK_BACKEND_QUEUES: usize = 2;
-const VSOCK_CHECKPOINT_VERSION: u32 = 1;
-const VSOCK_CHECKPOINT_BYTES: usize = std::mem::size_of::<u32>() * (1 + VHOST_VSOCK_BACKEND_QUEUES);
+const VSOCK_CHECKPOINT_VERSION: u32 = 2;
+const VSOCK_CHECKPOINT_HEADER_BYTES: usize =
+    std::mem::size_of::<u32>() + std::mem::size_of::<u64>() + std::mem::size_of::<u8>();
+const VSOCK_CHECKPOINT_BASES_BYTES: usize = std::mem::size_of::<u32>() * VHOST_VSOCK_BACKEND_QUEUES;
+const VSOCK_CHECKPOINT_WITH_BASES_BYTES: usize =
+    VSOCK_CHECKPOINT_HEADER_BYTES + VSOCK_CHECKPOINT_BASES_BYTES;
 
 /// Reserved CIDs: 0 = hypervisor, 1 = reserved, 2 = host.
 const MIN_GUEST_CID: u32 = 3;
@@ -329,7 +333,7 @@ impl VhostVsockDevice {
 
     fn quiesce_with<I: VhostIoctl + ?Sized>(&mut self, ioctl: &mut I) -> Result<()> {
         if !self.activated {
-            self.checkpoint_state = Some(Vec::new());
+            self.checkpoint_state = Some(encode_vsock_checkpoint(self.guest_cid, None));
             return Ok(());
         }
         let vhost_fd = self
@@ -372,7 +376,7 @@ impl VhostVsockDevice {
             *base = state.num;
         }
 
-        self.checkpoint_state = Some(encode_vsock_checkpoint(vring_bases));
+        self.checkpoint_state = Some(encode_vsock_checkpoint(self.guest_cid, Some(vring_bases)));
         debug!(
             event_name = "virtio.vsock.quiesce",
             rx_base = vring_bases[0],
@@ -405,18 +409,39 @@ impl VhostVsockDevice {
     }
 }
 
-fn encode_vsock_checkpoint(vring_bases: [u32; VHOST_VSOCK_BACKEND_QUEUES]) -> Vec<u8> {
-    let mut encoded = Vec::with_capacity(VSOCK_CHECKPOINT_BYTES);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VsockCheckpointState {
+    guest_cid: u64,
+    vring_bases: Option<[u32; VHOST_VSOCK_BACKEND_QUEUES]>,
+}
+
+fn encode_vsock_checkpoint(
+    guest_cid: u64,
+    vring_bases: Option<[u32; VHOST_VSOCK_BACKEND_QUEUES]>,
+) -> Vec<u8> {
+    let capacity = if vring_bases.is_some() {
+        VSOCK_CHECKPOINT_WITH_BASES_BYTES
+    } else {
+        VSOCK_CHECKPOINT_HEADER_BYTES
+    };
+    let mut encoded = Vec::with_capacity(capacity);
     encoded.extend_from_slice(&VSOCK_CHECKPOINT_VERSION.to_le_bytes());
-    for base in vring_bases {
-        encoded.extend_from_slice(&base.to_le_bytes());
+    encoded.extend_from_slice(&guest_cid.to_le_bytes());
+    encoded.push(u8::from(vring_bases.is_some()));
+    if let Some(vring_bases) = vring_bases {
+        for base in vring_bases {
+            encoded.extend_from_slice(&base.to_le_bytes());
+        }
     }
     encoded
 }
 
-fn decode_vsock_checkpoint(encoded: &[u8]) -> Result<[u32; VHOST_VSOCK_BACKEND_QUEUES]> {
+fn decode_vsock_checkpoint(encoded: &[u8]) -> Result<VsockCheckpointState> {
     ensure!(
-        encoded.len() == VSOCK_CHECKPOINT_BYTES,
+        matches!(
+            encoded.len(),
+            VSOCK_CHECKPOINT_HEADER_BYTES | VSOCK_CHECKPOINT_WITH_BASES_BYTES
+        ),
         "invalid vhost-vsock checkpoint length: {}",
         encoded.len()
     );
@@ -425,16 +450,45 @@ fn decode_vsock_checkpoint(encoded: &[u8]) -> Result<[u32; VHOST_VSOCK_BACKEND_Q
         version == VSOCK_CHECKPOINT_VERSION,
         "unsupported vhost-vsock checkpoint version: {version}"
     );
-    let mut vring_bases = [0u32; VHOST_VSOCK_BACKEND_QUEUES];
-    for (index, base) in vring_bases.iter_mut().enumerate() {
-        let offset = std::mem::size_of::<u32>() * (index + 1);
-        *base = u32::from_le_bytes(encoded[offset..offset + 4].try_into().unwrap());
-        ensure!(
-            *base <= u16::MAX as u32,
-            "invalid vhost-vsock queue {index} vring base: {base}"
-        );
-    }
-    Ok(vring_bases)
+    let cid_offset = std::mem::size_of::<u32>();
+    let guest_cid = u64::from_le_bytes(
+        encoded[cid_offset..cid_offset + std::mem::size_of::<u64>()]
+            .try_into()
+            .unwrap(),
+    );
+    let presence_offset = cid_offset + std::mem::size_of::<u64>();
+    let vring_bases = match encoded[presence_offset] {
+        0 => {
+            ensure!(
+                encoded.len() == VSOCK_CHECKPOINT_HEADER_BYTES,
+                "invalid vhost-vsock checkpoint length for bases-present flag 0: {}",
+                encoded.len()
+            );
+            None
+        }
+        1 => {
+            ensure!(
+                encoded.len() == VSOCK_CHECKPOINT_WITH_BASES_BYTES,
+                "invalid vhost-vsock checkpoint length for bases-present flag 1: {}",
+                encoded.len()
+            );
+            let mut vring_bases = [0u32; VHOST_VSOCK_BACKEND_QUEUES];
+            for (index, base) in vring_bases.iter_mut().enumerate() {
+                let offset = VSOCK_CHECKPOINT_HEADER_BYTES + index * std::mem::size_of::<u32>();
+                *base = u32::from_le_bytes(encoded[offset..offset + 4].try_into().unwrap());
+                ensure!(
+                    *base <= u16::MAX as u32,
+                    "invalid vhost-vsock queue {index} vring base: {base}"
+                );
+            }
+            Some(vring_bases)
+        }
+        flag => bail!("invalid vhost-vsock bases-present flag: {flag}"),
+    };
+    Ok(VsockCheckpointState {
+        guest_cid,
+        vring_bases,
+    })
 }
 
 fn queue_used_idx(mem: &GuestMemoryRef, queue: &QueueConfig) -> Result<u32> {
@@ -724,7 +778,7 @@ impl VirtioDevice for VhostVsockDevice {
             !self.activated,
             "vhost-vsock must be quiesced before checkpoint state is read"
         );
-        Ok(Vec::new())
+        Ok(encode_vsock_checkpoint(self.guest_cid, None))
     }
 
     fn restore_checkpoint_state(&mut self, state: &[u8]) -> Result<()> {
@@ -732,14 +786,15 @@ impl VirtioDevice for VhostVsockDevice {
             !self.activated,
             "cannot restore vhost-vsock checkpoint state after activation"
         );
-        if state.is_empty() {
-            self.checkpoint_state = Some(Vec::new());
-            self.restore_vring_bases = None;
-            return Ok(());
-        }
-        let vring_bases = decode_vsock_checkpoint(state)?;
+        let checkpoint = decode_vsock_checkpoint(state)?;
+        ensure!(
+            checkpoint.guest_cid == self.guest_cid,
+            "vhost-vsock checkpoint CID identity mismatch: checkpoint={}, device={}",
+            checkpoint.guest_cid,
+            self.guest_cid
+        );
         self.checkpoint_state = Some(state.to_vec());
-        self.restore_vring_bases = Some(vring_bases);
+        self.restore_vring_bases = checkpoint.vring_bases;
         Ok(())
     }
 

@@ -418,6 +418,82 @@ impl Drop for VirtioFsDevice {
     }
 }
 
+impl VirtioFsDevice {
+    fn activate_fallible(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) -> Result<()> {
+        let hiprio_config = queues
+            .first()
+            .filter(|queue| queue.size > 0)
+            .context("VirtioFS hiprio queue is unavailable for activation")?;
+        let hiprio_queue = if hiprio_config.warm_restore {
+            VirtQueue::new_restored(
+                mem.clone(),
+                hiprio_config.desc_addr,
+                hiprio_config.driver_addr,
+                hiprio_config.device_addr,
+                hiprio_config.size,
+            )
+        } else {
+            VirtQueue::new(
+                mem.clone(),
+                hiprio_config.desc_addr,
+                hiprio_config.driver_addr,
+                hiprio_config.device_addr,
+                hiprio_config.size,
+            )
+        };
+        let request_config = queues
+            .get(1)
+            .filter(|queue| queue.size > 0)
+            .context("VirtioFS request queue is unavailable for activation")?;
+        let request_queue = if request_config.warm_restore {
+            VirtQueue::new_restored(
+                mem.clone(),
+                request_config.desc_addr,
+                request_config.driver_addr,
+                request_config.device_addr,
+                request_config.size,
+            )
+        } else {
+            VirtQueue::new(
+                mem.clone(),
+                request_config.desc_addr,
+                request_config.driver_addr,
+                request_config.device_addr,
+                request_config.size,
+            )
+        };
+
+        let processor = self
+            .processor
+            .take()
+            .context("VirtioFS processor is unavailable for activation")?;
+        let (notify_tx, notify_rx) = mpsc::channel();
+        let irq_fd = self.irq_fd;
+        let interrupt_status = Arc::clone(&self.interrupt_status);
+        let handle = std::thread::Builder::new()
+            .name("virtio-fs-worker".into())
+            .spawn(move || {
+                worker_loop(
+                    processor,
+                    request_queue,
+                    hiprio_queue,
+                    mem,
+                    notify_rx,
+                    irq_fd,
+                    interrupt_status,
+                )
+            })
+            .context("spawn virtio-fs worker")?;
+        self.notify_tx = Some(notify_tx);
+        self.worker_handle = Some(handle);
+        debug!(
+            event_name = "virtio.fs.activate",
+            "virtio-fs device activated"
+        );
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // VirtioDevice trait impl
 // ---------------------------------------------------------------------------
@@ -449,71 +525,17 @@ impl VirtioDevice for VirtioFsDevice {
     fn write_config(&self, _offset: u64, _data: &[u8]) {}
 
     fn activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) {
-        let hiprio_queue = match queues.first().filter(|q| q.size > 0) {
-            Some(q) if q.warm_restore => VirtQueue::new_restored(
-                mem.clone(),
-                q.desc_addr,
-                q.driver_addr,
-                q.device_addr,
-                q.size,
-            ),
-            Some(q) => VirtQueue::new(
-                mem.clone(),
-                q.desc_addr,
-                q.driver_addr,
-                q.device_addr,
-                q.size,
-            ),
-            None => return,
-        };
-        let request_queue = match queues.get(1).filter(|q| q.size > 0) {
-            Some(q) if q.warm_restore => VirtQueue::new_restored(
-                mem.clone(),
-                q.desc_addr,
-                q.driver_addr,
-                q.device_addr,
-                q.size,
-            ),
-            Some(q) => VirtQueue::new(
-                mem.clone(),
-                q.desc_addr,
-                q.driver_addr,
-                q.device_addr,
-                q.size,
-            ),
-            None => return,
-        };
+        if let Err(error) = self.activate_fallible(mem, queues) {
+            warn!(
+                event_name = "virtio.fs.activate_failed",
+                error = format!("{error:#}"),
+                "virtio-fs activation failed"
+            );
+        }
+    }
 
-        // Transfer FUSE state to worker thread
-        let proc = match self.processor.take() {
-            Some(p) => p,
-            None => return,
-        };
-
-        let (tx, rx) = mpsc::channel();
-        self.notify_tx = Some(tx);
-
-        let irq_fd = self.irq_fd;
-        let interrupt_status = Arc::clone(&self.interrupt_status);
-        let handle = std::thread::Builder::new()
-            .name("virtio-fs-worker".into())
-            .spawn(move || {
-                worker_loop(
-                    proc,
-                    request_queue,
-                    hiprio_queue,
-                    mem,
-                    rx,
-                    irq_fd,
-                    interrupt_status,
-                )
-            })
-            .expect("failed to spawn virtio-fs worker");
-        self.worker_handle = Some(handle);
-        debug!(
-            event_name = "virtio.fs.activate",
-            "virtio-fs device activated"
-        );
+    fn restore_activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) -> Result<()> {
+        self.activate_fallible(mem, queues)
     }
 
     fn queue_notify(&mut self, queue_index: u32) -> bool {

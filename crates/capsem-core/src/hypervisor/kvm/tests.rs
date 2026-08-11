@@ -230,11 +230,11 @@ fn kvm_state_decoder_preserves_transient_states() {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn mmio_slot(slot: u32) -> checkpoint::MmioDeviceSnapshot {
+fn mmio_slot(slot: u32, device_type: u32) -> checkpoint::MmioDeviceSnapshot {
     checkpoint::MmioDeviceSnapshot {
         slot,
         transport: virtio_mmio::VirtioMmioSnapshot {
-            device_type: 26,
+            device_type,
             device_state: Vec::new(),
             status: 0,
             features_sel: 0,
@@ -252,7 +252,8 @@ fn mmio_slot(slot: u32) -> checkpoint::MmioDeviceSnapshot {
 #[cfg(target_arch = "x86_64")]
 #[test]
 fn restore_rejects_duplicate_mmio_slots_before_device_activation() {
-    let err = validate_mmio_slot_topology(&[0, 4], &[mmio_slot(4), mmio_slot(4)]).unwrap_err();
+    let err = validate_mmio_topology(&[(0, 3), (4, 26)], &[mmio_slot(4, 26), mmio_slot(4, 26)])
+        .unwrap_err();
 
     assert!(err.to_string().contains("duplicate MMIO slot"), "{err:#}");
 }
@@ -260,9 +261,252 @@ fn restore_rejects_duplicate_mmio_slots_before_device_activation() {
 #[cfg(target_arch = "x86_64")]
 #[test]
 fn restore_rejects_missing_mmio_slot_before_device_activation() {
-    let err = validate_mmio_slot_topology(&[0, 4], &[mmio_slot(0)]).unwrap_err();
+    let err = validate_mmio_topology(&[(0, 3), (4, 26)], &[mmio_slot(0, 3)]).unwrap_err();
 
     assert!(err.to_string().contains("topology mismatch"), "{err:#}");
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restore_rejects_mmio_device_type_mismatch_before_preparation() {
+    let err = validate_mmio_topology(&[(0, 3), (4, 26)], &[mmio_slot(0, 3), mmio_slot(4, 19)])
+        .unwrap_err();
+
+    assert!(err.to_string().contains("topology mismatch"), "{err:#}");
+    assert!(err.to_string().contains("device type"), "{err:#}");
+}
+
+#[cfg(target_arch = "x86_64")]
+struct RestoreOrderDevice {
+    device_type: u32,
+    label: &'static str,
+    reject_state: bool,
+    events: Arc<std::sync::Mutex<Vec<&'static str>>>,
+    activated: Arc<AtomicBool>,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl virtio_mmio::VirtioDevice for RestoreOrderDevice {
+    fn device_type(&self) -> u32 {
+        self.device_type
+    }
+
+    fn features(&self) -> u64 {
+        1 << 32
+    }
+
+    fn queue_max_sizes(&self) -> &[u16] {
+        &[8]
+    }
+
+    fn read_config(&self, _offset: u64, _data: &mut [u8]) {}
+
+    fn write_config(&self, _offset: u64, _data: &[u8]) {}
+
+    fn activate(&mut self, _mem: memory::GuestMemoryRef, _queues: &[virtio_mmio::QueueConfig]) {
+        self.activated.store(true, Ordering::SeqCst);
+    }
+
+    fn restore_checkpoint_state(&mut self, _state: &[u8]) -> Result<()> {
+        self.events.lock().unwrap().push(self.label);
+        ensure!(!self.reject_state, "rejected device identity");
+        Ok(())
+    }
+
+    fn restore_activate(
+        &mut self,
+        _mem: memory::GuestMemoryRef,
+        _queues: &[virtio_mmio::QueueConfig],
+    ) -> Result<()> {
+        let events = self.events.lock().unwrap();
+        ensure!(
+            events.len() >= 2,
+            "device activated before the complete graph was prepared"
+        );
+        drop(events);
+        self.activated.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn queue_notify(&mut self, _queue_index: u32) -> bool {
+        false
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn active_mmio_slot(slot: u32, device_type: u32, ring_base: u32) -> checkpoint::MmioDeviceSnapshot {
+    let mut snapshot = mmio_slot(slot, device_type);
+    snapshot.transport.status = 0xf;
+    snapshot.transport.driver_features = 1 << 32;
+    snapshot.transport.queues[0] = virtio_mmio::QueueSnapshot {
+        num: 8,
+        ready: true,
+        desc_lo: ring_base,
+        desc_hi: 0,
+        driver_lo: ring_base + 0x200,
+        driver_hi: 0,
+        device_lo: ring_base + 0x400,
+        device_hi: 0,
+    };
+    snapshot.transport.activated = true;
+    snapshot
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restore_prepares_complete_mmio_graph_before_any_activation() {
+    let memory = memory::GuestMemory::new(4096).unwrap();
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let first_activated = Arc::new(AtomicBool::new(false));
+    let second_activated = Arc::new(AtomicBool::new(false));
+    let transports = vec![
+        (
+            0,
+            Arc::new(virtio_mmio::VirtioMmioTransport::new(
+                Box::new(RestoreOrderDevice {
+                    device_type: 40,
+                    label: "prepare-first",
+                    reject_state: false,
+                    events: Arc::clone(&events),
+                    activated: Arc::clone(&first_activated),
+                }),
+                memory.clone_ref(memory::RAM_BASE),
+            )),
+        ),
+        (
+            4,
+            Arc::new(virtio_mmio::VirtioMmioTransport::new(
+                Box::new(RestoreOrderDevice {
+                    device_type: 41,
+                    label: "prepare-second",
+                    reject_state: false,
+                    events: Arc::clone(&events),
+                    activated: Arc::clone(&second_activated),
+                }),
+                memory.clone_ref(memory::RAM_BASE),
+            )),
+        ),
+    ];
+
+    restore_mmio_device_graph(
+        &transports,
+        &[
+            active_mmio_slot(0, 40, 0x100),
+            active_mmio_slot(4, 41, 0x900),
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec!["prepare-first", "prepare-second"]
+    );
+    assert!(first_activated.load(Ordering::SeqCst));
+    assert!(second_activated.load(Ordering::SeqCst));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restore_rejects_queue_memory_overlap_across_mmio_slots_before_preparation() {
+    let memory = memory::GuestMemory::new(4096).unwrap();
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let first_activated = Arc::new(AtomicBool::new(false));
+    let second_activated = Arc::new(AtomicBool::new(false));
+    let transports = vec![
+        (
+            0,
+            Arc::new(virtio_mmio::VirtioMmioTransport::new(
+                Box::new(RestoreOrderDevice {
+                    device_type: 40,
+                    label: "prepare-first",
+                    reject_state: false,
+                    events: Arc::clone(&events),
+                    activated: Arc::clone(&first_activated),
+                }),
+                memory.clone_ref(memory::RAM_BASE),
+            )),
+        ),
+        (
+            4,
+            Arc::new(virtio_mmio::VirtioMmioTransport::new(
+                Box::new(RestoreOrderDevice {
+                    device_type: 41,
+                    label: "prepare-second",
+                    reject_state: false,
+                    events: Arc::clone(&events),
+                    activated: Arc::clone(&second_activated),
+                }),
+                memory.clone_ref(memory::RAM_BASE),
+            )),
+        ),
+    ];
+
+    let err = restore_mmio_device_graph(
+        &transports,
+        &[
+            active_mmio_slot(0, 40, 0x100),
+            active_mmio_slot(4, 41, 0x100),
+        ],
+    )
+    .unwrap_err();
+
+    assert!(err.to_string().contains("overlap"), "{err:#}");
+    assert!(events.lock().unwrap().is_empty());
+    assert!(!first_activated.load(Ordering::SeqCst));
+    assert!(!second_activated.load(Ordering::SeqCst));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restore_preparation_failure_leaves_earlier_device_inactive() {
+    let memory = memory::GuestMemory::new(4096).unwrap();
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let first_activated = Arc::new(AtomicBool::new(false));
+    let second_activated = Arc::new(AtomicBool::new(false));
+    let transports = vec![
+        (
+            0,
+            Arc::new(virtio_mmio::VirtioMmioTransport::new(
+                Box::new(RestoreOrderDevice {
+                    device_type: 40,
+                    label: "prepare-first",
+                    reject_state: false,
+                    events: Arc::clone(&events),
+                    activated: Arc::clone(&first_activated),
+                }),
+                memory.clone_ref(memory::RAM_BASE),
+            )),
+        ),
+        (
+            4,
+            Arc::new(virtio_mmio::VirtioMmioTransport::new(
+                Box::new(RestoreOrderDevice {
+                    device_type: 41,
+                    label: "prepare-second",
+                    reject_state: true,
+                    events: Arc::clone(&events),
+                    activated: Arc::clone(&second_activated),
+                }),
+                memory.clone_ref(memory::RAM_BASE),
+            )),
+        ),
+    ];
+
+    let err = restore_mmio_device_graph(
+        &transports,
+        &[
+            active_mmio_slot(0, 40, 0x100),
+            active_mmio_slot(4, 41, 0x900),
+        ],
+    )
+    .unwrap_err();
+
+    assert!(
+        err.to_string().contains("rejected device identity"),
+        "{err:#}"
+    );
+    assert!(!first_activated.load(Ordering::SeqCst));
+    assert!(!second_activated.load(Ordering::SeqCst));
 }
 
 #[cfg(not(target_arch = "x86_64"))]

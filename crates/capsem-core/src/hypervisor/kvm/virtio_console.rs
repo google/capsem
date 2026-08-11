@@ -110,6 +110,11 @@ impl VirtioDevice for VirtioConsoleDevice {
         self.mem = Some(mem);
     }
 
+    fn restore_activate(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) -> Result<()> {
+        self.activate(mem, queues);
+        Ok(())
+    }
+
     fn queue_notify(&mut self, queue_index: u32) -> bool {
         let mut completed = false;
         if queue_index == 1 {

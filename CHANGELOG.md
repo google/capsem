@@ -14,8 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carry a bounded, versioned backend payload and reject replaced paths,
   escaped or malformed state, changed share identity, and inconsistent MMIO
   topology before activation, so a resumed guest can keep using `/root` and
-  descriptors opened before suspend instead of hanging on its next exec. The
-  vhost-vsock backend is also stopped behind its vring barriers before RAM is
+  descriptors opened before suspend instead of hanging on its next exec.
+  Checkpoint v9 also binds each block device to its already-open backing-file
+  identity and guest-visible ID, binds vhost-vsock state to the exact guest
+  CID, and validates every MMIO slot, device type, feature/status bit, and
+  virtqueue memory range before starting any restored backend. The
+  vhost-vsock backend is stopped behind its vring barriers before RAM is
   copied, records both queue positions, and must restart successfully from
   those positions before a restored VM is allowed to run.
 
