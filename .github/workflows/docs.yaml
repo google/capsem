@@ -52,8 +52,13 @@ jobs:
               && grep -qi '<main[ >]' /tmp/docs-index.html \
               && grep -q 'Capsem 0.6 documentation' /tmp/docs-index.html \
               && grep -q 'pre-release qualification' /tmp/docs-index.html \
-              && OLD_ROUTE_STATUS="$(curl -sS -o /tmp/docs-old-route.html -w '%{http_code}' "$OLD_ROUTE_URL")" \
-              && test "$OLD_ROUTE_STATUS" = 404
+              && curl -fsSL -D /tmp/docs-old-headers.txt "$OLD_ROUTE_URL" -o /tmp/docs-old-route.html \
+              && grep -qi '^cache-control:.*no-store' /tmp/docs-old-headers.txt \
+              && grep -q 'Documentation route unavailable' /tmp/docs-old-route.html \
+              && grep -q 'pre-release qualification' /tmp/docs-old-route.html \
+              && ! grep -qi 'Getting Started' /tmp/docs-old-route.html \
+              && ! grep -qi 'install.sh' /tmp/docs-old-route.html \
+              && ! grep -qi 'starlight' /tmp/docs-old-route.html
             then
               echo "docs.capsem.org smoke passed."
               exit 0

@@ -116,9 +116,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `docs.capsem.org` now publishes a single Capsem 0.6 pre-release holding page
-  while the complete detailed manual remains preserved in Git. The root README
-  no longer advertises installation, release downloads, or deep documentation
+- `docs.capsem.org` now publishes a Capsem 0.6 pre-release holding surface while
+  the complete detailed manual remains preserved in Git. The root README no
+  longer advertises installation, release downloads, or deep documentation
   before the release is qualified.
 
 - No lane mounts a named volume. Phase 9 completes literally rather than
@@ -175,6 +175,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   liveness only. This is a deliberate public-surface change.
 
 ### Fixed
+
+- Former `docs.capsem.org` routes now publish source-derived noindex holding
+  tombstones with no-store Pages headers. The first holding deployment removed
+  those files, but a warmed Cloudflare edge continued serving the previous
+  Starlight guide under its week-long shared-cache policy; the deploy smoke now
+  proves the replacement body and rejects the old guide/install content.
 
 - The observer records a symlink where it was created, not where it points.
   `symlink` was missing from the set of calls whose destination is the second
