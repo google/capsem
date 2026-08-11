@@ -7316,7 +7316,9 @@ fn preserve_renames_session_dir_and_keeps_logs() {
     std::fs::write(session_dir.join("process.log"), b"boot failed: ...").unwrap();
     std::fs::write(session_dir.join("serial.log"), b"kernel panic").unwrap();
 
-    state.preserve_failed_session_dir(&session_dir, "vm-abc");
+    state
+        .preserve_failed_session_dir(&session_dir, "vm-abc")
+        .expect("session evidence should be preserved");
 
     assert!(
         !session_dir.exists(),
@@ -7338,6 +7340,98 @@ fn preserve_renames_session_dir_and_keeps_logs() {
     assert_eq!(capsem_core::telemetry::read_log_tail(&preserved, usize::MAX).unwrap().into_bytes(), b"boot failed: ...");
     let preserved_serial = failed.path().join("serial.log");
     assert_eq!(capsem_core::telemetry::read_log_tail(&preserved_serial, usize::MAX).unwrap().into_bytes(), b"kernel panic");
+}
+
+#[tokio::test]
+async fn failed_run_preservation_noops_when_watcher_wins_after_shutdown_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().to_path_buf());
+    let session_dir = state.run_dir.join("sessions").join("code-1");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    std::fs::write(session_dir.join("process.log"), b"child exited with code 1").unwrap();
+    insert_fake_instance_with_session_dir(&state, "code-1", 42, session_dir.clone());
+
+    // Match shutdown_vm_process's pre-signal snapshot, then coordinate the
+    // child watcher to win the actual remove before shutdown claims it.
+    let shutdown_snapshot = {
+        let instances = state.instances.lock().unwrap();
+        let info = instances.get("code-1").unwrap();
+        (info.session_dir.clone(), info.persistent, info.pid)
+    };
+    let watcher_state = Arc::clone(&state);
+    let watcher_result = tokio::task::spawn_blocking(move || {
+        let info = watcher_state
+            .instances
+            .lock()
+            .unwrap()
+            .remove("code-1")
+            .expect("watcher should win the instance ownership race");
+        watcher_state
+            .preserve_failed_session_dir(&info.session_dir, "code-1")
+            .expect("child watcher should preserve the failed session")
+    })
+    .await
+    .unwrap();
+
+    let shutdown_claimed = claim_shutdown_instance(&state, "code-1");
+    assert!(
+        !shutdown_claimed,
+        "a stale snapshot is not shutdown ownership"
+    );
+
+    let provisioning_result = preserve_failed_run_shutdown_result(
+        Arc::clone(&state),
+        "code-1".to_string(),
+        shutdown_claimed.then_some(shutdown_snapshot),
+    )
+    .await
+    .unwrap();
+
+    assert!(provisioning_result.is_none());
+    assert_eq!(
+        find_failed_session_dir(&state.run_dir, "code-1"),
+        Some(watcher_result.clone())
+    );
+    assert_eq!(
+        std::fs::read_dir(state.run_dir.join("sessions"))
+            .unwrap()
+            .count(),
+        1,
+        "the provisioning owner must not create a second preservation result"
+    );
+    assert_eq!(
+        capsem_core::telemetry::read_log_tail(&watcher_result.join("process.log"), usize::MAX)
+            .unwrap(),
+        "child exited with code 1"
+    );
+}
+
+#[tokio::test]
+async fn failed_run_preservation_uses_shutdown_owned_instance_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().to_path_buf());
+    let session_dir = state.run_dir.join("sessions").join("code-1");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    std::fs::write(session_dir.join("process.log"), b"ready wait failed").unwrap();
+
+    let preserved = preserve_failed_run_shutdown_result(
+        Arc::clone(&state),
+        "code-1".to_string(),
+        Some((session_dir.clone(), false, 42)),
+    )
+    .await
+    .unwrap()
+    .expect("the provisioning owner must preserve its claimed session dir");
+
+    assert!(!session_dir.exists());
+    assert_eq!(
+        find_failed_session_dir(&state.run_dir, "code-1"),
+        Some(preserved.clone())
+    );
+    assert_eq!(
+        capsem_core::telemetry::read_log_tail(&preserved.join("process.log"), usize::MAX).unwrap(),
+        "ready wait failed"
+    );
 }
 
 #[test]
@@ -11793,4 +11887,3 @@ fn service_pidfile_leaves_a_successors_record_intact() {
          pidfile and reports success while the service keeps running"
     );
 }
-

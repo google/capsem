@@ -1148,7 +1148,7 @@ impl ServiceState {
                 id,
                 "ephemeral VM process died, preserving session dir for post-mortem"
             );
-            self.preserve_failed_session_dir(&info.session_dir, id);
+            let _ = self.preserve_failed_session_dir(&info.session_dir, id);
         }
         let _ = std::fs::remove_file(&info.uds_path);
         let _ = std::fs::remove_file(info.uds_path.with_extension("ready"));
@@ -1245,7 +1245,11 @@ impl ServiceState {
     /// etc.) we `warn!` with the specific error and fall back to
     /// `remove_dir_all` so disk isn't leaked when the filesystem is
     /// already unhappy.
-    fn preserve_failed_session_dir(&self, session_dir: &std::path::Path, id: &str) {
+    fn preserve_failed_session_dir(
+        &self,
+        session_dir: &std::path::Path,
+        id: &str,
+    ) -> Option<PathBuf> {
         let failed_id = format!(
             "{}-failed-{}",
             id,
@@ -1265,6 +1269,7 @@ impl ServiceState {
                         "failed to cull old failed session dirs -- disk may grow beyond {MAX_FAILED_SESSIONS}"
                     );
                 }
+                Some(failed_dir)
             }
             Err(e) => {
                 warn!(
@@ -1282,6 +1287,7 @@ impl ServiceState {
                         "also failed to remove session dir -- orphaned on disk"
                     );
                 }
+                None
             }
         }
     }
@@ -1806,7 +1812,8 @@ impl ServiceState {
                         "child exited unexpectedly, preserving session dir"
                     );
                     if !info.persistent {
-                        state_clone.preserve_failed_session_dir(&info.session_dir, &id_clone);
+                        let _ =
+                            state_clone.preserve_failed_session_dir(&info.session_dir, &id_clone);
                     }
                 } else {
                     tracing::info!(id_clone, "child exited cleanly (guest-initiated shutdown)");
@@ -11420,6 +11427,12 @@ async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
     }
 }
 
+/// Atomically claim teardown ownership for an instance. The child watcher
+/// uses the same map removal as its ownership token, so only one side wins.
+fn claim_shutdown_instance(state: &ServiceState, id: &str) -> bool {
+    state.instances.lock().unwrap().remove(id).is_some()
+}
+
 /// Shutdown a running VM process by ID. Returns (session_dir, persistent, pid).
 ///
 /// When `graceful` is true: sends `ServiceToProcess::Shutdown` via IPC so
@@ -11514,11 +11527,15 @@ async fn shutdown_vm_process(
         );
     }
 
-    // Remove from active instances immediately so the service considers this
-    // VM gone. The child-exit handler at spawn time may also call remove
-    // (idempotent).
-    tracing::debug!(id, "shutdown_vm_process removing instance");
-    state.instances.lock().unwrap().remove(id);
+    // The earlier lookup only supplied shutdown coordinates; it did not grant
+    // ownership. The child watcher can exit and remove the instance while the
+    // IPC send awaits. This actual remove is the sole preservation token.
+    let shutdown_claimed = claim_shutdown_instance(state, id);
+    tracing::debug!(
+        id,
+        shutdown_claimed,
+        "shutdown_vm_process removing instance"
+    );
     state.unregister_session_db_handle(id);
 
     // Wait for actual exit (poll_until + SIGKILL fallback), then clean up
@@ -11532,6 +11549,10 @@ async fn shutdown_vm_process(
     wait_for_process_exit(pid, exit_timeout).await;
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
+    if !shutdown_claimed {
+        tracing::debug!(id, "child watcher retained shutdown ownership");
+        return Ok(None);
+    }
     state
         .record_session_index_stop(id, "stopped", &session_dir)
         .map_err(|error| {
@@ -11542,6 +11563,38 @@ async fn shutdown_vm_process(
         })?;
 
     Ok(Some((session_dir, persistent, pid)))
+}
+
+/// Preserve a failed one-shot session only when this shutdown call claimed
+/// the instance record. The child watcher and `shutdown_vm_process` race to
+/// remove that record; exactly one receives `Some`, so exactly one owns the
+/// filesystem rename. `None` means the watcher already handled preservation.
+async fn preserve_failed_run_shutdown_result(
+    state: Arc<ServiceState>,
+    id: String,
+    shutdown_result: Option<(PathBuf, bool, u32)>,
+) -> Result<Option<PathBuf>, AppError> {
+    let Some((session_dir, persistent, _pid)) = shutdown_result else {
+        tracing::debug!(
+            id,
+            "failed session preservation already owned by child watcher"
+        );
+        return Ok(None);
+    };
+    if persistent {
+        return Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("one-shot session {id} unexpectedly used persistent storage"),
+        ));
+    }
+    tokio::task::spawn_blocking(move || state.preserve_failed_session_dir(&session_dir, &id))
+        .await
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed session preservation task: {error}"),
+            )
+        })
 }
 
 /// Tear down a warm-restore process that failed to reach ready while the
@@ -12166,8 +12219,6 @@ async fn handle_run(
     let cpus = resources.cpus;
     let scratch_disk_size_gb = resources.scratch_disk_size_gb;
 
-    let session_dir = state.run_dir.join("sessions").join(&id);
-
     // 1. Provision ephemeral VM. `provision_sandbox` is synchronous and
     // does heavy I/O (APFS clonefile, rootfs.img fsync, child spawn);
     // offload to the blocking pool, matching `handle_provision` -- the
@@ -12225,13 +12276,9 @@ async fn handle_run(
             // fallback) and cleans the UDS socket inline. Graceful because
             // preserve_failed_session_dir inspects session logs that capsem-process
             // is still flushing.
-            let _ = shutdown_vm_process(&state, &id, true).await?;
-            let dir = session_dir;
-            let state_clone = Arc::clone(&state);
-            let id_owned = id.clone();
-            tokio::task::spawn_blocking(move || {
-                state_clone.preserve_failed_session_dir(&dir, &id_owned);
-            });
+            let shutdown_result = shutdown_vm_process(&state, &id, true).await?;
+            preserve_failed_run_shutdown_result(Arc::clone(&state), id.clone(), shutdown_result)
+                .await?;
             return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e));
         }
     }

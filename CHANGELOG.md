@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Failed one-shot VM startup now assigns post-mortem preservation to the
+  single teardown path that atomically removes the live instance. A racing
+  child watcher and provisioning failure can no longer rename the same
+  session twice or emit false logs-lost and orphaned-directory warnings.
+
 - Linux KVM warm checkpoints now preserve the embedded VirtioFS inode and
   open file/directory-handle state before restoring virtqueues. Checkpoints
   carry a bounded, versioned backend payload and reject replaced paths,
