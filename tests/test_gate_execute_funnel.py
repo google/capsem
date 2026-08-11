@@ -391,6 +391,7 @@ def test_every_subprocess_is_recorded_once(journal) -> None:
 def _recorded_command_policy(command: GateCommand, monkeypatch) -> str:
     """Drive a real command class through the funnel with one inert action."""
     runner = command._runner
+    assert isinstance(runner, RecordingRunner)
     probe = Plan(command.name)
     probe.add(step("policy", Run(["doctor-policy-probe"])))
     monkeypatch.setattr(command, "plan", lambda: probe)
