@@ -106,6 +106,10 @@ dockerfile = "docker/Dockerfile.install-test"
 context = "."
 smoke_network = "none"
 venv = "/home/capsem/.venv-install-test"
+# A current-source CLI compiled once while the source image is still being
+# built. Update/channel tests need behavior newer than the package under test,
+# but the privileged runtime is deliberately unable to run Cargo or Rustup.
+source_cli = "/opt/capsem/install-test/bin/capsem-current"
 mount = "/src"
 channel = "local"
 manifest_version = "1.0.0"
@@ -192,6 +196,10 @@ dockerfile = "docker/Dockerfile.install-builder"
 tag_template = "capsem-install-builder:{digest}"
 source_tag_template = "capsem-install-test:{digest}"
 identity_inputs = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ".cargo/config.toml",
     "pyproject.toml",
     "uv.lock",
     "release-site/package.json",
@@ -201,8 +209,10 @@ identity_inputs = [
     "docker/materialize-install-os.sh",
     "scripts/configure-apt-snapshot.sh",
 ]
+identity_globs = ["crates/*/Cargo.toml"]
 materialize_build_network = "default"
 source_build_network = "none"
+cargo_store = "/opt/capsem/install-cargo"
 pnpm_store = "/opt/capsem/install-pnpm"
 # Includes both the real systemd harness and every dependency declared by the
 # publishable Debian package. They are reinstalled from `apt_snapshot` so
@@ -340,6 +350,7 @@ channel_dist = "CAPSEM_RELEASE_CHANNEL_DIST"
 installed = "CAPSEM_DEB_INSTALLED"
 bin_src = "CAPSEM_BIN_SRC"
 asset_manifest = "CAPSEM_TEST_ASSET_MANIFEST"
+source_cli = "CAPSEM_INSTALL_SOURCE_CLI"
 
 # Where the Linux parity runner writes, told to the checked-in script.
 [environment.linux_rust]

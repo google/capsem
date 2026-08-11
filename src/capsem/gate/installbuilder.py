@@ -31,7 +31,12 @@ class InstallBuilderIdentity:
 
 
 def _identity_files(config: GateConfig) -> tuple[Path, ...]:
-    files = tuple(config.path(name) for name in config.install.builder.identity_inputs)
+    settings = config.install.builder
+    explicit = tuple(config.path(name) for name in settings.identity_inputs)
+    expanded = tuple(
+        path for pattern in settings.identity_globs for path in sorted(config.root.glob(pattern))
+    )
+    files = (*explicit, *expanded)
     missing = [path for path in files if not path.is_file()]
     if missing:
         raise GateError(
@@ -70,9 +75,11 @@ def image_tag(config: GateConfig, docker: Docker, *, parent_id: str | None = Non
         ),
         host_arch.name,
         host_arch.docker_platform,
+        host_arch.rust_target,
         config.apt_snapshot.base,
         config.apt_snapshot.id,
         config.install.venv,
+        settings.cargo_store,
         settings.pnpm_store,
         settings.materialize_build_network,
         settings.source_build_network,
@@ -130,7 +137,9 @@ def materialize(runner: Runner, config: GateConfig) -> InstallBuilderIdentity:
                 f"APT_SNAPSHOT_BASE={config.apt_snapshot.base}",
                 f"APT_SNAPSHOT_ID={config.apt_snapshot.id}",
                 f"APT_PACKAGES={' '.join(_packages(config))}",
+                f"RUST_TARGET={host_arch.rust_target}",
                 f"INSTALL_VENV={config.install.venv}",
+                f"CARGO_STORE={settings.cargo_store}",
                 f"PNPM_STORE={settings.pnpm_store}",
                 f"INPUT_IDENTITY={tag}",
             ],

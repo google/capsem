@@ -1,8 +1,20 @@
 # check=skip=InvalidDefaultArgInFrom
 # Source-bearing, network-denied image for exact Debian install qualification.
 ARG BASE
+FROM ${BASE} AS source-cli
+ARG FRESH_CLI
+
+COPY --chown=capsem:capsem . /src
+WORKDIR /src
+USER capsem
+RUN RUSTUP_AUTO_INSTALL=0 CARGO_NET_OFFLINE=true \
+    CARGO_TARGET_DIR=/tmp/capsem-install-current-cli \
+    cargo build --locked --offline -p capsem --bin capsem \
+    && test -x /tmp/capsem-install-current-cli/debug/capsem
+
 FROM ${BASE}
 ARG INPUT_IDENTITY
+ARG FRESH_CLI
 LABEL org.capsem.install-image.input-key=${INPUT_IDENTITY}
 
 # The helper owns the systemd harness, exact OS cohort, Python environment and
@@ -18,5 +30,8 @@ RUN cd /src/release-site \
         --store-dir "${CAPSEM_INSTALL_PNPM_STORE}"
 USER root
 
+COPY --from=source-cli --chmod=0555 \
+    /tmp/capsem-install-current-cli/debug/capsem ${FRESH_CLI}
 RUN test -x "${UV_PROJECT_ENVIRONMENT}/bin/python" \
+    && test -x "${FRESH_CLI}" \
     && test -x /src/release-site/node_modules/.bin/astro

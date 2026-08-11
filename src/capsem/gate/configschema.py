@@ -93,6 +93,22 @@ class InstallProofEnvironment(Strict):
     installed: str
     bin_src: str
     asset_manifest: str
+    source_cli: str
+
+    def runtime(
+        self,
+        *,
+        bin_src: object,
+        asset_manifest: object,
+        source_cli: object,
+    ) -> dict[str, str]:
+        """The exact installed-package and current-source cohorts under proof."""
+        return {
+            self.installed: "1",
+            self.bin_src: str(bin_src),
+            self.asset_manifest: str(asset_manifest),
+            self.source_cli: str(source_cli),
+        }
 
 
 class LinuxRustEnvironment(Strict):

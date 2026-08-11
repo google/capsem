@@ -28,6 +28,7 @@ from pathlib import Path
 
 import pytest
 
+from . import conftest as install_fixtures
 from .conftest import INSTALL_DIR
 
 # The installed layout mounts a proper Linux ELF at INSTALL_DIR/capsem via
@@ -269,29 +270,40 @@ def _run(env: dict, *args: str) -> subprocess.CompletedProcess:
 
 
 def _fresh_capsem_binary() -> Path:
-    bin_src = Path(os.environ.get("CAPSEM_BIN_SRC", REPO_ROOT / "target" / "debug"))
-    binary = bin_src / "capsem"
-    source_paths = [
-        REPO_ROOT / "crates" / "capsem" / "src" / "update.rs",
-        REPO_ROOT / "crates" / "capsem" / "src" / "main.rs",
-    ]
-    if binary.is_file() and all(
-        binary.stat().st_mtime >= path.stat().st_mtime for path in source_paths
-    ):
-        return binary
-    result = subprocess.run(
-        ["cargo", "build", "-p", "capsem"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env={**os.environ, "CARGO_TARGET_DIR": str(bin_src.parent)},
-    )
-    assert result.returncode == 0, (
-        f"cargo build -p capsem failed\nstdout={result.stdout}\nstderr={result.stderr}"
-    )
-    assert binary.is_file()
-    return binary
+    return install_fixtures.fresh_capsem_binary()
+
+
+def test_fresh_capsem_binary_uses_prebuilt_source_cli_without_cargo(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "capsem-current-source"
+    binary.write_bytes(b"current source cli")
+    binary.chmod(0o555)
+    monkeypatch.setenv("CAPSEM_DEB_INSTALLED", "1")
+    monkeypatch.setenv("CAPSEM_INSTALL_SOURCE_CLI", str(binary))
+
+    def refuse_runtime_build(*_args, **_kwargs):
+        raise AssertionError("the installed runtime attempted a subprocess build")
+
+    monkeypatch.setattr(install_fixtures.subprocess, "run", refuse_runtime_build)
+
+    assert _fresh_capsem_binary() == binary
+
+
+def test_fresh_capsem_binary_refuses_missing_prebuilt_cli_in_installed_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CAPSEM_DEB_INSTALLED", "1")
+    monkeypatch.delenv("CAPSEM_INSTALL_SOURCE_CLI", raising=False)
+
+    def refuse_runtime_build(*_args, **_kwargs):
+        raise AssertionError("the installed runtime attempted a subprocess build")
+
+    monkeypatch.setattr(install_fixtures.subprocess, "run", refuse_runtime_build)
+
+    with pytest.raises(AssertionError, match="prebuilt current-source CLI"):
+        _fresh_capsem_binary()
 
 
 def _run_binary(binary: Path, env: dict, *args: str) -> subprocess.CompletedProcess:

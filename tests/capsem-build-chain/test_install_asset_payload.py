@@ -827,9 +827,7 @@ def test_install_test_removes_stale_container_before_controller_preflight() -> N
 
     config = gate_config.load(PROJECT_ROOT)
     container = config.install.container
-    runner = RecordingRunner(
-        PROJECT_ROOT, replies={"systemctl is-system-running": "running"}
-    )
+    runner = RecordingRunner(PROJECT_ROOT, replies={"systemctl is-system-running": "running"})
     InstallContainer(runner, sleep=lambda _seconds: None).start(options=[])
     issued = "\n".join(runner.rendered)
 
@@ -1137,6 +1135,42 @@ def test_full_gate_runs_fast_checks_before_install_harness_preflight() -> None:
     image = (PROJECT_ROOT / "src/capsem/gate/installimage.py").read_text(encoding="utf-8")
     assert "no_cache=True" not in image
     assert "cacheless rebuild" not in image
+
+
+def test_install_source_image_prebuilds_fresh_cli_before_sealed_runtime() -> None:
+    """Current-source update tests never compile inside the privileged runtime."""
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    helper = (PROJECT_ROOT / "docker/Dockerfile.install-builder").read_text()
+    source = (PROJECT_ROOT / "docker/Dockerfile.install-test").read_text()
+    builder = (PROJECT_ROOT / "src/capsem/gate/installbuilder.py").read_text()
+    proof = (PROJECT_ROOT / "src/capsem/gate/installproof.py").read_text()
+    tests = "\n".join(
+        (PROJECT_ROOT / path).read_text()
+        for path in (
+            "tests/capsem-install/conftest.py",
+            "tests/capsem-install/test_asset_download.py",
+            "tests/capsem-install/test_update.py",
+        )
+    )
+    issued = _planned("install-image")
+
+    assert config.install.source_cli.startswith("/")
+    assert config.install.builder.cargo_store.startswith("/")
+    assert config.environment.install_proof.source_cli == "CAPSEM_INSTALL_SOURCE_CLI"
+    assert 'cargo fetch --locked --target "${RUST_TARGET}"' in helper
+    assert "/capsem-deps/cargo/registry ${CARGO_STORE}/registry" in helper
+    assert "ENV RUSTUP_AUTO_INSTALL=0" in helper
+    assert "ENV CARGO_NET_OFFLINE=true" in helper
+    assert "cargo build --locked --offline -p capsem --bin capsem" in source
+    assert "RUSTUP_AUTO_INSTALL=0" in source
+    assert "COPY --from=source-cli --chmod=0555" in source
+    assert config.install.source_cli in issued
+    assert 'f"RUST_TARGET={host_arch.rust_target}"' in builder
+    assert "**proof.runtime(" in proof
+    assert "source_cli=self._settings.source_cli" in proof
+    assert '["cargo", "build", "-p", "capsem"]' not in tests
 
 
 def test_local_linux_preflight_contains_asset_ci_release_tools() -> None:

@@ -86,8 +86,10 @@ class InstallBuilderConfig(Strict):
     tag_template: str
     source_tag_template: str
     identity_inputs: tuple[str, ...]
+    identity_globs: tuple[str, ...]
     materialize_build_network: Literal["default"]
     source_build_network: Literal["none"]
+    cargo_store: str
     pnpm_store: str
     apt_packages: tuple[str, ...]
 
@@ -101,6 +103,7 @@ class InstallConfig(Strict):
     context: str
     smoke_network: Literal["none"]
     venv: str
+    source_cli: str
     mount: str
     runtime_network: Literal["none"]
     channel: str
@@ -156,6 +159,11 @@ class InstallConfig(Strict):
         inputs = self.selected_inputs_dir
         if not inputs or inputs.startswith("/") or ".." in inputs.split("/"):
             raise ValueError("install selected_inputs_dir must stay beneath its content root")
+        source_cli = PurePosixPath(self.source_cli)
+        if not source_cli.is_absolute() or source_cli == PurePosixPath(self.installed_capsem):
+            raise ValueError(
+                "install source_cli must be an absolute path distinct from installed_capsem"
+            )
         return self
 
     @property

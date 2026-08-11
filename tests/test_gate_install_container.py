@@ -383,10 +383,13 @@ def test_install_helper_materializes_locked_inputs_before_the_sealed_image(
     assert f"BASE=capsem-host-builder@sha256:{'0' * 64}" in str(helper)
     assert f"APT_SNAPSHOT_BASE={CONFIG.apt_snapshot.base}" in str(helper)
     assert f"APT_SNAPSHOT_ID={CONFIG.apt_snapshot.id}" in str(helper)
+    assert f"RUST_TARGET={CONFIG.host_arch().rust_target}" in str(helper)
+    assert f"CARGO_STORE={CONFIG.install.builder.cargo_store}" in str(helper)
     assert "INPUT_IDENTITY=capsem-install-builder:" in str(helper)
     assert "--platform linux/amd64" in str(source)
     assert "--network none" in str(source)
     assert f"BASE={identity.input_key}" in str(source)
+    assert f"FRESH_CLI={CONFIG.install.source_cli}" in str(source)
     assert identity.image_id == "sha256:" + "0" * 64
     assert runner.last_index_of(
         r"docker image inspect --platform linux/amd64 --format '\{\{\.Id\}\}' "

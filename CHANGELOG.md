@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux sealed-install qualification now prefetches the locked Cargo graph and
+  compiles one current-source CLI while building the network-denied source
+  image. Update and channel-transition tests consume that exact executable
+  instead of attempting Cargo or Rustup repair inside the privileged,
+  network-disabled package runtime.
+
 - The generated checkout-root asset selector is now explicitly ignored as
   build output, matching the Docker context that already excludes asset trees.
   Creating the selector after asset qualification can no longer change the

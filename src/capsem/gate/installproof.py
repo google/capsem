@@ -188,9 +188,11 @@ class InstallProof:
             cwd=self._mount,
             env={
                 "XDG_RUNTIME_DIR": self._guest.runtime_dir,
-                proof.installed: "1",
-                proof.bin_src: self._settings.bin_dir,
-                proof.asset_manifest: self._guest.asset_manifest,
+                **proof.runtime(
+                    bin_src=self._settings.bin_dir,
+                    asset_manifest=self._guest.asset_manifest,
+                    source_cli=self._settings.source_cli,
+                ),
                 "UV_PROJECT_ENVIRONMENT": self._settings.venv,
                 "TMPDIR": self._guest.tmp,
             },

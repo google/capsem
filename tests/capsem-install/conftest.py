@@ -103,6 +103,50 @@ BINARIES = [
     "capsem-mock-server",
 ]
 DEFAULT_TIMEOUT = 30
+SOURCE_CLI_VARIABLE = "CAPSEM_INSTALL_SOURCE_CLI"
+
+
+def fresh_capsem_binary() -> Path:
+    """Return the current-source CLI without compiling in an installed runtime."""
+    selected = os.environ.get(SOURCE_CLI_VARIABLE)
+    if selected:
+        binary = Path(selected)
+        assert binary.is_file() and os.access(binary, os.X_OK), (
+            f"prebuilt current-source CLI is missing or not executable: {binary}"
+        )
+        return binary
+
+    assert os.environ.get("CAPSEM_DEB_INSTALLED") != "1", (
+        f"installed runtime requires a prebuilt current-source CLI in "
+        f"{SOURCE_CLI_VARIABLE}; runtime Cargo/Rustup repair is forbidden"
+    )
+
+    repo_root = Path(__file__).resolve().parents[2]
+    bin_src = Path(os.environ.get("CAPSEM_BIN_SRC", repo_root / "target" / "debug"))
+    binary = bin_src / "capsem"
+    source_paths = (
+        repo_root / "crates" / "capsem" / "src" / "update.rs",
+        repo_root / "crates" / "capsem" / "src" / "client.rs",
+        repo_root / "crates" / "capsem" / "src" / "main.rs",
+    )
+    if binary.is_file() and all(
+        binary.stat().st_mtime >= path.stat().st_mtime for path in source_paths
+    ):
+        return binary
+    result = subprocess.run(
+        ["cargo", "build", "--locked", "-p", "capsem", "--bin", "capsem"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={**os.environ, "CARGO_TARGET_DIR": str(bin_src.parent)},
+    )
+    assert result.returncode == 0, (
+        f"cargo build of current-source capsem failed\n"
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert binary.is_file()
+    return binary
 
 
 def run_capsem(*args: str, timeout: int = DEFAULT_TIMEOUT) -> subprocess.CompletedProcess[str]:
@@ -197,7 +241,7 @@ def _kill_service() -> None:
         try:
             pid = int(pidfile.read_text().strip())
             os.kill(pid, signal.SIGTERM)
-            
+
             # Bounded wait + SIGKILL fallback
             start = time.time()
             while time.time() - start < 5:

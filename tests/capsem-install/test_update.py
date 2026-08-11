@@ -28,6 +28,7 @@ from blake3 import blake3
 
 from .conftest import (
     CAPSEM_DIR,
+    fresh_capsem_binary,
     get_build_hash,
     run_capsem,
 )
@@ -770,33 +771,8 @@ def _write_persistent_vm_pin_registry(capsem_home: Path) -> Path:
     return registry_path
 
 
-def _fresh_capsem_binary() -> Path | None:
-    bin_src = Path(os.environ.get("CAPSEM_BIN_SRC", REPO_ROOT / "target" / "debug"))
-    binary = bin_src / "capsem"
-    source_paths = [
-        REPO_ROOT / "crates" / "capsem" / "src" / "update.rs",
-        REPO_ROOT / "crates" / "capsem" / "src" / "client.rs",
-        REPO_ROOT / "crates" / "capsem" / "src" / "main.rs",
-    ]
-    if binary.is_file() and all(
-        binary.stat().st_mtime >= path.stat().st_mtime for path in source_paths
-    ):
-        return binary
-    result = subprocess.run(
-        ["cargo", "build", "-p", "capsem"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env={
-            **os.environ,
-            "CARGO_TARGET_DIR": str(bin_src.parent),
-        },
-    )
-    assert result.returncode == 0, (
-        f"cargo build -p capsem failed\nstdout={result.stdout}\nstderr={result.stderr}"
-    )
-    return binary if binary.is_file() else None
+def _fresh_capsem_binary() -> Path:
+    return fresh_capsem_binary()
 
 
 def test_update_fetches_release_manifest_and_writes_channel_cache(

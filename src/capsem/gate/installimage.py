@@ -63,6 +63,7 @@ def source_image_tag(
         config.install.builder.source_build_network,
         config.install.smoke_network,
         config.install.runtime_network,
+        config.install.source_cli,
     ):
         digest.update(value.encode())
         digest.update(b"\0")
@@ -77,6 +78,7 @@ def _smoke(runner: Runner, config: GateConfig, *, image: str) -> None:
         "set -e; sudo -n true; cd /src; cdxgen --version; "
         "source /src/scripts/doctor-linux.sh; linux_musl_toolchain_available; "
         f"{python} -m pytest --version; "
+        f"{settings.source_cli} version; "
         f"{python} -m pytest -p no:cacheprovider -q tests/test_materialize_config_http.py"
     )
     passed = Docker(runner).probe(
@@ -115,14 +117,17 @@ def build_source_image(
         tag=tag,
         dockerfile=str(config.path(config.install.dockerfile)),
         context=str(config.root),
-        args=[f"BASE={helper}", f"INPUT_IDENTITY={tag}"],
+        args=[
+            f"BASE={helper}",
+            f"INPUT_IDENTITY={tag}",
+            f"FRESH_CLI={config.install.source_cli}",
+        ],
         platform=platform,
         network=config.install.builder.source_build_network,
         console=ConsoleMode.LOG_ONLY,
     )
-    # Bind the local FROM tag on both sides of the build. Local Docker/Colima
-    # images often have no RepoDigest, so a sha256-qualified FROM is not
-    # portable; the exact-ID checks make movement fail closed.
+    # Bind the local FROM tag on both sides: local Docker/Colima images often
+    # lack a portable RepoDigest, so the exact-ID checks make movement fail closed.
     installbuilder.require_local_image(runner, config, expected=identity)
     require_input_key(
         docker,
