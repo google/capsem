@@ -28,8 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import INSTALL_DIR
-from .conftest import fresh_capsem_binary as fixture_fresh_capsem_binary
+from .conftest import INSTALL_DIR, fresh_capsem_binary
 
 # The installed layout mounts a proper Linux ELF at INSTALL_DIR/capsem via
 # dpkg (in the Docker install harness) or simulate-install.sh (local dev).
@@ -270,7 +269,7 @@ def _run(env: dict, *args: str) -> subprocess.CompletedProcess:
 
 
 def _fresh_capsem_binary() -> Path:
-    return fixture_fresh_capsem_binary()
+    return fresh_capsem_binary()
 
 
 def test_fresh_capsem_binary_uses_prebuilt_source_cli_without_cargo(
