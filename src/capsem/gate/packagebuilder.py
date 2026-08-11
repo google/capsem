@@ -67,7 +67,8 @@ def image_tag(config: GateConfig, target: Arch, docker: Docker) -> str:
         target.gnu,
         ort.ort_url,
         ort.ort_sha256,
-        settings.materialize_network,
+        settings.materialize_build_network,
+        settings.source_build_network,
         settings.runtime_network,
         settings.apt_snapshot_base,
         settings.apt_snapshot_id,
@@ -123,7 +124,7 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
                 f"INPUT_KEY={tag}",
             ],
             platform=host_arch.docker_platform,
-            network=settings.materialize_network,
+            network=settings.materialize_build_network,
             console=ConsoleMode.LOG_ONLY,
         )
         _require_input_key(docker, tag)

@@ -367,7 +367,8 @@ def test_an_unknown_channel_is_refused_before_anything_is_built() -> None:
 def test_package_helper_inputs_and_ort_are_config_authoritative() -> None:
     builder = CONFIG.package.builder
 
-    assert builder.materialize_network == "bridge"
+    assert builder.materialize_build_network == "default"
+    assert builder.source_build_network == "none"
     assert builder.runtime_network == "none"
     assert builder.apt_snapshot_base.startswith("https://snapshot.ubuntu.com/")
     assert re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", builder.apt_snapshot_id)
@@ -379,6 +380,40 @@ def test_package_helper_inputs_and_ort_are_config_authoritative() -> None:
         assert len(target.ort_sha256) == 64
         int(target.ort_sha256, 16)
         assert target.ort_url.endswith(f"{CONFIG.arch(name).rust_target}.tar.lzma2")
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("materialize_build_network", "bridge"),
+        ("materialize_build_network", "host"),
+        ("materialize_build_network", "none"),
+        ("source_build_network", "bridge"),
+        ("source_build_network", "default"),
+        ("source_build_network", "host"),
+        ("runtime_network", "bridge"),
+        ("runtime_network", "default"),
+        ("runtime_network", "host"),
+    ],
+)
+def test_package_network_vocabularies_are_schema_bound(
+    tmp_path: Path, field: str, invalid: str
+) -> None:
+    root = _checkout(tmp_path)
+    source = root / "config" / "gate.toml"
+    text = source.read_text(encoding="utf-8")
+    current = {
+        "materialize_build_network": "default",
+        "source_build_network": "none",
+        "runtime_network": "none",
+    }[field]
+    source.write_text(
+        text.replace(f'{field} = "{current}"', f'{field} = "{invalid}"', 1),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(GateError, match=field):
+        gate_config.load(root)
 
 
 def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> None:
@@ -655,7 +690,7 @@ def test_package_helper_is_host_native_and_target_specific(
     )
     build = str(build_command)
     assert "--platform linux/amd64" in build
-    assert "--network bridge" in build
+    assert "--network default" in build
     assert "RUST_TARGET=aarch64-unknown-linux-gnu" in build
     assert "DPKG_ARCH=arm64" in build
     assert f"APT_SNAPSHOT_BASE={config.package.builder.apt_snapshot_base}" in build

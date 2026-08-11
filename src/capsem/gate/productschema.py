@@ -13,6 +13,8 @@ manifest, and the three files a bootable tree is made of.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from .configschema import Strict
 
 
@@ -168,8 +170,9 @@ class PackageBuilderConfig(Strict):
     tag_template: str
     identity_inputs: tuple[str, ...]
     identity_globs: tuple[str, ...]
-    materialize_network: str
-    runtime_network: str
+    materialize_build_network: Literal["default"]
+    source_build_network: Literal["none"]
+    runtime_network: Literal["none"]
     apt_snapshot_base: str
     apt_snapshot_id: str
     cargo_store: str

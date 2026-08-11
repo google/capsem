@@ -168,7 +168,7 @@ class PackageRail:
             dockerfile=str(self.root / self._package.lane_dockerfile),
             context=str(self.root),
             args=[f"BASE={helper_id}"],
-            network=self._package.builder.runtime_network,
+            network=self._package.builder.source_build_network,
             console=ConsoleMode.LOG_ONLY,
         )
         docker.create(

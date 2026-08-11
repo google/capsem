@@ -28,6 +28,12 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+from helpers.gate import RecordingRunner
+
+from capsem.gate.docker import Docker
+from capsem.gate.errors import GateError
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 GATE = PROJECT_ROOT / "src" / "capsem" / "gate"
 
@@ -173,6 +179,47 @@ def test_every_container_declares_its_network() -> None:
             f"Docker.{name} defaults its network mode, so a call site can omit "
             "the decision and get outbound access without saying so"
         )
+
+
+def test_build_network_rejects_a_container_only_mode(tmp_path: Path) -> None:
+    runner = RecordingRunner(tmp_path)
+    docker = Docker(runner)
+
+    with pytest.raises(GateError, match="BuildKit network"):
+        docker.build(
+            tag="invalid-build",
+            dockerfile="Dockerfile",
+            context=".",
+            network="bridge",
+        )
+
+    assert runner.commands == []
+
+
+@pytest.mark.parametrize("operation", ["read", "run_detached", "run_once", "probe", "create"])
+def test_every_container_adapter_rejects_a_buildkit_only_mode(
+    tmp_path: Path, operation: str
+) -> None:
+    runner = RecordingRunner(tmp_path)
+    docker = Docker(runner)
+
+    with pytest.raises(GateError, match="container network"):
+        if operation == "read":
+            docker.read(image="invalid-run", command=["true"], network="default")
+        elif operation == "run_detached":
+            docker.run_detached(
+                name="invalid-run", image="invalid-run", command=["true"], network="default"
+            )
+        elif operation == "run_once":
+            docker.run_once(image="invalid-run", command=["true"], network="default")
+        elif operation == "probe":
+            docker.probe(image="invalid-run", command=["true"], network="default")
+        else:
+            docker.create(
+                name="invalid-run", image="invalid-run", command=["true"], network="default"
+            )
+
+    assert runner.commands == []
 
 
 def test_no_module_mounts_the_checkout() -> None:

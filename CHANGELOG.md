@@ -15,7 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build consumes the exact helper image with networking disabled, carries one
   verified asset/config cohort through concrete real-directory mounts, and
   preserves full per-architecture gate journals in release CI without noisy
-  successful dependency output on the live terminal.
+  successful dependency output on the live terminal. BuildKit and container
+  network modes are now separate schema-bound values: only the dependency
+  materializer receives BuildKit's ordinary network, while source construction
+  and package execution remain network-denied and cross-vocabulary values are
+  refused before Docker or Colima starts work.
 
 - Direct development diagnostics now have a portable bounded-process wrapper
   that closes stdin and owns the complete child process group. A blocked

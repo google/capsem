@@ -385,7 +385,11 @@ identity_inputs = [
     "scripts/materialize-package-ort.py",
 ]
 identity_globs = ["crates/*/Cargo.toml"]
-materialize_network = "bridge"
+# BuildKit and containers have different network vocabularies. `default` is
+# the ordinary networked BuildKit boundary; `bridge` is a container mode and
+# is deliberately rejected by the image adapter before Docker is invoked.
+materialize_build_network = "default"
+source_build_network = "none"
 runtime_network = "none"
 # Ubuntu's archive is mutable even when Cargo/pnpm are locked. Dependency
 # maintenance advances this timestamp deliberately; every cold materializer

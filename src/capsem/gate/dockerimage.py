@@ -16,6 +16,23 @@ from .errors import GateError
 from .invocation import ConsoleMode
 from .proc import Runner
 
+BUILDKIT_NETWORKS = frozenset({"default", "host", "none"})
+CONTAINER_NETWORKS = frozenset({"bridge", "host", "none"})
+
+
+def require_build_network(network: str) -> str:
+    if network not in BUILDKIT_NETWORKS:
+        allowed = ", ".join(sorted(BUILDKIT_NETWORKS))
+        raise GateError(f"invalid BuildKit network {network!r}; expected one of: {allowed}")
+    return network
+
+
+def require_container_network(network: str) -> str:
+    if network not in CONTAINER_NETWORKS:
+        allowed = ", ".join(sorted(CONTAINER_NETWORKS))
+        raise GateError(f"invalid container network {network!r}; expected one of: {allowed}")
+    return network
+
 
 class ImageOperations:
     """Build, identify and interrogate images. Mixed into `Docker`."""
@@ -43,7 +60,7 @@ class ImageOperations:
         if platform is not None:
             argv += ["--platform", platform]
         if network is not None:
-            argv += ["--network", network]
+            argv += ["--network", require_build_network(network)]
         if no_cache:
             argv.append("--no-cache")
         for value in args or []:
@@ -69,7 +86,14 @@ class ImageOperations:
         to read the checkout's revision as a stranger, and without this it had
         to assemble its own `docker run` -- and pick its own network mode.
         """
-        argv = ["docker", "run", "--rm", "--network", network, *options]
+        argv = [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            require_container_network(network),
+            *options,
+        ]
         argv += [part for mount in mounts for part in ("-v", str(mount))]
         if workdir is not None:
             argv += ["-w", workdir]
