@@ -868,7 +868,8 @@ def test_package_source_image_and_runtime_are_network_none(
     assert "--network none" in source
     assert "--network none" in runtime
     assert "--platform linux/arm64" in source
-    assert "BASE=capsem-package-builder-arm64@sha256:" in source
+    assert "BASE=capsem-package-builder-arm64:" in source
+    assert "@sha256:" not in source
     assert "BASE=sha256:" not in source
     from capsem.gate.invocation import ConsoleMode
 
@@ -901,7 +902,7 @@ def test_the_package_dockerfile_waives_only_its_required_base_check() -> None:
     assert "FROM ${BASE}" in lines
 
 
-def test_the_package_lane_supplies_its_repository_qualified_exact_helper(
+def test_the_package_lane_supplies_its_verified_local_input_key_helper(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The targeted Dockerfile waiver is safe only while this is indivisible."""
@@ -920,7 +921,9 @@ def test_the_package_lane_supplies_its_repository_qualified_exact_helper(
     supplied = [
         build.argv[index + 1] for index, value in enumerate(build.argv) if value == "--build-arg"
     ]
-    assert supplied == [f"BASE=capsem-package-builder-arm64@sha256:{'0' * 64}"]
+    assert len(supplied) == 1
+    assert supplied[0].startswith("BASE=capsem-package-builder-arm64:")
+    assert "@sha256:" not in supplied[0]
 
 
 def test_the_builder_receives_every_name_for_the_target(

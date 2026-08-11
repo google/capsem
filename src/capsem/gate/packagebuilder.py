@@ -187,8 +187,15 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
     )
 
 
-def require_image_reference(runner: Runner, config: GateConfig, target: Arch) -> str:
-    """Resolve an immutable FROM reference, never warming inside the lane."""
+def require_local_image(runner: Runner, config: GateConfig, target: Arch) -> str:
+    """Resolve and verify the input-keyed local FROM tag without warming it.
+
+    A repository digest is the immutable parent for the network-open helper
+    build. The source build is network-denied, however, and BuildKit still
+    consults a registry for `repo@digest`; its already-local, input-keyed tag
+    is the only reference it can consume without egress. The exact child and
+    matching RepoDigest are verified immediately before returning that tag.
+    """
     docker = Docker(runner)
     host_arch = config.host_arch()
     tag = image_tag(config, target, docker)
@@ -206,4 +213,4 @@ def require_image_reference(runner: Runner, config: GateConfig, target: Arch) ->
         f"Using package helper {target.name}: input key {tag}; exact image {exact_id}; "
         f"immutable reference {exact_reference}"
     )
-    return exact_reference
+    return tag

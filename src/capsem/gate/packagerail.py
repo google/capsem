@@ -154,7 +154,7 @@ class PackageRail:
         )
 
         docker = Docker(self._runner)
-        helper_reference = packagebuilder.require_image_reference(
+        helper_local_image = packagebuilder.require_local_image(
             self._runner, self._config, self.target
         )
         container = self._package.lane_container.format(arch=self.target.name)
@@ -169,7 +169,7 @@ class PackageRail:
             tag=self._package.lane_image,
             dockerfile=str(self.root / self._package.lane_dockerfile),
             context=str(self.root),
-            args=[f"BASE={helper_reference}"],
+            args=[f"BASE={helper_local_image}"],
             platform=self._config.host_arch().docker_platform,
             network=self._package.builder.source_build_network,
             console=ConsoleMode.LOG_ONLY,
