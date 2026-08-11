@@ -204,7 +204,7 @@ class GateCommand(Recorded, ABC):
             plan,
             self._config,
             self._args,
-            qualifying=qualification_is_release(self._qualification),
+            qualifying=self.publishes or qualification_is_release(self._qualification),
         )
 
         # Inspection before re-exec. The other way round, `candidate --dry-run`

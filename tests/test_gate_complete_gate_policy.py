@@ -70,9 +70,11 @@ def test_the_complete_qualification_declaration_inventory_is_exact() -> None:
 
 
 def _command(name: str, **args):
+    parsed = {"dry_run": False, "graph": False, "timing": False}
+    parsed.update(args)
     return GateCommand.registry[name](
         RecordingRunner(PROJECT_ROOT),
-        argparse.Namespace(dry_run=False, graph=False, timing=False, **args),
+        argparse.Namespace(**parsed),
         qualification=LocalQualification(bin_dir=CONFIG.modules.default_bin_dir),
     )
 
@@ -133,6 +135,39 @@ def test_complete_qualification_accepts_explicit_enforcement(
     with pytest.raises(PlanReached):
         command.execute()
 
+    assert command._runner.commands == []
+
+
+@pytest.mark.parametrize("name", ["release-binaries", "release-profile"])
+def test_a_public_release_refuses_continuation_before_dispatch_state_exists(
+    name: str,
+) -> None:
+    """Publishing authority, not a later workflow environment, closes resume."""
+    command = _command(
+        name,
+        dry_run=True,
+        prefix=None,
+        resume_from="precheck",
+        **COMPLETE_GATE[name],
+    )
+
+    with pytest.raises(GateError, match="--from cannot be used while qualifying a release"):
+        command.execute()
+
+    assert command._runner.commands == []
+
+
+def test_candidate_continuation_remains_an_explicit_diagnostic(capsys) -> None:
+    command = _command(
+        "candidate",
+        dry_run=True,
+        prefix=None,
+        resume_from="artifacts.build-chain",
+    )
+
+    command.execute()
+
+    assert "carried" in capsys.readouterr().out
     assert command._runner.commands == []
 
 
