@@ -126,6 +126,18 @@ def _profile_env() -> dict[str, str]:
     return {"CAPSEM_PROFILES_DIR": default_materialized_profiles_dir()}
 
 
+def _service_assets_dir(assets_dir: str) -> str:
+    """Use the gate-owned host architecture selector when given an asset tree.
+
+    The asset gate points ``assets/current`` at ``config.host_arch()`` after
+    merging both architecture lanes. A release input may instead already be
+    an architecture-specific directory, so retain that direct-root shape.
+    """
+    root = Path(assets_dir)
+    current = root / "current"
+    return str(current if current.exists() or current.is_symlink() else root)
+
+
 def _profile_run_prefix(
     binary: str, profile: str, *, timeout: int | None = None
 ) -> list[str]:
@@ -364,7 +376,7 @@ def _start_service_with_test_config(
             [
                 str(service_bin),
                 "--assets-dir",
-                f"{assets_dir}/arm64" if (Path(assets_dir) / "arm64").exists() else assets_dir,
+                _service_assets_dir(assets_dir),
                 "--process-binary",
                 str(process_bin),
                 "--uds-path",
@@ -389,6 +401,39 @@ def _start_service_with_test_config(
 
     _wait_for_service_ready(proc, service_socket=SERVICE_SOCKET, log_path=log_path)
     return proc
+
+
+_FAILURE_DIAGNOSTIC_MAX_LINES = 40
+_FAILURE_DIAGNOSTIC_MAX_CHARS = 8_000
+
+
+def _bounded_tail(text: str) -> str:
+    tail = "\n".join(text.splitlines()[-_FAILURE_DIAGNOSTIC_MAX_LINES:])
+    return tail[-_FAILURE_DIAGNOSTIC_MAX_CHARS:]
+
+
+def _print_vm_failure_diagnostics(
+    proc: subprocess.CompletedProcess[str], session_dir: Path
+) -> None:
+    """Print bounded failure evidence without adding noise to green runs."""
+    if proc.returncode == 0:
+        return
+
+    stderr_tail = _bounded_tail(proc.stderr or "")
+    if stderr_tail:
+        print(f"    {YELLOW}--- stderr tail ---{RESET}")
+        print(stderr_tail)
+
+    process_log = session_dir / "process.log"
+    if process_log.is_file():
+        print(f"    {YELLOW}--- process.log tail: {process_log} ---{RESET}")
+        try:
+            process_tail = _bounded_tail(process_log.read_text(errors="replace"))
+        except OSError as exc:
+            print(f"    unable to read process.log: {exc}")
+        else:
+            if process_tail:
+                print(process_tail)
 
 
 def run_vm(binary: str, assets_dir: str, profile: str) -> tuple[str, int]:
@@ -475,6 +520,7 @@ def run_vm(binary: str, assets_dir: str, profile: str) -> tuple[str, int]:
         sys.exit(1)
 
     session_id = new_sessions[0].name
+    _print_vm_failure_diagnostics(proc, new_sessions[0])
     print(f"  session: {CYAN}{session_id}{RESET}  exit_code: {exit_code}")
     return session_id, exit_code
 

@@ -232,3 +232,91 @@ def test_start_service_creates_run_dir_before_pidfile(tmp_path, monkeypatch):
     assert captured["env"]["RUST_LOG"] == "info"
     assert "--uds-path" in captured["args"]
     assert captured["args"][captured["args"].index("--uds-path") + 1] == str(module.SERVICE_SOCKET)
+
+
+@pytest.mark.parametrize("host_arch", ["arm64", "x86_64"])
+def test_start_service_uses_current_host_assets_from_dual_arch_tree(
+    tmp_path, monkeypatch, host_arch
+):
+    monkeypatch.setenv("CAPSEM_INTEGRATION_HOME", str(tmp_path / "integration-home"))
+    module = load_integration_script()
+
+    assets = tmp_path / "assets"
+    for arch in ("arm64", "x86_64"):
+        (assets / arch).mkdir(parents=True)
+    (assets / "current").symlink_to(host_arch)
+
+    class FakeProc:
+        pid = 424242
+
+    captured = {}
+
+    def fake_popen(args, **_kwargs):
+        captured["args"] = args
+        return FakeProc()
+
+    monkeypatch.setattr(module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(module, "_wait_for_service_ready", lambda *_args, **_kwargs: None)
+
+    module._start_service_with_test_config(
+        str(assets),
+        "tests/fixtures/config/integration/settings.toml",
+        "tests/fixtures/config/integration/corp.toml",
+    )
+
+    selected = Path(captured["args"][captured["args"].index("--assets-dir") + 1])
+    assert selected == assets / "current"
+    assert selected.resolve() == (assets / host_arch).resolve()
+
+
+def test_service_assets_dir_preserves_direct_architecture_root(tmp_path):
+    module = load_integration_script()
+    assets = tmp_path / "assets-x86_64"
+    assets.mkdir()
+    (assets / "vmlinuz").write_bytes(b"kernel")
+
+    assert module._service_assets_dir(str(assets)) == str(assets)
+
+
+def test_vm_failure_diagnostics_are_bounded_and_include_process_log(tmp_path, capsys):
+    module = load_integration_script()
+    session_dir = tmp_path / "sessions" / "code-1-failed"
+    session_dir.mkdir(parents=True)
+    process_log = session_dir / "process.log"
+    process_log.write_text(
+        "\n".join(
+            [f"old process line {number}" for number in range(100)]
+            + [
+                "p" * 20_000,
+                "kernel architecture mismatch: ARM64 image on x86_64 host",
+            ]
+        )
+    )
+    proc = subprocess.CompletedProcess(
+        ["capsem", "run"],
+        1,
+        stdout="",
+        stderr="\n".join(
+            [f"old stderr line {number}" for number in range(100)]
+            + ["e" * 20_000, "VM assets rejected"]
+        ),
+    )
+
+    module._print_vm_failure_diagnostics(proc, session_dir)
+
+    output = capsys.readouterr().out
+    assert "VM assets rejected" in output
+    assert "kernel architecture mismatch: ARM64 image on x86_64 host" in output
+    assert str(process_log) in output
+    assert "old stderr line 0" not in output
+    assert "old process line 0" not in output
+    assert len(output) < 2 * module._FAILURE_DIAGNOSTIC_MAX_CHARS + 1_000
+
+
+def test_vm_failure_diagnostics_are_quiet_for_success(tmp_path, capsys):
+    module = load_integration_script()
+    proc = subprocess.CompletedProcess(["capsem", "run"], 0, stdout="ok", stderr="")
+
+    module._print_vm_failure_diagnostics(proc, tmp_path)
+
+    assert capsys.readouterr().out == ""
