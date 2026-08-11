@@ -6291,3 +6291,33 @@ def test_release_recipes_reject_a_dirty_tree_before_running_the_gate() -> None:
             f"{recipe} runs the gate before checking the tree, which is the "
             "forty-minute failure this exists to prevent"
         )
+
+
+def test_web_only_prs_do_not_depend_on_product_or_release_jobs() -> None:
+    workflow = _workflow_text("ci.yaml")
+    docs_job = _workflow_job_block("docs-build")
+    gate = _workflow_job_block("pr-gate")
+
+    assert "fetch-depth: 0" in docs_job
+    assert "git diff --name-only \"$BASE_SHA\"...HEAD" in docs_job
+    assert "web_only: ${{ steps.scope.outputs.web_only }}" in docs_job
+    assert "site/*|docs/*" in docs_job
+    assert 'if [ "$EVENT_NAME" != pull_request ]; then' in docs_job
+    assert 'echo "web_only=false"' in docs_job
+
+    for job_name in ("fast-gate", "test-linux", "test", "test-install", "release-site-build"):
+        job = _workflow_job_block(job_name)
+        assert "needs: docs-build" in job
+        assert "needs.docs-build.outputs.web_only != 'true'" in job
+
+    assert "WEB_ONLY: ${{ needs.docs-build.outputs.web_only }}" in gate
+    assert 'if [ "$WEB_ONLY" = true ]; then' in gate
+    for result in (
+        "FAST_GATE_RESULT",
+        "TEST_LINUX_RESULT",
+        "TEST_MACOS_RESULT",
+        "TEST_INSTALL_RESULT",
+        "RELEASE_SITE_BUILD_RESULT",
+    ):
+        assert f'test "${result}" = skipped' in gate
+        assert f'test "${result}" = success' in gate
