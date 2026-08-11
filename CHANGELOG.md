@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Gateway status now reads the independent VM and profile authorities
+  concurrently while preserving fresh source data and failure semantics. This
+  removes avoidable control-route latency without weakening the release budget.
+
 - Rust dependencies now require the panic-safe `lru` 0.18.2 line directly and
   through Ratatui 0.30.2, removing both versions covered by
   `RUSTSEC-2026-0253` without weakening the strict advisory gate.

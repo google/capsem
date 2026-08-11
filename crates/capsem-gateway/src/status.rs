@@ -224,7 +224,11 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         profiles: None,
     };
 
-    let list = match uds_get(&state.uds_path, "/vms/list").await {
+    let (list_body, profiles) = tokio::join!(
+        uds_get(&state.uds_path, "/vms/list"),
+        fetch_profiles_status(state),
+    );
+    let list = match list_body {
         Ok(body) => match serde_json::from_slice::<ListResponse>(&body) {
             Ok(l) => l,
             Err(_) => return unavailable,
@@ -277,8 +281,6 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             available_actions: sess.available_actions.clone(),
         });
     }
-
-    let profiles = fetch_profiles_status(state).await;
 
     StatusResponse {
         service: "running".into(),

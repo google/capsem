@@ -344,6 +344,50 @@ async fn fetch_status_preserves_profile_catalog_and_manifest_provenance() {
 }
 
 #[tokio::test]
+async fn fetch_status_reads_its_authoritative_inputs_concurrently() {
+    let both_requests = Arc::new(tokio::sync::Barrier::new(2));
+    let list_request = both_requests.clone();
+    let profiles_request = both_requests.clone();
+    let mock = axum::Router::new()
+        .route(
+            "/vms/list",
+            axum::routing::get(move || {
+                let request = list_request.clone();
+                async move {
+                    request.wait().await;
+                    axum::Json(serde_json::json!({"sandboxes": []}))
+                }
+            }),
+        )
+        .route(
+            "/profiles/status",
+            axum::routing::get(move || {
+                let request = profiles_request.clone();
+                async move {
+                    request.wait().await;
+                    axum::Json(serde_json::json!({
+                        "source": "directory",
+                        "profile_count": 2,
+                        "ready_count": 2,
+                        "profiles": []
+                    }))
+                }
+            }),
+        );
+    let (path, h, _d) = mock_uds(mock).await;
+
+    let response =
+        tokio::time::timeout(Duration::from_secs(1), fetch_status(&test_app_state(&path)))
+            .await
+            .expect("independent authoritative status reads must be in flight together");
+
+    assert_eq!(response.service, "running");
+    assert_eq!(response.vm_count, 0);
+    assert_eq!(response.profiles.unwrap()["profile_count"], 2);
+    h.abort();
+}
+
+#[tokio::test]
 async fn fetch_status_ignores_retired_global_asset_health() {
     let mock = axum::Router::new()
         .route(
