@@ -127,6 +127,14 @@ The justfile dispatches; `src/capsem/gate/` decides. No recipe carries a shell
 body and none exceeds five lines, both held by contract tests rather than
 convention.
 
+Checked-in first-party scripts have the same architectural backstop. New
+scripts may not exceed `[boundary.scripts].max_lines`; larger historical files
+are an exact line-count debt ratchet, not an exemption list. Split growth before
+merging, and lower or remove a ratchet whenever a script shrinks. The guard
+only inventories Git-tracked program sources under the configured first-party
+roots, so generated outputs and vendored dependencies are outside its scope by
+rule.
+
 `just test` is **one process, one machine lock, one workspace, one plan**.
 Its dry run reports the current totals; conditional asset staging makes a
 checked-in count depend on machine state. Both release commands contain that

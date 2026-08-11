@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Checked-in first-party scripts now have a 300-line ceiling in the fast source
+  contracts. The 26 larger historical scripts carry exact config-owned line
+  counts that may only shrink, while Git-tracked root scoping excludes generated
+  output and vendored dependencies without a silent exemption list.
+
 - The asset-pipeline and site-architecture skill entrypoints now route
   reference-heavy manifest, publication, protocol, storage, lifecycle, crate,
   and privilege detail on demand. Their always-loaded spines shrink from

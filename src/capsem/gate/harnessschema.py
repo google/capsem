@@ -27,6 +27,7 @@ from pydantic import (
 
 from .configschema import Strict
 from .sandboxschema import SandboxConfig as SandboxConfig
+from .sourcecontractschema import ScriptSizeConfig
 
 #: A first-party tree to check. Relative, normalized, and inside the checkout:
 #: an absolute or escaping root would check somebody else's code and report it
@@ -39,7 +40,6 @@ PythonRoot = Annotated[str, StringConstraints(min_length=1, pattern=r"^[A-Za-z0-
 #: `--ignore`, so a misspelt entry held nothing back and looked exactly like a
 #: rule somebody had fixed.
 TyRule = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$")]
-
 
 class SuppressionBudget(Strict):
     """Exact Python-analysis debt that may only shrink deliberately."""
@@ -108,6 +108,7 @@ class LintConfig(Strict):
 class BoundaryConfig(Strict):
     max_recipe_lines: int
     max_module_lines: int
+    scripts: ScriptSizeConfig
     shell_control_flow: tuple[str, ...]
     recipes_with_inline_control_flow: tuple[str, ...]
     direct_machine_access: tuple[str, ...]
