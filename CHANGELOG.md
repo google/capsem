@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The asset-pipeline and site-architecture skill entrypoints now route
+  reference-heavy manifest, publication, protocol, storage, lifecycle, crate,
+  and privilege detail on demand. Their always-loaded spines shrink from
+  308/362 lines to 108/85 without dropping their source-contract guidance.
+
 - Linux package construction now materializes its target dependencies in an
   input-keyed helper from an immutable Ubuntu snapshot, locked Cargo and pnpm
   stores, and a digest-verified static ORT archive. The publishable source

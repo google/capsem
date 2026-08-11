@@ -1993,7 +1993,7 @@ def test_self_update_docs_match_verified_package_execution() -> None:
     update_rs = _source_text("crates/capsem/src/update.rs")
     install_tests = _source_text("tests/capsem-install/test_update.py")
     install_skill = _source_text("skills/dev-installation/SKILL.md")
-    architecture_skill = _source_text("skills/site-architecture/SKILL.md")
+    architecture_skill = _skill_text("skills/site-architecture/SKILL.md")
     service_docs = _source_text("docs/src/content/docs/architecture/service-architecture.md")
 
     assert "apply_binary_installer_plan(&plan).await?" in update_rs
@@ -4853,7 +4853,7 @@ def test_release_docs_identify_body_blobs_as_forensic_truth() -> None:
 
 
 def test_release_docs_reject_old_service_routes_and_manifest_signing() -> None:
-    architecture_skill = (PROJECT_ROOT / "skills" / "site-architecture" / "SKILL.md").read_text()
+    architecture_skill = _skill_text("skills/site-architecture/SKILL.md")
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
     current_service_table = architecture_skill.split("### Service HTTP API", maxsplit=1)[1].split(
@@ -5765,12 +5765,11 @@ def test_builder_has_no_legacy_ai_provider_authoring_rail() -> None:
 
 def test_gateway_docs_describe_explicit_routes_not_generic_forwarding() -> None:
     docs = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in (
-            PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "service-api.md",
-            PROJECT_ROOT / "skills" / "site-architecture" / "SKILL.md",
-            PROJECT_ROOT / "skills" / "frontend-design" / "SKILL.md",
-        )
+        [
+            _source_text("docs/src/content/docs/architecture/service-api.md"),
+            _skill_text("skills/site-architecture/SKILL.md"),
+            _source_text("skills/frontend-design/SKILL.md"),
+        ]
     )
 
     assert "Unknown routes must return 404" in docs

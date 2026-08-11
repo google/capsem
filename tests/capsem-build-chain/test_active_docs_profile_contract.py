@@ -124,10 +124,26 @@ RELEASE_ASSET_DOCS = [
 BENCHMARK_RESULTS_DOC = PROJECT_ROOT / "docs/src/content/docs/benchmarks/results.md"
 
 
+def _active_text(path: Path) -> str:
+    """Read active skill guidance through its routed reference layer."""
+    main = path.read_text()
+    if path != PROJECT_ROOT / "skills/asset-pipeline/SKILL.md":
+        return main
+    parts = [main]
+    for relative in dict.fromkeys(
+        re.findall(r"`(references/[A-Za-z0-9_./-]+\.md)`", main)
+    ):
+        reference = (path.parent / relative).resolve()
+        assert reference.is_relative_to(path.parent.resolve())
+        assert reference.is_file(), f"missing linked skill reference: {relative}"
+        parts.append(reference.read_text())
+    return "\n".join(parts)
+
+
 def test_active_docs_do_not_teach_retired_guest_config_authority() -> None:
     failures: list[str] = []
     for path in ACTIVE_DOCS_AND_SKILLS:
-        text = path.read_text()
+        text = _active_text(path)
         for needle in STALE_GUIDANCE:
             # Word-bounded so a retired term cannot be matched inside a current
             # one. Substring matching flagged the correct term "profile pins"

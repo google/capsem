@@ -29,6 +29,21 @@ DISCOVERY_ROOTS = (".claude", ".codex", ".gemini", ".agents")
 # reference; paths like `/vm/terminal/index.html` do not match.
 SKILL_REFERENCE = re.compile(r"`/([a-z0-9]+(?:-[a-z0-9]+)*)`")
 
+PROGRESSIVE_DISCLOSURE_SKILLS = {
+    "asset-pipeline": {
+        "references/manifest-and-storage.md",
+        "references/release-channel-publication.md",
+    },
+    "site-architecture": {
+        "references/crate-and-privilege-model.md",
+        "references/key-files.md",
+        "references/service-and-guest-protocols.md",
+        "references/storage-network-and-lifecycle.md",
+        "references/tauri-v2.md",
+    },
+}
+REFERENCE_LINK = re.compile(r"`(references/[A-Za-z0-9_./-]+\.md)`")
+
 
 def checked_in_skills() -> set[str]:
     root = PROJECT_ROOT / "skills"
@@ -37,6 +52,28 @@ def checked_in_skills() -> set[str]:
         for entry in root.iterdir()
         if entry.is_dir() and not entry.name.startswith(".")
     }
+
+
+@pytest.mark.parametrize(
+    ("skill_name", "expected_references"), PROGRESSIVE_DISCLOSURE_SKILLS.items()
+)
+def test_reference_heavy_skills_have_lean_routed_entrypoints(
+    skill_name: str, expected_references: set[str]
+) -> None:
+    skill_dir = PROJECT_ROOT / "skills" / skill_name
+    skill_path = skill_dir / "SKILL.md"
+    text = skill_path.read_text(encoding="utf-8")
+
+    assert len(text.splitlines()) <= 160, (
+        f"{skill_path.relative_to(PROJECT_ROOT)} must keep reference-heavy detail "
+        "behind progressive-disclosure routing"
+    )
+    linked = set(REFERENCE_LINK.findall(text))
+    assert expected_references <= linked
+    for relative in linked:
+        reference = (skill_dir / relative).resolve()
+        assert reference.is_relative_to(skill_dir.resolve())
+        assert reference.is_file(), f"missing linked skill reference: {relative}"
 
 
 @pytest.mark.parametrize("index_file", FULL_INDEX_FILES)
