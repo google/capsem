@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -47,7 +48,7 @@ def test_a_linux_host_with_virtualisation_devices_boots_a_guest(
 ) -> None:
     _on(monkeypatch, "Linux")
     monkeypatch.setattr("capsem.gate.host.device_available", lambda path: path != "/dev/vsock")
-    container, _ = _container()
+    container, runner = _container()
 
     options = container.runtime_options()
 
@@ -55,6 +56,14 @@ def test_a_linux_host_with_virtualisation_devices_boots_a_guest(
     assert "--device" in options and "/dev/kvm" in options
     assert "/dev/vhost-vsock" in options
     assert "/dev/vsock" not in options, "absent optional device must not be passed"
+    assert "--group-add" not in options
+
+    container.start(options=options)
+    started = runner.matching(r"docker run -d")[0]
+    assert (
+        f"bash {CONFIG.install.vm_device_setup_script} {CONFIG.install.guest_user.name} "
+        f"{CONFIG.install.systemd_command} /dev/kvm /dev/vhost-vsock"
+    ) in started
 
 
 def test_an_available_vsock_device_is_passed_through(
@@ -488,8 +497,65 @@ def test_the_virtualisation_devices_are_reachable_from_inside(
 
     container.start(options=container.runtime_options())
 
-    assert runner.ran(r"test -r /dev/kvm -a -w /dev/kvm")
-    assert runner.ran(r"test -r /dev/vhost-vsock -a -w /dev/vhost-vsock")
+    user = CONFIG.install.guest_user.name
+    assert runner.ran(rf"docker exec -u {user} .*test -r /dev/kvm -a -w /dev/kvm")
+    assert runner.ran(rf"docker exec -u {user} .*test -r /dev/vhost-vsock -a -w /dev/vhost-vsock")
+    runner.assert_order(
+        r"systemctl is-system-running --wait",
+        rf"docker exec -u {user} .*test -r /dev/vhost-vsock",
+    )
+
+
+def test_missing_device_group_is_created_before_systemd(
+    tmp_path: Path,
+) -> None:
+    """An unknown host gid is the ordinary Docker/Colima case, not an error.
+
+    Keep the test outside a container by replacing only the account tools; the
+    checked-in wrapper still owns validation, ordering, and the final exec.
+    """
+    commands = tmp_path / "bin"
+    commands.mkdir()
+    log = tmp_path / "calls.log"
+    for name, body in {
+        "id": "exit 0",
+        "runuser": (
+            'count=$(cat "$STATE" 2>/dev/null || printf 0); '
+            'if [[ "$count" = 0 ]]; then printf 1 > "$STATE"; exit 1; fi'
+        ),
+        "stat": 'if [[ "$*" = *"%g"* ]]; then printf "4242\\n"; else printf "660\\n"; fi',
+        "getent": "exit 2",
+        "groupadd": 'printf "groupadd %s\\n" "$*" >> "$CALL_LOG"',
+        "usermod": 'printf "usermod %s\\n" "$*" >> "$CALL_LOG"',
+        "systemd": 'printf "systemd\\n" >> "$CALL_LOG"',
+    }.items():
+        command = commands / name
+        command.write_text(f"#!/usr/bin/env bash\n{body}\n", encoding="utf-8")
+        command.chmod(0o755)
+
+    env = {
+        **os.environ,
+        "PATH": f"{commands}:{os.environ['PATH']}",
+        "CALL_LOG": str(log),
+        "STATE": str(tmp_path / "runuser-state"),
+    }
+    subprocess.run(
+        [
+            "bash",
+            str(PROJECT_ROOT / CONFIG.install.vm_device_setup_script),
+            CONFIG.install.guest_user.name,
+            str(commands / "systemd"),
+            "/dev/null",
+        ],
+        check=True,
+        env=env,
+    )
+
+    assert log.read_text(encoding="utf-8").splitlines() == [
+        "groupadd --gid 4242 capsem-vm-4242",
+        f"usermod --append --groups capsem-vm-4242 {CONFIG.install.guest_user.name}",
+        "systemd",
+    ]
 
 
 def test_the_install_containers_tmpfs_can_execute_what_is_unpacked_into_it() -> None:

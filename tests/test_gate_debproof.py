@@ -356,6 +356,24 @@ def test_the_release_and_shell_proofs_run_as_the_unprivileged_user(
         assert f"-u {CONFIG.install.guest_user.name}" in matched[0]
 
 
+def test_vm_devices_are_granted_and_probed_as_the_runtime_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof, runner = _proof(tmp_path, monkeypatch)
+
+    proof.run()
+
+    started = runner.matching(r"docker run -d")[0]
+    assert "--group-add" not in started
+    assert (
+        f"bash {CONFIG.install.vm_device_setup_script} {CONFIG.install.guest_user.name} "
+        f"{CONFIG.install.systemd_command} /dev/kvm /dev/vhost-vsock"
+    ) in started
+    user = CONFIG.install.guest_user.name
+    for device in CONFIG.install.vm_devices:
+        assert runner.ran(rf"docker exec -u {user} .*test -r {device} -a -w {device}")
+
+
 def test_the_container_is_removed_even_when_the_proof_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

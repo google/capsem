@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import shutil
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import config as gate_config
@@ -27,6 +28,42 @@ from .content import InstallContent, SelectedInstallContent
 from .docker import Docker, Mount
 from .errors import GateError
 from .proc import Runner
+from .productschema import InstallConfig
+
+
+@dataclass(frozen=True)
+class VmDeviceRuntime:
+    """One indivisible device pass-through and runtime-user device selection."""
+
+    docker_options: tuple[str, ...]
+    runtime_user_devices: tuple[str, ...]
+
+
+def virtualisation_runtime(settings: InstallConfig, *, purpose: str) -> VmDeviceRuntime:
+    """Pass VM devices and name the required subset for runtime-user setup."""
+    options: list[str] = []
+    selected: list[str] = []
+    for device in settings.vm_devices:
+        if not host.device_available(device):
+            raise GateError(f"{purpose}; {device} is not readable and writable")
+        selected.append(device)
+    for device in settings.optional_vm_devices:
+        if host.device_available(device):
+            selected.append(device)
+    for device in selected:
+        options += ["--device", device]
+    return VmDeviceRuntime(tuple(options), settings.vm_devices)
+
+
+def systemd_command(settings: InstallConfig, devices: tuple[str, ...]) -> list[str]:
+    """Prepare the proof user before systemd recomputes its group membership."""
+    return [
+        "bash",
+        settings.vm_device_setup_script,
+        settings.guest_user.name,
+        settings.systemd_command,
+        *devices,
+    ]
 
 
 class InstallContainer:
@@ -48,6 +85,7 @@ class InstallContainer:
         self._owned = self._settings.layout.owned_paths(self._settings.mount)
         self._sleep = sleep
         self._rosetta_required = False
+        self._runtime_user_devices: tuple[str, ...] = ()
         self.boots_a_guest = False
 
     # -- host capability ---------------------------------------------------
@@ -58,16 +96,12 @@ class InstallContainer:
         if not host.on_linux():
             return options
 
-        for device in self._settings.vm_devices:
-            if not host.device_available(device):
-                raise GateError(
-                    "installed doctor requires KVM and vhost-vsock on the Linux "
-                    f"runner; {device} is not readable and writable"
-                )
-            options += ["--device", device]
-        for device in self._settings.optional_vm_devices:
-            if host.device_available(device):
-                options += ["--device", device]
+        runtime = virtualisation_runtime(
+            self._settings,
+            purpose="installed doctor requires KVM and vhost-vsock on the Linux runner",
+        )
+        options += runtime.docker_options
+        self._runtime_user_devices = runtime.runtime_user_devices
         self.boots_a_guest = True
         return options
 
@@ -108,7 +142,7 @@ class InstallContainer:
             network=self._settings.runtime_network,
             name=self.name,
             image=image,
-            command=[self._settings.systemd_command],
+            command=systemd_command(self._settings, self._runtime_user_devices),
             options=["--privileged", "--cgroupns=host", *options, *self._tmpfs()],
             mounts=[
                 Mount(cgroup, cgroup, "rw"),
@@ -124,10 +158,15 @@ class InstallContainer:
                 *self._content_mounts(),
             ],
         )
-        if self.boots_a_guest:
-            for device in self._settings.vm_devices:
-                self._docker.exec(self.name, ["test", "-r", device, "-a", "-w", device])
         self._await_systemd()
+        if self.boots_a_guest:
+            user = self._settings.guest_user.name
+            for device in self._settings.vm_devices:
+                self._docker.exec(
+                    self.name,
+                    ["test", "-r", device, "-a", "-w", device],
+                    user=user,
+                )
         self._claim_paths()
 
     def _content_mounts(self) -> tuple[Mount, ...]:

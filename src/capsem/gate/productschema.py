@@ -112,6 +112,7 @@ class InstallConfig(Strict):
     serve_ready_interval_seconds: float
     vm_devices: tuple[str, ...]
     optional_vm_devices: tuple[str, ...]
+    vm_device_setup_script: str
     rosetta_binfmt: str
     systemd_command: str
     cgroup_path: str

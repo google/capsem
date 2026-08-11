@@ -7,11 +7,16 @@ import time
 from pathlib import Path
 
 from . import config as gate_config
-from . import host, installimage
+from . import installimage
 from .content import ProfileContent
 from .docker import Docker, Mount
 from .errors import GateError
-from .installcontainer import await_systemd
+from .installcontainer import (
+    VmDeviceRuntime,
+    await_systemd,
+    systemd_command,
+    virtualisation_runtime,
+)
 from .installproof import InstallProof
 from .proc import Runner
 from .releasegraph import ReleaseGraph
@@ -78,35 +83,25 @@ class DebProof:
             raise GateError(f"unsupported exact package proof channel: {channel}")
         return channel
 
-    def _require_virtualisation(self) -> list[str]:
-        devices = []
-        for device in self._install.vm_devices:
-            if not host.device_available(device):
-                raise GateError(
-                    f"the exact Debian package proof needs {device}, which is not "
-                    "readable and writable on this host"
-                )
-            devices += ["--device", device]
-        for device in self._install.optional_vm_devices:
-            if host.device_available(device):
-                devices += ["--device", device]
-        return devices
-
-    # -- the run -----------------------------------------------------------
+    def _require_virtualisation(self) -> VmDeviceRuntime:
+        return virtualisation_runtime(
+            self._install,
+            purpose="the exact Debian package proof needs KVM and vhost-vsock",
+        )
 
     def run(self) -> None:
         self._content.require_complete(
             self._config,
             arches=(self._config.host_arch(),),
         )
-        devices = self._require_virtualisation()
+        runtime = self._require_virtualisation()
         container_deb = f"{self._install.mount}/{self.package.relative_to(self.root)}"
         expected = self._runner.capture(["dpkg-deb", "-f", str(self.package), "Version"])
         if not expected:
             raise GateError(f"{self.package.name} declares no Version field")
 
         try:
-            self._start(devices)
+            self._start(runtime)
             self._staging.stage_content_from(
                 assets=self._install.proof_assets_mount,
                 content_config=self._install.proof_config_mount,
@@ -125,7 +120,7 @@ class DebProof:
             f"Exact Debian package proof passed: version={expected} profiles={ready}/{total}"
         )
 
-    def _start(self, devices: list[str]) -> None:
+    def _start(self, runtime: VmDeviceRuntime) -> None:
         self._runner.note("Starting clean systemd container for exact package proof...")
         cgroup = self._install.cgroup_path
         image = installimage.require_local_image(self._runner, self._config)
@@ -135,13 +130,13 @@ class DebProof:
             network=self._install.runtime_network,
             name=self._proof.container,
             image=image,
-            command=[self._install.systemd_command],
+            command=systemd_command(self._install, runtime.runtime_user_devices),
             options=[
                 "--privileged",
                 "--cgroupns=host",
                 "--security-opt",
                 "seccomp=unconfined",
-                *devices,
+                *runtime.docker_options,
                 *tmpfs,
             ],
             mounts=[
@@ -169,8 +164,13 @@ class DebProof:
             interval=self._install.systemd_ready_interval_seconds,
             sleep=self._sleep,
         )
+        user = self._install.guest_user.name
         for device in self._install.vm_devices:
-            self._docker.exec(self._proof.container, ["test", "-r", device, "-a", "-w", device])
+            self._docker.exec(
+                self._proof.container,
+                ["test", "-r", device, "-a", "-w", device],
+                user=user,
+            )
 
     def _prepare_handoff(self, package: str, version: str) -> None:
         """Author the exact local graph before the package's postinst runs."""

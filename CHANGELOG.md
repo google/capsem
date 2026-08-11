@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux exact-install containers now map the host's numeric KVM/vhost-vsock
+  device group onto the unprivileged installed user before systemd starts.
+  Preflight probes run as that same user, so Doctor cannot reach its first VM
+  boot with root-only device access that the gate mistakenly accepted.
+
 - Native Linux and macOS installers now carry the exact manifest bytes selected
   by the public installer into the network-sealed postinstall, alongside their
   logical source URL. Relative assets resolve against that source without a

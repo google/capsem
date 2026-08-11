@@ -125,6 +125,10 @@ serve_ready_interval_seconds = 0.05
 # runs complete rather than packaging-only.
 vm_devices = ["/dev/kvm", "/dev/vhost-vsock"]
 optional_vm_devices = ["/dev/vsock"]
+# Docker keeps host numeric device ownership. This wrapper maps only the
+# selected non-root device gids onto the unprivileged proof user before
+# systemd creates that user's manager and recomputes supplementary groups.
+vm_device_setup_script = "scripts/prepare-install-vm-devices.sh"
 rosetta_binfmt = "/proc/sys/fs/binfmt_misc/rosetta"
 
 # Where the extracted-but-not-installed package lands. Deliberately not
