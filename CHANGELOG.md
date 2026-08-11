@@ -23,7 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uses a repository-qualified immutable digest; the network-denied source
   build consumes the verified local input-key tag. Warm helpers are keyed to
   the exact host-platform child image rather than a provenance index whose
-  attestation can change without changing the executable base.
+  attestation can change without changing the executable base. Cross-target
+  helpers prefetch both the publishable target graph and the build-host graph,
+  so host-compiled build scripts and procedural macros cannot discover a
+  missing conditional crate after the package lane has sealed its network.
 
 - Direct development diagnostics now have a portable bounded-process wrapper
   that closes stdin and owns the complete child process group. A blocked

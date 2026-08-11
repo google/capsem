@@ -91,6 +91,7 @@ def image_tag(
         ),
         host_arch.name,
         host_arch.docker_platform,
+        host_arch.rust_target,
         target.name,
         target.rust_target,
         target.dpkg,
@@ -153,6 +154,7 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
             args=[
                 f"BASE={parent_reference}",
                 f"RUST_TARGET={target.rust_target}",
+                f"HOST_RUST_TARGET={host_arch.rust_target}",
                 f"DPKG_ARCH={target.dpkg}",
                 f"APT_SNAPSHOT_BASE={settings.apt_snapshot_base}",
                 f"APT_SNAPSHOT_ID={settings.apt_snapshot_id}",

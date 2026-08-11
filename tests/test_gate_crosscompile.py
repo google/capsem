@@ -424,7 +424,10 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     assert "ENV RUSTUP_AUTO_INSTALL=0" in dockerfile
     assert 'grep -F "${selected}-"' in dockerfile
     assert 'rustup target list --toolchain "${selected}" --installed' in dockerfile
-    assert "cargo fetch --locked --target" in dockerfile
+    assert dockerfile.count("cargo fetch --locked --target") == 2
+    assert 'cargo fetch --locked --target "${RUST_TARGET}"' in dockerfile
+    assert 'cargo fetch --locked --target "${HOST_RUST_TARGET}"' in dockerfile
+    assert "ARG HOST_RUST_TARGET" in dockerfile
     assert "pnpm fetch --frozen-lockfile" in dockerfile
     assert "frontend/pnpm-workspace.yaml" in builder.identity_inputs
     assert "frontend/pnpm-workspace.yaml" in dockerfile
@@ -671,26 +674,37 @@ def test_ort_materializer_rejects_an_archive_path_escape(tmp_path: Path) -> None
     assert not (tmp_path / "escaped").exists()
 
 
+@pytest.mark.parametrize(
+    ("host_name", "target_name"),
+    (("x86_64", "arm64"), ("arm64", "x86_64")),
+)
 def test_package_helper_is_host_native_and_target_specific(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    host_name: str,
+    target_name: str,
 ) -> None:
     from capsem.gate.packagebuilder import materialize
 
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: host_name)
     root = _checkout(tmp_path)
     config = gate_config.load(root)
+    host = config.arch(host_name)
+    target = config.arch(target_name)
     runner = RecordingRunner(
         root,
-        failures=("docker image inspect --platform linux/amd64 capsem-package-builder-arm64:",),
+        failures=(
+            f"docker image inspect --platform {host.docker_platform} "
+            f"capsem-package-builder-{target.name}:",
+        ),
         replies={
-            "--platform linux/amd64 --format '{{.Id}}' capsem-package-builder-arm64": (
-                "sha256:" + "d" * 64
-            ),
-            "--format '{{.Id}}' capsem-package-builder-arm64": "sha256:" + "e" * 64,
+            f"--platform {host.docker_platform} --format '{{{{.Id}}}}' "
+            f"capsem-package-builder-{target.name}": ("sha256:" + "d" * 64),
+            f"--format '{{{{.Id}}}}' capsem-package-builder-{target.name}": ("sha256:" + "e" * 64),
         },
     )
 
-    identity = materialize(runner, config, config.arch("arm64"))
+    identity = materialize(runner, config, target)
 
     build_command = next(
         command
@@ -699,23 +713,24 @@ def test_package_helper_is_host_native_and_target_specific(
         and any(value.endswith("/Dockerfile.package-builder") for value in command.argv)
     )
     build = str(build_command)
-    assert "--platform linux/amd64" in build
+    assert f"--platform {host.docker_platform}" in build
     assert "--network default" in build
     assert f"BASE=capsem-host-builder@sha256:{'0' * 64}" in build
     assert f"BASE=sha256:{'0' * 64}" not in build
-    assert "RUST_TARGET=aarch64-unknown-linux-gnu" in build
-    assert "DPKG_ARCH=arm64" in build
+    assert f"RUST_TARGET={target.rust_target}" in build
+    assert f"HOST_RUST_TARGET={host.rust_target}" in build
+    assert f"DPKG_ARCH={target.dpkg}" in build
     assert f"APT_SNAPSHOT_BASE={config.package.builder.apt_snapshot_base}" in build
     assert f"APT_SNAPSHOT_ID={config.package.builder.apt_snapshot_id}" in build
     assert f"CARGO_STORE={config.package.builder.cargo_store}" in build
     assert f"PNPM_STORE={config.package.builder.pnpm_store}" in build
-    assert CONFIG.package.builder.targets["arm64"].ort_sha256 in build
-    assert "INPUT_IDENTITY=capsem-package-builder-arm64:" in build
+    assert CONFIG.package.builder.targets[target.name].ort_sha256 in build
+    assert f"INPUT_IDENTITY=capsem-package-builder-{target.name}:" in build
     assert "INPUT_KEY=" not in build
     assert any("sha256:" in note for note in runner.notes)
-    assert identity.input_key.startswith("capsem-package-builder-arm64:")
+    assert identity.input_key.startswith(f"capsem-package-builder-{target.name}:")
     assert identity.image_id == "sha256:" + "d" * 64
-    assert identity.image_reference == f"capsem-package-builder-arm64@sha256:{'0' * 64}"
+    assert identity.image_reference == (f"capsem-package-builder-{target.name}@sha256:{'0' * 64}")
     from capsem.gate.invocation import ConsoleMode
 
     assert build_command.console is ConsoleMode.LOG_ONLY

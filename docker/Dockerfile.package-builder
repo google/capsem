@@ -6,6 +6,7 @@ ARG BASE
 FROM ${BASE} AS dependency-fetch
 
 ARG RUST_TARGET
+ARG HOST_RUST_TARGET
 ARG ORT_URL
 ARG ORT_SHA256
 
@@ -23,13 +24,17 @@ WORKDIR /prefetch
 RUN selected="$(sed -n 's/^channel = \"\(.*\)\"/\1/p' rust-toolchain.toml)" \
     && test -n "${selected}" \
     && rustup show active-toolchain | grep -F "${selected}-" \
-    && rustup target list --toolchain "${selected}" --installed | grep -Fx "${RUST_TARGET}"
+    && rustup target list --toolchain "${selected}" --installed | grep -Fx "${RUST_TARGET}" \
+    && rustup target list --toolchain "${selected}" --installed | grep -Fx "${HOST_RUST_TARGET}"
 
 # Locked Cargo/pnpm inputs and exact ORT are fetched into fixed transfer roots.
-# No first-party compilation happens here, and /prefetch is never an ancestor
-# of the final helper.
+# Cargo needs both graphs: `--target` selects the publishable architecture, but
+# its build scripts and proc macros are compiled for the container host and can
+# have different target-conditional dependencies. No first-party compilation
+# happens here, and /prefetch is never an ancestor of the final helper.
 RUN mkdir -p /capsem-deps/cargo/registry /capsem-deps/cargo/git \
-    && CARGO_HOME=/capsem-deps/cargo cargo fetch --locked --target "${RUST_TARGET}"
+    && CARGO_HOME=/capsem-deps/cargo cargo fetch --locked --target "${RUST_TARGET}" \
+    && CARGO_HOME=/capsem-deps/cargo cargo fetch --locked --target "${HOST_RUST_TARGET}"
 RUN cd frontend && pnpm fetch --frozen-lockfile --store-dir /capsem-deps/pnpm
 RUN python3 /usr/local/bin/materialize-package-ort.py \
     --url "${ORT_URL}" --sha256 "${ORT_SHA256}" --output /capsem-deps/ort
