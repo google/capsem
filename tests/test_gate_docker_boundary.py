@@ -196,6 +196,16 @@ def test_build_network_rejects_a_container_only_mode(tmp_path: Path) -> None:
     assert runner.commands == []
 
 
+def test_image_reference_refuses_a_digest_for_a_different_repository(tmp_path: Path) -> None:
+    runner = RecordingRunner(
+        tmp_path,
+        replies={"{{json .RepoDigests}}": f'["other@sha256:{"a" * 64}"]'},
+    )
+
+    with pytest.raises(GateError, match="matching repository digest"):
+        Docker(runner).image_reference("capsem-host-builder:latest")
+
+
 @pytest.mark.parametrize("operation", ["read", "run_detached", "run_once", "probe", "create"])
 def test_every_container_adapter_rejects_a_buildkit_only_mode(
     tmp_path: Path, operation: str

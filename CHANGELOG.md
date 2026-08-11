@@ -19,7 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   network modes are now separate schema-bound values: only the dependency
   materializer receives BuildKit's ordinary network, while source construction
   and package execution remain network-denied and cross-vocabulary values are
-  refused before Docker or Colima starts work.
+  refused before Docker or Colima starts work. Dockerfile parents use
+  repository-qualified immutable digests, and warm helpers are keyed to the
+  exact host-platform child image rather than a provenance index whose
+  attestation can change without changing the executable base.
 
 - Direct development diagnostics now have a portable bounded-process wrapper
   that closes stdin and owns the complete child process group. A blocked

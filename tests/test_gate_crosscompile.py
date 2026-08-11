@@ -678,6 +678,12 @@ def test_package_helper_is_host_native_and_target_specific(
     runner = RecordingRunner(
         root,
         failures=("docker image inspect --platform linux/amd64 capsem-package-builder-arm64:",),
+        replies={
+            "--platform linux/amd64 --format '{{.Id}}' capsem-package-builder-arm64": (
+                "sha256:" + "d" * 64
+            ),
+            "--format '{{.Id}}' capsem-package-builder-arm64": "sha256:" + "e" * 64,
+        },
     )
 
     identity = materialize(runner, config, config.arch("arm64"))
@@ -691,6 +697,8 @@ def test_package_helper_is_host_native_and_target_specific(
     build = str(build_command)
     assert "--platform linux/amd64" in build
     assert "--network default" in build
+    assert f"BASE=capsem-host-builder@sha256:{'0' * 64}" in build
+    assert f"BASE=sha256:{'0' * 64}" not in build
     assert "RUST_TARGET=aarch64-unknown-linux-gnu" in build
     assert "DPKG_ARCH=arm64" in build
     assert f"APT_SNAPSHOT_BASE={config.package.builder.apt_snapshot_base}" in build
@@ -700,10 +708,61 @@ def test_package_helper_is_host_native_and_target_specific(
     assert CONFIG.package.builder.targets["arm64"].ort_sha256 in build
     assert any("sha256:" in note for note in runner.notes)
     assert identity.input_key.startswith("capsem-package-builder-arm64:")
-    assert identity.image_id == "sha256:" + "0" * 64
+    assert identity.image_id == "sha256:" + "d" * 64
+    assert identity.image_reference == f"capsem-package-builder-arm64@sha256:{'0' * 64}"
     from capsem.gate.invocation import ConsoleMode
 
     assert build_command.console is ConsoleMode.LOG_ONLY
+
+
+def test_package_helper_key_uses_the_platform_child_not_the_provenance_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from capsem.gate.docker import Docker
+    from capsem.gate.packagebuilder import image_tag
+
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    root = _checkout(tmp_path)
+    config = gate_config.load(root)
+    child = "sha256:" + "c" * 64
+
+    class Identity(Docker):
+        def __init__(self, provenance_index: str) -> None:
+            self.provenance_index = provenance_index
+
+        def image_id(self, tag: str, *, platform: str | None = None) -> str:
+            del tag
+            return child if platform == "linux/amd64" else self.provenance_index
+
+    assert image_tag(config, config.arch("x86_64"), Identity("sha256:" + "1" * 64)) == image_tag(
+        config, config.arch("x86_64"), Identity("sha256:" + "2" * 64)
+    )
+
+
+def test_package_helper_refuses_a_parent_tag_move_before_docker_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from capsem.gate.packagebuilder import materialize
+
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    root = _checkout(tmp_path)
+    config = gate_config.load(root)
+    runner = RecordingRunner(
+        root,
+        replies={
+            "--platform linux/amd64 --format '{{.Id}}' capsem-host-builder:latest": (
+                "sha256:" + "a" * 64
+            ),
+            "--platform linux/amd64 --format '{{.Id}}' capsem-host-builder@sha256:": (
+                "sha256:" + "c" * 64
+            ),
+        },
+    )
+
+    with pytest.raises(GateError, match="moved while resolving"):
+        materialize(runner, config, config.arch("x86_64"))
+
+    assert not runner.ran(r"docker build")
 
 
 @pytest.mark.parametrize(
@@ -786,6 +845,7 @@ def test_package_helper_exact_identity_is_written_to_the_run_journal(
     (recorded,) = [note for note in journal.notes if note.startswith("package helper arm64:")]
     assert "input key capsem-package-builder-arm64:" in recorded
     assert "exact image sha256:" in recorded
+    assert "immutable reference capsem-package-builder-arm64@sha256:" in recorded
 
 
 def test_package_source_image_and_runtime_are_network_none(
@@ -801,6 +861,9 @@ def test_package_source_image_and_runtime_are_network_none(
     runtime = runner.matching(r"docker create")[0]
     assert "--network none" in source
     assert "--network none" in runtime
+    assert "--platform linux/arm64" in source
+    assert "BASE=capsem-package-builder-arm64@sha256:" in source
+    assert "BASE=sha256:" not in source
     from capsem.gate.invocation import ConsoleMode
 
     source_command = next(
@@ -832,7 +895,7 @@ def test_the_package_dockerfile_waives_only_its_required_base_check() -> None:
     assert "FROM ${BASE}" in lines
 
 
-def test_the_package_lane_supplies_its_exact_host_builder_base(
+def test_the_package_lane_supplies_its_repository_qualified_exact_helper(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The targeted Dockerfile waiver is safe only while this is indivisible."""
@@ -851,8 +914,7 @@ def test_the_package_lane_supplies_its_exact_host_builder_base(
     supplied = [
         build.argv[index + 1] for index, value in enumerate(build.argv) if value == "--build-arg"
     ]
-    assert CONFIG.package.builder_image == CONFIG.hostimage.tag
-    assert supplied == ["BASE=sha256:" + "0" * 64]
+    assert supplied == [f"BASE=capsem-package-builder-arm64@sha256:{'0' * 64}"]
 
 
 def test_the_builder_receives_every_name_for_the_target(

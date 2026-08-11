@@ -21,13 +21,32 @@ INPUT_KEY_LABEL = "org.capsem.package-builder.input-key"
 class PackageBuilderIdentity:
     input_key: str
     image_id: str
+    image_reference: str
 
 
-def _exact_image_id(docker: Docker, image: str) -> str:
-    found = docker.image_id(image)
+def _exact_image_id(docker: Docker, image: str, *, platform: str | None = None) -> str:
+    found = docker.image_id(image, platform=platform)
     if re.fullmatch(r"sha256:[0-9a-f]{64}", found) is None:
         raise GateError(f"package helper dependency {image} has invalid image ID {found!r}")
     return found
+
+
+def _exact_image_reference(
+    docker: Docker,
+    image: str,
+    *,
+    platform: str | None = None,
+    expected_id: str | None = None,
+) -> str:
+    expected = expected_id or _exact_image_id(docker, image, platform=platform)
+    reference = docker.image_reference(image)
+    resolved = _exact_image_id(docker, reference, platform=platform)
+    if resolved != expected:
+        raise GateError(
+            f"package helper dependency {image} moved while resolving its immutable reference: "
+            f"expected {expected}, but {reference} resolves to {resolved}"
+        )
+    return reference
 
 
 def _identity_files(config: GateConfig) -> tuple[Path, ...]:
@@ -46,7 +65,13 @@ def _identity_files(config: GateConfig) -> tuple[Path, ...]:
     return files
 
 
-def image_tag(config: GateConfig, target: Arch, docker: Docker) -> str:
+def image_tag(
+    config: GateConfig,
+    target: Arch,
+    docker: Docker,
+    *,
+    parent_id: str | None = None,
+) -> str:
     """Input-keyed tag including the mutable host builder's exact identity."""
     settings = config.package.builder
     host_arch = config.host_arch()
@@ -58,7 +83,12 @@ def image_tag(config: GateConfig, target: Arch, docker: Docker) -> str:
         digest.update(path.read_bytes())
         digest.update(b"\0")
     for value in (
-        _exact_image_id(docker, config.package.builder_image),
+        parent_id
+        or _exact_image_id(
+            docker,
+            config.package.builder_image,
+            platform=host_arch.docker_platform,
+        ),
         host_arch.name,
         host_arch.docker_platform,
         target.name,
@@ -98,8 +128,18 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
     settings = config.package.builder
     docker = Docker(runner)
     host_arch = config.host_arch()
-    parent_id = _exact_image_id(docker, config.package.builder_image)
-    tag = image_tag(config, target, docker)
+    parent_id = _exact_image_id(
+        docker,
+        config.package.builder_image,
+        platform=host_arch.docker_platform,
+    )
+    parent_reference = _exact_image_reference(
+        docker,
+        config.package.builder_image,
+        platform=host_arch.docker_platform,
+        expected_id=parent_id,
+    )
+    tag = image_tag(config, target, docker, parent_id=parent_id)
     runner.step(f"Materializing locked package dependencies ({target.name})")
     if docker.image_exists(tag, platform=host_arch.docker_platform):
         _require_input_key(docker, tag)
@@ -111,7 +151,7 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
             dockerfile=config.path(settings.dockerfile).as_posix(),
             context=str(config.root),
             args=[
-                f"BASE={parent_id}",
+                f"BASE={parent_reference}",
                 f"RUST_TARGET={target.rust_target}",
                 f"DPKG_ARCH={target.dpkg}",
                 f"APT_SNAPSHOT_BASE={settings.apt_snapshot_base}",
@@ -128,19 +168,42 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
             console=ConsoleMode.LOG_ONLY,
         )
         _require_input_key(docker, tag)
-    exact_id = _exact_image_id(docker, tag)
-    runner.note(f"Package helper {target.name}: input key {tag}; exact image {exact_id}")
+    exact_id = _exact_image_id(docker, tag, platform=host_arch.docker_platform)
+    exact_reference = _exact_image_reference(
+        docker,
+        tag,
+        platform=host_arch.docker_platform,
+        expected_id=exact_id,
+    )
+    runner.note(
+        f"Package helper {target.name}: input key {tag}; exact image {exact_id}; "
+        f"immutable reference {exact_reference}"
+    )
     Storage(runner).reclaim(image_repository(config, target), keep=tag)
-    return PackageBuilderIdentity(input_key=tag, image_id=exact_id)
+    return PackageBuilderIdentity(
+        input_key=tag,
+        image_id=exact_id,
+        image_reference=exact_reference,
+    )
 
 
-def require_image_id(runner: Runner, config: GateConfig, target: Arch) -> str:
-    """Resolve the already-materialized helper, never warming inside the lane."""
+def require_image_reference(runner: Runner, config: GateConfig, target: Arch) -> str:
+    """Resolve an immutable FROM reference, never warming inside the lane."""
     docker = Docker(runner)
+    host_arch = config.host_arch()
     tag = image_tag(config, target, docker)
-    if not docker.image_exists(tag, platform=config.host_arch().docker_platform):
+    if not docker.image_exists(tag, platform=host_arch.docker_platform):
         raise GateError(f"package helper {tag} is missing; its materialize step did not complete")
     _require_input_key(docker, tag)
-    exact_id = _exact_image_id(docker, tag)
-    runner.note(f"Using package helper {target.name}: input key {tag}; exact image {exact_id}")
-    return exact_id
+    exact_id = _exact_image_id(docker, tag, platform=host_arch.docker_platform)
+    exact_reference = _exact_image_reference(
+        docker,
+        tag,
+        platform=host_arch.docker_platform,
+        expected_id=exact_id,
+    )
+    runner.note(
+        f"Using package helper {target.name}: input key {tag}; exact image {exact_id}; "
+        f"immutable reference {exact_reference}"
+    )
+    return exact_reference

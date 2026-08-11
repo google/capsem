@@ -12,6 +12,9 @@ once, not about handing callers two objects to thread around.
 
 from __future__ import annotations
 
+import json
+import re
+
 from .errors import GateError
 from .invocation import ConsoleMode
 from .proc import Runner
@@ -110,7 +113,7 @@ class ImageOperations:
         """Materialize one exact platform image through the Docker daemon."""
         self._runner.run(["docker", "pull", "--platform", platform, image])
 
-    def image_id(self, tag: str) -> str:
+    def image_id(self, tag: str, *, platform: str | None = None) -> str:
         """The exact image a mutable tag currently names.
 
         `:latest` is a pointer, so "the same tag" is a different image after
@@ -118,12 +121,45 @@ class ImageOperations:
         it off this, or it reuses work built against an image that no longer
         exists under that name.
         """
-        found = self._runner.capture(
-            ["docker", "image", "inspect", "--format", "{{.Id}}", tag]
-        ).strip()
+        argv = ["docker", "image", "inspect"]
+        if platform is not None:
+            argv += ["--platform", platform]
+        found = self._runner.capture([*argv, "--format", "{{.Id}}", tag]).strip()
         if not found:
             raise GateError(f"docker has no image tagged {tag}, so nothing can be keyed by it")
         return found
+
+    def image_reference(self, tag: str) -> str:
+        """Return the immutable repository-qualified digest behind a local tag.
+
+        A bare image ID works for `docker run` but not in Dockerfile `FROM`:
+        BuildKit parses `sha256:<hex>` as a repository and tries to pull it.
+        The local RepoDigest names the same exact index in valid FROM syntax.
+        """
+        raw = self._runner.capture(
+            ["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", tag]
+        ).strip()
+        try:
+            candidates = json.loads(raw)
+        except json.JSONDecodeError:
+            candidates = None
+        if not isinstance(candidates, list):
+            candidates = []
+        name = tag.split("@", 1)[0]
+        if name.rfind(":") > name.rfind("/"):
+            name = name.rsplit(":", 1)[0]
+        matches = {
+            candidate
+            for candidate in candidates or []
+            if isinstance(candidate, str)
+            and candidate.startswith(f"{name}@")
+            and re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", candidate)
+        }
+        if len(matches) != 1:
+            raise GateError(
+                f"docker image {tag} has no unique matching repository digest; found {raw!r}"
+            )
+        return matches.pop()
 
     def image_label(self, tag: str, label: str) -> str:
         """Read the label used to reject accidental warm-tag poisoning."""

@@ -56,7 +56,15 @@ GIT_COMMON_DIR_PROBE = "--git-common-dir"
 #: it from the same recorder.
 IMAGE_ID_PROBE = "{{.Id}}"
 IMAGE_LABEL_PROBE = "index .Config.Labels"
+IMAGE_REPOSITORY_DIGEST_PROBE = "{{json .RepoDigests}}"
 RECORDED_IMAGE_ID = "sha256:" + "0" * 64
+
+
+def _image_repository(reference: str) -> str:
+    name = reference.split("@", 1)[0]
+    if name.rfind(":") > name.rfind("/"):
+        name = name.rsplit(":", 1)[0]
+    return name
 
 
 @cache
@@ -133,6 +141,9 @@ class RecordingRunner(Runner):
                 stdout = RECORDED_IMAGE_ID
             elif IMAGE_LABEL_PROBE in rendered:
                 stdout = command.argv[-1]
+            elif IMAGE_REPOSITORY_DIGEST_PROBE in rendered:
+                repository = _image_repository(command.argv[-1])
+                stdout = f'["{repository}@{RECORDED_IMAGE_ID}"]'
             elif (
                 command.argv
                 and command.argv[0] in _cargo_tool_probe_executables()

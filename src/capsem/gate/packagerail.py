@@ -154,7 +154,9 @@ class PackageRail:
         )
 
         docker = Docker(self._runner)
-        helper_id = packagebuilder.require_image_id(self._runner, self._config, self.target)
+        helper_reference = packagebuilder.require_image_reference(
+            self._runner, self._config, self.target
+        )
         container = self._package.lane_container.format(arch=self.target.name)
         # Any predecessor first: a container left by a killed run holds the
         # name this one needs, and `docker create` fails on the collision
@@ -167,7 +169,8 @@ class PackageRail:
             tag=self._package.lane_image,
             dockerfile=str(self.root / self._package.lane_dockerfile),
             context=str(self.root),
-            args=[f"BASE={helper_id}"],
+            args=[f"BASE={helper_reference}"],
+            platform=self._config.host_arch().docker_platform,
             network=self._package.builder.source_build_network,
             console=ConsoleMode.LOG_ONLY,
         )

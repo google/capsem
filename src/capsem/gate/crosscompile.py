@@ -182,7 +182,7 @@ def _phase(target, method: str, content: ProfileContent):
         if method == "materialize":
             context.journal.note(
                 f"package helper {target.name}: input key {result.input_key}; "
-                f"exact image {result.image_id}"
+                f"exact image {result.image_id}; immutable reference {result.image_reference}"
             )
 
     return perform
