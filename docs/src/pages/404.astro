@@ -1,0 +1,81 @@
+---
+const title = 'Documentation route unavailable — Capsem 0.6';
+const description = 'Detailed Capsem 0.6 documentation is unavailable during release qualification.';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content={description} />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <main>
+      <p class="status">404</p>
+      <h1>Documentation route unavailable</h1>
+      <p>
+        Capsem 0.6 is in pre-release qualification. Detailed documentation is not
+        published yet.
+      </p>
+      <a href="/">Return to the release status</a>
+    </main>
+  </body>
+</html>
+
+<style is:inline>
+  :root {
+    color-scheme: light;
+    font-family:
+      Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+      sans-serif;
+    background: #f8fafc;
+    color: #172033;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    min-height: 100vh;
+    margin: 0;
+    display: grid;
+    place-items: center;
+    background: #f8fafc;
+  }
+
+  main {
+    width: min(36rem, calc(100% - 2rem));
+    text-align: center;
+  }
+
+  .status {
+    margin: 0 0 1rem;
+    color: #2563eb;
+    font-size: 0.85rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: clamp(2rem, 6vw, 3.5rem);
+    line-height: 1.1;
+    letter-spacing: -0.04em;
+  }
+
+  p:not(.status) {
+    margin: 1.25rem 0;
+    color: #475569;
+    line-height: 1.65;
+  }
+
+  a {
+    color: #1d4ed8;
+    font-weight: 700;
+    text-underline-offset: 0.2em;
+  }
+</style>

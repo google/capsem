@@ -116,6 +116,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `docs.capsem.org` now publishes a single Capsem 0.6 pre-release holding page
+  while the complete detailed manual remains preserved in Git. The root README
+  no longer advertises installation, release downloads, or deep documentation
+  before the release is qualified.
+
 - No lane mounts a named volume. Phase 9 completes literally rather than
   partially: the cargo registry, cargo git and rustup volumes are gone because
   they mounted over `/usr/local/cargo` and `/usr/local/rustup` -- exactly where

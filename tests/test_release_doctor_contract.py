@@ -2812,7 +2812,7 @@ def test_site_skills_preserve_every_main_merge_deploy_rail() -> None:
         "deploys only on every push to `main` and smokes `https://docs.capsem.org/`"
         in site_infra_text
     )
-    assert "plus `/getting-started/`" in site_infra_text
+    assert "rejects the former `/getting-started/` route" in site_infra_text
     assert "`ci.yaml` runs the merge-blocking `site-build` job" in site_marketing_text
     assert (
         "deploys only on every push to `main` and smokes `https://capsem.org/`"

@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build",
+    "build": "astro build && python3 ../scripts/check-docs-holding-build.py dist",
     "preview": "astro preview"
   },
   "dependencies": {

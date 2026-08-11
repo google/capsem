@@ -42,6 +42,7 @@ jobs:
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
           SITE_URL: https://docs.capsem.org
+          OLD_ROUTE_URL: https://docs.capsem.org/getting-started/
         run: |
           for attempt in 1 2 3 4 5 6; do
             echo "Checking $SITE_URL (attempt $attempt)..."
@@ -49,9 +50,10 @@ jobs:
               && grep -qi '^content-type: text/html' /tmp/docs-headers.txt \
               && curl -fsSL "$SITE_URL/" -o /tmp/docs-index.html \
               && grep -qi '<main[ >]' /tmp/docs-index.html \
-              && grep -q 'href="/getting-started/"' /tmp/docs-index.html \
-              && curl -fsSL "$SITE_URL/getting-started/" -o /tmp/docs-getting-started.html \
-              && grep -qi '<main[ >]' /tmp/docs-getting-started.html
+              && grep -q 'Capsem 0.6 documentation' /tmp/docs-index.html \
+              && grep -q 'pre-release qualification' /tmp/docs-index.html \
+              && OLD_ROUTE_STATUS="$(curl -sS -o /tmp/docs-old-route.html -w '%{http_code}' "$OLD_ROUTE_URL")" \
+              && test "$OLD_ROUTE_STATUS" = 404
             then
               echo "docs.capsem.org smoke passed."
               exit 0
