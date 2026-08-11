@@ -20,7 +20,7 @@
 
 Capsem 0.6 is undergoing release qualification. Installation instructions,
 downloadable packages, and detailed documentation are intentionally unavailable
-until the public release.
+until the public release, planned for Summer 2026.
 
 The current documentation status is at **[docs.capsem.org](https://docs.capsem.org/)**.
 

@@ -49,7 +49,9 @@ jobs:
               && grep -qi '^content-type: text/html' /tmp/site-headers.txt \
               && curl -fsSL "$SITE_URL/" -o /tmp/site-index.html \
               && grep -q '<main id="main">' /tmp/site-index.html \
-              && grep -q 'https://capsem.org/install.sh' /tmp/site-index.html
+              && grep -q 'Available Summer 2026' /tmp/site-index.html \
+              && curl -fsSL "$SITE_URL/later/" -o /tmp/site-later.html \
+              && grep -q '<main id="main">' /tmp/site-later.html
             then
               echo "capsem.org smoke passed."
               exit 0
