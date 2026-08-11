@@ -28,8 +28,8 @@ from pathlib import Path
 
 import pytest
 
-from . import conftest as install_fixtures
 from .conftest import INSTALL_DIR
+from .conftest import fresh_capsem_binary as fixture_fresh_capsem_binary
 
 # The installed layout mounts a proper Linux ELF at INSTALL_DIR/capsem via
 # dpkg (in the Docker install harness) or simulate-install.sh (local dev).
@@ -270,7 +270,7 @@ def _run(env: dict, *args: str) -> subprocess.CompletedProcess:
 
 
 def _fresh_capsem_binary() -> Path:
-    return install_fixtures.fresh_capsem_binary()
+    return fixture_fresh_capsem_binary()
 
 
 def test_fresh_capsem_binary_uses_prebuilt_source_cli_without_cargo(
@@ -286,7 +286,7 @@ def test_fresh_capsem_binary_uses_prebuilt_source_cli_without_cargo(
     def refuse_runtime_build(*_args, **_kwargs):
         raise AssertionError("the installed runtime attempted a subprocess build")
 
-    monkeypatch.setattr(install_fixtures.subprocess, "run", refuse_runtime_build)
+    monkeypatch.setattr(subprocess, "run", refuse_runtime_build)
 
     assert _fresh_capsem_binary() == binary
 
@@ -300,7 +300,7 @@ def test_fresh_capsem_binary_refuses_missing_prebuilt_cli_in_installed_runtime(
     def refuse_runtime_build(*_args, **_kwargs):
         raise AssertionError("the installed runtime attempted a subprocess build")
 
-    monkeypatch.setattr(install_fixtures.subprocess, "run", refuse_runtime_build)
+    monkeypatch.setattr(subprocess, "run", refuse_runtime_build)
 
     with pytest.raises(AssertionError, match="prebuilt current-source CLI"):
         _fresh_capsem_binary()
