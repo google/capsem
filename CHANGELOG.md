@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rust dependencies now require the panic-safe `lru` 0.18.2 line directly and
+  through Ratatui 0.30.2, removing both versions covered by
+  `RUSTSEC-2026-0253` without weakening the strict advisory gate.
+
 - Linux exact-install containers now map the host's numeric KVM/vhost-vsock
   device group onto the unprivileged installed user before systemd starts.
   Preflight probes run as that same user, so Doctor cannot reach its first VM

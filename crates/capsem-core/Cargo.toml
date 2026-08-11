@@ -55,7 +55,7 @@ rmcp = { workspace = true, features = ["transport-streamable-http-client-reqwest
 hickory-proto = { workspace = true }
 # Bounded LRU primitive used by `net::dns::cache` for the TTL-honoring
 # answer cache (T3.f). Pure-Rust, no_std-compatible, single small dep.
-lru = "0.18"
+lru = "0.18.2"
 ego-tree = "0.10"
 notify = "7"
 walkdir = "2"
