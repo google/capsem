@@ -1420,16 +1420,16 @@ def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> N
     plan = gate_plan("candidate")
     order = _gate_order()
 
-    assert _at(order, "install.image-smoke") < _at(order, "package.arm64")
     assert "storage.install-preflight" not in plan.labels
     static_leaves = {
-        "install.image-smoke",
         "static.guest-binary-contracts",
         "static.sign",
     }
     if host.on_macos():
         static_leaves.add("linux-rust")
     assert static_leaves <= plan.after_of("assets.preflight")
+    assert "install.image-smoke" not in plan.after_of("assets.preflight")
+    assert ("install.image-smoke", "glowup.install") in plan.edges
     assert ("linux-rust" in plan.labels) is host.on_macos()
     assert (
         _at(order, "assets.preflight")

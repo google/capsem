@@ -69,6 +69,30 @@ def test_from_a_step_carries_exactly_its_ancestors() -> None:
         assert plan.after_of(label) <= carried, f"{label} is carried but its inputs are not"
 
 
+def test_a_source_fix_before_functional_rebuilds_the_exact_install_image() -> None:
+    """Do not carry a source-keyed image merely because functional work resumes.
+
+    A retained prefix refreshes its source before the resumed gate starts.  The
+    install image key therefore changes when the fix touches any byte included
+    in that image.  Chaining its smoke step ahead of the asset graph made all
+    three lifecycle steps ancestors of ``functional.pytest.timing.code``; the
+    continuation carried the old image, built both packages, then failed at
+    glow-up because the new exact tag had never been materialized.
+
+    The lifecycle is independent work that may run alongside functional proof,
+    but the install transaction must still wait for its exact smoke result.
+    """
+    from capsem.gate import resume
+    from capsem.gate.installimage import InstallImageStep
+
+    plan = _candidate_plan()
+    carried = resume.ancestors(plan, "functional.pytest.timing.code")
+    install_steps = {step.value for step in InstallImageStep}
+
+    assert install_steps.isdisjoint(carried)
+    assert (InstallImageStep.SMOKE.value, "glowup.install") in plan.edges
+
+
 def test_a_misspelled_step_is_refused_with_a_suggestion() -> None:
     """Cheap, and before the machine lock.
 

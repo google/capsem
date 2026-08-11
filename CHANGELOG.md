@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retained-prefix continuation no longer carries a source-keyed install image
+  merely because functional VM work resumes. The image lifecycle runs as an
+  independent branch and remains a hard prerequisite of exact install proof,
+  so a refreshed source tree cannot select a tag that was never materialized.
+
 - Gateway status now reads the independent VM and profile authorities
   concurrently while preserving fresh source data and failure semantics. This
   removes avoidable control-route latency without weakening the release budget.

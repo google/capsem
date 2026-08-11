@@ -188,14 +188,13 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
     settings = config.modules
     leaves: list[Step] = []
 
-    # The install-harness preflight comes first for a blunt reason: proving the
-    # clean container can launch its runner takes a minute, and discovering it
-    # cannot after the Rust coverage run wastes twenty.
-    preflight = installimage.fragment(plan, config, after=after)
-    # The helper and source images are generational and reclaim superseded tags
-    # at their owning materialization steps. There is no working resource to
-    # release after smoke, so the smoke itself is this branch's leaf.
-    leaves.append(preflight)
+    # Start the install-harness preflight early, but do not make unrelated
+    # asset and functional work depend on it.  A retained-prefix refresh can
+    # change its source-derived image key; keeping this branch independent
+    # means a continuation at a functional step reruns the current image
+    # lifecycle instead of carrying an obsolete tag.  Glow-up adds the real
+    # consumer edge from smoke to the install transaction.
+    installimage.fragment(plan, config, after=after)
 
     initrd = config.initrd
     agents = phase.add(

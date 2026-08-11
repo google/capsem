@@ -11,6 +11,7 @@ from . import (
     host,
     hostpackage,
     install,
+    installimage,
 )
 from .actions import Call, Script
 from .command import GateCommand
@@ -207,7 +208,8 @@ def _build_and_prove(plan: Plan, phase, config: GateConfig, after: tuple) -> Ste
         )
 
     sbom = phase.add(hostpackage.sbom_step(config), after=previous)
+    exact_install_image = installimage.fragment(plan, config)
     return phase.add(
         install.install_step(config, content=LocalInstallContent(content)),
-        after=(sbom,),
+        after=(sbom, exact_install_image),
     )
