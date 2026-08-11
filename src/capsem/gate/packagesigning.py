@@ -11,12 +11,20 @@ match them are spelled in YAML.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from . import config as gate_config
+from .errors import GateError
 
 
-def signing_key(root: Path, config: gate_config.GateConfig) -> dict[str, str]:
+def signing_key(
+    root: Path,
+    config: gate_config.GateConfig,
+    *,
+    environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
     """The real Tauri release keys, if this checkout has them.
 
     Absent, the container generates a throwaway dev key so `cargo tauri build`
@@ -28,6 +36,17 @@ def signing_key(root: Path, config: gate_config.GateConfig) -> dict[str, str]:
     independently is how they stop agreeing.
     """
     settings = config.package.signing
+    available = os.environ if environment is None else environment
+    exported = {
+        name: available[name]
+        for name in (settings.key_variable, settings.password_variable)
+        if available.get(name)
+    }
+    if exported:
+        if len(exported) != 2:
+            raise GateError("both configured Tauri signing variables must be exported together")
+        return exported
+
     directory = Path(root) / settings.directory
     private = directory / settings.key
     password = directory / settings.password

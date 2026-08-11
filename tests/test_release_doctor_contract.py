@@ -1826,7 +1826,8 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "Verify macOS package installation path policy" in macos_build
     assert "Notarize and staple .pkg" in macos_build
     assert "Verify exact notarized package identity and Gatekeeper acceptance" in macos_build
-    assert "Repack .deb with companion binaries" in linux_build
+    assert "Build Linux package through the shared hermetic rail" in linux_build
+    assert "uv run capsem-gate cross-compile" in linux_build
     assert "Collect Linux artifacts" in linux_build
     assert "Record binary candidate metadata once" in author
     assert "Prove binary candidate preserved every profile" in author
@@ -3034,11 +3035,12 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
 
     for shared_script in (
         "scripts/build-pkg.sh",
-        "scripts/repack-deb.sh",
         "scripts/verify-installed-release.py",
         "scripts/prove-installed-shell.py",
     ):
         assert shared_script in release
+    assert "uv run capsem-gate cross-compile" in release
+    assert "scripts/repack-deb.sh" in _source_text("scripts/build-linux-package.sh")
     assert "scripts/build-test-macos-package.sh" in macos_glowup
     # The local rail must reach the same shared scripts CI does. Since the
     # package build moved out of the recipe body, "local" is the justfile plus
@@ -3107,7 +3109,10 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     assert "bash scripts/check-web-surface.sh release-site" in ci
     assert "bash scripts/check-web-surface.sh docs" in docs
     assert "bash scripts/check-web-surface.sh site" in site
-    assert release.count("bash scripts/check-web-surface.sh frontend-build") == 2
+    assert release.count("bash scripts/check-web-surface.sh frontend-build") == 1
+    assert "bash scripts/check-web-surface.sh frontend-build" in _source_text(
+        "scripts/build-linux-package.sh"
+    )
     for workflow in (binary_staging, channel_staging):
         assert "bash scripts/check-web-surface.sh release-site-build" in workflow
     assert "scripts/build-complete-release-channel.py" in release
@@ -5144,23 +5149,42 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
     assert "architecture: ${{ matrix.arch }}" in linux_job
     assert "output: target/binary-selected-profiles" in linux_job
     assert "--input-dir target/binary-selected-profiles" in linux_job
-    assert "--assets-dir target/release-assets" in linux_job
-    assert "--config-root target/release-config" in linux_job
-    assert 'CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"' in linux_job
-    assert 'CAPSEM_CONFIG_ROOT="$PWD/target/release-config"' in linux_job
-    assert 'CAPSEM_ASSETS_PATH="$PWD/target/release-assets"' in linux_job
+    assert "--assets-dir target/package-content/assets" in linux_job
+    assert "--config-root target/package-source-config" in linux_job
+    assert 'CAPSEM_ASSET_MANIFEST="$PWD/target/package-content/assets/manifest.json"' in linux_job
+    assert 'CAPSEM_CONFIG_ROOT="$PWD/target/package-source-config"' in linux_job
+    assert 'CAPSEM_ASSETS_PATH="$PWD/target/package-content/assets"' in linux_job
+    assert 'CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/package-content/config"' in linux_job
     assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in linux_job
     assert "bash scripts/materialize-config.sh" in linux_job
     assert linux_job.index("Fetch exact selected ${{ matrix.arch }} profiles") < linux_job.index(
         "bash scripts/materialize-config.sh"
     )
-    assert 'scripts/repack-deb.sh --manifest "$ASSET_MANIFEST_URL"' in linux_job
+    assert "uv run capsem-gate cross-compile" in linux_job
+    assert "--content-root target/package-content" in linux_job
+    assert "--defer-proof" in linux_job
+    assert "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/" in linux_job
+    for mutable in ("sudo apt-get", "pnpm install", "cargo install", "cargo tauri build"):
+        assert mutable not in linux_job
     assert "--profile config/profiles/code/profile.toml" not in release
     for assembler in ("scripts/build-pkg.sh", "scripts/repack-deb.sh"):
         source = _source_text(assembler)
         assert 'for profile_path in "$CONFIG_ROOT"/profiles/*/profile.toml' in source
         assert 'profile validate "$profile_path"' in source
         assert '--config-root "$CONFIG_ROOT" --materialized' in source
+
+
+def test_linux_release_always_retains_full_per_arch_gate_evidence() -> None:
+    linux_job = _workflow_job_block("build-app-linux", "release.yaml")
+    upload = linux_job.split("- name: Upload Linux package gate evidence", maxsplit=1)[1]
+
+    assert "- arch: arm64" in linux_job
+    assert "- arch: x86_64" in linux_job
+    assert "if: always()" in upload
+    assert "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in upload
+    assert "name: release-linux-${{ matrix.arch }}-gate-runs-${{ github.run_attempt }}" in upload
+    assert "path: target/gate-runs/" in upload
+    assert "if-no-files-found: error" in upload
 
 
 def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:

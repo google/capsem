@@ -1,14 +1,15 @@
-"""One architecture's Linux release package, built in the builder container.
+"""One architecture's Linux release package, built in the sealed package helper.
 
 Native cross-compilation, no QEMU. The image runs on the host architecture and
-targets the other through `--target` plus multiarch system libraries, with
-named volumes carrying the cargo registry, the rustup toolchain, and the build
-directory between runs. `CARGO_TARGET_DIR=/cargo-target` inside the container
-keeps all of that off the host's `target/`.
+targets the other through `--target` plus multiarch system libraries. An
+explicit network-open step materializes the locked Cargo/pnpm graphs and exact
+ORT archive into a per-target helper; the source image and runtime consume its
+exact OCI ID with networking disabled. `CARGO_TARGET_DIR=/cargo-target` inside
+the container keeps first-party build output out of both the helper and host.
 
-Keep in sync with `.github/workflows/release.yaml`'s `build-app-linux` job,
-which does the same work on a bare Ubuntu runner: CI takes its Tauri signing
-keys from secrets where this takes them from `private/tauri/`.
+`.github/workflows/release.yaml`'s `build-app-linux` job calls this same rail;
+CI takes its Tauri signing keys from secrets where a local build takes them
+from `private/tauri/`.
 
 The build itself is `scripts/build-linux-package.sh`. It used to be the
 argument of a `bash -c` inside a `docker run` inside a recipe, escaped twice
@@ -25,12 +26,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import config as gate_config
-from . import debproof, host
+from . import debproof, host, packagebuilder
 from .config import Arch
+from .content import ProfileContent
 from .docker import Docker
 from .dockermount import Mount
 from .errors import GateError
-from .fileactions import link, make_dir, remove
+from .fileactions import make_dir, remove
+from .invocation import ConsoleMode
 from .packageinputs import package_environment, pinned_toolchain, resolve_channel
 from .packagesigning import signing_key
 from .proc import Runner
@@ -45,6 +48,7 @@ class PackageRail:
         runner: Runner,
         target: Arch,
         *,
+        content: ProfileContent,
         manifest_url: str | None = None,
         channel: str | None = None,
         require_proof: bool = False,
@@ -55,6 +59,7 @@ class PackageRail:
         self._storage = Storage(runner)
         self.root = runner.root
         self.target = target
+        self.content = content
         self.manifest_url = manifest_url or self._package.default_manifest_url
         self.channel = resolve_channel(channel or self._package.default_channel, self._config)
         self._require_proof = require_proof
@@ -97,23 +102,13 @@ class PackageRail:
         if host.on_macos():
             self._runner.run(["python3", self._package.clock_script])
 
-    def sync_assets(self) -> None:
-        """Point the architecture-neutral asset path at this target.
+    def require_content(self) -> None:
+        """Prove the paired bundle only for the target this job can build."""
+        self.content.require_complete(self._config, arches=(self.target,))
 
-        The selected architecture already contains canonical and hash-named
-        hardlinks. A copied ``current`` tree breaks that topology and stores
-        every VM blob twice. Keep the pointer relative so the same link works
-        through the package container's read-only ``assets`` bind mount.
-        """
-        settings = self._config.imagebuild
-        current = self.root / settings.output / self._package.current_assets
-        built = self.root / settings.output / self.target.name
-        remove(current)
-        if built.is_dir():
-            link(current, self.target.name)
-            landed = current.readlink()
-            if landed != Path(self.target.name):
-                raise GateError(f"{current} points at {landed}, not {self.target.name}")
+    def materialize(self) -> packagebuilder.PackageBuilderIdentity:
+        """Resolve package dependencies at the graph's network-open edge."""
+        return packagebuilder.materialize(self._runner, self._config, self.target)
 
     # -- the build ---------------------------------------------------------
 
@@ -143,6 +138,7 @@ class PackageRail:
             ),
         )
         mount = self._config.install.mount
+        assets_destination, config_destination = self._package.generated_inputs
         mounts = (
             # No source mount. The checkout is copied into the lane image
             # below, so the container holds its own bytes and a host step
@@ -153,13 +149,12 @@ class PackageRail:
             # see `Mount.generated` -- `assets/` alone is 3.0 GB and changes
             # every run, so copying it would put a multi-gigabyte layer in
             # Docker storage per gate to avoid a mount that was never the race.
-            *(
-                Mount.generated(str(self.root / name), f"{mount}/{name}")
-                for name in self._package.generated_inputs
-            ),
+            Mount.generated(str(self.content.assets), f"{mount}/{assets_destination}"),
+            Mount.generated(str(self.content.config), f"{mount}/{config_destination}"),
         )
 
         docker = Docker(self._runner)
+        helper_id = packagebuilder.require_image_id(self._runner, self._config, self.target)
         container = self._package.lane_container.format(arch=self.target.name)
         # Any predecessor first: a container left by a killed run holds the
         # name this one needs, and `docker create` fails on the collision
@@ -172,13 +167,15 @@ class PackageRail:
             tag=self._package.lane_image,
             dockerfile=str(self.root / self._package.lane_dockerfile),
             context=str(self.root),
-            args=[f"BASE={self._package.builder_image}"],
+            args=[f"BASE={helper_id}"],
+            network=self._package.builder.runtime_network,
+            console=ConsoleMode.LOG_ONLY,
         )
         docker.create(
             name=container,
             image=self._package.lane_image,
             command=["bash", f"{mount}/{self._package.build_script}"],
-            network=self._package.network,
+            network=self._package.builder.runtime_network,
             # Whatever signing contributed is the credential set, taken from
             # the keys it returned rather than from a second list of names.
             forward=tuple(environment),
@@ -197,7 +194,7 @@ class PackageRail:
             secret_env=frozenset(signing),
         )
         try:
-            docker.start(container)
+            docker.start(container, console=ConsoleMode.LOG_ONLY)
         finally:
             # Before the removal, and on the failure path too: a build that
             # failed after producing a package is exactly when the package is

@@ -55,6 +55,7 @@ GIT_COMMON_DIR_PROBE = "--git-common-dir"
 #: the shape of what gets issued. A test that needs the resulting tag composes
 #: it from the same recorder.
 IMAGE_ID_PROBE = "{{.Id}}"
+IMAGE_LABEL_PROBE = "index .Config.Labels"
 RECORDED_IMAGE_ID = "sha256:" + "0" * 64
 
 
@@ -130,6 +131,8 @@ class RecordingRunner(Runner):
                 stdout = _git_common_dir(self.root)
             elif IMAGE_ID_PROBE in rendered:
                 stdout = RECORDED_IMAGE_ID
+            elif IMAGE_LABEL_PROBE in rendered:
+                stdout = command.argv[-1]
             elif (
                 command.argv
                 and command.argv[0] in _cargo_tool_probe_executables()

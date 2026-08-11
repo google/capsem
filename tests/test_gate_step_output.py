@@ -28,6 +28,7 @@ from capsem.gate.actions import Run
 from capsem.gate.errors import GateError
 from capsem.gate.execution import step
 from capsem.gate.funnel import GuardedRunner
+from capsem.gate.invocation import ConsoleMode
 from capsem.gate.proc import Runner
 from capsem.gate.runlog import RunLog
 
@@ -49,14 +50,21 @@ def _checkout(tmp_path: Path, **overrides: object) -> gate_config.GateConfig:
 BOTH = "import sys; print('OUT-MARKER'); print('ERR-MARKER', file=sys.stderr); sys.stderr.flush()"
 
 
-def _run(config, label: str, script: str, *, check: bool = True) -> Path:
+def _run(
+    config,
+    label: str,
+    script: str,
+    *,
+    check: bool = True,
+    console: ConsoleMode = ConsoleMode.STREAM,
+) -> Path:
     """One step, run for real, returning its log path."""
     import sys
 
     with RunLog.open(config, "test") as log:
         runner = GuardedRunner(Runner(config.root), journal=log)
         with log.step(step(label, Run([sys.executable, "-c", script]))):
-            runner.run([sys.executable, "-c", script], check=check)
+            runner.run([sys.executable, "-c", script], check=check, console=console)
         return log.step_log(label)
 
 
@@ -118,6 +126,31 @@ def test_the_operator_still_sees_it_happen(
 
     streamed = capfd.readouterr()
     assert "OUT-MARKER" in streamed.out + streamed.err
+
+
+def test_log_only_keeps_full_evidence_without_terminal_churn(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    config = _checkout(tmp_path)
+
+    written = _run(config, "dependency-materialize", BOTH, console=ConsoleMode.LOG_ONLY)
+
+    assert "OUT-MARKER" in written.read_text(encoding="utf-8")
+    assert "ERR-MARKER" in written.read_text(encoding="utf-8")
+    streamed = capfd.readouterr()
+    assert "MARKER" not in streamed.out + streamed.err
+
+
+def test_log_only_failure_still_surfaces_the_configured_tail(tmp_path: Path) -> None:
+    config = _checkout(tmp_path, failure_tail_lines=2)
+
+    with pytest.raises(GateError, match="LOG-ONLY-FAILURE"):
+        _run(
+            config,
+            "dependency-materialize",
+            "import sys; print('earlier'); print('LOG-ONLY-FAILURE'); sys.exit(9)",
+            console=ConsoleMode.LOG_ONLY,
+        )
 
 
 def test_concurrent_steps_never_share_a_file(tmp_path: Path) -> None:

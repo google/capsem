@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TextIO
 
 from .errors import GateError
-from .invocation import Command
+from .invocation import Command, ConsoleMode
 from .planseal import _refuse_while_sealed
 
 #: Concurrent steps write to one terminal. Their own logs are private, so this
@@ -123,9 +123,10 @@ class Runner:
                 sink.write(line)
                 # Only the terminal is serialized. Each step owns its own sink,
                 # so those need no lock and must not wait behind one.
-                with _TERMINAL:
-                    self._stream.write(line)
-                    self._stream.flush()
+                if command.console is ConsoleMode.STREAM:
+                    with _TERMINAL:
+                        self._stream.write(line)
+                        self._stream.flush()
         return subprocess.CompletedProcess(args=list(command.argv), returncode=process.returncode)
 
     def run(
@@ -136,6 +137,7 @@ class Runner:
         env: dict[str, str] | None = None,
         check: bool = True,
         log: Path | None = None,
+        console: ConsoleMode = ConsoleMode.STREAM,
         secret_env: frozenset[str] = frozenset(),
     ) -> int:
         """Run a command, streaming its output. Returns the exit status."""
@@ -145,6 +147,7 @@ class Runner:
             env=dict(env or {}),
             check=check,
             log=log,
+            console=console,
             secret_env=secret_env,
         )
         # Checked here rather than in `execute`, which subclasses replace: a

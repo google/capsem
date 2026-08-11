@@ -8,6 +8,15 @@ basename it created and this reads it back rather than looking around.
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
+import io
+import lzma
+import os
+import re
+import shutil
+import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -15,6 +24,7 @@ from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
 from capsem.gate import crosscompile
+from capsem.gate.content import ProfileContent
 from capsem.gate.errors import GateError
 from capsem.gate.packageinputs import pinned_toolchain, resolve_channel
 from capsem.gate.packagerail import PackageRail
@@ -26,6 +36,16 @@ CONFIG = gate_config.load(PROJECT_ROOT)
 BUILD_SCRIPT = CONFIG.package.build_script
 TARGET = CONFIG.arch("arm64")
 PACKAGE = "Capsem_9.9.9_arm64.deb"
+
+
+def _asset_manifest(*arches: str) -> str:
+    releases = {arch: {} for arch in arches}
+    return (
+        '{"format":2,"refresh_policy":"24h","assets":{"current":"test",'
+        '"releases":{"test":{"arches":'
+        + __import__("json").dumps(releases, sort_keys=True)
+        + "}}}}"
+    )
 
 
 def _checkout(tmp_path: Path, *, toolchain: str = "9.99.9") -> Path:
@@ -42,7 +62,28 @@ def _checkout(tmp_path: Path, *, toolchain: str = "9.99.9") -> Path:
     (tmp_path / "config" / "gate.toml").write_text(
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     )
+    for name in CONFIG.package.builder.identity_inputs:
+        destination = tmp_path / name
+        if destination.exists():
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(PROJECT_ROOT / name, destination)
+    for pattern in CONFIG.package.builder.identity_globs:
+        for source in PROJECT_ROOT.glob(pattern):
+            destination = tmp_path / source.relative_to(PROJECT_ROOT)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
     (tmp_path / "assets" / TARGET.name).mkdir(parents=True)
+    manifest = _asset_manifest(TARGET.name)
+    (tmp_path / "assets" / CONFIG.install.manifest_name).write_text(manifest)
+    config_root = tmp_path / CONFIG.functional.config_root
+    (config_root / CONFIG.functional.profiles_subdir / "code").mkdir(parents=True)
+    (config_root / CONFIG.functional.profiles_subdir / "code" / "profile.toml").write_text(
+        'id = "code"\n'
+    )
+    config_manifest = config_root / CONFIG.suites.pytest.test_manifest
+    config_manifest.parent.mkdir(parents=True, exist_ok=True)
+    config_manifest.write_text(manifest)
     return tmp_path
 
 
@@ -76,7 +117,8 @@ def _run_lane(rail):
     rail.release_rails()
     rail.reserve()
     rail.sync_clock()
-    rail.sync_assets()
+    rail.require_content()
+    rail.materialize()
     rail.build()
     package = rail.resolve()
     rail.prove()
@@ -85,7 +127,169 @@ def _run_lane(rail):
 
 
 def _rail(runner: RecordingRunner, **kwargs) -> PackageRail:
-    return PackageRail(runner, TARGET, **kwargs)
+    return PackageRail(
+        runner,
+        TARGET,
+        content=ProfileContent.standalone(gate_config.load(runner.root)),
+        **kwargs,
+    )
+
+
+# ---------------------------------------------------------------------------
+# One typed content bundle
+# ---------------------------------------------------------------------------
+
+
+def test_profile_content_derives_both_trees_from_one_root_without_reading_it(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "not-materialized-yet"
+
+    content = ProfileContent.isolated(CONFIG, missing)
+
+    assert content.root == missing
+    assert content.assets == missing / CONFIG.assets.merged_assets_dir
+    assert content.config == missing / CONFIG.assets.merged_config_dir
+    assert content.profiles(CONFIG) == content.config / CONFIG.functional.profiles_subdir
+
+
+@pytest.mark.parametrize("relative", [Path("/absolute"), Path("../sibling")])
+def test_profile_content_refuses_a_path_outside_its_root(tmp_path: Path, relative: Path) -> None:
+    with pytest.raises(ValueError, match="relative path under"):
+        ProfileContent(tmp_path, relative, Path("config"))
+
+
+def test_profile_content_completeness_is_explicitly_target_scoped(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    content = ProfileContent.standalone(gate_config.load(root))
+
+    content.require_complete(gate_config.load(root), arches=(TARGET,))
+
+    with pytest.raises(GateError, match="x86_64"):
+        content.require_complete(gate_config.load(root))
+
+
+def test_profile_content_refuses_an_architecture_not_declared_by_the_manifest(
+    tmp_path: Path,
+) -> None:
+    root = _checkout(tmp_path)
+    config = gate_config.load(root)
+    undeclared = config.arch("x86_64")
+    (root / "assets" / undeclared.name).mkdir()
+
+    with pytest.raises(GateError, match=r"manifest.*x86_64"):
+        ProfileContent.standalone(config).require_complete(config, arches=(undeclared,))
+
+
+def _assert_no_package_docker_started(runner: RecordingRunner) -> None:
+    assert not any(command.argv[:2] == ("docker", "build") for command in runner.commands)
+    assert not any(command.argv[:2] == ("docker", "create") for command in runner.commands)
+    assert not any("Materializing locked package dependencies" in note for note in runner.notes)
+
+
+def test_standalone_package_refuses_the_relative_assets_selector_before_docker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    root = _checkout(tmp_path)
+    selected = root / "selected-assets"
+    (root / "assets").rename(selected)
+    (root / "assets").symlink_to(selected.name, target_is_directory=True)
+    runner = Building(root, replies={"select-linux": "skip"})
+
+    with pytest.raises(GateError, match=r"assets.*symlink"):
+        _run_lane(_rail(runner))
+
+    assert (root / "assets").readlink() == Path(selected.name)
+    _assert_no_package_docker_started(runner)
+
+
+def test_explicit_package_content_refuses_a_symlink_root_before_docker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    checkout = _checkout(tmp_path / "checkout")
+    config = gate_config.load(checkout)
+    real = tmp_path / "real-content"
+    real.mkdir()
+    selected = tmp_path / "selected-content"
+    selected.symlink_to(real.name, target_is_directory=True)
+    runner = Building(checkout, replies={"select-linux": "skip"})
+    rail = PackageRail(runner, TARGET, content=ProfileContent.isolated(config, selected))
+
+    with pytest.raises(GateError, match=r"root.*symlink"):
+        _run_lane(rail)
+
+    _assert_no_package_docker_started(runner)
+
+
+def test_package_content_refuses_a_symlink_config_directory_before_docker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    root = _checkout(tmp_path)
+    config = gate_config.load(root)
+    selected = root / "selected-config"
+    (root / config.functional.config_root).rename(selected)
+    (root / config.functional.config_root).symlink_to(
+        Path("..") / selected.name, target_is_directory=True
+    )
+    runner = Building(root, replies={"select-linux": "skip"})
+
+    with pytest.raises(GateError, match=r"config.*symlink"):
+        _run_lane(_rail(runner))
+
+    _assert_no_package_docker_started(runner)
+
+
+def test_package_mounts_only_the_concrete_paired_content_dirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    root = _checkout(tmp_path)
+    config = gate_config.load(root)
+    isolated = root / "target" / "ironbank-assets" / "code"
+    content = ProfileContent.isolated(config, isolated)
+    content.assets.mkdir(parents=True)
+    content.config.mkdir(parents=True)
+    manifest = _asset_manifest(TARGET.name)
+    (content.assets / TARGET.name).mkdir()
+    (content.assets / config.install.manifest_name).write_text(manifest)
+    profile = content.profiles(config) / "code" / "profile.toml"
+    profile.parent.mkdir(parents=True)
+    profile.write_text('id = "code"\n')
+    config_manifest = content.config / config.suites.pytest.test_manifest
+    config_manifest.parent.mkdir(parents=True)
+    config_manifest.write_text(manifest)
+
+    # This is the exact retained-prefix shape that Docker's `-v <prefix>/assets`
+    # destroyed: a relative selector plus an older canonical config tree.  The
+    # package must not even inspect or normalize either one.
+    stale_assets = root / "stale-canonical-assets"
+    (root / "assets").rename(stale_assets)
+    (root / "assets").symlink_to(stale_assets.name)
+    selector_inode = (root / "assets").lstat().st_ino
+    selector_target = (root / "assets").readlink()
+    sentinel = root / config.functional.config_root / "stale-sentinel"
+    sentinel.write_bytes(b"canonical config must survive")
+    runner = Building(root, replies={"select-linux": "skip"})
+
+    rail = PackageRail(runner, TARGET, content=content)
+    rail.require_content()
+    rail.build()
+
+    create = runner.matching(r"docker create")[0]
+    assert f"{content.assets}:/src/assets:ro" in create
+    assert f"{content.config}:/src/target/config:ro" in create
+    assert f"{root / 'assets'}:/src/assets" not in create
+    assert f"{root / 'target' / 'config'}:/src/target/config" not in create
+    assert (root / "assets").lstat().st_ino == selector_inode
+    assert (root / "assets").readlink() == selector_target
+    assert sentinel.read_bytes() == b"canonical config must survive"
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +333,22 @@ def test_a_checkout_without_keys_injects_none(tmp_path: Path) -> None:
     assert signing_key(tmp_path, CONFIG) == {}
 
 
+def test_release_signing_keys_can_arrive_through_the_configured_ci_environment(
+    tmp_path: Path,
+) -> None:
+    variables = CONFIG.package.signing
+    environment = {variables.key_variable: "CI-KEY", variables.password_variable: "CI-PASS"}
+
+    assert signing_key(tmp_path, CONFIG, environment=environment) == environment
+
+
+def test_a_half_exported_release_signing_environment_is_refused(tmp_path: Path) -> None:
+    variables = CONFIG.package.signing
+
+    with pytest.raises(GateError, match=r"both.*signing"):
+        signing_key(tmp_path, CONFIG, environment={variables.key_variable: "CI-KEY"})
+
+
 @pytest.mark.parametrize("channel", CONFIG.package.channels)
 def test_known_channels_are_accepted(channel: str) -> None:
     assert resolve_channel(channel, CONFIG) == channel
@@ -142,6 +362,423 @@ def test_an_unknown_channel_is_refused_before_anything_is_built() -> None:
 # ---------------------------------------------------------------------------
 # The build
 # ---------------------------------------------------------------------------
+
+
+def test_package_helper_inputs_and_ort_are_config_authoritative() -> None:
+    builder = CONFIG.package.builder
+
+    assert builder.materialize_network == "bridge"
+    assert builder.runtime_network == "none"
+    assert builder.apt_snapshot_base.startswith("https://snapshot.ubuntu.com/")
+    assert re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", builder.apt_snapshot_id)
+    assert builder.cargo_store.startswith("/opt/capsem/")
+    assert builder.pnpm_store.startswith("/opt/capsem/")
+    assert set(builder.targets) == set(CONFIG.architectures)
+    for name, target in builder.targets.items():
+        assert target.ort_url.startswith("https://cdn.pyke.io/")
+        assert len(target.ort_sha256) == 64
+        int(target.ort_sha256, 16)
+        assert target.ort_url.endswith(f"{CONFIG.arch(name).rust_target}.tar.lzma2")
+
+
+def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> None:
+    builder = CONFIG.package.builder
+    dockerfile = (PROJECT_ROOT / builder.dockerfile).read_text(encoding="utf-8")
+    script = (PROJECT_ROOT / CONFIG.package.build_script).read_text(encoding="utf-8")
+
+    assert "ENV RUSTUP_AUTO_INSTALL=0" in dockerfile
+    assert 'grep -F "${selected}-"' in dockerfile
+    assert 'rustup target list --toolchain "${selected}" --installed' in dockerfile
+    assert "cargo fetch --locked --target" in dockerfile
+    assert "pnpm fetch --frozen-lockfile" in dockerfile
+    assert "frontend/pnpm-workspace.yaml" in builder.identity_inputs
+    assert "frontend/pnpm-workspace.yaml" in dockerfile
+    assert "ORT_STRATEGY=system" in dockerfile
+    assert "ORT_LIB_LOCATION" in dockerfile
+    assert "materialize-package-ort.py" in dockerfile
+    assert "cargo build" not in dockerfile
+    assert "COPY --from=dependency-fetch /cargo-target" not in dockerfile
+    assert 'test -n "${APT_SNAPSHOT_BASE}"' in dockerfile
+    assert 'test -n "${APT_SNAPSHOT_ID}"' in dockerfile
+    assert 'swap-dev-libs "${DPKG_ARCH}" "${APT_SNAPSHOT_BASE}" "${APT_SNAPSHOT_ID}"' in dockerfile
+
+    swap = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text(encoding="utf-8")
+    assert 'SNAPSHOT_URL="${APT_SNAPSHOT_BASE%/}/${APT_SNAPSHOT_ID}"' in swap
+    assert 'APT_SNAPSHOT_BASE="${2:?' in swap
+    assert 'APT_SNAPSHOT_ID="${3:?' in swap
+    assert "inherited apt sources" not in swap
+    assert "archive.ubuntu.com" not in swap
+    assert "security.ubuntu.com" not in swap
+    assert "ports.ubuntu.com" not in swap
+
+    assert "rustup toolchain install" not in script
+    assert "rustup target add" not in script
+    assert 'grep -F "$RUST_TOOLCHAIN-"' in script
+    assert "swap-dev-libs" not in script
+    assert "apt-get" not in script
+    assert "pnpm install --offline --frozen-lockfile" in script
+    assert script.count("cargo build --release --locked --offline") == 2
+    assert "cargo tauri build" in script
+    assert "--locked --offline" in script
+    assert '"${CARGO_HOME:?}"' in script
+    assert '"${CAPSEM_PNPM_STORE:?}"' in script
+
+
+def test_package_helper_final_stage_contains_only_materialized_dependency_stores() -> None:
+    builder = CONFIG.package.builder
+    dockerfile = (PROJECT_ROOT / builder.dockerfile).read_text(encoding="utf-8")
+    stages = dockerfile.split("FROM ${BASE}")
+
+    assert len(stages) == 3
+    fetch, final = stages[1:]
+    assert " AS dependency-fetch" in fetch.splitlines()[0]
+    assert "COPY crates /prefetch/crates" in fetch
+    assert "COPY crates" not in final
+    assert "COPY ." not in final
+    assert "COPY --from=dependency-fetch /capsem-deps/cargo/registry" in final
+    assert "COPY --from=dependency-fetch /capsem-deps/cargo/git" in final
+    assert "COPY --from=dependency-fetch /capsem-deps/pnpm" in final
+    assert "COPY --from=dependency-fetch /capsem-deps/ort" in final
+    assert "ENV CARGO_HOME=${CARGO_STORE}" in final
+    assert "ENV CAPSEM_PNPM_STORE=${PNPM_STORE}" in final
+
+    script = (PROJECT_ROOT / CONFIG.package.build_script).read_text(encoding="utf-8")
+    assert '--store-dir "$CAPSEM_PNPM_STORE"' in script
+
+
+def test_source_only_bytes_do_not_change_the_dependency_helper_input_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from capsem.gate.docker import Docker
+    from capsem.gate.packagebuilder import image_tag
+
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    root = _checkout(tmp_path)
+    config = gate_config.load(root)
+    source = root / "crates" / "capsem" / "src" / "main.rs"
+    source.parent.mkdir(parents=True)
+    source.write_text("fn main() {}\n", encoding="utf-8")
+    docker = Docker(RecordingRunner(root))
+    before = image_tag(config, config.arch("arm64"), docker)
+
+    source.write_text('fn main() { println!("changed"); }\n', encoding="utf-8")
+
+    assert image_tag(config, config.arch("arm64"), docker) == before
+
+
+def _stubbed_swap(tmp_path: Path, *, native: str, remove_status: int = 0):
+    apt_root = tmp_path / "apt"
+    (apt_root / "sources.list.d").mkdir(parents=True)
+    apt_lists = tmp_path / "apt-lists"
+    apt_lists.mkdir()
+    script = tmp_path / "swap-dev-libs.sh"
+    source = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text(encoding="utf-8")
+    script.write_text(
+        source.replace("/etc/apt", str(apt_root)).replace("/var/lib/apt/lists", str(apt_lists)),
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    log = tmp_path / "commands.log"
+    dpkg = binary / "dpkg"
+    dpkg.write_text(
+        "#!/bin/sh\n"
+        'printf \'dpkg %s\\n\' "$*" >> "$CAPSEM_STUB_LOG"\n'
+        'if [ "$1" = --print-architecture ]; then printf \'%s\\n\' "$CAPSEM_STUB_NATIVE"; fi\n',
+        encoding="utf-8",
+    )
+    dpkg.chmod(0o755)
+    apt_get = binary / "apt-get"
+    apt_get.write_text(
+        "#!/bin/sh\n"
+        'printf \'apt-get %s\\n\' "$*" >> "$CAPSEM_STUB_LOG"\n'
+        'case "$1" in\n'
+        '  update) exit "${CAPSEM_STUB_UPDATE_STATUS:-0}" ;;\n'
+        '  remove) exit "${CAPSEM_STUB_REMOVE_STATUS:-0}" ;;\n'
+        '  install) exit "${CAPSEM_STUB_INSTALL_STATUS:-0}" ;;\n'
+        "esac\n",
+        encoding="utf-8",
+    )
+    apt_get.chmod(0o755)
+    environment = {
+        **os.environ,
+        "PATH": f"{binary}:/usr/bin:/bin",
+        "CAPSEM_STUB_LOG": str(log),
+        "CAPSEM_STUB_NATIVE": native,
+        "CAPSEM_STUB_REMOVE_STATUS": str(remove_status),
+    }
+
+    def run(*arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["/bin/bash", str(script), *arguments],
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    return run, log, apt_root / "sources.list.d" / "capsem-snapshot.sources"
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ("arm64",),
+        ("arm64", "https://snapshot.ubuntu.com/ubuntu"),
+    ],
+)
+def test_package_swap_refuses_missing_snapshot_authority_before_apt(
+    tmp_path: Path, arguments: tuple[str, ...]
+) -> None:
+    run, log, sources = _stubbed_swap(tmp_path, native="arm64")
+
+    result = run(*arguments)
+
+    assert result.returncode != 0
+    assert not log.exists()
+    assert not sources.exists()
+
+
+def test_native_package_swap_reinstalls_dev_libraries_from_the_snapshot(tmp_path: Path) -> None:
+    run, log, sources = _stubbed_swap(tmp_path, native="arm64")
+
+    result = run("arm64", "https://snapshot.ubuntu.com/ubuntu", "20260810T000000Z")
+
+    assert result.returncode == 0, result.stderr
+    recorded = log.read_text(encoding="utf-8")
+    assert recorded.index("apt-get update -qq") < recorded.index("apt-get install")
+    assert "apt-get remove" not in recorded
+    assert "--reinstall" in recorded
+    assert "--allow-downgrades" in recorded
+    assert "libssl-dev:arm64" in recorded
+    assert "https://snapshot.ubuntu.com/ubuntu/20260810T000000Z" in sources.read_text()
+
+
+def test_foreign_package_swap_updates_then_removes_then_installs(tmp_path: Path) -> None:
+    run, log, _sources = _stubbed_swap(tmp_path, native="amd64")
+
+    result = run("arm64", "https://snapshot.ubuntu.com/ubuntu", "20260810T000000Z")
+
+    assert result.returncode == 0, result.stderr
+    recorded = log.read_text(encoding="utf-8")
+    assert recorded.index("apt-get update -qq") < recorded.index("apt-get remove")
+    assert recorded.index("apt-get remove") < recorded.index("apt-get install")
+    assert "libssl-dev:arm64" in recorded
+
+
+def test_foreign_package_swap_stops_when_native_removal_fails(tmp_path: Path) -> None:
+    run, log, _sources = _stubbed_swap(tmp_path, native="amd64", remove_status=19)
+
+    result = run("arm64", "https://snapshot.ubuntu.com/ubuntu", "20260810T000000Z")
+
+    assert result.returncode == 19
+    recorded = log.read_text(encoding="utf-8")
+    assert "apt-get remove" in recorded
+    assert "apt-get install" not in recorded
+
+
+def _ort_materializer():
+    path = PROJECT_ROOT / CONFIG.package.builder.ort_script
+    spec = importlib.util.spec_from_file_location("package_ort_materializer", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _ort_archive(name: str, payload: bytes) -> bytes:
+    tar = io.BytesIO()
+    with tarfile.open(fileobj=tar, mode="w") as archive:
+        member = tarfile.TarInfo(name)
+        member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+    return lzma.compress(
+        tar.getvalue(),
+        format=lzma.FORMAT_RAW,
+        filters=[{"id": lzma.FILTER_LZMA2, "dict_size": 1 << 26}],
+    )
+
+
+def test_ort_materializer_verifies_and_extracts_only_the_static_distribution(
+    tmp_path: Path,
+) -> None:
+    materializer = _ort_materializer()
+    payload = _ort_archive("libonnxruntime.a", b"static-ort")
+    source = tmp_path / "source.lzma2"
+    source.write_bytes(payload)
+    downloaded = tmp_path / "downloaded.lzma2"
+    tar = tmp_path / "archive.tar"
+    output = tmp_path / "ort"
+
+    materializer._download(source.as_uri(), hashlib.sha256(payload).hexdigest(), downloaded)
+    materializer._decompress(downloaded, tar)
+    materializer._extract(tar, output)
+
+    assert (output / "libonnxruntime.a").read_bytes() == b"static-ort"
+    assert (output / "libonnxruntime.a").stat().st_mode & 0o777 == 0o444
+
+
+def test_ort_materializer_rejects_an_archive_path_escape(tmp_path: Path) -> None:
+    materializer = _ort_materializer()
+    compressed = tmp_path / "escape.lzma2"
+    compressed.write_bytes(_ort_archive("../escaped", b"no"))
+    tar = tmp_path / "escape.tar"
+    materializer._decompress(compressed, tar)
+
+    with pytest.raises(ValueError, match="escapes its root"):
+        materializer._extract(tar, tmp_path / "output")
+
+    assert not (tmp_path / "escaped").exists()
+
+
+def test_package_helper_is_host_native_and_target_specific(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from capsem.gate.packagebuilder import materialize
+
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    root = _checkout(tmp_path)
+    config = gate_config.load(root)
+    runner = RecordingRunner(
+        root,
+        failures=("docker image inspect --platform linux/amd64 capsem-package-builder-arm64:",),
+    )
+
+    identity = materialize(runner, config, config.arch("arm64"))
+
+    build_command = next(
+        command
+        for command in runner.commands
+        if command.argv[:2] == ("docker", "build")
+        and any(value.endswith("/Dockerfile.package-builder") for value in command.argv)
+    )
+    build = str(build_command)
+    assert "--platform linux/amd64" in build
+    assert "--network bridge" in build
+    assert "RUST_TARGET=aarch64-unknown-linux-gnu" in build
+    assert "DPKG_ARCH=arm64" in build
+    assert f"APT_SNAPSHOT_BASE={config.package.builder.apt_snapshot_base}" in build
+    assert f"APT_SNAPSHOT_ID={config.package.builder.apt_snapshot_id}" in build
+    assert f"CARGO_STORE={config.package.builder.cargo_store}" in build
+    assert f"PNPM_STORE={config.package.builder.pnpm_store}" in build
+    assert CONFIG.package.builder.targets["arm64"].ort_sha256 in build
+    assert any("sha256:" in note for note in runner.notes)
+    assert identity.input_key.startswith("capsem-package-builder-arm64:")
+    assert identity.image_id == "sha256:" + "0" * 64
+    from capsem.gate.invocation import ConsoleMode
+
+    assert build_command.console is ConsoleMode.LOG_ONLY
+
+
+@pytest.mark.parametrize(
+    "changed_authority",
+    [
+        {"apt_snapshot_id": "20260811T000000Z"},
+        {"apt_snapshot_base": "https://snapshot.example.invalid/ubuntu"},
+    ],
+)
+def test_package_helper_snapshot_authority_changes_the_input_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    changed_authority: dict[str, str],
+) -> None:
+    from capsem.gate.docker import Docker
+    from capsem.gate.packagebuilder import image_tag
+
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    root = _checkout(tmp_path)
+    config = gate_config.load(root)
+    changed_builder = config.package.builder.model_copy(update=changed_authority)
+    changed = config.model_copy(
+        update={"package": config.package.model_copy(update={"builder": changed_builder})}
+    )
+    docker = Docker(RecordingRunner(root))
+
+    assert image_tag(config, config.arch("arm64"), docker) != image_tag(
+        changed, changed.arch("arm64"), docker
+    )
+
+
+def test_package_helper_reuses_a_matching_warm_snapshot_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from capsem.gate.packagebuilder import materialize
+
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    root = _checkout(tmp_path)
+    config = gate_config.load(root)
+    runner = RecordingRunner(root)
+
+    identity = materialize(runner, config, config.arch("arm64"))
+
+    assert identity.input_key.startswith("capsem-package-builder-arm64:")
+    assert runner.ran(r"index \.Config\.Labels")
+    assert not runner.ran(r"docker build.*Dockerfile\.package-builder")
+
+
+def test_package_helper_refuses_a_warm_tag_with_the_wrong_input_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from capsem.gate.packagebuilder import materialize
+
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    root = _checkout(tmp_path)
+    config = gate_config.load(root)
+    runner = RecordingRunner(root, replies={"index .Config.Labels": "forged-input-key"})
+
+    with pytest.raises(GateError, match="poisoned warm tag"):
+        materialize(runner, config, config.arch("arm64"))
+
+
+def test_package_helper_exact_identity_is_written_to_the_run_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from helpers.gate import RecordingJournal
+
+    from capsem.gate.context import Context
+
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    root = _checkout(tmp_path)
+    config = gate_config.load(root)
+    runner = RecordingRunner(root)
+    journal = RecordingJournal()
+
+    crosscompile._phase(config.arch("arm64"), "materialize", ProfileContent.standalone(config))(
+        Context(runner, config, journal=journal)
+    )
+
+    (recorded,) = [note for note in journal.notes if note.startswith("package helper arm64:")]
+    assert "input key capsem-package-builder-arm64:" in recorded
+    assert "exact image sha256:" in recorded
+
+
+def test_package_source_image_and_runtime_are_network_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
+
+    _rail(runner).build()
+
+    source = runner.matching(r"docker build.*Dockerfile\.package")[0]
+    runtime = runner.matching(r"docker create")[0]
+    assert "--network none" in source
+    assert "--network none" in runtime
+    from capsem.gate.invocation import ConsoleMode
+
+    source_command = next(
+        command
+        for command in runner.commands
+        if command.argv[:2] == ("docker", "build")
+        and any(value.endswith("/Dockerfile.package") for value in command.argv)
+    )
+    runtime_command = next(
+        command for command in runner.commands if command.argv[:3] == ("docker", "start", "-a")
+    )
+    assert source_command.console is ConsoleMode.LOG_ONLY
+    assert runtime_command.console is ConsoleMode.LOG_ONLY
 
 
 def test_the_package_dockerfile_waives_only_its_required_base_check() -> None:
@@ -180,7 +817,7 @@ def test_the_package_lane_supplies_its_exact_host_builder_base(
         build.argv[index + 1] for index, value in enumerate(build.argv) if value == "--build-arg"
     ]
     assert CONFIG.package.builder_image == CONFIG.hostimage.tag
-    assert supplied == [f"BASE={CONFIG.package.builder_image}"]
+    assert supplied == ["BASE=sha256:" + "0" * 64]
 
 
 def test_the_builder_receives_every_name_for_the_target(
@@ -332,6 +969,35 @@ def test_the_builder_image_is_rebuilt_before_every_package() -> None:
     assert (hostimage.STEP, f"package.{TARGET.name}.storage-release") in plan.edges
 
 
+def test_fresh_release_package_plan_owns_helper_prerequisites_in_order() -> None:
+    import argparse
+
+    from capsem.gate import cli, hostimage
+    from capsem.gate.command import GateCommand
+
+    del cli  # Importing registers every command; the registry is the value used below.
+
+    args = argparse.Namespace(
+        dry_run=False,
+        graph=False,
+        timing=False,
+        arch=TARGET.name,
+        content_root="target/package-content",
+        defer_proof=True,
+    )
+    plan = GateCommand.registry["cross-compile"](RecordingRunner(PROJECT_ROOT), args)._describe()
+    order = list(plan.labels)
+
+    assert order.index(hostimage.STEP) < order.index(f"package.{TARGET.name}.content")
+    assert order.index(f"package.{TARGET.name}.content") < order.index(
+        f"package.{TARGET.name}.materialize"
+    )
+    assert order.index(f"package.{TARGET.name}.materialize") < order.index(
+        f"package.{TARGET.name}.build"
+    )
+    assert not any(label.startswith("install-image") for label in order)
+
+
 def test_the_container_clock_is_synced_only_on_macos(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -345,51 +1011,6 @@ def test_the_container_clock_is_synced_only_on_macos(
         _run_lane(_rail(runner))
 
         assert runner.ran(r"sync-container-clock\.py") is expected
-
-
-def test_asset_sync_points_at_the_selected_arch_without_copying_its_tree(tmp_path: Path) -> None:
-    """The package selector is a pointer, not another multi-gigabyte asset tree.
-
-    Asset preparation deliberately keeps canonical and hash-named paths as
-    hardlinks. Copying that directory into ``assets/current`` breaks the link
-    topology and materializes every blob twice; a relative pointer preserves
-    the exact selected tree and remains valid inside the ``assets`` bind mount.
-    """
-    root = _checkout(tmp_path)
-    selected = root / CONFIG.imagebuild.output / TARGET.name
-    canonical = selected / "software-inventory.json"
-    alias = selected / "software-inventory-deadbeefdeadbeef.json"
-    canonical.write_bytes(b"inventory")
-    alias.hardlink_to(canonical)
-
-    # A prior package run used a real copied directory. The forward fix must
-    # migrate that state safely rather than requiring a hand cleanup.
-    current = root / CONFIG.imagebuild.output / CONFIG.package.current_assets
-    current.mkdir()
-    (current / "stale").write_text("old copied tree", encoding="utf-8")
-
-    _rail(RecordingRunner(root)).sync_assets()
-
-    assert current.is_symlink(), "the architecture selector was materialized as another tree"
-    assert current.readlink() == Path(TARGET.name), "the pointer must stay relative to assets/"
-    assert (current / canonical.name).samefile(canonical)
-    assert (current / alias.name).samefile(alias)
-    assert canonical.samefile(alias), "syncing the selector rewrote the selected asset tree"
-
-
-def test_asset_sync_refuses_an_absolute_pointer_that_would_break_in_the_container(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = _checkout(tmp_path)
-    selected = root / CONFIG.imagebuild.output / TARGET.name
-
-    def absolute_link(path: Path, _target: str) -> None:
-        path.symlink_to(selected)
-
-    monkeypatch.setattr("capsem.gate.packagerail.link", absolute_link)
-
-    with pytest.raises(GateError, match=r"points at .* not arm64"):
-        _rail(RecordingRunner(root)).sync_assets()
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +1116,9 @@ def test_a_provable_target_runs_the_systemd_kvm_proof(
 
 def test_the_standalone_plan_keeps_the_exact_package_proof() -> None:
     plan = Plan("standalone-package")
-    crosscompile.fragment(plan, CONFIG, CONFIG.host_arch())
+    crosscompile.fragment(
+        plan, CONFIG, CONFIG.host_arch(), content=ProfileContent.standalone(CONFIG)
+    )
 
     rendered = "\n".join(plan.step_named(f"package.{CONFIG.host_arch().name}.prove").render())
 

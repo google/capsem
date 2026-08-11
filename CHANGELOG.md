@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux package construction now materializes its target dependencies in an
+  input-keyed helper from an immutable Ubuntu snapshot, locked Cargo and pnpm
+  stores, and a digest-verified static ORT archive. The publishable source
+  build consumes the exact helper image with networking disabled, carries one
+  verified asset/config cohort through concrete real-directory mounts, and
+  preserves full per-architecture gate journals in release CI without noisy
+  successful dependency output on the live terminal.
+
 - Direct development diagnostics now have a portable bounded-process wrapper
   that closes stdin and owns the complete child process group. A blocked
   Docker client, compiler, test runner, or helper is terminated on timeout or

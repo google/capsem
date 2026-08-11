@@ -29,6 +29,7 @@ class Arch(Strict):
     rust_target: str
     dpkg: str
     gnu: str
+    docker_platform: str
     aliases: tuple[str, ...]
 
     pkg_config_template: str = ""

@@ -9,10 +9,12 @@ the graph cannot see is a phase nothing can order, time, or name in a failure.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from . import hostimage, installimage
 from .actions import Call
 from .command import GateCommand
+from .content import ProfileContent
 from .execution import step
 from .opacity import CallJustification, Effect, OpaqueKind
 from .packagerail import PackageRail
@@ -24,7 +26,8 @@ from .plan import Plan
 RAILS = "which rails the assets finished with is resolved from the policy at run time"
 HEADROOM = "reads the daemon's free space before an hour of compilation spends it"
 CLOCK = "Colima's clock drift is a property of the machine this runs on"
-EMBEDDED = "points the architecture-neutral asset selector at the package target"
+CONTENT = "verifies one paired asset and configuration bundle for the package target"
+MATERIALIZE = "resolves locked package dependencies at the explicit network-open boundary"
 SIGNING = "its environment carries the Tauri private key, which a dry run must not print"
 RECORDED = "reads back the exact package basename the builder just wrote"
 PROOF = "installs that package in a systemd container and proves what it produced"
@@ -46,7 +49,15 @@ def _because(reason: str, *effects: Effect) -> CallJustification:
     return CallJustification(kind=kind, reason=reason, effects=frozenset(effects))
 
 
-def fragment(plan: Plan, config, target, *, after: tuple = (), defer_proof: bool = False):
+def fragment(
+    plan: Plan,
+    config,
+    target,
+    *,
+    content: ProfileContent,
+    after: tuple = (),
+    defer_proof: bool = False,
+):
     """One architecture's package, after the builder image it needs.
 
     The builder is `shared`, so composing several architectures into one plan
@@ -90,10 +101,16 @@ def fragment(plan: Plan, config, target, *, after: tuple = (), defer_proof: bool
         ("space", "reserve the package rail's headroom", "reserve", _because(HEADROOM, "process")),
         ("clock", "sync the container clock", "sync_clock", _because(CLOCK, "process")),
         (
-            "sync-assets",
-            f"point the asset selector at {target.name}",
-            "sync_assets",
-            _because(EMBEDDED, "filesystem"),
+            "content",
+            f"verify paired package content for {target.name}",
+            "require_content",
+            _because(CONTENT),
+        ),
+        (
+            "materialize",
+            f"materialize locked package dependencies for {target.name}",
+            "materialize",
+            _because(MATERIALIZE, "process", "host-state", "network"),
         ),
         # The one instance the class docstring used to describe as though it
         # were all of them: this environment carries the Tauri private key.
@@ -101,7 +118,7 @@ def fragment(plan: Plan, config, target, *, after: tuple = (), defer_proof: bool
             "build",
             f"build the Linux release package for {target.name}",
             "build",
-            _because(SIGNING, "process", "filesystem", "network"),
+            _because(SIGNING, "process", "filesystem"),
         ),
         (
             "resolve",
@@ -129,7 +146,11 @@ def fragment(plan: Plan, config, target, *, after: tuple = (), defer_proof: bool
             phase.add(
                 step(
                     label,
-                    Call(description, _phase(target, method), justification=justification),
+                    Call(
+                        description,
+                        _phase(target, method, content),
+                        justification=justification,
+                    ),
                     contends=docker,
                 ),
                 after=previous,
@@ -138,7 +159,7 @@ def fragment(plan: Plan, config, target, *, after: tuple = (), defer_proof: bool
     return previous[0]
 
 
-def _phase(target, method: str):
+def _phase(target, method: str, content: ProfileContent):
     """One rail method, as a plan action.
 
     The rail is rebuilt per phase from the context's runner rather than shared
@@ -152,11 +173,17 @@ def _phase(target, method: str):
         rail = PackageRail(
             context.runner,
             target,
+            content=content,
             manifest_url=os.environ.get(settings.manifest_variable),
             channel=os.environ.get(settings.channel_variable),
             require_proof=os.environ.get(settings.require_proof_variable, "0") == "1",
         )
-        getattr(rail, method)()
+        result = getattr(rail, method)()
+        if method == "materialize":
+            context.journal.note(
+                f"package helper {target.name}: input key {result.input_key}; "
+                f"exact image {result.image_id}"
+            )
 
     return perform
 
@@ -171,10 +198,32 @@ class CrossCompileCommand(
     @classmethod
     def add_arguments(cls, parser) -> None:
         parser.add_argument("arch", nargs="?", help="arm64 or x86_64; defaults to the host")
+        parser.add_argument(
+            "--content-root",
+            help="paired assets/config root already selected by a release or candidate rail",
+        )
+        parser.add_argument(
+            "--defer-proof",
+            action="store_true",
+            help="defer exact package proof to the release install transaction",
+        )
 
     def plan(self) -> Plan:
         config = self._config
         target = config.arch(self._args.arch) if self._args.arch else config.host_arch()
+        content_root = getattr(self._args, "content_root", None)
+        defer_proof = bool(getattr(self._args, "defer_proof", False))
+        if defer_proof and content_root is None:
+            from .errors import GateError
+
+            raise GateError("--defer-proof requires an explicit --content-root")
+        if content_root is None:
+            content = ProfileContent.standalone(config)
+        else:
+            selected = Path(content_root)
+            content = ProfileContent.isolated(
+                config, selected if selected.is_absolute() else config.path(str(selected))
+            )
         plan = Plan(self.name)
         # The complete candidate composes `install-image` in its static phase
         # before it reaches the package lanes. This standalone command has no
@@ -183,7 +232,14 @@ class CrossCompileCommand(
         # build the package and then fail by trying to pull our local-only
         # `capsem-install-test` tag from a registry.
         after = ()
-        if target == config.host_arch():
+        if target == config.host_arch() and not defer_proof:
             after = (installimage.fragment(plan, config),)
-        fragment(plan, config, target, after=after)
+        fragment(
+            plan,
+            config,
+            target,
+            content=content,
+            after=after,
+            defer_proof=defer_proof,
+        )
         return plan

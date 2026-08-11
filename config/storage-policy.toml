@@ -142,6 +142,22 @@ last_consumer = "install"
 release_boundary = "after-install"
 reason = "Both package builds and the install proof's base image need this tag."
 
+[resources.capsem-package-builder-arm64]
+kind = "image"
+docker_name = "capsem-package-builder-arm64"
+retention = "generational"
+owner = "packages"
+keep_previous = 0
+reason = "Only the current input-keyed arm64 package helper has a possible consumer."
+
+[resources.capsem-package-builder-x86_64]
+kind = "image"
+docker_name = "capsem-package-builder-x86_64"
+retention = "generational"
+owner = "packages"
+keep_previous = 0
+reason = "Only the current input-keyed x86_64 package helper has a possible consumer."
+
 [resources.capsem-host-target-arm64]
 kind = "volume"
 retention = "obsolete"

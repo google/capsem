@@ -483,10 +483,8 @@ jobs:
         include:
           - arch: arm64
             runner: ubuntu-24.04-arm
-            bundles: deb
           - arch: x86_64
             runner: ubuntu-24.04
-            bundles: deb
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -496,20 +494,15 @@ jobs:
           name: binary-channel-source
           path: target/channel-source/
 
-      - name: Select serialized pre-activation manifest
-        run: |
-          test -s target/channel-source/manifest.json
-          echo "PREACTIVATION_MANIFEST=file://$PWD/target/channel-source/manifest.json" \
-            >> "$GITHUB_ENV"
-
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: 1.97.1
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
-          key: build-app-linux-${{ matrix.arch }}
+          key: materialize-package-config-${{ matrix.arch }}
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - run: uv sync --frozen
 
       - name: Fetch exact selected ${{ matrix.arch }} profiles
         uses: ./.github/actions/fetch-release-inputs
@@ -523,92 +516,42 @@ jobs:
         run: |
           uv run python scripts/stage-release-test-inputs.py \
             --input-dir target/binary-selected-profiles \
-            --assets-dir target/release-assets \
-            --config-root target/release-config \
+            --assets-dir target/package-content/assets \
+            --config-root target/package-source-config \
             --shared-config-root config
 
       - name: Materialize runtime config
         run: |
-          CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST" \
-          CAPSEM_ASSETS_PATH="$PWD/target/release-assets" \
-          CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
+          CAPSEM_ASSET_MANIFEST="$PWD/target/package-content/assets/manifest.json" \
+          CAPSEM_ASSETS_PATH="$PWD/target/package-content/assets" \
+          CAPSEM_CONFIG_ROOT="$PWD/target/package-source-config" \
+          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/package-content/config" \
           CAPSEM_ARCH="${{ matrix.arch }}" \
             bash scripts/materialize-config.sh
 
-      - name: Install Tauri system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libssl-dev \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libxdo-dev \
-            xdg-utils \
-            xvfb
-
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
-        with:
-          version: 10
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
-      - run: cd frontend && pnpm install --frozen-lockfile
-
-      - name: Build frontend
-        run: bash scripts/check-web-surface.sh frontend-build
-
-      - name: Install cargo tools
-        env:
-          CARGO_NET_RETRY: 10
-        run: |
-          install_cargo_tool() {
-            tool="$1"
-            for attempt in 1 2 3; do
-              if cargo install "$tool" --locked; then
-                return 0
-              fi
-              echo "cargo install $tool failed on attempt $attempt/3"
-              sleep $((attempt * 15))
-            done
-            return 1
-          }
-
-          install_cargo_tool tauri-cli
-          install_cargo_tool cargo-auditable
-
-      - name: Build app
+      - name: Build Linux package through the shared hermetic rail
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          CAPSEM_INSTALL_CHANNEL: ${{ inputs.channel }}
+          CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json
         run: |
-          cd crates/capsem-app
-          cargo tauri build --bundles ${{ matrix.bundles }}
+          uv run capsem-gate cross-compile "${{ matrix.arch }}" \
+            --content-root target/package-content \
+            --defer-proof
 
-      - name: Build companion binaries
-        run: |
-          cargo build --release -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench
-          bash scripts/check-build-provenance.sh target/release/capsem
-
-      - name: Repack .deb with companion binaries
-        run: |
-          DEB_FILE=$(ls target/release/bundle/deb/*.deb)
-          bash scripts/repack-deb.sh --manifest "$ASSET_MANIFEST_URL" "$DEB_FILE" "target/release" "target/config" "assets"
-
-      - name: Validate artifacts
-        run: |
-          echo "=== Validate deb ==="
-          dpkg-deb --info target/release/bundle/deb/*.deb
-          echo "=== Verify companion binaries in deb ==="
-          dpkg-deb --contents target/release/bundle/deb/*.deb | grep -E "capsem-service|capsem-tui|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin|capsem-mock-server|capsem-bench-rs"
+      - name: Upload Linux package gate evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-linux-${{ matrix.arch }}-gate-runs-${{ github.run_attempt }}
+          path: target/gate-runs/
+          if-no-files-found: error
 
       - name: Collect Linux artifacts
         run: |
           mkdir -p release-artifacts
-          cp target/release/bundle/deb/*.deb release-artifacts/
+          cp dist/*.deb release-artifacts/
           ls -lh release-artifacts/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

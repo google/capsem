@@ -4,18 +4,52 @@
 #
 # The image ships with native-arch -dev packages. If the Rust target
 # is a different arch, we remove native -dev and install foreign -dev.
-# If target matches native, this is a no-op.
+# If target matches native, the same packages are reinstalled from the selected
+# snapshot so mutable host-builder bytes cannot enter the package.
 #
-# Usage: swap-dev-libs <target-arch>   (arm64 or amd64)
+# Usage: swap-dev-libs <target-arch> <snapshot-base> <snapshot-id>
 set -euo pipefail
 
-TARGET_ARCH="${1:?usage: swap-dev-libs <arm64|amd64>}"
+TARGET_ARCH="${1:?target architecture is required}"
+APT_SNAPSHOT_BASE="${2:?Ubuntu snapshot base is required}"
+APT_SNAPSHOT_ID="${3:?Ubuntu snapshot ID is required}"
+if [[ ! "$APT_SNAPSHOT_BASE" =~ ^https://[^[:space:]]+$ ]]; then
+    echo "ERROR: Ubuntu snapshot base must be an HTTPS URL" >&2
+    exit 1
+fi
+if [[ ! "$APT_SNAPSHOT_ID" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
+    echo "ERROR: invalid Ubuntu snapshot ID '$APT_SNAPSHOT_ID'" >&2
+    exit 1
+fi
+SNAPSHOT_URL="${APT_SNAPSHOT_BASE%/}/${APT_SNAPSHOT_ID}"
 NATIVE_ARCH=$(dpkg --print-architecture)
 
-if [ "$TARGET_ARCH" = "$NATIVE_ARCH" ]; then
-    echo "Target matches native arch ($NATIVE_ARCH), no swap needed."
-    exit 0
+case "$NATIVE_ARCH" in
+    arm64) FOREIGN_ARCH=amd64 ;;
+    amd64) FOREIGN_ARCH=arm64 ;;
+    *)
+        echo "ERROR: unsupported native architecture '$NATIVE_ARCH'" >&2
+        exit 1
+        ;;
+esac
+if [ "$TARGET_ARCH" != "$NATIVE_ARCH" ] && [ "$TARGET_ARCH" != "$FOREIGN_ARCH" ]; then
+    echo "ERROR: target '$TARGET_ARCH' is neither native nor configured foreign architecture" >&2
+    exit 1
 fi
+
+dpkg --add-architecture "$FOREIGN_ARCH"
+# Replace every mutable archive inherited from the host builder before any
+# helper-layer apt operation. The official direct timestamped endpoint is
+# immutable and serves both configured architectures and every Noble pocket.
+rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*
+cat > /etc/apt/sources.list.d/capsem-snapshot.sources << EOF
+Types: deb
+URIs: $SNAPSHOT_URL
+Suites: noble noble-updates noble-backports noble-security
+Components: main restricted universe multiverse
+Architectures: $NATIVE_ARCH $FOREIGN_ARCH
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
 
 DEV_PACKAGES=(
     libssl-dev
@@ -25,15 +59,28 @@ DEV_PACKAGES=(
     libxdo-dev
 )
 
-echo "Swapping -dev libs: $NATIVE_ARCH -> $TARGET_ARCH"
-
 # Prove every architecture-scoped index is fresh before mutating the installed
 # toolchain. The image-level apt policy retries transient downloads and makes a
 # partial update fatal.
 apt-get update -qq
 
+if [ "$TARGET_ARCH" = "$NATIVE_ARCH" ]; then
+    NATIVE_PKGS=()
+    for pkg in "${DEV_PACKAGES[@]}"; do
+        NATIVE_PKGS+=("${pkg}:${NATIVE_ARCH}")
+    done
+    echo "Reinstalling $NATIVE_ARCH dev libraries via $SNAPSHOT_URL"
+    apt-get install -y --reinstall --allow-downgrades --no-install-recommends \
+        -o Dpkg::Options::="--force-overwrite" "${NATIVE_PKGS[@]}"
+    rm -rf /var/lib/apt/lists/*
+    echo "Reinstalled $NATIVE_ARCH dev libraries from the selected snapshot."
+    exit 0
+fi
+
+echo "Swapping -dev libs from $NATIVE_ARCH to $TARGET_ARCH via $SNAPSHOT_URL"
+
 # Remove native-arch -dev packages only after the foreign indexes are usable.
-apt-get remove -y "${DEV_PACKAGES[@]}" >/dev/null 2>&1 || true
+apt-get remove -y "${DEV_PACKAGES[@]}"
 
 # Install foreign-arch -dev packages
 FOREIGN_PKGS=()

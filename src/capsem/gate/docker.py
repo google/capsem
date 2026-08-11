@@ -14,6 +14,7 @@ from __future__ import annotations
 from .dockerimage import ImageOperations
 from .dockermount import Mount
 from .errors import GateError
+from .invocation import ConsoleMode
 from .proc import Runner
 
 
@@ -164,8 +165,8 @@ class Docker(ImageOperations):
         # blur the one distinction this signature exists to make.
         self._runner.run(argv, env=carry, secret_env=secret_env)
 
-    def start(self, container: str) -> None:
-        self._runner.run(["docker", "start", "-a", container])
+    def start(self, container: str, *, console: ConsoleMode = ConsoleMode.STREAM) -> None:
+        self._runner.run(["docker", "start", "-a", container], console=console)
 
     def copy_out(self, container: str, source: str, destination: str) -> None:
         """Take bytes out of a container without a writable mount."""

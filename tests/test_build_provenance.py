@@ -100,9 +100,7 @@ def test_embedded_hash_follows_head_across_cached_builds(
         )
 
     target_dir = tmp_path / f"target-{linked_worktree}"
-    before_sha = _run(
-        ["git", "rev-parse", "--short", "HEAD"], cwd=checkout
-    ).stdout.strip()
+    before_sha = _run(["git", "rev-parse", "--short", "HEAD"], cwd=checkout).stdout.strip()
     before_hash = _embedded_hash(checkout, target_dir)
     assert before_hash.startswith(f"{before_sha}.")
 
@@ -165,10 +163,7 @@ def test_every_package_builder_enforces_exact_provenance() -> None:
     linux_builder = (REPO_ROOT / "scripts" / "build-linux-package.sh").read_text()
     release_workflow = (REPO_ROOT / ".github" / "workflows" / "release.yaml").read_text()
 
-    assert (
-        'bash scripts/check-build-provenance.sh "$ROOT/target/release/capsem"'
-        in macos_builder
-    )
+    assert 'bash scripts/check-build-provenance.sh "$ROOT/target/release/capsem"' in macos_builder
     # Was asserted against the justfile, where this lived as an escaped
     # fragment of a `docker run ... bash -c` argument.
     assert (
@@ -176,8 +171,6 @@ def test_every_package_builder_enforces_exact_provenance() -> None:
         in linux_builder
     )
     assert (
-        release_workflow.count(
-            "bash scripts/check-build-provenance.sh target/release/capsem"
-        )
-        == 2
-    ), "both macOS and Linux publication builders must reject stale provenance"
+        release_workflow.count("bash scripts/check-build-provenance.sh target/release/capsem") == 1
+    ), "the macOS publication builder must reject stale provenance directly"
+    assert "uv run capsem-gate cross-compile" in release_workflow

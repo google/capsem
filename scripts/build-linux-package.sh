@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the Linux release cohort inside capsem-host-builder, for one target.
+# Build the Linux release cohort inside the sealed package helper, for one target.
 #
 # Lifted verbatim out of a `docker run ... bash -c "..."` argument in the
 # justfile, where every quote was escaped twice and the whole program was one
@@ -18,6 +18,7 @@
 set -euo pipefail
 
 : "${TARGET_ARCH:?}" "${RUST_TARGET:?}" "${DPKG_ARCH:?}" "${RUST_TOOLCHAIN:?}"
+: "${CARGO_HOME:?}" "${CAPSEM_PNPM_STORE:?}"
 : "${HOST_UID:?}" "${HOST_GID:?}" "${CAPSEM_INSTALL_MANIFEST_URL:?}"
 
 # Where this build's artifacts go. A container path by default, copied out with
@@ -35,8 +36,10 @@ mkdir -p "$OUT"
 trap 'chown -R "$HOST_UID:$HOST_GID" "$OUT" 2>/dev/null || true' EXIT
 
 echo "--- Verify pinned Rust target ---"
-rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
-rustup target add --toolchain "$RUST_TOOLCHAIN" "$RUST_TARGET"
+if ! rustup show active-toolchain | grep -F "$RUST_TOOLCHAIN-" >/dev/null; then
+    echo "ERROR: package helper does not carry pinned Rust $RUST_TOOLCHAIN" >&2
+    exit 1
+fi
 if ! rustup target list --toolchain "$RUST_TOOLCHAIN" --installed \
     | grep -Fx "$RUST_TARGET" >/dev/null; then
     echo "ERROR: pinned Rust $RUST_TOOLCHAIN target $RUST_TARGET is unavailable in the capsem-rustup cache" >&2
@@ -44,12 +47,12 @@ if ! rustup target list --toolchain "$RUST_TOOLCHAIN" --installed \
 fi
 
 echo "--- Build frontend ---"
-(cd frontend && CI=true pnpm install && pnpm build)
-
-swap-dev-libs "$DPKG_ARCH"
+(cd frontend && CI=true pnpm install --offline --frozen-lockfile \
+    --store-dir "$CAPSEM_PNPM_STORE")
+bash scripts/check-web-surface.sh frontend-build
 
 echo "--- Build agent binaries ---"
-cargo build --release --target "$RUST_TARGET" -p capsem-agent
+cargo build --release --locked --offline --target "$RUST_TARGET" -p capsem-agent
 mkdir -p "/cargo-target/linux-agent/$TARGET_ARCH"
 cp "/cargo-target/$RUST_TARGET/release/capsem-pty-agent" \
    "/cargo-target/$RUST_TARGET/release/capsem-mcp-server" \
@@ -59,7 +62,7 @@ cp "/cargo-target/$RUST_TARGET/release/capsem-pty-agent" \
    "/cargo-target/linux-agent/$TARGET_ARCH/"
 
 echo "--- Build companion host binaries ---"
-cargo build --release --target "$RUST_TARGET" \
+cargo build --release --locked --offline --target "$RUST_TARGET" \
     -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp \
     -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway \
     -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench
@@ -87,7 +90,8 @@ fi
 
 echo "--- Build Tauri app ---"
 rm -rf "/cargo-target/$RUST_TARGET/release/bundle/deb"
-(cd crates/capsem-app && cargo tauri build --target "$RUST_TARGET" --bundles deb)
+(cd crates/capsem-app && cargo tauri build --target "$RUST_TARGET" --bundles deb \
+    -- --locked --offline)
 
 echo "--- Repack Debian package ---"
 DEB=$(ls -t "/cargo-target/$RUST_TARGET/release/bundle/deb/"*.deb | head -n1)

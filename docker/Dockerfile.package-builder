@@ -1,0 +1,73 @@
+# check=skip=InvalidDefaultArgInFrom
+# Host-native, per-target package dependencies. The source-bearing fetch stage
+# is deliberately not an ancestor of the final helper: only dependency stores
+# cross the stage boundary, so source-only edits cannot change helper history.
+ARG BASE
+FROM ${BASE} AS dependency-fetch
+
+ARG RUST_TARGET
+ARG ORT_URL
+ARG ORT_SHA256
+
+COPY Cargo.toml Cargo.lock rust-toolchain.toml /prefetch/
+COPY .cargo/config.toml /prefetch/.cargo/config.toml
+COPY crates /prefetch/crates
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml /prefetch/frontend/
+COPY scripts/materialize-package-ort.py /usr/local/bin/materialize-package-ort.py
+
+WORKDIR /prefetch
+
+# The exact host builder already owns the pinned toolchain and both configured
+# targets. A mismatch fails here; rustup is forbidden from repairing it with a
+# download hidden inside qualification.
+RUN selected="$(sed -n 's/^channel = \"\(.*\)\"/\1/p' rust-toolchain.toml)" \
+    && test -n "${selected}" \
+    && rustup show active-toolchain | grep -F "${selected}-" \
+    && rustup target list --toolchain "${selected}" --installed | grep -Fx "${RUST_TARGET}"
+
+# Locked Cargo/pnpm inputs and exact ORT are fetched into fixed transfer roots.
+# No first-party compilation happens here, and /prefetch is never an ancestor
+# of the final helper.
+RUN mkdir -p /capsem-deps/cargo/registry /capsem-deps/cargo/git \
+    && CARGO_HOME=/capsem-deps/cargo cargo fetch --locked --target "${RUST_TARGET}"
+RUN cd frontend && pnpm fetch --frozen-lockfile --store-dir /capsem-deps/pnpm
+RUN python3 /usr/local/bin/materialize-package-ort.py \
+    --url "${ORT_URL}" --sha256 "${ORT_SHA256}" --output /capsem-deps/ort
+
+# A sibling of the fetch stage, not its child. Only the locked stores and exact
+# ORT distribution cross this boundary; crate/frontend source remains solely
+# in BuildKit's non-runtime fetch stage.
+FROM ${BASE}
+
+ARG DPKG_ARCH
+ARG APT_SNAPSHOT_BASE
+ARG APT_SNAPSHOT_ID
+ARG CARGO_STORE
+ARG PNPM_STORE
+ARG ORT_LIB_LOCATION
+ARG INPUT_KEY
+
+LABEL org.capsem.package-builder.input-key=${INPUT_KEY}
+
+COPY docker/swap-dev-libs.sh /usr/local/bin/swap-dev-libs
+
+# Snapshot-pinned Ubuntu packages are the final stage's only network-open
+# materialization. Missing authority is a hard failure, never ambient latest.
+RUN test -n "${APT_SNAPSHOT_BASE}" \
+    && test -n "${APT_SNAPSHOT_ID}" \
+    && test -n "${CARGO_STORE}" \
+    && test -n "${PNPM_STORE}" \
+    && test -n "${ORT_LIB_LOCATION}" \
+    && swap-dev-libs "${DPKG_ARCH}" "${APT_SNAPSHOT_BASE}" "${APT_SNAPSHOT_ID}"
+
+COPY --from=dependency-fetch /capsem-deps/cargo/registry ${CARGO_STORE}/registry
+COPY --from=dependency-fetch /capsem-deps/cargo/git ${CARGO_STORE}/git
+COPY --from=dependency-fetch /capsem-deps/pnpm ${PNPM_STORE}
+COPY --from=dependency-fetch /capsem-deps/ort ${ORT_LIB_LOCATION}
+
+ENV RUSTUP_AUTO_INSTALL=0
+ENV CARGO_NET_OFFLINE=true
+ENV CARGO_HOME=${CARGO_STORE}
+ENV CAPSEM_PNPM_STORE=${PNPM_STORE}
+ENV ORT_STRATEGY=system
+ENV ORT_LIB_LOCATION=${ORT_LIB_LOCATION}

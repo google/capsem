@@ -50,8 +50,14 @@ class _Recording(Runner):
         import subprocess
 
         self.commands.append(command)
+        if "{{.Id}}" in command.argv:
+            stdout = "sha256:" + "0" * 64
+        elif "index .Config.Labels" in " ".join(command.argv):
+            stdout = command.argv[-1]
+        else:
+            stdout = ""
         return subprocess.CompletedProcess(
-            args=list(command.argv), returncode=1 if self._fail else 0, stdout="", stderr=""
+            args=list(command.argv), returncode=1 if self._fail else 0, stdout=stdout, stderr=""
         )
 
     def launch(self, argv, *, env=None, cwd=None, secret_env=frozenset()) -> int:
@@ -200,6 +206,17 @@ def _rail_with_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         if source.is_dir():
             shutil.copytree(source, tmp_path / name, dirs_exist_ok=True)
     shutil.copy(PROJECT_ROOT / "rust-toolchain.toml", tmp_path / "rust-toolchain.toml")
+    for name in CONFIG.package.builder.identity_inputs:
+        destination = tmp_path / name
+        if destination.exists():
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(PROJECT_ROOT / name, destination)
+    for pattern in CONFIG.package.builder.identity_globs:
+        for source in PROJECT_ROOT.glob(pattern):
+            destination = tmp_path / source.relative_to(PROJECT_ROOT)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
     return directory
 
 
@@ -212,12 +229,17 @@ def test_the_docker_argv_names_the_variable_and_carries_the_value_in_the_child_e
     reaches argv -- and therefore never reaches `ps`, which is readable by
     every user on the machine and which no amount of log redaction covers.
     """
+    from capsem.gate.content import ProfileContent
     from capsem.gate.packagerail import PackageRail
 
     _rail_with_keys(tmp_path, monkeypatch)
     runner = _Recording(tmp_path)
     config = gate_config.load(tmp_path)
-    rail = PackageRail(runner, config.arch(next(iter(config.architectures))))
+    rail = PackageRail(
+        runner,
+        config.arch(next(iter(config.architectures))),
+        content=ProfileContent.standalone(config),
+    )
 
     rail.build()
 
@@ -249,6 +271,7 @@ def test_no_byte_of_a_recorded_run_holds_the_signing_material(
     Asserted over every file the run wrote, because the leak reached four
     different ones and a check per file is a check that misses the fifth.
     """
+    from capsem.gate.content import ProfileContent
     from capsem.gate.packagerail import PackageRail
     from capsem.gate.runlog import RunLog
 
@@ -258,7 +281,11 @@ def test_no_byte_of_a_recorded_run_holds_the_signing_material(
 
     with RunLog.open(config, "cross-compile", argv=("cross-compile",)) as log:
         runner = GuardedRunner(inner, journal=log)
-        rail = PackageRail(runner, config.arch(next(iter(config.architectures))))
+        rail = PackageRail(
+            runner,
+            config.arch(next(iter(config.architectures))),
+            content=ProfileContent.standalone(config),
+        )
         with pytest.raises(GateError):
             rail.build()
 

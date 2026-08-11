@@ -29,6 +29,7 @@ from capsem.gate import (
 )
 from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
+from capsem.gate.content import ProfileContent
 from capsem.gate.plan import Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -85,9 +86,7 @@ def test_standalone_cross_compile_builds_the_image_its_exact_proof_runs() -> Non
 
 def test_standalone_cross_compile_skips_the_unused_proof_image_for_cross_arch() -> None:
     """The selector skips exact package proof when the target cannot boot here."""
-    cross = next(
-        arch.name for arch in CONFIG.architectures.values() if arch != CONFIG.host_arch()
-    )
+    cross = next(arch.name for arch in CONFIG.architectures.values() if arch != CONFIG.host_arch())
 
     plan = _plan("cross-compile", arch=cross)
 
@@ -215,8 +214,9 @@ def test_chained_lanes_do_not_make_the_builder_depend_on_them() -> None:
     from capsem.gate import crosscompile
 
     plan = Plan("chained")
-    first = crosscompile.fragment(plan, CONFIG, CONFIG.arch("arm64"))
-    crosscompile.fragment(plan, CONFIG, CONFIG.arch("x86_64"), after=(first,))
+    content = ProfileContent.standalone(CONFIG)
+    first = crosscompile.fragment(plan, CONFIG, CONFIG.arch("arm64"), content=content)
+    crosscompile.fragment(plan, CONFIG, CONFIG.arch("x86_64"), content=content, after=(first,))
 
     assert plan.labels, "a cycle would raise before returning any order"
     assert list(plan.labels).count(hostimage.STEP) == 1

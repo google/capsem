@@ -158,8 +158,29 @@ class PackageSigningConfig(Strict):
     password_variable: str
 
 
+class PackageBuilderTarget(Strict):
+    ort_url: str
+    ort_sha256: str
+
+
+class PackageBuilderConfig(Strict):
+    dockerfile: str
+    tag_template: str
+    identity_inputs: tuple[str, ...]
+    identity_globs: tuple[str, ...]
+    materialize_network: str
+    runtime_network: str
+    apt_snapshot_base: str
+    apt_snapshot_id: str
+    cargo_store: str
+    pnpm_store: str
+    ort_script: str
+    ort_lib_location: str
+    targets: dict[str, PackageBuilderTarget]
+
+
 class PackageConfig(Strict):
-    current_assets: str
+    builder: PackageBuilderConfig
     signing: PackageSigningConfig
     manifest_variable: str
     channel_variable: str
@@ -175,7 +196,6 @@ class PackageConfig(Strict):
     clock_script: str
     cargo_target_mount: str
     package_suffix: str
-    network: str
     lane_container: str
     generated_inputs: tuple[str, ...]
     lane_dockerfile: str

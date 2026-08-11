@@ -21,11 +21,19 @@ from __future__ import annotations
 
 import shlex
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 #: What a secret renders as. One spelling, so a reader who greps a run
 #: directory for it finds every place a value was withheld.
 REDACTED = "<redacted>"
+
+
+class ConsoleMode(str, Enum):
+    """Whether filed command output also belongs on the live terminal."""
+
+    STREAM = "stream"
+    LOG_ONLY = "log-only"
 
 
 @dataclass(frozen=True)
@@ -45,6 +53,7 @@ class Command:
     can read, so each concurrent lane writes its own log and only a failing
     lane's tail is surfaced.
     """
+    console: ConsoleMode = ConsoleMode.STREAM
 
     secret_env: frozenset[str] = frozenset()
     """Names in `env` whose values must never be rendered anywhere.

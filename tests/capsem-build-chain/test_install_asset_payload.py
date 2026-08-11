@@ -970,11 +970,15 @@ def test_binary_packages_embed_public_url_but_install_against_serialized_source(
     for job in (macos, linux):
         assert "needs: [preflight, resolve-channel-source]" in job
         assert "name: binary-channel-source" in job
-        assert "PREACTIVATION_MANIFEST=file://" in job
-        assert 'CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"' in job
+
+    assert "PREACTIVATION_MANIFEST=file://" in macos
+    assert 'CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"' in macos
+    assert "target/package-content/assets/manifest.json" in linux
+    assert "--content-root target/package-content" in linux
+    assert "CAPSEM_INSTALL_MANIFEST_URL:" in linux
 
     assert macos.count('--manifest "$ASSET_MANIFEST_URL"') == 1
-    assert linux.count('--manifest "$ASSET_MANIFEST_URL"') == 1
+    assert linux.count("CAPSEM_INSTALL_MANIFEST_URL:") == 1
     for job in (native_macos, native_linux):
         assert "binary-channel-candidate" in job
         assert "PREACTIVATION_MANIFEST=file://" in job
@@ -1069,21 +1073,22 @@ def test_cross_arch_tauri_swap_excludes_non_crossable_introspection_toolchain() 
     assert "qemu" not in swap_script.lower()
 
 
-def test_cross_arch_frontend_build_precedes_foreign_dev_library_swap() -> None:
-    """Inside the builder script, where the ordering now lives.
-
-    The frontend is built with the host's own libraries before the foreign
-    development libraries are swapped in; afterwards the toolchain is aimed at
-    the target and the host's own build would fail.
-    """
+def test_cross_arch_frontend_fetch_is_isolated_from_the_dev_library_swap() -> None:
+    """Both are materialization, in sibling stages, never qualification work."""
     from capsem.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     script = (PROJECT_ROOT / config.package.build_script).read_text(encoding="utf-8")
+    helper = (PROJECT_ROOT / config.package.builder.dockerfile).read_text(encoding="utf-8")
 
-    frontend = script.index("frontend")
-    swap = script.index("swap-dev-libs")
-    assert frontend < swap
+    assert "swap-dev-libs" not in script
+    stages = helper.split("FROM ${BASE}")
+    assert len(stages) == 3
+    fetch, final = stages[1:]
+    assert "pnpm fetch --frozen-lockfile" in fetch
+    assert "swap-dev-libs" not in fetch
+    assert "swap-dev-libs" in final
+    assert "pnpm fetch" not in final
 
 
 def test_cross_compile_reasserts_pinned_rust_target_before_expensive_work() -> None:
@@ -1096,14 +1101,18 @@ def test_cross_compile_reasserts_pinned_rust_target_before_expensive_work() -> N
     from capsem.gate.packageinputs import pinned_toolchain
 
     config = gate_config.load(PROJECT_ROOT)
-    issued = _planned("cross-compile", arch="arm64")
     pinned = pinned_toolchain(PROJECT_ROOT)
 
-    assert f"RUST_TOOLCHAIN={pinned}" in issued
     assert config.package.toolchain_pin == "rust-toolchain.toml"
+    assert pinned == "1.97.1"
 
     script = (PROJECT_ROOT / config.package.build_script).read_text(encoding="utf-8")
-    assert "rustup" in script and "target" in script
+    helper = (PROJECT_ROOT / config.package.builder.dockerfile).read_text(encoding="utf-8")
+    assert "rustup show active-toolchain" in script
+    assert "rustup target list" in script
+    assert "rustup show active-toolchain" in helper
+    assert 'rustup target list --toolchain "${selected}" --installed' in helper
+    assert "rustup target add" not in script + helper
 
 
 def test_deb_repacker_strips_each_elf_with_its_target_tool_and_fails_closed() -> None:
@@ -1136,18 +1145,17 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     The builder image itself consumes the headroom, so a single check before it
     measures a number that is wrong by the time it matters.
     """
-    issued = _planned("cross-compile", arch="arm64")
-    lines = issued.splitlines()
+    from capsem.gate import config as gate_config
 
-    builder = next(
-        i for i, line in enumerate(lines) if "docker build -t capsem-host-builder" in line
-    )
-    package = next(i for i, line in enumerate(lines) if "build-linux-package.sh" in line)
-    capacities = [i for i, line in enumerate(lines) if "ensure-docker-space.sh package" in line]
+    config = gate_config.load(PROJECT_ROOT)
+    source = (PROJECT_ROOT / "src/capsem/gate/packagerail.py").read_text()
+    plan = _planned("cross-compile", arch="arm64")
 
-    assert len(capacities) == 2, f"expected two capacity checks, saw {len(capacities)}"
-    assert all(builder < position < package for position in capacities)
-    assert "docker image rm rust:slim-bookworm" not in issued
+    assert source.count('ensure_space("package")') == 2
+    assert plan.index("host-image") < plan.index("package.arm64.space")
+    assert plan.index("package.arm64.space") < plan.index("package.arm64.materialize")
+    assert plan.index("package.arm64.materialize") < plan.index("package.arm64.build")
+    assert config.package.builder.runtime_network == "none"
 
 
 def test_package_boundary_releases_only_completed_docker_rail_volumes() -> None:
@@ -2735,15 +2743,14 @@ def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -
 def test_release_workflow_retries_app_cargo_tool_installs() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
     build_app_macos = workflow.split("  build-app-macos:", 1)[1].split("\n  build-app-linux:", 1)[0]
-    build_app_linux = workflow.split("  build-app-linux:", 1)[1].split("\n  create-release:", 1)[0]
+    build_app_linux = workflow.split("  build-app-linux:", 1)[1].split(
+        "\n  author-binary-candidate:", 1
+    )[0]
 
     assert "cargo install tauri-cli cargo-auditable cargo-sbom --locked" not in workflow
     assert "cargo install tauri-cli cargo-auditable --locked" not in workflow
 
-    for block, required_tools in (
-        (build_app_macos, ("tauri-cli", "cargo-auditable")),
-        (build_app_linux, ("tauri-cli", "cargo-auditable")),
-    ):
+    for block, required_tools in ((build_app_macos, ("tauri-cli", "cargo-auditable")),):
         assert "CARGO_NET_RETRY: 10" in block
         assert "install_cargo_tool() {" in block
         assert "for attempt in 1 2 3; do" in block
@@ -2754,6 +2761,9 @@ def test_release_workflow_retries_app_cargo_tool_installs() -> None:
     assert "cargo install cargo-sbom --locked" in build_app_macos
     assert "cargo install cargo-sbom --locked" not in build_app_linux
     assert "install_cargo_tool cargo-sbom" not in workflow
+    assert "uv run capsem-gate cross-compile" in build_app_linux
+    assert "cargo install" not in build_app_linux
+    assert "sudo apt-get" not in build_app_linux
     assert "-p capsem-tui" in workflow
     assert "-p capsem-mcp-aggregator" in workflow
     assert "-p capsem-mcp-builtin" in workflow
@@ -2915,6 +2925,7 @@ def test_cross_compile_clock_sync_uses_bounded_colima_command(
     from helpers.gate import RecordingRunner
 
     from capsem.gate import config as gate_config
+    from capsem.gate.content import ProfileContent
     from capsem.gate.packagerail import PackageRail
 
     config = gate_config.load(PROJECT_ROOT)
@@ -2927,7 +2938,7 @@ def test_cross_compile_clock_sync_uses_bounded_colima_command(
         monkeypatch.setattr("capsem.gate.host.system", lambda system=system: system)
         runner = RecordingRunner(PROJECT_ROOT)
 
-        PackageRail(runner, target).sync_clock()
+        PackageRail(runner, target, content=ProfileContent.standalone(config)).sync_clock()
 
         assert runner.ran(re.escape(config.package.clock_script)) is expected
 

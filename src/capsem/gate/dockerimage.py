@@ -13,6 +13,7 @@ once, not about handing callers two objects to thread around.
 from __future__ import annotations
 
 from .errors import GateError
+from .invocation import ConsoleMode
 from .proc import Runner
 
 
@@ -32,6 +33,8 @@ class ImageOperations:
         context: str,
         args: list[str] | None = None,
         platform: str | None = None,
+        network: str | None = None,
+        console: ConsoleMode = ConsoleMode.STREAM,
         no_cache: bool = False,
     ) -> None:
         """Build an image. The context streams from the CLI, so it does not
@@ -39,12 +42,14 @@ class ImageOperations:
         argv = ["docker", "build", "-t", tag, "-f", dockerfile]
         if platform is not None:
             argv += ["--platform", platform]
+        if network is not None:
+            argv += ["--network", network]
         if no_cache:
             argv.append("--no-cache")
         for value in args or []:
             argv += ["--build-arg", value]
         argv.append(context)
-        self._runner.run(argv)
+        self._runner.run(argv, console=console)
 
     def read(
         self,
@@ -95,3 +100,16 @@ class ImageOperations:
         if not found:
             raise GateError(f"docker has no image tagged {tag}, so nothing can be keyed by it")
         return found
+
+    def image_label(self, tag: str, label: str) -> str:
+        """Read the label used to reject accidental warm-tag poisoning."""
+        return self._runner.capture(
+            [
+                "docker",
+                "image",
+                "inspect",
+                "--format",
+                f'{{{{ index .Config.Labels "{label}" }}}}',
+                tag,
+            ]
+        ).strip()

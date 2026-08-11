@@ -30,12 +30,14 @@ pkg_config_template = "/usr/lib/{gnu}/pkgconfig:/usr/share/pkgconfig"
 rust_target = "aarch64-unknown-linux-gnu"
 dpkg = "arm64"
 gnu = "aarch64-linux-gnu"
+docker_platform = "linux/arm64"
 aliases = ["arm64", "aarch64"]
 
 [architectures.x86_64]
 rust_target = "x86_64-unknown-linux-gnu"
 dpkg = "amd64"
 gnu = "x86_64-linux-gnu"
+docker_platform = "linux/amd64"
 aliases = ["x86_64", "amd64"]
 
 # ---------------------------------------------------------------------------
@@ -313,9 +315,6 @@ manifest_variable = "CAPSEM_INSTALL_MANIFEST_URL"
 channel_variable = "CAPSEM_INSTALL_CHANNEL"
 require_proof_variable = "CAPSEM_REQUIRE_LINUX_DEB_PROOF"
 
-# Architecture-neutral compatibility path used by package tooling. It is a
-# verified relative symlink into this same assets tree, never a copied image.
-current_assets = "current"
 builder_image = "capsem-host-builder:latest"
 build_script = "scripts/build-linux-package.sh"
 proof_selector = "scripts/select-linux-deb-proof.sh"
@@ -333,11 +332,8 @@ dist_dir = "dist"
 # The container the build runs in, kept until its output has been copied out.
 # `--rm` and `docker cp` are mutually exclusive, which is the same constraint
 # the Linux parity lane hit: a removed container has nothing left to read.
-# It needs outbound access: rustup target install, pnpm install, and apt's
-# multiarch swap all run inside. Named rather than omitted, so the decision is
-# visible -- and it is the next thing to close once the frontend and toolchain
-# are baked into the builder image.
-network = "bridge"
+# Network-open dependency work belongs to `[package.builder]`. Both the source
+# image build and the qualifying container below are explicitly network-none.
 lane_container = "capsem-package-{arch}"
 # The source goes in as an image layer, not a mount. See
 # `docker/Dockerfile.package` for why a mount could not be sealed: the frontend
@@ -352,9 +348,10 @@ lane_container = "capsem-package-{arch}"
 generated_inputs = ["assets", "target/config"]
 lane_dockerfile = "docker/Dockerfile.package"
 lane_image = "capsem-package-lane:latest"
-# The checkout goes in read-only; these three paths get container-local
-# scratch grafted over them, because the build genuinely writes to all three
-# and none of those writes belongs to the host. `pnpm install` fills
+# The checkout is copied into the source image; these three paths get
+# container-local scratch grafted over them, because the build genuinely
+# writes to all three and none of those writes belongs in the source layer.
+# `pnpm install` fills
 # node_modules, `pnpm build` fills dist, and Tauri's build script regenerates
 # ACL schemas into the app crate's `gen/`. Anonymous volumes rather than tmpfs:
 # node_modules is 356 MB and the Colima VM's RAM is not where it belongs.
@@ -371,6 +368,43 @@ container_output_contents = "/package-output/."
 # No `target_volume`. The build directory is an anonymous volume, spelled by
 # its container path in `cargo_target_mount` and allocated per container, so
 # there is no name for two gates to share.
+
+[package.builder]
+dockerfile = "docker/Dockerfile.package-builder"
+tag_template = "capsem-package-builder-{arch}:{digest}"
+identity_inputs = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ".cargo/config.toml",
+    "frontend/package.json",
+    "frontend/pnpm-lock.yaml",
+    "frontend/pnpm-workspace.yaml",
+    "docker/Dockerfile.package-builder",
+    "docker/swap-dev-libs.sh",
+    "scripts/materialize-package-ort.py",
+]
+identity_globs = ["crates/*/Cargo.toml"]
+materialize_network = "bridge"
+runtime_network = "none"
+# Ubuntu's archive is mutable even when Cargo/pnpm are locked. Dependency
+# maintenance advances this timestamp deliberately; every cold materializer
+# otherwise sees the same signed archive bytes from the official snapshot
+# service, on both amd64 and arm64.
+apt_snapshot_base = "https://snapshot.ubuntu.com/ubuntu"
+apt_snapshot_id = "20260810T000000Z"
+cargo_store = "/opt/capsem/package-cargo"
+pnpm_store = "/opt/capsem/package-pnpm"
+ort_script = "scripts/materialize-package-ort.py"
+ort_lib_location = "/opt/capsem/onnxruntime"
+
+[package.builder.targets.arm64]
+ort_url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.23.2/aarch64-unknown-linux-gnu.tar.lzma2"
+ort_sha256 = "c25248c32d84f228b9d584b84b31e1577e4810d46beb5e304e9fa340c000176c"
+
+[package.builder.targets.x86_64]
+ort_url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.23.2/x86_64-unknown-linux-gnu.tar.lzma2"
+ort_sha256 = "8c57d059aaaee407812a5698d6706c79e090ad69e1a14204309e802dcbbaa35f"
 
 # Installing the exact package into a clean systemd container and proving it
 # works: every binary present and reporting the package's own version, the

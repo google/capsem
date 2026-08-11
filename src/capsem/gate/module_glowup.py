@@ -17,6 +17,7 @@ from . import (
 from .actions import Script
 from .command import GateCommand
 from .config import GateConfig
+from .content import ProfileContent
 from .execution import Step, step
 from .plan import Plan
 from .qualification import Qualification
@@ -134,6 +135,10 @@ def _build_and_prove(plan: Plan, phase, config: GateConfig, after: tuple) -> Ste
     # nothing before it beyond whatever this phase was given.
     previous: tuple = after
     last = list(config.architectures)[-1]
+    content = ProfileContent.isolated(
+        config,
+        config.path(config.assets.test_root) / config.suites.pytest.base_profile,
+    )
     for arch in config.architectures:
         # The final install step below authors a checked local release graph
         # before installing the exact native package and running the broader
@@ -144,6 +149,7 @@ def _build_and_prove(plan: Plan, phase, config: GateConfig, after: tuple) -> Ste
             plan,
             config,
             config.arch(arch),
+            content=content,
             after=previous,
             defer_proof=True,
         )
