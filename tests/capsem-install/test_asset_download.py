@@ -657,7 +657,7 @@ def test_update_assets_records_channel_change_audit_log(
     assert "package_version" not in complete["changed_fields"]
 
 
-def test_package_preactivation_manifest_preserves_its_declared_public_channel(
+def test_explicit_manifest_records_its_source_without_rebranding_public_channel(
     tmp_path: Path,
     http_fixture,
     installed_layout,
@@ -715,10 +715,9 @@ def test_package_preactivation_manifest_preserves_its_declared_public_channel(
 
     assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
     metadata = json.loads((assets / "manifest-metadata.json").read_text())
-    assert metadata["manifest_url"] == (
-        "https://release.capsem.org/assets/nightly/manifest.json"
-    )
-    assert metadata["origin"] == "package"
+    assert metadata["manifest_url"] == candidate_url
+    assert metadata["checked_url"] == candidate_url
+    assert metadata["origin"] == "update"
     assert metadata["channel"] == "nightly"
     assert metadata["channel_kind"] == "public"
     assert metadata["channel_locked"] is False
