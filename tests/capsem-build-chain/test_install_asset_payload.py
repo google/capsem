@@ -1570,9 +1570,10 @@ def test_standalone_install_gate_preflights_privileged_helper(tmp_path: Path) ->
 
     from helpers.gate import RecordingRunner
 
-    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate import cli
     from capsem.gate.command import GateCommand
 
+    assert cli is not None  # importing the command module registers the command
     plan = GateCommand.registry["install"](
         RecordingRunner(PROJECT_ROOT),
         argparse.Namespace(
