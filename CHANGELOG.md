@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and privilege detail on demand. Their always-loaded spines shrink from
   308/362 lines to 108/85 without dropping their source-contract guidance.
 
+- The release-process skill now keeps its command, qualification, lane,
+  `ProfileContent`, platform-proof, and retry invariants in a 146-line spine
+  while routing the full workflow, verification, and versioning contracts to
+  explicit on-demand references, down from a 564-line always-loaded document.
+
 - Linux package construction now materializes its target dependencies in an
   input-keyed helper from an immutable Ubuntu snapshot, locked Cargo and pnpm
   stores, and a digest-verified static ORT archive. The publishable source

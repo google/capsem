@@ -34,6 +34,16 @@ PROGRESSIVE_DISCLOSURE_SKILLS = {
         "references/manifest-and-storage.md",
         "references/release-channel-publication.md",
     },
+    "release-process": {
+        "references/apple-signing.md",
+        "references/ci-invariants.md",
+        "references/installation-verification-and-retry.md",
+        "references/lane-workflows.md",
+        "references/post-release-verification.md",
+        "references/qualification-and-test-composition.md",
+        "references/release-graph.md",
+        "references/versions-and-commit-discipline.md",
+    },
     "site-architecture": {
         "references/crate-and-privilege-model.md",
         "references/key-files.md",
@@ -74,6 +84,21 @@ def test_reference_heavy_skills_have_lean_routed_entrypoints(
         reference = (skill_dir / relative).resolve()
         assert reference.is_relative_to(skill_dir.resolve())
         assert reference.is_file(), f"missing linked skill reference: {relative}"
+
+
+def test_release_spine_keeps_paired_profile_content_boundary() -> None:
+    text = (
+        PROJECT_ROOT / "skills/release-process/SKILL.md"
+    ).read_text(encoding="utf-8")
+    normalized = " ".join(text.split())
+
+    for required in (
+        "Assets and materialized configuration travel as one `ProfileContent` root.",
+        "must derive both paths from that one value and validate it before Docker or Colima",
+        "stages raw manifest inputs into the paired root on the host",
+        "the sealed proof never rematerializes them or falls back to checkout `assets`/`target/config` selectors",
+    ):
+        assert required in normalized
 
 
 @pytest.mark.parametrize("index_file", FULL_INDEX_FILES)
