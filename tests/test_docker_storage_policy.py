@@ -65,11 +65,10 @@ def test_policy_declares_last_consumers_before_release_boundaries() -> None:
     policy = load_policy()
     resources = policy["resources"]
 
-    # `install`, not `package-x86_64`: `docker/Dockerfile.install-test` is
-    # `FROM capsem-host-builder:latest`, and the install proof always rebuilds
-    # rather than reusing a tag that may be stale. Declaring the packages as
-    # the last consumer released the base image out from under it, and the
-    # gate died at `docker build` with `pull access denied`.
+    # `install`, not `package-x86_64`: the input-keyed install helper derives
+    # from the exact local host builder before the source image is sealed.
+    # Declaring the packages as the last consumer released that parent out
+    # from under install materialization, which then died at `docker build`.
     assert resources["capsem-host-builder"]["last_consumer"] == "install"
     assert resources["capsem-host-builder"]["release_boundary"] == "after-install"
     # `capsem-install-target` and `-frontend-node-modules` were `working` and

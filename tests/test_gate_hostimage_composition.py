@@ -30,10 +30,12 @@ from capsem.gate import (
 from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
 from capsem.gate.content import ProfileContent
+from capsem.gate.installimage import InstallImageStep
 from capsem.gate.plan import Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
+INSTALL_IMAGE_STEPS = tuple(step.value for step in InstallImageStep)
 
 
 def _plan(name: str, **args) -> Plan:
@@ -69,7 +71,7 @@ def test_everything_that_needs_the_builder_waits_for_it(name, args) -> None:
     assert built == 0 or all(
         order.index(label) > built
         for label in order
-        if label.startswith(("install-image", "package."))
+        if label in INSTALL_IMAGE_STEPS or label.startswith("package.")
     )
 
 
@@ -79,8 +81,8 @@ def test_standalone_cross_compile_builds_the_image_its_exact_proof_runs() -> Non
     plan = _plan("cross-compile", arch=native)
     order = list(plan.labels)
 
-    assert order.count("install-image") == 1
-    assert order.index("install-image") < order.index(f"package.{native}.prove")
+    assert all(order.count(label) == 1 for label in INSTALL_IMAGE_STEPS)
+    assert order.index(InstallImageStep.SMOKE.value) < order.index(f"package.{native}.prove")
     assert order.count(hostimage.STEP) == 1
 
 
@@ -90,7 +92,7 @@ def test_standalone_cross_compile_skips_the_unused_proof_image_for_cross_arch() 
 
     plan = _plan("cross-compile", arch=cross)
 
-    assert "install-image" not in plan.labels
+    assert not set(INSTALL_IMAGE_STEPS) & set(plan.labels)
     assert hostimage.STEP in plan.labels, "the package builder image is still required"
 
 

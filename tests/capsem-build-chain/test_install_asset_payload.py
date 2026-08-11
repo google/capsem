@@ -735,18 +735,22 @@ def test_release_matrix_installs_both_architectures_and_uses_available_kvm() -> 
     assert "release-exact-shell-x86_64" in linux
 
 
-def test_install_test_restores_host_workspace_ownership(tmp_path: Path) -> None:
-    """Everything the container wrote as its own user is handed back.
+def test_install_test_returns_configured_writable_paths_to_host_identity() -> None:
+    """The lifecycle boundary, not the opaque plan, owns path hand-back.
 
-    `/src` is a bind mount of the host checkout. On Linux the host UID does not
-    own what the container writes, so a subsequent `rm -rf` on the host fails
-    with EACCES. The shell computed `HOST_UID=$(id -u)` and chowned a listed
-    set; the set is config now, and the ownership comes from `host.user()`.
+    The install plan now exposes one domain transaction, so looking for its
+    internal chown in a plan transcript proves nothing. Drive the production
+    container boundary directly and keep the hand-back set config-owned.
     """
+    from helpers.gate import RecordingRunner
+
     from capsem.gate import config as gate_config
+    from capsem.gate.installcontainer import InstallContainer
 
     config = gate_config.load(PROJECT_ROOT)
-    issued = _planned("install", selected_content_root=_selected_content(tmp_path))
+    runner = RecordingRunner(PROJECT_ROOT)
+    InstallContainer(runner).return_paths()
+    issued = "\n".join(runner.rendered)
     owned = config.install.layout.owned_paths(config.install.mount)
 
     assert "chown -R" in issued
@@ -814,13 +818,20 @@ def test_install_test_does_not_rebuild_frontend_and_owns_release_site_scratch() 
     assert "/src/release-site/dist" in owned
 
 
-def test_install_test_removes_stale_container_before_controller_preflight(tmp_path: Path) -> None:
+def test_install_test_removes_stale_container_before_controller_preflight() -> None:
     """A predecessor is cleared before anything starts, not after it collides."""
+    from helpers.gate import RecordingRunner
+
     from capsem.gate import config as gate_config
+    from capsem.gate.installcontainer import InstallContainer
 
     config = gate_config.load(PROJECT_ROOT)
     container = config.install.container
-    issued = _planned("install", selected_content_root=_selected_content(tmp_path))
+    runner = RecordingRunner(
+        PROJECT_ROOT, replies={"systemctl is-system-running": "running"}
+    )
+    InstallContainer(runner, sleep=lambda _seconds: None).start(options=[])
+    issued = "\n".join(runner.rendered)
 
     # `-v` since the wrapper takes anonymous volumes with the container it
     # removes; the ordering this test is about is unchanged.
@@ -1361,9 +1372,9 @@ def test_full_gate_releases_completed_buildkit_graph_after_packages() -> None:
     """
     order = _gate_order()
 
-    # `after-install`, not `after-packages`: the install proof's Dockerfile is
-    # `FROM capsem-host-builder:latest` and it always rebuilds, so the packages
-    # are not the last thing that needs the tag.
+    # `after-install`, not `after-packages`: the install helper derives from
+    # the exact local host builder before the source image is sealed, so the
+    # packages are not the last thing that needs the parent tag.
     import tomllib
 
     policy = tomllib.loads(
@@ -1386,19 +1397,15 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
         encoding="utf-8"
     )
 
-    assert _boundary("candidate-boundary") == "candidate-boundary"
+    assert "candidate-boundary" not in config.storage.phases
     assert tuple(config.candidate.candidate_budget) == ("default", "candidate-boundary")
-    # Released, then the space checked -- the other order asks whether there is
-    # room while still holding what it is about to give back. Matched on the
-    # actions in the step rather than on a helper's name, so renaming the
-    # helper cannot break the assertion or, worse, make it vacuous.
+    # `candidate-boundary` labels the capacity evidence. It is not a release
+    # phase: no working resource is owned before the candidate starts, so a
+    # release action here would only take two snapshots and reclaim nothing.
     budget = _gate_plan_step("prepare.storage-budget")
     rendered = budget.render()
-    assert any("release the storage held" in line for line in rendered)
     assert any("no room to finish" in line for line in rendered)
-    assert next(i for i, line in enumerate(rendered) if "release the storage" in line) < next(
-        i for i, line in enumerate(rendered) if "no room to finish" in line
-    )
+    assert not any("release the storage held" in line for line in rendered)
     assert _at(order, "prepare.storage-budget") < _at(order, "assets.preflight")
     for destructive in ("docker image rm -f", "docker volume rm", "docker buildx prune"):
         assert destructive not in plan_source
@@ -1413,13 +1420,10 @@ def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> N
     plan = gate_plan("candidate")
     order = _gate_order()
 
-    assert (
-        _at(order, "install.image-smoke")
-        < _at(order, "storage.install-preflight")
-        < _at(order, "package.arm64")
-    )
+    assert _at(order, "install.image-smoke") < _at(order, "package.arm64")
+    assert "storage.install-preflight" not in plan.labels
     static_leaves = {
-        "static.storage.install-preflight",
+        "install.image-smoke",
         "static.guest-binary-contracts",
         "static.sign",
     }
@@ -1562,15 +1566,27 @@ def test_standalone_install_gate_preflights_privileged_helper(tmp_path: Path) ->
     Proving the clean container can launch its runner takes a minute;
     discovering it cannot after the expensive work wastes far more.
     """
-    from capsem.gate import config as gate_config
+    import argparse
 
-    config = gate_config.load(PROJECT_ROOT)
-    issued = _planned("install", selected_content_root=_selected_content(tmp_path))
+    from helpers.gate import RecordingRunner
 
-    capacity = issued.index("ensure-docker-space.sh install-preflight")
-    image = issued.index(f"docker build -t {config.install.image}")
-    start = issued.index(f"docker run -d --name {config.install.container}")
-    assert capacity < image < start
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+
+    plan = GateCommand.registry["install"](
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(
+            dry_run=False,
+            graph=False,
+            timing=False,
+            selected_content_root=_selected_content(tmp_path),
+        ),
+    )._describe()
+
+    assert ("install.capacity", "install.materialize") in plan.edges
+    assert ("install.materialize", "install.image-build") in plan.edges
+    assert ("install.image-build", "install.image-smoke") in plan.edges
+    assert ("install.image-smoke", "install") in plan.edges
 
 
 def test_install_gate_passes_vm_devices_to_full_installed_proofs() -> None:

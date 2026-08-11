@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Candidate and static qualification no longer schedule storage-release phases
+  that owned no working resource. Their real capacity checks and sealed install
+  lifecycle remain ordered, while CI no longer provisions an unused host pnpm
+  cache for the container-owned Linux package rail.
+
 - Checked-in first-party scripts now have a 300-line ceiling in the fast source
   contracts. The 26 larger historical scripts carry exact config-owned line
   counts that may only shrink, while Git-tracked root scoping excludes generated

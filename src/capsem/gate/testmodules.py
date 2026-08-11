@@ -192,7 +192,10 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
     # clean container can launch its runner takes a minute, and discovering it
     # cannot after the Rust coverage run wastes twenty.
     preflight = installimage.fragment(plan, config, after=after)
-    leaves.append(phase.add(storagerelease(config, "install-preflight"), after=(preflight,)))
+    # The helper and source images are generational and reclaim superseded tags
+    # at their owning materialization steps. There is no working resource to
+    # release after smoke, so the smoke itself is this branch's leaf.
+    leaves.append(preflight)
 
     initrd = config.initrd
     agents = phase.add(

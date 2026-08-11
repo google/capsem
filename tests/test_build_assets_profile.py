@@ -541,8 +541,13 @@ def test_isolated_test_recipes_trap_test_home_service_cleanup() -> None:
 def test_release_workflow_uses_same_config_materializer() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
 
-    assert workflow.count("bash scripts/materialize-config.sh") >= 2
-    assert workflow.count('CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"') >= 2
+    assert workflow.count("bash scripts/materialize-config.sh") == 3
+    assert workflow.count('CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"') == 1
+    assert (
+        'CAPSEM_ASSET_MANIFEST="$PWD/target/package-content/assets/manifest.json"'
+        in workflow
+    )
+    assert 'CAPSEM_ASSET_MANIFEST="file://$PWD/assets/manifest.json"' in workflow
     assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in workflow
 
 

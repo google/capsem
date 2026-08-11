@@ -24,13 +24,16 @@ def _job_block(workflow: str, name: str) -> str:
     return match.group(0)
 
 
-def test_install_test_inherits_uv_from_its_locally_built_parent() -> None:
-    """One parent owns uv; the sealed child must not resolve a second image."""
+def test_install_test_inherits_uv_through_its_exact_local_helper() -> None:
+    """One parent owns uv; neither sealed child resolves a second image."""
     parent = _read("docker/Dockerfile.host-builder")
+    helper = _read("docker/Dockerfile.install-builder")
     child = _read("docker/Dockerfile.install-test")
 
     assert "install -m 555 /root/.local/bin/uv /usr/local/bin/uv" in parent
-    assert "FROM capsem-host-builder:latest" in child
+    assert helper.count("FROM ${BASE}") == 2
+    assert "FROM ${BASE}" in child
+    assert "astral-sh/uv" not in helper
     assert "astral-sh/uv" not in child
 
 

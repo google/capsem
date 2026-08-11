@@ -356,26 +356,8 @@ jobs:
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
-
-      # `just _cross-compile` reaches `_build-assets` -> `_pnpm-install`, which
-      # installs every Node workspace. Without pnpm on PATH it exits 127.
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
-        with:
-          version: 10
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: |
-            frontend/pnpm-lock.yaml
-            docs/pnpm-lock.yaml
-            site/pnpm-lock.yaml
-            release-site/pnpm-lock.yaml
-
-      # `just _cross-compile` runs `just doctor`, whose Linux check requires a
-      # musl C toolchain to build the guest agent binaries. Same install as
-      # release-assets.yaml's asset builder.
+      # The package source build compiles the musl guest cohort and therefore
+      # needs the same C toolchain as the release asset builder.
       - name: Install musl C toolchain
         run: |
           sudo apt-get update

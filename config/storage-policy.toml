@@ -134,10 +134,9 @@ kind = "image"
 docker_name = "capsem-host-builder:latest"
 retention = "working"
 owner = "packages"
-# Not `package-x86_64`: `docker/Dockerfile.install-test` is `FROM` this tag,
-# and the install proof always rebuilds -- deliberately, so a stale local
-# image cannot hide a new prerequisite. Released at `after-install`, which is
-# the last thing that derives from it.
+# Not `package-x86_64`: the input-keyed install helper derives from this exact
+# local parent before the network-denied source image is sealed. Released at
+# `after-install`, after the last consumer has completed.
 last_consumer = "install"
 release_boundary = "after-install"
 reason = "Both package builds and the install proof's base image need this tag."

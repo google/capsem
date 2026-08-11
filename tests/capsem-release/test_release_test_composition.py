@@ -606,7 +606,7 @@ def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
     assert "check-web-surface.sh frontend" in fast
     assert fast.index("check-web-surface.sh frontend") < fast.index("cargo clippy")
 
-    assert "build the disposable install-test image" in static
+    assert "build the network-denied install qualification image" in static
     assert "cargo clippy" not in static, "the lint gate belongs to the fast module"
 
 
@@ -623,7 +623,7 @@ def test_static_module_audits_the_locked_python_graph_fail_closed() -> None:
     audit_script = (PROJECT_ROOT / "scripts/audit-python-lock.sh").read_text(encoding="utf-8")
 
     assert "scripts/audit-python-lock.sh" in fast
-    assert "build the disposable install-test image" in static
+    assert "build the network-denied install qualification image" in static
     assert '"pip-audit>=' in pyproject
     for required in (
         "uv export",

@@ -24,7 +24,6 @@ from . import (
     imagebuild,
     initrd,
     module_contracts,
-    storage,
     testmodules,
     vmmodules,
 )
@@ -138,7 +137,6 @@ def _prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
     bounded = phase.add(
         step(
             "storage-budget",
-            storage.release_action("candidate-boundary"),
             _ensure_space(config),
             Remove(config.path(config.workspace.benchmark_root)),
             contends=(config.exclusive("docker_daemon"),),
@@ -184,9 +182,10 @@ def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
 def _ensure_space(config: GateConfig):
     """Refuse to start a gate the daemon has no room to finish.
 
-    The release beside it is `storage.release_action`, which is the same
-    spelling `storage.release_step` uses -- one place decides what releasing a
-    boundary means.
+    The second configured argument is an evidence label for the capacity
+    check, not a release boundary. There is no working resource to release at
+    candidate start; a release action here would only take two snapshots and
+    reclaim nothing.
     """
     settings = config.candidate
     return Call(

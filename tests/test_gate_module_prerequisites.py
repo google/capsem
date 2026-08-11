@@ -5,11 +5,11 @@ module must own its prerequisites and must also be executable independently in
 a clean local environment. Never rely on a package installed incidentally by an
 earlier workflow job or by a developer machine."
 
-`install` did not. Its plan was one step, and `docker/Dockerfile.install-test`
-is `FROM capsem-host-builder:latest` -- an image built by a *different* phase.
-Inside the complete gate that phase happens to run first; on its own, and on
-any machine where the previous run released the tag at `after-install`, the
-build failed with `pull access denied`.
+`install` did not. Its plan was one step, while the input-keyed install helper
+derives from the exact local host builder -- an image built by a *different*
+phase. Inside the complete gate that phase happened to run first; on its own,
+and on any machine where the previous run released the tag at `after-install`,
+the build failed with `pull access denied`.
 """
 
 from __future__ import annotations
@@ -32,8 +32,8 @@ def test_install_builds_the_image_its_dockerfile_derives_from() -> None:
     labels = _labels("install")
 
     assert "host-image" in labels, (
-        "Dockerfile.install-test is FROM capsem-host-builder:latest, so the "
-        "install lane cannot start on a machine that does not already have it"
+        "the install helper derives from the local host builder, so the install "
+        "lane cannot start on a machine that does not already have it"
     )
     assert labels.index("host-image") < labels.index("install")
 

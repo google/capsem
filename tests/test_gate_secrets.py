@@ -52,6 +52,12 @@ class _Recording(Runner):
         self.commands.append(command)
         if "{{.Id}}" in command.argv:
             stdout = "sha256:" + "0" * 64
+        elif "{{json .RepoDigests}}" in command.argv:
+            # Locally built Docker/Colima images legitimately have no
+            # repository digest. The identity rail accepts that exact JSON
+            # shape and binds the input-keyed tag to the separately verified
+            # image ID; malformed/blank inspect output must still fail closed.
+            stdout = "[]"
         elif "index .Config.Labels" in " ".join(command.argv):
             stdout = command.argv[-1]
         else:
