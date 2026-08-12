@@ -13,6 +13,7 @@ manifest, and the three files a bootable tree is made of.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Literal
 
@@ -81,6 +82,13 @@ class AptSnapshotConfig(Strict):
     configure_script: str
 
 
+class ProfileRevisionPolicy(StrEnum):
+    """Whether a local graph authors new revisions or imports selected bytes."""
+
+    STRICT = "strict"
+    SELECTED_INPUT = "selected-input"
+
+
 class InstallBuilderConfig(Strict):
     dockerfile: str
     tag_template: str
@@ -107,6 +115,7 @@ class InstallConfig(Strict):
     mount: str
     runtime_network: Literal["none"]
     channel: str
+    profile_revision_policy: ProfileRevisionPolicy
     manifest_version: str
     systemd_ready_attempts: int
     systemd_ready_interval_seconds: float

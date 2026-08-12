@@ -1220,6 +1220,14 @@ fn dated_profile_revisions_are_rejected() {
 }
 
 #[test]
+fn only_the_historical_four_numeric_component_shape_is_legacy() {
+    assert!(is_legacy_profile_revision("2026.06.08.7"));
+    assert!(!is_legacy_profile_revision("0.6.0"));
+    assert!(!is_legacy_profile_revision("legacy"));
+    assert!(!is_legacy_profile_revision("2026.06.08.7/escape"));
+}
+
+#[test]
 fn a_two_component_revision_is_rejected() {
     assert!(parse_profile_revision("0.6").is_err());
 }
@@ -1235,6 +1243,12 @@ fn profile_revisions_order_numerically_not_lexically() {
     let ten = parse_profile_revision("0.10.0").unwrap();
     let nine = parse_profile_revision("0.9.0").unwrap();
     assert!(ten > nine, "0.10.0 must outrank 0.9.0");
+}
+
+#[test]
+fn semver_may_replace_a_published_legacy_revision_once() {
+    assert!(ensure_revision_advances("2026.06.08.7", "0.6.0").is_ok());
+    assert!(ensure_revision_advances("2026.06.08.7", "2026.06.08.8").is_err());
 }
 
 #[test]

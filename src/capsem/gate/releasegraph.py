@@ -31,6 +31,7 @@ from __future__ import annotations
 from . import config as gate_config
 from .docker import Docker
 from .errors import GateError
+from .productschema import ProfileRevisionPolicy
 
 
 class ReleaseGraph:
@@ -64,6 +65,7 @@ class ReleaseGraph:
         assets_dir: str,
         profiles_dir: str,
         channel: str,
+        profile_revision_policy: ProfileRevisionPolicy,
         manifest_version: str,
         out_dir: str,
     ) -> None:
@@ -81,6 +83,7 @@ class ReleaseGraph:
             assets_dir=assets_dir,
             profiles_dir=profiles_dir,
             channel=channel,
+            profile_revision_policy=profile_revision_policy,
             manifest_version=manifest_version,
             out_dir=out_dir,
         )
@@ -156,6 +159,7 @@ class ReleaseGraph:
         assets_dir: str,
         profiles_dir: str,
         channel: str,
+        profile_revision_policy: ProfileRevisionPolicy,
         manifest_version: str,
         out_dir: str,
     ) -> str:
@@ -177,6 +181,8 @@ class ReleaseGraph:
                     f'"{profiles_dir}"',
                     "--channel",
                     channel,
+                    "--profile-revision-policy",
+                    profile_revision_policy.value,
                     "--manifest-version",
                     manifest_version,
                     "--out-dir",

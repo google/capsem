@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sealed install qualification can now import the path-safe legacy revision
+  carried by already-published immutable profiles without weakening SemVer for
+  any new first-party or corporate profile. A new SemVer revision may migrate
+  from that historical format once; new legacy revisions remain refused.
 - Cross-package dependency helpers now keep config-owned host tools pinned to
   the builder architecture while APT resolves foreign development libraries.
   Ubuntu can no longer replace the Python/uv driver with a foreign interpreter

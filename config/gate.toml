@@ -112,6 +112,10 @@ venv = "/home/capsem/.venv-install-test"
 source_cli = "/opt/capsem/install-test/bin/capsem-current"
 mount = "/src"
 channel = "local"
+# The install proof re-publishes immutable, already-selected public inputs into
+# a loopback-only graph. Current public profiles predate the strict SemVer
+# authoring rule; release authoring never selects this policy and remains strict.
+profile_revision_policy = "selected-input"
 manifest_version = "1.0.0"
 
 # Build output the install proof reads, which the image cannot carry because

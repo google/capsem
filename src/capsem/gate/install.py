@@ -151,6 +151,7 @@ class InstallGate:
             assets_dir=self._layout.assets,
             profiles_dir=f"{self._layout.config}/{self._config.assets.materialized_profiles_dir}",
             channel=self._settings.channel,
+            profile_revision_policy=self._settings.profile_revision_policy,
             manifest_version=self._settings.manifest_version,
             out_dir=self._layout.channel,
         )

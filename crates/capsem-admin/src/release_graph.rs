@@ -1135,14 +1135,31 @@ pub fn parse_profile_revision(revision: &str) -> Result<Version> {
     })
 }
 
+/// Recognize the one revision shape used by profiles published before 0.6.
+///
+/// This is an import format, never an authoring format. Keeping it separate
+/// from `parse_profile_revision` prevents a compatibility read from weakening
+/// the strict rule for every new first-party and corporate profile.
+pub fn is_legacy_profile_revision(revision: &str) -> bool {
+    let components = revision.split('.').collect::<Vec<_>>();
+    components.len() == 4
+        && components.iter().all(|component| {
+            !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit())
+        })
+}
+
 /// Reject a publication whose revision does not advance past what is published.
 ///
 /// Immutable publication already refuses to overwrite differing bytes under an
 /// existing revision, but it cannot tell the operator what to do about it. This
 /// fails earlier and says the actionable thing: the revision has to move.
 pub fn ensure_revision_advances(previous: &str, next: &str) -> Result<()> {
-    let previous_version = parse_profile_revision(previous)?;
     let next_version = parse_profile_revision(next)?;
+    let previous_version = match parse_profile_revision(previous) {
+        Ok(version) => version,
+        Err(_) if is_legacy_profile_revision(previous) => return Ok(()),
+        Err(error) => return Err(error),
+    };
     if next_version <= previous_version {
         bail!("profile revision {next:?} does not advance past published {previous:?}");
     }

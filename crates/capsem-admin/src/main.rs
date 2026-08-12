@@ -351,6 +351,16 @@ struct AssetsChannelBuildArgs {
     /// Channel name to publish under assets/<channel>/manifest.json.
     #[arg(long, default_value = "stable")]
     channel: String,
+    /// Revision validation for the profile bytes being assembled. Release
+    /// authoring is always strict; the sealed install proof may explicitly
+    /// import an already-published legacy profile into its local graph.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = ProfileRevisionPolicyArg::Strict,
+        hide = true
+    )]
+    profile_revision_policy: ProfileRevisionPolicyArg,
     /// Release graph manifest version for this channel pointer.
     #[arg(long, default_value = "1.0.0")]
     manifest_version: String,
@@ -470,6 +480,12 @@ enum ProfileReleaseStatusArg {
     Supported,
     Deprecated,
     Revoked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum ProfileRevisionPolicyArg {
+    Strict,
+    SelectedInput,
 }
 
 impl ProfileReleaseStatusArg {
@@ -2195,7 +2211,7 @@ fn corporate_manifest_output_dir(args: &ManifestCorporateArgs) -> Result<PathBuf
 
 fn assets_channel_build_command(args: AssetsChannelBuildArgs) -> Result<()> {
     let generated_at = args.generated_at.unwrap_or(current_utc_rfc3339()?);
-    let report = build_assets_channel(
+    let report = build_assets_channel_with_policy(
         &args.manifest,
         &args.assets_dir,
         &args.profiles_dir,
@@ -2204,6 +2220,7 @@ fn assets_channel_build_command(args: AssetsChannelBuildArgs) -> Result<()> {
         &args.out_dir,
         &generated_at,
         args.asset_source_base.as_deref(),
+        args.profile_revision_policy,
     )?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -2247,6 +2264,7 @@ fn assets_channel_record_binary_command(args: AssetsChannelRecordBinaryArgs) -> 
     Ok(())
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn build_assets_channel(
     manifest_url: &str,
@@ -2257,6 +2275,31 @@ fn build_assets_channel(
     out_dir: &Path,
     generated_at: &str,
     asset_source_base: Option<&str>,
+) -> Result<AssetsChannelBuildReport> {
+    build_assets_channel_with_policy(
+        manifest_url,
+        assets_dir,
+        profiles_dir,
+        channel,
+        manifest_version,
+        out_dir,
+        generated_at,
+        asset_source_base,
+        ProfileRevisionPolicyArg::Strict,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_assets_channel_with_policy(
+    manifest_url: &str,
+    assets_dir: &Path,
+    profiles_dir: &Path,
+    channel: &str,
+    manifest_version: &str,
+    out_dir: &Path,
+    generated_at: &str,
+    asset_source_base: Option<&str>,
+    profile_revision_policy: ProfileRevisionPolicyArg,
 ) -> Result<AssetsChannelBuildReport> {
     validate_channel_name(channel)?;
     let manifest_bytes = read_manifest_url(manifest_url)?;
@@ -2340,6 +2383,7 @@ fn build_assets_channel(
         asset_base,
         assets_dir,
         &mut asset_digest_cache,
+        profile_revision_policy,
     )?;
     copy_profile_release_files(out_dir, &publishable_profiles.file_copies)?;
     validate_graph_manifest_version(manifest_version)?;
@@ -5229,6 +5273,7 @@ fn publishable_profiles(
     asset_base: &str,
     assets_dir: &Path,
     asset_digest_cache: &mut AssetDigestCache,
+    profile_revision_policy: ProfileRevisionPolicyArg,
 ) -> Result<PublishableProfiles> {
     let current_release = manifest
         .assets
@@ -5255,7 +5300,7 @@ fn publishable_profiles(
         .iter()
         .map(|profile| profile.id.clone())
         .collect::<Vec<_>>();
-    let revision = profile_release_revision(&profiles)?;
+    let revision = profile_release_revision(&profiles, profile_revision_policy)?;
     validate_profile_revision_path(&revision)?;
     let refresh_policy = profile_refresh_policy(&profiles);
     let min_binary = current_release.min_binary.clone();
@@ -6216,14 +6261,21 @@ fn validate_profile_revision_path(revision: &str) -> Result<()> {
     Ok(())
 }
 
-fn profile_release_revision(profiles: &[ProfileConfigFile]) -> Result<String> {
-    // Every profile's own revision must be semver, whoever authored it. This
-    // runs before the collapse below so a corp profile carrying a date is
-    // refused by name rather than disappearing into a `profiles-<hash>`
-    // identifier that looks perfectly well formed.
+fn profile_release_revision(
+    profiles: &[ProfileConfigFile],
+    policy: ProfileRevisionPolicyArg,
+) -> Result<String> {
     for profile in profiles {
-        release_graph::parse_profile_revision(&profile.revision)
-            .with_context(|| format!("profile {} declares an unusable revision", profile.id))?;
+        validate_profile_revision_path(&profile.revision)
+            .with_context(|| format!("profile {} declares an unsafe revision", profile.id))?;
+        let strict = release_graph::parse_profile_revision(&profile.revision);
+        if strict.is_err()
+            && (policy == ProfileRevisionPolicyArg::Strict
+                || !release_graph::is_legacy_profile_revision(&profile.revision))
+        {
+            strict
+                .with_context(|| format!("profile {} declares an unusable revision", profile.id))?;
+        }
     }
     let mut revisions = profiles
         .iter()

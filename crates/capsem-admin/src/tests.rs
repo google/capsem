@@ -4236,7 +4236,10 @@ fn a_dated_profile_revision_is_rejected_at_release_time() {
 
     // Formatted as the operator sees it: anyhow's alternate form prints the
     // whole chain, so the message names both the profile and the value.
-    let error = format!("{:#}", profile_release_revision(&profiles).unwrap_err());
+    let error = format!(
+        "{:#}",
+        profile_release_revision(&profiles, ProfileRevisionPolicyArg::Strict).unwrap_err()
+    );
 
     assert!(
         error.contains("2026.06.08.9") && error.contains("code"),
@@ -4248,7 +4251,20 @@ fn a_dated_profile_revision_is_rejected_at_release_time() {
 fn a_semver_profile_revision_is_accepted_at_release_time() {
     let profiles = vec![profile_config_file("code", "0.6.0")];
 
-    assert_eq!(profile_release_revision(&profiles).unwrap(), "0.6.0");
+    assert_eq!(
+        profile_release_revision(&profiles, ProfileRevisionPolicyArg::Strict).unwrap(),
+        "0.6.0"
+    );
+}
+
+#[test]
+fn selected_input_policy_imports_a_legacy_published_revision() {
+    let profiles = vec![profile_config_file("co-work", "2026.06.08.7")];
+
+    assert_eq!(
+        profile_release_revision(&profiles, ProfileRevisionPolicyArg::SelectedInput).unwrap(),
+        "2026.06.08.7"
+    );
 }
 
 #[test]
@@ -4261,7 +4277,8 @@ fn profiles_at_different_semver_revisions_collapse_to_a_hash_identifier() {
         profile_config_file("co-work", "0.3.2"),
     ];
 
-    let revision = profile_release_revision(&profiles).unwrap();
+    let revision =
+        profile_release_revision(&profiles, ProfileRevisionPolicyArg::Strict).unwrap();
 
     assert!(
         revision.starts_with("profiles-"),
@@ -4275,6 +4292,11 @@ fn profile_revision_validation_still_rejects_unsafe_paths() {
     // Semver enforcement must not displace the path check it joins.
     assert!(validate_profile_revision_path("../etc/passwd").is_err());
     assert!(validate_profile_revision_path("0.6.0/../..").is_err());
+
+    let profiles = vec![profile_config_file("code", "../etc/passwd")];
+    assert!(
+        profile_release_revision(&profiles, ProfileRevisionPolicyArg::SelectedInput).is_err()
+    );
 }
 
 /// A minimal profile carrying just an id and a revision.

@@ -27,6 +27,7 @@ from capsem.gate.docker import Docker
 from capsem.gate.errors import GateError
 from capsem.gate.install import InstallGate
 from capsem.gate.installproof import InstallProof
+from capsem.gate.productschema import ProfileRevisionPolicy
 from capsem.gate.releasegraph import ReleaseGraph
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +36,11 @@ INSTALL = CONFIG.install
 LAYOUT = INSTALL.layout
 SERVE_READY_FILE = INSTALL.serve_ready_file
 PREINSTALL_ADMIN = INSTALL.preinstall_admin
+
+
+def test_selected_profile_revision_policy_is_a_typed_install_authority() -> None:
+    assert INSTALL.profile_revision_policy is ProfileRevisionPolicy.SELECTED_INPUT
+
 
 VERSION = "9.9.9"
 WORKSPACE = f"""\
@@ -223,6 +229,7 @@ def test_the_graph_exists_before_anything_points_at_it(
         r"assets channel check",
         r"install-manifest-request\.sh write",
     )
+    assert runner.ran(r"--profile-revision-policy selected-input")
 
 
 def test_the_admin_that_authors_the_graph_is_extracted_not_installed(

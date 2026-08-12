@@ -183,6 +183,7 @@ class DebProof:
             assets_dir=layout.assets,
             profiles_dir=f"{layout.config}/{self._config.functional.profiles_subdir}",
             channel=self.channel,
+            profile_revision_policy=self._install.profile_revision_policy,
             manifest_version=self._install.manifest_version,
             out_dir=layout.channel,
         )

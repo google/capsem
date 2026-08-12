@@ -57,6 +57,12 @@ def test_every_profile_revision_is_semver() -> None:
     )
 
 
+def test_public_release_workflows_cannot_select_the_legacy_import_policy() -> None:
+    workflows = PROJECT_ROOT / ".github" / "workflows"
+    for path in sorted(workflows.glob("release*.yaml")):
+        assert "--profile-revision-policy" not in path.read_text(encoding="utf-8"), path
+
+
 def test_profile_revisions_are_independent_per_profile() -> None:
     """Nothing may require two profiles to share a revision.
 

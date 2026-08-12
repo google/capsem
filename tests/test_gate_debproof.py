@@ -189,6 +189,7 @@ def test_exact_package_graph_is_checked_and_handed_off_before_dpkg(
     handoff = transcript.index("install-manifest-request.sh write")
     install = transcript.index("dpkg -i")
     assert extract < record < build < check < handoff < install
+    assert "--profile-revision-policy selected-input" in transcript
     assert "--network none" in runner.matching(r"docker run -d")[0]
 
 
