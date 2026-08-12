@@ -61,6 +61,8 @@ NETWORKED = {
         "fast.audit.cargo",
         "fast.audit.pnpm",
         "fast.audit.python-lock",
+        "fast.toolchain.ort",
+        "static.toolchain.ort",
         "confirm-head",
         "release",
     ),
@@ -68,6 +70,8 @@ NETWORKED = {
         "fast.audit.cargo",
         "fast.audit.pnpm",
         "fast.audit.python-lock",
+        "fast.toolchain.ort",
+        "static.toolchain.ort",
         "confirm-head",
         "release",
     ),
@@ -210,7 +214,7 @@ def test_only_networked_release_edges_cross_the_kernel_boundary(name, args) -> N
 
     assert marked == set(NETWORKED[name])
     assert not any(
-        label.startswith(("static.", "artifacts.", "functional.", "glowup."))
-        or (label.startswith("fast.") and label not in NETWORKED[name])
+        label.startswith(("artifacts.", "functional.", "glowup."))
+        or (label.startswith(("fast.", "static.")) and label not in NETWORKED[name])
         for label in marked
     )

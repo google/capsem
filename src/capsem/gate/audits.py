@@ -15,6 +15,7 @@ exactly the runs where the most had changed. It is an edge.
 
 from __future__ import annotations
 
+from . import toolchain
 from .actions import Run, Script
 from .config import GateConfig
 from .execution import Step, step
@@ -117,7 +118,10 @@ def clippy(config: GateConfig) -> Step:
     """
     return step(
         "clippy",
-        Run(["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]),
+        Run(
+            ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+            env=toolchain.ort_environment(config, toolchain.OrtConsumer.FAST),
+        ),
     )
 
 

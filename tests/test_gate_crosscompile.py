@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
@@ -374,12 +375,14 @@ def test_package_helper_inputs_and_ort_are_config_authoritative() -> None:
     assert re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", CONFIG.apt_snapshot.id)
     assert builder.cargo_store.startswith("/opt/capsem/")
     assert builder.pnpm_store.startswith("/opt/capsem/")
-    assert set(builder.targets) == set(CONFIG.architectures)
-    for name, target in builder.targets.items():
-        assert target.ort_url.startswith("https://cdn.pyke.io/")
-        assert len(target.ort_sha256) == 64
-        int(target.ort_sha256, 16)
-        assert target.ort_url.endswith(f"{CONFIG.arch(name).rust_target}.tar.lzma2")
+    package_targets = {arch.rust_target for arch in CONFIG.architectures.values()}
+    assert package_targets <= CONFIG.toolchain.ort.distributions.keys()
+    for target in package_targets:
+        distribution = CONFIG.toolchain.ort.distributions[target]
+        assert distribution.url.startswith("https://cdn.pyke.io/")
+        assert len(distribution.sha256) == 64
+        int(distribution.sha256, 16)
+        assert distribution.url.endswith(f"{target}.tar.lzma2")
 
 
 @pytest.mark.parametrize(
@@ -685,7 +688,7 @@ def test_foreign_package_swap_stops_when_native_removal_fails(tmp_path: Path) ->
 
 
 def _ort_materializer():
-    path = PROJECT_ROOT / CONFIG.package.builder.ort_script
+    path = PROJECT_ROOT / CONFIG.toolchain.ort.script
     spec = importlib.util.spec_from_file_location("package_ort_materializer", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -738,6 +741,41 @@ def test_ort_materializer_rejects_an_archive_path_escape(tmp_path: Path) -> None
     assert not (tmp_path / "escaped").exists()
 
 
+def test_ort_materializer_reuses_verified_archive_and_repairs_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    materializer = _ort_materializer()
+    payload = _ort_archive("libonnxruntime.a", b"static-ort")
+    source = tmp_path / "source.lzma2"
+    source.write_bytes(payload)
+    cache = tmp_path / "cache" / "ort.lzma2"
+    output = tmp_path / "ort"
+    argv = [
+        str(PROJECT_ROOT / CONFIG.toolchain.ort.script),
+        "--url",
+        source.as_uri(),
+        "--sha256",
+        hashlib.sha256(payload).hexdigest(),
+        "--archive-cache",
+        str(cache),
+        "--replace",
+        "--output",
+        str(output),
+    ]
+
+    monkeypatch.setattr(sys, "argv", argv)
+    materializer.main()
+    source.unlink()
+    (output / "libonnxruntime.a").chmod(0o644)
+    (output / "libonnxruntime.a").write_bytes(b"corrupt")
+    materializer.main()
+
+    assert (output / "libonnxruntime.a").read_bytes() == b"static-ort"
+    cache.write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="cached ORT archive digest mismatch"):
+        materializer.main()
+
+
 @pytest.mark.parametrize(
     ("host_name", "target_name"),
     (("x86_64", "arm64"), ("arm64", "x86_64")),
@@ -785,7 +823,7 @@ def test_package_helper_is_host_native_and_target_specific(
     assert f"APT_SNAPSHOT_ID={config.apt_snapshot.id}" in build
     assert f"CARGO_STORE={config.package.builder.cargo_store}" in build
     assert f"PNPM_STORE={config.package.builder.pnpm_store}" in build
-    assert CONFIG.package.builder.targets[target.name].ort_sha256 in build
+    assert CONFIG.toolchain.ort.distributions[target.rust_target].sha256 in build
     assert f"INPUT_IDENTITY=capsem-package-builder-{target.name}:" in build
     assert "INPUT_KEY=" not in build
     assert any("sha256:" in note for note in runner.notes)

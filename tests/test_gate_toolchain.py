@@ -31,10 +31,7 @@ EXPECTED_TOOLS = {
 def _rust_replies(*, targets: str, components: str) -> dict[str, str]:
     replies = {"target list": targets, "component list": components}
     replies.update(
-        {
-            " ".join(probe): expected
-            for probe, expected, _version in EXPECTED_TOOLS.values()
-        }
+        {" ".join(probe): expected for probe, expected, _version in EXPECTED_TOOLS.values()}
     )
     return replies
 
@@ -78,6 +75,48 @@ def test_sealed_fast_ci_preinstalls_the_same_nextest_pin() -> None:
     tools = next(line for line in workflow.splitlines() if "tool: cargo-audit@" in line)
 
     assert "cargo-nextest@0.9.137" in tools
+
+
+def test_ort_distributions_are_one_toolchain_authority_for_linux_and_macos() -> None:
+    configured = CONFIG.toolchain.ort.distributions
+
+    assert {arch.rust_target for arch in CONFIG.architectures.values()} <= configured.keys()
+    assert "aarch64-apple-darwin" in configured
+    for distribution in configured.values():
+        assert distribution.url.startswith("https://cdn.pyke.io/")
+        assert len(distribution.sha256) == 64
+
+
+def test_ort_materializer_selects_apple_silicon_distribution(monkeypatch) -> None:
+    monkeypatch.setattr(toolchain.host, "system", lambda: "Darwin")
+    monkeypatch.setattr(toolchain.host, "machine", lambda: "arm64")
+
+    selected = CONFIG.toolchain.ort.distributions["aarch64-apple-darwin"]
+    rendered = "\n".join(toolchain.ort(CONFIG, toolchain.OrtConsumer.FAST).render())
+    environment = toolchain.ort_environment(CONFIG, toolchain.OrtConsumer.FAST)
+
+    assert selected.url in rendered
+    assert selected.sha256 in rendered
+    assert "fast-aarch64-apple-darwin" in rendered
+    assert environment == {
+        CONFIG.toolchain.ort.strategy_variable: CONFIG.toolchain.ort.strategy,
+        CONFIG.toolchain.ort.location_variable: str(
+            PROJECT_ROOT
+            / CONFIG.toolchain.ort.output_template.format(
+                consumer="fast",
+                target="aarch64-apple-darwin",
+                sha256=selected.sha256,
+            )
+        ),
+    }
+
+
+def test_ort_materializer_refuses_an_unconfigured_host(monkeypatch) -> None:
+    monkeypatch.setattr(toolchain.host, "system", lambda: "Darwin")
+    monkeypatch.setattr(toolchain.host, "machine", lambda: "x86_64")
+
+    with pytest.raises(GateError, match="no distribution for Darwin/x86_64"):
+        toolchain.ort(CONFIG, toolchain.OrtConsumer.FAST)
 
 
 def test_rust_setup_names_the_checked_in_toolchain_for_every_rustup_probe(

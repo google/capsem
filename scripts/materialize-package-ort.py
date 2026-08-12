@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import lzma
+import os
 import shutil
 import tarfile
 import tempfile
@@ -22,6 +23,8 @@ def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", required=True)
     parser.add_argument("--sha256", required=True)
+    parser.add_argument("--archive-cache", type=Path)
+    parser.add_argument("--replace", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
 
@@ -47,6 +50,21 @@ def _download(url: str, expected: str, destination: Path) -> None:
     if actual != expected:
         raise ValueError(f"ORT archive digest mismatch: got {actual}, expected {expected}")
     print(f"verified ORT archive sha256={actual} bytes={total}")
+
+
+def _verify_archive(source: Path, expected: str) -> None:
+    digest = hashlib.sha256()
+    total = 0
+    with source.open("rb") as archive:
+        while chunk := archive.read(CHUNK):
+            total += len(chunk)
+            if total > MAX_ARCHIVE_BYTES:
+                raise ValueError("cached ORT archive exceeds the 1 GiB limit")
+            digest.update(chunk)
+    actual = digest.hexdigest()
+    if actual != expected:
+        raise ValueError(f"cached ORT archive digest mismatch: got {actual}, expected {expected}")
+    print(f"reused verified ORT archive sha256={actual} bytes={total}")
 
 
 def _decompress(source: Path, destination: Path) -> None:
@@ -104,16 +122,35 @@ def _extract(source: Path, output: Path) -> None:
 
 def main() -> None:
     args = _arguments()
-    if args.output.exists():
+    if args.output.exists() and not args.replace:
         raise ValueError(f"ORT output already exists: {args.output}")
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="capsem-ort-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="capsem-ort-", dir=args.output.parent) as temporary:
         root = Path(temporary)
-        compressed = root / "ort.tar.lzma2"
+        downloaded = root / "ort.tar.lzma2"
+        compressed = args.archive_cache or downloaded
+        if args.archive_cache is not None:
+            args.archive_cache.parent.mkdir(parents=True, exist_ok=True)
+            if args.archive_cache.exists():
+                if args.archive_cache.is_symlink() or not args.archive_cache.is_file():
+                    raise ValueError(
+                        f"ORT archive cache is not a regular file: {args.archive_cache}"
+                    )
+                _verify_archive(args.archive_cache, args.sha256)
+            else:
+                _download(args.url, args.sha256, downloaded)
+                os.replace(downloaded, args.archive_cache)
+        else:
+            _download(args.url, args.sha256, downloaded)
         tar = root / "ort.tar"
-        _download(args.url, args.sha256, compressed)
         _decompress(compressed, tar)
-        _extract(tar, args.output)
+        staged = root / "output"
+        _extract(tar, staged)
+        if args.output.exists():
+            if args.output.is_symlink() or not args.output.is_dir():
+                raise ValueError(f"ORT output is not a real directory: {args.output}")
+            shutil.rmtree(args.output)
+        os.replace(staged, args.output)
 
 
 if __name__ == "__main__":

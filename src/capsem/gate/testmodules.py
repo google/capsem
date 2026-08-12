@@ -116,6 +116,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     python = phase.add(toolchain.sync(config), after=after)
     node = phase.add(toolchain.node(config), after=(python,))
     rust = phase.add(toolchain.rust(config), after=(python,))
+    ort = phase.add(toolchain.ort(config, toolchain.OrtConsumer.FAST), after=(python,))
 
     # Nothing is worth starting against a file that will not parse.
     syntax = phase.add(audits.source_syntax(config), after=(python,))
@@ -145,7 +146,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # `settings` needs no entry -- every surface waits on it, so it is already
     # an ancestor of anything that waits on a surface.
     blocking = audits.blocking_surface(config, surfaces)
-    clippy = phase.add(audits.clippy(config), after=(blocking, rust))
+    clippy = phase.add(audits.clippy(config), after=(blocking, rust, ort))
     return (
         *audited,
         *checked,
@@ -168,6 +169,14 @@ class StaticModule(
     cannot after the Rust coverage run wastes twenty.
     """
 
+    outside_egress = True
+
+    def resources(self, runner: Runner) -> tuple[Resource, ...]:
+        return (
+            Egress(self._config, enabled=self._sandbox_mode != sandbox.OFF),
+            Workspace(self._config),
+        )
+
     def plan(self) -> Plan:
         plan = Plan(self.name)
         static(plan, self._config)
@@ -187,6 +196,7 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
     phase = plan.phase("static")
     settings = config.modules
     leaves: list[Step] = []
+    ort = phase.add(toolchain.ort(config, toolchain.OrtConsumer.STATIC), after=after)
 
     # Start the install-harness preflight early, but do not make unrelated
     # asset and functional work depend on it.  A retained-prefix refresh can
@@ -236,10 +246,13 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
     coverage = phase.add(
         step(
             "rust-coverage",
-            Run([*settings.rust_coverage, settings.rust_coverage_floor]),
+            Run(
+                [*settings.rust_coverage, settings.rust_coverage_floor],
+                env=toolchain.ort_environment(config, toolchain.OrtConsumer.STATIC),
+            ),
             contends=(config.exclusive("workspace_binaries"),),
         ),
-        after=(agents,),
+        after=(agents, ort),
     )
     leaves.append(phase.add(hostpackage.sign_step(config), after=(coverage,)))
     return tuple(leaves)

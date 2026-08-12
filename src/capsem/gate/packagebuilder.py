@@ -81,7 +81,7 @@ def image_tag(
     """Input-keyed tag including the mutable host builder's exact identity."""
     settings = config.package.builder
     host_arch = config.host_arch()
-    ort = settings.targets[target.name]
+    ort = config.toolchain.ort.distributions[target.rust_target]
     digest = hashlib.blake2b(digest_size=16)
     for path in _identity_files(config):
         digest.update(path.relative_to(config.root).as_posix().encode())
@@ -102,8 +102,8 @@ def image_tag(
         target.rust_target,
         target.dpkg,
         target.gnu,
-        ort.ort_url,
-        ort.ort_sha256,
+        ort.url,
+        ort.sha256,
         settings.materialize_build_network,
         settings.source_build_network,
         settings.runtime_network,
@@ -154,7 +154,7 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
         _require_input_key(docker, tag)
         runner.note(f"package helper input key is already present: {tag}")
     else:
-        ort = settings.targets[target.name]
+        ort = config.toolchain.ort.distributions[target.rust_target]
         docker.build(
             tag=tag,
             dockerfile=config.path(settings.dockerfile).as_posix(),
@@ -169,8 +169,8 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
                 "CROSS_DEV_PACKAGES=" + " ".join(config.toolchain.linux.cross_dev_packages),
                 f"CARGO_STORE={settings.cargo_store}",
                 f"PNPM_STORE={settings.pnpm_store}",
-                f"ORT_URL={ort.ort_url}",
-                f"ORT_SHA256={ort.ort_sha256}",
+                f"ORT_URL={ort.url}",
+                f"ORT_SHA256={ort.sha256}",
                 f"ORT_LIB_LOCATION={settings.ort_lib_location}",
                 f"INPUT_IDENTITY={tag}",
             ],

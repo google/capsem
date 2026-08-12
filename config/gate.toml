@@ -454,16 +454,7 @@ source_build_network = "none"
 runtime_network = "none"
 cargo_store = "/opt/capsem/package-cargo"
 pnpm_store = "/opt/capsem/package-pnpm"
-ort_script = "scripts/materialize-package-ort.py"
 ort_lib_location = "/opt/capsem/onnxruntime"
-
-[package.builder.targets.arm64]
-ort_url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.23.2/aarch64-unknown-linux-gnu.tar.lzma2"
-ort_sha256 = "c25248c32d84f228b9d584b84b31e1577e4810d46beb5e304e9fa340c000176c"
-
-[package.builder.targets.x86_64]
-ort_url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.23.2/x86_64-unknown-linux-gnu.tar.lzma2"
-ort_sha256 = "8c57d059aaaee407812a5698d6706c79e090ad69e1a14204309e802dcbbaa35f"
 
 # Installing the exact package into a clean systemd container and proving it
 # works: every binary present and reporting the package's own version, the
@@ -928,6 +919,35 @@ node_env = { CI = "true" }
 rust_targets = ["aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]
 # rust-lld comes from here.
 rust_components = ["llvm-tools"]
+
+# ort-sys has a networked build script even after Cargo has fetched every
+# locked crate. Resolve its static library once through the named egress edge,
+# then point Clippy, coverage and the package helper at the same verified
+# bytes. Host selection is data: Linux and Apple Silicon use different
+# archives, while both Linux package targets share this authority.
+[toolchain.ort]
+script = "scripts/materialize-package-ort.py"
+archive_cache_template = "~/.cache/capsem/ort/archive-{sha256}.tar.lzma2"
+output_template = "target/toolchain/ort/{consumer}-{target}-{sha256}"
+strategy_variable = "ORT_STRATEGY"
+location_variable = "ORT_LIB_LOCATION"
+strategy = "system"
+
+[toolchain.ort.host_targets]
+Linux = { arm64 = "aarch64-unknown-linux-gnu", x86_64 = "x86_64-unknown-linux-gnu" }
+Darwin = { arm64 = "aarch64-apple-darwin" }
+
+[toolchain.ort.distributions.aarch64-unknown-linux-gnu]
+url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.23.2/aarch64-unknown-linux-gnu.tar.lzma2"
+sha256 = "c25248c32d84f228b9d584b84b31e1577e4810d46beb5e304e9fa340c000176c"
+
+[toolchain.ort.distributions.x86_64-unknown-linux-gnu]
+url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.23.2/x86_64-unknown-linux-gnu.tar.lzma2"
+sha256 = "8c57d059aaaee407812a5698d6706c79e090ad69e1a14204309e802dcbbaa35f"
+
+[toolchain.ort.distributions.aarch64-apple-darwin]
+url = "https://cdn.pyke.io/0/pyke:ort-rs/ms@1.23.2/aarch64-apple-darwin.tar.lzma2"
+sha256 = "0897a0e1b840566a97e5a49497b02cbc204be2d006815174b639bc99731840f9"
 
 # One native Linux dependency authority. Bootstrap, both hosted Linux gates,
 # and the Docker host builder consume these exact values; none keeps a private

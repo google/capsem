@@ -67,10 +67,11 @@ unnested_only = pytest.mark.skipif(
     _already_sandboxed(), reason="the kernel sandbox cannot be applied from inside itself"
 )
 
-ONLINE_AUDITS = {
+ONLINE_FAST = {
     "fast.audit.cargo",
     "fast.audit.pnpm",
     "fast.audit.python-lock",
+    "fast.toolchain.ort",
 }
 
 
@@ -641,15 +642,14 @@ def test_an_outside_action_uses_only_the_capability_runner() -> None:
         ),
     ],
 )
-def test_only_live_advisory_queries_cross_the_fast_gate_network_boundary(
+def test_only_named_dependency_inputs_cross_the_fast_gate_network_boundary(
     name: str, args: tuple[tuple[str, str], ...]
 ) -> None:
     """Mutable advisory services are narrow exceptions, not a wider gate.
 
-    Cargo's advisory Git repository, npm's bulk endpoint, and OSV cannot be
-    materialized by the locked language-dependency bootstrap.  They must be
-    queried at qualification time, while every other fast-gate action stays in
-    the loopback-only namespace.
+    Mutable advisory queries and the digest-authorized ORT distribution are
+    the exact exceptions. Every compiler and test action stays inside the
+    loopback-only namespace.
     """
     from helpers.gate import built_command
 
@@ -660,9 +660,12 @@ def test_only_live_advisory_queries_cross_the_fast_gate_network_boundary(
         if any("[outside kernel sandbox]" in line for line in candidate.render())
     }
 
-    assert marked >= ONLINE_AUDITS
+    expected = ONLINE_FAST | ({"static.toolchain.ort"} if name != "test-fast" else set())
+    assert marked >= expected
     assert not {
-        label for label in marked if label.startswith("fast.") and label not in ONLINE_AUDITS
+        label
+        for label in marked
+        if label.startswith(("fast.", "static.")) and label not in expected
     }
 
 

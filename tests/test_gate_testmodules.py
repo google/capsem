@@ -19,7 +19,7 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
-from capsem.gate.testmodules import FastModule
+from capsem.gate.testmodules import FastModule, StaticModule
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -70,6 +70,27 @@ def test_clippy_waits_for_the_frontend_build() -> None:
     runs where the most had changed.
     """
     assert _wave_of(FastModule, "fast.clippy") > _wave_of(FastModule, "fast.web.frontend")
+
+
+@pytest.mark.parametrize(
+    ("module", "materializer", "consumer"),
+    [
+        (FastModule, "fast.toolchain.ort", "fast.clippy"),
+        (StaticModule, "static.toolchain.ort", "static.rust-coverage"),
+    ],
+)
+def test_rust_builds_wait_for_the_verified_host_ort_distribution(
+    module, materializer: str, consumer: str
+) -> None:
+    plan = _plan(module)
+    materialize = next(step for step in plan.steps if step.label == materializer)
+    build = next(step for step in plan.steps if step.label == consumer)
+
+    assert _wave_of(module, consumer) > _wave_of(module, materializer)
+    assert any("[outside kernel sandbox]" in line for line in materialize.render())
+    rendered = "\n".join(build.render())
+    assert "ORT_STRATEGY=system" in rendered
+    assert "ORT_LIB_LOCATION=" in rendered
 
 
 def test_the_dependency_is_taken_from_config_not_from_position() -> None:

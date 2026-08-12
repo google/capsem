@@ -12,13 +12,78 @@ first run on a machine is a gate with two behaviours and one of them untested.
 from __future__ import annotations
 
 import shutil
+from enum import StrEnum
+from pathlib import Path
 
-from .actions import Action, Run
+from . import host
+from .actions import Action, Run, Script
 from .config import GateConfig
 from .context import Context
 from .errors import GateError
 from .execution import Step, step
 from .packageinputs import pinned_toolchain
+
+
+class OrtConsumer(StrEnum):
+    """Rust build cohorts that must never replace each other's selected bytes."""
+
+    FAST = "fast"
+    STATIC = "static"
+
+
+def _ort_target(config: GateConfig) -> str:
+    system = host.system()
+    architecture = host.machine()
+    try:
+        return config.toolchain.ort.host_targets[system][architecture]
+    except KeyError as error:
+        raise GateError(f"toolchain.ort has no distribution for {system}/{architecture}") from error
+
+
+def _ort_paths(config: GateConfig, consumer: OrtConsumer) -> tuple[Path, Path]:
+    settings = config.toolchain.ort
+    target = _ort_target(config)
+    distribution = settings.distributions[target]
+    fields = {"consumer": consumer.value, "target": target, "sha256": distribution.sha256}
+    return (
+        Path(settings.archive_cache_template.format(**fields)).expanduser(),
+        config.path(settings.output_template.format(**fields)),
+    )
+
+
+def ort_environment(config: GateConfig, consumer: OrtConsumer) -> dict[str, str]:
+    """Select the exact static ORT bytes materialized for this host."""
+    _archive, output = _ort_paths(config, consumer)
+    settings = config.toolchain.ort
+    return {
+        settings.strategy_variable: settings.strategy,
+        settings.location_variable: str(output),
+    }
+
+
+def ort(config: GateConfig, consumer: OrtConsumer) -> Step:
+    """Materialize ort-sys inputs before entering a sealed Rust build."""
+    settings = config.toolchain.ort
+    target = _ort_target(config)
+    distribution = settings.distributions[target]
+    archive, output = _ort_paths(config, consumer)
+    return step(
+        "toolchain.ort",
+        Script(
+            settings.script,
+            "--url",
+            distribution.url,
+            "--sha256",
+            distribution.sha256,
+            "--archive-cache",
+            archive,
+            "--replace",
+            "--output",
+            output,
+            outside_sandbox=True,
+        ),
+        produces=(output / "libonnxruntime.a",),
+    )
 
 
 def sync(config: GateConfig) -> Step:
@@ -74,9 +139,7 @@ class _EnsureRust(Action, name="ensure-rust"):
         )
         for target in settings.rust_targets:
             if target not in installed:
-                context.runner.run(
-                    ["rustup", "target", "add", "--toolchain", toolchain, target]
-                )
+                context.runner.run(["rustup", "target", "add", "--toolchain", toolchain, target])
 
         components = context.runner.capture(
             ["rustup", "component", "list", "--toolchain", toolchain, "--installed"]

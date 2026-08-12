@@ -211,11 +211,6 @@ class PackageSigningConfig(Strict):
     password_variable: str
 
 
-class PackageBuilderTarget(Strict):
-    ort_url: str
-    ort_sha256: str
-
-
 class PackageBuilderConfig(Strict):
     dockerfile: str
     tag_template: str
@@ -226,9 +221,7 @@ class PackageBuilderConfig(Strict):
     runtime_network: Literal["none"]
     cargo_store: str
     pnpm_store: str
-    ort_script: str
     ort_lib_location: str
-    targets: dict[str, PackageBuilderTarget]
 
 
 class PackageConfig(Strict):

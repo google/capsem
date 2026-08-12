@@ -132,14 +132,11 @@ class GateConfig(Strict):
                 object.__setattr__(arch, "name", key)
             if not arch.pkg_config_template:
                 object.__setattr__(arch, "pkg_config_template", self.pkg_config_template)
-        targets = set(self.package.builder.targets)
-        architectures = set(self.architectures)
-        if targets != architectures:
-            missing = ", ".join(sorted(architectures - targets)) or "none"
-            extra = ", ".join(sorted(targets - architectures)) or "none"
+        required_ort = {arch.rust_target for arch in self.architectures.values()}
+        missing_ort = sorted(required_ort - set(self.toolchain.ort.distributions))
+        if missing_ort:
             raise ValueError(
-                f"package builder targets must equal architectures "
-                f"(missing: {missing}; extra: {extra})"
+                "package target ORT distributions are missing: " + ", ".join(missing_ort)
             )
         return self
 
