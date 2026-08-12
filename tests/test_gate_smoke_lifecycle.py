@@ -90,7 +90,7 @@ def test_acquiring_the_service_starts_it_and_waits_for_its_socket(tmp_path, monk
     runner = RecordingRunner(PROJECT_ROOT)
     workspace = Workspace(CONFIG)
     service = Service(CONFIG, workspace, runner)
-    monkeypatch.setattr("capsem.gate.service._WaitForSocket.perform", lambda self, context: None)
+    monkeypatch.setattr("capsem.gate.service.WaitForSocket.perform", lambda self, context: None)
     # `acquire` copies the materialized profiles into the workspace, and a
     # `RecordingRunner` only stubs subprocesses -- filesystem actions still
     # run. This test is about starting a daemon and waiting for its socket, so

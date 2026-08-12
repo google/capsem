@@ -29,6 +29,7 @@ from pathlib import Path
 from . import assetevidence, crossexec, imagebases, pidfiles
 from . import config as gate_config
 from .assetlanes import AssetLanes, Profile, discover_profiles
+from .context import Context
 from .errors import GateError
 from .fileactions import (
     copy_tree,
@@ -40,6 +41,8 @@ from .fileactions import (
     scratch_dir,
 )
 from .proc import Runner
+from .service import WaitForSocket
+from .service import launch as launch_service
 from .storage import Storage
 
 
@@ -136,7 +139,28 @@ class AssetGate:
         marker = f"CAPSEM_ASSET_{profile.name.replace('-', '_')}_{self.host_arch.name}_SHELL_OK"
 
         names = self._config.environment
+        environment = {
+            **names.capsem(home=home, run_dir=run_dir),
+            **names.content(
+                assets=assets,
+                profiles=config_root / self._assets.materialized_profiles_dir,
+            ),
+        }
+        context = Context(self._runner, self._config, env=environment)
         try:
+            # The CLI normally auto-starts its service. That makes the daemon
+            # a descendant of this foreground proof, so a successful proof can
+            # exit while leaving a hidden child behind. Launch it through the
+            # gate primitive instead: the PID is persisted before the shell
+            # proof begins and the finally block owns its complete lifetime.
+            launch_service(
+                self._config,
+                home=home,
+                run_dir=run_dir,
+                assets=assets,
+                profiles=config_root / self._assets.materialized_profiles_dir,
+            ).perform(context)
+            WaitForSocket(run_dir).perform(context)
             self._runner.script(
                 self._assets.shell_proof_script,
                 "--capsem",
@@ -149,13 +173,7 @@ class AssetGate:
                 profile.name,
                 "--timeout",
                 self._assets.shell_proof_timeout_seconds,
-                env={
-                    **names.capsem(home=home, run_dir=run_dir),
-                    **names.content(
-                        assets=assets,
-                        profiles=config_root / self._assets.materialized_profiles_dir,
-                    ),
-                },
+                env=environment,
             )
         except GateError:
             # Stop the service first: it SIGTERMs every VM process, flushing

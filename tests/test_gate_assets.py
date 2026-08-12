@@ -108,6 +108,7 @@ def _gate(
 ) -> tuple[AssetGate, Gating]:
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
     monkeypatch.setattr("capsem.gate.pidfiles.stop_gate_service", lambda *_a: None)
+    monkeypatch.setattr("capsem.gate.assets.WaitForSocket.perform", lambda _self, _context: None)
     runner = runner_class(_checkout(tmp_path, profiles=profiles), **kwargs)
     return AssetGate(runner), runner
 
@@ -283,6 +284,27 @@ def test_the_boot_proof_runs_after_the_profile_is_materialized(
     _run_all(gate)
 
     runner.assert_order(r"profile materialize", r"prove-installed-shell\.py")
+
+
+def test_the_boot_service_is_detached_owned_and_ready_before_the_shell_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A foreground proof may not leave its auto-started daemon behind.
+
+    The process-tree guard caught exactly that in a retained candidate: the
+    successful shell script exited while its descendant ``capsem-service``
+    remained alive.  The gate must own the daemon through the launch/pidfile
+    lifecycle before the foreground proof starts.
+    """
+    gate, runner = _gate(tmp_path, monkeypatch)
+
+    _run_all(gate)
+
+    launched = runner.matching(r"capsem-service .*--foreground")
+    assert len(launched) == 1
+    assert f"--assets-dir {gate.test_root}/code/assets" in launched[0]
+    assert f"CAPSEM_PROFILES_DIR={gate.test_root}/code/config/profiles" in launched[0]
+    runner.assert_order(r"capsem-service .*--foreground", r"prove-installed-shell\.py")
 
 
 def test_the_boot_proof_runs_against_this_profile_s_own_assets(

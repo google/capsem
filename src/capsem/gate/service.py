@@ -83,8 +83,8 @@ class Service(Resource, name="service"):
 
         context = Context(self._runner, self._config, env=self.environment())
         self._stage(context)
-        _launch(self._config, home=self.home, run_dir=self.run_dir).perform(context)
-        _WaitForSocket(self.run_dir).perform(context)
+        launch(self._config, home=self.home, run_dir=self.run_dir).perform(context)
+        WaitForSocket(self.run_dir).perform(context)
         self.started = True
 
     def _stage(self, context) -> None:
@@ -101,7 +101,14 @@ class Service(Resource, name="service"):
         pidfiles.stop_gate_service(self.run_dir, self._config.pidfiles)
 
 
-def _launch(config: GateConfig, *, home: Path, run_dir: Path) -> Launch:
+def launch(
+    config: GateConfig,
+    *,
+    home: Path,
+    run_dir: Path,
+    assets: Path | None = None,
+    profiles: Path | None = None,
+) -> Launch:
     """Start the daemon, detached, with its pid where `pidfiles` will find it.
 
     The home and run directory are passed rather than read from the ambient
@@ -110,11 +117,13 @@ def _launch(config: GateConfig, *, home: Path, run_dir: Path) -> Launch:
     """
     settings = config.service
     names = config.environment
+    selected_assets = assets or home / settings.home_assets
+    selected_profiles = profiles or config.path(settings.generated_profiles)
     return Launch(
         [
             str(config.path(settings.binary)),
             "--assets-dir",
-            str(home / settings.home_assets),
+            str(selected_assets),
             "--process-binary",
             str(config.path(settings.process_binary)),
             "--foreground",
@@ -122,13 +131,13 @@ def _launch(config: GateConfig, *, home: Path, run_dir: Path) -> Launch:
         pidfile=run_dir / settings.pidfile,
         env={
             names.home: str(home),
-            **names.content(profiles=config.path(settings.generated_profiles)),
+            **names.content(assets=selected_assets, profiles=selected_profiles),
             "RUST_LOG": settings.log_level,
         },
     )
 
 
-class _WaitForSocket(Action, name="wait-for-socket"):
+class WaitForSocket(Action, name="wait-for-socket"):
     """A pidfile says a process exists; the socket says it is listening."""
 
     def __init__(self, directory: Path | None = None) -> None:
@@ -226,8 +235,8 @@ class EnsureServiceCommand(
         plan.add(
             step(
                 "start",
-                _launch(config, home=target, run_dir=run_dir(config)),
-                _WaitForSocket(),
+                launch(config, home=target, run_dir=run_dir(config)),
+                WaitForSocket(),
             ),
             after=(materialized,),
         )

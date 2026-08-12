@@ -54,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- IronBank asset boot proofs now launch their selected-content service through
+  the gate's detached process primitive, persist its configured PID, and wait
+  for its socket before entering the foreground shell. A successful proof can
+  no longer leave an auto-started descendant behind or bypass orphan-process
+  accounting.
 - Asset resume now treats the final manifest as the producer completion
   record: every boot and evidence file must match its recorded size and BLAKE3
   digest. Profile producers are ordered and invalidate that record before

@@ -498,7 +498,8 @@ def test_ensure_service_uses_generated_profiles() -> None:
     # in this module was asserting where it was spelled rather than what the
     # daemon is told. The claim is that the launch carries it.
     assert config.environment.profiles_dir == "CAPSEM_PROFILES_DIR"
-    assert "names.content(profiles=" in service
+    assert "profiles or config.path(settings.generated_profiles)" in service
+    assert "profiles=selected_profiles" in service
     assert "generated profiles are missing" in service
 
 
