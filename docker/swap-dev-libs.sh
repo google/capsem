@@ -7,13 +7,14 @@
 # If target matches native, the same packages are reinstalled from the selected
 # snapshot so mutable host-builder bytes cannot enter the package.
 #
-# Usage: swap-dev-libs <target-arch> <snapshot-base> <snapshot-id> <dev-packages>
+# Usage: swap-dev-libs <target-arch> <snapshot-base> <snapshot-id> <dev-packages> <host-packages>
 set -euo pipefail
 
 TARGET_ARCH="${1:?target architecture is required}"
 APT_SNAPSHOT_BASE="${2:?Ubuntu snapshot base is required}"
 APT_SNAPSHOT_ID="${3:?Ubuntu snapshot ID is required}"
 DEV_PACKAGES_RAW="${4:?cross-architecture dev packages are required}"
+HOST_PACKAGES_RAW="${5:?host-architecture packages are required}"
 if [[ ! "$APT_SNAPSHOT_BASE" =~ ^https://[^[:space:]]+$ ]]; then
     echo "ERROR: Ubuntu snapshot base must be an HTTPS URL" >&2
     exit 1
@@ -23,11 +24,16 @@ if [[ ! "$APT_SNAPSHOT_ID" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
     exit 1
 fi
 read -r -a DEV_PACKAGES <<< "$DEV_PACKAGES_RAW"
+read -r -a HOST_PACKAGES <<< "$HOST_PACKAGES_RAW"
 if [ "${#DEV_PACKAGES[@]}" -eq 0 ]; then
     echo "ERROR: cross-architecture dev package inventory is empty" >&2
     exit 1
 fi
-for package in "${DEV_PACKAGES[@]}"; do
+if [ "${#HOST_PACKAGES[@]}" -eq 0 ]; then
+    echo "ERROR: host-architecture package inventory is empty" >&2
+    exit 1
+fi
+for package in "${DEV_PACKAGES[@]}" "${HOST_PACKAGES[@]}"; do
     if [[ ! "$package" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*$ ]]; then
         echo "ERROR: invalid cross-architecture dev package '$package'" >&2
         exit 1
@@ -92,7 +98,16 @@ for pkg in "${DEV_PACKAGES[@]}"; do
     FOREIGN_PKGS+=("${pkg}:${TARGET_ARCH}")
 done
 
-apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-overwrite" "${FOREIGN_PKGS[@]}"
+# Some foreign development packages depend on host tooling through `:any`.
+# Pin those tools to the native architecture in the same solve so APT cannot
+# replace the Python/uv driver with a non-executable foreign interpreter.
+HOST_PKGS=()
+for pkg in "${HOST_PACKAGES[@]}"; do
+    HOST_PKGS+=("${pkg}:${NATIVE_ARCH}")
+done
+
+apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-overwrite" \
+    "${HOST_PKGS[@]}" "${FOREIGN_PKGS[@]}"
 rm -rf /var/lib/apt/lists/*
 
 echo "Installed ${TARGET_ARCH} -dev libraries."

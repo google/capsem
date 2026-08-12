@@ -30,6 +30,8 @@ def test_linux_workspace_prerequisites_are_one_validated_config_value() -> None:
     assert linux.apt_packages == tuple(dict.fromkeys(linux.apt_packages))
     assert linux.cross_dev_packages == tuple(dict.fromkeys(linux.cross_dev_packages))
     assert set(linux.cross_dev_packages) <= set(linux.apt_packages)
+    assert linux.cross_host_packages == tuple(dict.fromkeys(linux.cross_host_packages))
+    assert set(linux.cross_host_packages) <= set(linux.apt_packages)
     assert "librsvg2-dev" not in linux.cross_dev_packages
     assert linux.dnf_packages == tuple(dict.fromkeys(linux.dnf_packages))
     assert linux.pkg_config_modules == tuple(dict.fromkeys(linux.pkg_config_modules))
@@ -59,6 +61,14 @@ def test_cross_dev_packages_must_come_from_the_native_apt_inventory() -> None:
     document["cross_dev_packages"] = ["not-installed-dev-package"]
 
     with pytest.raises(ValidationError, match="cross_dev_packages"):
+        LinuxWorkspaceConfig.model_validate(document)
+
+
+def test_cross_host_packages_must_come_from_the_native_apt_inventory() -> None:
+    document = gate_config.load(PROJECT_ROOT).toolchain.linux.model_dump()
+    document["cross_host_packages"] = ["not-installed-host-package"]
+
+    with pytest.raises(ValidationError, match="cross_host_packages"):
         LinuxWorkspaceConfig.model_validate(document)
 
 

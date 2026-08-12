@@ -1216,8 +1216,13 @@ def test_cross_arch_tauri_swap_covers_every_native_dev_package() -> None:
     assert set(config.toolchain.linux.cross_dev_packages) <= set(
         config.toolchain.linux.apt_packages
     )
+    assert set(config.toolchain.linux.cross_host_packages) <= set(
+        config.toolchain.linux.apt_packages
+    )
     assert 'DEV_PACKAGES_RAW="${4:?cross-architecture dev packages are required}"' in swap_script
+    assert 'HOST_PACKAGES_RAW="${5:?host-architecture packages are required}"' in swap_script
     assert 'read -r -a DEV_PACKAGES <<< "$DEV_PACKAGES_RAW"' in swap_script
+    assert 'read -r -a HOST_PACKAGES <<< "$HOST_PACKAGES_RAW"' in swap_script
     assert "DEV_PACKAGES=(" not in swap_script
 
 
@@ -1575,8 +1580,9 @@ def test_cross_arch_tauri_swap_refreshes_indexes_before_removing_native_libs() -
     assert swap_script.count("apt-get update -qq") == 1
 
 
-def test_host_builder_does_not_refetch_multiarch_indexes_for_python() -> None:
+def test_host_builder_uses_shared_apt_authority_without_refetching_for_python() -> None:
     host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+    gate = tomllib.loads((PROJECT_ROOT / "config/gate.toml").read_text())
     native_tools = host_builder.split(
         "# ---- Native build tools + cross-compilation toolchains ----", maxsplit=1
     )[1].split("# ---- Node.js 24 + pnpm 10 ----", maxsplit=1)[0]
@@ -1584,7 +1590,9 @@ def test_host_builder_does_not_refetch_multiarch_indexes_for_python() -> None:
         "# ---- Helper script", maxsplit=1
     )[0]
 
-    assert "python3 \\" in native_tools
+    assert "python3" in gate["toolchain"]["linux"]["apt_packages"]
+    assert "$WORKSPACE_APT_PACKAGES" in native_tools
+    assert "    python3 \\" not in native_tools
     assert "python3-venv \\" in native_tools
     assert native_tools.count("apt-get update") == 1
     assert host_builder.count("apt-get update") == 1

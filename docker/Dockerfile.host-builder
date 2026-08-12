@@ -67,7 +67,6 @@ RUN test -n "$WORKSPACE_APT_PACKAGES" \
     ca-certificates \
     git \
     sqlite3 \
-    python3 \
     python3-venv \
     # Cross-compilation toolchains (both directions)
     gcc-x86-64-linux-gnu \

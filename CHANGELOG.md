@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cross-package dependency helpers now keep config-owned host tools pinned to
+  the builder architecture while APT resolves foreign development libraries.
+  Ubuntu can no longer replace the Python/uv driver with a foreign interpreter
+  or fail the sealed arm64 package materializer on that conflict.
 - Checked-in storage release callers are now validated against the
   config-owned phase inventory in the fast source gate. Retired release
   phases can no longer survive as dormant Just commands or fail only after

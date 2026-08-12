@@ -395,6 +395,10 @@ def test_package_helper_inputs_and_ort_are_config_authoritative() -> None:
     assert re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", CONFIG.apt_snapshot.id)
     assert builder.cargo_store.startswith("/opt/capsem/")
     assert builder.pnpm_store.startswith("/opt/capsem/")
+    assert CONFIG.toolchain.linux.cross_host_packages == ("python3",)
+    assert set(CONFIG.toolchain.linux.cross_host_packages) <= set(
+        CONFIG.toolchain.linux.apt_packages
+    )
     package_targets = {arch.rust_target for arch in CONFIG.architectures.values()}
     assert package_targets <= CONFIG.toolchain.ort.distributions.keys()
     for target in package_targets:
@@ -452,6 +456,7 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     assert 'cargo fetch --locked --target "${RUST_TARGET}"' in dockerfile
     assert 'cargo fetch --locked --target "${HOST_RUST_TARGET}"' in dockerfile
     assert "ARG HOST_RUST_TARGET" in dockerfile
+    assert "ARG HOST_PACKAGES" in dockerfile
     assert "pnpm fetch --frozen-lockfile" in dockerfile
     assert "frontend/pnpm-workspace.yaml" in builder.identity_inputs
     assert "frontend/pnpm-workspace.yaml" in dockerfile
@@ -464,7 +469,7 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     assert 'test -n "${APT_SNAPSHOT_ID}"' in dockerfile
     assert (
         'swap-dev-libs "${DPKG_ARCH}" "${APT_SNAPSHOT_BASE}" '
-        '"${APT_SNAPSHOT_ID}" "${CROSS_DEV_PACKAGES}"'
+        '"${APT_SNAPSHOT_ID}" "${CROSS_DEV_PACKAGES}" "${HOST_PACKAGES}"'
     ) in normalized_dockerfile
     assert "COPY --chmod=555 docker/swap-dev-libs.sh /usr/local/bin/swap-dev-libs" in dockerfile
     assert "ARG INPUT_IDENTITY" in dockerfile
@@ -476,6 +481,7 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     assert 'APT_SNAPSHOT_BASE="${2:?' in swap
     assert 'APT_SNAPSHOT_ID="${3:?' in swap
     assert 'DEV_PACKAGES_RAW="${4:?' in swap
+    assert 'HOST_PACKAGES_RAW="${5:?' in swap
     assert "inherited apt sources" not in swap
     assert "archive.ubuntu.com" not in swap
     assert "security.ubuntu.com" not in swap
@@ -561,6 +567,25 @@ def test_cross_dev_package_authority_changes_the_dependency_helper_input_key(
     assert image_tag(changed, changed.arch("arm64"), docker) != before
 
 
+def test_cross_host_package_authority_changes_the_dependency_helper_input_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from capsem.gate.docker import Docker
+    from capsem.gate.packagebuilder import image_tag
+
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    root = _checkout(tmp_path)
+    config = gate_config.load(root)
+    docker = Docker(RecordingRunner(root))
+    before = image_tag(config, config.arch("arm64"), docker)
+    linux = config.toolchain.linux.model_copy(update={"cross_host_packages": ("python3-venv",)})
+    changed = config.model_copy(
+        update={"toolchain": config.toolchain.model_copy(update={"linux": linux})}
+    )
+
+    assert image_tag(changed, changed.arch("arm64"), docker) != before
+
+
 def _stubbed_swap(tmp_path: Path, *, native: str, remove_status: int = 0):
     apt_root = tmp_path / "apt"
     (apt_root / "sources.list.d").mkdir(parents=True)
@@ -622,6 +647,12 @@ def _stubbed_swap(tmp_path: Path, *, native: str, remove_status: int = 0):
         ("arm64",),
         ("arm64", "https://snapshot.ubuntu.com/ubuntu"),
         ("arm64", "https://snapshot.ubuntu.com/ubuntu", "20260810T000000Z"),
+        (
+            "arm64",
+            "https://snapshot.ubuntu.com/ubuntu",
+            "20260810T000000Z",
+            "libssl-dev",
+        ),
     ],
 )
 def test_package_swap_refuses_missing_snapshot_authority_before_apt(
@@ -646,6 +677,7 @@ def test_package_swap_refuses_invalid_config_owned_package_before_mutation(
         "https://snapshot.ubuntu.com/ubuntu",
         "20260810T000000Z",
         "libssl-dev;touch-pwned",
+        " ".join(CONFIG.toolchain.linux.cross_host_packages),
     )
 
     assert result.returncode != 0
@@ -662,6 +694,7 @@ def test_native_package_swap_reinstalls_dev_libraries_from_the_snapshot(tmp_path
         "https://snapshot.ubuntu.com/ubuntu",
         "20260810T000000Z",
         " ".join(CONFIG.toolchain.linux.cross_dev_packages),
+        " ".join(CONFIG.toolchain.linux.cross_host_packages),
     )
 
     assert result.returncode == 0, result.stderr
@@ -682,6 +715,7 @@ def test_foreign_package_swap_updates_then_removes_then_installs(tmp_path: Path)
         "https://snapshot.ubuntu.com/ubuntu",
         "20260810T000000Z",
         " ".join(CONFIG.toolchain.linux.cross_dev_packages),
+        " ".join(CONFIG.toolchain.linux.cross_host_packages),
     )
 
     assert result.returncode == 0, result.stderr
@@ -689,6 +723,7 @@ def test_foreign_package_swap_updates_then_removes_then_installs(tmp_path: Path)
     assert recorded.index("apt-get update -qq") < recorded.index("apt-get remove")
     assert recorded.index("apt-get remove") < recorded.index("apt-get install")
     assert "libssl-dev:arm64" in recorded
+    assert "python3:amd64" in recorded
 
 
 def test_foreign_package_swap_stops_when_native_removal_fails(tmp_path: Path) -> None:
@@ -699,6 +734,7 @@ def test_foreign_package_swap_stops_when_native_removal_fails(tmp_path: Path) ->
         "https://snapshot.ubuntu.com/ubuntu",
         "20260810T000000Z",
         " ".join(CONFIG.toolchain.linux.cross_dev_packages),
+        " ".join(CONFIG.toolchain.linux.cross_host_packages),
     )
 
     assert result.returncode == 19
@@ -841,6 +877,7 @@ def test_package_helper_is_host_native_and_target_specific(
     assert f"DPKG_ARCH={target.dpkg}" in build
     assert f"APT_SNAPSHOT_BASE={config.apt_snapshot.base}" in build
     assert f"APT_SNAPSHOT_ID={config.apt_snapshot.id}" in build
+    assert "HOST_PACKAGES=" + " ".join(config.toolchain.linux.cross_host_packages) in build
     assert f"CARGO_STORE={config.package.builder.cargo_store}" in build
     assert f"PNPM_STORE={config.package.builder.pnpm_store}" in build
     assert CONFIG.toolchain.ort.distributions[target.rust_target].sha256 in build

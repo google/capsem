@@ -654,7 +654,7 @@ error_on_warning = true
 [lint.ty_ratchet]
 call-top-callable = 3
 invalid-argument-type = 128
-invalid-assignment = 18
+invalid-assignment = 17
 invalid-attribute-override = 1
 invalid-method-override = 2
 invalid-return-type = 6
@@ -674,7 +674,7 @@ unused-type-ignore-comment = 3
 # and no value may grow.
 [lint.suppression_budget]
 noqa = 70
-type_ignore = 23
+type_ignore = 22
 ty_ignore = 6
 ruff_global_ignore = 1
 ruff_per_file_ignore = 2
@@ -966,6 +966,7 @@ apt_packages = [
     "libgtk-3-dev",
     "musl-tools",
     "pkg-config",
+    "python3",
     "xdg-utils",
 ]
 # Header packages that can be architecture-swapped inside the package helper.
@@ -978,6 +979,11 @@ cross_dev_packages = [
     "libwebkit2gtk-4.1-dev",
     "libxdo-dev",
 ]
+# Host-architecture tools which foreign development packages also accept as
+# `:any`. APT otherwise prefers the foreign interpreter while resolving the
+# cross graph and attempts to remove the Python/uv toolchain that drives the
+# package build.
+cross_host_packages = ["python3"]
 dnf_packages = [
     "bubblewrap",
     "file",
