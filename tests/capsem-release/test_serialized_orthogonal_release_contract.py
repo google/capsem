@@ -325,9 +325,13 @@ def test_daily_scheduler_runs_profile_and_binary_lanes_without_direct_dispatch()
     assert "profile: [code, co-work]" in profiles
     assert "max-parallel: 1" in profiles
     assert "fail-fast: false" in profiles
+    assert 'CAPSEM_SKIP_ASSET_CHECK: "1"' in profiles
+    assert "sh bootstrap.sh --yes" in profiles
     assert "just release-profile nightly ${{ matrix.profile }}" in profiles
     assert "needs: release-profiles" in binaries
     assert "if: ${{ always() }}" in binaries
+    assert 'CAPSEM_SKIP_ASSET_CHECK: "1"' in binaries
+    assert "sh bootstrap.sh --yes" in binaries
     assert "just release-binaries nightly" in binaries
     assert "release.yaml" not in workflow
     assert "release-assets.yaml" not in workflow

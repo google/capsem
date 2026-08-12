@@ -127,7 +127,10 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert "docker info" in linux
     assert "docker buildx version" in linux
     assert "bwrap --unshare-net" in linux
-    assert 'python3 "$CAPSEM_BUBBLEWRAP_PROJECT_ROOT/scripts/prepare-linux-sandbox.py"' in linux
+    assert (
+        'python3 "$CAPSEM_BUBBLEWRAP_PROJECT_ROOT/scripts/prepare-linux-sandbox.py" '
+        "--repair-hosted-runner"
+    ) in linux
     assert "[ -r /dev/kvm ] && [ -w /dev/kvm ]" in linux
     assert "[ -r /dev/vhost-vsock ] && [ -w /dev/vhost-vsock ]" in linux
 

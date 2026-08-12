@@ -199,6 +199,26 @@ def test_fast_gate_proves_hosted_linux_sandbox_before_dependency_work() -> None:
     assert_unmasked_step("fast-gate.yaml", workflow, "static", "Prove Linux sandbox boundary")
 
 
+@pytest.mark.parametrize("job_name", ("release-profiles", "release-binaries"))
+def test_nightly_release_bootstraps_host_before_enforced_qualification(job_name: str) -> None:
+    workflow_path = PROJECT_ROOT / ".github" / "workflows" / "release-nightly.yaml"
+    workflow = yaml.safe_load(workflow_path.read_text())
+    steps = workflow["jobs"][job_name]["steps"]
+    names = [step.get("name") for step in steps]
+    bootstrap = next(
+        step for step in steps if step.get("name") == "Bootstrap complete release host"
+    )
+    release_name = next(name for name in names if name and "nightly" in name.lower())
+
+    assert bootstrap["run"] == "sh bootstrap.sh --yes"
+    assert bootstrap["env"] == {"CAPSEM_SKIP_ASSET_CHECK": "1"}
+    assert "continue-on-error" not in bootstrap
+    assert names.index("Bootstrap complete release host") < names.index(release_name)
+    assert_unmasked_step(
+        "release-nightly.yaml", workflow, job_name, "Bootstrap complete release host"
+    )
+
+
 def test_the_profile_denies_the_network() -> None:
     """The rule the whole profile exists for."""
     text = sandbox.profile(CONFIG, report=False)

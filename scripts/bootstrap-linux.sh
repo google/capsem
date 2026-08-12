@@ -420,7 +420,7 @@ capsem_linux_prepare_bubblewrap() {
         return 0
     fi
     if [ -n "$CAPSEM_BUBBLEWRAP_PROJECT_ROOT" ]; then
-        python3 "$CAPSEM_BUBBLEWRAP_PROJECT_ROOT/scripts/prepare-linux-sandbox.py"
+        python3 "$CAPSEM_BUBBLEWRAP_PROJECT_ROOT/scripts/prepare-linux-sandbox.py" --repair-hosted-runner
         return
     fi
     if ! bwrap --unshare-net --die-with-parent --new-session \

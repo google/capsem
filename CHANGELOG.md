@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Daily nightly release runners now execute the canonical Linux bootstrap
+  before enforced qualification. The bootstrap may repair only GitHub's known
+  hosted-runner AppArmor restriction, then must prove the complete Bubblewrap
+  boundary; unknown or unhosted failures remain fatal.
+
 - Linux and macOS build rails now share exact config-owned Rust, uv, pnpm, and
   Cargo-tool authorities. The network-open host-builder materializer is keyed
   by those values plus its immutable Ubuntu snapshot and source inputs; a warm
