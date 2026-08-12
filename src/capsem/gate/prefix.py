@@ -185,13 +185,14 @@ def run_from_private_copy(
         check=False,
     )
     export(path, config.root, config)
-    if status == 0:
+    if status == 0 and reuse is None:
         reclaim(config, path)
     else:
-        # Kept on purpose. Its build output is what a `--prefix ... --from ...`
-        # run reuses, and re-earning it costs the twenty minutes resuming
-        # exists to save. `sweep` on the next run is what bounds the
-        # accumulation -- not `gc`, which only reaches inside the checkout.
+        # Kept on purpose. A failure needs its build output for the first
+        # continuation, and an explicitly reused prefix remains iteration
+        # state even when a focused diagnostic succeeds: that diagnostic is
+        # not the complete candidate it is helping repair. `sweep` on a later
+        # fresh run bounds accumulation; `gc` reaches only inside a checkout.
         runner.note(f"prefix kept for resuming: {path}")
     return status
 

@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Successful focused continuations now retain an explicitly reused private
+  prefix after exporting their evidence. A diagnostic `--prefix/--from` slice
+  can no longer delete the exact candidate workspace needed by the next
+  continuation; fresh successful qualification still reclaims its own copy.
 - One-shot `capsem run` now gives any directly spawned fallback service a
   typed command-bound lifetime. After the complete `/run` response, the CLI
   terminates and reaps only the service it spawned and removes its owned

@@ -684,6 +684,77 @@ def test_a_sweep_keeps_the_newest_and_reclaims_the_rest(tmp_path: Path) -> None:
     assert newer.is_dir(), "the newest survives, so a failed run can still be resumed"
 
 
+def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A focused diagnostic is not the complete candidate it is helping fix.
+
+    The first successful ``test-functional --prefix ... --from ...`` deleted
+    the retained candidate tree.  Its functional evidence was valid, but the
+    next ``candidate --prefix ...`` could no longer reuse the fifty-nine steps
+    that had already run.  Naming an existing prefix is an iteration contract:
+    success exports its evidence, while the tree remains until a later fresh
+    run sweeps it.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate import prefix
+
+    reused = tmp_path / "aaaaaaaa"
+    reused.mkdir()
+    config = gate_config.load(PROJECT_ROOT).model_copy(
+        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
+    )
+    reclaimed: list[Path] = []
+
+    class SuccessfulRunner:
+        def note(self, message: str) -> None:
+            assert message == f"prefix kept for resuming: {reused}"
+
+        def run(self, *args, **kwargs) -> int:
+            return 0
+
+    monkeypatch.setattr(prefix.snapshot, "refresh", lambda *args: None)
+    monkeypatch.setattr(prefix, "export", lambda *args: None)
+    monkeypatch.setattr(prefix, "reclaim", lambda _config, path: reclaimed.append(path))
+
+    assert (
+        prefix.run_from_private_copy(SuccessfulRunner(), config, ["test-functional"], reuse=reused)
+        == 0
+    )
+    assert reclaimed == []
+    assert reused.is_dir()
+
+
+def test_a_fresh_successful_prefix_is_still_reclaimed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Successful fresh qualification has no continuation debt to retain."""
+    from capsem.gate import config as gate_config
+    from capsem.gate import prefix
+
+    fresh = tmp_path / "bbbbbbbb"
+    config = gate_config.load(PROJECT_ROOT).model_copy(
+        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
+    )
+    reclaimed: list[Path] = []
+
+    class SuccessfulRunner:
+        def note(self, message: str) -> None:
+            raise AssertionError(f"fresh success should not be retained: {message}")
+
+        def run(self, *args, **kwargs) -> int:
+            return 0
+
+    monkeypatch.setattr(prefix, "allocate", lambda *args: fresh)
+    monkeypatch.setattr(prefix, "sweep", lambda *args: [])
+    monkeypatch.setattr(prefix.snapshot, "populate", lambda *args: fresh.mkdir())
+    monkeypatch.setattr(prefix, "export", lambda *args: None)
+    monkeypatch.setattr(prefix, "reclaim", lambda _config, path: reclaimed.append(path))
+
+    assert prefix.run_from_private_copy(SuccessfulRunner(), config, ["candidate"]) == 0
+    assert reclaimed == [fresh]
+
+
 def test_reclaim_does_not_report_success_on_a_tree_it_left_behind(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
