@@ -1106,9 +1106,7 @@ def test_stages_every_verified_profile_image_and_exact_config(
         Path("corp/enforcement.toml"),
         Path("corp/detection.yaml"),
     ):
-        assert (config_root / relative).read_bytes() == (
-            ROOT / "config" / relative
-        ).read_bytes()
+        assert (config_root / relative).read_bytes() == (ROOT / "config" / relative).read_bytes()
     assert (config_root / "profiles/code/profile.toml").read_bytes() == artifacts["profile.toml"]
     assert (config_root / "profiles/co-work/profile.toml").read_bytes() == co_work["co-work.toml"]
     assert (assets / "x86_64/vmlinuz").read_bytes() == artifacts["vmlinuz"]
@@ -1185,6 +1183,78 @@ def test_stages_manifest_owned_profile_root_payload_without_checkout_fallback(
     assert (config_root / "profiles/code/root/root/.profile").read_bytes() == root_payload
 
 
+def test_legacy_root_manifest_rehydrates_only_exact_verified_checkout_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Old stable graphs select root bytes through their nested manifest."""
+    manifest, _ = _write_manifest(tmp_path)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    source_profile = ROOT / "config/profiles/code"
+    root_manifest = (source_profile / "root.manifest.json").read_bytes()
+    (tmp_path / "root.manifest.json").write_bytes(root_manifest)
+    document["profiles"]["code"]["architectures"][0]["config"].append(
+        _record(
+            "root.manifest.json",
+            root_manifest,
+            kind="root_manifest",
+            path="profiles/code/root.manifest.json",
+            status="current",
+        )
+    )
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+
+    inputs = tmp_path / "profile-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+    config_root = tmp_path / "release-config"
+    STAGE.stage_profiles(inputs, tmp_path / "assets", config_root, ROOT / "config")
+
+    nested = json.loads(root_manifest)
+    for entry in nested["files"]:
+        relative = Path(entry["path"])
+        assert (config_root / "profiles/code/root" / relative).read_bytes() == (
+            source_profile / "root" / relative
+        ).read_bytes()
+
+
+def test_legacy_root_manifest_rejects_a_same_size_checkout_substitution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    source_profile = ROOT / "config/profiles/code"
+    root_manifest = (source_profile / "root.manifest.json").read_bytes()
+    (tmp_path / "root.manifest.json").write_bytes(root_manifest)
+    document["profiles"]["code"]["architectures"][0]["config"].append(
+        _record(
+            "root.manifest.json",
+            root_manifest,
+            kind="root_manifest",
+            path="profiles/code/root.manifest.json",
+            status="current",
+        )
+    )
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    inputs = tmp_path / "profile-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
+
+    shared = tmp_path / "shared-config"
+    shutil.copytree(ROOT / "config", shared)
+    first = json.loads(root_manifest)["files"][0]["path"]
+    substitute = shared / "profiles/code/root" / first
+    original = substitute.read_bytes()
+    substitute.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+
+    with pytest.raises(ValueError, match="BLAKE3 mismatch"):
+        STAGE.stage_profiles(
+            inputs,
+            tmp_path / "assets",
+            tmp_path / "release-config",
+            shared,
+        )
+
+
 def test_staging_reverifies_inputs_instead_of_trusting_the_fetch_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1242,9 +1312,7 @@ def test_profile_staging_rejects_symlinked_or_overlapping_shared_config(
         'refresh_policy = "24h"\n',
         encoding="utf-8",
     )
-    (shared / "corp/enforcement.toml").symlink_to(
-        ROOT / "config/corp/enforcement.toml"
-    )
+    (shared / "corp/enforcement.toml").symlink_to(ROOT / "config/corp/enforcement.toml")
 
     with pytest.raises(ValueError, match="must not contain symlinks"):
         STAGE.stage_profiles(
@@ -1349,8 +1417,7 @@ def test_profile_lane_accepts_only_the_complete_manifest_binary_cohort(
 ) -> None:
     manifest, _ = _write_manifest(tmp_path)
     binary_payloads = {
-        name: f"resolved-{name}".encode()
-        for name in STAGE.REQUIRED_LINUX_RELEASE_BINARIES
+        name: f"resolved-{name}".encode() for name in STAGE.REQUIRED_LINUX_RELEASE_BINARIES
     }
     _package_with_binary_inventory(manifest, binary_payloads)
     inputs = tmp_path / "package-inputs"

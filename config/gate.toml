@@ -835,7 +835,7 @@ max_lines = 300
 "scripts/release_glowup.py" = 823
 "scripts/release_inputs.py" = 337
 "scripts/resolve-reusable-profile-assets.py" = 334
-"scripts/stage-release-test-inputs.py" = 562
+"scripts/stage-release-test-inputs.py" = 557
 
 # ---------------------------------------------------------------------------
 # What may not run beside what

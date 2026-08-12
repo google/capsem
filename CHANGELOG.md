@@ -49,6 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Legacy published profiles whose root bytes are selected by a nested root
+  manifest now rehydrate only byte-for-byte verified checkout cache hits. This
+  keeps current manifests fully self-contained while allowing install CI to
+  pair a new binary with the existing stable profile graph.
+
 - Workflow provisioning contracts now follow Just reachability for `uv` as
   well as Node tools, so every Linux lane installs the exact gate interpreter
   before invoking `capsem-gate`.
