@@ -10,24 +10,28 @@ import platform
 import shutil
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import urljoin
 
-import tomli_w
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
-
-from release_binary_cohort import REQUIRED_LINUX_RELEASE_BINARIES  # noqa: E402
-from release_inputs import (  # noqa: E402
+from release_binary_cohort import REQUIRED_LINUX_RELEASE_BINARIES
+from release_inputs import (
     load_verified_release_inputs,
     safe_component,
     safe_relative,
     verify_payload,
 )
+from stage_profile_assets import (
+    active_profile_architectures,
+    configured_evidence_artifacts,
+    local_file,
+    scope_profile_to_arch,
+    stage_profile_architecture_assets,
+)
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 
 def _host_arch() -> str:
@@ -69,23 +73,6 @@ def _rewrite_urls(value: Any, replacements: dict[str, str], manifest_url: str) -
     elif isinstance(value, list):
         for child in value:
             _rewrite_urls(child, replacements, manifest_url)
-
-
-def _local_file(url: object, label: str) -> Path:
-    if not isinstance(url, str):
-        raise ValueError(f"{label} lacks a staged URL")
-    parsed = urlparse(url)
-    if parsed.scheme != "file":
-        raise ValueError(f"{label} was not resolved to a local immutable input")
-    return Path(unquote(parsed.path))
-
-
-def _hash_filename(logical_name: str, digest: str) -> str:
-    prefix = digest[:16]
-    if "." in logical_name:
-        stem, extension = logical_name.split(".", 1)
-        return f"{stem}-{prefix}.{extension}"
-    return f"{logical_name}-{prefix}"
 
 
 def _reset_staging_directory(path: Path, label: str) -> None:
@@ -147,62 +134,6 @@ def _stage_shared_config(
         shutil.copytree(source, config_root / name)
 
 
-def _active_profile_architectures(
-    manifest: dict[str, Any], arch: str
-) -> list[tuple[str, dict[str, Any]]]:
-    profiles = manifest.get("profiles")
-    if not isinstance(profiles, dict) or not profiles:
-        raise ValueError("release manifest contains no profiles")
-    selected: list[tuple[str, dict[str, Any]]] = []
-    for profile_id_value, profile in sorted(profiles.items()):
-        profile_id = safe_component(profile_id_value, "profile identity")
-        if not isinstance(profile, dict):
-            raise ValueError(f"release profile {profile_id} is malformed")
-        profile = cast(dict[str, Any], profile)
-        if profile.get("status") == "revoked":
-            continue
-        architectures = [
-            candidate
-            for candidate in profile.get("architectures", [])
-            if isinstance(candidate, dict) and candidate.get("architecture") == arch
-        ]
-        if len(architectures) != 1:
-            raise ValueError(
-                f"release profile {profile_id} must have exactly one {arch} architecture"
-            )
-        selected.append((profile_id, architectures[0]))
-    if not selected:
-        raise ValueError(f"release manifest contains no active {arch} profiles")
-    selected.sort(key=lambda row: (row[0] != "code", row[0]))
-    return selected
-
-
-def _scope_profile_to_arch(path: Path, arch: str, profile_id: str) -> None:
-    """Describe only the architecture these inputs actually staged.
-
-    Release inputs are pulled one architecture at a time, but the published
-    profile.toml describes every architecture the profile supports. Copying it
-    verbatim leaves entries whose images were never staged, and
-    `capsem-admin profile validate --materialized` then rejects the catalog --
-    correctly, since nothing on this host can resolve them. The staged catalog
-    must match the staged assets.
-
-    Only the copy under the config root is rewritten. The release manifest's
-    config URLs point at the pulled input tree, so the digests it records still
-    describe untouched bytes.
-    """
-    document = tomllib.loads(path.read_text(encoding="utf-8"))
-    architectures = document.get("assets", {}).get("arch")
-    if not isinstance(architectures, dict):
-        return
-    if arch not in architectures:
-        raise ValueError(f"staged profile {profile_id} declares no {arch} assets to materialize")
-    if set(architectures) == {arch}:
-        return
-    document["assets"]["arch"] = {arch: architectures[arch]}
-    path.write_text(tomli_w.dumps(document), encoding="utf-8")
-
-
 def stage_profiles(
     input_dir: Path,
     assets_dir: Path,
@@ -241,13 +172,9 @@ def stage_profiles(
     arch = host_arch
     arch_dir = assets_dir / arch
     arch_dir.mkdir(parents=True, exist_ok=True)
-    logical_names = {
-        "kernel": "vmlinuz",
-        "initrd": "initrd.img",
-        "rootfs": "rootfs.erofs",
-    }
+    evidence_artifacts = configured_evidence_artifacts(shared_config_root)
     for profile_index, (profile_id, architecture) in enumerate(
-        _active_profile_architectures(manifest, arch)
+        active_profile_architectures(manifest, arch)
     ):
         configs = architecture.get("config")
         if not isinstance(configs, list) or not configs:
@@ -275,54 +202,24 @@ def stage_profiles(
             if relative in staged_config_paths:
                 raise ValueError(f"profile {profile_id}/{arch} repeats config path {relative}")
             staged_config_paths.add(relative)
-            source = _local_file(record.get("url"), f"profile {profile_id}/{arch} config[{index}]")
+            source = local_file(record.get("url"), f"profile {profile_id}/{arch} config[{index}]")
             destination = config_root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
         expected_profile = Path("profiles") / profile_id / "profile.toml"
         if expected_profile not in staged_config_paths:
             raise ValueError(f"release profile {profile_id}/{arch} lacks {expected_profile}")
-        _scope_profile_to_arch(config_root / expected_profile, arch, profile_id)
+        scope_profile_to_arch(config_root / expected_profile, arch, profile_id)
         stage_legacy_root(shared_config_root, config_root, profile_id, staged_config_paths)
 
-        images = architecture.get("images")
-        if not isinstance(images, list):
-            raise ValueError(f"release profile {profile_id}/{arch} images are malformed")
-        by_kind: dict[str, tuple[str, str, Path]] = {}
-        for index, record in enumerate(images):
-            if not isinstance(record, dict):
-                raise ValueError(f"release profile {profile_id}/{arch} image[{index}] is malformed")
-            record = cast(dict[str, Any], record)
-            if record.get("status") == "revoked":
-                continue
-            kind = record.get("kind")
-            if kind not in logical_names:
-                continue
-            if kind in by_kind:
-                raise ValueError(f"release profile {profile_id}/{arch} repeats {kind} image")
-            logical_name = safe_component(
-                record.get("name") or logical_names[kind],
-                f"profile {profile_id}/{arch} {kind} image name",
-            )
-            digest = record.get("digest", {}).get("blake3")
-            if not isinstance(digest, str):
-                raise ValueError(f"release profile {profile_id}/{arch} {kind} lacks BLAKE3")
-            source = _local_file(record.get("url"), f"profile {profile_id}/{arch} image[{index}]")
-            by_kind[kind] = (logical_name, digest, source)
-        missing = set(logical_names) - set(by_kind)
-        if missing:
-            raise ValueError(f"release profile {profile_id}/{arch} lacks images: {sorted(missing)}")
-        for kind, (logical_name, digest, source) in by_kind.items():
-            hashed = arch_dir / _hash_filename(logical_name, digest)
-            if not hashed.exists():
-                shutil.copy2(source, hashed)
-            elif hashed.read_bytes() != source.read_bytes():
-                raise ValueError(f"release profiles collide at immutable image {hashed.name}")
-            # A few fail-fast checks still require the legacy logical names.
-            # The first deterministic active profile supplies those aliases;
-            # every VM boot resolves its selected profile by the hash name.
-            if profile_index == 0:
-                shutil.copy2(source, arch_dir / logical_names[kind])
+        stage_profile_architecture_assets(
+            architecture,
+            profile_id=profile_id,
+            profile_index=profile_index,
+            arch=arch,
+            arch_dir=arch_dir,
+            evidence_artifacts=evidence_artifacts,
+        )
     return manifest_path
 
 

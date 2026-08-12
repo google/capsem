@@ -75,6 +75,8 @@ def _checkout(tmp_path: Path, *, toolchain: str = "9.99.9") -> Path:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
     (tmp_path / "assets" / TARGET.name).mkdir(parents=True)
+    for name in (*CONFIG.artifacts.bootable, *CONFIG.assets.evidence_artifacts):
+        (tmp_path / "assets" / TARGET.name / name).write_text(name)
     manifest = _asset_manifest(TARGET.name)
     (tmp_path / "assets" / CONFIG.install.manifest_name).write_text(manifest)
     config_root = tmp_path / CONFIG.functional.config_root
@@ -182,6 +184,22 @@ def test_profile_content_refuses_an_architecture_not_declared_by_the_manifest(
         ProfileContent.standalone(config).require_complete(config, arches=(undeclared,))
 
 
+def test_profile_content_refuses_missing_required_evidence_before_docker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    root = _checkout(tmp_path)
+    missing = CONFIG.assets.evidence_artifacts[0]
+    (root / "assets" / TARGET.name / missing).unlink()
+    runner = Building(root, replies={"select-linux": "skip"})
+
+    with pytest.raises(GateError, match=rf"{TARGET.name}/{re.escape(missing)}"):
+        _run_lane(_rail(runner))
+
+    _assert_no_package_docker_started(runner)
+
+
 def _assert_no_package_docker_started(runner: RecordingRunner) -> None:
     assert not any(command.argv[:2] == ("docker", "build") for command in runner.commands)
     assert not any(command.argv[:2] == ("docker", "create") for command in runner.commands)
@@ -259,6 +277,8 @@ def test_package_mounts_only_the_concrete_paired_content_dirs(
     content.config.mkdir(parents=True)
     manifest = _asset_manifest(TARGET.name)
     (content.assets / TARGET.name).mkdir()
+    for name in (*config.artifacts.bootable, *config.assets.evidence_artifacts):
+        (content.assets / TARGET.name / name).write_text(name)
     (content.assets / config.install.manifest_name).write_text(manifest)
     profile = content.profiles(config) / "code" / "profile.toml"
     profile.parent.mkdir(parents=True)

@@ -29,6 +29,12 @@ STAGE_SPEC = importlib.util.spec_from_file_location(
 assert STAGE_SPEC is not None and STAGE_SPEC.loader is not None
 STAGE = importlib.util.module_from_spec(STAGE_SPEC)
 STAGE_SPEC.loader.exec_module(STAGE)
+PROFILE_STAGE_SPEC = importlib.util.spec_from_file_location(
+    "stage_profile_assets", ROOT / "scripts" / "stage_profile_assets.py"
+)
+assert PROFILE_STAGE_SPEC is not None and PROFILE_STAGE_SPEC.loader is not None
+PROFILE_STAGE = importlib.util.module_from_spec(PROFILE_STAGE_SPEC)
+PROFILE_STAGE_SPEC.loader.exec_module(PROFILE_STAGE)
 BOOT_SPEC = importlib.util.spec_from_file_location(
     "prove_release_profile_assets",
     ROOT / "scripts" / "prove-release-profile-assets.py",
@@ -416,6 +422,7 @@ def _write_manifest(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
         "initrd.img": b"initrd",
         "rootfs.erofs": b"rootfs",
         "obom.cdx.json": b'{"bomFormat":"CycloneDX"}',
+        "software-inventory.json": b'{"architecture":"x86_64","packages":[]}',
     }
     for name, payload in artifacts.items():
         (tmp_path / name).write_bytes(payload)
@@ -479,7 +486,13 @@ def _write_manifest(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
                                 artifacts["obom.cdx.json"],
                                 kind="obom",
                                 status="current",
-                            )
+                            ),
+                            _record(
+                                "software-inventory.json",
+                                artifacts["software-inventory.json"],
+                                kind="software_inventory",
+                                status="current",
+                            ),
                         ],
                     }
                 ],
@@ -695,6 +708,7 @@ def test_fetches_every_profile_owned_input(tmp_path: Path) -> None:
         "profiles/code/x86_64/images/initrd.img",
         "profiles/code/x86_64/images/rootfs.erofs",
         "profiles/code/x86_64/evidence/obom.cdx.json",
+        "profiles/code/x86_64/evidence/software-inventory.json",
     }
     assert (output / "profiles/code/x86_64/images/rootfs.erofs").read_bytes() == artifacts[
         "rootfs.erofs"
@@ -853,6 +867,7 @@ def test_candidate_profile_inputs_mix_staged_publication_with_manifest_urls(
         f"{publication_base}/x86_64-initrd.img",
         f"{publication_base}/x86_64-rootfs.erofs",
         f"{publication_base}/x86_64-obom.cdx.json",
+        f"{publication_base}/x86_64-software-inventory.json",
     }
     assert (output / "profiles/code/x86_64/images/x86_64-rootfs.erofs").read_bytes() == artifacts[
         "rootfs.erofs"
@@ -1028,6 +1043,7 @@ def _add_distinct_profile(
         "co-work-initrd.img": b"co-work-initrd",
         "co-work-rootfs.erofs": b"co-work-rootfs",
         "co-work-obom.cdx.json": b'{"bomFormat":"CycloneDX","profile":"co-work"}',
+        "co-work-software-inventory.json": b'{"architecture":"x86_64","profile":"co-work"}',
     }
     for name, payload in artifacts.items():
         (tmp_path / name).write_bytes(payload)
@@ -1069,7 +1085,13 @@ def _add_distinct_profile(
                         artifacts["co-work-obom.cdx.json"],
                         kind="obom",
                         status="current",
-                    )
+                    ),
+                    _record(
+                        "co-work-software-inventory.json",
+                        artifacts["co-work-software-inventory.json"],
+                        kind="software_inventory",
+                        status="current",
+                    ),
                 ],
             }
         ],
@@ -1112,6 +1134,10 @@ def test_stages_every_verified_profile_image_and_exact_config(
     assert (assets / "x86_64/vmlinuz").read_bytes() == artifacts["vmlinuz"]
     assert (assets / "x86_64/initrd.img").read_bytes() == artifacts["initrd.img"]
     assert (assets / "x86_64/rootfs.erofs").read_bytes() == artifacts["rootfs.erofs"]
+    assert (assets / "x86_64/obom.cdx.json").read_bytes() == artifacts["obom.cdx.json"]
+    assert (assets / "x86_64/software-inventory.json").read_bytes() == artifacts[
+        "software-inventory.json"
+    ]
     for logical_name, payload in (
         ("vmlinuz", artifacts["vmlinuz"]),
         ("initrd.img", artifacts["initrd.img"]),
@@ -1119,10 +1145,32 @@ def test_stages_every_verified_profile_image_and_exact_config(
         ("vmlinuz", co_work["co-work-vmlinuz"]),
         ("initrd.img", co_work["co-work-initrd.img"]),
         ("rootfs.erofs", co_work["co-work-rootfs.erofs"]),
+        ("obom.cdx.json", artifacts["obom.cdx.json"]),
+        ("software-inventory.json", artifacts["software-inventory.json"]),
+        ("obom.cdx.json", co_work["co-work-obom.cdx.json"]),
+        ("software-inventory.json", co_work["co-work-software-inventory.json"]),
     ):
         digest = blake3.blake3(payload).hexdigest()
-        staged = assets / "x86_64" / STAGE._hash_filename(logical_name, digest)
+        staged = assets / "x86_64" / PROFILE_STAGE.hash_filename(logical_name, digest)
         assert staged.read_bytes() == payload
+
+
+def test_profile_staging_refuses_missing_configured_evidence_before_package_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    evidence = document["profiles"]["code"]["architectures"][0]["evidence"]
+    document["profiles"]["code"]["architectures"][0]["evidence"] = [
+        record for record in evidence if record["kind"] != "obom"
+    ]
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    inputs = tmp_path / "profile-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+
+    with pytest.raises(ValueError, match=r"code/x86_64.*obom\.cdx\.json"):
+        STAGE.stage_profiles(inputs, tmp_path / "assets", tmp_path / "config", ROOT / "config")
 
 
 def test_selected_install_transport_keeps_the_verified_source_graph(
@@ -1597,7 +1645,7 @@ def test_staged_profile_keeps_everything_outside_the_architecture_table(
     before = tomllib.loads(profile.read_text(encoding="utf-8"))
     assert {"arm64", "x86_64"} <= set(before["assets"]["arch"])
 
-    STAGE._scope_profile_to_arch(profile, "x86_64", "co-work")
+    PROFILE_STAGE.scope_profile_to_arch(profile, "x86_64", "co-work")
 
     after = tomllib.loads(profile.read_text(encoding="utf-8"))
     assert set(after["assets"]["arch"]) == {"x86_64"}
@@ -1616,7 +1664,7 @@ def test_staging_refuses_a_profile_without_the_host_architecture(
     shutil.copy2(ROOT / "config/profiles/co-work/profile.toml", profile)
 
     with pytest.raises(ValueError, match="declares no riscv64 assets"):
-        STAGE._scope_profile_to_arch(profile, "riscv64", "co-work")
+        PROFILE_STAGE.scope_profile_to_arch(profile, "riscv64", "co-work")
 
 
 def test_empty_package_cohort_is_permitted_only_when_stated(tmp_path: Path) -> None:

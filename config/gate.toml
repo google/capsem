@@ -673,7 +673,7 @@ unused-type-ignore-comment = 3
 # policy change. This is historical debt, not capacity: every value may shrink
 # and no value may grow.
 [lint.suppression_budget]
-noqa = 72
+noqa = 70
 type_ignore = 23
 ty_ignore = 6
 ruff_global_ignore = 1
@@ -828,7 +828,7 @@ max_lines = 300
 "scripts/release_glowup.py" = 823
 "scripts/release_inputs.py" = 337
 "scripts/resolve-reusable-profile-assets.py" = 334
-"scripts/stage-release-test-inputs.py" = 557
+"scripts/stage-release-test-inputs.py" = 454
 
 # ---------------------------------------------------------------------------
 # What may not run beside what

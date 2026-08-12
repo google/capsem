@@ -106,6 +106,12 @@ class ProfileContent:
             directory = assets / arch.name
             if not directory.is_dir():
                 raise GateError(f"profile content assets are missing {arch.name}: {directory}")
+            for name in (*config.artifacts.bootable, *config.assets.evidence_artifacts):
+                artifact = directory / name
+                if not artifact.is_file():
+                    raise GateError(
+                        f"profile content artifact is missing {arch.name}/{name}: {artifact}"
+                    )
 
         profiles = self.profiles(config)
         if not profiles.is_dir():

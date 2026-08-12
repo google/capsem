@@ -54,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Hosted install qualification now stages the complete config-owned evidence
+  closure for every selected profile architecture, including OBOM and software
+  inventory aliases plus their immutable hash names. `ProfileContent` refuses
+  an incomplete cohort before package Docker work, so release pairing cannot
+  discover missing evidence only after building the package and install image.
 - The stop-before-service contract now recognizes the shared client's typed
   constructor instead of pinning one obsolete constructor method name. The
   guard continues to require `capsem stop` to return before shared service,
