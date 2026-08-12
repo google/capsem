@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The guest Rust builder's `/src/*` workspace glob is now documented and
+  guarded as load-bearing rather than left looking like an oversight. It skips
+  dotfiles, so `.cargo/config.toml` never reaches `/build` and no container
+  build applies the checked-in Cargo configuration -- which reads like a bug
+  and is not one. That file sets `linker = "rust-lld"` for
+  `x86_64-unknown-linux-musl`; inside the Alpine builder that triple is the
+  *host* target, so inheriting it makes every proc-macro (`serde_derive`,
+  `tokio-macros`) link its host `.so` with rust-lld and fail on
+  `unable to find library -lgcc_s`. Widening the glob was tried and breaks the
+  build. `test_container_workspace_excludes_dotfiles` now fails if it is
+  widened again, and `/build-images` records the rule: checked-in Cargo
+  configuration is developer-host configuration, and the builder container
+  receives its toolchain settings as environment.
 - The complete gate now runs its cheap source checks before the nine-minute
   release contract suite instead of after it. The two phases were already
   serial, so the order cost nothing in total time and everything in how long a

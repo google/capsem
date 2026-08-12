@@ -360,6 +360,80 @@ For kernel:
 5. Extract vmlinuz + initrd.img from image
 6. Clean up
 
+## The guest Rust builder workspace: do not widen the `/src/*` glob
+
+`container_compile_agent` mounts the checkout read-only at `/src` and assembles
+a writable workspace at `/build`:
+
+```sh
+for f in /src/*; do b=$(basename "$f"); \
+  [ "$b" != target ] && [ "$b" != crates ] && ln -s "$f" /build/; done
+```
+
+`/src/*` does not match dotfiles. **That exclusion is load-bearing. Widening it
+breaks the build.** It reads like an oversight -- `.cargo/config.toml` never
+reaches the container, so the checked-in Cargo configuration is never applied --
+and it has been "fixed" on exactly that reasoning.
+
+Why it must stay: `.cargo/config.toml` declares
+
+```toml
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"
+```
+
+On a developer host, `x86_64-unknown-linux-musl` is a *cross* target and
+rust-lld is correct. Inside the Alpine builder that same triple **is the host
+target**, so inheriting the file makes every proc-macro crate -- `serde_derive`,
+`tokio-macros` -- link its host `.so` with rust-lld:
+
+```
+rust-lld: error: unable to find library -lgcc_s
+rust-lld: error: unable to find library -lc
+error: could not compile `tokio-macros`
+```
+
+The rule this generalizes to: **checked-in Cargo configuration is
+developer-host configuration.** The builder container owns its own toolchain
+settings and receives them as environment on the `docker run`, never by reading
+them out of the tree. If a container build needs a linker or a `CC`, pass it
+explicitly.
+
+`tests/test_guest_rust_builder_hermetic.py::test_container_workspace_excludes_dotfiles`
+fails if the glob is widened, so this cannot be rediscovered the slow way.
+
+## Cross-compiling guest binaries instead of emulating
+
+Foreign-target guest builds run `rustc` under QEMU on the target's own platform
+child. Measured on a 16-core Linux host, cold, `--locked --offline`, for the six
+aarch64 guest binaries:
+
+| | |
+|---|---|
+| emulated (`--platform linux/arm64`, qemu-aarch64) | 1194.7s |
+| cross-compiled from the amd64 base | 86s |
+
+A profile release run compiles that graph **three** times -- co-work rootfs,
+code rootfs, and `assets.pack-initrds` -- so emulation costs roughly forty
+minutes per run.
+
+What a cross image needs, materialized at image-build time on the same
+network-open setup edge that `cargo fetch --locked` already uses:
+
+- `apk add --no-cache clang lld`. `ring` is the **only** crate in the
+  `capsem-agent` + `capsem-bench` graph that compiles C -- nothing else pulls
+  `cc`, `cmake` or `bindgen`. Alpine's clang cross-compiles it for a foreign
+  musl target with **no external sysroot**.
+- `rustup target add "${RUST_TARGET}"`, after which the existing
+  `rustup target list --installed` assertion proves it landed.
+- `CC_<target>=clang` and `CFLAGS_<target>=--target=<target>` on the run.
+- `CARGO_TARGET_<TARGET>_LINKER=rust-lld` on the run -- **not** by linking
+  `.cargo/config.toml` into the workspace, for the reason in the section above.
+
+The runtime build stays `--network none` with `--locked --offline`. The image
+tag is keyed by the base, the target, the Dockerfile and the lockfiles, so a
+change to any of them is a different image rather than a silent reuse.
+
 ## Container runtime requirements
 
 On macOS, Docker runs inside a Colima VM with limited resources.

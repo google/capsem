@@ -293,3 +293,46 @@ def test_cross_build_runs_from_materialized_inputs_with_network_denied(
     assert "rustup target add" not in script
     assert "cargo build --locked --offline" in script
     assert command[-3:-1] == ["sh", "-c"]
+
+
+@patch("capsem.builder.docker.run_cmd")
+@patch("capsem.builder.docker.detect_runtime", return_value="docker")
+def test_container_workspace_excludes_dotfiles(
+    _detect: MagicMock, run: MagicMock, tmp_path: Path
+) -> None:
+    """The `/src/*` glob must not be widened to match dotfiles.
+
+    It reads like an oversight -- `.cargo/config.toml` never reaches `/build`,
+    so no container build applies the checked-in Cargo configuration -- and it
+    has been "fixed" on exactly that reasoning.
+
+    It is load-bearing. `.cargo/config.toml` sets `linker = "rust-lld"` for
+    `x86_64-unknown-linux-musl`. On a developer host that is a cross target and
+    rust-lld is right; inside the Alpine builder the same triple is the *host*
+    target, so every proc-macro (`serde_derive`, `tokio-macros`) links its host
+    `.so` with rust-lld and dies on `unable to find library -lgcc_s`.
+
+    Checked-in Cargo configuration is developer-host configuration. The
+    container owns its toolchain settings and receives them as environment.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _seed_identity(repo)
+    output = tmp_path / "output"
+
+    def produce(cmd, **_kwargs):
+        if "run" in cmd:
+            for binary in GUEST_BINARIES:
+                (output / binary).write_bytes(b"elf")
+        return MagicMock(stdout="")
+
+    run.side_effect = produce
+    container_compile_agent(BUILD, "arm64", repo, output)
+    script = next(call.args[0] for call in run.call_args_list if "run" in call.args[0])[-1]
+
+    assert "for f in /src/*; do" in script
+    # The two spellings that widen it to dotfiles, and the file that makes
+    # doing so fatal.
+    assert "/src/.[!.]*" not in script
+    assert "/src/.*" not in script
+    assert ".cargo" not in script

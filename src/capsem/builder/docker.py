@@ -573,7 +573,24 @@ def container_compile_agent(
             image,
             "sh",
             "-c",
-            f'for f in /src/*; do b=$(basename "$f"); [ "$b" != target ] && [ "$b" != crates ] && ln -s "$f" /build/; done && '
+            # `/src/*` does not match dotfiles, and that exclusion is
+            # load-bearing rather than incidental -- it was relied on for a
+            # long time without being stated, so it is stated here.
+            #
+            # `.cargo/config.toml` declares `linker = "rust-lld"` for
+            # `x86_64-unknown-linux-musl`. On a developer host that target is
+            # a cross target and rust-lld is the right answer. Inside this
+            # Alpine builder the same triple *is* the host, so inheriting the
+            # file makes every proc-macro -- `serde_derive`, `tokio-macros` --
+            # link its host `.so` with rust-lld and fail on `-lgcc_s`/`-lc`.
+            # Checked-in Cargo configuration is developer-host configuration;
+            # the container owns its own toolchain settings and passes them as
+            # environment, which is why the cross linker is set explicitly
+            # below rather than read from the tree.
+            #
+            # Widening this glob therefore breaks the build. Verified, not
+            # assumed: `/src/.[!.]*` fails at `tokio-macros`.
+            'for f in /src/*; do b=$(basename "$f"); [ "$b" != target ] && [ "$b" != crates ] && ln -s "$f" /build/; done && '
             f"cp -r /src/crates /build/crates && "
             f"cargo build --locked --offline --release --target {rust_target} "
             "-p capsem-agent -p capsem-bench && "
