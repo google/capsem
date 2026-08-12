@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The complete gate now runs its cheap source checks before the nine-minute
+  release contract suite instead of after it. The two phases were already
+  serial, so the order cost nothing in total time and everything in how long a
+  trivial failure took to surface: two consecutive `release-profile` attempts
+  died at 9m12 and 11m39 on a single unused local variable that `ruff` reports
+  in under two seconds. Ruff and both Ty passes now answer at wave five rather
+  than behind `contracts.release`.
+- `pr-gate` enforcement is now proved structurally rather than by substring.
+  The literal-text contract was inverted in both directions: reformatting
+  `needs:` into YAML block style or reordering it -- neither of which GitHub
+  can distinguish from the original -- turned four contracts red, while
+  appending `|| true` to every enforcement line or adding
+  `continue-on-error: true` to the deciding step left all twenty-four
+  assertions green with merge protection fully disabled.
+  `tests/test_ci_enforcement_contract.py` reads the parsed workflow, checks the
+  properties no substring can see, and keeps all four mutations as executable
+  cases so a regression to text matching fails there.
+- `_workflow_job_block` locates a job through the parsed document instead of
+  slicing on exact two-space indentation. The old slice lost the job outright
+  after a reindent and truncated the block at any comment at that indentation
+  ending in `:`, silently dropping every step below it from the assertions that
+  followed. The required pr-gate job list is now one set constant rather than
+  the same exact string restated in four contracts.
 - EROFS rootfs publication now accepts only the release-owned `lz4` and
   `lz4hc` formats. The unused experimental zstd rail and its mutable
   `debian:trixie-slim` helper selection have been removed before the 0.6 cut.

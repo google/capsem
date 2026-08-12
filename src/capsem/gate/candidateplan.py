@@ -69,9 +69,18 @@ def compose(
         after=after,
     )
 
-    contracts = module_contracts.release_contracts(plan, config, after=(recorded,))
-    fast = testmodules.fast(plan, config, after=(contracts,))
-    modules = compose_modules(plan, config, qualification=qualification, after=fast)
+    # Cheap before expensive. These two were the other way round, and they are
+    # serial either way -- so the order cost nothing in total time and
+    # everything in how long a trivial failure takes to arrive. `contracts` is
+    # a nine-minute pytest run, and Ruff, which answers in under two seconds,
+    # sat behind it: two consecutive `release-profile` attempts died at 9m12
+    # and 11m39 on one unused local variable.
+    #
+    # `fast` also opens with `toolchain.sync`, so running it first means the
+    # contracts suite is no longer the step that discovers the environment.
+    fast = testmodules.fast(plan, config, after=(recorded,))
+    contracts = module_contracts.release_contracts(plan, config, after=fast)
+    modules = compose_modules(plan, config, qualification=qualification, after=(contracts,))
 
     return plan.add(step("source.verify", RequireSourceUnchanged()), after=(modules,))
 
