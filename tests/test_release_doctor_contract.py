@@ -4839,11 +4839,15 @@ def test_stop_command_stays_before_status_and_credential_hydration() -> None:
     for needle in forbidden:
         assert needle not in body, f"`capsem stop` must not touch {needle}"
 
-    client_creation = source.find("let client = UdsClient::new")
+    client_creation = re.search(
+        r"^\s*let client = (?:client::)?UdsClient::[a-z_][a-z0-9_]*\(",
+        source,
+        re.MULTILINE,
+    )
     stop_position = source.find("Commands::Misc(MiscCommands::Stop)")
     assert stop_position != -1
-    assert client_creation != -1
-    assert stop_position < client_creation
+    assert client_creation is not None
+    assert stop_position < client_creation.start()
 
 
 def test_changelog_does_not_advertise_keychain_credential_storage_for_1_3() -> None:

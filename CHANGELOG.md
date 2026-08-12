@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The stop-before-service contract now recognizes the shared client's typed
+  constructor instead of pinning one obsolete constructor method name. The
+  guard continues to require `capsem stop` to return before shared service,
+  status, profile, or credential hydration.
 - Selected install qualification now keeps the fetched release graph intact
   and relies on its twice-executed immutable input report for local byte
   binding. Hosted stable/nightly manifests are no longer mistaken for a
