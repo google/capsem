@@ -630,10 +630,26 @@ def test_an_outside_action_uses_only_the_capability_runner() -> None:
     assert all(command.env[variable] == "" for command in capability.commands)
 
 
+def test_an_outside_wrapper_moves_an_opaque_materializer_only() -> None:
+    from capsem.gate.outside import Outside
+
+    ordinary = RecordingRunner(PROJECT_ROOT)
+    capability = RecordingRunner(PROJECT_ROOT)
+    context = Context(ordinary, CONFIG, outside_runner=capability)
+
+    Outside(Run(("docker", "pull", "example@sha256:" + "0" * 64))).perform(context)
+
+    assert ordinary.commands == []
+    assert [command.argv for command in capability.commands] == [
+        ("docker", "pull", "example@sha256:" + "0" * 64)
+    ]
+
+
 @pytest.mark.parametrize(
     ("name", "args"),
     [
         ("test-fast", ()),
+        ("test-static", ()),
         ("candidate", ()),
         ("release-binaries", (("channel", "nightly"),)),
         (
@@ -647,9 +663,9 @@ def test_only_named_dependency_inputs_cross_the_fast_gate_network_boundary(
 ) -> None:
     """Mutable advisory services are narrow exceptions, not a wider gate.
 
-    Mutable advisory queries and the digest-authorized ORT distribution are
-    the exact exceptions. Every compiler and test action stays inside the
-    loopback-only namespace.
+    Mutable advisory queries, digest-authorized distributions, and exact
+    dependency-image materializers are the exceptions. Every compiler and
+    test action stays inside the loopback-only namespace.
     """
     from helpers.gate import built_command
 
@@ -660,7 +676,14 @@ def test_only_named_dependency_inputs_cross_the_fast_gate_network_boundary(
         if any("[outside kernel sandbox]" in line for line in candidate.render())
     }
 
-    expected = ONLINE_FAST | ({"static.toolchain.ort"} if name != "test-fast" else set())
+    expected = ONLINE_FAST if name != "test-static" else set()
+    if name != "test-fast":
+        expected |= {
+            "host-image",
+            "install.materialize",
+            "static.guest-builder",
+            "static.toolchain.ort",
+        }
     assert marked >= expected
     assert not {
         label

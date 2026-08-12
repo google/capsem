@@ -22,6 +22,7 @@ from . import (
     host,
     hostimage,
     hostpackage,
+    imagebases,
     installimage,
     pytestsuite,
     sandbox,
@@ -36,6 +37,7 @@ from .egress import Egress
 from .execution import Step, step
 from .fileactions import RequireFile
 from .lifecycle import Resource
+from .outside import Outside
 from .plan import Plan
 from .proc import Runner
 from .workspace import Workspace
@@ -207,6 +209,17 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
     installimage.fragment(plan, config, after=after)
 
     initrd = config.initrd
+    host_arch = config.host_arch().name
+    guest_builder = phase.add(
+        step(
+            "guest-builder",
+            Outside(imagebases.Prefetch((), rust_names=(host_arch,))),
+            Outside(imagebases.MaterializeRustBuilders((host_arch,))),
+            contends=(config.exclusive("docker_daemon"),),
+            carry_checks=(imagebases.RequireRustBuilders((host_arch,)),),
+        ),
+        after=after,
+    )
     agents = phase.add(
         step(
             "guest-agents",
@@ -217,7 +230,7 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
                 for name in initrd.binaries
             ),
         ),
-        after=after,
+        after=(guest_builder,),
     )
     binaries = phase.add(_guest_binaries_present(config), after=(agents,))
     leaves.append(

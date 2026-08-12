@@ -93,6 +93,21 @@ def test_rust_builds_wait_for_the_verified_host_ort_distribution(
     assert "ORT_LIB_LOCATION=" in rendered
 
 
+def test_static_materializes_only_dependency_helpers_outside_the_sandbox() -> None:
+    plan = _plan(StaticModule)
+    networked = {"host-image", "install.materialize", "static.guest-builder"}
+
+    for label in networked:
+        rendered = plan.step_named(label).render()
+        assert any("[outside kernel sandbox]" in line for line in rendered), label
+
+    assert plan.after_of("static.guest-agents") == {"static.guest-builder"}
+    for label in ("install.image-build", "install.image-smoke", "static.guest-agents"):
+        assert all(
+            "[outside kernel sandbox]" not in line for line in plan.step_named(label).render()
+        ), label
+
+
 def test_the_dependency_is_taken_from_config_not_from_position() -> None:
     """Reordering the surface list must not move the edge onto another one."""
     assert CONFIG.websurfaces.blocks_clippy == "frontend"

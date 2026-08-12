@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Cold static qualification now routes only exact Docker dependency
+  materializers through the authenticated pre-sandbox capability. Host,
+  install, and guest Rust helpers are available before their sealed consumers;
+  source builds and runtime remain network-denied. Guest helper probes also
+  use Docker's portable formatted identity instead of the version-specific
+  `image inspect --platform` flag used neither by hosted Docker nor Colima.
+
 - Daily nightly release runners now execute the canonical Linux bootstrap
   before enforced qualification. The bootstrap may repair only GitHub's known
   hosted-runner AppArmor restriction, then must prove the complete Bubblewrap

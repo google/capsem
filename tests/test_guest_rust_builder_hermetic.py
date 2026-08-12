@@ -340,9 +340,29 @@ def test_cross_build_fails_closed_when_the_materialized_helper_is_missing(
     assert run.call_count == 1
     inspected = run.call_args.args[0]
     assert inspected[:3] == ["docker", "image", "inspect"]
+    assert inspected[3:5] == ["--format", "{{.Os}}/{{.Architecture}}"]
+    assert "--platform" not in inspected
     assert image_tag(BUILD, "arm64", repo) == inspected[-1]
     assert "pull" not in inspected
     assert "build" not in inspected
+
+
+@patch("capsem.builder.docker.run_cmd")
+@patch("capsem.builder.docker.detect_runtime", return_value="docker")
+def test_cross_build_refuses_a_materialized_helper_for_the_wrong_platform(
+    _detect: MagicMock, run: MagicMock, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _seed_identity(repo)
+    expected = guestbuilder.environment(BUILD, "arm64").docker_platform
+    wrong = "linux/arm64" if expected != "linux/arm64" else "linux/amd64"
+    run.return_value = MagicMock(stdout=f"{wrong}\n")
+
+    with pytest.raises(RuntimeError, match=f"resolves to {wrong}, expected {expected}"):
+        container_compile_agent(BUILD, "arm64", repo, tmp_path / "output")
+
+    assert run.call_count == 1
 
 
 @patch("capsem.builder.docker.run_cmd")
@@ -356,6 +376,8 @@ def test_cross_build_runs_from_materialized_inputs_with_network_denied(
     output = tmp_path / "output"
 
     def produce(cmd, **_kwargs):
+        if "inspect" in cmd:
+            return MagicMock(stdout=f"{guestbuilder.environment(BUILD, 'arm64').docker_platform}\n")
         if "run" in cmd:
             for binary in GUEST_BINARIES:
                 (output / binary).write_bytes(b"elf")
@@ -405,6 +427,8 @@ def test_container_workspace_excludes_dotfiles(
     output = tmp_path / "output"
 
     def produce(cmd, **_kwargs):
+        if "inspect" in cmd:
+            return MagicMock(stdout=f"{guestbuilder.environment(BUILD, 'arm64').docker_platform}\n")
         if "run" in cmd:
             for binary in GUEST_BINARIES:
                 (output / binary).write_bytes(b"elf")

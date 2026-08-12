@@ -17,6 +17,7 @@ from .execution import Step, step
 from .imageidentity import exact_image_id, exact_image_reference, require_input_key
 from .invocation import ConsoleMode
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
+from .outside import Outside
 from .plan import Plan
 from .proc import Runner
 from .storage import Storage
@@ -25,8 +26,6 @@ INPUT_KEY_LABEL = "org.capsem.install-image.input-key"
 
 
 class InstallImageStep(StrEnum):
-    """Stable graph identities for the sealed install-image lifecycle."""
-
     CAPACITY = "install.capacity"
     MATERIALIZE = "install.materialize"
     BUILD = "install.image-build"
@@ -126,8 +125,6 @@ def build_source_image(
         network=config.install.builder.source_build_network,
         console=ConsoleMode.LOG_ONLY,
     )
-    # Bind the local FROM tag on both sides: local Docker/Colima images often
-    # lack a portable RepoDigest, so the exact-ID checks make movement fail closed.
     installbuilder.require_local_image(runner, config, expected=identity)
     require_input_key(
         docker,
@@ -220,19 +217,21 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
     materialized = plan.shared(
         step(
             _step_label(InstallImageStep.MATERIALIZE),
-            Call(
-                "materialize locked install qualification dependencies",
-                materialize,
-                justification=CallJustification(
-                    kind=OpaqueKind.RUNTIME_DERIVED,
-                    reason="the exact host-builder child and helper input key resolve at run time",
-                    effects=machine_effects(
-                        Effect.PROCESS,
-                        Effect.FILESYSTEM,
-                        Effect.NETWORK,
-                        Effect.HOST_STATE,
+            Outside(
+                Call(
+                    "materialize locked install qualification dependencies",
+                    materialize,
+                    justification=CallJustification(
+                        kind=OpaqueKind.RUNTIME_DERIVED,
+                        reason="the exact host-builder child and helper input key resolve at run time",
+                        effects=machine_effects(
+                            Effect.PROCESS,
+                            Effect.FILESYSTEM,
+                            Effect.NETWORK,
+                            Effect.HOST_STATE,
+                        ),
                     ),
-                ),
+                )
             ),
             contends=(config.exclusive("docker_daemon"),),
         ),

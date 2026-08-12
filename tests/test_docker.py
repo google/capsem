@@ -2228,7 +2228,8 @@ class TestContainerCompileAgent:
             # Simulate container creating binaries in bind-mounted output
             for b in GUEST_BINARIES:
                 (output_dir / b).write_bytes(b"binary content")
-            return MagicMock(stdout="")
+            platform = guestbuilder.environment(real_config.build, "arm64").docker_platform
+            return MagicMock(stdout=f"{platform}\n" if "inspect" in cmd else "")
 
         mock_run.side_effect = side_effect
 
@@ -2280,7 +2281,8 @@ class TestContainerCompileAgent:
         def side_effect(cmd, **kwargs):
             for b in GUEST_BINARIES:
                 (output_dir / b).write_bytes(b"binary content")
-            return MagicMock(stdout="")
+            platform = guestbuilder.environment(real_config.build, "x86_64").docker_platform
+            return MagicMock(stdout=f"{platform}\n" if "inspect" in cmd else "")
 
         mock_run.side_effect = side_effect
 
@@ -2309,7 +2311,10 @@ class TestContainerCompileAgent:
         _seed_guest_rust_builder_inputs(repo_root, real_config)
         output_dir = tmp_path / "output"
         # Container runs but doesn't create binaries (simulates build failure)
-        mock_run.return_value = MagicMock(stdout="")
+        platform = guestbuilder.environment(real_config.build, "arm64").docker_platform
+        mock_run.side_effect = lambda cmd, **_kwargs: MagicMock(
+            stdout=f"{platform}\n" if "inspect" in cmd else ""
+        )
 
         with pytest.raises(RuntimeError, match="Expected binary not found"):
             container_compile_agent(
@@ -2331,7 +2336,8 @@ class TestContainerCompileAgent:
         def side_effect(cmd, **kwargs):
             for b in GUEST_BINARIES:
                 (output_dir / b).write_bytes(b"")  # empty
-            return MagicMock(stdout="")
+            platform = guestbuilder.environment(real_config.build, "arm64").docker_platform
+            return MagicMock(stdout=f"{platform}\n" if "inspect" in cmd else "")
 
         mock_run.side_effect = side_effect
 
@@ -2355,10 +2361,16 @@ class TestContainerCompileAgentShellScript:
     def _extract_shell_script(self, mock_run, real_config, tmp_path):
         """Run container_compile_agent and return the sh -c script string."""
         _seed_guest_rust_builder_inputs(tmp_path / "repo", real_config)
-        mock_run.side_effect = lambda cmd, **kw: (
-            [(tmp_path / "output" / b).write_bytes(b"elf") for b in GUEST_BINARIES]
-            or MagicMock(stdout="")
-        )
+
+        def run(cmd, **_kwargs):
+            if "inspect" in cmd:
+                platform = guestbuilder.environment(real_config.build, "arm64").docker_platform
+                return MagicMock(stdout=f"{platform}\n")
+            for binary in GUEST_BINARIES:
+                (tmp_path / "output" / binary).write_bytes(b"elf")
+            return MagicMock(stdout="")
+
+        mock_run.side_effect = run
         container_compile_agent(
             real_config.build,
             "arm64",

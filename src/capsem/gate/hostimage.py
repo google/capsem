@@ -27,6 +27,7 @@ from .docker import Docker
 from .errors import GateError
 from .execution import Step, step
 from .invocation import ConsoleMode
+from .outside import Outside
 from .packageinputs import pinned_toolchain
 from .plan import Plan
 
@@ -129,14 +130,15 @@ def image(config: GateConfig) -> Step:
     """Build the builder, then prove it can read the checkout as a stranger."""
     return step(
         STEP,
-        _Build(),
+        Outside(_Build()),
+        _Require(),
         contends=(config.exclusive("docker_daemon"),),
         carry_checks=(_Require(),),
     )
 
 
-class _Build(Action, name="host-image-build"):
-    """Build the builder, through the wrapper like every other image."""
+class _Build(Action, name="host-image-materialize"):
+    """Materialize the builder's exact dependencies at its named egress edge."""
 
     def render(self) -> str:
         return "docker build the Linux host builder image"
@@ -185,7 +187,6 @@ class _Build(Action, name="host-image-build"):
                     f"host builder {settings.tag} carries input key {found!r}, expected {identity}"
                 )
             context.runner.note(f"host builder materialized with input key {identity}")
-        _prove_tools(context, docker)
 
 
 class _Require(Action, name="host-image-require"):

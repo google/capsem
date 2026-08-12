@@ -574,8 +574,8 @@ def container_compile_agent(
 
     image = image_tag(build, arch_name, repo_root)
     try:
-        run_cmd(
-            [runtime, "image", "inspect", "--platform", docker_platform, image],
+        inspected = run_cmd(
+            [runtime, "image", "inspect", "--format", "{{.Os}}/{{.Architecture}}", image],
             capture=True,
             echo=False,
         )
@@ -584,6 +584,12 @@ def container_compile_agent(
             f"locked guest Rust builder is missing: {image}; "
             "materialize the asset build inputs before cross-compiling"
         ) from error
+    found_platform = inspected.stdout.strip()
+    if found_platform != docker_platform:
+        raise RuntimeError(
+            f"locked guest Rust builder {image} resolves to {found_platform or '<empty>'}, "
+            f"expected {docker_platform}"
+        )
 
     # The container owns its toolchain settings, passed in rather than read out
     # of the tree -- see the workspace comment below for why `.cargo/config.toml`
