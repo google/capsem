@@ -1,5 +1,6 @@
 """Install package asset-payload contract tests."""
 
+import ast
 import contextlib
 import errno
 import functools
@@ -917,12 +918,21 @@ def test_install_test_consumes_exact_publishable_package_without_rebuild() -> No
 
 def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> None:
     script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    tree = ast.parse(script)
+    clone_functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "clone_manifest_for_channel"
+    ]
 
     assert "scripts/repack-deb.sh" in script
     assert "scripts/generate-host-binary-sbom.py" in script
     assert "record-binary" in script
     assert "assets" in script and "channel" in script and "build" in script
-    assert "json.dumps({" not in script or "capsem.local_release_glowup.v1" in script
+    assert len(clone_functions) == 1
+    assert not any(isinstance(node, ast.Dict) for node in ast.walk(clone_functions[0])), (
+        "channel projection must derive from selected manifest bytes, not a literal fake graph"
+    )
     assert "stable-assets-manifest.json" in script
     assert "nightly-assets-manifest.json" in script
     assert "clone_manifest_for_channel(" in script
@@ -3037,14 +3047,20 @@ def test_installed_doctor_failure_is_printed_and_preserved() -> None:
 
 
 def test_ci_install_job_uploads_glowup_evidence_on_failure() -> None:
-    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
-    install_job = _workflow_job_blocks(workflow)["test-install"]
+    workflow = yaml.safe_load((PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text())
+    upload = next(
+        step
+        for step in workflow["jobs"]["test-install"]["steps"]
+        if step.get("name") == "Upload install and glow-up evidence on failure"
+    )
 
-    assert "Upload install and glow-up evidence on failure" in install_job
-    assert "if: failure()" in install_job
-    assert "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in install_job
-    assert "target/local-release-glowup/" in install_job
-    assert "if-no-files-found: warn" in install_job
+    assert upload["if"] == "failure()"
+    assert upload["uses"] == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    assert set(upload["with"]["path"].splitlines()) == {
+        "target/gate-runs/",
+        "target/local-release-glowup-evidence/",
+    }
+    assert upload["with"]["if-no-files-found"] == "error"
 
 
 def test_asset_build_recipes_skip_kvm_only_for_build_prereq_doctor() -> None:
