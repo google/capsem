@@ -419,6 +419,7 @@ def test_package_network_vocabularies_are_schema_bound(
 def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> None:
     builder = CONFIG.package.builder
     dockerfile = (PROJECT_ROOT / builder.dockerfile).read_text(encoding="utf-8")
+    normalized_dockerfile = " ".join(dockerfile.replace("\\\n", " ").split())
     script = (PROJECT_ROOT / CONFIG.package.build_script).read_text(encoding="utf-8")
 
     assert "ENV RUSTUP_AUTO_INSTALL=0" in dockerfile
@@ -438,7 +439,10 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     assert "COPY --from=dependency-fetch /cargo-target" not in dockerfile
     assert 'test -n "${APT_SNAPSHOT_BASE}"' in dockerfile
     assert 'test -n "${APT_SNAPSHOT_ID}"' in dockerfile
-    assert 'swap-dev-libs "${DPKG_ARCH}" "${APT_SNAPSHOT_BASE}" "${APT_SNAPSHOT_ID}"' in dockerfile
+    assert (
+        'swap-dev-libs "${DPKG_ARCH}" "${APT_SNAPSHOT_BASE}" '
+        '"${APT_SNAPSHOT_ID}" "${CROSS_DEV_PACKAGES}"'
+    ) in normalized_dockerfile
     assert "COPY --chmod=555 docker/swap-dev-libs.sh /usr/local/bin/swap-dev-libs" in dockerfile
     assert "ARG INPUT_IDENTITY" in dockerfile
     assert "org.capsem.package-builder.input-key=${INPUT_IDENTITY}" in dockerfile
@@ -448,6 +452,7 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     assert 'SNAPSHOT_URL="${APT_SNAPSHOT_BASE%/}/${APT_SNAPSHOT_ID}"' in swap
     assert 'APT_SNAPSHOT_BASE="${2:?' in swap
     assert 'APT_SNAPSHOT_ID="${3:?' in swap
+    assert 'DEV_PACKAGES_RAW="${4:?' in swap
     assert "inherited apt sources" not in swap
     assert "archive.ubuntu.com" not in swap
     assert "security.ubuntu.com" not in swap
@@ -506,6 +511,31 @@ def test_source_only_bytes_do_not_change_the_dependency_helper_input_key(
     source.write_text('fn main() { println!("changed"); }\n', encoding="utf-8")
 
     assert image_tag(config, config.arch("arm64"), docker) == before
+
+
+def test_cross_dev_package_authority_changes_the_dependency_helper_input_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from capsem.gate.docker import Docker
+    from capsem.gate.packagebuilder import image_tag
+
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    root = _checkout(tmp_path)
+    config = gate_config.load(root)
+    docker = Docker(RecordingRunner(root))
+    before = image_tag(config, config.arch("arm64"), docker)
+    linux = config.toolchain.linux.model_copy(
+        update={
+            "cross_dev_packages": tuple(reversed(config.toolchain.linux.cross_dev_packages)),
+        }
+    )
+    changed = config.model_copy(
+        update={
+            "toolchain": config.toolchain.model_copy(update={"linux": linux}),
+        }
+    )
+
+    assert image_tag(changed, changed.arch("arm64"), docker) != before
 
 
 def _stubbed_swap(tmp_path: Path, *, native: str, remove_status: int = 0):
@@ -568,6 +598,7 @@ def _stubbed_swap(tmp_path: Path, *, native: str, remove_status: int = 0):
     [
         ("arm64",),
         ("arm64", "https://snapshot.ubuntu.com/ubuntu"),
+        ("arm64", "https://snapshot.ubuntu.com/ubuntu", "20260810T000000Z"),
     ],
 )
 def test_package_swap_refuses_missing_snapshot_authority_before_apt(
@@ -582,10 +613,33 @@ def test_package_swap_refuses_missing_snapshot_authority_before_apt(
     assert not sources.exists()
 
 
+def test_package_swap_refuses_invalid_config_owned_package_before_mutation(
+    tmp_path: Path,
+) -> None:
+    run, log, sources = _stubbed_swap(tmp_path, native="arm64")
+
+    result = run(
+        "arm64",
+        "https://snapshot.ubuntu.com/ubuntu",
+        "20260810T000000Z",
+        "libssl-dev;touch-pwned",
+    )
+
+    assert result.returncode != 0
+    assert "invalid cross-architecture dev package" in result.stderr
+    assert not log.exists()
+    assert not sources.exists()
+
+
 def test_native_package_swap_reinstalls_dev_libraries_from_the_snapshot(tmp_path: Path) -> None:
     run, log, sources = _stubbed_swap(tmp_path, native="arm64")
 
-    result = run("arm64", "https://snapshot.ubuntu.com/ubuntu", "20260810T000000Z")
+    result = run(
+        "arm64",
+        "https://snapshot.ubuntu.com/ubuntu",
+        "20260810T000000Z",
+        " ".join(CONFIG.toolchain.linux.cross_dev_packages),
+    )
 
     assert result.returncode == 0, result.stderr
     recorded = log.read_text(encoding="utf-8")
@@ -600,7 +654,12 @@ def test_native_package_swap_reinstalls_dev_libraries_from_the_snapshot(tmp_path
 def test_foreign_package_swap_updates_then_removes_then_installs(tmp_path: Path) -> None:
     run, log, _sources = _stubbed_swap(tmp_path, native="amd64")
 
-    result = run("arm64", "https://snapshot.ubuntu.com/ubuntu", "20260810T000000Z")
+    result = run(
+        "arm64",
+        "https://snapshot.ubuntu.com/ubuntu",
+        "20260810T000000Z",
+        " ".join(CONFIG.toolchain.linux.cross_dev_packages),
+    )
 
     assert result.returncode == 0, result.stderr
     recorded = log.read_text(encoding="utf-8")
@@ -612,7 +671,12 @@ def test_foreign_package_swap_updates_then_removes_then_installs(tmp_path: Path)
 def test_foreign_package_swap_stops_when_native_removal_fails(tmp_path: Path) -> None:
     run, log, _sources = _stubbed_swap(tmp_path, native="amd64", remove_status=19)
 
-    result = run("arm64", "https://snapshot.ubuntu.com/ubuntu", "20260810T000000Z")
+    result = run(
+        "arm64",
+        "https://snapshot.ubuntu.com/ubuntu",
+        "20260810T000000Z",
+        " ".join(CONFIG.toolchain.linux.cross_dev_packages),
+    )
 
     assert result.returncode == 19
     recorded = log.read_text(encoding="utf-8")

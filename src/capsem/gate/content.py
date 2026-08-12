@@ -142,7 +142,11 @@ class SelectedInstallContent:
             if not (inputs / name).is_file():
                 raise GateError(f"selected release input is missing: {inputs / name}")
 
-        manifest = self.content.assets / config.install.manifest_name
+        # The mounted runtime projection is deliberately legacy-shaped so the
+        # installed service can consume it, while `inputs/manifest.json` is the
+        # immutable release graph whose URLs identify the pulled byte cohort.
+        # They describe the same cohort but are not byte-identical formats.
+        manifest = inputs / config.install.manifest_name
         try:
             document = json.loads(manifest.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:

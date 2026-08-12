@@ -47,6 +47,7 @@ FROM ${BASE}
 ARG DPKG_ARCH
 ARG APT_SNAPSHOT_BASE
 ARG APT_SNAPSHOT_ID
+ARG CROSS_DEV_PACKAGES
 ARG CARGO_STORE
 ARG PNPM_STORE
 ARG ORT_LIB_LOCATION
@@ -60,10 +61,12 @@ COPY --chmod=555 docker/swap-dev-libs.sh /usr/local/bin/swap-dev-libs
 # materialization. Missing authority is a hard failure, never ambient latest.
 RUN test -n "${APT_SNAPSHOT_BASE}" \
     && test -n "${APT_SNAPSHOT_ID}" \
+    && test -n "${CROSS_DEV_PACKAGES}" \
     && test -n "${CARGO_STORE}" \
     && test -n "${PNPM_STORE}" \
     && test -n "${ORT_LIB_LOCATION}" \
-    && swap-dev-libs "${DPKG_ARCH}" "${APT_SNAPSHOT_BASE}" "${APT_SNAPSHOT_ID}"
+    && swap-dev-libs "${DPKG_ARCH}" "${APT_SNAPSHOT_BASE}" \
+        "${APT_SNAPSHOT_ID}" "${CROSS_DEV_PACKAGES}"
 
 COPY --from=dependency-fetch /capsem-deps/cargo/registry ${CARGO_STORE}/registry
 COPY --from=dependency-fetch /capsem-deps/cargo/git ${CARGO_STORE}/git

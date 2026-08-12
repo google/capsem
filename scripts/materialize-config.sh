@@ -1,6 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+pair_content=0
+case "$#" in
+    0)
+        ;;
+    1)
+        if [ "$1" != "--pair-content" ]; then
+            echo "ERROR: unknown materialize-config argument: $1" >&2
+            exit 2
+        fi
+        pair_content=1
+        ;;
+    *)
+        echo "ERROR: materialize-config accepts only --pair-content" >&2
+        exit 2
+        ;;
+esac
+
 ROOT="${CAPSEM_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 ASSETS_DIR="${CAPSEM_ASSETS_DIR:-assets}"
 OUTPUT_ROOT="${CAPSEM_CONFIG_OUTPUT_ROOT:-$ROOT/target/config}"
@@ -182,3 +199,50 @@ for profile_path in "${profile_paths[@]}"; do
         --output-root "$OUTPUT_ROOT" \
         --arch "$arch"
 done
+
+case "$pair_content" in
+    0)
+        ;;
+    1)
+        python3 - "$ASSETS_PATH" "$OUTPUT_ROOT" "$MANIFEST" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+assets = Path(sys.argv[1])
+config = Path(sys.argv[2])
+selected_manifest = Path(sys.argv[3])
+for label, directory in (("assets", assets), ("config", config)):
+    if directory.is_symlink() or not directory.is_dir():
+        raise SystemExit(f"paired content {label} must be a real directory: {directory}")
+
+runtime_manifest = config / "assets" / "manifest.json"
+asset_manifest = assets / "manifest.json"
+if selected_manifest.resolve() != asset_manifest.resolve():
+    raise SystemExit(
+        "paired content manifest must be the selected asset manifest: "
+        f"{selected_manifest} != {asset_manifest}"
+    )
+try:
+    payload = runtime_manifest.read_bytes()
+    document = json.loads(payload)
+    current = document["assets"]["current"]
+    document["assets"]["releases"][current]["arches"]
+except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+    raise SystemExit(f"materialized runtime manifest is invalid: {runtime_manifest}: {error}")
+
+with tempfile.NamedTemporaryFile(dir=assets, prefix=".manifest.", delete=False) as handle:
+    temporary = Path(handle.name)
+    handle.write(payload)
+try:
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, asset_manifest)
+finally:
+    temporary.unlink(missing_ok=True)
+if asset_manifest.read_bytes() != runtime_manifest.read_bytes():
+    raise SystemExit("paired content manifests differ after atomic finalization")
+PY
+        ;;
+esac

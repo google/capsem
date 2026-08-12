@@ -7,12 +7,13 @@
 # If target matches native, the same packages are reinstalled from the selected
 # snapshot so mutable host-builder bytes cannot enter the package.
 #
-# Usage: swap-dev-libs <target-arch> <snapshot-base> <snapshot-id>
+# Usage: swap-dev-libs <target-arch> <snapshot-base> <snapshot-id> <dev-packages>
 set -euo pipefail
 
 TARGET_ARCH="${1:?target architecture is required}"
 APT_SNAPSHOT_BASE="${2:?Ubuntu snapshot base is required}"
 APT_SNAPSHOT_ID="${3:?Ubuntu snapshot ID is required}"
+DEV_PACKAGES_RAW="${4:?cross-architecture dev packages are required}"
 if [[ ! "$APT_SNAPSHOT_BASE" =~ ^https://[^[:space:]]+$ ]]; then
     echo "ERROR: Ubuntu snapshot base must be an HTTPS URL" >&2
     exit 1
@@ -21,6 +22,17 @@ if [[ ! "$APT_SNAPSHOT_ID" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
     echo "ERROR: invalid Ubuntu snapshot ID '$APT_SNAPSHOT_ID'" >&2
     exit 1
 fi
+read -r -a DEV_PACKAGES <<< "$DEV_PACKAGES_RAW"
+if [ "${#DEV_PACKAGES[@]}" -eq 0 ]; then
+    echo "ERROR: cross-architecture dev package inventory is empty" >&2
+    exit 1
+fi
+for package in "${DEV_PACKAGES[@]}"; do
+    if [[ ! "$package" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*$ ]]; then
+        echo "ERROR: invalid cross-architecture dev package '$package'" >&2
+        exit 1
+    fi
+done
 SNAPSHOT_URL="${APT_SNAPSHOT_BASE%/}/${APT_SNAPSHOT_ID}"
 NATIVE_ARCH=$(dpkg --print-architecture)
 
@@ -50,14 +62,6 @@ Components: main restricted universe multiverse
 Architectures: $NATIVE_ARCH $FOREIGN_ARCH
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 EOF
-
-DEV_PACKAGES=(
-    libssl-dev
-    libgtk-3-dev
-    libwebkit2gtk-4.1-dev
-    libayatana-appindicator3-dev
-    libxdo-dev
-)
 
 # Prove every architecture-scoped index is fresh before mutating the installed
 # toolchain. The image-level apt policy retries transient downloads and makes a

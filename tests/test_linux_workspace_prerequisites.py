@@ -6,8 +6,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from capsem.gate import config as gate_config
+from capsem.gate.toolchainschema import LinuxWorkspaceConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROVISIONER = PROJECT_ROOT / "scripts" / "provision-linux-workspace.py"
@@ -26,6 +28,9 @@ def test_linux_workspace_prerequisites_are_one_validated_config_value() -> None:
     linux = gate_config.load(PROJECT_ROOT).toolchain.linux
 
     assert linux.apt_packages == tuple(dict.fromkeys(linux.apt_packages))
+    assert linux.cross_dev_packages == tuple(dict.fromkeys(linux.cross_dev_packages))
+    assert set(linux.cross_dev_packages) <= set(linux.apt_packages)
+    assert "librsvg2-dev" not in linux.cross_dev_packages
     assert linux.dnf_packages == tuple(dict.fromkeys(linux.dnf_packages))
     assert linux.pkg_config_modules == tuple(dict.fromkeys(linux.pkg_config_modules))
     assert {
@@ -47,6 +52,14 @@ def test_linux_workspace_prerequisites_are_one_validated_config_value() -> None:
         "openssl",
         "librsvg-2.0",
     } <= set(linux.pkg_config_modules)
+
+
+def test_cross_dev_packages_must_come_from_the_native_apt_inventory() -> None:
+    document = gate_config.load(PROJECT_ROOT).toolchain.linux.model_dump()
+    document["cross_dev_packages"] = ["not-installed-dev-package"]
+
+    with pytest.raises(ValidationError, match="cross_dev_packages"):
+        LinuxWorkspaceConfig.model_validate(document)
 
 
 @pytest.mark.parametrize("manager", ["apt", "dnf"])

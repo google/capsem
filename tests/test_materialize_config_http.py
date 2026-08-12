@@ -76,11 +76,7 @@ def test_materializer_http_request_identifies_capsem(tmp_path: Path) -> None:
     manifest = {
         "channel": "stable",
         "profiles": {
-            "code": {
-                "architectures": [
-                    {"architecture": "arm64", "images": [], "config": []}
-                ]
-            }
+            "code": {"architectures": [{"architecture": "arm64", "images": [], "config": []}]}
         },
         "packages": [],
         "status": "current",
@@ -102,8 +98,8 @@ def test_materializer_http_request_identifies_capsem(tmp_path: Path) -> None:
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, _format: str, *_args: object) -> None:
-            pass
+        def log_message(self, format: str, *_args: object) -> None:
+            _ = format
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -116,9 +112,7 @@ def test_materializer_http_request_identifies_capsem(tmp_path: Path) -> None:
             {
                 "CAPSEM_REPO_ROOT": str(repo),
                 "CAPSEM_ARCH": "arm64",
-                "CAPSEM_ASSET_MANIFEST": (
-                    f"http://127.0.0.1:{server.server_port}/manifest.json"
-                ),
+                "CAPSEM_ASSET_MANIFEST": (f"http://127.0.0.1:{server.server_port}/manifest.json"),
                 "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
             }
         )
@@ -142,7 +136,7 @@ def test_materializer_http_request_identifies_capsem(tmp_path: Path) -> None:
 def test_materializer_never_uses_bare_urlopen_for_http_manifest() -> None:
     source = MATERIALIZER.read_text()
 
-    assert "Request(source, headers={\"User-Agent\": USER_AGENT})" in source
+    assert 'Request(source, headers={"User-Agent": USER_AGENT})' in source
     assert "urlopen(request, timeout=60)" in source
     assert "urlopen(source, timeout=60)" not in source
     assert 'elif "profiles" in manifest:' in source
@@ -280,6 +274,86 @@ def test_materializer_custom_output_preserves_shared_default_config(
     assert not isolated_marker.exists()
 
 
+def test_materializer_finalizes_one_exact_runtime_content_pair(tmp_path: Path) -> None:
+    repo, fake_bin = _fake_materializer_repo(tmp_path)
+    pair = repo / "target" / "paired-content"
+    assets = pair / "assets"
+    config = pair / "config"
+    inputs = pair / "inputs"
+    assets.mkdir(parents=True)
+    inputs.mkdir(parents=True)
+    release_graph = {
+        "channel": "stable",
+        "profiles": {"code": {"architectures": [{"architecture": "arm64"}]}},
+        "packages": [],
+    }
+    original = json.dumps(release_graph, sort_keys=True).encode()
+    (assets / "manifest.json").write_bytes(original)
+    (inputs / "manifest.json").write_bytes(original)
+    runtime_projection = (
+        b'{"assets":{"current":"runtime","releases":{"runtime":{"arches":{"arm64":{}}}}}}'
+    )
+    fake_cargo = fake_bin / "cargo"
+    fake_cargo.write_text(
+        "#!/bin/sh\n"
+        "output=\n"
+        'while [ "$#" -gt 0 ]; do\n'
+        '  if [ "$1" = --output-root ]; then output=$2; shift 2; else shift; fi\n'
+        "done\n"
+        'mkdir -p "$output/assets"\n'
+        'printf \'%s\' "$CAPSEM_FAKE_RUNTIME_MANIFEST" > "$output/assets/manifest.json"\n',
+        encoding="utf-8",
+    )
+    fake_cargo.chmod(0o755)
+    env = {
+        **os.environ,
+        "CAPSEM_REPO_ROOT": str(repo),
+        "CAPSEM_ARCH": "arm64",
+        "CAPSEM_ASSET_MANIFEST": str(assets / "manifest.json"),
+        "CAPSEM_ASSETS_PATH": str(assets),
+        "CAPSEM_CONFIG_OUTPUT_ROOT": str(config),
+        "CAPSEM_FAKE_RUNTIME_MANIFEST": runtime_projection.decode(),
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+    }
+
+    result = subprocess.run(
+        ["bash", str(MATERIALIZER), "--pair-content"],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (assets / "manifest.json").read_bytes() == runtime_projection
+    assert (config / "assets" / "manifest.json").read_bytes() == runtime_projection
+    assert (inputs / "manifest.json").read_bytes() == original
+
+
+def test_materializer_refuses_unknown_pairing_mode_before_cargo(tmp_path: Path) -> None:
+    repo, fake_bin = _fake_materializer_repo(tmp_path)
+    cargo_log = tmp_path / "cargo.log"
+
+    result = subprocess.run(
+        ["bash", str(MATERIALIZER), "--best-effort-pair"],
+        env={
+            **os.environ,
+            "CAPSEM_REPO_ROOT": str(repo),
+            "FAKE_CARGO_LOG": str(cargo_log),
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        },
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "unknown materialize-config argument" in result.stderr
+    assert not cargo_log.exists()
+
+
 @pytest.mark.parametrize(
     ("manifest", "message"),
     [
@@ -340,17 +414,15 @@ def test_public_release_readers_identify_capsem_to_http_edge(
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, _format: str, *_args: object) -> None:
-            pass
+        def log_message(self, format: str, *_args: object) -> None:
+            _ = format
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
         module = _load_script(path)
-        value = getattr(module, reader_name)(
-            f"http://127.0.0.1:{server.server_port}/manifest.json"
-        )
+        value = getattr(module, reader_name)(f"http://127.0.0.1:{server.server_port}/manifest.json")
     finally:
         server.shutdown()
         thread.join(timeout=5)

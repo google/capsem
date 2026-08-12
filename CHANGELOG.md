@@ -62,9 +62,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sealed asset scanners now return generated OBOM files to the invoking host
   owner before deterministic normalization, so rootless qualification can
   finish without weakening the scanner container or its network denial.
-- macOS CI records its partial Python cohort without prematurely enforcing the
-  full-suite coverage floor, then applies the one config-owned threshold after
-  the non-VM integration cohort is appended.
+- macOS CI records and uploads its partial Python cohorts without pretending
+  they are the whole source suite. The complete gate's broad all-source cohort
+  remains the sole owner of the positive, config-owned coverage floor.
+- Release-selected profile inputs now retain their immutable release graph in
+  the paired `inputs/` transport while atomically finalizing one byte-identical
+  legacy runtime projection under both `assets/` and `config/`. Package and
+  install rails therefore cannot mix manifest representations or stale cohorts.
+- Architecture-swappable Linux development packages are now a validated subset
+  of the config-owned native package inventory and are passed into the sealed
+  helper explicitly. Contract tests follow that semantic authority and Docker
+  command ordering instead of depending on whitespace in a Dockerfile.
 - Linux bootstrap, hosted ARM coverage, hosted static checks, and the sealed
   host builder now consume one config-owned native dependency inventory and
   prove its pkg-config modules before compiling. A missing GTK/glib package

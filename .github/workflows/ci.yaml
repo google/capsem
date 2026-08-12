@@ -257,7 +257,8 @@ jobs:
             -v --tb=short \
             --cov=src/capsem \
             --cov-append \
-            --cov-report=xml:codecov-python.xml
+            --cov-report=xml:codecov-python.xml \
+            --cov-fail-under=0
 
       # Verify all integration test suites import cleanly (catches broken imports/syntax)
       - name: Verify all integration test imports
@@ -406,7 +407,7 @@ jobs:
           CAPSEM_CONFIG_ROOT="$PWD/target/ci-install-source-config" \
           CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/ci-install-content/config" \
           CAPSEM_ARCH=x86_64 \
-            bash scripts/materialize-config.sh
+            bash scripts/materialize-config.sh --pair-content
 
       - name: Build exact native release package
         env:

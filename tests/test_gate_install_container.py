@@ -212,24 +212,28 @@ def _complete_selected_content(tmp_path: Path) -> SelectedInstallContent:
     inputs.mkdir(parents=True)
     payload = inputs / "payload.bin"
     payload.write_bytes(b"immutable")
-    manifest = {
+    selected_manifest = {
+        "channel": "stable",
+        "profiles": {"code": {"architectures": [], "url": payload.resolve().as_uri()}},
+    }
+    runtime_manifest = {
         "assets": {
             "current": "selected",
             "releases": {
                 "selected": {"arches": {CONFIG.host_arch().name: {}}},
             },
         },
-        "profiles": {"code": {"url": payload.resolve().as_uri()}},
     }
-    encoded = json.dumps(manifest).encode()
+    selected_encoded = json.dumps(selected_manifest).encode()
+    runtime_encoded = json.dumps(runtime_manifest).encode()
     (inputs / CONFIG.package.release_inputs_name).write_text("{}")
-    (inputs / CONFIG.install.manifest_name).write_bytes(encoded)
+    (inputs / CONFIG.install.manifest_name).write_bytes(selected_encoded)
     selected.content.assets.mkdir(parents=True)
-    (selected.content.assets / CONFIG.install.manifest_name).write_bytes(encoded)
+    (selected.content.assets / CONFIG.install.manifest_name).write_bytes(runtime_encoded)
     (selected.content.assets / CONFIG.host_arch().name).mkdir()
     config_manifest = selected.content.config / CONFIG.suites.pytest.test_manifest
     config_manifest.parent.mkdir(parents=True)
-    config_manifest.write_bytes(encoded)
+    config_manifest.write_bytes(runtime_encoded)
     profile = selected.content.profiles(CONFIG) / "code/profile.toml"
     profile.parent.mkdir(parents=True)
     profile.write_text("name = 'code'\n")
@@ -242,15 +246,30 @@ def test_selected_release_transport_refuses_payload_outside_its_paired_root(
     selected = _complete_selected_content(tmp_path)
     outside = tmp_path / "outside.bin"
     outside.write_bytes(b"not selected")
-    manifest = selected.content.assets / CONFIG.install.manifest_name
+    manifest = selected.inputs(CONFIG) / CONFIG.install.manifest_name
     document = json.loads(manifest.read_text())
     document["profiles"]["code"]["url"] = outside.resolve().as_uri()
     encoded = json.dumps(document).encode()
     manifest.write_bytes(encoded)
-    (selected.content.config / CONFIG.suites.pytest.test_manifest).write_bytes(encoded)
 
     with pytest.raises(GateError, match="escapes its content root"):
         selected.require_complete(CONFIG, arches=(CONFIG.host_arch(),))
+
+
+def test_selected_release_transport_is_distinct_from_the_runtime_projection(
+    tmp_path: Path,
+) -> None:
+    selected = _complete_selected_content(tmp_path)
+
+    selected.require_complete(CONFIG, arches=(CONFIG.host_arch(),))
+
+    transport = selected.inputs(CONFIG) / CONFIG.install.manifest_name
+    runtime = selected.content.assets / CONFIG.install.manifest_name
+    assert transport.read_bytes() != runtime.read_bytes()
+    assert (
+        runtime.read_bytes()
+        == (selected.content.config / CONFIG.suites.pytest.test_manifest).read_bytes()
+    )
 
 
 def test_systemd_that_never_comes_up_fails_with_the_wait_it_gave(

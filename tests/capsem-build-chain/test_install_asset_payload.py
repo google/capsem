@@ -1188,25 +1188,17 @@ def test_install_preflight_does_not_claim_asset_only_cdxgen() -> None:
 
 
 def test_cross_arch_tauri_swap_covers_every_native_dev_package() -> None:
-    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
     swap_script = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text()
-    native_block = host_builder.split("# ---- Native-arch Tauri dev libraries ----", maxsplit=1)[
-        1
-    ].split("# ---- Helper script", maxsplit=1)[0]
-    swap_block = swap_script.split("DEV_PACKAGES=(", maxsplit=1)[1].split(")", maxsplit=1)[0]
 
-    native_packages = {
-        line.strip().removesuffix("\\").strip()
-        for line in native_block.splitlines()
-        if line.strip().startswith("lib")
-    }
-    swapped_packages = {
-        line.strip()
-        for line in swap_block.splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    }
-
-    assert swapped_packages == native_packages
+    assert set(config.toolchain.linux.cross_dev_packages) <= set(
+        config.toolchain.linux.apt_packages
+    )
+    assert 'DEV_PACKAGES_RAW="${4:?cross-architecture dev packages are required}"' in swap_script
+    assert 'read -r -a DEV_PACKAGES <<< "$DEV_PACKAGES_RAW"' in swap_script
+    assert "DEV_PACKAGES=(" not in swap_script
 
 
 def test_cross_arch_tauri_swap_excludes_non_crossable_introspection_toolchain() -> None:
@@ -1530,7 +1522,8 @@ def test_host_builder_bootstraps_https_trust_before_ubuntu_package_fetches() -> 
         "/etc/ssl/certs/ca-certificates.crt"
     )
     sources_copy = "COPY sources-multiarch.sh /tmp/"
-    first_update = "RUN apt-get update && apt-get install"
+    normalized = re.sub(r"\s+", " ", host_builder)
+    first_update = "apt-get update && apt-get install -y --no-install-recommends"
     ubuntu_stage = next(
         line for line in host_builder.splitlines() if line.startswith("FROM ubuntu:24.04")
     )
@@ -1541,8 +1534,9 @@ def test_host_builder_bootstraps_https_trust_before_ubuntu_package_fetches() -> 
         host_builder.index(ubuntu_stage)
         < host_builder.index(trust_copy)
         < host_builder.index(sources_copy)
-        < host_builder.index(first_update)
+        < host_builder.index("apt-get update")
     )
+    assert first_update in normalized
 
 
 def test_cross_arch_tauri_swap_refreshes_indexes_before_removing_native_libs() -> None:
@@ -2969,6 +2963,7 @@ def test_ci_install_job_pulls_existing_profiles_before_building_packages() -> No
     package_pos = install_job.index("uv run capsem-gate cross-compile x86_64")
     gate_pos = install_job.index("uv run capsem-gate install")
     assert fetch_pos < stage_pos < materialize_pos < package_pos < gate_pos
+    assert "bash scripts/materialize-config.sh --pair-content" in install_job
     assert "kind: profiles" in install_job
     assert "architecture: x86_64" in install_job
     assert "output: target/ci-install-content/inputs" in install_job

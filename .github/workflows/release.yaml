@@ -503,7 +503,7 @@ jobs:
           CAPSEM_CONFIG_ROOT="$PWD/target/package-source-config" \
           CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/package-content/config" \
           CAPSEM_ARCH="${{ matrix.arch }}" \
-            bash scripts/materialize-config.sh
+            bash scripts/materialize-config.sh --pair-content
 
       - name: Build Linux package through the shared hermetic rail
         env:

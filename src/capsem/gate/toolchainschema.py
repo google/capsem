@@ -38,6 +38,7 @@ class LinuxWorkspaceConfig(Strict):
     """Native dependencies shared by bootstrap, CI, and the Linux builder."""
 
     apt_packages: tuple[LinuxPackage, ...]
+    cross_dev_packages: tuple[LinuxPackage, ...]
     dnf_packages: tuple[LinuxPackage, ...]
     pkg_config_modules: tuple[PkgConfigModule, ...]
     required_commands: tuple[LinuxPackage, ...]
@@ -46,6 +47,7 @@ class LinuxWorkspaceConfig(Strict):
     def inventories_are_nonempty_and_unique(self) -> LinuxWorkspaceConfig:
         for name in (
             "apt_packages",
+            "cross_dev_packages",
             "dnf_packages",
             "pkg_config_modules",
             "required_commands",
@@ -53,6 +55,12 @@ class LinuxWorkspaceConfig(Strict):
             values = getattr(self, name)
             if not values or len(values) != len(set(values)):
                 raise ValueError(f"toolchain.linux.{name} must be non-empty and unique")
+        missing = sorted(set(self.cross_dev_packages) - set(self.apt_packages))
+        if missing:
+            raise ValueError(
+                "toolchain.linux.cross_dev_packages must be installed by apt_packages: "
+                + ", ".join(missing)
+            )
         return self
 
 

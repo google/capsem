@@ -665,7 +665,7 @@ call-top-callable = 3
 invalid-argument-type = 130
 invalid-assignment = 18
 invalid-attribute-override = 1
-invalid-method-override = 4
+invalid-method-override = 2
 invalid-return-type = 6
 no-matching-overload = 9
 not-iterable = 2
@@ -947,6 +947,16 @@ apt_packages = [
     "musl-tools",
     "pkg-config",
     "xdg-utils",
+]
+# Header packages that can be architecture-swapped inside the package helper.
+# `librsvg2-dev` is deliberately absent: its target-architecture introspection
+# dependency is executable and cannot run on the native builder.
+cross_dev_packages = [
+    "libayatana-appindicator3-dev",
+    "libgtk-3-dev",
+    "libssl-dev",
+    "libwebkit2gtk-4.1-dev",
+    "libxdo-dev",
 ]
 dnf_packages = [
     "bubblewrap",

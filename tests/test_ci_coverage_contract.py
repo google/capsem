@@ -54,8 +54,13 @@ def test_no_caller_restates_the_coverage_floor() -> None:
     )
 
 
-def test_python_coverage_floor_runs_after_the_complete_appended_cohort() -> None:
-    """The first macOS cohort records data; only the complete cohort judges it."""
+def test_partial_macos_python_cohorts_aggregate_without_judging_the_complete_floor() -> None:
+    """Partial platform cohorts report data; complete qualification judges it.
+
+    The macOS job intentionally runs only schema and non-VM integration slices.
+    Treating their appended 63% as whole-project coverage made 387 passing tests
+    fail against an 85% claim they could not satisfy by construction.
+    """
     ci = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     test_job = workflow_job_block(ci, "test")
     selected = python_pytest_command_containing(test_job, "tests/test_agent_skill_index.py")
@@ -69,10 +74,23 @@ def test_python_coverage_floor_runs_after_the_complete_appended_cohort() -> None
     assert "--cov=src/capsem" in appended
     assert "--cov-append" in appended
     assert "--cov-report=xml:codecov-python.xml" in appended
-    assert "--cov-fail-under" not in appended
+    assert "--cov-fail-under=0" in appended
     assert test_job.index("- name: Python schema tests with coverage") < test_job.index(
         "- name: Python integration tests (non-VM suites)"
     )
+
+
+def test_complete_gate_broad_suite_inherits_the_authoritative_coverage_floor() -> None:
+    """The all-source broad cohort owns the positive pyproject threshold."""
+    from capsem.gate import config as gate_config
+    from capsem.gate import pytestsuite
+
+    config = gate_config.load(PROJECT_ROOT)
+    argv = pytestsuite.broad(config, profile="code").argv(config)
+
+    assert "--cov=src/capsem" in argv
+    assert "--cov-report=xml:codecov-python.xml" in argv
+    assert not any(argument.startswith("--cov-fail-under") for argument in argv)
 
 
 @dataclass(frozen=True)

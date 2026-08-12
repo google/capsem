@@ -693,6 +693,7 @@ def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
         ("test", "Verify all integration test imports"),
         ("test", "Schema drift check"),
         ("test-install", "Run install e2e tests"),
+        ("test-install", "Stage one exact install content pair"),
         ("docs-build", "Build docs"),
         ("site-build", "Build site"),
     ):
@@ -5225,6 +5226,13 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
     assert 'CAPSEM_CONFIG_ROOT="$PWD/target/package-source-config"' in linux_job
     assert 'CAPSEM_ASSETS_PATH="$PWD/target/package-content/assets"' in linux_job
     assert 'CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/package-content/config"' in linux_job
+    assert "bash scripts/materialize-config.sh --pair-content" in linux_job
+    assert_unmasked_step(
+        "release.yaml",
+        yaml.safe_load(release),
+        "build-app-linux",
+        "Materialize runtime config",
+    )
     assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in linux_job
     assert "bash scripts/materialize-config.sh" in linux_job
     assert linux_job.index("Fetch exact selected ${{ matrix.arch }} profiles") < linux_job.index(
