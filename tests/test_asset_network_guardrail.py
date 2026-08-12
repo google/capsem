@@ -148,6 +148,26 @@ def test_asset_docker_build_network_is_phase_owned_by_config() -> None:
     assert config.build.guest_rust_builder.runtime_network == "none"
 
 
+def test_asset_tool_smokes_erofs_through_its_portable_help_contract() -> None:
+    source = (PROJECT_ROOT / BUILD.asset_tools.dockerfile).read_text(encoding="utf-8")
+
+    assert "mkfs.erofs --help > /dev/null" in source
+    assert "mkfs.erofs -V" not in source
+
+
+@pytest.mark.parametrize(
+    "relative",
+    (BUILD.asset_tools.dockerfile, BUILD.guest_rust_builder.dockerfile),
+)
+def test_required_helper_base_waivers_never_supply_a_fallback(relative: str) -> None:
+    lines = (PROJECT_ROOT / relative).read_text(encoding="utf-8").splitlines()
+
+    assert lines[0] == "# check=skip=InvalidDefaultArgInFrom"
+    assert "ARG BASE" in lines
+    assert "ARG BASE=" not in "\n".join(lines)
+    assert "FROM ${BASE}" in lines
+
+
 def test_declared_asset_materializers_match_the_exact_mutator_inventory() -> None:
     expected = {
         "config/docker/Dockerfile.kernel.j2": Counter({"apt-get": 2, "wget": 2, "apt": 1}),

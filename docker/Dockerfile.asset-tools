@@ -1,3 +1,7 @@
+# check=skip=InvalidDefaultArgInFrom
+# BASE is deliberately required: the gate's sole caller supplies the exact
+# config-owned platform child and a Dockerfile fallback would reopen a mutable
+# direct-build rail.
 ARG BASE
 FROM ${BASE}
 
@@ -41,6 +45,6 @@ RUN set -eux; \
     printf '%s  %s\n' "${CDX_VALIDATE_SHA256}" /tmp/cdx-validate | sha256sum -c -; \
     install -m 0555 /tmp/cdx-validate /usr/local/bin/cdx-validate; \
     rm -f /tmp/cdxgen /tmp/cdx-validate; \
-    mkfs.erofs -V; \
+    mkfs.erofs --help > /dev/null 2>&1; \
     cdxgen --version; \
     cdx-validate --version

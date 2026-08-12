@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The snapshot-pinned asset-tools image now proves `mkfs.erofs` through its
+  portable help contract instead of the unsupported `-V` flag used by Debian's
+  erofs-utils 1.5. Required helper bases also carry narrow first-line BuildKit
+  waivers while remaining argument-only, so warning cleanup cannot introduce a
+  mutable fallback image.
+
 - Synthetic real-runner tests now receive the same config-owned cancellation
   policy as the complete gate instead of trying to discover a second gate
   configuration inside their minimal Git fixtures. The exact Ty debt ratchet

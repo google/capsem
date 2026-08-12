@@ -1,3 +1,4 @@
+# check=skip=InvalidDefaultArgInFrom
 # Dependencies for one architecture's guest Rust binaries, resolved before
 # the hermetic build runs. BASE is always the *host* platform's exact
 # rust:1.97.1-alpine3.23 child, selected by config/docker/image/build.toml.
