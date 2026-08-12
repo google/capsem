@@ -5,21 +5,47 @@ description: Capsem documentation site infrastructure and conventions. Use when 
 
 # Documentation Site
 
-The documentation site (docs.capsem.org) uses [Astro Starlight](https://starlight.astro.build/) (Astro 6 + Tailwind v4). Docs live in `docs/src/content/docs/` as markdown/MDX files.
+The detailed documentation source for docs.capsem.org is authored for
+[Astro Starlight](https://starlight.astro.build/) and lives in
+`docs/src/content/docs/` as Markdown/MDX files. During the Capsem 0.6
+pre-release, the production Astro build deliberately does not register the
+Starlight integration: it publishes `docs/src/pages/index.astro` as the root
+holding page and derives a noindex holding tombstone for every former detailed
+route while every source file remains checked in.
 
 ## Dev workflow
 
 ```bash
-cd docs && pnpm run dev     # localhost:4321
-cd docs && pnpm run build   # Production build
+cd docs && pnpm run dev     # Holding surface at localhost:4321
+cd docs && pnpm run build   # Build and verify the exact production artifact graph
 ```
 
 ## CI and deploy rail
 
 `ci.yaml` runs the merge-blocking `docs-build` job under `pr-gate`. `docs.yaml`
-deploys only on every push to `main` and smokes `https://docs.capsem.org/` plus
-`/getting-started/`. This deploy rail is independent from binary releases,
+deploys only on every push to `main` and smokes `https://docs.capsem.org/`, then
+requires the warmed `/getting-started/` tombstone markers while rejecting its
+old guide/install content. This deploy rail is independent from binary releases,
 manual VM asset releases, and the `release.capsem.org` asset-channel workflow.
+
+## Capsem 0.6 holding boundary
+
+- Do not delete or rewrite the detailed manual to produce the holding page.
+- `docs/src/pages/[...slug].astro` derives one static noindex tombstone from
+  every detailed Markdown/MDX source except the root `index.mdx`. A removed
+  path is not enough: Cloudflare can continue serving a warmed old asset after
+  deletion, so each former URL must be replaced explicitly.
+- `docs/public-holding/_headers` applies no-store browser/CDN policy and an
+  `X-Robots-Tag` to the complete qualification surface.
+- `scripts/check-docs-holding-build.py` independently derives the exact
+  tombstone inventory from the manual sources. It permits only those files,
+  the root holding page, a top-level `404.html`, and `_headers`; it rejects
+  unexpected artifacts and old Starlight, installation, release, or deep-doc
+  content.
+- The holding page must say that 0.6 is in pre-release qualification and must
+  not offer installation instructions or release downloads.
+- Restoring detailed routes is a separate publication decision: register
+  Starlight again only when the 0.6 documentation is approved for release.
 
 ## Writing style
 

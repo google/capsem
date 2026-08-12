@@ -15,12 +15,16 @@ permissions:
 
 jobs:
   fast-gate:
+    needs: docs-build
+    if: ${{ needs.docs-build.outputs.web_only != 'true' }}
     uses: ./.github/workflows/fast-gate.yaml
 
   # ---------------------------------------------------------------------------
   # Linux: compile + test KVM hypervisor backend (cfg(target_os = "linux"))
   # ---------------------------------------------------------------------------
   test-linux:
+    needs: docs-build
+    if: ${{ needs.docs-build.outputs.web_only != 'true' }}
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -127,6 +131,8 @@ jobs:
   # macOS: full test suite (Apple VZ backend, frontend, Python, coverage)
   # ---------------------------------------------------------------------------
   test:
+    needs: docs-build
+    if: ${{ needs.docs-build.outputs.web_only != 'true' }}
     runs-on: macos-14
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -350,6 +356,8 @@ jobs:
   # Install e2e: Docker-based install layout + systemd tests (Linux)
   # ---------------------------------------------------------------------------
   test-install:
+    needs: docs-build
+    if: ${{ needs.docs-build.outputs.web_only != 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -421,8 +429,36 @@ jobs:
   # ---------------------------------------------------------------------------
   docs-build:
     runs-on: ubuntu-latest
+    outputs:
+      web_only: ${{ steps.scope.outputs.web_only }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          fetch-depth: 0
+
+      - name: Classify pull request scope
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT_NAME" != pull_request ]; then
+            echo "web_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          web_only=true
+          while IFS= read -r path; do
+            case "$path" in
+              README.md|later/*|site/*|docs/*|.github/workflows/site.yaml|.github/workflows/docs.yaml|.github/workflows/ci.yaml|scripts/check-docs-holding-build.py|tests/test_docs_holding_contract.py|tests/test_release_doctor_contract.py)
+                ;;
+              *)
+                web_only=false
+                break
+                ;;
+            esac
+          done < <(git diff --name-only "$BASE_SHA"...HEAD)
+          echo "web_only=$web_only" >> "$GITHUB_OUTPUT"
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
@@ -460,6 +496,8 @@ jobs:
         run: bash scripts/check-web-surface.sh site
 
   release-site-build:
+    needs: docs-build
+    if: ${{ needs.docs-build.outputs.web_only != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -518,7 +556,9 @@ jobs:
           DOCS_BUILD_RESULT: ${{ needs.docs-build.result }}
           SITE_BUILD_RESULT: ${{ needs.site-build.result }}
           RELEASE_SITE_BUILD_RESULT: ${{ needs.release-site-build.result }}
+          WEB_ONLY: ${{ needs.docs-build.outputs.web_only }}
         run: |
+          echo "web-only:     $WEB_ONLY"
           echo "fast-gate:    $FAST_GATE_RESULT"
           echo "test-linux:   $TEST_LINUX_RESULT"
           echo "test:         $TEST_MACOS_RESULT"
@@ -527,10 +567,19 @@ jobs:
           echo "site-build:   $SITE_BUILD_RESULT"
           echo "release-site-build: $RELEASE_SITE_BUILD_RESULT"
 
-          test "$FAST_GATE_RESULT" = success
-          test "$TEST_LINUX_RESULT" = success
-          test "$TEST_MACOS_RESULT" = success
-          test "$TEST_INSTALL_RESULT" = success
           test "$DOCS_BUILD_RESULT" = success
           test "$SITE_BUILD_RESULT" = success
-          test "$RELEASE_SITE_BUILD_RESULT" = success
+
+          if [ "$WEB_ONLY" = true ]; then
+            test "$FAST_GATE_RESULT" = skipped
+            test "$TEST_LINUX_RESULT" = skipped
+            test "$TEST_MACOS_RESULT" = skipped
+            test "$TEST_INSTALL_RESULT" = skipped
+            test "$RELEASE_SITE_BUILD_RESULT" = skipped
+          else
+            test "$FAST_GATE_RESULT" = success
+            test "$TEST_LINUX_RESULT" = success
+            test "$TEST_MACOS_RESULT" = success
+            test "$TEST_INSTALL_RESULT" = success
+            test "$RELEASE_SITE_BUILD_RESULT" = success
+          fi

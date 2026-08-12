@@ -1,0 +1,130 @@
+---
+const title = 'Capsem 0.6 documentation — pre-release';
+const description = 'Capsem 0.6 documentation is being prepared during release qualification.';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content={description} />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <main>
+      <svg
+        class="logo"
+        role="img"
+        aria-labelledby="capsem-logo-title"
+        viewBox="0 0 100 100"
+        width="72"
+        height="72"
+      >
+        <title id="capsem-logo-title">Capsem</title>
+        <path
+          d="M50 5c0 33 12 45 45 45-33 0-45 12-45 45 0-33-12-45-45-45 33 0 45-12 45-45Z"
+        ></path>
+        <path d="M76 39a28 28 0 0 0-15-15 48 48 0 0 1 15 15Z"></path>
+        <path d="M61 76a28 28 0 0 0 15-15 48 48 0 0 1-15 15Z"></path>
+        <path d="M24 61a28 28 0 0 0 15 15 48 48 0 0 1-15-15Z"></path>
+        <path d="M39 24a28 28 0 0 0-15 15 48 48 0 0 1 15-15Z"></path>
+      </svg>
+      <p class="status">Version 0.6 · Pre-release</p>
+      <h1>Capsem 0.6 documentation</h1>
+      <p class="lead">Documentation is being prepared.</p>
+      <div class="notice">
+        <p>
+          Capsem 0.6 is in pre-release qualification. Installation instructions,
+          release downloads, and detailed documentation are intentionally unavailable
+          until qualification is complete.
+        </p>
+        <p>Please check back after the public release.</p>
+      </div>
+    </main>
+  </body>
+</html>
+
+<style is:inline>
+  :root {
+    color-scheme: light;
+    font-family:
+      Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+      sans-serif;
+    background: #f8fafc;
+    color: #172033;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    min-height: 100vh;
+    margin: 0;
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(circle at 50% 0%, rgb(219 234 254 / 75%), transparent 38rem),
+      #f8fafc;
+  }
+
+  main {
+    width: min(42rem, calc(100% - 2rem));
+    padding: 4rem 0;
+    text-align: center;
+  }
+
+  .logo {
+    display: block;
+    margin: 0 auto 1.5rem;
+    fill: #111827;
+  }
+
+  .status {
+    width: fit-content;
+    margin: 0 auto 1.25rem;
+    padding: 0.4rem 0.75rem;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: clamp(2.25rem, 7vw, 4.25rem);
+    line-height: 1.05;
+    letter-spacing: -0.045em;
+  }
+
+  .lead {
+    margin: 1.25rem 0 2rem;
+    color: #475569;
+    font-size: clamp(1.1rem, 2.5vw, 1.35rem);
+  }
+
+  .notice {
+    padding: 1.25rem 1.5rem;
+    border: 1px solid #dbe4f0;
+    border-radius: 1rem;
+    background: rgb(255 255 255 / 88%);
+    box-shadow: 0 1rem 3rem rgb(15 23 42 / 8%);
+    color: #334155;
+    line-height: 1.65;
+  }
+
+  .notice p {
+    margin: 0;
+  }
+
+  .notice p + p {
+    margin-top: 0.75rem;
+    font-weight: 650;
+  }
+</style>
