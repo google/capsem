@@ -340,62 +340,11 @@ jobs:
           test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
 
       - name: Prepare exact profile and pulled binary pairing
-        run: |
-          set -euo pipefail
-          uv run python scripts/verify-release-inputs.py \
-            --input-dir target/profile-public-before/packages
-          uv run python scripts/verify-release-inputs.py \
-            --input-dir target/profile-public-before/profiles
-          cmp \
-            target/profile-public-before/packages/manifest.json \
-            target/profile-public-before/profiles/manifest.json
-          PUBLICATION_IDENTITY="${{ needs.author-profile-release.outputs.publication_identity }}"
-          PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$PUBLICATION_IDENTITY"
-          PUBLICATION_DIR="target/asset-release/$PUBLICATION_IDENTITY"
-          uv run python scripts/fetch-release-artifacts.py \
-            --manifest-url "file://$PWD/target/source-channel/manifest.json" \
-            --kind profiles \
-            --output target/candidate-profile-inputs \
-            --local-publication-base "$PUBLICATION_BASE" \
-            --local-publication-dir "$PUBLICATION_DIR"
-          uv run python scripts/verify-release-inputs.py \
-            --input-dir target/candidate-profile-inputs
-          uv run python scripts/stage-release-test-inputs.py \
-            --input-dir target/profile-public-before/packages \
-            --binary-dir target/debug
-          uv run python scripts/stage-release-test-inputs.py \
-            --input-dir target/candidate-profile-inputs \
-            --assets-dir assets \
-            --config-root target/release-config \
-            --shared-config-root config
-          CAPSEM_ASSET_MANIFEST="file://$PWD/assets/manifest.json" \
-          CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
-          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/config" \
-            bash scripts/materialize-config.sh
-          package=$(uv run python scripts/stage-release-test-inputs.py \
-            --input-dir target/profile-public-before/packages \
-            --print-package-path)
-          test -n "$package"
-          uv run python scripts/install-deb-runtime-dependencies.py "$package" --config config/gate.toml
-          {
-            echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package"
-            echo "CAPSEM_RELEASE_BIN_DIR=$PWD/target/debug"
-            echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/target/candidate-profile-inputs"
-            echo "CAPSEM_RELEASE_CHANNEL=${{ inputs.channel }}"
-            echo "CAPSEM_RELEASE_TRANSITION=profile_only"
-            echo "CAPSEM_RELEASE_BEFORE_MANIFEST=$PWD/target/profile-public-before/profiles/manifest.json"
-            echo "CAPSEM_RELEASE_AFTER_MANIFEST=$PWD/target/source-channel/manifest.json"
-            echo "CAPSEM_RELEASE_BEFORE_PACKAGE=$PWD/$package"
-            echo "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS=$PWD/target/profile-public-before/profiles"
-            echo "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS=$PWD/target/candidate-profile-inputs"
-            echo "CAPSEM_RELEASE_PROFILE=${{ inputs.profile }}"
-            echo "CAPSEM_RELEASE_CANDIDATE_PROFILE_PUBLICATION=$PWD/$PUBLICATION_DIR"
-            echo "CAPSEM_RELEASE_PUBLICATION_BASE=$PUBLICATION_BASE"
-            echo "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem"
-            echo "CAPSEM_TEST_ASSETS_DIR=$PWD/assets"
-            echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/target/config"
-          } >> "$GITHUB_ENV"
-
+        env:
+          PUBLICATION_IDENTITY: ${{ needs.author-profile-release.outputs.publication_identity }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_PROFILE: ${{ inputs.profile }}
+        run: bash scripts/stage-profile-pairing.sh
       - name: Run shared artifact module
         run: just _test-artifacts
 
