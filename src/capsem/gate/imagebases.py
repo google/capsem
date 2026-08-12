@@ -222,6 +222,26 @@ class MaterializeRustBuilders(Action, name="guest-rust-builder-materialize"):
         materialize_rust_builders(context.runner, context.config, self._names)
 
 
+class RequireRustBuilders(Action, name="guest-rust-builder-require"):
+    """Prove a carried materializer's exact local images still exist."""
+
+    def __init__(self, names: Iterable[str] | None = None) -> None:
+        self._names = tuple(names) if names is not None else None
+
+    def render(self) -> str:
+        scope = "all architectures" if self._names is None else ", ".join(self._names)
+        return f"require carried guest Rust builders ({scope})"
+
+    def perform(self, context: Context) -> None:
+        docker = Docker(context.runner)
+        build = build_config(context.config)
+        for name, _arch in selected(context.config, self._names):
+            resolved = guestbuilder.environment(build, name)
+            builder = image_tag(build, name, context.config.root)
+            if not docker.image_exists(builder, platform=resolved.docker_platform):
+                raise GateError(f"locked guest Rust builder is missing: {builder}")
+
+
 class MaterializeAssetTools(Action, name="asset-tools-materialize"):
     """Build the one host-native helper before publishable post-processing."""
 
@@ -230,3 +250,25 @@ class MaterializeAssetTools(Action, name="asset-tools-materialize"):
 
     def perform(self, context: Context) -> None:
         materialize_asset_tools(context.runner, context.config)
+
+
+class RequireAssetTools(Action, name="asset-tools-require"):
+    """Prove a carried host helper remains the exact keyed image."""
+
+    def render(self) -> str:
+        return "require carried host EROFS and CycloneDX tools"
+
+    def perform(self, context: Context) -> None:
+        docker = Docker(context.runner)
+        build = build_config(context.config)
+        name = context.config.host_arch().name
+        arch = build.architectures[name]
+        tag = assettools.image_tag(build, name, context.config.root)
+        if not docker.image_exists(tag, platform=arch.docker_platform):
+            raise GateError(f"locked {name} asset tools are missing: {tag}")
+        require_input_key(
+            docker,
+            tag,
+            label=assettools.INPUT_KEY_LABEL,
+            subject="carried asset tools helper",
+        )

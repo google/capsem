@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from . import crossexec, initrd
+from . import crossexec, imagebases, initrd
 from .actions import Run
 from .assetcondition import AssetRecovery
 from .assetcondition import missing as missing
@@ -12,12 +12,6 @@ from .command import GateCommand
 from .config import GateConfig
 from .errors import GateError
 from .execution import Step, step
-from .imagebases import (
-    MaterializeAssetTools,
-    MaterializeRustBuilders,
-    Prefetch,
-    required_rust_builder_names,
-)
 from .imagedoctor import doctor
 from .plan import Plan
 
@@ -107,14 +101,16 @@ class BuildAssetsCommand(
             (config.arch(self._args.arch).name,) if self._args.arch else tuple(config.architectures)
         )
         rust_builders = (
-            () if self._args.template == "kernel" else required_rust_builder_names(config, names)
+            ()
+            if self._args.template == "kernel"
+            else imagebases.required_rust_builder_names(config, names)
         )
         needs_asset_tools = self._args.template != "kernel"
 
         bases = plan.add(
             step(
                 "base-images",
-                Prefetch(names, rust_names=rust_builders, asset_tools=needs_asset_tools),
+                imagebases.Prefetch(names, rust_names=rust_builders, asset_tools=needs_asset_tools),
                 contends=(config.exclusive("docker_daemon"),),
             )
         )
@@ -131,8 +127,9 @@ class BuildAssetsCommand(
             ready = plan.add(
                 step(
                     "guest-builders",
-                    MaterializeRustBuilders(rust_builders),
+                    imagebases.MaterializeRustBuilders(rust_builders),
                     contends=(config.exclusive("docker_daemon"),),
+                    carry_checks=(imagebases.RequireRustBuilders(rust_builders),),
                 ),
                 after=(ready,),
             )
@@ -140,8 +137,9 @@ class BuildAssetsCommand(
             ready = plan.add(
                 step(
                     "asset-tools",
-                    MaterializeAssetTools(),
+                    imagebases.MaterializeAssetTools(),
                     contends=(config.exclusive("docker_daemon"),),
+                    carry_checks=(imagebases.RequireAssetTools(),),
                 ),
                 after=(ready,),
             )
@@ -193,13 +191,13 @@ def check_assets(
     recovery = AssetRecovery(config, arch)
     phase = plan.phase("assets")
     names = (arch.name,)
-    rust_builders = required_rust_builder_names(config, names)
+    rust_builders = imagebases.required_rust_builder_names(config, names)
     bases = phase.add(
         _when_missing(
             recovery,
             step(
                 "base-images",
-                Prefetch(names, rust_names=rust_builders, asset_tools=True),
+                imagebases.Prefetch(names, rust_names=rust_builders, asset_tools=True),
                 contends=(config.exclusive("docker_daemon"),),
             ),
         ),
@@ -223,8 +221,9 @@ def check_assets(
                 recovery,
                 step(
                     "guest-builders",
-                    MaterializeRustBuilders(rust_builders),
+                    imagebases.MaterializeRustBuilders(rust_builders),
                     contends=(config.exclusive("docker_daemon"),),
+                    carry_checks=(imagebases.RequireRustBuilders(rust_builders),),
                 ),
             ),
             after=(ready,),
@@ -234,8 +233,9 @@ def check_assets(
             recovery,
             step(
                 "asset-tools",
-                MaterializeAssetTools(),
+                imagebases.MaterializeAssetTools(),
                 contends=(config.exclusive("docker_daemon"),),
+                carry_checks=(imagebases.RequireAssetTools(),),
             ),
         ),
         after=(ready,),
@@ -256,6 +256,7 @@ def _when_missing(recovery: AssetRecovery, subject: Step) -> Step:
     return replace(
         subject,
         actions=tuple(recovery.when(action) for action in subject.actions),
+        carry_checks=tuple(recovery.when(check) for check in subject.carry_checks),
     )
 
 

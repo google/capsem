@@ -23,6 +23,8 @@ from .imagebases import (
     MaterializeAssetTools,
     MaterializeRustBuilders,
     Prefetch,
+    RequireAssetTools,
+    RequireRustBuilders,
     required_rust_builder_names,
 )
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
@@ -69,6 +71,7 @@ def fragment(plan, config, *, after: tuple = ()):
             MaterializeRustBuilders(rust_builders),
             MaterializeAssetTools(),
             contends=exclusive,
+            carry_checks=(RequireRustBuilders(rust_builders), RequireAssetTools()),
         ),
         after=after,
     )

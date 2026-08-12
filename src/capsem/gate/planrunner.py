@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from operator import attrgetter
 from typing import TYPE_CHECKING
 
+from . import carry
 from .cancellation import cancellable, observing
 from .contention import Claims
 from .context import Context
@@ -82,6 +83,7 @@ def execute(plan: Plan, context: Context, *, max_parallel: int | None = None) ->
     """Run every step the graph allows, and report what each one did."""
     sorter = plan.sorter()
     context.journal.shape(plan.labels, plan.edges)
+    carry.validate(plan, context)
     outcomes: dict[str, Outcome] = {}
     broken: set[str] = set()
     claims = Claims()

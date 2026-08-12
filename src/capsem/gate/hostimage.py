@@ -128,6 +128,7 @@ def image(config: GateConfig) -> Step:
         STEP,
         _Build(),
         contends=(config.exclusive("docker_daemon"),),
+        carry_checks=(_Require(),),
     )
 
 
@@ -180,6 +181,27 @@ class _Build(Action, name="host-image-build"):
                     f"host builder {settings.tag} carries input key {found!r}, expected {identity}"
                 )
             context.runner.note(f"host builder materialized with input key {identity}")
+        _prove_tools(context, docker)
+
+
+class _Require(Action, name="host-image-require"):
+    """Prove the carried builder still names and executes the exact inputs."""
+
+    def render(self) -> str:
+        return "require the carried exact Linux host builder image"
+
+    def perform(self, context: Context) -> None:
+        settings = context.config.hostimage
+        docker = Docker(context.runner)
+        platform = context.config.host_arch().docker_platform
+        identity = input_key(context.config)
+        if not docker.image_exists(settings.tag, platform=platform):
+            raise GateError(f"host builder {settings.tag} is missing")
+        found = docker.image_label(settings.tag, INPUT_KEY_LABEL)
+        if found != identity:
+            raise GateError(
+                f"host builder {settings.tag} carries input key {found!r}, expected {identity}"
+            )
         _prove_tools(context, docker)
 
 

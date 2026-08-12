@@ -63,6 +63,10 @@ required predecessor really completed there, and record the origin run ID in
 the diagnosis. Prefer a fresh focused test when the edit invalidates the
 expensive producer itself.
 
+Carried steps with external runtime products are revalidated before resumed
+work. If one was reclaimed, use the exact owning `--from` label in the refusal;
+do not guess an earlier frontier or recreate the product by hand.
+
 Call the result `diagnostic-passed` or `diagnostic-failed`, even if the current
 implementation still summarizes a zero exit as `ok`. It combines earlier
 outputs with current source and therefore answers only whether the new segment
