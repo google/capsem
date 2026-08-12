@@ -26,11 +26,16 @@ def _job_block(workflow: str, name: str) -> str:
 
 def test_install_test_inherits_uv_through_its_exact_local_helper() -> None:
     """One parent owns uv; neither sealed child resolves a second image."""
+    from capsem.gate import config as gate_config
+
     parent = _read("docker/Dockerfile.host-builder")
     helper = _read("docker/Dockerfile.install-builder")
     child = _read("docker/Dockerfile.install-test")
+    config = gate_config.load(PROJECT_ROOT)
 
-    assert "install -m 555 /root/.local/bin/uv /usr/local/bin/uv" in parent
+    assert "FROM ${UV_IMAGE} AS uv-runtime" in parent
+    assert "COPY --from=uv-runtime /uv /uvx /usr/local/bin/" in parent
+    assert re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", config.hostimage.uv_image)
     assert helper.count("FROM ${BASE}") == 2
     assert "FROM ${BASE}" in child
     assert "astral-sh/uv" not in helper
@@ -40,11 +45,26 @@ def test_install_test_inherits_uv_through_its_exact_local_helper() -> None:
 def test_every_fresh_ci_test_runner_preinstalls_the_exact_nextest() -> None:
     pin = "cargo-nextest@0.9.137"
     jobs = (
-        ("fast-gate.yaml", "static", "Materialize locked qualification dependencies", "just _test-fast"),
+        (
+            "fast-gate.yaml",
+            "static",
+            "Materialize locked qualification dependencies",
+            "just _test-fast",
+        ),
         ("ci.yaml", "test-linux", None, "just _gate-linux-rust"),
         ("ci.yaml", "test", None, "cargo llvm-cov nextest"),
-        ("release.yaml", "test-binary-pairing", "Prepare hermetic qualification boundary", "just _test-functional"),
-        ("release-assets.yaml", "test-profile-pairing", "Prepare hermetic qualification boundary", "just _test-functional"),
+        (
+            "release.yaml",
+            "test-binary-pairing",
+            "Prepare hermetic qualification boundary",
+            "just _test-functional",
+        ),
+        (
+            "release-assets.yaml",
+            "test-profile-pairing",
+            "Prepare hermetic qualification boundary",
+            "just _test-functional",
+        ),
     )
 
     for workflow_name, job_name, seal, consumer in jobs:
@@ -56,10 +76,20 @@ def test_every_fresh_ci_test_runner_preinstalls_the_exact_nextest() -> None:
 
 
 def test_host_builder_installs_the_same_exact_nextest() -> None:
-    host_builder = _read("docker/Dockerfile.host-builder")
+    from capsem.gate import config as gate_config
+    from capsem.gate import hostimage
 
-    assert "cargo install cargo-nextest --version 0.9.137 --locked" in host_builder
-    assert "cargo install cargo-nextest --locked" not in host_builder
+    config = gate_config.load(PROJECT_ROOT)
+    host_builder = _read("docker/Dockerfile.host-builder")
+    argument = next(
+        name for name, tool in config.hostimage.cargo_tool_args.items() if tool == "cargo-nextest"
+    )
+    package, version = hostimage.cargo_tool(config=config, argument=argument)
+
+    assert package == "cargo-nextest"
+    assert version
+    assert f'cargo install {package} --version "${{{argument}}}" --locked' in host_builder
+    assert f"ARG {argument}" in host_builder
 
 
 def test_just_test_holds_source_state_stable_without_archiving_benchmarks() -> None:
@@ -94,10 +124,7 @@ def test_just_test_holds_source_state_stable_without_archiving_benchmarks() -> N
     # to cover only part of the gate is gone.
     from helpers.gate import RecordingRunner
 
-    held = {
-        resource.name
-        for resource in command.resources(RecordingRunner(PROJECT_ROOT))
-    }
+    held = {resource.name for resource in command.resources(RecordingRunner(PROJECT_ROOT))}
     assert {"colima", "orphan-accounting", "failure-evidence"} <= held
 
     # Declared in `[environment]`, which Workspace exports and Service reads.
@@ -143,7 +170,6 @@ def _step_at(labels: list[str], fragment: str) -> int:
     raise AssertionError(f"no step matching {fragment!r} in:\n  " + "\n  ".join(labels))
 
 
-
 def test_gate_run_retains_the_vm_performance_recordings_it_produces() -> None:
     """`functional` writes the VM recordings and `glowup` runs after it.
 
@@ -183,16 +209,10 @@ def test_full_gate_runs_capsem_bench_baseline_for_every_selected_profile() -> No
     labels = list(_gate_plan().labels)
 
     for profile in profiles.selected(config):
-        matching = [
-            label for label in labels if label.endswith(f"pytest.benchmark.{profile}")
-        ]
-        assert len(matching) == 1, (
-            f"{profile} has {len(matching)} recorded baselines, expected one"
-        )
+        matching = [label for label in labels if label.endswith(f"pytest.benchmark.{profile}")]
+        assert len(matching) == 1, f"{profile} has {len(matching)} recorded baselines, expected one"
 
-    step = _gate_plan().step_named(
-        next(label for label in labels if "pytest.benchmark." in label)
-    )
+    step = _gate_plan().step_named(next(label for label in labels if "pytest.benchmark." in label))
     assert [e.name for e in step.contends] == ["apple_vz"]
 
 
@@ -233,9 +253,7 @@ def test_local_gate_bootstraps_docker_before_storage_preflight() -> None:
     """A storage budget measured before the daemon exists measures nothing."""
     labels = list(_gate_plan().labels)
 
-    assert _step_at(labels, "prepare.bootstrap") < _step_at(
-        labels, "prepare.storage-budget"
-    )
+    assert _step_at(labels, "prepare.bootstrap") < _step_at(labels, "prepare.storage-budget")
 
 
 def test_macos_full_gate_holds_a_system_sleep_assertion() -> None:
@@ -251,6 +269,8 @@ def test_macos_full_gate_holds_a_system_sleep_assertion() -> None:
 
 
 def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
+    from capsem.gate import config as gate_config
+
     toolchain = tomllib.loads(_read("rust-toolchain.toml"))
     assert toolchain["toolchain"]["channel"] == PINNED_RUST
 
@@ -267,8 +287,11 @@ def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
         assert all("@" in tool for tool in tools)
 
     builder = _read("docker/Dockerfile.host-builder")
-    assert f"--default-toolchain {PINNED_RUST}" in builder
-    assert "--default-toolchain stable" not in builder
+    config = gate_config.load(PROJECT_ROOT)
+    assert "FROM ${RUST_IMAGE} AS rust-toolchain" in builder
+    assert PINNED_RUST in config.hostimage.rust_image
+    assert 'case "$rustc_version" in "rustc ${RUST_TOOLCHAIN} "*)' in builder
+    assert "--default-toolchain stable" not in builder and "rustup.rs" not in builder
 
     bootstrap = _read("bootstrap.sh")
     assert '--default-toolchain "$CAPSEM_RUST_TOOLCHAIN"' in bootstrap
@@ -304,11 +327,20 @@ def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
 
 def test_host_builder_base_images_are_immutable() -> None:
     """A sealed rebuild must resolve exact bytes, not refresh mutable tags."""
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
     builder = _read("docker/Dockerfile.host-builder")
     bases = [line.split()[1] for line in builder.splitlines() if line.startswith("FROM ")]
+    dynamic = {"${RUST_IMAGE}", "${UV_IMAGE}"}
 
     assert bases
-    assert all("@sha256:" in base for base in bases), bases
+    assert {base for base in bases if base.startswith("${")} == dynamic
+    assert all("@sha256:" in base for base in bases if base not in dynamic), bases
+    assert all(
+        re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", image)
+        for image in (config.hostimage.rust_image, config.hostimage.uv_image)
+    )
 
 
 def test_every_guest_builder_base_is_an_exact_platform_child_manifest() -> None:
@@ -373,9 +405,7 @@ def test_remote_storage_images_are_immutable() -> None:
             for child in value:
                 visit(child)
         elif (
-            isinstance(value, str)
-            and value.endswith(":latest")
-            and not value.startswith("capsem-")
+            isinstance(value, str) and value.endswith(":latest") and not value.startswith("capsem-")
         ):
             floating.append(value)
 

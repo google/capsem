@@ -110,6 +110,13 @@ def test_two_lanes_in_one_plan_build_the_builder_once() -> None:
     assert list(plan.labels).count(hostimage.STEP) == 1
 
 
+def test_focused_host_image_command_runs_only_the_production_materializer() -> None:
+    plan = _plan("host-image")
+
+    assert plan.labels == (hostimage.STEP,)
+    assert GateCommand.registry["host-image"].exclusive
+
+
 def test_the_builder_needs_no_repository_to_identify_a_build() -> None:
     """Reimplemented from a test of the foreign-UID probe.
 

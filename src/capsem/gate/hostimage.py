@@ -15,6 +15,9 @@ foreign UID reproduces it here, and works on macOS too because git compares
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
 from . import host, linuxrust
 from .actions import Action, Run
 from .command import GateCommand
@@ -23,11 +26,100 @@ from .context import Context
 from .docker import Docker
 from .errors import GateError
 from .execution import Step, step
+from .invocation import ConsoleMode
+from .packageinputs import pinned_toolchain
 from .plan import Plan
 
 #: One name, so every lane that needs the builder depends on the same step
 #: rather than each spelling its own label.
 STEP = "host-image"
+INPUT_KEY_LABEL = "org.capsem.host-builder.input-key"
+
+
+def cargo_tool(*, config: GateConfig, argument: str) -> tuple[str, str]:
+    """The install package and version named by one Docker build argument."""
+    try:
+        name = config.hostimage.cargo_tool_args[argument]
+    except KeyError:
+        raise GateError(f"unknown host-builder Cargo tool argument {argument!r}") from None
+    matches = [crate for crate in config.toolchain.crates if crate.name == name]
+    if len(matches) != 1:
+        raise GateError(f"host-builder Cargo tool {name!r} is not uniquely configured")
+    install = matches[0].install
+    version_at = install.index("--version") + 1
+    return install[2], install[version_at]
+
+
+def _identity_files(config: GateConfig) -> tuple[Path, ...]:
+    files = tuple(config.path(relative) for relative in config.hostimage.builder_identity_inputs)
+    missing = [path for path in files if not path.is_file()]
+    if missing:
+        raise GateError(
+            "host-builder identity inputs are missing: " + ", ".join(str(path) for path in missing)
+        )
+    return files
+
+
+def input_key(config: GateConfig) -> str:
+    """Digest every file and config value that can change the builder."""
+    settings = config.hostimage
+    digest = hashlib.blake2b(digest_size=16)
+    for path in _identity_files(config):
+        digest.update(path.relative_to(config.root).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    values = [
+        config.host_arch().docker_platform,
+        config.apt_snapshot.base,
+        config.apt_snapshot.id,
+        settings.materialize_network,
+        settings.pnpm_version,
+        settings.rust_image,
+        settings.uv_image,
+        pinned_toolchain(config.root),
+    ]
+    for argument in sorted(settings.cargo_tool_args):
+        package, version = cargo_tool(config=config, argument=argument)
+        values.extend((argument, settings.cargo_tool_args[argument], package, version))
+    for value in values:
+        digest.update(value.encode())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _image_tag(ref: str) -> str:
+    """Version tag from a schema-validated digest-qualified image ref."""
+    return ref.split("@", 1)[0].rsplit(":", 1)[1]
+
+
+def _prove_tools(context: Context, docker: Docker) -> None:
+    """Execute every promised tool inside the exact image, without egress."""
+    config = context.config
+    settings = config.hostimage
+    probes: list[tuple[tuple[str, ...], str]] = [
+        (("rustc", "--version"), f"rustc {pinned_toolchain(config.root)} "),
+        (("uv", "--version"), f"uv {_image_tag(settings.uv_image)}"),
+        (("pnpm", "--version"), settings.pnpm_version),
+    ]
+    for argument in sorted(settings.cargo_tool_args):
+        name = settings.cargo_tool_args[argument]
+        tool = next(crate for crate in config.toolchain.crates if crate.name == name)
+        probes.append((tool.probe, tool.expected))
+    script = (
+        'expected=$1; shift; actual=$("$@" 2>&1); case "$actual" in "$expected"*) exit 0 ;; '
+        '*) printf "expected %s, got %s\\n" "$expected" "$actual" >&2; exit 1 ;; esac'
+    )
+    context.runner.step("Proving exact host-builder tools without network")
+    for probe, expected in probes:
+        if not docker.probe(
+            image=settings.tag,
+            command=["sh", "-eu", "-c", script, "host-builder-probe", expected, *probe],
+            network="none",
+        ):
+            raise GateError(
+                f"host builder {settings.tag} does not provide {expected!r} through {probe!r}"
+            )
 
 
 def image(config: GateConfig) -> Step:
@@ -47,9 +139,48 @@ class _Build(Action, name="host-image-build"):
 
     def perform(self, context: Context) -> None:
         settings = context.config.hostimage
-        Docker(context.runner).build(
-            tag=settings.tag, dockerfile=settings.dockerfile, context=settings.context
-        )
+        docker = Docker(context.runner)
+        platform = context.config.host_arch().docker_platform
+        identity = input_key(context.config)
+        found: str | None = None
+        if docker.image_exists(settings.tag, platform=platform):
+            found = docker.image_label(settings.tag, INPUT_KEY_LABEL)
+            if found == identity:
+                context.runner.note(f"host builder input key is already present: {identity}")
+            else:
+                context.runner.note(
+                    f"host builder input changed from {found or '<unlabelled>'} to {identity}"
+                )
+        if found != identity:
+            arguments = [
+                f"APT_SNAPSHOT_BASE={context.config.apt_snapshot.base}",
+                f"APT_SNAPSHOT_ID={context.config.apt_snapshot.id}",
+                f"PNPM_VERSION={settings.pnpm_version}",
+                f"RUST_IMAGE={settings.rust_image}",
+                f"UV_IMAGE={settings.uv_image}",
+                f"RUST_TOOLCHAIN={pinned_toolchain(context.config.root)}",
+                f"INPUT_IDENTITY={identity}",
+            ]
+            for argument in sorted(settings.cargo_tool_args):
+                _package, version = cargo_tool(config=context.config, argument=argument)
+                arguments.append(f"{argument}={version}")
+            context.runner.step("Materializing exact host-builder dependencies")
+            docker.build(
+                tag=settings.tag,
+                dockerfile=settings.dockerfile,
+                context=settings.context,
+                args=arguments,
+                platform=platform,
+                network=settings.materialize_network,
+                console=ConsoleMode.LOG_ONLY,
+            )
+            found = docker.image_label(settings.tag, INPUT_KEY_LABEL)
+            if found != identity:
+                raise GateError(
+                    f"host builder {settings.tag} carries input key {found!r}, expected {identity}"
+                )
+            context.runner.note(f"host builder materialized with input key {identity}")
+        _prove_tools(context, docker)
 
 
 def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
@@ -64,6 +195,21 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
     label or a six-gigabyte image built twice.
     """
     return plan.shared(image(config), after=after)
+
+
+class HostImageCommand(
+    GateCommand,
+    name="host-image",
+    help="materialize the exact Linux host-builder dependency image",
+):
+    """Focused cold/warm acceptance without continuing into package proof."""
+
+    exclusive = True
+
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        fragment(plan, self._config)
+        return plan
 
 
 def linux_rust(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:

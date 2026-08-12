@@ -269,7 +269,7 @@ jobs:
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
-          version: 10
+          version: 10.34.5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
@@ -280,34 +280,10 @@ jobs:
       - name: Build frontend
         run: bash scripts/check-web-surface.sh frontend-build
 
-      - name: Install cargo tools
+      - name: Install exact config-owned Cargo tools
         env:
           CARGO_NET_RETRY: 10
-        run: |
-          install_cargo_tool() {
-            tool="$1"
-            for attempt in 1 2 3; do
-              if cargo install "$tool" --locked; then
-                return 0
-              fi
-              echo "cargo install $tool failed on attempt $attempt/3"
-              sleep $((attempt * 15))
-            done
-            return 1
-          }
-
-          install_cargo_tool tauri-cli
-          install_cargo_tool cargo-auditable
-          for attempt in 1 2 3; do
-            if cargo install cargo-sbom --locked; then
-              break
-            fi
-            if [ "$attempt" = "3" ]; then
-              exit 1
-            fi
-            echo "cargo install cargo-sbom failed on attempt $attempt/3"
-            sleep $((attempt * 15))
-          done
+        run: uv run python scripts/install-configured-cargo-tools.py cargo-tauri cargo-sbom
 
       - name: Import Apple certificate
         env:
@@ -855,7 +831,7 @@ jobs:
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
-          version: 10
+          version: 10.34.5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
@@ -1113,7 +1089,7 @@ jobs:
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
-          version: 10
+          version: 10.34.5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24

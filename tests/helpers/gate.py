@@ -140,7 +140,16 @@ class RecordingRunner(Runner):
             elif IMAGE_ID_PROBE in rendered:
                 stdout = RECORDED_IMAGE_ID
             elif IMAGE_LABEL_PROBE in rendered:
-                stdout = command.argv[-1]
+                if "org.capsem.host-builder.input-key" in rendered:
+                    from capsem.gate import config as gate_config
+                    from capsem.gate import hostimage
+
+                    config_root = (
+                        self.root if (self.root / "config/gate.toml").is_file() else PROJECT_ROOT
+                    )
+                    stdout = hostimage.input_key(gate_config.load(config_root))
+                else:
+                    stdout = command.argv[-1]
             elif IMAGE_REPOSITORY_DIGEST_PROBE in rendered:
                 repository = _image_repository(command.argv[-1])
                 stdout = f'["{repository}@{RECORDED_IMAGE_ID}"]'

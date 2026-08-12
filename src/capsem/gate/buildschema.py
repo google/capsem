@@ -9,7 +9,7 @@ own source.
 from __future__ import annotations
 
 from pathlib import PurePosixPath
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import StringConstraints, model_validator
 
@@ -99,6 +99,12 @@ class HostImageConfig(Strict):
     tag: str
     dockerfile: str
     context: str
+    builder_identity_inputs: tuple[str, ...]
+    materialize_network: Literal["default"]
+    pnpm_version: Annotated[str, StringConstraints(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$")]
+    rust_image: Annotated[str, StringConstraints(pattern=r"^[^\s@]+@sha256:[0-9a-f]{64}$")]
+    uv_image: Annotated[str, StringConstraints(pattern=r"^[^\s@]+@sha256:[0-9a-f]{64}$")]
+    cargo_tool_args: dict[Annotated[str, StringConstraints(pattern=r"^[A-Z][A-Z0-9_]+$")], str]
     script: str
     mount: str
 

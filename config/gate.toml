@@ -1156,6 +1156,17 @@ lane_container = "capsem-linux-rust-run"
 tag = "capsem-host-builder:latest"
 dockerfile = "docker/Dockerfile.host-builder"
 context = "docker/"
+builder_identity_inputs = [
+    "docker/Dockerfile.host-builder",
+    "docker/sources-multiarch.sh",
+    "docker/swap-dev-libs.sh",
+    "rust-toolchain.toml",
+]
+materialize_network = "default"
+pnpm_version = "10.34.5"
+rust_image = "rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97"
+uv_image = "ghcr.io/astral-sh/uv:0.12.3@sha256:2d890623d310b57771ce840f0da5eed5fc6d657da05ffaa45d82797b53fa3abc"
+cargo_tool_args = { TAURI_CLI_VERSION = "cargo-tauri", CARGO_NEXTEST_VERSION = "cargo-nextest", CARGO_LLVM_COV_VERSION = "cargo-llvm-cov" }
 script = "scripts/test-linux-rust.sh"
 mount = "/src"
 # `probe_user` and `probe_network` are gone with the probe they configured.
@@ -1352,6 +1363,7 @@ source_contract = [
     "tests/test_gate_hardening.py",
     "tests/test_gate_has_no_literal_data.py",
     "tests/test_gate_hostimage_composition.py",
+    "tests/test_host_builder_materializer.py",
     "tests/test_gate_install_container.py",
     "tests/test_gate_no_nested_commands.py",
     "tests/test_gate_install_ordering.py",

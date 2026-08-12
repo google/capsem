@@ -1273,18 +1273,15 @@ def test_deb_repacker_strips_each_elf_with_its_target_tool_and_fails_closed() ->
     assert "could not be stripped" not in repack
 
 
-def test_cross_compile_refreshes_the_cached_host_builder_image() -> None:
-    """Always rebuilt, never asked about.
-
-    Asking whether the tag exists lets a stale local image hide a change to the
-    Dockerfile, and then the gate proves an environment nobody else has. Docker
-    keeps unchanged layers, so the rebuild is nearly free.
-    """
+def test_cross_compile_reuses_only_the_exact_host_builder_identity() -> None:
+    """A warm retry skips six minutes without accepting a stale Dockerfile."""
     host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
     issued = _planned("cross-compile", arch="arm64")
 
-    assert "docker build -t capsem-host-builder" in issued
-    assert "docker image inspect capsem-host-builder" not in issued
+    assert "docker image inspect --platform" in issued
+    assert "org.capsem.host-builder.input-key" in issued
+    assert "docker build -t capsem-host-builder" not in issued
+    assert "org.capsem.host-builder.input-key" in host_builder
     assert host_builder.index("COPY swap-dev-libs.sh") > host_builder.index("FROM")
 
 
@@ -1508,15 +1505,12 @@ def test_cross_compile_does_not_bypass_apt_date_validation() -> None:
 def test_cross_compile_apt_sources_are_encrypted_retried_and_fail_closed() -> None:
     sources = (PROJECT_ROOT / "docker/sources-multiarch.sh").read_text()
 
-    mirror_assignments = [
-        line.strip()
-        for line in sources.splitlines()
-        if line.strip().startswith(
-            ("NATIVE_MIRROR=", "NATIVE_SECURITY=", "FOREIGN_MIRROR=", "FOREIGN_SECURITY=")
-        )
-    ]
-    assert mirror_assignments
-    assert all('="https://' in line for line in mirror_assignments)
+    assert "${1:?Ubuntu snapshot base is required}" in sources
+    assert "${2:?Ubuntu snapshot ID is required}" in sources
+    assert "${snapshot_base%/}/${snapshot_id}" in sources
+    assert "archive.ubuntu.com" not in sources
+    assert "ports.ubuntu.com" not in sources
+    assert "security.ubuntu.com" not in sources
     assert 'Acquire::Retries "5";' in sources
     assert 'Acquire::https::Timeout "30";' in sources
     assert 'APT::Update::Error-Mode "any";' in sources
@@ -1565,7 +1559,7 @@ def test_host_builder_does_not_refetch_multiarch_indexes_for_python() -> None:
     native_tools = host_builder.split(
         "# ---- Native build tools + cross-compilation toolchains ----", maxsplit=1
     )[1].split("# ---- Node.js 24 + pnpm 10 ----", maxsplit=1)[0]
-    python = host_builder.split("# ---- Python 3 + uv", maxsplit=1)[1].split(
+    python = host_builder.split("# ---- Exact uv binary", maxsplit=1)[1].split(
         "# ---- Helper script", maxsplit=1
     )[0]
 
@@ -1574,7 +1568,7 @@ def test_host_builder_does_not_refetch_multiarch_indexes_for_python() -> None:
     assert native_tools.count("apt-get update") == 1
     assert host_builder.count("apt-get update") == 1
     assert "apt-get update" not in python
-    assert "astral.sh/uv/install.sh" in python
+    assert "COPY --from=uv-runtime /uv /uvx /usr/local/bin/" in python
 
 
 def test_host_builder_uses_digest_pinned_prebuilt_node_runtime() -> None:

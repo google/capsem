@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Linux and macOS build rails now share exact config-owned Rust, uv, pnpm, and
+  Cargo-tool authorities. The network-open host-builder materializer is keyed
+  by those values plus its immutable Ubuntu snapshot and source inputs; a warm
+  match is reused, while package and install work stays network-denied. A
+  focused recorded `capsem-gate host-image` rail proves cold/warm behavior
+  without continuing into an unrelated package build.
+
 - Every recorded gate command now prints its critical-path timing summary;
   nobody has to remember `--timing` before starting a multi-hour proof.
   Complete qualification also fails when its critical path or any of the prior
