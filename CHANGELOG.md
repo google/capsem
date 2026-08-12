@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Workflow provisioning contracts now follow Just reachability for `uv` as
+  well as Node tools, so every Linux lane installs the exact gate interpreter
+  before invoking `capsem-gate`.
+
 - Diagnostic continuation now validates carried Docker authorities before any
   resumed work. If storage reclamation removed an exact helper image, the gate
   refuses immediately and names its owning `--from` step instead of rebuilding
