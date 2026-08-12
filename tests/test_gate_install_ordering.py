@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 from helpers.gate import RecordingRunner
+from helpers.profile_content import materialize_required_artifacts
 
 from capsem.gate import config as gate_config
 from capsem.gate.content import LocalInstallContent, ProfileContent, SelectedInstallContent
@@ -82,8 +83,7 @@ def _local_content(root: Path) -> ProfileContent:
     payload = __import__("json").dumps(manifest).encode()
     content.assets.mkdir(parents=True)
     (content.assets / config.install.manifest_name).write_bytes(payload)
-    for arch in config.architectures:
-        (content.assets / arch).mkdir()
+    materialize_required_artifacts(config, content.assets)
     config_manifest = content.config / config.suites.pytest.test_manifest
     config_manifest.parent.mkdir(parents=True)
     config_manifest.write_bytes(payload)
@@ -116,6 +116,16 @@ def _selected_content(root: Path) -> SelectedInstallContent:
     (inputs / config.install.manifest_name).write_bytes(manifest_bytes)
     (inputs / config.package.release_inputs_name).write_text("{}\n")
     return SelectedInstallContent(content)
+
+
+def test_local_content_fixture_tracks_the_config_owned_artifact_inventory(tmp_path: Path) -> None:
+    root = _checkout(tmp_path, dpkg_arch=CONFIG.host_arch().dpkg)
+    config = gate_config.load(root)
+    content = _local_content(root)
+    expected = {*config.artifacts.bootable, *config.assets.evidence_artifacts}
+
+    for arch in config.architectures.values():
+        assert {path.name for path in (content.assets / arch.name).iterdir()} == expected
 
 
 @pytest.fixture

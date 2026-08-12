@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Release-proof fixtures now materialize the exact config-owned boot and
+  evidence artifact inventory for every selected architecture. The fast gate
+  therefore keeps exercising install and deb-proof behavior after
+  `ProfileContent` rejects incomplete cohorts, without weakening that refusal.
 - Hosted install qualification now stages the complete config-owned evidence
   closure for every selected profile architecture, including OBOM and software
   inventory aliases plus their immutable hash names. `ProfileContent` refuses

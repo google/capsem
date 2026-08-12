@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from helpers.gate import RecordingRunner
+from helpers.profile_content import materialize_required_artifacts
 
 from capsem.gate import config as gate_config
 from capsem.gate.content import ProfileContent
@@ -60,8 +61,7 @@ def _content(root: Path) -> ProfileContent:
     ).encode()
     content.assets.mkdir(parents=True)
     (content.assets / config.install.manifest_name).write_bytes(payload)
-    for arch in config.architectures:
-        (content.assets / arch).mkdir()
+    materialize_required_artifacts(config, content.assets)
     config_manifest = content.config / config.suites.pytest.test_manifest
     config_manifest.parent.mkdir(parents=True)
     config_manifest.write_bytes(payload)

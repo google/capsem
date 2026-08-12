@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 from helpers.gate import RecordingRunner
+from helpers.profile_content import materialize_required_artifacts
 
 from capsem.gate import config as gate_config
 from capsem.gate.content import ProfileContent, SelectedInstallContent
@@ -233,7 +234,11 @@ def _complete_selected_content(tmp_path: Path) -> SelectedInstallContent:
     (inputs / CONFIG.install.manifest_name).write_bytes(selected_encoded)
     selected.content.assets.mkdir(parents=True)
     (selected.content.assets / CONFIG.install.manifest_name).write_bytes(runtime_encoded)
-    (selected.content.assets / CONFIG.host_arch().name).mkdir()
+    materialize_required_artifacts(
+        CONFIG,
+        selected.content.assets,
+        arches=(CONFIG.host_arch(),),
+    )
     config_manifest = selected.content.config / CONFIG.suites.pytest.test_manifest
     config_manifest.parent.mkdir(parents=True)
     config_manifest.write_bytes(runtime_encoded)
