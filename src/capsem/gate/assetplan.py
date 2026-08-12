@@ -19,7 +19,12 @@ from .assetlanes import discover_profiles, lane_assets
 from .assets import AssetGate
 from .command import GateCommand
 from .execution import step
-from .imagebases import MaterializeRustBuilders, Prefetch, required_rust_builder_names
+from .imagebases import (
+    MaterializeAssetTools,
+    MaterializeRustBuilders,
+    Prefetch,
+    required_rust_builder_names,
+)
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 
@@ -50,7 +55,7 @@ def fragment(plan, config, *, after: tuple = ()):
     ready = phase.add(
         step(
             "preflight",
-            Prefetch(rust_names=rust_builders),
+            Prefetch(rust_names=rust_builders, asset_tools=True),
             Call(
                 "run the container execution preflight, check capacity, and clear the asset tree",
                 lambda ctx: AssetGate(ctx.runner).preflight(),
@@ -62,6 +67,7 @@ def fragment(plan, config, *, after: tuple = ()):
                 ),
             ),
             MaterializeRustBuilders(rust_builders),
+            MaterializeAssetTools(),
             contends=exclusive,
         ),
         after=after,

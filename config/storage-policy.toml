@@ -101,6 +101,22 @@ owner = "assets"
 keep_previous = 0
 reason = "Only the lockfile-keyed x86_64 guest Rust builder has a possible consumer."
 
+[resources.capsem-asset-tools-arm64]
+kind = "image"
+docker_name = "capsem-asset-tools-arm64"
+retention = "generational"
+owner = "assets"
+keep_previous = 0
+reason = "Only the current snapshot/digest-keyed arm64 EROFS and OBOM helper has a consumer."
+
+[resources.capsem-asset-tools-x86_64]
+kind = "image"
+docker_name = "capsem-asset-tools-x86_64"
+retention = "generational"
+owner = "assets"
+keep_previous = 0
+reason = "Only the current snapshot/digest-keyed x86_64 EROFS and OBOM helper has a consumer."
+
 [resources.capsem-agent-target-arm64]
 kind = "volume"
 retention = "obsolete"

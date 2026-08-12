@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from . import crossexec, initrd
-from .actions import Call, Run
+from .actions import Run
 from .command import GateCommand
 from .config import Arch, GateConfig
 from .errors import GateError
 from .execution import Step, step
-from .imagebases import MaterializeRustBuilders, Prefetch, required_rust_builder_names
-from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
+from .imagebases import (
+    MaterializeAssetTools,
+    MaterializeRustBuilders,
+    Prefetch,
+    required_rust_builder_names,
+)
+from .imagedoctor import doctor
 from .plan import Plan
 
 
@@ -34,35 +39,6 @@ def missing(config: GateConfig, arch: Arch) -> list[str]:
         for name in config.artifacts.bootable
         if not (tree / name).is_file() or (tree / name).stat().st_size == 0
     ]
-
-
-def doctor(config: GateConfig) -> Step:
-    """Check the host, with the asset and KVM checks turned off.
-
-    Those two would fail on exactly the thing this is about to build, which is
-    why the skips exist rather than the doctor being skipped entirely.
-    """
-    from . import doctor as diagnosis
-
-    return step(
-        "doctor",
-        # Both halves of `just doctor`, composed rather than dispatched: the
-        # gate's own wiring check, then the host-tooling script that actually
-        # reads the skip variables.
-        Call(
-            "would the gate work if we started now",
-            diagnosis.report,
-            justification=CallJustification(
-                kind=OpaqueKind.PURE_INSPECTION,
-                reason="reports every wiring problem it can find and changes nothing at all",
-                effects=machine_effects(Effect.PROCESS),
-            ),
-        ),
-        Run(
-            ["bash", config.doctor.common_script],
-            env=dict(config.imagebuild.doctor_skips),
-        ),
-    )
 
 
 def build_argv(
@@ -144,11 +120,12 @@ class BuildAssetsCommand(
         rust_builders = (
             () if self._args.template == "kernel" else required_rust_builder_names(config, names)
         )
+        needs_asset_tools = self._args.template != "kernel"
 
         bases = plan.add(
             step(
                 "base-images",
-                Prefetch(names, rust_names=rust_builders),
+                Prefetch(names, rust_names=rust_builders, asset_tools=needs_asset_tools),
                 contends=(config.exclusive("docker_daemon"),),
             )
         )
@@ -166,6 +143,15 @@ class BuildAssetsCommand(
                 step(
                     "guest-builders",
                     MaterializeRustBuilders(rust_builders),
+                    contends=(config.exclusive("docker_daemon"),),
+                ),
+                after=(ready,),
+            )
+        if needs_asset_tools:
+            ready = plan.add(
+                step(
+                    "asset-tools",
+                    MaterializeAssetTools(),
                     contends=(config.exclusive("docker_daemon"),),
                 ),
                 after=(ready,),
@@ -224,7 +210,7 @@ def check_assets(
     bases = phase.add(
         step(
             "base-images",
-            Prefetch(names, rust_names=rust_builders),
+            Prefetch(names, rust_names=rust_builders, asset_tools=True),
             contends=(config.exclusive("docker_daemon"),),
         ),
         after=after,
@@ -247,6 +233,14 @@ def check_assets(
             ),
             after=(ready,),
         )
+    ready = phase.add(
+        step(
+            "asset-tools",
+            MaterializeAssetTools(),
+            contends=(config.exclusive("docker_daemon"),),
+        ),
+        after=(ready,),
+    )
     return tuple(
         phase.add(
             build(config, profile=profile, arch=arch.name, template="all"),

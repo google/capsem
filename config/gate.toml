@@ -660,7 +660,7 @@ error_on_warning = true
 # Reductions must lower the count immediately, so stale exemptions fail too.
 [lint.ty_ratchet]
 call-top-callable = 3
-invalid-argument-type = 139
+invalid-argument-type = 135
 invalid-assignment = 18
 invalid-attribute-override = 1
 invalid-method-override = 4
@@ -1311,6 +1311,7 @@ source_contract = [
     "tests/test_agent_skill_index.py",
     "tests/test_authoritative_values_are_not_restated.py",
     "tests/test_build_assets_profile.py",
+    "tests/test_asset_network_guardrail.py",
     "tests/test_build_provenance.py",
     "tests/test_builder_probe_timeouts.py",
     "tests/test_cargo_audit_gate.py",

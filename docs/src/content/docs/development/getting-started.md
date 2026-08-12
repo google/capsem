@@ -60,11 +60,8 @@ lifecycles in the bootstrap run.
 | 2 | Frontend deps | `pnpm install --frozen-lockfile` (in `frontend/`) | Tauri UI dependencies |
 | 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` | Installs Rust targets and exact config-owned Cargo tools (`cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri`, `cargo-sbom`), builds VM assets, packs initrd |
 
-Release-only tools are checked but not all installed by `doctor --fix`. Before
-running `bash scripts/check-release-workflow.sh` or cutting VM asset releases
-locally, install the OBOM generator with
-`npm install -g @cyclonedx/cdxgen@12.7.0`; the manual asset workflow installs the same
-tool in CI.
+The VM asset rail materializes its pinned OBOM generator and validator inside
+an architecture-matched helper. No global npm cdxgen install is required.
 
 Pressing **Enter** at any prompt accepts the install (Y is the default). Type `n` to skip — bootstrap continues and surfaces the missing tool in the doctor report at the end.
 

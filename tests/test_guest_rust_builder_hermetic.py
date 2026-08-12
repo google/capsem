@@ -180,13 +180,13 @@ def test_materialization_fails_closed_without_its_exact_rust_base() -> None:
     assert not runner.ran(r"docker build")
 
 
-def test_linux_helpers_cover_only_foreign_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_linux_helpers_cover_every_requested_target(monkeypatch: pytest.MonkeyPatch) -> None:
     config = gate_config.load(PROJECT_ROOT)
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
     monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
 
-    assert imagebases.required_rust_builder_names(config) == ("arm64",)
-    assert imagebases.required_rust_builder_names(config, ("x86_64",)) == ()
+    assert imagebases.required_rust_builder_names(config) == ("arm64", "x86_64")
+    assert imagebases.required_rust_builder_names(config, ("x86_64",)) == ("x86_64",)
 
 
 def test_macos_helpers_cover_every_requested_target(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -234,9 +234,10 @@ def test_macos_check_assets_proves_execution_before_materializing_helper(
 
     assert plan.after_of("assets.guest-execution") == {"assets.doctor"}
     assert plan.after_of("assets.guest-builders") == {"assets.guest-execution"}
+    assert plan.after_of("assets.asset-tools") == {"assets.guest-builders"}
     for profile in imagebuild.profiles(config):
         assert plan.after_of(f"assets.image.{profile}.all.{config.host_arch().name}") == {
-            "assets.guest-builders"
+            "assets.asset-tools"
         }
 
 

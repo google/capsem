@@ -1,0 +1,46 @@
+ARG BASE
+FROM ${BASE}
+
+ARG DEBIAN_SNAPSHOT_BASE
+ARG DEBIAN_SECURITY_SNAPSHOT_BASE
+ARG DEBIAN_SNAPSHOT_ID
+ARG CDXGEN_URL
+ARG CDXGEN_SHA256
+ARG CDX_VALIDATE_URL
+ARG CDX_VALIDATE_SHA256
+ARG INPUT_IDENTITY
+
+LABEL org.capsem.asset-tools.input-key="${INPUT_IDENTITY}"
+
+# This is the sole network-open asset post-processing materializer. APT's
+# signed metadata and every downloaded executable are selected by checked-in
+# timestamp/digest; the publishable pack/OBOM phase runs this image offline.
+RUN set -eux; \
+    test -n "${DEBIAN_SNAPSHOT_BASE}"; \
+    test -n "${DEBIAN_SECURITY_SNAPSHOT_BASE}"; \
+    test -n "${DEBIAN_SNAPSHOT_ID}"; \
+    rm -f /etc/apt/sources.list.d/*; \
+    printf 'deb [check-valid-until=no] %s/%s bookworm main\n' \
+        "${DEBIAN_SNAPSHOT_BASE}" "${DEBIAN_SNAPSHOT_ID}" \
+        > /etc/apt/sources.list; \
+    printf 'deb [check-valid-until=no] %s/%s bookworm-updates main\n' \
+        "${DEBIAN_SNAPSHOT_BASE}" "${DEBIAN_SNAPSHOT_ID}" \
+        >> /etc/apt/sources.list; \
+    printf 'deb [check-valid-until=no] %s/%s bookworm-security main\n' \
+        "${DEBIAN_SECURITY_SNAPSHOT_BASE}" "${DEBIAN_SNAPSHOT_ID}" \
+        >> /etc/apt/sources.list; \
+    apt-get -o Acquire::Check-Date=false update; \
+    apt-get install -y --no-install-recommends ca-certificates curl erofs-utils; \
+    rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    curl -fsSL "${CDXGEN_URL}" -o /tmp/cdxgen; \
+    printf '%s  %s\n' "${CDXGEN_SHA256}" /tmp/cdxgen | sha256sum -c -; \
+    install -m 0555 /tmp/cdxgen /usr/local/bin/cdxgen; \
+    curl -fsSL "${CDX_VALIDATE_URL}" -o /tmp/cdx-validate; \
+    printf '%s  %s\n' "${CDX_VALIDATE_SHA256}" /tmp/cdx-validate | sha256sum -c -; \
+    install -m 0555 /tmp/cdx-validate /usr/local/bin/cdx-validate; \
+    rm -f /tmp/cdxgen /tmp/cdx-validate; \
+    mkfs.erofs -V; \
+    cdxgen --version; \
+    cdx-validate --version

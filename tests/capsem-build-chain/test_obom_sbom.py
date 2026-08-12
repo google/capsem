@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 
+from capsem.builder.config import load_guest_config
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CDXGEN_VERSION = "12.7.0"
 
 
 def _read(path: str) -> str:
@@ -19,17 +19,10 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     asset_workflow = _read(".github/workflows/release-assets.yaml")
     channel_workflow = _read(".github/workflows/release-channel.yaml")
 
-    assert f"npm install -g @cyclonedx/cdxgen@{CDXGEN_VERSION}" in asset_workflow
-    assert "@cyclonedx/cdxgen@latest" not in asset_workflow
+    assert "npm install -g @cyclonedx/cdxgen" not in asset_workflow
     assert "attestations: write" in asset_workflow
     assert "id-token: write" in asset_workflow
-    assert "CAPSEM_CDXGEN_CMD: cdxgen" in asset_workflow
-    assert asset_workflow.index("Install OBOM generator") < asset_workflow.index(
-        "- name: Build VM assets"
-    )
-    assert asset_workflow.index("CAPSEM_CDXGEN_CMD: cdxgen") < asset_workflow.index(
-        "just _build-rootfs"
-    )
+    assert "CAPSEM_CDXGEN_CMD" not in asset_workflow
     assert "asset-channel-preview" in asset_workflow
     assert "Publish immutable GitHub profile release" in asset_workflow
     assert "Attest VM asset provenance" in asset_workflow
@@ -117,8 +110,10 @@ def test_builder_emits_obom_and_keeps_build_ledger_debug_scoped() -> None:
 
     assert 'OBOM_ASSET = "obom.cdx.json"' in builder
     assert 'BUILD_LEDGER_NAME = "build-ledger.log"' in builder
-    assert f'CDXGEN_VERSION = "{CDXGEN_VERSION}"' in builder
-    assert cdxgen_commands == [["-t", "rootfs", "--no-validate", "-o"]]
+    assert len(cdxgen_commands) == 1
+    assert {"--pull", "never", "--network", "/rootfs", "-t", "rootfs", "-o"} <= set(
+        cdxgen_commands[0]
+    )
     assert "def _normalize_cyclonedx_obom" in builder
     assert "def _cdx_validate_command" in builder
     assert '"capsem:evidence:scope", "value": "exported-rootfs"' in builder
@@ -126,26 +121,27 @@ def test_builder_emits_obom_and_keeps_build_ledger_debug_scoped() -> None:
     assert "], capture=True)" in builder
     assert "def generate_cyclonedx_obom" in builder
     assert "cdxgen" in builder
-    assert "CAPSEM_CDXGEN_CMD" in builder
+    assert "CAPSEM_CDXGEN_CMD" not in builder
     assert "The build ledger records declared build inputs" in builder
     assert "This OBOM is the runtime" in builder
     assert '"capsem.build_ledger.v1"' in builder
 
 
-def test_cdxgen_is_pinned_identically_across_local_and_ci_asset_rails() -> None:
-    builder = _read("src/capsem/builder/docker.py")
+def test_cdxgen_is_digest_pinned_in_the_one_asset_helper() -> None:
+    config = load_guest_config(PROJECT_ROOT / "config/docker/image")
     host_builder = _read("docker/Dockerfile.host-builder")
     asset_workflow = _read(".github/workflows/release-assets.yaml")
+    helper = _read("docker/Dockerfile.asset-tools")
 
-    pins = {
-        "builder": re.search(r'CDXGEN_VERSION = "([0-9.]+)"', builder),
-        "host_builder": re.search(r"@cyclonedx/cdxgen@([0-9.]+)", host_builder),
-        "asset_workflow": re.search(r"@cyclonedx/cdxgen@([0-9.]+)", asset_workflow),
-    }
-    assert all(match is not None for match in pins.values())
-    assert {match.group(1) for match in pins.values() if match is not None} == {CDXGEN_VERSION}
-    for text in (builder, host_builder, asset_workflow):
-        assert "@cyclonedx/cdxgen@latest" not in text
+    assert set(config.build.asset_tools.architectures) == set(config.build.architectures)
+    for downloads in config.build.asset_tools.architectures.values():
+        for binary in (downloads.cdxgen, downloads.cdx_validate):
+            assert "/releases/download/v12.7.0/" in binary.url
+            assert len(binary.sha256) == 64
+    assert "sha256sum -c -" in helper
+    assert "@cyclonedx/cdxgen" not in host_builder
+    assert "@cyclonedx/cdxgen" not in asset_workflow
+    assert "CAPSEM_CDXGEN_CMD" not in asset_workflow
 
 
 def test_admin_materialization_and_service_routes_expose_verified_obom_evidence() -> None:

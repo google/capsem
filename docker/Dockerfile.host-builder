@@ -70,7 +70,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # tree intact preserves npm/npx's relative symlink targets while avoiding a
 # NodeSource setup script that performs another full multiarch apt refresh.
 COPY --from=node-runtime /usr/local/ /usr/local/
-RUN npm install -g pnpm@10 @cyclonedx/cdxgen@12.7.0
+RUN npm install -g pnpm@10
 
 # ---- Rust toolchain (kept identical to rust-toolchain.toml and CI) ----
 ENV RUSTUP_HOME=/usr/local/rustup

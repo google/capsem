@@ -5,11 +5,16 @@ TDD: these tests are written first (RED), then models.py makes them pass (GREEN)
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 from pydantic import ValidationError
 
 from capsem.builder.models import (
     ArchConfig,
+    AssetToolBinaryConfig,
+    AssetToolsArchitectureConfig,
+    AssetToolsConfig,
     BuildConfig,
     Compression,
     ErofsCompression,
@@ -59,7 +64,28 @@ def _arch(
 
 
 def _build(**kw):
+    binary = AssetToolBinaryConfig(url="https://example.test/tool", sha256="d" * 64)
+    architectures = cast(dict[str, ArchConfig], kw.get("architectures", {"arm64": _arch()}))
+    asset_tools = cast(AssetToolsConfig | None, kw.get("asset_tools"))
+    if asset_tools is None:
+        asset_tools = AssetToolsConfig(
+            dockerfile="docker/Dockerfile.asset-tools",
+            tag_template="capsem-asset-tools-{arch}:{digest}",
+            debian_snapshot_base="http://snapshot.example/debian",
+            debian_security_snapshot_base="http://snapshot.example/debian-security",
+            debian_snapshot_id="20260810T000000Z",
+            materialize_network="default",
+            runtime_network="none",
+            architectures={
+                name: AssetToolsArchitectureConfig(
+                    cdxgen=binary,
+                    cdx_validate=binary,
+                )
+                for name in architectures
+            },
+        )
     defaults = {
+        "materialize_network": "default",
         "kernel": KernelConfig(version="9.9.9", sha256="a" * 64),
         "guest_rust_builder": GuestRustBuilderConfig(
             dockerfile="docker/Dockerfile.guest-rust-builder",
@@ -67,10 +93,11 @@ def _build(**kw):
             identity_inputs=("Cargo.lock", "rust-toolchain.toml"),
             runtime_network="none",
         ),
-        "architectures": {"arm64": _arch()},
+        "asset_tools": asset_tools,
+        "architectures": architectures,
     }
     defaults.update(kw)
-    return BuildConfig(**defaults)
+    return BuildConfig.model_validate(defaults)
 
 
 def _mcp_stdio(**kw):

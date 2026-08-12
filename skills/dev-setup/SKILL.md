@@ -157,9 +157,8 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 | 2 | Frontend, docs, site, and release-site deps | config-driven `capsem-gate install-node` with frozen lockfiles |
 | 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` -- Rust targets, exact config-owned Cargo tools (`cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri`, `cargo-sbom`), build VM assets, pack initrd |
 
-Release-only local preflight also needs `cdxgen`. Install it with
-`npm install -g @cyclonedx/cdxgen@12.7.0` before running
-`bash scripts/check-release-workflow.sh` or local VM asset release dry runs.
+The VM asset rail materializes its digest-pinned OBOM tools inside its own
+architecture-matched helper; do not install a parallel global cdxgen.
 
 ### Kernel version
 

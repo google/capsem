@@ -1262,7 +1262,7 @@ def test_release_channel_cache_header_documentation_matches_deploy_smoke() -> No
         assert "release-channel" in normalized
 
 
-def test_cdxgen_release_tool_prerequisite_is_documented() -> None:
+def test_cdxgen_is_owned_only_by_the_digest_pinned_asset_helper() -> None:
     release_preflight = _source_text("scripts/check-release-workflow.sh")
     doctor = _source_text("scripts/doctor-common.sh")
     asset_workflow = _workflow_text("release-assets.yaml")
@@ -1273,26 +1273,23 @@ def test_cdxgen_release_tool_prerequisite_is_documented() -> None:
         _source_text("skills/dev-setup/SKILL.md"),
     ]
 
-    assert 'CDXGEN_VERSION="12.7.0"' in release_preflight
-    assert "CDXGEN_ACTUAL_VERSION=$(cdxgen --version" in release_preflight
-    assert 'if [ "$CDXGEN_ACTUAL_VERSION" = "$CDXGEN_VERSION" ]' in release_preflight
-    assert "npm install -g @cyclonedx/cdxgen@12.7.0" in release_preflight
-    assert "for tool in gh openssl cdxgen" in doctor
+    assert "cdxgen" not in release_preflight
+    assert "for tool in gh openssl; do" in doctor
     assert "capsem_gate_cargo_tool_versions" in doctor
     assert 'name = "cargo-sbom"' in _source_text("config/gate.toml")
     assert 'skip "$tool (only needed for releases)"' in doctor
-    assert "npm install -g @cyclonedx/cdxgen@12.7.0" in asset_workflow
-    assert "@cyclonedx/cdxgen@latest" not in asset_workflow
-    assert "CAPSEM_CDXGEN_CMD: cdxgen" in asset_workflow
+    assert "npm install -g @cyclonedx/cdxgen" not in asset_workflow
+    assert "CAPSEM_CDXGEN_CMD" not in asset_workflow
     assert 'elif [ "$PLATFORM" = "Darwin" ]' in release_preflight
-    assert "provisioned by the hermetic asset builder" in release_preflight
+    assert 'dockerfile = "docker/Dockerfile.asset-tools"' in _source_text(
+        "config/docker/image/build.toml"
+    )
 
     for source in docs_and_skills:
         normalized = " ".join(source.split())
         assert "cdxgen" in source
-        assert "release-only" in normalized.lower()
-        assert "npm install -g @cyclonedx/cdxgen@12.7.0" in source
-        assert "check-release-workflow.sh" in source
+        assert "helper" in normalized.lower()
+        assert "npm install -g @cyclonedx/cdxgen" not in source
 
 
 def test_release_workflow_preflight_preserves_macos_key_and_linux_skip() -> None:
@@ -6317,7 +6314,7 @@ def test_web_only_prs_do_not_depend_on_product_or_release_jobs() -> None:
     gate = _workflow_job_block("pr-gate")
 
     assert "fetch-depth: 0" in docs_job
-    assert "git diff --name-only \"$BASE_SHA\"...HEAD" in docs_job
+    assert 'git diff --name-only "$BASE_SHA"...HEAD' in docs_job
     assert "web_only: ${{ steps.scope.outputs.web_only }}" in docs_job
     assert "site/*|docs/*" in docs_job
     assert 'if [ "$EVENT_NAME" != pull_request ]; then' in docs_job

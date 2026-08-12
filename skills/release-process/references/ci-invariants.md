@@ -75,9 +75,10 @@ Docker preflight execute `linux_musl_toolchain_available`, which accepts the
 native `musl-gcc` on arm64 and x86_64 without inventing an
 `x86_64-linux-musl-gcc` requirement.
 
-Release-only generators are immutable build inputs. Pin cdxgen to the same
-exact version in the Python asset builder, `docker/Dockerfile.host-builder`, and
-`release-assets.yaml`; contract tests must reject `@latest` and version drift.
+Release-only generators are immutable build inputs. The asset build config owns
+the exact cdxgen and validator download URLs and SHA-256 digests; the
+architecture-matched asset-tools helper verifies them before its sealed use.
+Do not add a global npm cdxgen or a workflow command override.
 VM OBOM generation targets the extracted guest filesystem directory, never the
 build host `/`, using the invocation qualified against the complete Capsem
 image. For cdxgen 12.7.0 that is `-t os`: its `rootfs` mode passes a minimal

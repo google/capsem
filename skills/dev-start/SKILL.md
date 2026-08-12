@@ -24,9 +24,8 @@ Three phases. Default answer at every prompt is **Yes** — press Enter to insta
 2. **Dependencies**: on Linux, distro-native build/Tauri packages, `cpio`, verified Node 24, pnpm 10, Docker + Buildx, Bubblewrap, and immediate Docker/KVM access; on macOS, `flock`, `colima` + `docker` + `docker-buildx`, Tart, and sshpass through Homebrew. Both platforms install `uv`, locked Python/frontend dependencies, and then prove the runtime.
 3. **Doctor `--fix`** (`scripts/doctor-common.sh --fix`): installs Rust targets and the exact config-owned Cargo tools (`cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri`, and `cargo-sbom`); builds VM assets and packs the initrd.
 
-Release-only local preflight also needs `cdxgen`. Install it with
-`npm install -g @cyclonedx/cdxgen@12.7.0` before running
-`bash scripts/check-release-workflow.sh` or local VM asset release dry runs.
+The VM asset rail materializes its digest-pinned OBOM tools inside its own
+architecture-matched helper; do not install a parallel global cdxgen.
 
 `--yes` flag and non-tty input both auto-accept every prompt.
 

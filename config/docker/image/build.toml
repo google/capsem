@@ -1,6 +1,7 @@
 [build]
 compression = "zstd"
 compression_level = 15
+materialize_network = "default"
 
 [build.erofs]
 enabled = true
@@ -16,6 +17,31 @@ dockerfile = "docker/Dockerfile.guest-rust-builder"
 tag_template = "capsem-guest-rust-{arch}:{digest}"
 identity_inputs = ["Cargo.lock", "rust-toolchain.toml"]
 runtime_network = "none"
+
+[build.asset_tools]
+dockerfile = "docker/Dockerfile.asset-tools"
+tag_template = "capsem-asset-tools-{arch}:{digest}"
+debian_snapshot_base = "http://snapshot.debian.org/archive/debian"
+debian_security_snapshot_base = "http://snapshot.debian.org/archive/debian-security"
+debian_snapshot_id = "20260810T000000Z"
+materialize_network = "default"
+runtime_network = "none"
+
+[build.asset_tools.architectures.arm64.cdxgen]
+url = "https://github.com/CycloneDX/cdxgen/releases/download/v12.7.0/cdxgen-linux-arm64"
+sha256 = "b9df01473f0cd28a1911b276feb81a8ed410c947eb84266b59333513ec8afdc5"
+
+[build.asset_tools.architectures.arm64.cdx_validate]
+url = "https://github.com/CycloneDX/cdxgen/releases/download/v12.7.0/cdx-validate-linux-arm64"
+sha256 = "0a585e0888876d68f424dbb0f7cf7e5f26fd79d9141458234062dc804e75d00e"
+
+[build.asset_tools.architectures.x86_64.cdxgen]
+url = "https://github.com/CycloneDX/cdxgen/releases/download/v12.7.0/cdxgen-linux-amd64"
+sha256 = "e202de54d1a99e388eddf9b21bf11b3301f8495a77e84a5d323f9b867160d731"
+
+[build.asset_tools.architectures.x86_64.cdx_validate]
+url = "https://github.com/CycloneDX/cdxgen/releases/download/v12.7.0/cdx-validate-linux-amd64"
+sha256 = "865c98417126eaac34b33de49ec21a60339553ce3bcf034bdc70948c003ad942"
 
 [build.version_commands]
 node = "node --version 2>&1 | tr -d v"

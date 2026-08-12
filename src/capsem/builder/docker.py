@@ -13,16 +13,16 @@ import json
 import os
 import platform
 import re
-import shlex
 import shutil
 import subprocess
 import sys
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from jinja2 import Environment, FileSystemLoader
 
+from capsem.builder.assettools import image_tag as asset_tools_image_tag
 from capsem.builder.doctor import check_container_runtime
 from capsem.builder.guestbuilder import image_tag
 from capsem.builder.models import BuildConfig, ErofsConfig, GuestImageConfig
@@ -33,7 +33,6 @@ CLOCK_SYNC_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "sync-cont
 BOOT_ASSETS = ("vmlinuz", "initrd.img")
 ROOTFS_ASSET_PREFERENCE = ("rootfs.erofs",)
 OBOM_ASSET = "obom.cdx.json"
-CDXGEN_VERSION = "12.7.0"
 SOFTWARE_INVENTORY_ASSET = "software-inventory.json"
 BUILD_LEDGER_NAME = "build-ledger.log"
 CONTAINER_PROBE_TIMEOUT_SECONDS = 60
@@ -305,6 +304,8 @@ def docker_build(
     dockerfile_path: str | Path,
     context_dir: str | Path,
     platform: str,
+    *,
+    network: Literal["default", "none"],
     build_args: dict[str, str] | None = None,
     ci_cache: bool = False,
 ) -> None:
@@ -321,6 +322,8 @@ def docker_build(
                 "build",
                 "--platform",
                 platform,
+                "--network",
+                network,
                 "--cache-from",
                 f"type=gha,scope={tag}",
                 "--cache-to",
@@ -341,6 +344,8 @@ def docker_build(
                 "build",
                 "--platform",
                 platform,
+                "--network",
+                network,
                 *args_flags,
                 "-t",
                 tag,
@@ -360,7 +365,18 @@ def extract_kernel_assets(
     """Extract vmlinuz and initrd.img from a kernel builder image."""
     output_dir.mkdir(parents=True, exist_ok=True)
     result = run_cmd(
-        [runtime, "create", "--platform", platform, image_tag, "/bin/true"],
+        [
+            runtime,
+            "create",
+            "--pull",
+            "never",
+            "--network",
+            "none",
+            "--platform",
+            platform,
+            image_tag,
+            "/bin/true",
+        ],
         capture=True,
     )
     cid = result.stdout.strip()
@@ -382,7 +398,18 @@ def export_container_fs(
 ) -> None:
     """Export container filesystem as a tar archive."""
     result = run_cmd(
-        [runtime, "create", "--platform", platform, image_tag, "/bin/true"],
+        [
+            runtime,
+            "create",
+            "--pull",
+            "never",
+            "--network",
+            "none",
+            "--platform",
+            platform,
+            image_tag,
+            "/bin/true",
+        ],
         capture=True,
     )
     cid = result.stdout.strip()
@@ -410,7 +437,8 @@ def create_erofs(
     cluster_size: str | None = None,
     compression_level: str | None = None,
     *,
-    base_image: str,
+    tool_image: str,
+    runtime_network: Literal["none"],
 ) -> None:
     """Create an EROFS image from a tar archive using a container."""
     if compression not in {"lz4", "lz4hc"}:
@@ -429,7 +457,6 @@ def create_erofs(
     tar_rel = tar_abs.relative_to(common_dir).as_posix()
     out_rel = output_abs.relative_to(common_dir).as_posix()
     out_dir = Path(out_rel).parent.as_posix()
-    image = base_image
     cluster_flag = f" -C{cluster_size}" if cluster_size else ""
     level_flag = f",level={compression_level}" if compression_level else ""
     mkdir_output = "" if out_dir == "." else f"mkdir -p /assets/{out_dir} && "
@@ -442,16 +469,17 @@ def create_erofs(
             runtime,
             "run",
             "--rm",
+            "--pull",
+            "never",
+            "--network",
+            runtime_network,
             "--platform",
             host_platform,
             "-v",
             f"{common_dir}:/assets",
-            image,
+            tool_image,
             "bash",
             "-c",
-            f"DEBIAN_FRONTEND=noninteractive apt-get "
-            f"-o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && "
-            f"DEBIAN_FRONTEND=noninteractive apt-get install -y erofs-utils && "
             f"mkdir /rootfs && {mkdir_output}tar xf /assets/{tar_rel} -C /rootfs && "
             f"mkfs.erofs -Enosbcrc -z{compression}{level_flag}{cluster_flag} "
             f"/assets/{out_rel} /rootfs && "
@@ -461,19 +489,24 @@ def create_erofs(
     )
 
 
-def _native_base_image(config: GuestImageConfig) -> str:
-    """Return the exact base child matching the Docker host architecture."""
+def _native_build_arch(config: GuestImageConfig) -> str:
+    """Return the configured name matching the Docker host architecture."""
     platform_name = _native_linux_platform()
     matches = [
-        arch.base_image
-        for arch in config.build.architectures.values()
+        name
+        for name, arch in config.build.architectures.items()
         if arch.docker_platform == platform_name
     ]
     if len(matches) != 1:
         raise RuntimeError(
-            f"expected one exact guest base for Docker host {platform_name}, got {matches}"
+            f"expected one guest architecture for Docker host {platform_name}, got {matches}"
         )
     return matches[0]
+
+
+def _asset_tools_image(config: GuestImageConfig, repo_root: Path) -> str:
+    """Return the input-keyed helper the gate must materialize first."""
+    return asset_tools_image_tag(config.build, _native_build_arch(config), repo_root)
 
 
 def experimental_erofs_build_config(
@@ -517,8 +550,8 @@ def container_compile_agent(
 ) -> list[Path]:
     """Compile guest agent binaries inside a Linux container.
 
-    Used on macOS and for a foreign Linux target. The dependency/toolchain
-    image is materialized before this call; the build itself has no network.
+    Used on every host and target. The dependency/toolchain image is
+    materialized before this call; the build itself has no network or pull.
     """
     arch = build.architectures[arch_name]
     rust_target = arch.rust_target
@@ -558,6 +591,8 @@ def container_compile_agent(
             runtime,
             "run",
             "--rm",
+            "--pull",
+            "never",
             "--network",
             build.guest_rust_builder.runtime_network,
             "--platform",
@@ -601,85 +636,8 @@ def cross_compile_agent(
     repo_root: Path,
     output_dir: Path,
 ) -> list[Path]:
-    """Cross-compile guest agent binaries for a given Rust target.
-
-    Foreign-architecture builds delegate to container_compile_agent so the C
-    toolchain used by transitive Rust dependencies matches the target CPU.
-    """
-    rust_target = build.architectures[arch_name].rust_target
-    if sys.platform == "darwin":
-        print(f"  macOS detected: using container-native build for {rust_target}")
-        return container_compile_agent(build, arch_name, repo_root, output_dir)
-
-    if sys.platform.startswith("linux") and not _rust_target_is_native(rust_target):
-        print(
-            "  Linux foreign target detected "
-            f"({platform.machine()} -> {rust_target}): using container-native build"
-        )
-        return container_compile_agent(build, arch_name, repo_root, output_dir)
-
-    # Native Linux compile.
-    # Ensure target installed
-    try:
-        result = run_cmd(
-            ["rustup", "target", "list", "--installed"],
-            capture=True,
-            echo=False,
-        )
-        if rust_target not in result.stdout.split():
-            print(f"  Installing missing rustup target: {rust_target}")
-            run_cmd(["rustup", "target", "add", rust_target])
-    except Exception:
-        run_cmd(["rustup", "target", "add", rust_target])
-
-    run_cmd(
-        [
-            "cargo",
-            "build",
-            "--release",
-            "--target",
-            rust_target,
-            "-p",
-            "capsem-agent",
-            "-p",
-            "capsem-bench",
-        ],
-        cwd=repo_root,
-    )
-
-    release_dir = repo_root / "target" / rust_target / "release"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    copied: list[Path] = []
-    for binary in GUEST_BINARIES:
-        src = release_dir / _guest_binary_source(binary)
-        if not src.exists():
-            raise RuntimeError(f"Expected binary not found: {src}")
-        dst = output_dir / binary
-        dst.unlink(missing_ok=True)
-        shutil.copy2(str(src), str(dst))
-        if dst.stat().st_size == 0:
-            raise RuntimeError(f"Binary is empty: {dst}")
-        copied.append(dst)
-    enforce_guest_binary_perms(copied)
-    return copied
-
-
-def _rust_target_is_native(rust_target: str) -> bool:
-    """Return whether a supported Linux Rust target matches the host CPU."""
-    host_aliases = {
-        "aarch64": "aarch64",
-        "arm64": "aarch64",
-        "x86_64": "x86_64",
-        "amd64": "x86_64",
-    }
-    host_arch = host_aliases.get(platform.machine().lower())
-    if rust_target.startswith("aarch64-"):
-        target_arch = "aarch64"
-    elif rust_target.startswith("x86_64-"):
-        target_arch = "x86_64"
-    else:
-        raise ValueError(f"unsupported guest Rust target: {rust_target}")
-    return host_arch == target_arch
+    """Compile every guest architecture in the same locked offline helper."""
+    return container_compile_agent(build, arch_name, repo_root, output_dir)
 
 
 def build_version_script(config: GuestImageConfig) -> str:
@@ -770,6 +728,10 @@ def _container_output(
         runtime,
         "run",
         "--rm",
+        "--pull",
+        "never",
+        "--network",
+        "none",
         "--name",
         container_name,
         "--platform",
@@ -865,40 +827,13 @@ def extract_software_inventory(
 
 
 def _cdxgen_command() -> list[str]:
-    """Return the configured cdxgen command.
-
-    CI and developer machines can pin this through CAPSEM_CDXGEN_CMD. The
-    default uses npm's package runner so the rootfs build does not depend on a
-    globally installed binary.
-    """
-    configured = os.environ.get(
-        "CAPSEM_CDXGEN_CMD",
-        f"npx --yes @cyclonedx/cdxgen@{CDXGEN_VERSION}",
-    )
-    command = shlex.split(configured)
-    if not command:
-        raise RuntimeError("CAPSEM_CDXGEN_CMD must not be empty")
-    return command
+    """Command installed and digest-verified in the asset tools helper."""
+    return ["cdxgen"]
 
 
 def _cdx_validate_command() -> list[str]:
-    """Return the schema validator paired with the pinned cdxgen release."""
-    configured = os.environ.get("CAPSEM_CDX_VALIDATE_CMD")
-    if configured is not None:
-        command = shlex.split(configured)
-    elif os.environ.get("CAPSEM_CDXGEN_CMD") == "cdxgen":
-        command = ["cdx-validate"]
-    else:
-        command = [
-            "npx",
-            "--yes",
-            "--package",
-            f"@cyclonedx/cdxgen@{CDXGEN_VERSION}",
-            "cdx-validate",
-        ]
-    if not command:
-        raise RuntimeError("CAPSEM_CDX_VALIDATE_CMD must not be empty")
-    return command
+    """Validator installed beside cdxgen from the same upstream release."""
+    return ["cdx-validate"]
 
 
 def _normalize_cyclonedx_obom(
@@ -909,7 +844,7 @@ def _normalize_cyclonedx_obom(
 ) -> None:
     """Remove build-host context while preserving exported-rootfs evidence."""
     document = json.loads(path.read_text())
-    rootfs_prefixes = [str(rootfs_dir)]
+    rootfs_prefixes = [str(rootfs_dir), "/rootfs"]
     relative_rootfs = os.path.relpath(rootfs_dir)
     if relative_rootfs not in rootfs_prefixes:
         rootfs_prefixes.append(relative_rootfs)
@@ -1063,6 +998,10 @@ def generate_cyclonedx_obom(
     *,
     repo_root: Path,
     architecture: str,
+    runtime: str,
+    tool_image: str,
+    tool_platform: str,
+    runtime_network: Literal["none"],
 ) -> Path:
     """Generate a CycloneDX OS OBOM for the exported rootfs tar.
 
@@ -1096,13 +1035,27 @@ def generate_cyclonedx_obom(
         # that known SPDX spelling, then run the paired strict schema validator.
         run_cmd(
             [
+                runtime,
+                "run",
+                "--rm",
+                "--pull",
+                "never",
+                "--network",
+                runtime_network,
+                "--platform",
+                tool_platform,
+                "-v",
+                f"{rootfs_dir}:/rootfs:ro",
+                "-v",
+                f"{output_path.parent.resolve()}:/output",
+                tool_image,
                 *_cdxgen_command(),
-                str(rootfs_dir),
+                "/rootfs",
                 "-t",
                 "rootfs",
                 "--no-validate",
                 "-o",
-                str(output_path),
+                f"/output/{output_path.name}",
             ],
             capture=True,
             timeout=OBOM_COMMAND_TIMEOUT_SECONDS,
@@ -1111,6 +1064,18 @@ def generate_cyclonedx_obom(
     _validate_cyclonedx_obom(output_path)
     run_cmd(
         [
+            runtime,
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--network",
+            runtime_network,
+            "--platform",
+            tool_platform,
+            "-v",
+            f"{output_path.parent.resolve()}:/output:ro",
+            tool_image,
             *_cdx_validate_command(),
             "--strict",
             "--no-deep",
@@ -1118,7 +1083,7 @@ def generate_cyclonedx_obom(
             "critical",
             "--no-include-manual",
             "-i",
-            str(output_path),
+            f"/output/{output_path.name}",
         ],
         capture=True,
         timeout=OBOM_COMMAND_TIMEOUT_SECONDS,
@@ -1680,8 +1645,6 @@ def build_image(
     """
     import tempfile
 
-    from capsem.builder.doctor import check_cross_target
-
     if repo_root is None:
         repo_root = Path.cwd()
     if output_dir is None:
@@ -1693,14 +1656,6 @@ def build_image(
 
     # Sync container VM clock with host to prevent apt date errors
     sync_container_clock()
-
-    # Doctor check: cross-compilation target (skip on macOS -- container handles it)
-    if template == "rootfs" and sys.platform != "darwin":
-        target_check = check_cross_target(arch.rust_target)
-        if not target_check.passed:
-            raise RuntimeError(
-                f"{target_check.name}: {target_check.detail}\n  fix: {target_check.fix}"
-            )
 
     # Per-arch output directory
     arch_output = output_dir / arch_name
@@ -1745,6 +1700,7 @@ def build_image(
                 context_dir / "Dockerfile",
                 context_dir,
                 arch.docker_platform,
+                network=config.build.materialize_network,
                 ci_cache=ci,
             )
             vmlinuz, initrd = extract_kernel_assets(
@@ -1810,6 +1766,7 @@ def build_image(
                 context_dir / "Dockerfile",
                 context_dir,
                 arch.docker_platform,
+                network=config.build.materialize_network,
                 ci_cache=ci,
             )
 
@@ -1862,7 +1819,8 @@ def build_image(
                 erofs_compression,
                 erofs_cluster_size,
                 erofs_level,
-                base_image=_native_base_image(config),
+                tool_image=_asset_tools_image(config, repo_root),
+                runtime_network=config.build.asset_tools.runtime_network,
             )
             erofs_entry = _file_ledger_entry(erofs_path, base=arch_output)
             _append_build_ledger(
@@ -1875,7 +1833,7 @@ def build_image(
                         "compression": erofs_compression,
                         "compression_level": erofs_level,
                         "cluster_size": erofs_cluster_size,
-                        "utils_image": _native_base_image(config),
+                        "utils_image": _asset_tools_image(config, repo_root),
                     },
                     "outputs": [erofs_entry],
                 },
@@ -1887,6 +1845,10 @@ def build_image(
                 obom_path,
                 repo_root=repo_root,
                 architecture=arch_name,
+                runtime=runtime,
+                tool_image=_asset_tools_image(config, repo_root),
+                tool_platform=_native_linux_platform(),
+                runtime_network=config.build.asset_tools.runtime_network,
             )
             obom_entry = _file_ledger_entry(obom_path, base=arch_output)
             _append_build_ledger(

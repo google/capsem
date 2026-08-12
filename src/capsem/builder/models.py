@@ -92,6 +92,47 @@ class GuestRustBuilderConfig(BaseModel):
         return self
 
 
+class AssetToolBinaryConfig(BaseModel):
+    """One upstream standalone binary admitted to the asset helper."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    url: str = Field(pattern=r"^https://")
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class AssetToolsArchitectureConfig(BaseModel):
+    """Host-architecture downloads for the asset post-processing helper."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    cdxgen: AssetToolBinaryConfig
+    cdx_validate: AssetToolBinaryConfig
+
+
+class AssetToolsConfig(BaseModel):
+    """Input-keyed EROFS/OBOM helper materialized before asset lanes."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    dockerfile: str
+    tag_template: str
+    debian_snapshot_base: str
+    debian_security_snapshot_base: str
+    debian_snapshot_id: str = Field(pattern=r"^\d{8}T\d{6}Z$")
+    materialize_network: Literal["default"]
+    runtime_network: Literal["none"]
+    architectures: dict[str, AssetToolsArchitectureConfig]
+
+    @model_validator(mode="after")
+    def _identity_is_complete(self):
+        if "{arch}" not in self.tag_template or "{digest}" not in self.tag_template:
+            raise ValueError("tag_template must contain {arch} and {digest}")
+        if not self.architectures:
+            raise ValueError("asset tool architectures must not be empty")
+        return self
+
+
 class ErofsConfig(BaseModel):
     """EROFS rootfs asset settings.
 
@@ -126,9 +167,11 @@ class BuildConfig(BaseModel):
 
     compression: Compression = Compression.ZSTD
     compression_level: int = Field(default=15, ge=1, le=22)
+    materialize_network: Literal["default"]
     erofs: ErofsConfig = Field(default_factory=ErofsConfig)
     kernel: KernelConfig
     guest_rust_builder: GuestRustBuilderConfig
+    asset_tools: AssetToolsConfig
     architectures: dict[str, ArchConfig]
     version_commands: dict[str, str] = Field(default_factory=dict)
 
@@ -136,6 +179,8 @@ class BuildConfig(BaseModel):
     def _architectures_non_empty(self):
         if not self.architectures:
             raise ValueError("architectures must have at least one entry")
+        if set(self.asset_tools.architectures) != set(self.architectures):
+            raise ValueError("asset tool architectures must exactly match build architectures")
         return self
 
 

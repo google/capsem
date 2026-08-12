@@ -329,17 +329,11 @@ same `assets/manifest.json` produced by `capsem-admin manifest generate`, and
 builds a channel preview. By default it runs as a dry run; live publication
 calls `release-channel.yaml`.
 
-macOS release preflight has one extra release-only OBOM prerequisite beyond the
-normal developer bootstrap path: `bash scripts/check-release-workflow.sh`
-expects `cdxgen` in `PATH`. Install it with
-`npm install -g @cyclonedx/cdxgen@12.7.0` before local profile image release dry
-runs; the profile asset workflow installs `@cyclonedx/cdxgen@12.7.0` in CI
-before invoking the build with `CAPSEM_CDXGEN_CMD=cdxgen`.
-
-On Linux, that preflight reports the macOS signing key, `cargo-sbom`, and host
-`cdxgen` as not applicable when they are absent: the macOS release job and
-hermetic asset builder provision them. If any is present it is still validated,
-and macOS continues to fail closed on missing or malformed signing material.
+OBOM generation is not a host prerequisite. The profile asset rail
+materializes its config-pinned, digest-verified cdxgen and validator binaries
+inside the architecture-matched asset-tools helper, then runs that helper with
+networking disabled. macOS continues to fail closed on missing or malformed
+signing material.
 
 `release.capsem.org` is the asset channel publication surface. It is generated
 from the release graph JSON and profile image files produced by the asset

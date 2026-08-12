@@ -155,17 +155,16 @@ def test_standalone_asset_build_proves_execution_before_helper_materialization()
     assert plan.after_of("doctor") == {"base-images"}
     assert plan.after_of("guest-execution") == {"doctor"}
     assert plan.after_of("guest-builders") == {"guest-execution"}
-    assert plan.after_of("image.code.rootfs.arm64") == {"guest-builders"}
+    assert plan.after_of("asset-tools") == {"guest-builders"}
+    assert plan.after_of("image.code.rootfs.arm64") == {"asset-tools"}
 
 
-def test_macos_rootfs_materializes_its_native_helper_before_repack(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr("capsem.gate.imagebases.host.on_macos", lambda: True)
+def test_rootfs_materializes_asset_tools_before_repack() -> None:
     plan = _command("build-assets", profile="code", arch="x86_64", template="rootfs").plan()
 
     assert plan.after_of("guest-builders") == {"guest-execution"}
-    assert plan.after_of("image.code.rootfs.x86_64") == {"guest-builders"}
+    assert plan.after_of("asset-tools") == {"guest-builders"}
+    assert plan.after_of("image.code.rootfs.x86_64") == {"asset-tools"}
     assert plan.after_of("pack-initrds") == {"image.code.rootfs.x86_64"}
 
 
@@ -543,10 +542,7 @@ def test_release_workflow_uses_same_config_materializer() -> None:
 
     assert workflow.count("bash scripts/materialize-config.sh") == 3
     assert workflow.count('CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"') == 1
-    assert (
-        'CAPSEM_ASSET_MANIFEST="$PWD/target/package-content/assets/manifest.json"'
-        in workflow
-    )
+    assert 'CAPSEM_ASSET_MANIFEST="$PWD/target/package-content/assets/manifest.json"' in workflow
     assert 'CAPSEM_ASSET_MANIFEST="file://$PWD/assets/manifest.json"' in workflow
     assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in workflow
 
@@ -556,9 +552,8 @@ def test_asset_workflow_publishes_obom_not_debug_build_ledger() -> None:
     release = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
     stager = (PROJECT_ROOT / "scripts/stage-profile-publication.py").read_text()
 
-    assert "npm install -g @cyclonedx/cdxgen@12.7.0" in workflow
-    assert "@cyclonedx/cdxgen@latest" not in workflow
-    assert "CAPSEM_CDXGEN_CMD: cdxgen" in workflow
+    assert "npm install -g @cyclonedx/cdxgen" not in workflow
+    assert "CAPSEM_CDXGEN_CMD" not in workflow
     stage_step = workflow.split(
         "- name: Stage and verify immutable profile publication once", maxsplit=1
     )[1].split(

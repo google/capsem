@@ -9,16 +9,17 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from capsem.builder import assettools
 from capsem.builder.config import load_guest_config
 from capsem.builder.guestbuilder import build_arguments, image_repository, image_tag
 from capsem.builder.models import ArchConfig, BuildConfig
 
-from . import host
 from .actions import Action
 from .config import GateConfig
 from .context import Context
 from .docker import Docker
 from .errors import GateError
+from .imageidentity import require_input_key
 from .proc import Runner
 from .storage import Storage
 
@@ -56,14 +57,8 @@ def required_rust_builder_names(
     config: GateConfig,
     names: Iterable[str] | None = None,
 ) -> tuple[str, ...]:
-    """Architectures whose guest binaries actually use a container helper."""
-    requested = tuple(name for name, _arch in selected(config, names))
-    if host.on_macos():
-        return requested
-    if host.on_linux():
-        native = config.host_arch().name
-        return tuple(name for name in requested if name != native)
-    return ()
+    """Every architecture uses the same locked/offline container helper."""
+    return tuple(name for name, _arch in selected(config, names))
 
 
 def prefetch(
@@ -72,10 +67,14 @@ def prefetch(
     names: Iterable[str] | None = None,
     *,
     rust_names: Iterable[str] | None = None,
+    asset_tools: bool = False,
 ) -> None:
     """Pull each absent exact base through the Docker daemon fetch edge."""
     docker = Docker(runner)
-    for name, arch in selected(config, names):
+    base_names = [name for name, _arch in selected(config, names)]
+    if asset_tools and config.host_arch().name not in base_names:
+        base_names.append(config.host_arch().name)
+    for name, arch in selected(config, base_names):
         if docker.image_exists(arch.base_image, platform=arch.docker_platform):
             runner.note(f"exact {name} guest base is already present: {arch.base_image}")
         else:
@@ -92,6 +91,47 @@ def prefetch(
                 arch.rust_builder_base_image,
                 platform=arch.docker_platform,
             )
+
+
+def materialize_asset_tools(runner: Runner, config: GateConfig) -> None:
+    """Build the input-keyed host helper used by the sealed asset tail."""
+    docker = Docker(runner)
+    storage = Storage(runner)
+    build = build_config(config)
+    name = config.host_arch().name
+    arch = build.architectures[name]
+    if not docker.image_exists(arch.base_image, platform=arch.docker_platform):
+        raise GateError(
+            f"exact {name} asset-tool base is missing: {arch.base_image}; "
+            "run guest base prefetch first"
+        )
+    tag = assettools.image_tag(build, name, config.root)
+    if docker.image_exists(tag, platform=arch.docker_platform):
+        require_input_key(
+            docker,
+            tag,
+            label=assettools.INPUT_KEY_LABEL,
+            subject="asset tools helper",
+        )
+        runner.note(f"locked {name} asset tools are already present: {tag}")
+    else:
+        docker.build(
+            tag=tag,
+            dockerfile=config.path(build.asset_tools.dockerfile).as_posix(),
+            context=str(config.root),
+            args=assettools.build_arguments(build, name, tag),
+            platform=arch.docker_platform,
+            network=build.asset_tools.materialize_network,
+        )
+        require_input_key(
+            docker,
+            tag,
+            label=assettools.INPUT_KEY_LABEL,
+            subject="asset tools helper",
+        )
+    exact_id = docker.image_id(tag, platform=arch.docker_platform)
+    runner.note(f"sealed asset tools identity: {tag} -> {exact_id}")
+    storage.reclaim(assettools.image_repository(build, name), keep=tag)
 
 
 def materialize_rust_builders(
@@ -134,21 +174,20 @@ class Prefetch(Action, name="guest-base-prefetch"):
         names: Iterable[str] | None = None,
         *,
         rust_names: Iterable[str] | None = None,
+        asset_tools: bool = False,
     ) -> None:
         self._names = tuple(names) if names is not None else None
         self._rust_names = tuple(rust_names) if rust_names is not None else None
+        self._asset_tools = asset_tools
 
     def render(self) -> str:
         scope = "all architectures" if self._names is None else ", ".join(self._names)
         rust_names = self._names if self._rust_names is None else self._rust_names
-        rust_scope = (
-            "all architectures"
-            if rust_names is None
-            else ", ".join(rust_names) or "none"
-        )
+        rust_scope = "all architectures" if rust_names is None else ", ".join(rust_names) or "none"
         return (
             f"materialize exact guest base images ({scope}); "
-            f"Rust builder bases ({rust_scope})"
+            f"Rust builder bases ({rust_scope}); "
+            f"asset tools ({'host' if self._asset_tools else 'none'})"
         )
 
     def perform(self, context: Context) -> None:
@@ -157,6 +196,7 @@ class Prefetch(Action, name="guest-base-prefetch"):
             context.config,
             self._names,
             rust_names=self._rust_names,
+            asset_tools=self._asset_tools,
         )
 
 
@@ -172,3 +212,13 @@ class MaterializeRustBuilders(Action, name="guest-rust-builder-materialize"):
 
     def perform(self, context: Context) -> None:
         materialize_rust_builders(context.runner, context.config, self._names)
+
+
+class MaterializeAssetTools(Action, name="asset-tools-materialize"):
+    """Build the one host-native helper before publishable post-processing."""
+
+    def render(self) -> str:
+        return "materialize locked host EROFS and CycloneDX tools"
+
+    def perform(self, context: Context) -> None:
+        materialize_asset_tools(context.runner, context.config)

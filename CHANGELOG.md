@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- VM asset builds now inventory every mutable package/fetch tool in an
+  executable fast-gate guardrail. Guest Rust always compiles through its
+  locked, network-denied architecture helper; EROFS and CycloneDX run from one
+  snapshot- and digest-keyed host helper with networking disabled. The profile
+  release workflow no longer installs parallel musl or npm cdxgen authorities.
+
 - EROFS rootfs publication now accepts only the release-owned `lz4` and
   `lz4hc` formats. The unused experimental zstd rail and its mutable
   `debian:trixie-slim` helper selection have been removed before the 0.6 cut.

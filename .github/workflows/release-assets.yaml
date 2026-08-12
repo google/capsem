@@ -235,28 +235,11 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install musl C toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools
-
-      - name: Install OBOM generator
-        run: |
-          npm install -g @cyclonedx/cdxgen@12.7.0
-          cdxgen --version
-
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: 1.97.1
-          targets: ${{ matrix.rust-target }}
 
       - name: Build VM assets (kernel + rootfs)
-        env:
-          CAPSEM_CDXGEN_CMD: cdxgen
-          CC_aarch64_unknown_linux_musl: musl-gcc
-          CC_x86_64_unknown_linux_musl: musl-gcc
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: |
           just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"
           just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"

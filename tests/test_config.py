@@ -51,6 +51,7 @@ terminated_retention_days = 365
 """)
     return guest
 
+
 # ---------------------------------------------------------------------------
 # Inline TOML fixtures
 # ---------------------------------------------------------------------------
@@ -59,6 +60,7 @@ MINIMAL_BUILD_TOML = """\
 [build]
 compression = "zstd"
 compression_level = 15
+materialize_network = "default"
 
 [build.erofs]
 enabled = true
@@ -74,6 +76,23 @@ dockerfile = "docker/Dockerfile.guest-rust-builder"
 tag_template = "capsem-guest-rust-{arch}:{digest}"
 identity_inputs = ["Cargo.lock", "rust-toolchain.toml"]
 runtime_network = "none"
+
+[build.asset_tools]
+dockerfile = "docker/Dockerfile.asset-tools"
+tag_template = "capsem-asset-tools-{arch}:{digest}"
+debian_snapshot_base = "http://snapshot.example/debian"
+debian_security_snapshot_base = "http://snapshot.example/debian-security"
+debian_snapshot_id = "20260810T000000Z"
+materialize_network = "default"
+runtime_network = "none"
+
+[build.asset_tools.architectures.arm64.cdxgen]
+url = "https://example.test/cdxgen-arm64"
+sha256 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+
+[build.asset_tools.architectures.arm64.cdx_validate]
+url = "https://example.test/cdx-validate-arm64"
+sha256 = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 
 [build.architectures.arm64]
 base_image = "registry.example/debian@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -213,7 +232,7 @@ def guest_full(tmp_path):
 class TestParseToml:
     def test_basic_parse(self, tmp_path):
         f = tmp_path / "test.toml"
-        f.write_text('[foo]\nbar = 42\n')
+        f.write_text("[foo]\nbar = 42\n")
         data = parse_toml(f)
         assert data["foo"]["bar"] == 42
 
@@ -395,6 +414,7 @@ class TestLoadGuestConfigEdgeCases:
 [build]
 compression = "gzip"
 compression_level = 9
+materialize_network = "default"
 
 [build.kernel]
 version = "9.9.9"
@@ -405,6 +425,31 @@ dockerfile = "docker/Dockerfile.guest-rust-builder"
 tag_template = "capsem-guest-rust-{arch}:{digest}"
 identity_inputs = ["Cargo.lock", "rust-toolchain.toml"]
 runtime_network = "none"
+
+[build.asset_tools]
+dockerfile = "docker/Dockerfile.asset-tools"
+tag_template = "capsem-asset-tools-{arch}:{digest}"
+debian_snapshot_base = "http://snapshot.example/debian"
+debian_security_snapshot_base = "http://snapshot.example/debian-security"
+debian_snapshot_id = "20260810T000000Z"
+materialize_network = "default"
+runtime_network = "none"
+
+[build.asset_tools.architectures.arm64.cdxgen]
+url = "https://example.test/cdxgen-arm64"
+sha256 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+
+[build.asset_tools.architectures.arm64.cdx_validate]
+url = "https://example.test/cdx-validate-arm64"
+sha256 = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+
+[build.asset_tools.architectures.x86_64.cdxgen]
+url = "https://example.test/cdxgen-amd64"
+sha256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+
+[build.asset_tools.architectures.x86_64.cdx_validate]
+url = "https://example.test/cdx-validate-amd64"
+sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
 
 [build.architectures.arm64]
 base_image = "registry.example/debian@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -551,11 +596,13 @@ class TestGenerateDefaultsJsonConformance:
         gen = _collect_setting_ids(generated["settings"])
         for sid, data in current.items():
             if "type" in data:
-                assert gen[sid].get("type") == data["type"], \
+                assert gen[sid].get("type") == data["type"], (
                     f"{sid}: expected type={data['type']}, got {gen[sid].get('type')}"
+                )
             if "action" in data:
-                assert gen[sid].get("action") == data["action"], \
+                assert gen[sid].get("action") == data["action"], (
                     f"{sid}: expected action={data['action']}, got {gen[sid].get('action')}"
+                )
 
     def test_same_default_values(self, generated, current_defaults):
         """Default values match between generated and hand-authored."""
@@ -563,8 +610,9 @@ class TestGenerateDefaultsJsonConformance:
         gen = _collect_setting_ids(generated["settings"])
         for sid, data in current.items():
             if "default" in data:
-                assert gen[sid].get("default") == data["default"], \
+                assert gen[sid].get("default") == data["default"], (
                     f"{sid}: default mismatch: {data['default']!r} vs {gen[sid].get('default')!r}"
+                )
 
     def test_mcp_servers_do_not_reappear(self, generated, current_defaults):
         """Profile MCP declarations must not be exported through settings metadata."""
@@ -587,8 +635,9 @@ class TestGenerateDefaultsJsonConformance:
                 cur = cur_section[key]
                 gen = gen_section[key]
                 if "enabled_by" in cur:
-                    assert gen.get("enabled_by") == cur["enabled_by"], \
+                    assert gen.get("enabled_by") == cur["enabled_by"], (
                         f"security.services.{svc_type}.{key}.enabled_by: mismatch"
+                    )
 
     def test_repo_provider_enabled_by(self, generated, current_defaults):
         """Repository provider groups have correct enabled_by."""

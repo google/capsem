@@ -352,7 +352,7 @@ else
 fi
 
 section "Release Tools"
-for tool in gh openssl cdxgen; do
+for tool in gh openssl; do
     if command -v "$tool" &>/dev/null; then
         pass "$tool"
     else

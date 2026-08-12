@@ -23,22 +23,6 @@ elif [ "$PLATFORM" = "Darwin" ]; then
 else
     skip "cargo-sbom is provisioned by the macOS release job"
 fi
-CDXGEN_VERSION="12.7.0"
-if command -v cdxgen >/dev/null; then
-    CDXGEN_ACTUAL_VERSION=$(cdxgen --version 2>&1 | sed -n 's/.*CycloneDX Generator \([0-9.]*\).*/\1/p' | head -1)
-    if [ "$CDXGEN_ACTUAL_VERSION" = "$CDXGEN_VERSION" ]; then
-        pass "cdxgen $CDXGEN_VERSION"
-    else
-        fail "cdxgen version $CDXGEN_ACTUAL_VERSION does not match required $CDXGEN_VERSION (npm install -g @cyclonedx/cdxgen@12.7.0)"
-    fi
-else
-    if [ "$PLATFORM" = "Darwin" ]; then
-        fail "cdxgen not found (npm install -g @cyclonedx/cdxgen@12.7.0)"
-    else
-        skip "cdxgen $CDXGEN_VERSION is provisioned by the hermetic asset builder"
-    fi
-fi
-
 # --- Tauri key format ---
 echo ""
 echo "Tauri signing key:"

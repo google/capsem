@@ -35,11 +35,14 @@ def test_container_probe_timeout_force_removes_named_container(mock_run) -> None
 
     run_call, cleanup_call = mock_run.call_args_list
     run_command = run_call.args[0]
-    assert run_command[:4] == ["docker", "run", "--rm", "--name"]
-    assert run_command[4].startswith("capsem-probe-dpkg-inventory-")
+    assert run_command[:3] == ["docker", "run", "--rm"]
+    assert run_command[run_command.index("--pull") + 1] == "never"
+    assert run_command[run_command.index("--network") + 1] == "none"
+    name = run_command[run_command.index("--name") + 1]
+    assert name.startswith("capsem-probe-dpkg-inventory-")
     assert run_call.kwargs["timeout"] == CONTAINER_PROBE_TIMEOUT_SECONDS
 
-    assert cleanup_call.args[0] == ["docker", "rm", "-f", run_command[4]]
+    assert cleanup_call.args[0] == ["docker", "rm", "-f", name]
     assert cleanup_call.kwargs == {
         "capture": True,
         "echo": False,
@@ -82,10 +85,13 @@ def test_obom_subprocesses_are_all_bounded(
         output,
         repo_root=tmp_path,
         architecture="arm64",
+        runtime="docker",
+        tool_image="capsem-asset-tools-arm64:test",
+        tool_platform="linux/arm64",
+        runtime_network="none",
     )
 
     assert len(mock_run.call_args_list) == 3
-    assert {
-        call.kwargs.get("timeout")
-        for call in mock_run.call_args_list
-    } == {OBOM_COMMAND_TIMEOUT_SECONDS}
+    assert {call.kwargs.get("timeout") for call in mock_run.call_args_list} == {
+        OBOM_COMMAND_TIMEOUT_SECONDS
+    }
