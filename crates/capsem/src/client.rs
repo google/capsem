@@ -470,7 +470,11 @@ fn isolation_mode_active() -> bool {
         .unwrap_or(false)
 }
 
-fn direct_spawn_service_args(paths: &paths::CapsemPaths, isolated: bool) -> Vec<OsString> {
+fn direct_spawn_service_args(
+    paths: &paths::CapsemPaths,
+    isolated: bool,
+    lifetime: DirectServiceLifetime,
+) -> Vec<OsString> {
     let mut args = vec![
         "--foreground".into(),
         "--assets-dir".into(),
@@ -480,6 +484,12 @@ fn direct_spawn_service_args(paths: &paths::CapsemPaths, isolated: bool) -> Vec<
     ];
     if isolated {
         args.extend([OsString::from("--gateway-port"), OsString::from("0")]);
+    }
+    if lifetime == DirectServiceLifetime::BoundToCommand {
+        args.extend([
+            OsString::from("--parent-pid"),
+            OsString::from(std::process::id().to_string()),
+        ]);
     }
     args
 }
@@ -518,9 +528,22 @@ pub enum ConnectMode {
     AwaitStartup,
 }
 
+/// Lifetime of a service that the CLI must spawn directly.
+///
+/// Installed service-manager units remain persistent regardless of this
+/// value. The distinction applies only to the unmanaged fallback: `run` is a
+/// one-shot operation and must not turn one command into a hidden daemon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DirectServiceLifetime {
+    Persistent,
+    BoundToCommand,
+}
+
 pub struct UdsClient {
     uds_path: PathBuf,
     auto_launch: bool,
+    direct_service_lifetime: DirectServiceLifetime,
+    owned_direct_service: tokio::sync::Mutex<Option<tokio::process::Child>>,
 }
 
 impl UdsClient {
@@ -528,6 +551,71 @@ impl UdsClient {
         Self {
             uds_path,
             auto_launch,
+            direct_service_lifetime: DirectServiceLifetime::Persistent,
+            owned_direct_service: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn with_direct_service_lifetime(
+        uds_path: PathBuf,
+        auto_launch: bool,
+        direct_service_lifetime: DirectServiceLifetime,
+    ) -> Self {
+        Self {
+            uds_path,
+            auto_launch,
+            direct_service_lifetime,
+            owned_direct_service: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// Finish a request and then reap the unmanaged service this client
+    /// spawned for a bounded one-shot command. Existing services and
+    /// service-manager launches never populate `owned_direct_service` and are
+    /// therefore left untouched.
+    pub(crate) async fn finish_direct_request<T>(&self, request: Result<T>) -> Result<T> {
+        let shutdown = self.shutdown_owned_direct_service().await;
+        match (request, shutdown) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Ok(_), Err(error)) => Err(error),
+            (Err(error), Ok(())) => Err(error),
+            (Err(error), Err(shutdown_error)) => Err(error.context(format!(
+                "the owned one-shot service also failed to shut down: {shutdown_error:#}"
+            ))),
+        }
+    }
+
+    async fn shutdown_owned_direct_service(&self) -> Result<()> {
+        let Some(mut child) = self.owned_direct_service.lock().await.take() else {
+            return Ok(());
+        };
+
+        if let Some(pid) = child.id() {
+            match nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid as i32),
+                nix::sys::signal::Signal::SIGTERM,
+            ) {
+                Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+                Err(error) => {
+                    let _ = child.start_kill();
+                    let _ = child.wait().await;
+                    return Err(error).context("failed to stop the owned one-shot service");
+                }
+            }
+        }
+        child
+            .wait()
+            .await
+            .context("failed to reap the owned one-shot service")?;
+        match std::fs::remove_file(&self.uds_path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error).with_context(|| {
+                format!(
+                    "failed to remove owned service socket {}",
+                    self.uds_path.display()
+                )
+            }),
         }
     }
 
@@ -688,7 +776,11 @@ impl UdsClient {
             .map(std::process::Stdio::from)
             .unwrap_or_else(|_| std::process::Stdio::null());
         let mut child = tokio::process::Command::new(&paths.service_bin)
-            .args(direct_spawn_service_args(&paths, isolation_mode_active()))
+            .args(direct_spawn_service_args(
+                &paths,
+                isolation_mode_active(),
+                self.direct_service_lifetime,
+            ))
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(service_stderr)
@@ -698,12 +790,20 @@ impl UdsClient {
         match self.connect_with_timeout(ConnectMode::AwaitStartup).await {
             Ok(stream) => {
                 info!("Service spawned and responding");
-                tokio::spawn(async move {
-                    let _ = child.wait().await;
-                });
+                if self.direct_service_lifetime == DirectServiceLifetime::BoundToCommand {
+                    *self.owned_direct_service.lock().await = Some(child);
+                } else {
+                    tokio::spawn(async move {
+                        let _ = child.wait().await;
+                    });
+                }
                 Ok(stream)
             }
-            Err(e) => Err(e).context("capsem-service failed to start"),
+            Err(e) => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                Err(e).context("capsem-service failed to start")
+            }
         }
     }
 

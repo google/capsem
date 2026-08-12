@@ -54,6 +54,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- One-shot `capsem run` now gives any directly spawned fallback service a
+  typed command-bound lifetime. After the complete `/run` response, the CLI
+  terminates and reaps only the service it spawned and removes its owned
+  socket; the parent watcher remains the crash fallback. This prevents both
+  hidden descendants and a consecutive command connecting to a dying stale
+  socket, while ordinary installed and interactive services stay persistent.
 - Docker contract recorders now answer the same portable platform-and-image-ID
   probe as the production gate, so hosted-CLI compatibility changes cannot
   leave broad qualification fixtures asserting against an obsolete inspect

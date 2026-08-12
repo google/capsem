@@ -1416,6 +1416,15 @@ fn should_start_background_update_refresh(command: Option<&Commands>) -> bool {
     should_refresh_update_cache_for_command(command) && app_auto_update_enabled()
 }
 
+fn direct_service_lifetime(command: &Commands) -> client::DirectServiceLifetime {
+    match command {
+        Commands::Session(SessionCommands::Run { .. }) => {
+            client::DirectServiceLifetime::BoundToCommand
+        }
+        _ => client::DirectServiceLifetime::Persistent,
+    }
+}
+
 #[cfg(test)]
 fn command_is_handled_before_service_api(command: &Commands) -> bool {
     matches!(
@@ -1722,9 +1731,14 @@ async fn main() -> Result<()> {
         _ => {}
     }
 
-    let client = UdsClient::new(uds_path, auto_launch);
+    let command = cli.command.as_ref().unwrap();
+    let client = UdsClient::with_direct_service_lifetime(
+        uds_path,
+        auto_launch,
+        direct_service_lifetime(command),
+    );
 
-    match cli.command.as_ref().unwrap() {
+    match command {
         Commands::Assets(AssetsCommands::Status { profile, json }) => {
             client::validate_id(profile)?;
             let encoded_profile = urlencoding::encode(profile);
@@ -1926,7 +1940,8 @@ async fn main() -> Result<()> {
                 timeout_secs: *timeout,
                 env: client::parse_env_vars(env)?,
             };
-            let resp: ApiResponse<ExecResponse> = client.post("/run", &req).await?;
+            let request: Result<ApiResponse<ExecResponse>> = client.post("/run", &req).await;
+            let resp = client.finish_direct_request(request).await?;
             let resp = resp.into_result()?;
             if !resp.stdout.is_empty() {
                 print!("{}", resp.stdout);

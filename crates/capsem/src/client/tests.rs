@@ -812,12 +812,64 @@ fn isolated_direct_spawn_uses_an_ephemeral_gateway_port() {
         tray_bin: PathBuf::from("/opt/capsem/bin/capsem-tray"),
         assets_dir: PathBuf::from("/opt/capsem/assets"),
     };
-    let args = direct_spawn_service_args(&paths, true);
+    let args = direct_spawn_service_args(&paths, true, DirectServiceLifetime::Persistent);
     let args: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
 
     assert!(
         args.windows(2).any(|pair| pair == ["--gateway-port", "0"]),
         "isolated service must not collide with an installed gateway: {args:?}"
+    );
+}
+
+#[test]
+fn bounded_direct_spawn_exits_with_its_one_shot_cli_parent() {
+    let paths = paths::CapsemPaths {
+        service_bin: PathBuf::from("/opt/capsem/bin/capsem-service"),
+        process_bin: PathBuf::from("/opt/capsem/bin/capsem-process"),
+        gateway_bin: PathBuf::from("/opt/capsem/bin/capsem-gateway"),
+        tray_bin: PathBuf::from("/opt/capsem/bin/capsem-tray"),
+        assets_dir: PathBuf::from("/opt/capsem/assets"),
+    };
+    let args = direct_spawn_service_args(&paths, true, DirectServiceLifetime::BoundToCommand);
+    let args: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
+    let expected_parent = std::process::id().to_string();
+
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--parent-pid", expected_parent.as_str()]),
+        "one-shot direct service must die with its CLI parent: {args:?}"
+    );
+}
+
+#[tokio::test]
+async fn bounded_direct_request_reaps_its_owned_service_and_socket_on_error() {
+    let temp = tempfile::tempdir().unwrap();
+    let socket = temp.path().join("service.sock");
+    std::fs::write(&socket, b"stale socket sentinel").unwrap();
+
+    let mut command = tokio::process::Command::new("/bin/sleep");
+    command.arg("300").kill_on_drop(true);
+    let child = command.spawn().unwrap();
+    let child_pid = child.id().unwrap();
+
+    let client = UdsClient::with_direct_service_lifetime(
+        socket.clone(),
+        true,
+        DirectServiceLifetime::BoundToCommand,
+    );
+    *client.owned_direct_service.lock().await = Some(child);
+
+    let error = client
+        .finish_direct_request::<()>(Err(anyhow::anyhow!("request failed")))
+        .await
+        .unwrap_err();
+
+    assert_eq!(format!("{error:#}"), "request failed");
+    assert!(!socket.exists(), "the owned stale socket must be removed");
+    assert_eq!(
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(child_pid as i32), None),
+        Err(nix::errno::Errno::ESRCH),
+        "the exact direct child must be reaped before the request returns",
     );
 }
 
@@ -830,12 +882,16 @@ fn ordinary_direct_spawn_preserves_the_installed_gateway_port_contract() {
         tray_bin: PathBuf::from("/opt/capsem/bin/capsem-tray"),
         assets_dir: PathBuf::from("/opt/capsem/assets"),
     };
-    let args = direct_spawn_service_args(&paths, false);
+    let args = direct_spawn_service_args(&paths, false, DirectServiceLifetime::Persistent);
     let args: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
 
     assert!(
         !args.iter().any(|arg| arg == "--gateway-port"),
         "ordinary installs retain the configured/default gateway port: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|arg| arg == "--parent-pid"),
+        "persistent direct services must not die with one CLI invocation: {args:?}"
     );
 }
 

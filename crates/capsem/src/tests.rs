@@ -126,7 +126,10 @@ fn session_blocked_reason_explains_a_stopped_vm_the_service_will_not_resume() {
 
 #[test]
 fn session_blocked_reason_stays_quiet_for_a_healthy_session() {
-    assert_eq!(session_blocked_reason(&session(client::VmLifecycleState::Running)), None);
+    assert_eq!(
+        session_blocked_reason(&session(client::VmLifecycleState::Running)),
+        None
+    );
 
     let mut resumable = session(client::VmLifecycleState::Stopped);
     resumable.can_resume = true;
@@ -292,6 +295,28 @@ fn parse_create_ephemeral() {
         }
         _ => panic!("expected Create"),
     }
+}
+
+#[test]
+fn one_shot_run_bounds_any_direct_service_to_the_cli() {
+    let cli = Cli::parse_from(["capsem", "run", "true"]);
+    let command = cli.command.as_ref().unwrap();
+
+    assert_eq!(
+        direct_service_lifetime(command),
+        client::DirectServiceLifetime::BoundToCommand
+    );
+}
+
+#[test]
+fn ordinary_session_commands_keep_a_persistent_direct_service() {
+    let cli = Cli::parse_from(["capsem", "create"]);
+    let command = cli.command.as_ref().unwrap();
+
+    assert_eq!(
+        direct_service_lifetime(command),
+        client::DirectServiceLifetime::Persistent
+    );
 }
 
 #[test]
@@ -584,7 +609,6 @@ fn app_auto_update_false_disables_background_refresh_from_settings_file() {
     let command = cli.command.as_ref().expect("parsed command");
     assert!(!should_start_background_update_refresh(Some(command)));
     assert!(!should_start_background_update_refresh(None));
-
 }
 
 #[test]
@@ -1271,8 +1295,7 @@ fn parse_update_rejects_assets_with_corp_policy() {
 fn parse_update_url_overrides_reject_bare_paths() {
     for flag in ["--manifest", "--corp"] {
         for source in ["/tmp/capsem/manifest.json", "assets/stable/manifest.json"] {
-            let err = match Cli::try_parse_from(["capsem", "update", "--assets", flag, source])
-            {
+            let err = match Cli::try_parse_from(["capsem", "update", "--assets", flag, source]) {
                 Ok(_) => panic!("update source overrides must reject bare filesystem paths"),
                 Err(err) => err,
             };
@@ -1301,8 +1324,7 @@ fn parse_update_url_overrides_reject_url_shorthand_paths() {
                 "must use https://, http://, or file:// URLs",
             ),
         ] {
-            let err = match Cli::try_parse_from(["capsem", "update", "--assets", flag, source])
-            {
+            let err = match Cli::try_parse_from(["capsem", "update", "--assets", flag, source]) {
                 Ok(_) => panic!("update source overrides must reject URL shorthand paths"),
                 Err(err) => err,
             };
