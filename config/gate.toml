@@ -1269,6 +1269,15 @@ python_lock = "scripts/audit-python-lock.sh"
 public_surface = "scripts/check_public_surface.py"
 source_syntax = "scripts/check-source-syntax.py"
 hardcoded_selections = "scripts/check-hardcoded-release-selections.sh"
+shell = "scripts/check-shell.sh"
+# Warning and above. `info`/`style` add twenty-five findings that are opinions
+# rather than defects, and a gate nobody believes gets disabled.
+shell_severity = "warning"
+#   SC1091  cannot follow a sourced path it was not given as input; the sourced
+#           files are themselves checked, so following would only double-report
+#   SC2034  every hit is a variable a *sourced* consumer reads, which the
+#           single-file view cannot see -- deb-preinst/postinst and doctor-common
+shell_ignore = ["SC1091", "SC2034"]
 skills_dir = "skills"
 # A skill's frontmatter description is loaded into every agent session before
 # any work starts, and it is the text a router chooses from. Both costs point

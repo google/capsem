@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   joins `broad_ignores` so the suite has one owner rather than two, and
   `tests/citadel/test_guard_scheduling.py` fails if it is ever moved back
   behind the expensive work.
+- Shell scripts are linted. Python has Ruff and strict Ty, Rust has Clippy with
+  `warnings = "deny"`, the web surfaces fail on warnings -- and 6,821 lines of
+  shell across 46 tracked scripts had nothing, while four
+  `# shellcheck disable=` directives already sat in the tree, written for a
+  linter no lane ran. `fast.audit.shell` runs ShellCheck at warning severity
+  over `git ls-files -- '*.sh'`, the same tracked-file rule the script size
+  ratchet uses. It found no real defects: the only two hits were a deliberate
+  `CDPATH= cd` and a sourced library with no shebang, both now carrying a
+  directive that records why. ShellCheck arrives through `shellcheck-py` in
+  `uv.lock`, so it needs no new bootstrap step.
 - Skill frontmatter descriptions are halved, from 11,162 characters to 5,158.
   They are loaded into every agent session before any work starts and are the
   text a router picks from, so length is not neutral: thirty-four paragraphs

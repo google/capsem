@@ -166,6 +166,9 @@ class AuditsConfig(Strict):
     public_surface: str
     source_syntax: str
     hardcoded_selections: str
+    shell: str
+    shell_severity: str
+    shell_ignore: tuple[str, ...]
     skills_dir: str
     max_skill_description_chars: PositiveInt
     max_skill_body_lines: PositiveInt

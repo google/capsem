@@ -40,6 +40,14 @@ def all_of(config: GateConfig) -> list[Step]:
             Run(["uv", "run", "capsem-builder", "validate-skills", audits.skills_dir]),
         ),
         step("audit.release-selections", Run(["bash", audits.hardcoded_selections])),
+        # Python has Ruff and strict Ty, Rust has Clippy with warnings denied,
+        # the web surfaces fail on warnings -- and 6,821 lines of shell across
+        # 46 tracked scripts had nothing at all. Four `# shellcheck disable=`
+        # directives were already in the tree, written for a linter no lane ran.
+        step(
+            "audit.shell",
+            Run(["bash", audits.shell, audits.shell_severity, ",".join(audits.shell_ignore)]),
+        ),
     ]
 
 
