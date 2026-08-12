@@ -23,6 +23,7 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 
+from capsem.builder import guestbuilder
 from capsem.builder.doctor import check_container_runtime
 from capsem.builder.guestbuilder import image_tag
 from capsem.builder.models import BuildConfig, ErofsConfig, GuestImageConfig
@@ -520,10 +521,12 @@ def container_compile_agent(
     Used on macOS and for a foreign Linux target. The dependency/toolchain
     image is materialized before this call; the build itself has no network.
     """
-    arch = build.architectures[arch_name]
-    rust_target = arch.rust_target
+    resolved = guestbuilder.environment(build, arch_name)
+    rust_target = resolved.rust_target
     runtime = detect_runtime()
-    docker_platform = arch.docker_platform
+    # The host's platform, even for a foreign target: that target is
+    # cross-compiled in a host-platform image rather than emulated in its own.
+    docker_platform = resolved.docker_platform
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Build all shell commands from GUEST_BINARIES constant
@@ -548,7 +551,24 @@ def container_compile_agent(
             "materialize the asset build inputs before cross-compiling"
         ) from error
 
-    print(f"  Container build ({docker_platform}) ...")
+    # The container owns its toolchain settings, passed in rather than read out
+    # of the tree -- see the workspace comment below for why `.cargo/config.toml`
+    # must not reach `/build`. `ring` is the only crate in the guest graph that
+    # compiles C, and the image materialized clang for it.
+    cross_env: list[str] = []
+    if resolved.cross:
+        variable = rust_target.replace("-", "_")
+        cross_env = [
+            "-e",
+            f"CC_{variable}=clang",
+            "-e",
+            f"CFLAGS_{variable}=--target={rust_target}",
+            "-e",
+            f"CARGO_TARGET_{variable.upper()}_LINKER=rust-lld",
+        ]
+
+    shape = "cross" if resolved.cross else "native"
+    print(f"  Container build ({docker_platform}, {shape} -> {rust_target}) ...")
     # Source is mounted :ro to protect the host. We symlink everything into
     # a writable /build dir, while Cargo.lock stays the checked-in read-only
     # input. The image owns the registry and rustup trees; masking either with
@@ -570,6 +590,7 @@ def container_compile_agent(
             "/build/target",
             "-w",
             "/build",
+            *cross_env,
             image,
             "sh",
             "-c",
@@ -620,8 +641,15 @@ def cross_compile_agent(
 ) -> list[Path]:
     """Cross-compile guest agent binaries for a given Rust target.
 
-    Foreign-architecture builds delegate to container_compile_agent so the C
-    toolchain used by transitive Rust dependencies matches the target CPU.
+    Foreign-architecture builds delegate to `container_compile_agent`, which now
+    genuinely cross-compiles: the helper image is the host platform's child with
+    the foreign target and clang materialized into it. It used to run the
+    target's own platform child under QEMU so the C toolchain matched the target
+    CPU -- correct, and 1194.7s per invocation against 86s, three times per
+    profile release run.
+
+    `ring` is the only crate in this graph that compiles C, which is what makes
+    the cheaper answer available at all.
     """
     rust_target = build.architectures[arch_name].rust_target
     if sys.platform == "darwin":

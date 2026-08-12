@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from capsem.builder import guestbuilder
 from capsem.builder.config import load_guest_config
 from capsem.builder.guestbuilder import build_arguments, image_repository, image_tag
 from capsem.builder.models import ArchConfig, BuildConfig
@@ -81,16 +82,22 @@ def prefetch(
         else:
             docker.pull(arch.base_image, platform=arch.docker_platform)
 
+    # The Rust builder base is the *host* platform's exact child even for a
+    # foreign target, because a foreign target is cross-compiled rather than
+    # emulated. Two requested architectures therefore normally resolve to one
+    # pull, which `image_exists` collapses on the second.
+    build = build_config(config)
     rust_scope = names if rust_names is None else rust_names
-    for name, arch in selected(config, rust_scope):
-        if docker.image_exists(arch.rust_builder_base_image, platform=arch.docker_platform):
+    for name, _arch in selected(config, rust_scope):
+        resolved = guestbuilder.environment(build, name)
+        if docker.image_exists(resolved.base_image, platform=resolved.docker_platform):
             runner.note(
-                f"exact {name} Rust builder base is already present: {arch.rust_builder_base_image}"
+                f"exact {name} Rust builder base is already present: {resolved.base_image}"
             )
         else:
             docker.pull(
-                arch.rust_builder_base_image,
-                platform=arch.docker_platform,
+                resolved.base_image,
+                platform=resolved.docker_platform,
             )
 
 
@@ -103,25 +110,26 @@ def materialize_rust_builders(
     docker = Docker(runner)
     storage = Storage(runner)
     build = build_config(config)
-    for name, arch in selected(config, names):
+    for name, _arch in selected(config, names):
+        resolved = guestbuilder.environment(build, name)
         if not docker.image_exists(
-            arch.rust_builder_base_image,
-            platform=arch.docker_platform,
+            resolved.base_image,
+            platform=resolved.docker_platform,
         ):
             raise GateError(
                 f"exact {name} Rust builder base is missing: "
-                f"{arch.rust_builder_base_image}; run guest base prefetch first"
+                f"{resolved.base_image}; run guest base prefetch first"
             )
         builder = image_tag(build, name, config.root)
-        if docker.image_exists(builder, platform=arch.docker_platform):
+        if docker.image_exists(builder, platform=resolved.docker_platform):
             runner.note(f"locked {name} guest Rust builder is already present: {builder}")
         else:
             docker.build(
                 tag=builder,
                 dockerfile=config.path(build.guest_rust_builder.dockerfile).as_posix(),
                 context=str(config.root),
-                args=build_arguments(arch),
-                platform=arch.docker_platform,
+                args=build_arguments(resolved),
+                platform=resolved.docker_platform,
             )
         storage.reclaim(image_repository(build, name), keep=builder)
 

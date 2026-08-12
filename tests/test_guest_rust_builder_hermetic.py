@@ -12,6 +12,7 @@ import pytest
 from helpers.gate import RecordingRunner
 from pydantic import ValidationError
 
+from capsem.builder import guestbuilder
 from capsem.builder.config import load_guest_config
 from capsem.builder.docker import GUEST_BINARIES, container_compile_agent
 from capsem.builder.guestbuilder import image_repository, image_tag
@@ -40,6 +41,14 @@ def _seed_identity(root: Path) -> None:
 
 
 def test_every_guest_rust_builder_base_is_an_exact_platform_child_manifest() -> None:
+    """One exact, distinct child manifest is declared per architecture.
+
+    Which base a given *target* resolves to is a separate question answered by
+    `guestbuilder.environment`: a foreign target is cross-compiled from the
+    host's child, so two targets normally share one base at build time. This
+    contract is about the declarations being exact and per-platform, not about
+    how many of them a single host ends up using.
+    """
     refs = {arch.rust_builder_base_image for arch in BUILD.architectures.values()}
 
     assert len(refs) == len(BUILD.architectures)
@@ -57,11 +66,33 @@ def test_guest_rust_builder_materializes_the_checked_in_lock_before_runtime() ->
     assert "COPY Cargo.toml Cargo.lock rust-toolchain.toml" in source
     assert "cargo fetch --locked" in source
     assert "apt-get" not in source
-    assert "rustup target add" not in source
     assert "ENV RUSTUP_AUTO_INSTALL=0" in source
     assert "rustup toolchain list" in source
     assert "rustup target list --installed" in source
     assert "RUN rm -rf /prefetch" in source
+
+
+def test_a_cross_image_materializes_its_target_and_asserts_it_landed() -> None:
+    """`rustup target add` is permitted, and only in the cross setup layer.
+
+    This assertion used to be `"rustup target add" not in source`, because
+    every image was the target's own platform child and already carried its
+    native target -- so an install could only mean the base had drifted.
+
+    A cross image is built FROM the host's child and must add the foreign
+    target. That is materialization at image-build time on the same
+    network-open edge `cargo fetch --locked` already uses, not a runtime
+    download: the target is still asserted present afterwards, so the runtime's
+    `--locked --offline --network none` build never reaches the rustup proxy.
+    """
+    source = (PROJECT_ROOT / BUILD.guest_rust_builder.dockerfile).read_text(encoding="utf-8")
+
+    add = source.index("rustup target add")
+    assert 'if [ "${CROSS}" = "1" ]' in source
+    assert source.index('if [ "${CROSS}" = "1" ]') < add
+    # Asserted after the install, unconditionally, for both shapes.
+    assert add < source.index("rustup target list --installed")
+    assert "ARG CROSS" in source
 
 
 @pytest.mark.parametrize(
@@ -122,18 +153,22 @@ def test_cold_prefetch_pulls_exact_rust_base_then_builds_locked_helper() -> None
     config = gate_config.load(PROJECT_ROOT)
     runner = RecordingRunner(PROJECT_ROOT, failures=("docker image inspect",))
 
+    # Resolved rather than spelled: which base an architecture builds from
+    # depends on the host, so a literal here would assert the CI runner's CPU.
+    resolved = guestbuilder.environment(BUILD, "arm64")
+
     imagebases.prefetch(runner, config, names=("arm64",))
     builder = image_tag(BUILD, "arm64", PROJECT_ROOT)
-    runner.fail_on(f"docker image inspect --platform linux/arm64 {builder}")
+    runner.fail_on(f"docker image inspect --platform {resolved.docker_platform} {builder}")
     imagebases.materialize_rust_builders(runner, config, names=("arm64",))
 
-    arch = BUILD.architectures["arm64"]
-    pulled = f"docker pull --platform {arch.docker_platform} {arch.rust_builder_base_image}"
+    pulled = f"docker pull --platform {resolved.docker_platform} {resolved.base_image}"
     built = runner.matching(r"docker build .*Dockerfile\.guest-rust-builder")
     assert len(built) == 1
-    assert f"--platform {arch.docker_platform}" in built[0]
-    assert f"BASE={arch.rust_builder_base_image}" in built[0]
-    assert f"RUST_TARGET={arch.rust_target}" in built[0]
+    assert f"--platform {resolved.docker_platform}" in built[0]
+    assert f"BASE={resolved.base_image}" in built[0]
+    assert f"RUST_TARGET={BUILD.architectures['arm64'].rust_target}" in built[0]
+    assert f"CROSS={'1' if resolved.cross else '0'}" in built[0]
     runner.assert_order(pulled, r"docker build .*Dockerfile\.guest-rust-builder")
 
 
@@ -161,17 +196,27 @@ def test_prefetch_pulls_rust_bases_only_for_helper_consumers() -> None:
 
     arm = BUILD.architectures["arm64"]
     x86 = BUILD.architectures["x86_64"]
+    # Both guest bases are still per-target and pulled at their own platform.
     assert runner.ran(rf"docker pull --platform {arm.docker_platform} {arm.base_image}")
     assert runner.ran(rf"docker pull --platform {x86.docker_platform} {x86.base_image}")
+
+    # The Rust builder base is the host's, because a foreign target is crossed
+    # rather than emulated. Only the requested consumer's helper base is
+    # pulled, and no architecture outside `rust_names` drags one in.
+    resolved = guestbuilder.environment(BUILD, "arm64")
     assert runner.ran(
-        rf"docker pull --platform {arm.docker_platform} {arm.rust_builder_base_image}"
+        rf"docker pull --platform {resolved.docker_platform} {resolved.base_image}"
     )
-    assert not runner.ran(rf"docker pull .*{x86.rust_builder_base_image}")
+    unused = {
+        arch.rust_builder_base_image for arch in BUILD.architectures.values()
+    } - {resolved.base_image}
+    for reference in unused:
+        assert not runner.ran(rf"docker pull .*{reference}")
 
 
 def test_materialization_fails_closed_without_its_exact_rust_base() -> None:
     config = gate_config.load(PROJECT_ROOT)
-    base = BUILD.architectures["arm64"].rust_builder_base_image
+    base = guestbuilder.environment(BUILD, "arm64").base_image
     runner = RecordingRunner(PROJECT_ROOT, failures=(base,))
 
     with pytest.raises(GateError, match="Rust builder base is missing"):

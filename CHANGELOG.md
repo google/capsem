@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Guest binaries for a foreign architecture are cross-compiled instead of
+  emulated. The builder image is now resolved from the *host* rather than the
+  target: it is always the host platform's exact `rust:1.97.1-alpine3.23`
+  child, and a foreign target is reached by materializing that target plus
+  `clang`/`lld` into the image at build time, on the same network-open setup
+  edge `cargo fetch --locked` already uses. Measured cold on a 16-core Linux
+  host for the six aarch64 guest binaries, through the real build path:
+  **1194.7s emulated against 89s cross**, with a 44s image build. A profile
+  release run compiles that graph three times, so this is roughly forty
+  minutes per run. The change is symmetric and fixes macOS too, where it is the
+  x86_64 lane that was emulated on Apple Silicon.
+
+  `ring` is the only crate in the `capsem-agent` + `capsem-bench` graph that
+  compiles C, and Alpine's clang cross-compiles it for a foreign musl target
+  with no external sysroot -- which is what makes this available at all. The
+  runtime build is unchanged in every other respect: `--network none`,
+  `--locked --offline`, guest binaries still `chmod 555`. Cross-built binaries
+  were verified to execute under aarch64 and to be byte-identical across
+  independent builds. The image tag is now keyed by the resolved base,
+  platform and cross shape, so a native helper and a cross one can never share
+  a tag.
+
 ### Fixed
 
 - The guest Rust builder's `/src/*` workspace glob is now documented and
