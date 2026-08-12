@@ -4960,9 +4960,30 @@ def test_frontend_coverage_artifacts_are_not_typechecked_or_misuploaded() -> Non
 
 def test_pr_ci_coverage_reports_without_local_threshold_abort() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    unit_step = next(
+        step
+        for step in _workflow_job("test")["steps"]
+        if step.get("name") == "Unit tests with coverage"
+    )
+    report_command = next(
+        line.strip()
+        for line in unit_step["run"].splitlines()
+        if line.strip().startswith("cargo llvm-cov report")
+    )
 
     assert "--fail-under-lines" not in workflow
     assert "cargo llvm-cov report --no-cfg-coverage" not in workflow
+    for test_selector in (
+        "--lib",
+        "--bins",
+        "--tests",
+        "--test",
+        "--benches",
+        "--examples",
+        "--all-targets",
+        "--doc",
+    ):
+        assert test_selector not in report_command.split()
     assert "codecov-unit.json" in workflow
     assert "coverage-summary.txt" in workflow
     assert "codecov-linux.json" in workflow

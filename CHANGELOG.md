@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- macOS CI now keeps Rust target selectors on the Nextest execution command;
+  its coverage-report command receives only report-compatible arguments, so a
+  fully passing Rust cohort cannot be turned red after execution.
+
 - Legacy published profiles whose root bytes are selected by a nested root
   manifest now rehydrate only byte-for-byte verified checkout cache hits. This
   keeps current manifests fully self-contained while allowing install CI to
