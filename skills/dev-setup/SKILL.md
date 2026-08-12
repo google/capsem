@@ -115,9 +115,12 @@ udev rules remain the authority.
 ```
 
 `just doctor` checks these resources automatically and fails if below minimum.
-On Linux it also proves Bubblewrap can create the exact loopback-only gate
-namespace; when doctor is already running inside a gate, it verifies that only
-`lo` is visible instead of attempting a nested namespace.
+On Linux bootstrap and hosted CI run the checked-in Bubblewrap proof: only
+`lo`, usable loopback/devices, and no direct egress. An ephemeral GitHub Ubuntu
+runner may lift only the exact AppArmor user-namespace switch responsible for
+`RTM_NEWADDR`, after which the complete proof must pass again. Local bootstrap
+never applies that hosted repair. When doctor is already inside a gate, it
+verifies that only `lo` is visible instead of attempting a nested namespace.
 
 ## First-time setup
 

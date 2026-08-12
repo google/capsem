@@ -424,6 +424,7 @@ capsem_linux_prepare_binfmt() {
 
 capsem_linux_prepare_bubblewrap() {
     CAPSEM_NET_DEV=${1:-/proc/net/dev}
+    CAPSEM_BUBBLEWRAP_PROJECT_ROOT=${2:-}
     if capsem_linux_loopback_only "$CAPSEM_NET_DEV"; then
         if ! { : > /dev/null; } 2>/dev/null; then
             printf "  [FAIL] active Linux gate namespace cannot use /dev/null\n" >&2
@@ -431,6 +432,10 @@ capsem_linux_prepare_bubblewrap() {
         fi
         printf "  [ok]   Bubblewrap network namespace already active (loopback only)\n"
         return 0
+    fi
+    if [ -n "$CAPSEM_BUBBLEWRAP_PROJECT_ROOT" ]; then
+        python3 "$CAPSEM_BUBBLEWRAP_PROJECT_ROOT/scripts/prepare-linux-sandbox.py"
+        return
     fi
     if ! bwrap --unshare-net --die-with-parent --new-session \
         --bind / / --dev-bind /dev /dev -- sh -c ': > /dev/null' \
@@ -596,7 +601,7 @@ bootstrap_linux() {
     fi
 
     capsem_linux_prepare_binfmt "$CAPSEM_NET_DEV"
-    capsem_linux_prepare_bubblewrap "$CAPSEM_NET_DEV"
+    capsem_linux_prepare_bubblewrap "$CAPSEM_NET_DEV" "$CAPSEM_LINUX_PROJECT_ROOT"
     capsem_linux_install_node "$CAPSEM_LINUX_PROJECT_ROOT" "$CAPSEM_LINUX_ASSUME_YES"
     if capsem_linux_loopback_only "$CAPSEM_NET_DEV"; then
         capsem_linux_verify_docker

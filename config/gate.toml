@@ -810,7 +810,7 @@ max_lines = 300
 # excludes build-generated output and vendored dependency trees by rule while
 # still catching suffix-less package scripts through their shebang.
 [boundary.scripts.oversized_line_counts]
-"scripts/bootstrap-linux.sh" = 608
+"scripts/bootstrap-linux.sh" = 613
 "scripts/build-pkg.sh" = 352
 "scripts/check-hardcoded-release-selections.py" = 305
 "scripts/check-public-binary-release.py" = 1097
@@ -1628,6 +1628,21 @@ linux_args = [
     "--dev-bind", "/dev", "/dev",
 ]
 linux_device_mount = "/dev"
+# A pre-gate kernel proof, not a marker: only loopback may exist and a numeric
+# external connection must fail. The timeout is config-owned so runner/network
+# variance is never hidden in a script literal.
+linux_probe_loopback_host = "127.0.0.1"
+linux_probe_egress_host = "1.1.1.1"
+linux_probe_egress_port = 53
+linux_probe_timeout_seconds = 1.0
+# Ubuntu 24.04 hosted runners can permit user namespaces but deny Bubblewrap's
+# loopback RTM_NEWADDR under AppArmor. Only that exact ephemeral-host signature
+# may lift the one sysctl, and the complete kernel proof must then pass again.
+linux_hosted_failure_marker = "Failed RTM_NEWADDR"
+linux_hosted_repair_command = ["sudo", "sysctl", "-w"]
+linux_hosted_userns_sysctl = "kernel.apparmor_restrict_unprivileged_userns"
+linux_hosted_userns_required_value = 1
+linux_hosted_userns_repair_value = 0
 profile_name = "gate.sb"
 
 # Three live advisory queries, plus a release's manifest resolution, exact-main

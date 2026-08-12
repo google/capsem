@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import model_validator
+from ipaddress import ip_address
+
+from pydantic import PositiveFloat, PositiveInt, model_validator
 
 from .configschema import Strict
 
@@ -19,6 +21,15 @@ class SandboxConfig(Strict):
     linux_command: str
     linux_args: tuple[str, ...]
     linux_device_mount: str
+    linux_probe_loopback_host: str
+    linux_probe_egress_host: str
+    linux_probe_egress_port: PositiveInt
+    linux_probe_timeout_seconds: PositiveFloat
+    linux_hosted_failure_marker: str
+    linux_hosted_repair_command: tuple[str, ...]
+    linux_hosted_userns_sysctl: str
+    linux_hosted_userns_required_value: int
+    linux_hosted_userns_repair_value: int
     profile_name: str
     egress_metadata_variable: str
     egress_socket_template: str
@@ -63,4 +74,19 @@ class SandboxConfig(Strict):
         for required in ("--die-with-parent", "--new-session"):
             if required not in self.linux_args:
                 raise ValueError(f"linux_args must contain {required}")
+        if not ip_address(self.linux_probe_loopback_host).is_loopback:
+            raise ValueError("linux_probe_loopback_host must be a loopback address")
+        egress = ip_address(self.linux_probe_egress_host)
+        if egress.is_loopback or egress.is_unspecified or egress.is_multicast:
+            raise ValueError("linux_probe_egress_host must name an external unicast address")
+        if self.linux_probe_egress_port > 65535:
+            raise ValueError("linux_probe_egress_port must fit a TCP port")
+        if self.linux_hosted_repair_command != ("sudo", "sysctl", "-w"):
+            raise ValueError("the hosted repair must remain the narrow sudo sysctl command")
+        if (
+            self.linux_hosted_userns_sysctl != "kernel.apparmor_restrict_unprivileged_userns"
+            or self.linux_hosted_userns_required_value != 1
+            or self.linux_hosted_userns_repair_value != 0
+        ):
+            raise ValueError("the hosted repair may only lift Ubuntu's userns AppArmor switch")
         return self

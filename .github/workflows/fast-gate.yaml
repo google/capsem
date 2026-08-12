@@ -54,6 +54,9 @@ jobs:
             libayatana-appindicator3-dev \
             libxdo-dev
 
+      - name: Prove Linux sandbox boundary
+        run: python3 scripts/prepare-linux-sandbox.py --repair-hosted-runner
+
       - name: Install prebuilt Rust gate tools
         uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
         with:
