@@ -21,7 +21,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from profile_root_payload import stage_legacy_root  # noqa: E402
 from release_binary_cohort import REQUIRED_LINUX_RELEASE_BINARIES  # noqa: E402
 from release_inputs import (  # noqa: E402
     load_verified_release_inputs,
@@ -211,6 +210,8 @@ def stage_profiles(
     config_root: Path = Path("target/release-config"),
     shared_config_root: Path = Path("config"),
 ) -> Path:
+    from profile_root_payload import stage_legacy_root
+
     report, manifest = _load(input_dir)
     if report.get("kind") != "profiles":
         raise ValueError("profile staging requires profile release inputs")
