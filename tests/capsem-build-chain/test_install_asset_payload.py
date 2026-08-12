@@ -15,6 +15,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+import yaml
 from blake3 import blake3
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -2889,37 +2890,46 @@ def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -
     assert "-p capsem-admin" in workflow
 
 
-def test_release_workflow_retries_app_cargo_tool_installs() -> None:
-    workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
-    build_app_macos = workflow.split("  build-app-macos:", 1)[1].split("\n  build-app-linux:", 1)[0]
-    build_app_linux = workflow.split("  build-app-linux:", 1)[1].split(
-        "\n  author-binary-candidate:", 1
-    )[0]
+def test_release_workflow_retries_app_cargo_tool_installs_through_config_authority() -> None:
+    workflow_path = PROJECT_ROOT / ".github" / "workflows" / "release.yaml"
+    workflow = yaml.safe_load(workflow_path.read_text())
+    mac_steps = workflow["jobs"]["build-app-macos"]["steps"]
+    linux_steps = workflow["jobs"]["build-app-linux"]["steps"]
+    installer = next(
+        step for step in mac_steps if step.get("name") == "Install exact config-owned Cargo tools"
+    )
+    config = tomllib.loads((PROJECT_ROOT / "config" / "gate.toml").read_text())
+    configured = {tool["name"]: tool for tool in config["toolchain"]["crates"]}
 
-    assert "cargo install tauri-cli cargo-auditable cargo-sbom --locked" not in workflow
-    assert "cargo install tauri-cli cargo-auditable --locked" not in workflow
+    assert installer["run"].split() == [
+        "uv",
+        "run",
+        "python",
+        "scripts/install-configured-cargo-tools.py",
+        "cargo-tauri",
+        "cargo-sbom",
+    ]
+    assert str(installer["env"]["CARGO_NET_RETRY"]) == "10"
+    assert "continue-on-error" not in installer
+    for name in ("cargo-tauri", "cargo-sbom"):
+        tool = configured[name]
+        assert tool["install"][:2] == ["cargo", "install"]
+        assert "--version" in tool["install"]
+        assert tool["install"][-1] == "--locked"
 
-    for block, required_tools in ((build_app_macos, ("tauri-cli", "cargo-auditable")),):
-        assert "CARGO_NET_RETRY: 10" in block
-        assert "install_cargo_tool() {" in block
-        assert "for attempt in 1 2 3; do" in block
-        assert 'cargo install "$tool" --locked' in block
-        assert 'echo "cargo install $tool failed on attempt $attempt/3"' in block
-        for tool in required_tools:
-            assert f"install_cargo_tool {tool}" in block
-    assert "cargo install cargo-sbom --locked" in build_app_macos
-    assert "cargo install cargo-sbom --locked" not in build_app_linux
-    assert "install_cargo_tool cargo-sbom" not in workflow
+    build_app_linux = "\n".join(str(step.get("run", "")) for step in linux_steps)
     assert "uv run capsem-gate cross-compile" in build_app_linux
+    assert "install-configured-cargo-tools.py" not in build_app_linux
     assert "cargo install" not in build_app_linux
     assert "sudo apt-get" not in build_app_linux
-    assert "-p capsem-tui" in workflow
-    assert "-p capsem-mcp-aggregator" in workflow
-    assert "-p capsem-mcp-builtin" in workflow
-    assert "capsem-admin" in workflow
-    assert "capsem-tui" in workflow
-    assert "capsem-mcp-aggregator" in workflow
-    assert "capsem-mcp-builtin" in workflow
+    workflow_text = workflow_path.read_text()
+    assert "-p capsem-tui" in workflow_text
+    assert "-p capsem-mcp-aggregator" in workflow_text
+    assert "-p capsem-mcp-builtin" in workflow_text
+    assert "capsem-admin" in workflow_text
+    assert "capsem-tui" in workflow_text
+    assert "capsem-mcp-aggregator" in workflow_text
+    assert "capsem-mcp-builtin" in workflow_text
 
 
 def test_release_workflow_sets_up_uv_before_uv_run_steps() -> None:
