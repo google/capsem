@@ -1,23 +1,61 @@
 # Dependencies for one architecture's guest Rust binaries, resolved before
-# the hermetic build runs. BASE is the exact rust:1.97.1-alpine3.23 platform
-# child selected by config/docker/image/build.toml. It already carries the
-# checked-in compiler version, its native musl target, musl-dev and gcc.
+# the hermetic build runs. BASE is always the *host* platform's exact
+# rust:1.97.1-alpine3.23 child, selected by config/docker/image/build.toml.
+#
+# Two shapes, chosen by CROSS:
+#
+#   CROSS=0  RUST_TARGET is the host's own target. The base already carries the
+#            checked-in compiler, that musl target, musl-dev and gcc, so
+#            nothing is installed and the target is asserted present.
+#
+#   CROSS=1  RUST_TARGET is foreign. Emulating its platform to run rustc under
+#            QEMU cost 1194.7s for the six aarch64 guest binaries against 86s
+#            cross-compiling them, and a profile release run compiles that
+#            graph three times. On Apple Silicon the emulated lane is the
+#            x86_64 one; the same shape covers it.
+#
+# Everything either shape needs is materialized here, at image-build time, on
+# the same network-open setup edge `cargo fetch --locked` already uses. The
+# runtime build then runs --network none with --locked --offline against
+# exactly this image. The tag is keyed by BASE, CROSS, the target, this file
+# and the lockfiles, so any change is a new image rather than a silent reuse.
 ARG BASE
 FROM ${BASE}
 
 ARG RUST_TARGET
+ARG CROSS=0
+ARG CROSS_PACKAGES
 ENV RUSTUP_AUTO_INSTALL=0
 
 WORKDIR /prefetch
 COPY Cargo.toml Cargo.lock rust-toolchain.toml /prefetch/
 COPY crates /prefetch/crates
 
-# Fail rather than letting the rustup proxy install something over the network
-# if the exact base ever drifts from the checked-in toolchain/target contract.
+# The compiler itself is never installed: the base carries the checked-in
+# channel or this fails, whichever shape is being built.
 RUN selected="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)" \
     && test -n "${selected}" \
-    && rustup toolchain list | grep -F "${selected}-" \
-    && rustup target list --installed | grep -Fx "${RUST_TARGET}"
+    && rustup toolchain list | grep -F "${selected}-"
+
+# The only thing a cross image adds. `ring` is the sole crate in the
+# capsem-agent + capsem-bench graph that compiles C -- nothing else pulls cc,
+# cmake or bindgen -- and Alpine's clang cross-compiles it for a foreign musl
+# target with no external sysroot. CROSS_PACKAGES is an exact config-owned
+# name=version list and part of the helper identity; cold package drift fails
+# instead of silently changing publishable guest bytes.
+RUN if [ "${CROSS}" = "1" ]; then \
+        test -n "${CROSS_PACKAGES}" \
+        && apk add --no-cache ${CROSS_PACKAGES} \
+        && rustup target add "${RUST_TARGET}"; \
+    else \
+        test -z "${CROSS_PACKAGES}"; \
+    fi
+
+# Asserted for both shapes: native proves the exact base did not drift, cross
+# proves the line above landed the target it claims to have installed. Either
+# way the runtime build finds the target already present and never reaches for
+# the rustup proxy.
+RUN rustup target list --installed | grep -Fx "${RUST_TARGET}"
 
 # Resolve only what Cargo.lock permits. The runtime build uses the same cache
 # with --locked --offline and --network none, so a missing input is a failure

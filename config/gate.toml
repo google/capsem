@@ -1316,6 +1316,7 @@ source_contract = [
     "tests/test_builder_probe_timeouts.py",
     "tests/test_cargo_audit_gate.py",
     "tests/test_check_cargo_audit.py",
+    "tests/test_ci_enforcement_contract.py",
     "tests/test_complete_release_channel.py",
     "tests/test_docker_storage_policy.py",
     "tests/test_exec_lock.py",

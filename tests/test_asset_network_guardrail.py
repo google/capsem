@@ -166,7 +166,7 @@ def test_declared_asset_materializers_match_the_exact_mutator_inventory() -> Non
         "config/profiles/co-work/build.sh": Counter({"curl": 3}),
         "config/profiles/code/build.sh": Counter({"curl": 3}),
         "docker/Dockerfile.asset-tools": Counter({"apt": 5, "curl": 3, "apt-get": 2}),
-        "docker/Dockerfile.guest-rust-builder": Counter({"rustup": 2, "cargo": 1}),
+        "docker/Dockerfile.guest-rust-builder": Counter({"rustup": 3, "apk": 1, "cargo": 1}),
     }
     candidates = {
         *PROJECT_ROOT.glob("config/docker/**/*.j2"),
@@ -180,6 +180,16 @@ def test_declared_asset_materializers_match_the_exact_mutator_inventory() -> Non
         if (inventory := _source_line_inventory(path))
     }
     assert actual == expected
+
+
+def test_guest_cross_compiler_packages_are_exact_and_input_keyed() -> None:
+    settings = BUILD.guest_rust_builder
+    assert settings.cross_packages == ("clang21=21.1.2-r2",)
+    assert all("=" in package for package in settings.cross_packages)
+
+    source = (PROJECT_ROOT / settings.dockerfile).read_text(encoding="utf-8")
+    assert "apk add --no-cache ${CROSS_PACKAGES}" in source
+    assert "apk add --no-cache clang" not in source
 
 
 def test_asset_materializer_builds_name_their_network_explicitly() -> None:

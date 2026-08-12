@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Guest binaries for a foreign architecture are cross-compiled instead of
+  emulated. The builder image is now resolved from the *host* rather than the
+  target: it is always the host platform's exact `rust:1.97.1-alpine3.23`
+  child, and a foreign target is reached by materializing that target plus an
+  exact config-pinned `clang` package into the image at build time, on the same
+  network-open setup edge `cargo fetch --locked` already uses. Rust's pinned
+  toolchain supplies `rust-lld`. Measured cold on a 16-core Linux
+  host for the six aarch64 guest binaries, through the real build path:
+  **1194.7s emulated against 89s cross**, with a 44s image build. A profile
+  release run compiles that graph three times, so this is roughly forty
+  minutes per run. The change is symmetric and fixes macOS too, where it is the
+  x86_64 lane that was emulated on Apple Silicon.
+
+  `ring` is the only crate in the `capsem-agent` + `capsem-bench` graph that
+  compiles C, and Alpine's clang cross-compiles it for a foreign musl target
+  with no external sysroot -- which is what makes this available at all. The
+  runtime build is unchanged in every other respect: `--network none`,
+  `--locked --offline`, guest binaries still `chmod 555`. Cross-built binaries
+  were verified to execute under aarch64 and to be byte-identical across
+  independent builds. The image tag is now keyed by the resolved base,
+  platform and cross shape, so a native helper and a cross one can never share
+  a tag.
+
 ### Fixed
 
 - CI and release workflow enforcement is now a structurally parsed fast-gate
@@ -22,6 +47,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   snapshot- and digest-keyed host helper with networking disabled. The profile
   release workflow no longer installs parallel musl or npm cdxgen authorities.
 
+- The guest Rust builder's `/src/*` workspace glob is now documented and
+  guarded as load-bearing rather than left looking like an oversight. It skips
+  dotfiles, so `.cargo/config.toml` never reaches `/build` and no container
+  build applies the checked-in Cargo configuration -- which reads like a bug
+  and is not one. That file sets `linker = "rust-lld"` for
+  `x86_64-unknown-linux-musl`; inside the Alpine builder that triple is the
+  *host* target, so inheriting it makes every proc-macro (`serde_derive`,
+  `tokio-macros`) link its host `.so` with rust-lld and fail on
+  `unable to find library -lgcc_s`. Widening the glob was tried and breaks the
+  build. `test_container_workspace_excludes_dotfiles` now fails if it is
+  widened again, and `/build-images` records the rule: checked-in Cargo
+  configuration is developer-host configuration, and the builder container
+  receives its toolchain settings as environment.
+- The complete gate now runs its cheap source checks before the nine-minute
+  release contract suite instead of after it. The two phases were already
+  serial, so the order cost nothing in total time and everything in how long a
+  trivial failure took to surface: two consecutive `release-profile` attempts
+  died at 9m12 and 11m39 on a single unused local variable that `ruff` reports
+  in under two seconds. Ruff and both Ty passes now answer at wave five rather
+  than behind `contracts.release`.
+- `pr-gate` enforcement is now proved structurally rather than by substring.
+  The literal-text contract was inverted in both directions: reformatting
+  `needs:` into YAML block style or reordering it -- neither of which GitHub
+  can distinguish from the original -- turned four contracts red, while
+  appending `|| true` to every enforcement line or adding
+  `continue-on-error: true` to the deciding step left all twenty-four
+  assertions green with merge protection fully disabled.
+  `tests/test_ci_enforcement_contract.py` reads the parsed workflow, checks the
+  properties no substring can see, and keeps all four mutations as executable
+  cases so a regression to text matching fails there.
+- `_workflow_job_block` locates a job through the parsed document instead of
+  slicing on exact two-space indentation. The old slice lost the job outright
+  after a reindent and truncated the block at any comment at that indentation
+  ending in `:`, silently dropping every step below it from the assertions that
+  followed. The required pr-gate job list is now one set constant rather than
+  the same exact string restated in four contracts.
 - EROFS rootfs publication now accepts only the release-owned `lz4` and
   `lz4hc` formats. The unused experimental zstd rail and its mutable
   `debian:trixie-slim` helper selection have been removed before the 0.6 cut.

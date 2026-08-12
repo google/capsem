@@ -81,12 +81,20 @@ class GuestRustBuilderConfig(BaseModel):
     dockerfile: str
     tag_template: str
     identity_inputs: tuple[str, ...]
+    cross_packages: tuple[str, ...]
     runtime_network: Literal["none"]
 
     @model_validator(mode="after")
     def _identity_is_complete(self):
         if not self.identity_inputs:
             raise ValueError("identity_inputs must have at least one entry")
+        if not self.cross_packages:
+            raise ValueError("cross_packages must have at least one exact package")
+        if any(
+            "=" not in package or any(ch.isspace() for ch in package)
+            for package in self.cross_packages
+        ):
+            raise ValueError("cross_packages must use exact name=version package specs")
         if "{arch}" not in self.tag_template or "{digest}" not in self.tag_template:
             raise ValueError("tag_template must contain {arch} and {digest}")
         return self

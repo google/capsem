@@ -23,6 +23,24 @@ from helpers.workflow_contract import assert_unmasked_step
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+# Every job `pr-gate` must aggregate before a pull request can merge. Declared
+# once, as a set: this is the contract, so it is stated here rather than read
+# back from the workflow it judges. It was previously spelled as the exact
+# string `needs: [fast-gate, test-linux, ...]` in six places, which made
+# reordering the list -- or writing it in YAML block style, which is the same
+# list -- fail four contracts while changing nothing GitHub acts on.
+REQUIRED_PR_GATE_JOBS = frozenset(
+    {
+        "fast-gate",
+        "test-linux",
+        "test",
+        "test-install",
+        "docs-build",
+        "site-build",
+        "release-site-build",
+    }
+)
+
 # The Rust line-coverage floor `just test` enforces. Named once because two
 # separate contracts assert it, and a floor that disagrees with itself is worse
 # than no floor. It tracks the real measured surface: adding previously
@@ -242,20 +260,46 @@ def _recipe_body(name: str) -> str:
     return "\n".join(lines[start:end])
 
 
+def _workflow_path(name: str) -> Path:
+    return PROJECT_ROOT / ".github" / "workflows" / name
+
+
+def _workflow_document(workflow_name: str = "ci.yaml") -> dict:
+    """The parsed workflow. Every structural question is answered from here."""
+    return yaml.safe_load(_workflow_path(workflow_name).read_text())
+
+
+def _workflow_job(name: str, workflow_name: str = "ci.yaml") -> dict:
+    """One job, as the mapping GitHub will actually act on."""
+    jobs = _workflow_document(workflow_name).get("jobs") or {}
+    assert name in jobs, f"{workflow_name} declares no job {name!r}"
+    return jobs[name]
+
+
 def _workflow_job_block(name: str, workflow_name: str = "ci.yaml") -> str:
-    lines = (PROJECT_ROOT / ".github" / "workflows" / workflow_name).read_text().splitlines()
-    start = next(i for i, line in enumerate(lines) if line == f"  {name}:")
-    end = len(lines)
-    for i in range(start + 1, len(lines)):
-        line = lines[i]
-        if line.startswith("  ") and not line.startswith("    ") and line.endswith(":"):
-            end = i
-            break
-    return "\n".join(lines[start:end])
+    """The job's own source lines, located through the parsed document.
+
+    Still text, because most assertions below are about the contents of `run:`
+    scripts and a script body is text however it is reached. Located by YAML
+    node marks rather than by matching an exact two-space-indented line: the
+    old slice lost the job entirely after a reindent, and any comment at that
+    indentation ending in `:` truncated the block early -- silently dropping
+    every step below it from the assertions that follow.
+
+    Structural properties no substring can see -- `continue-on-error`, `if:`,
+    the membership of `needs` -- belong in `_workflow_job` and in
+    `tests/test_ci_enforcement_contract.py`, not here.
+    """
+    _workflow_job(name, workflow_name)
+    text = _workflow_path(workflow_name).read_text()
+    root = yaml.compose(text)
+    jobs = next(value for key, value in root.value if key.value == "jobs")
+    key, node = next(pair for pair in jobs.value if pair[0].value == name)
+    return "\n".join(text.splitlines()[key.start_mark.line : node.end_mark.line])
 
 
 def _workflow_text(name: str) -> str:
-    return (PROJECT_ROOT / ".github" / "workflows" / name).read_text()
+    return _workflow_path(name).read_text()
 
 
 def _source_text(path: str) -> str:
@@ -557,11 +601,8 @@ def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     assert "push:" in trigger
     assert "branches: [main]" in trigger
     assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in trigger
-    assert (
-        "needs: [fast-gate, test-linux, test, test-install, docs-build, site-build, release-site-build]"
-        in gate
-    )
-    assert "if: ${{ always() }}" in gate
+    assert frozenset(_workflow_job("pr-gate")["needs"]) == REQUIRED_PR_GATE_JOBS
+    assert _workflow_job("pr-gate").get("if") == "${{ always() }}"
     assert "FAST_GATE_RESULT: ${{ needs.fast-gate.result }}" in gate
     assert "TEST_LINUX_RESULT: ${{ needs.test-linux.result }}" in gate
     assert "TEST_MACOS_RESULT: ${{ needs.test.result }}" in gate
@@ -594,10 +635,7 @@ def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
     assert "pr-gate:" in workflow
     assert "docs-build:" in workflow
     assert "site-build:" in workflow
-    assert (
-        "needs: [fast-gate, test-linux, test, test-install, docs-build, site-build, release-site-build]"
-        in gate
-    )
+    assert frozenset(_workflow_job("pr-gate")["needs"]) == REQUIRED_PR_GATE_JOBS
     assert "DOCS_BUILD_RESULT: ${{ needs.docs-build.result }}" in gate
     assert "SITE_BUILD_RESULT: ${{ needs.site-build.result }}" in gate
     assert "RELEASE_SITE_BUILD_RESULT: ${{ needs.release-site-build.result }}" in gate
@@ -1447,7 +1485,6 @@ def test_installed_service_owns_one_serial_automatic_update_path() -> None:
 
 
 def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
-    ci_workflow = _workflow_text("ci.yaml")
     expectations = [
         (
             "docs.yaml",
@@ -1490,10 +1527,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         assert f"cache-dependency-path: {directory}/pnpm-lock.yaml" in ci_block
         assert f"cd {directory} && pnpm install --frozen-lockfile" in ci_block
         assert f"bash scripts/check-web-surface.sh {directory}" in ci_block
-        assert (
-            "needs: [fast-gate, test-linux, test, test-install, docs-build, site-build, release-site-build]"
-            in ci_workflow
-        )
+        assert frozenset(_workflow_job("pr-gate")["needs"]) == REQUIRED_PR_GATE_JOBS
         assert f"cd {directory} && pnpm install --frozen-lockfile" in workflow
         assert f"bash scripts/check-web-surface.sh {directory}" in workflow
         assert (
@@ -2935,7 +2969,6 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
 def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None:
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
-    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
 
     for stage in [
         "Audits + lint + web surfaces",
@@ -2975,10 +3008,7 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
     )
     assert "`pr-gate` is the only status that should be required by branch protection" in docs
     assert "`pr-gate` depends on `docs-build`, `site-build`, and `release-site-build`" in docs_text
-    assert (
-        "needs: [fast-gate, test-linux, test, test-install, docs-build, site-build, release-site-build]"
-        in workflow
-    )
+    assert frozenset(_workflow_job("pr-gate")["needs"]) == REQUIRED_PR_GATE_JOBS
 
 
 def test_release_skills_require_local_ci_execution_parity_and_record_native_musl_lesson() -> None:

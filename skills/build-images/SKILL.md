@@ -293,16 +293,17 @@ testing available in every shipped profile image that declares the hook.
 
 ## How to: Add a new guest binary
 
-Guest binaries are compiled from `crates/capsem-agent/`. On macOS, and on Linux
-when the target is not the host architecture, `cross_compile_agent()` delegates
-to `container_compile_agent()`. The asset preflight first materializes the
-config-selected exact Rust child image plus the checked-in Rust toolchain and
-`Cargo.lock`; the actual container build runs with `--network none` and Cargo
-`--locked --offline`.
+Guest binaries are compiled from `crates/capsem-agent/`. Every architecture on
+every host goes through `container_compile_agent()`; native Linux has no second
+ambient Cargo/rustup rail. The asset preflight first materializes the host
+platform's config-selected exact Rust child image plus the checked-in Rust
+toolchain and `Cargo.lock`; a foreign target also materializes its exact
+config-pinned C compiler package. The actual container build runs with
+`--network none` and Cargo `--locked --offline`.
 
 Materialize only helpers the command can consume: every requested architecture
-on macOS, foreign requested architectures on Linux, and none for a kernel-only
-build. Immutable Debian guest bases remain architecture-selected separately.
+on either supported host, and none for a kernel-only build. Immutable Debian
+guest bases remain architecture-selected separately.
 
 1. Add the binary target in `crates/capsem-agent/Cargo.toml`
 2. Add the binary name to `GUEST_BINARIES` list in `docker.py`
@@ -341,9 +342,9 @@ backend-generated image workspaces.
 ## Build pipeline (what `build_image()` does)
 
 For rootfs:
-1. Build guest agent binaries (`cross_compile_agent` -- macOS and foreign Linux
-   targets use the pre-materialized, network-denied Rust builder; native Linux
-   compiles directly)
+1. Build guest agent binaries (`cross_compile_agent` -- every target uses the
+   pre-materialized, network-denied Rust builder; a foreign target cross-compiles
+   on the host CPU)
 2. Assemble build context (`prepare_build_context`) -- copies CA cert, shell configs, diagnostics, agent binaries
 3. Render Dockerfile from template
 4. `docker build`
@@ -359,6 +360,83 @@ For kernel:
 4. `docker build`, verifying the downloaded source archive before extraction
 5. Extract vmlinuz + initrd.img from image
 6. Clean up
+
+## The guest Rust builder workspace: do not widen the `/src/*` glob
+
+`container_compile_agent` mounts the checkout read-only at `/src` and assembles
+a writable workspace at `/build`:
+
+```sh
+for f in /src/*; do b=$(basename "$f"); \
+  [ "$b" != target ] && [ "$b" != crates ] && ln -s "$f" /build/; done
+```
+
+`/src/*` does not match dotfiles. **That exclusion is load-bearing. Widening it
+breaks the build.** It reads like an oversight -- `.cargo/config.toml` never
+reaches the container, so the checked-in Cargo configuration is never applied --
+and it has been "fixed" on exactly that reasoning.
+
+Why it must stay: `.cargo/config.toml` declares
+
+```toml
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"
+```
+
+On a developer host, `x86_64-unknown-linux-musl` is a *cross* target and
+rust-lld is correct. Inside the Alpine builder that same triple **is the host
+target**, so inheriting the file makes every proc-macro crate -- `serde_derive`,
+`tokio-macros` -- link its host `.so` with rust-lld:
+
+```
+rust-lld: error: unable to find library -lgcc_s
+rust-lld: error: unable to find library -lc
+error: could not compile `tokio-macros`
+```
+
+The rule this generalizes to: **checked-in Cargo configuration is
+developer-host configuration.** The builder container owns its own toolchain
+settings and receives them as environment on the `docker run`, never by reading
+them out of the tree. If a container build needs a linker or a `CC`, pass it
+explicitly.
+
+`tests/test_guest_rust_builder_hermetic.py::test_container_workspace_excludes_dotfiles`
+fails if the glob is widened, so this cannot be rediscovered the slow way.
+
+## Cross-compiling guest binaries instead of emulating
+
+Foreign-target guest builds used to run `rustc` under QEMU on the target's own
+platform child. Measured on a 16-core Linux host, cold, `--locked --offline`,
+for the six aarch64 guest binaries:
+
+| | |
+|---|---|
+| emulated (`--platform linux/arm64`, qemu-aarch64) | 1194.7s |
+| cross-compiled from the amd64 base | 86s |
+
+A profile release run compiles that graph **three** times -- co-work rootfs,
+code rootfs, and `assets.pack-initrds` -- so emulation costs roughly forty
+minutes per run.
+
+What a cross image needs, materialized at image-build time on the same
+network-open setup edge that `cargo fetch --locked` already uses:
+
+- `apk add --no-cache ${CROSS_PACKAGES}`, where config owns the exact package
+  tuple (currently `clang21=21.1.2-r2`) and the helper identity includes it.
+  `ring` is the **only** crate in the
+  `capsem-agent` + `capsem-bench` graph that compiles C -- nothing else pulls
+  `cc`, `cmake` or `bindgen`. Alpine's clang cross-compiles it for a foreign
+  musl target with **no external sysroot**. The pinned Rust toolchain already
+  supplies `rust-lld`; no separate ambient linker package is installed.
+- `rustup target add "${RUST_TARGET}"`, after which the existing
+  `rustup target list --installed` assertion proves it landed.
+- `CC_<target>=clang` and `CFLAGS_<target>=--target=<target>` on the run.
+- `CARGO_TARGET_<TARGET>_LINKER=rust-lld` on the run -- **not** by linking
+  `.cargo/config.toml` into the workspace, for the reason in the section above.
+
+The runtime build stays `--network none` with `--locked --offline`. The image
+tag is keyed by the base, target, cross-package tuple, Dockerfile and lockfiles,
+so a change to any of them is a different image rather than a silent reuse.
 
 ## Container runtime requirements
 
@@ -388,11 +466,13 @@ The resource check lives in `src/capsem/builder/doctor.py`:
 Guest cross-build containers use the exact per-platform
 `rust:1.97.1-alpine3.23` child manifests in
 `config/docker/image/build.toml`, never a mutable Rust tag. Those children
-already own the exact toolchain, native musl target, musl headers, and compiler;
-`docker/Dockerfile.guest-rust-builder` only resolves the Cargo.lock graph at the
-guarded asset-prefetch boundary. Do not add package installation, target
-installation, index updates, or downloads to `container_compile_agent()`; its
-runtime network is deliberately `none`.
+already own the exact toolchain, native musl target, musl headers, and compiler.
+At the guarded asset-prefetch boundary,
+`docker/Dockerfile.guest-rust-builder` resolves the Cargo.lock graph and, only
+for a foreign target, adds the exact config-pinned C compiler package and Rust
+target. Do not add package installation, target installation, index updates, or
+downloads to `container_compile_agent()`; its runtime network is deliberately
+`none`.
 
 The local helper tag is an input cache key, not an OCI content digest. Two cold
 Docker builds may have different image IDs because registry/index and layer

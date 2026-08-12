@@ -19,6 +19,7 @@ MINIMAL_BUILD_TOML = """\
 [build]
 compression = "zstd"
 compression_level = 15
+materialize_network = "default"
 
 [build.kernel]
 version = "9.9.9"
@@ -28,7 +29,25 @@ sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 dockerfile = "docker/Dockerfile.guest-rust-builder"
 tag_template = "capsem-guest-rust-{arch}:{digest}"
 identity_inputs = ["Cargo.lock", "rust-toolchain.toml"]
+cross_packages = ["clang21=21.1.2-r2"]
 runtime_network = "none"
+
+[build.asset_tools]
+dockerfile = "docker/Dockerfile.asset-tools"
+tag_template = "capsem-asset-tools-{arch}:{digest}"
+debian_snapshot_base = "http://snapshot.example/debian"
+debian_security_snapshot_base = "http://snapshot.example/debian-security"
+debian_snapshot_id = "20260810T000000Z"
+materialize_network = "default"
+runtime_network = "none"
+
+[build.asset_tools.architectures.arm64.cdxgen]
+url = "https://example.test/cdxgen-arm64"
+sha256 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+
+[build.asset_tools.architectures.arm64.cdx_validate]
+url = "https://example.test/cdx-validate-arm64"
+sha256 = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 
 [build.architectures.arm64]
 base_image = "registry.example/debian@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

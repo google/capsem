@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from capsem.builder import guestbuilder
 from capsem.builder.config import load_guest_config
 from capsem.builder.docker import (
     BUILD_LEDGER_NAME,
@@ -880,6 +881,7 @@ class TestBuildVersionScript:
                     dockerfile="docker/Dockerfile.guest-rust-builder",
                     tag_template="capsem-guest-rust-{arch}:{digest}",
                     identity_inputs=("Cargo.lock", "rust-toolchain.toml"),
+                    cross_packages=("clang21=21.1.2-r2",),
                     runtime_network="none",
                 ),
                 asset_tools=AssetToolsConfig(
@@ -2212,7 +2214,18 @@ class TestContainerCompileAgent:
         run_cmd = mock_run.call_args_list[-1][0][0]
         assert "docker" in run_cmd
         assert "--platform" in run_cmd
-        assert "linux/arm64" in run_cmd
+        # The *host's* platform, not the target's: a foreign target is
+        # cross-compiled in a host-platform image rather than emulated in its
+        # own, so spelling `linux/arm64` here would assert the runner's CPU.
+        resolved = guestbuilder.environment(real_config.build, "arm64")
+        assert resolved.docker_platform in run_cmd
+        if resolved.cross:
+            # The container owns its toolchain settings; they are never read
+            # out of the tree, because `.cargo/config.toml` is developer-host
+            # configuration that is wrong inside the musl builder.
+            joined = " ".join(run_cmd)
+            assert "CC_aarch64_unknown_linux_musl=clang" in joined
+            assert "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld" in joined
         # No named volumes. These were `capsem-agent-target-arm64`,
         # `capsem-cargo-registry` and `capsem-cargo-git`; the caches now live
         # in the image and the build directory is an anonymous volume, so
@@ -2246,7 +2259,10 @@ class TestContainerCompileAgent:
         # `docker image inspect` preflight.
         cmd = mock_run.call_args_list[-1][0][0]
         assert "docker" in cmd
-        assert "linux/amd64" in cmd
+        # The host's platform again. On an amd64 host this is the native lane
+        # and resolves to linux/amd64; on Apple Silicon it is x86_64 that gets
+        # crossed, which is the emulated lane this replaces there.
+        assert guestbuilder.environment(real_config.build, "x86_64").docker_platform in cmd
         # No named volumes, as with arm64: the caches live in the image and
         # the build directory is anonymous, so nothing carries state between
         # runs.

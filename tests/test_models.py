@@ -91,6 +91,7 @@ def _build(**kw):
             dockerfile="docker/Dockerfile.guest-rust-builder",
             tag_template="capsem-guest-rust-{arch}:{digest}",
             identity_inputs=("Cargo.lock", "rust-toolchain.toml"),
+            cross_packages=("clang21=21.1.2-r2",),
             runtime_network="none",
         ),
         "asset_tools": asset_tools,

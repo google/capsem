@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from jinja2 import Environment, FileSystemLoader
 
+from capsem.builder import guestbuilder
 from capsem.builder.assettools import image_tag as asset_tools_image_tag
 from capsem.builder.doctor import check_container_runtime
 from capsem.builder.guestbuilder import image_tag
@@ -553,10 +554,12 @@ def container_compile_agent(
     Used on every host and target. The dependency/toolchain image is
     materialized before this call; the build itself has no network or pull.
     """
-    arch = build.architectures[arch_name]
-    rust_target = arch.rust_target
+    resolved = guestbuilder.environment(build, arch_name)
+    rust_target = resolved.rust_target
     runtime = detect_runtime()
-    docker_platform = arch.docker_platform
+    # The host's platform, even for a foreign target: that target is
+    # cross-compiled in a host-platform image rather than emulated in its own.
+    docker_platform = resolved.docker_platform
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Build all shell commands from GUEST_BINARIES constant
@@ -581,7 +584,24 @@ def container_compile_agent(
             "materialize the asset build inputs before cross-compiling"
         ) from error
 
-    print(f"  Container build ({docker_platform}) ...")
+    # The container owns its toolchain settings, passed in rather than read out
+    # of the tree -- see the workspace comment below for why `.cargo/config.toml`
+    # must not reach `/build`. `ring` is the only crate in the guest graph that
+    # compiles C, and the image materialized clang for it.
+    cross_env: list[str] = []
+    if resolved.cross:
+        variable = rust_target.replace("-", "_")
+        cross_env = [
+            "-e",
+            f"CC_{variable}=clang",
+            "-e",
+            f"CFLAGS_{variable}=--target={rust_target}",
+            "-e",
+            f"CARGO_TARGET_{variable.upper()}_LINKER=rust-lld",
+        ]
+
+    shape = "cross" if resolved.cross else "native"
+    print(f"  Container build ({docker_platform}, {shape} -> {rust_target}) ...")
     # Source is mounted :ro to protect the host. We symlink everything into
     # a writable /build dir, while Cargo.lock stays the checked-in read-only
     # input. The image owns the registry and rustup trees; masking either with
@@ -605,10 +625,28 @@ def container_compile_agent(
             "/build/target",
             "-w",
             "/build",
+            *cross_env,
             image,
             "sh",
             "-c",
-            f'for f in /src/*; do b=$(basename "$f"); [ "$b" != target ] && [ "$b" != crates ] && ln -s "$f" /build/; done && '
+            # `/src/*` does not match dotfiles, and that exclusion is
+            # load-bearing rather than incidental -- it was relied on for a
+            # long time without being stated, so it is stated here.
+            #
+            # `.cargo/config.toml` declares `linker = "rust-lld"` for
+            # `x86_64-unknown-linux-musl`. On a developer host that target is
+            # a cross target and rust-lld is the right answer. Inside this
+            # Alpine builder the same triple *is* the host, so inheriting the
+            # file makes every proc-macro -- `serde_derive`, `tokio-macros` --
+            # link its host `.so` with rust-lld and fail on `-lgcc_s`/`-lc`.
+            # Checked-in Cargo configuration is developer-host configuration;
+            # the container owns its own toolchain settings and passes them as
+            # environment, which is why the cross linker is set explicitly
+            # below rather than read from the tree.
+            #
+            # Widening this glob therefore breaks the build. Verified, not
+            # assumed: `/src/.[!.]*` fails at `tokio-macros`.
+            'for f in /src/*; do b=$(basename "$f"); [ "$b" != target ] && [ "$b" != crates ] && ln -s "$f" /build/; done && '
             f"cp -r /src/crates /build/crates && "
             f"cargo build --locked --offline --release --target {rust_target} "
             "-p capsem-agent -p capsem-bench && "
@@ -636,7 +674,14 @@ def cross_compile_agent(
     repo_root: Path,
     output_dir: Path,
 ) -> list[Path]:
-    """Compile every guest architecture in the same locked offline helper."""
+    """Compile every guest architecture in the same locked offline helper.
+
+    The helper always runs on the host CPU. A foreign guest target is reached
+    with the target and exact clang package materialized into that host-platform
+    image (the pinned Rust toolchain supplies rust-lld), replacing the former
+    1194.7-second QEMU compile with an 89-second cross compile while preserving
+    one sealed path for native and foreign targets.
+    """
     return container_compile_agent(build, arch_name, repo_root, output_dir)
 
 
