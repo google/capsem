@@ -18,7 +18,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -27,6 +27,12 @@ from capsem.builder.assettools import image_tag as asset_tools_image_tag
 from capsem.builder.doctor import check_container_runtime
 from capsem.builder.guestbuilder import image_tag
 from capsem.builder.models import BuildConfig, ErofsConfig, GuestImageConfig
+from capsem.dockerpolicy import (
+    BuildNetwork,
+    ContainerNetwork,
+    require_build_network,
+    require_container_network,
+)
 from capsem.gate import auditfs
 from capsem.obom import validate_exported_rootfs_obom
 
@@ -307,11 +313,12 @@ def docker_build(
     context_dir: str | Path,
     platform: str,
     *,
-    network: Literal["default", "none"],
+    network: BuildNetwork,
     build_args: dict[str, str] | None = None,
     ci_cache: bool = False,
 ) -> None:
     """Build a container image."""
+    network_value = require_build_network(network)
     args_flags: list[str] = []
     for k, v in (build_args or {}).items():
         args_flags.extend(["--build-arg", f"{k}={v}"])
@@ -325,7 +332,7 @@ def docker_build(
                 "--platform",
                 platform,
                 "--network",
-                network,
+                network_value,
                 "--cache-from",
                 f"type=gha,scope={tag}",
                 "--cache-to",
@@ -347,7 +354,7 @@ def docker_build(
                 "--platform",
                 platform,
                 "--network",
-                network,
+                network_value,
                 *args_flags,
                 "-t",
                 tag,
@@ -440,9 +447,10 @@ def create_erofs(
     compression_level: str | None = None,
     *,
     tool_image: str,
-    runtime_network: Literal["none"],
+    runtime_network: ContainerNetwork,
 ) -> None:
     """Create an EROFS image from a tar archive using a container."""
+    network_value = require_container_network(runtime_network)
     if compression not in {"lz4", "lz4hc"}:
         raise ValueError(f"unsupported EROFS compression: {compression}")
 
@@ -474,7 +482,7 @@ def create_erofs(
             "--pull",
             "never",
             "--network",
-            runtime_network,
+            network_value,
             "--platform",
             host_platform,
             "-v",
@@ -1017,7 +1025,7 @@ def generate_cyclonedx_obom(
     runtime: str,
     tool_image: str,
     tool_platform: str,
-    runtime_network: Literal["none"],
+    runtime_network: ContainerNetwork,
 ) -> Path:
     """Generate a CycloneDX OS OBOM for the exported rootfs tar.
 
@@ -1025,6 +1033,8 @@ def generate_cyclonedx_obom(
     inventory for what actually ended up in the base image.
     """
     import tempfile
+
+    network_value = require_container_network(runtime_network)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_parent = repo_root / "target" / "tmp"
@@ -1057,7 +1067,7 @@ def generate_cyclonedx_obom(
                 "--pull",
                 "never",
                 "--network",
-                runtime_network,
+                network_value,
                 "--platform",
                 tool_platform,
                 "-v",
@@ -1091,7 +1101,7 @@ def generate_cyclonedx_obom(
             "--pull",
             "never",
             "--network",
-            runtime_network,
+            network_value,
             "--platform",
             tool_platform,
             "-v",

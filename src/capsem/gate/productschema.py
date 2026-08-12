@@ -19,6 +19,8 @@ from typing import Literal
 
 from pydantic import model_validator
 
+from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
+
 from .configschema import Strict
 
 
@@ -97,8 +99,8 @@ class InstallBuilderConfig(Strict):
     source_tag_template: str
     identity_inputs: tuple[str, ...]
     identity_globs: tuple[str, ...]
-    materialize_build_network: Literal["default"]
-    source_build_network: Literal["none"]
+    materialize_build_network: Literal[BuildNetwork.DEFAULT]
+    source_build_network: Literal[BuildNetwork.NONE]
     cargo_store: str
     pnpm_store: str
     apt_packages: tuple[str, ...]
@@ -111,11 +113,11 @@ class InstallConfig(Strict):
     image: str
     dockerfile: str
     context: str
-    smoke_network: Literal["none"]
+    smoke_network: Literal[ContainerNetwork.NONE]
     venv: str
     source_cli: str
     mount: str
-    runtime_network: Literal["none"]
+    runtime_network: Literal[ContainerNetwork.NONE]
     channel: str
     profile_revision_policy: ProfileRevisionPolicy
     manifest_version: str
@@ -227,9 +229,9 @@ class PackageBuilderConfig(Strict):
     tag_template: str
     identity_inputs: tuple[str, ...]
     identity_globs: tuple[str, ...]
-    materialize_build_network: Literal["default"]
-    source_build_network: Literal["none"]
-    runtime_network: Literal["none"]
+    materialize_build_network: Literal[BuildNetwork.DEFAULT]
+    source_build_network: Literal[BuildNetwork.NONE]
+    runtime_network: Literal[ContainerNetwork.NONE]
     cargo_store: str
     pnpm_store: str
     ort_lib_location: str

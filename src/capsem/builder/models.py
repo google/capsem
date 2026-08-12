@@ -13,6 +13,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from capsem.builder.schema import McpTransport
+from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -82,7 +83,7 @@ class GuestRustBuilderConfig(BaseModel):
     tag_template: str
     identity_inputs: tuple[str, ...]
     cross_packages: tuple[str, ...]
-    runtime_network: Literal["none"]
+    runtime_network: Literal[ContainerNetwork.NONE]
 
     @model_validator(mode="after")
     def _identity_is_complete(self):
@@ -128,8 +129,8 @@ class AssetToolsConfig(BaseModel):
     debian_snapshot_base: str
     debian_security_snapshot_base: str
     debian_snapshot_id: str = Field(pattern=r"^\d{8}T\d{6}Z$")
-    materialize_network: Literal["default"]
-    runtime_network: Literal["none"]
+    materialize_network: Literal[BuildNetwork.DEFAULT]
+    runtime_network: Literal[ContainerNetwork.NONE]
     architectures: dict[str, AssetToolsArchitectureConfig]
 
     @model_validator(mode="after")
@@ -175,7 +176,7 @@ class BuildConfig(BaseModel):
 
     compression: Compression = Compression.ZSTD
     compression_level: int = Field(default=15, ge=1, le=22)
-    materialize_network: Literal["default"]
+    materialize_network: Literal[BuildNetwork.DEFAULT]
     erofs: ErofsConfig = Field(default_factory=ErofsConfig)
     kernel: KernelConfig
     guest_rust_builder: GuestRustBuilderConfig

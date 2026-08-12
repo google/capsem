@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import model_validator
+
+from capsem.dockerpolicy import ContainerNetwork
 
 from .configschema import Strict
 
@@ -34,7 +38,7 @@ class AssetsConfig(Strict):
     shell_proof_script: str
     container_cleanup_script: str
     cross_platform_probe_command: str
-    cross_platform_probe_network: str
+    cross_platform_probe_network: Literal[ContainerNetwork.NONE]
     merged_assets_dir: str
     merged_config_dir: str
     profile_home_dir: str

@@ -11,7 +11,9 @@ The disk budget those containers consume is `storage.py`.
 
 from __future__ import annotations
 
-from .dockerimage import ImageOperations, require_container_network
+from capsem.dockerpolicy import ContainerNetwork, require_container_network
+
+from .dockerimage import ImageOperations
 from .dockermount import Mount
 from .errors import GateError
 from .invocation import ConsoleMode
@@ -45,7 +47,7 @@ class Docker(ImageOperations):
         name: str,
         image: str,
         command: list[str],
-        network: str,
+        network: ContainerNetwork,
         options: list[str] | None = None,
         mounts: list[Mount] | None = None,
     ) -> None:
@@ -56,8 +58,17 @@ class Docker(ImageOperations):
         fetched mid-run -- which is the difference between a gate that proves
         a build reproduces and one that proves it reproduces today.
         """
-        network = require_container_network(network)
-        argv = ["docker", "run", "-d", "--name", name, "--network", network, *(options or [])]
+        network_value = require_container_network(network)
+        argv = [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            name,
+            "--network",
+            network_value,
+            *(options or []),
+        ]
         for mount in mounts or []:
             argv += ["-v", str(mount)]
         argv += [image, *command]
@@ -68,14 +79,14 @@ class Docker(ImageOperations):
         *,
         image: str,
         command: list[str],
-        network: str,
+        network: ContainerNetwork,
         options: list[str] | None = None,
         mounts: list[Mount] | None = None,
         check: bool = True,
     ) -> None:
         """Run a container to completion and remove it."""
-        network = require_container_network(network)
-        argv = ["docker", "run", "--rm", "--network", network, *(options or [])]
+        network_value = require_container_network(network)
+        argv = ["docker", "run", "--rm", "--network", network_value, *(options or [])]
         for mount in mounts or []:
             argv += ["-v", str(mount)]
         argv += [image, *command]
@@ -86,7 +97,7 @@ class Docker(ImageOperations):
         *,
         image: str,
         command: list[str],
-        network: str,
+        network: ContainerNetwork,
         options: tuple[str, ...] = (),
         user: str | None = None,
         env: dict[str, str] | None = None,
@@ -99,8 +110,8 @@ class Docker(ImageOperations):
         that wants the answer had to build its own argv to get it, which is how
         the last hand-built `docker run` in the gate outlived the wrapper.
         """
-        network = require_container_network(network)
-        argv = ["docker", "run", "--rm", "--network", network, *options]
+        network_value = require_container_network(network)
+        argv = ["docker", "run", "--rm", "--network", network_value, *options]
         if user is not None:
             argv += ["-u", user]
         for key, value in (env or {}).items():
@@ -117,7 +128,7 @@ class Docker(ImageOperations):
         name: str,
         image: str,
         command: list[str],
-        network: str,
+        network: ContainerNetwork,
         env: dict[str, str] | None = None,
         forward: tuple[str, ...] = (),
         carry: dict[str, str] | None = None,
@@ -150,8 +161,8 @@ class Docker(ImageOperations):
                 "where `ps` can read it. Name it in `forward` and pass its value "
                 "in `carry`, so docker takes it from its own environment."
             )
-        network = require_container_network(network)
-        argv = ["docker", "create", "--name", name, "--network", network]
+        network_value = require_container_network(network)
+        argv = ["docker", "create", "--name", name, "--network", network_value]
         for key, value in (env or {}).items():
             argv += ["-e", f"{key}={value}"]
         argv += [part for name_only in forward for part in ("-e", name_only)]

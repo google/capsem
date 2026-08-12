@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -64,6 +64,7 @@ from capsem.builder.models import (
     GuestRustBuilderConfig,
     KernelConfig,
 )
+from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 EXACT_EROFS_BASE = "registry.example/debian@sha256:" + "e" * 64
@@ -779,6 +780,29 @@ class TestSyncContainerClock:
 
 class TestDockerBuild:
     @patch("capsem.builder.docker.run_cmd")
+    def test_builder_boundaries_reject_raw_network_strings(self, mock_run):
+        with pytest.raises(TypeError, match="BuildNetwork enum"):
+            cast(Any, docker_build)(
+                runtime="docker",
+                tag="raw-build",
+                dockerfile_path="Dockerfile",
+                context_dir=".",
+                platform="linux/amd64",
+                network="none",
+            )
+        with pytest.raises(TypeError, match="ContainerNetwork enum"):
+            cast(Any, create_erofs)(
+                "docker",
+                Path("rootfs.tar"),
+                Path("rootfs.erofs"),
+                "lz4hc",
+                tool_image="asset-tools",
+                runtime_network="none",
+            )
+
+        mock_run.assert_not_called()
+
+    @patch("capsem.builder.docker.run_cmd")
     def test_regular_build(self, mock_run):
         docker_build(
             runtime="docker",
@@ -786,7 +810,7 @@ class TestDockerBuild:
             dockerfile_path="/tmp/Dockerfile",
             context_dir="/tmp/ctx",
             platform="linux/arm64",
-            network="default",
+            network=BuildNetwork.DEFAULT,
         )
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "docker"
@@ -804,7 +828,7 @@ class TestDockerBuild:
             dockerfile_path="/tmp/Dockerfile",
             context_dir="/tmp/ctx",
             platform="linux/arm64",
-            network="default",
+            network=BuildNetwork.DEFAULT,
             ci_cache=True,
         )
         cmd = mock_run.call_args[0][0]
@@ -821,7 +845,7 @@ class TestDockerBuild:
             dockerfile_path="/tmp/Dockerfile",
             context_dir="/tmp/ctx",
             platform="linux/arm64",
-            network="none",
+            network=BuildNetwork.NONE,
             build_args={"KERNEL_VERSION": "6.6.131"},
         )
         cmd = mock_run.call_args[0][0]
@@ -898,14 +922,14 @@ class TestBuildVersionScript:
 
         config = GuestImageConfig(
             build=BuildConfig(
-                materialize_network="default",
+                materialize_network=BuildNetwork.DEFAULT,
                 kernel=KernelConfig(version="9.9.9", sha256="a" * 64),
                 guest_rust_builder=GuestRustBuilderConfig(
                     dockerfile="docker/Dockerfile.guest-rust-builder",
                     tag_template="capsem-guest-rust-{arch}:{digest}",
                     identity_inputs=("Cargo.lock", "rust-toolchain.toml"),
                     cross_packages=("clang21=21.1.2-r2",),
-                    runtime_network="none",
+                    runtime_network=ContainerNetwork.NONE,
                 ),
                 asset_tools=AssetToolsConfig(
                     dockerfile="docker/Dockerfile.asset-tools",
@@ -913,8 +937,8 @@ class TestBuildVersionScript:
                     debian_snapshot_base="http://snapshot.example/debian",
                     debian_security_snapshot_base="http://snapshot.example/debian-security",
                     debian_snapshot_id="20260810T000000Z",
-                    materialize_network="default",
-                    runtime_network="none",
+                    materialize_network=BuildNetwork.DEFAULT,
+                    runtime_network=ContainerNetwork.NONE,
                     architectures={
                         "arm64": AssetToolsArchitectureConfig(
                             cdxgen=AssetToolBinaryConfig(
@@ -1040,7 +1064,7 @@ class TestAptClockSkewOptions:
             "65536",
             "12",
             tool_image=EXACT_EROFS_BASE,
-            runtime_network="none",
+            runtime_network=ContainerNetwork.NONE,
         )
         cmd_str = " ".join(mock_run.call_args[0][0])
         assert "apt" not in cmd_str
@@ -1076,7 +1100,7 @@ class TestCreateErofs:
             "65536",
             "12",
             tool_image=EXACT_EROFS_BASE,
-            runtime_network="none",
+            runtime_network=ContainerNetwork.NONE,
         )
 
         command = mock_run.call_args.args[0]
@@ -1096,7 +1120,7 @@ class TestCreateErofs:
                 "65536",
                 "12",
                 tool_image=EXACT_EROFS_BASE,
-                runtime_network="none",
+                runtime_network=ContainerNetwork.NONE,
             )
 
         mock_run.assert_not_called()
@@ -1111,7 +1135,7 @@ class TestCreateErofs:
                 "zstd",
                 "65536",
                 tool_image=EXACT_EROFS_BASE,
-                runtime_network="none",
+                runtime_network=ContainerNetwork.NONE,
             )
 
         mock_run.assert_not_called()
@@ -1126,7 +1150,7 @@ class TestCreateErofs:
             "65536",
             "12",
             tool_image=EXACT_EROFS_BASE,
-            runtime_network="none",
+            runtime_network=ContainerNetwork.NONE,
         )
         cmd = mock_run.call_args[0][0]
         cmd_str = " ".join(cmd)
@@ -1145,7 +1169,7 @@ class TestCreateErofs:
             "65536",
             "12",
             tool_image=EXACT_EROFS_BASE,
-            runtime_network="none",
+            runtime_network=ContainerNetwork.NONE,
         )
         cmd = mock_run.call_args[0][0]
         cmd_str = " ".join(cmd)
@@ -1167,7 +1191,7 @@ class TestCreateErofs:
             None,
             "12",
             tool_image=EXACT_EROFS_BASE,
-            runtime_network="none",
+            runtime_network=ContainerNetwork.NONE,
         )
 
         cmd_str = " ".join(mock_run.call_args[0][0])
@@ -1297,7 +1321,7 @@ class TestBuildLedger:
             runtime="docker",
             tool_image=EXACT_EROFS_BASE,
             tool_platform="linux/amd64",
-            runtime_network="none",
+            runtime_network=ContainerNetwork.NONE,
         )
 
         assert result == output

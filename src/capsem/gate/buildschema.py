@@ -13,6 +13,8 @@ from typing import Annotated, Literal
 
 from pydantic import StringConstraints, model_validator
 
+from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
+
 from .configschema import Strict
 
 
@@ -58,7 +60,8 @@ class HostImageConfig(Strict):
     base_tag_template: str
     lane_tag: str
     identity_inputs: tuple[str, ...]
-    network: str
+    network: Literal[ContainerNetwork.NONE]
+    source_build_network: Literal[BuildNetwork.NONE]
     container_output_dir: str
     container_output_contents: str
     extract_to: str
@@ -69,7 +72,7 @@ class HostImageConfig(Strict):
     dockerfile: str
     context: str
     builder_identity_inputs: tuple[str, ...]
-    materialize_network: Literal["default"]
+    materialize_network: Literal[BuildNetwork.DEFAULT]
     pnpm_version: Annotated[str, StringConstraints(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$")]
     rust_image: Annotated[str, StringConstraints(pattern=r"^[^\s@]+@sha256:[0-9a-f]{64}$")]
     uv_image: Annotated[str, StringConstraints(pattern=r"^[^\s@]+@sha256:[0-9a-f]{64}$")]

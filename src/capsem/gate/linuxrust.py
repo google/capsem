@@ -127,6 +127,7 @@ class WarmBase(Action, name="linux-rust-warm-base"):
                 dockerfile=config.path(settings.base_dockerfile).as_posix(),
                 context=str(config.root),
                 args=[f"BASE={settings.tag}"],
+                network=settings.materialize_network,
             )
         # On the already-present path too, not only after a build. A machine
         # sitting at the current tag with stale ones beside it is exactly the
@@ -160,6 +161,7 @@ class RunLane(Action, name="linux-rust-lane"):
             dockerfile=config.path(settings.lane_dockerfile).as_posix(),
             context=str(config.root),
             args=[f"BASE={base}"],
+            network=settings.source_build_network,
         )
 
         container = settings.lane_container

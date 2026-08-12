@@ -15,6 +15,7 @@ from capsem.builder.docker import (
     _container_output,
     generate_cyclonedx_obom,
 )
+from capsem.dockerpolicy import ContainerNetwork
 
 
 @patch("capsem.builder.docker.run_cmd")
@@ -88,7 +89,7 @@ def test_obom_subprocesses_are_all_bounded(
         runtime="docker",
         tool_image="capsem-asset-tools-arm64:test",
         tool_platform="linux/arm64",
-        runtime_network="none",
+        runtime_network=ContainerNetwork.NONE,
     )
 
     assert len(mock_run.call_args_list) == 3

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Every Docker build and container boundary now requires a typed network-mode
+  enum. BuildKit and runtime vocabularies are distinct, raw strings are
+  rejected before command execution, and config deserializes directly into
+  phase-specific closed values. A missing or misplaced network policy can no
+  longer silently inherit Docker's ambient default.
+
 - Cold static qualification now routes only exact Docker dependency
   materializers through the authenticated pre-sandbox capability. Host,
   install, and guest Rust helpers are available before their sealed consumers;

@@ -15,27 +15,18 @@ from __future__ import annotations
 import json
 import re
 
+from capsem.dockerpolicy import (
+    BuildNetwork,
+    ContainerNetwork,
+    require_build_network,
+    require_container_network,
+)
+
 from .errors import GateError
 from .invocation import ConsoleMode
 from .proc import Runner
 
-BUILDKIT_NETWORKS = frozenset({"default", "host", "none"})
-CONTAINER_NETWORKS = frozenset({"bridge", "host", "none"})
 IMAGE_IDENTITY_FORMAT = "{{.Os}}/{{.Architecture}}\t{{.Id}}"
-
-
-def require_build_network(network: str) -> str:
-    if network not in BUILDKIT_NETWORKS:
-        allowed = ", ".join(sorted(BUILDKIT_NETWORKS))
-        raise GateError(f"invalid BuildKit network {network!r}; expected one of: {allowed}")
-    return network
-
-
-def require_container_network(network: str) -> str:
-    if network not in CONTAINER_NETWORKS:
-        allowed = ", ".join(sorted(CONTAINER_NETWORKS))
-        raise GateError(f"invalid container network {network!r}; expected one of: {allowed}")
-    return network
 
 
 class ImageOperations:
@@ -54,7 +45,7 @@ class ImageOperations:
         context: str,
         args: list[str] | None = None,
         platform: str | None = None,
-        network: str | None = None,
+        network: BuildNetwork,
         console: ConsoleMode = ConsoleMode.STREAM,
         no_cache: bool = False,
     ) -> None:
@@ -63,8 +54,7 @@ class ImageOperations:
         argv = ["docker", "build", "-t", tag, "-f", dockerfile]
         if platform is not None:
             argv += ["--platform", platform]
-        if network is not None:
-            argv += ["--network", require_build_network(network)]
+        argv += ["--network", require_build_network(network)]
         if no_cache:
             argv.append("--no-cache")
         for value in args or []:
@@ -77,7 +67,7 @@ class ImageOperations:
         *,
         image: str,
         command: list[str],
-        network: str,
+        network: ContainerNetwork,
         options: tuple[str, ...] = (),
         mounts: tuple[object, ...] = (),
         workdir: str | None = None,

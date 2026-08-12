@@ -119,7 +119,7 @@ def _prove_tools(context: Context, docker: Docker) -> None:
         if not docker.probe(
             image=settings.tag,
             command=["sh", "-eu", "-c", script, "host-builder-probe", expected, *probe],
-            network="none",
+            network=settings.network,
         ):
             raise GateError(
                 f"host builder {settings.tag} does not provide {expected!r} through {probe!r}"

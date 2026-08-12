@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from helpers.gate import RecordingRunner
 
+from capsem.dockerpolicy import ContainerNetwork
 from capsem.gate import config as gate_config
 from capsem.gate.docker import Docker
 from capsem.gate.dockermount import Mount, container_path
@@ -73,7 +74,7 @@ def test_mounts_render_in_docker_order(tmp_path: Path) -> None:
         name="box",
         image="capsem-install-test",
         command=["/usr/lib/systemd/systemd"],
-        network="bridge",
+        network=ContainerNetwork.BRIDGE,
         options=["--privileged"],
         mounts=[
             Mount("/sys/fs/cgroup", "/sys/fs/cgroup", "rw"),

@@ -26,11 +26,14 @@ mode is a flag, and a flag is what a future change will quietly reintroduce.
 from __future__ import annotations
 
 import ast
+import inspect
 from pathlib import Path
+from typing import Any, cast, get_type_hints
 
 import pytest
 from helpers.gate import RecordingRunner
 
+from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
 from capsem.gate.docker import Docker
 from capsem.gate.errors import GateError
 
@@ -166,11 +169,7 @@ def test_every_container_declares_its_network() -> None:
     has outbound access and several use it mid-run. A required keyword makes
     that visible at each call site instead of invisible everywhere.
     """
-    import inspect
-
-    from capsem.gate.docker import Docker
-
-    for name in ("run_detached", "run_once"):
+    for name in ("read", "run_detached", "run_once", "probe", "create"):
         method = getattr(Docker, name, None)
         assert method is not None, f"Docker.{name} is missing"
         parameter = inspect.signature(method).parameters.get("network")
@@ -179,18 +178,24 @@ def test_every_container_declares_its_network() -> None:
             f"Docker.{name} defaults its network mode, so a call site can omit "
             "the decision and get outbound access without saying so"
         )
+        assert get_type_hints(method)["network"] is ContainerNetwork
+
+    build_network = inspect.signature(Docker.build).parameters.get("network")
+    assert build_network is not None
+    assert build_network.default is inspect.Parameter.empty
+    assert get_type_hints(Docker.build)["network"] is BuildNetwork
 
 
 def test_build_network_rejects_a_container_only_mode(tmp_path: Path) -> None:
     runner = RecordingRunner(tmp_path)
     docker = Docker(runner)
 
-    with pytest.raises(GateError, match="BuildKit network"):
+    with pytest.raises(TypeError, match="BuildNetwork enum"):
         docker.build(
             tag="invalid-build",
             dockerfile="Dockerfile",
             context=".",
-            network="bridge",
+            network=cast(Any, ContainerNetwork.BRIDGE),
         )
 
     assert runner.commands == []
@@ -256,23 +261,95 @@ def test_every_container_adapter_rejects_a_buildkit_only_mode(
     runner = RecordingRunner(tmp_path)
     docker = Docker(runner)
 
-    with pytest.raises(GateError, match="container network"):
+    with pytest.raises(TypeError, match="ContainerNetwork enum"):
         if operation == "read":
-            docker.read(image="invalid-run", command=["true"], network="default")
+            docker.read(
+                image="invalid-run",
+                command=["true"],
+                network=cast(Any, BuildNetwork.DEFAULT),
+            )
         elif operation == "run_detached":
             docker.run_detached(
-                name="invalid-run", image="invalid-run", command=["true"], network="default"
+                name="invalid-run",
+                image="invalid-run",
+                command=["true"],
+                network=cast(Any, BuildNetwork.DEFAULT),
             )
         elif operation == "run_once":
-            docker.run_once(image="invalid-run", command=["true"], network="default")
+            docker.run_once(
+                image="invalid-run",
+                command=["true"],
+                network=cast(Any, BuildNetwork.DEFAULT),
+            )
         elif operation == "probe":
-            docker.probe(image="invalid-run", command=["true"], network="default")
+            docker.probe(
+                image="invalid-run",
+                command=["true"],
+                network=cast(Any, BuildNetwork.DEFAULT),
+            )
         else:
             docker.create(
-                name="invalid-run", image="invalid-run", command=["true"], network="default"
+                name="invalid-run",
+                image="invalid-run",
+                command=["true"],
+                network=cast(Any, BuildNetwork.DEFAULT),
             )
 
     assert runner.commands == []
+
+
+def test_docker_network_boundaries_reject_raw_strings_before_issuing_commands(
+    tmp_path: Path,
+) -> None:
+    runner = RecordingRunner(tmp_path)
+    docker = Docker(runner)
+
+    with pytest.raises(TypeError, match="BuildNetwork enum"):
+        cast(Any, docker.build)(
+            tag="raw-build", dockerfile="Dockerfile", context=".", network="none"
+        )
+    with pytest.raises(TypeError, match="ContainerNetwork enum"):
+        cast(Any, docker.run_once)(image="raw-run", command=["true"], network="none")
+
+    assert runner.commands == []
+
+
+def test_typed_network_modes_render_their_exact_docker_vocabulary(tmp_path: Path) -> None:
+    runner = RecordingRunner(tmp_path)
+    docker = Docker(runner)
+
+    docker.build(
+        tag="sealed-build",
+        dockerfile="Dockerfile",
+        context=".",
+        network=BuildNetwork.NONE,
+    )
+    docker.run_once(
+        image="sealed-run",
+        command=["true"],
+        network=ContainerNetwork.NONE,
+    )
+
+    assert runner.commands[0].argv == (
+        "docker",
+        "build",
+        "-t",
+        "sealed-build",
+        "-f",
+        "Dockerfile",
+        "--network",
+        "none",
+        ".",
+    )
+    assert runner.commands[1].argv == (
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "sealed-run",
+        "true",
+    )
 
 
 def test_no_module_mounts_the_checkout() -> None:

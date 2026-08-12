@@ -1231,6 +1231,8 @@ warm_recipe = "_warm-linux-rust-base"
 # Denied, which is what proves the base image is complete rather than believed
 # to be complete.
 network = "none"
+# The source lane itself consumes only the materialized base image.
+source_build_network = "none"
 # Copied out with `docker cp`, because `--rm` and `docker cp` are mutually
 # exclusive and a writable bind mount is the thing being removed.
 container_output_dir = "/linux-rust-output"
