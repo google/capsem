@@ -620,6 +620,28 @@ def test_a_shared_step_that_differs_is_still_a_collision() -> None:
         plan.shared(step("build", Run(["cargo", "build", "--release"])))
 
 
+def test_a_shared_step_cannot_hide_a_different_resume_policy() -> None:
+    """Resume behavior is part of a shared step's identity.
+
+    If the first fragment said an identity receipt was reusable while the
+    second said it must be re-measured, returning whichever was registered
+    first would make continuation safety depend on composition order.
+    """
+    from capsem.gate.execution import ResumePolicy
+
+    plan = Plan("example")
+    plan.shared(step("identity", Run(["git", "rev-parse", "HEAD"])))
+
+    with pytest.raises(GateError, match="two different steps"):
+        plan.shared(
+            step(
+                "identity",
+                Run(["git", "rev-parse", "HEAD"]),
+                resume=ResumePolicy.ALWAYS_RUN,
+            )
+        )
+
+
 def test_a_shared_step_can_be_depended_on_by_both_callers() -> None:
     """The point of the diamond: both dependants wait, the work happens once."""
     ran: list[str] = []

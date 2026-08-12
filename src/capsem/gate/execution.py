@@ -20,12 +20,20 @@ can answer "which bytes did this build" after the tree is gone.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 from .actions import Action
 from .context import Context
 from .fileactions import Hash
 from .harnessschema import Exclusive
+
+
+class ResumePolicy(StrEnum):
+    """Whether a diagnostic continuation may reuse this step's result."""
+
+    REUSE = "reuse"
+    ALWAYS_RUN = "always-run"
 
 
 @dataclass(frozen=True)
@@ -37,6 +45,7 @@ class Step:
     contends: tuple[Exclusive, ...] = ()
     produces: tuple[Path, ...] = field(default_factory=tuple)
     carry_checks: tuple[Action, ...] = ()
+    resume: ResumePolicy = ResumePolicy.REUSE
 
     def render(self) -> list[str]:
         """One line per action, for the dry run."""
@@ -75,6 +84,7 @@ def step(
     contends: tuple[Exclusive, ...] = (),
     produces: tuple[Path, ...] = (),
     carry_checks: tuple[Action, ...] = (),
+    resume: ResumePolicy = ResumePolicy.REUSE,
 ) -> Step:
     """Build a step from actions given positionally, which reads better.
 
@@ -89,4 +99,5 @@ def step(
         contends=contends,
         produces=produces,
         carry_checks=carry_checks,
+        resume=resume,
     )

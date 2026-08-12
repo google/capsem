@@ -95,11 +95,16 @@ class Plan:
             return self.add(step, after=after)
         existing_checks = [check.render() for check in existing.carry_checks]
         wanted_checks = [check.render() for check in step.carry_checks]
-        if existing.render() != step.render() or existing_checks != wanted_checks:
+        if (
+            existing.render() != step.render()
+            or existing_checks != wanted_checks
+            or existing.resume is not step.resume
+        ):
             raise GateError(
                 f"two different steps in the {self.name} plan are both called "
                 f"{step.label!r}:\n  {existing.render()} / {existing_checks}\n  "
-                f"{step.render()} / {wanted_checks}"
+                f"{step.render()} / {wanted_checks}; resume="
+                f"{existing.resume.value}/{step.resume.value}"
             )
         for earlier in after:
             self.edge(before=earlier, after=existing)

@@ -61,6 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Diagnostic continuation now re-records source identity after refreshing a
+  retained prefix while carrying only steps whose typed resume policy permits
+  reuse. The final source guard can no longer spend hours testing the refreshed
+  revision and then compare it with the previous run's stale receipt.
 - Binary-only update fixtures now preserve the selected profiles' compatibility
   bounds unless the fixture explicitly declares an asset compatibility change.
   Hosted install checks can no longer manufacture a profile update while

@@ -29,7 +29,7 @@ from . import (
 )
 from .actions import Call, Run, Script
 from .config import GateConfig
-from .execution import Step, step
+from .execution import ResumePolicy, Step, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .qualification import Qualification
@@ -66,6 +66,7 @@ def compose(
             # What the release guard reads back to prove the tested tree is the
             # pushed tree.
             produces=(config.path(config.candidate.source_state_file),),
+            resume=ResumePolicy.ALWAYS_RUN,
         ),
         after=after,
     )

@@ -69,6 +69,88 @@ def test_from_a_step_carries_exactly_its_ancestors() -> None:
         assert plan.after_of(label) <= carried, f"{label} is carried but its inputs are not"
 
 
+def test_a_refreshed_prefix_reruns_source_identity_before_carried_work() -> None:
+    """Refreshing source invalidates the old run's identity receipt.
+
+    The retained prefix is refreshed before the child gate starts.  Carrying
+    ``source.record`` after that refresh left the old receipt in ``target``;
+    the entire resumed candidate then passed before ``source.verify`` rejected
+    the revision mismatch at the final step.  Resume policy belongs to the
+    step, not a label exception in the resolver, so any future identity
+    boundary can make the same declaration.
+    """
+    from capsem.gate import resume
+    from capsem.gate.execution import ResumePolicy
+
+    plan = _candidate_plan()
+    carried = resume.carried(
+        plan,
+        _config(),
+        "artifacts.build-chain",
+        qualifying=False,
+    )
+
+    assert plan.step_named("source.record").resume is ResumePolicy.ALWAYS_RUN
+    assert "source.record" not in carried
+    assert carried == resume.ancestors(plan, "artifacts.build-chain") - {"source.record"}
+
+
+def test_always_run_resume_policy_executes_before_carried_dependants() -> None:
+    """A non-carried ancestor remains a real graph dependency.
+
+    Filtering the carried set must not make the scheduler start the frontier
+    before the refreshed receipt exists.  The graph still orders the always-
+    run step; only its downstream reusable work is skipped.
+    """
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate.actions import Action
+    from capsem.gate.context import Context
+    from capsem.gate.execution import ResumePolicy, step
+    from capsem.gate.plan import Plan
+
+    seen: list[str] = []
+
+    class Record(Action, name="record-resume-policy-action"):
+        def __init__(self, label: str) -> None:
+            self._label = label
+
+        def render(self) -> str:
+            return f"record {self._label}"
+
+        def perform(self, context: Context) -> None:
+            del context
+            seen.append(self._label)
+
+    plan = Plan("resume-policy")
+    identity = plan.add(
+        step(
+            "identity",
+            Record("identity"),
+            resume=ResumePolicy.ALWAYS_RUN,
+        )
+    )
+    reused = plan.add(
+        step("reused", Record("reused")),
+        after=(identity,),
+    )
+    plan.add(
+        step("frontier", Record("frontier")),
+        after=(reused,),
+    )
+
+    config = _config()
+    plan.run(
+        Context(
+            RecordingRunner(config.root),
+            config,
+            carried=frozenset({"reused"}),
+        )
+    )
+
+    assert seen == ["identity", "frontier"]
+
+
 def test_a_source_fix_before_functional_rebuilds_the_exact_install_image() -> None:
     """Do not carry a source-keyed image merely because functional work resumes.
 

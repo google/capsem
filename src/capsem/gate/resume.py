@@ -39,6 +39,7 @@ from pathlib import Path
 from . import prefix
 from .config import GateConfig
 from .errors import GateError
+from .execution import ResumePolicy
 
 
 def ancestors(plan, label: str) -> frozenset[str]:
@@ -78,7 +79,11 @@ def carried(plan, config: GateConfig, label: str | None, *, qualifying: bool) ->
             "the release process forbids."
         )
     del config
-    return ancestors(plan, label)
+    return frozenset(
+        step_label
+        for step_label in ancestors(plan, label)
+        if plan.step_named(step_label).resume is ResumePolicy.REUSE
+    )
 
 
 def existing(config: GateConfig, given: str) -> Path:
