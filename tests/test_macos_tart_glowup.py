@@ -694,6 +694,7 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke(
     # contracts are being exercised on Linux. The Linux plan correctly omits
     # Tart because it cannot execute that host-only proof.
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "arm64")
     # The recipe is a dispatch and the ordering is an edge in the plan: the
     # bootstrap that installs Tart runs before anything that needs it.
     labels = _gate_labels("test-candidate")
