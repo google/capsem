@@ -28,6 +28,7 @@ class InstallLayout(Strict):
     channel: str
     packages: str
     glowup: str
+    glowup_evidence: str
     extra_owned_paths: tuple[str, ...]
 
     def owned_paths(self, mount: str) -> tuple[str, ...]:
@@ -40,6 +41,7 @@ class InstallLayout(Strict):
                 self.channel,
                 self.packages,
                 self.glowup,
+                self.glowup_evidence,
                 *self.extra_owned_paths,
             )
         )

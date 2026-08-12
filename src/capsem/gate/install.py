@@ -28,7 +28,7 @@ from .docker import Docker
 from .dockermount import container_path
 from .errors import GateError
 from .execution import step
-from .fileactions import remove
+from .fileactions import make_dir, remove
 from .installcontainer import InstallContainer
 from .installproof import InstallProof
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
@@ -90,6 +90,9 @@ class InstallGate:
         # bind mount. The host owns this generated tree, so clear it before the
         # container exists; profile artifacts are regenerated from the manifest.
         remove(self._config.path(self._layout.channel))
+        evidence = self._config.path(self._layout.glowup_evidence)
+        remove(evidence)
+        make_dir(evidence)
 
         try:
             self._container.require_rosetta()

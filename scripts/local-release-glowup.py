@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Hermetic installed-package glow-up using exact publishable bytes.
-Both channels use ``capsem-admin`` and the public installer shape; no manifest
-is hand-authored here."""
+"""Hermetic exact-byte glow-up through capsem-admin and the public installer."""
 
 from __future__ import annotations
 
@@ -156,6 +154,7 @@ def main() -> int:
     parser.add_argument(
         "--work-dir", default=PROJECT_ROOT / "target/local-release-glowup", type=Path
     )
+    parser.add_argument("--evidence-dir", required=True, type=Path)
     parser.add_argument("--skip-install", action="store_true")
     parser.add_argument(
         "--package-ready",
@@ -219,8 +218,12 @@ def main() -> int:
         default=os.environ.get("CAPSEM_RELEASE_PUBLICATION_BASE"),
     )
     args = parser.parse_args()
+    args.evidence_dir.mkdir(parents=True, exist_ok=True)
+    (args.evidence_dir / "started.json").write_text(
+        json.dumps({"schema": "capsem.glowup.run.v1", "package": args.input_deb.name}) + "\n",
+        encoding="utf-8",
+    )
     exact_pairing = validate_exact_release_pairing(args)
-
     if args.work_dir.exists():
         shutil.rmtree(args.work_dir)
     args.work_dir.mkdir(parents=True)
@@ -302,9 +305,7 @@ def main() -> int:
 
         stable_manifest = manifests / "stable-assets-manifest.json"
         nightly_manifest = manifests / "nightly-assets-manifest.json"
-        # Release lanes stage the selected channel's exact candidate manifest.
-        # The channel-switch proof needs both first-party identities regardless
-        # of whether the selected candidate is stable or nightly.
+        # Channel-switch proof stages both identities from the selected candidate.
         clone_manifest_for_channel(
             args.assets_dir / "manifest.json",
             stable_manifest,
@@ -318,8 +319,6 @@ def main() -> int:
         # describing an unstaged architecture whose URLs still pointed at
         # GitHub, which the hermetic channel rejected as "not local".
         clone_manifest_for_channel(stable_manifest, nightly_manifest, "nightly")
-        # Both channels share the cohort; binary authoring mutates only package inventory.
-
         record_binary(
             admin, stable_manifest, stable_version, stable_deb, stable_sbom, stable_download_base
         )
@@ -396,7 +395,7 @@ def main() -> int:
                     transport=exact_transport,
                     install_script_url=install_script_url,
                     release_base_url=base_url,
-                    evidence_dir=args.work_dir / "exact-transition-evidence",
+                    evidence_dir=args.evidence_dir / "exact-transition-evidence",
                 )
                 installed = json.loads(
                     exact_evidence.candidate_installed.read_text(encoding="utf-8")
@@ -450,7 +449,7 @@ def main() -> int:
                     },
                 }
             else:
-                evidence_path = args.work_dir / "installed-evidence.json"
+                evidence_path = args.evidence_dir / "installed-evidence.json"
                 run_installed_glowup(
                     install_script_url=install_script_url,
                     release_base_url=base_url,
@@ -488,7 +487,7 @@ def main() -> int:
                     "nightly_manifest_url": nightly_manifest_url,
                     "stable_artifact": stable_artifact.as_report(),
                 }
-            (args.work_dir / "report.json").write_text(
+            (args.evidence_dir / "report.json").write_text(
                 json.dumps(report, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )

@@ -220,6 +220,7 @@ class InstallProof:
             f'--bin-dir {self._settings.bin_dir} --assets-dir "{self._layout.assets}" '
             f'--config-root "{self._layout.config}" '
             f"--work-dir {self._layout.glowup} --package-ready "
+            f"--evidence-dir {self._layout.glowup_evidence} "
             f"--profile-revision-policy {self._settings.profile_revision_policy.value}"
         )
         self._docker.shell(
@@ -231,6 +232,10 @@ class InstallProof:
                 "XDG_RUNTIME_DIR": self._guest.runtime_dir,
                 "UV_PROJECT_ENVIRONMENT": self._settings.venv,
             },
+        )
+        self._runner.note(
+            f"Local release glow-up evidence: "
+            f"{self._config.path(self._layout.glowup_evidence)}"
         )
 
     def validate_macos_glowup(self, report: str | None, *, cargo_toml: Path) -> None:

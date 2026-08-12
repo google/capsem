@@ -428,9 +428,11 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: install-glowup-evidence-${{ github.run_attempt }}
-          path: target/local-release-glowup/
+          path: |
+            target/gate-runs/
+            target/local-release-glowup-evidence/
           retention-days: 7
-          if-no-files-found: warn
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   # Web: build docs and marketing before pr-gate can pass

@@ -265,6 +265,7 @@ config = "target/install-test-config"
 channel = "target/install-test-channel"
 packages = "target/install-test-packages"
 glowup = "target/local-release-glowup"
+glowup_evidence = "target/local-release-glowup-evidence"
 
 # Written by the container as its own user, and handed back on the way out.
 extra_owned_paths = ["release-site/node_modules", "release-site/dist"]
@@ -820,7 +821,7 @@ max_lines = 300
 "scripts/fetch-channel-source-manifest.py" = 329
 "scripts/fetch-release-artifacts.py" = 353
 "scripts/integration_test.py" = 1191
-"scripts/local-release-glowup.py" = 2120
+"scripts/local-release-glowup.py" = 2119
 "scripts/macos_release_glowup.py" = 421
 "scripts/macos_tart_glowup.py" = 622
 "scripts/macos_tart_guest.sh" = 341

@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Hosted install qualification now exports bounded glow-up JSON through a
+  dedicated host mount and uploads it with the exact gate journal; a missing
+  failure artifact is fatal instead of a warning.
 - Installed-package glow-up now imports immutable selected profiles with the
   typed legacy-revision compatibility policy while keeping all new public
   profile authoring on strict SemVer.

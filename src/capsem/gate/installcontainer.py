@@ -146,6 +146,11 @@ class InstallContainer:
             options=["--privileged", "--cgroupns=host", *options, *self._tmpfs()],
             mounts=[
                 Mount(cgroup, cgroup, "rw"),
+                Mount.generated(
+                    str(self._config.path(self._settings.layout.glowup_evidence)),
+                    f"{self._settings.mount}/{self._settings.layout.glowup_evidence}",
+                    "rw",
+                ),
                 # What the image could not carry: the package this proof
                 # installs is written by an earlier step, long after the image
                 # was built. Read-only, so the proof cannot alter the artifact

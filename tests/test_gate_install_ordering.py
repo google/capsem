@@ -560,6 +560,20 @@ def test_a_host_that_boots_a_guest_runs_the_complete_glowup(tmp_path: Path) -> N
     assert not runner.ran(r"--skip-install")
 
 
+def test_glowup_writes_bounded_evidence_through_one_host_mount(
+    gate: tuple[InstallGate, RecordingRunner],
+) -> None:
+    built, runner = gate
+    built.run()
+
+    evidence = runner.root / LAYOUT.glowup_evidence
+    mounted = f"{evidence}:{INSTALL.mount}/{LAYOUT.glowup_evidence}:rw"
+    assert evidence.is_dir()
+    assert runner.ran(mounted)
+    assert runner.ran(rf"--evidence-dir {LAYOUT.glowup_evidence}")
+    assert not runner.ran(rf"{runner.root / LAYOUT.glowup}:[^ ]+:rw")
+
+
 def test_a_host_without_a_guest_skips_only_the_install_half(tmp_path: Path) -> None:
     runner = RecordingRunner(tmp_path)
     InstallProof(runner, CONFIG).prove_glowup("/src/x.deb", boots_a_guest=False)

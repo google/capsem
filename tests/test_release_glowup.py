@@ -934,6 +934,49 @@ def test_local_channel_import_uses_the_typed_selected_revision_policy(
     ]
 
 
+def test_local_glowup_exports_bounded_started_evidence_before_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_local_glowup()
+    evidence = tmp_path / "evidence"
+    package = tmp_path / "Capsem_0.6.0_amd64.deb"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(LOCAL_GLOWUP_PATH),
+            "--input-deb",
+            str(package),
+            "--bin-dir",
+            str(tmp_path / "bin"),
+            "--assets-dir",
+            str(tmp_path / "assets"),
+            "--config-root",
+            str(tmp_path / "config"),
+            "--work-dir",
+            str(tmp_path / "work"),
+            "--evidence-dir",
+            str(evidence),
+            "--profile-revision-policy",
+            "selected-input",
+        ],
+    )
+    def fail(_args) -> None:
+        raise SystemExit("forced failure")
+
+    monkeypatch.setattr(module, "validate_exact_release_pairing", fail)
+
+    with pytest.raises(SystemExit, match="forced failure"):
+        module.main()
+
+    assert json.loads((evidence / "started.json").read_text()) == {
+        "schema": "capsem.glowup.run.v1",
+        "package": package.name,
+    }
+    assert [path.name for path in evidence.iterdir()] == ["started.json"]
+
+
 def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
