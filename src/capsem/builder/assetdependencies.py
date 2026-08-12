@@ -3,11 +3,23 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 
 from capsem.builder.models import GuestImageConfig
 
 INPUT_KEY_LABEL = "org.capsem.asset-dependencies.input-key"
+
+
+@dataclass(frozen=True)
+class AssetDependencyImage:
+    """One runnable local reference bound to its verified exact image ID."""
+
+    reference: str
+    image_id: str
+
+    def as_record(self) -> dict[str, str]:
+        return {"reference": self.reference, "image_id": self.image_id}
 
 
 def image_tag(

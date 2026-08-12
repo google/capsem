@@ -415,8 +415,8 @@ def require_asset_dependencies(
     config: GuestImageConfig,
     arch_name: str,
     template: str,
-) -> str:
-    """Return the exact local image ID for one keyed dependency helper."""
+) -> assetdependencies.AssetDependencyImage:
+    """Bind one input-keyed runnable reference to its exact local image ID."""
     tag = _asset_dependency_tag(config, arch_name, template)
     arch = config.build.architectures[arch_name]
     result = run_cmd(
@@ -446,7 +446,7 @@ def require_asset_dependencies(
         raise RuntimeError(f"asset dependency image identity mismatch: {tag}")
     if not image_id.startswith("sha256:"):
         raise RuntimeError(f"asset dependency image has no exact ID: {tag}")
-    return image_id
+    return assetdependencies.AssetDependencyImage(reference=tag, image_id=image_id)
 
 
 def materialize_asset_dependencies(
@@ -455,7 +455,7 @@ def materialize_asset_dependencies(
     *,
     template: str,
     repo_root: Path | None = None,
-) -> str:
+) -> assetdependencies.AssetDependencyImage:
     """Build one input-keyed network-open helper before the sealed source lane."""
     import tempfile
 
@@ -1868,7 +1868,7 @@ def build_image(
                 docker_platform=arch.docker_platform,
                 runtime=runtime,
             )
-            build_inputs["dependency_image"] = dependency_image
+            build_inputs["dependency_image"] = dependency_image.as_record()
             docker_build(
                 runtime,
                 tag,
@@ -1876,9 +1876,11 @@ def build_image(
                 context_dir,
                 arch.docker_platform,
                 network=config.build.asset_dependencies.source_build_network,
-                build_args={"BASE": dependency_image},
+                build_args={"BASE": dependency_image.reference},
                 ci_cache=False,
             )
+            if require_asset_dependencies(runtime, config, arch_name, template) != dependency_image:
+                raise RuntimeError("kernel dependency image moved during sealed source build")
             vmlinuz, initrd = extract_kernel_assets(
                 runtime,
                 tag,
@@ -1932,7 +1934,7 @@ def build_image(
                 docker_platform=arch.docker_platform,
                 runtime=runtime,
             )
-            build_inputs["dependency_image"] = dependency_image
+            build_inputs["dependency_image"] = dependency_image.as_record()
             _append_build_ledger(
                 arch_output,
                 _rootfs_config_input_record(config, arch_name),
@@ -1944,9 +1946,11 @@ def build_image(
                 context_dir,
                 arch.docker_platform,
                 network=config.build.asset_dependencies.source_build_network,
-                build_args={"BASE": dependency_image},
+                build_args={"BASE": dependency_image.reference},
                 ci_cache=False,
             )
+            if require_asset_dependencies(runtime, config, arch_name, template) != dependency_image:
+                raise RuntimeError("rootfs dependency image moved during sealed source build")
 
             print("Extracting installed software inventory...")
             software_inventory_path = extract_software_inventory(

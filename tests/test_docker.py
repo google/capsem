@@ -669,7 +669,9 @@ def test_asset_dependency_require_returns_only_exact_matching_platform_image(
 
     monkeypatch.setattr("capsem.builder.docker.run_cmd", inspect)
 
-    assert require_asset_dependencies("docker", real_config, "arm64", "kernel") == exact
+    assert require_asset_dependencies(
+        "docker", real_config, "arm64", "kernel"
+    ) == assetdependencies.AssetDependencyImage(reference=tag, image_id=exact)
     assert seen[0][-1] == tag
 
 
@@ -686,7 +688,16 @@ def test_asset_dependency_materializer_is_the_only_network_open_build(
     monkeypatch.setattr("capsem.builder.docker.run_cmd", MagicMock(side_effect=missing))
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     exact = "sha256:" + "e" * 64
-    require_mock.return_value = exact
+    resolved = assetdependencies.AssetDependencyImage(
+        reference=assetdependencies.image_tag(
+            real_config,
+            "arm64",
+            "kernel",
+            render_dockerfile("Dockerfile.kernel-dependencies.j2", real_config, "arm64").encode(),
+        ),
+        image_id=exact,
+    )
+    require_mock.return_value = resolved
 
     assert (
         materialize_asset_dependencies(
@@ -695,7 +706,7 @@ def test_asset_dependency_materializer_is_the_only_network_open_build(
             template="kernel",
             repo_root=PROJECT_ROOT,
         )
-        == exact
+        == resolved
     )
 
     tag = assetdependencies.image_tag(
@@ -1787,9 +1798,14 @@ class TestBuildLedger:
         mock_extract_inventory.side_effect = fake_inventory
 
         dependency_id = "sha256:" + "d" * 64
+        dependency_tag = _asset_dependency_tag(real_config, "arm64", "rootfs")
+        dependency = assetdependencies.AssetDependencyImage(
+            reference=dependency_tag,
+            image_id=dependency_id,
+        )
         with patch(
             "capsem.builder.docker.require_asset_dependencies",
-            return_value=dependency_id,
+            return_value=dependency,
         ):
             build_image(
                 real_config,
@@ -1816,7 +1832,10 @@ class TestBuildLedger:
         assert config_record["profile_inputs"]["root_seed"]["enabled"] is True
         assert "installed_packages" not in config_record
         inventory_record = records[1]
-        assert inventory_record["inputs"]["dependency_image"] == dependency_id
+        assert inventory_record["inputs"]["dependency_image"] == {
+            "reference": dependency_tag,
+            "image_id": dependency_id,
+        }
         assert inventory_record["outputs"][0]["path"] == "software-inventory.json"
         erofs_record = records[3]
         assert erofs_record["erofs"] == {
@@ -1858,10 +1877,15 @@ class TestBuildLedger:
         mock_extract.side_effect = fake_extract
 
         dependency_id = "sha256:" + "d" * 64
+        dependency_tag = _asset_dependency_tag(real_config, "arm64", "kernel")
+        dependency = assetdependencies.AssetDependencyImage(
+            reference=dependency_tag,
+            image_id=dependency_id,
+        )
         with patch(
             "capsem.builder.docker.require_asset_dependencies",
-            return_value=dependency_id,
-        ):
+            return_value=dependency,
+        ) as require_mock:
             build_image(
                 real_config,
                 "arm64",
@@ -1880,10 +1904,14 @@ class TestBuildLedger:
         assert records[0]["kernel_sha256"] == real_config.build.kernel.sha256
         assert _mock_docker_build.call_args.kwargs == {
             "network": BuildNetwork.NONE,
-            "build_args": {"BASE": dependency_id},
+            "build_args": {"BASE": dependency_tag},
             "ci_cache": False,
         }
-        assert records[0]["inputs"]["dependency_image"] == dependency_id
+        assert require_mock.call_count == 2
+        assert records[0]["inputs"]["dependency_image"] == {
+            "reference": dependency_tag,
+            "image_id": dependency_id,
+        }
         assert {entry["path"] for entry in records[0]["outputs"]} == {
             "vmlinuz",
             "initrd.img",

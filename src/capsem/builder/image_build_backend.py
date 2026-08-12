@@ -36,23 +36,21 @@ def main() -> None:
     if args.materialize_dependencies and args.require_dependencies:
         parser.error("dependency materialization and verification are mutually exclusive")
     if args.materialize_dependencies:
-        print(
-            materialize_asset_dependencies(
-                config,
-                args.arch,
-                template=args.template,
-                repo_root=Path.cwd(),
-            )
+        resolved = materialize_asset_dependencies(
+            config,
+            args.arch,
+            template=args.template,
+            repo_root=Path.cwd(),
         )
+        print(resolved.image_id)
     elif args.require_dependencies:
-        print(
-            require_asset_dependencies(
-                detect_runtime(),
-                config,
-                args.arch,
-                args.template,
-            )
+        resolved = require_asset_dependencies(
+            detect_runtime(),
+            config,
+            args.arch,
+            args.template,
         )
+        print(resolved.image_id)
     else:
         if args.output is None:
             parser.error("--output is required for an image build")
