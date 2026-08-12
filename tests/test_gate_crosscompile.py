@@ -757,14 +757,11 @@ def test_package_helper_is_host_native_and_target_specific(
     target = config.arch(target_name)
     runner = RecordingRunner(
         root,
-        failures=(
-            f"docker image inspect --platform {host.docker_platform} "
-            f"capsem-package-builder-{target.name}:",
-        ),
+        failures=(f"docker image inspect capsem-package-builder-{target.name}:",),
         replies={
-            f"--platform {host.docker_platform} --format '{{{{.Id}}}}' "
-            f"capsem-package-builder-{target.name}": ("sha256:" + "d" * 64),
-            f"--format '{{{{.Id}}}}' capsem-package-builder-{target.name}": ("sha256:" + "e" * 64),
+            f"{{{{.Architecture}}}}\t{{{{.Id}}}}' capsem-package-builder-{target.name}": (
+                f"{host.docker_platform}\tsha256:{'d' * 64}"
+            ),
         },
     )
 
@@ -796,7 +793,7 @@ def test_package_helper_is_host_native_and_target_specific(
     assert identity.image_id == "sha256:" + "d" * 64
     assert identity.image_reference == (f"capsem-package-builder-{target.name}@sha256:{'0' * 64}")
     assert runner.last_index_of(
-        r"--format '\{\{\.Id\}\}' capsem-host-builder@sha256:"
+        r"--format '\{\{\.Os\}\}/\{\{\.Architecture\}\}.*capsem-host-builder@sha256:"
     ) > runner.index_of(r"docker build .*Dockerfile\.package-builder")
     from capsem.gate.invocation import ConsoleMode
 
@@ -838,11 +835,11 @@ def test_package_helper_refuses_a_parent_tag_move_before_docker_build(
     runner = RecordingRunner(
         root,
         replies={
-            "--platform linux/amd64 --format '{{.Id}}' capsem-host-builder:latest": (
-                "sha256:" + "a" * 64
+            "{{.Architecture}}\t{{.Id}}' capsem-host-builder:latest": (
+                f"linux/amd64\tsha256:{'a' * 64}"
             ),
-            "--platform linux/amd64 --format '{{.Id}}' capsem-host-builder@sha256:": (
-                "sha256:" + "c" * 64
+            "{{.Architecture}}\t{{.Id}}' capsem-host-builder@sha256:": (
+                f"linux/amd64\tsha256:{'c' * 64}"
             ),
         },
     )

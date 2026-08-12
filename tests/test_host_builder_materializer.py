@@ -169,10 +169,7 @@ def test_warm_identity_skips_build_and_cold_identity_builds_exactly_once() -> No
     cold = RecordingRunner(
         PROJECT_ROOT,
         replies={"index .Config.Labels": identity},
-        failures=(
-            f"docker image inspect --platform {CONFIG.host_arch().docker_platform} "
-            f"{CONFIG.hostimage.tag}",
-        ),
+        failures=(f"docker image inspect {CONFIG.hostimage.tag}",),
     )
     hostimage.image(CONFIG).actions[0].perform(_context(cold))
     builds = cold.matching(r"docker build .*Dockerfile\.host-builder")

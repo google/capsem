@@ -55,6 +55,7 @@ GIT_COMMON_DIR_PROBE = "--git-common-dir"
 #: the shape of what gets issued. A test that needs the resulting tag composes
 #: it from the same recorder.
 IMAGE_ID_PROBE = "{{.Id}}"
+IMAGE_PLATFORM_ID_PROBE = "{{.Os}}/{{.Architecture}}"
 IMAGE_LABEL_PROBE = "index .Config.Labels"
 IMAGE_REPOSITORY_DIGEST_PROBE = "{{json .RepoDigests}}"
 RECORDED_IMAGE_ID = "sha256:" + "0" * 64
@@ -65,6 +66,44 @@ def _image_repository(reference: str) -> str:
     if name.rfind(":") > name.rfind("/"):
         name = name.rsplit(":", 1)[0]
     return name
+
+
+def _recorded_image_platform(root: Path, reference: str) -> str:
+    """Answer an identity probe from the checked-in architecture authority."""
+    from capsem.builder import guestbuilder
+    from capsem.gate import config as gate_config
+    from capsem.gate import host, imagebases
+
+    config_root = root if (root / "config/gate.toml").is_file() else PROJECT_ROOT
+    config = gate_config.load(config_root)
+    host_platform = config.arch(host.machine()).docker_platform
+    if reference.startswith(
+        (
+            "capsem-host-builder",
+            "capsem-package-builder-",
+            "capsem-install-builder",
+            "capsem-guest-rust-",
+            "capsem-asset-tools-",
+        )
+    ):
+        return host_platform
+    try:
+        build = imagebases.build_config(config)
+    except OSError:
+        build = None
+    if build is not None:
+        for name, arch in build.architectures.items():
+            if reference == arch.base_image:
+                return arch.docker_platform
+            resolved = guestbuilder.environment(build, name)
+            if reference == resolved.base_image:
+                return resolved.docker_platform
+            if reference == guestbuilder.image_tag(build, name, config_root):
+                return resolved.docker_platform
+    for name, arch in config.architectures.items():
+        if name in reference or any(alias in reference for alias in arch.aliases):
+            return arch.docker_platform
+    return host_platform
 
 
 @cache
@@ -137,6 +176,9 @@ class RecordingRunner(Runner):
         else:
             if GIT_COMMON_DIR_PROBE in rendered:
                 stdout = _git_common_dir(self.root)
+            elif IMAGE_PLATFORM_ID_PROBE in rendered:
+                platform = _recorded_image_platform(self.root, command.argv[-1])
+                stdout = f"{platform}\t{RECORDED_IMAGE_ID}"
             elif IMAGE_ID_PROBE in rendered:
                 stdout = RECORDED_IMAGE_ID
             elif IMAGE_LABEL_PROBE in rendered:

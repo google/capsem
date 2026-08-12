@@ -94,9 +94,7 @@ def test_mounts_render_in_docker_order(tmp_path: Path) -> None:
 
 
 def test_a_checkout_path_maps_onto_the_bind_mount(tmp_path: Path) -> None:
-    mapped = container_path(
-        tmp_path, tmp_path / "dist" / "Capsem_9.9.9_arm64.deb", mount=MOUNT
-    )
+    mapped = container_path(tmp_path, tmp_path / "dist" / "Capsem_9.9.9_arm64.deb", mount=MOUNT)
 
     assert mapped == f"{MOUNT}/dist/Capsem_9.9.9_arm64.deb"
 
@@ -138,13 +136,16 @@ def test_exists_answers_without_failing_the_run(tmp_path: Path) -> None:
 
 
 def test_exact_image_presence_is_checked_for_its_platform(tmp_path: Path) -> None:
-    runner = RecordingRunner(tmp_path)
+    runner = RecordingRunner(
+        tmp_path,
+        replies={"{{.Os}}/{{.Architecture}}": f"linux/arm64\tsha256:{'0' * 64}"},
+    )
     image = "registry.example/guest@sha256:" + "a" * 64
 
     assert Docker(runner).image_exists(image, platform="linux/arm64")
-    assert runner.rendered == [
-        f"docker image inspect --platform linux/arm64 {image}"
-    ]
+    assert runner.rendered[0] == f"docker image inspect {image}"
+    assert "--platform" not in runner.rendered[1]
+    assert "{{.Os}}/{{.Architecture}}" in runner.rendered[1]
 
 
 def test_exact_image_pull_names_platform_and_digest(tmp_path: Path) -> None:

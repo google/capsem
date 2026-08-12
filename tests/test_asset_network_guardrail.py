@@ -275,7 +275,7 @@ def test_asset_tool_materializer_is_the_only_network_open_helper_build() -> None
     tag = assettools.image_tag(BUILD, name, PROJECT_ROOT)
     runner = RecordingRunner(
         PROJECT_ROOT,
-        failures=(f"docker image inspect --platform {arch.docker_platform} {tag}",),
+        failures=(f"docker image inspect {tag}",),
     )
 
     imagebases.materialize_asset_tools(runner, config)

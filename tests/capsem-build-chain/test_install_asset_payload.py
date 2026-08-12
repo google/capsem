@@ -1271,7 +1271,9 @@ def test_cross_compile_reuses_only_the_exact_host_builder_identity() -> None:
     host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
     issued = _planned("cross-compile", arch="arm64")
 
-    assert "docker image inspect --platform" in issued
+    assert "docker image inspect --format" in issued
+    assert "{{.Os}}/{{.Architecture}}" in issued
+    assert "docker image inspect --platform" not in issued
     assert "org.capsem.host-builder.input-key" in issued
     assert "docker build -t capsem-host-builder" not in issued
     assert "org.capsem.host-builder.input-key" in host_builder

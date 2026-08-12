@@ -225,6 +225,30 @@ def test_exact_build_reference_accepts_a_locally_built_image_without_repo_digest
     )
 
 
+def test_platform_image_identity_does_not_require_inspect_platform_flag(tmp_path: Path) -> None:
+    runner = RecordingRunner(
+        tmp_path,
+        replies={"{{.Os}}/{{.Architecture}}": f"linux/amd64\tsha256:{'a' * 64}"},
+    )
+
+    assert Docker(runner).image_id("capsem-host-builder:latest", platform="linux/amd64") == (
+        "sha256:" + "a" * 64
+    )
+    assert all("--platform" not in command.argv for command in runner.commands)
+
+
+def test_platform_image_identity_refuses_the_wrong_platform(tmp_path: Path) -> None:
+    runner = RecordingRunner(
+        tmp_path,
+        replies={"{{.Os}}/{{.Architecture}}": f"linux/arm64\tsha256:{'a' * 64}"},
+    )
+
+    with pytest.raises(GateError, match=r"expected platform linux/amd64.*linux/arm64"):
+        Docker(runner).image_id("capsem-host-builder:latest", platform="linux/amd64")
+
+    assert all("--platform" not in command.argv for command in runner.commands)
+
+
 @pytest.mark.parametrize("operation", ["read", "run_detached", "run_once", "probe", "create"])
 def test_every_container_adapter_rejects_a_buildkit_only_mode(
     tmp_path: Path, operation: str

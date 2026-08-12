@@ -21,6 +21,7 @@ from .proc import Runner
 
 BUILDKIT_NETWORKS = frozenset({"default", "host", "none"})
 CONTAINER_NETWORKS = frozenset({"bridge", "host", "none"})
+IMAGE_IDENTITY_FORMAT = "{{.Os}}/{{.Architecture}}\t{{.Id}}"
 
 
 def require_build_network(network: str) -> str:
@@ -103,11 +104,31 @@ class ImageOperations:
         argv += [image, *command]
         return self._runner.capture(argv, check=check)
 
+    def _image_identity(self, tag: str, *, check: bool) -> tuple[str, str] | None:
+        raw = self._runner.capture(
+            ["docker", "image", "inspect", "--format", IMAGE_IDENTITY_FORMAT, tag],
+            check=check,
+        ).strip()
+        if not raw and not check:
+            return None
+        fields = raw.split()
+        if len(fields) != 2:
+            raise GateError(f"docker image {tag} returned malformed identity {raw!r}")
+        return fields[0], fields[1]
+
+    @staticmethod
+    def _require_platform(tag: str, expected: str | None, found: str) -> None:
+        if expected is not None and found != expected:
+            raise GateError(
+                f"docker image {tag} expected platform {expected}, but resolves to {found}"
+            )
+
     def image_exists(self, tag: str, *, platform: str | None = None) -> bool:
-        argv = ["docker", "image", "inspect"]
+        if not self._runner.succeeds(["docker", "image", "inspect", tag]):
+            return False
         if platform is not None:
-            argv += ["--platform", platform]
-        return self._runner.succeeds([*argv, tag])
+            self.image_id(tag, platform=platform)
+        return True
 
     def pull(self, image: str, *, platform: str) -> None:
         """Materialize one exact platform image through the Docker daemon."""
@@ -121,13 +142,12 @@ class ImageOperations:
         it off this, or it reuses work built against an image that no longer
         exists under that name.
         """
-        argv = ["docker", "image", "inspect"]
-        if platform is not None:
-            argv += ["--platform", platform]
-        found = self._runner.capture([*argv, "--format", "{{.Id}}", tag]).strip()
-        if not found:
-            raise GateError(f"docker has no image tagged {tag}, so nothing can be keyed by it")
-        return found
+        identity = self._image_identity(tag, check=True)
+        if identity is None:
+            raise AssertionError("a checked Docker identity probe returned no identity")
+        found_platform, image_id = identity
+        self._require_platform(tag, platform, found_platform)
+        return image_id
 
     def _repository_references(self, tag: str) -> tuple[str, list[object], set[str]]:
         raw = self._runner.capture(

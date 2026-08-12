@@ -379,7 +379,7 @@ def test_install_helper_materializes_locked_inputs_before_the_sealed_image(
     monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
     runner = RecordingRunner(
         PROJECT_ROOT,
-        failures=("docker image inspect --platform linux/amd64 capsem-install-builder:",),
+        failures=("docker image inspect capsem-install-builder:",),
     )
 
     identity = installbuilder.materialize(runner, CONFIG)
@@ -411,11 +411,11 @@ def test_install_helper_materializes_locked_inputs_before_the_sealed_image(
     assert f"FRESH_CLI={CONFIG.install.source_cli}" in str(source)
     assert identity.image_id == "sha256:" + "0" * 64
     assert runner.last_index_of(
-        r"docker image inspect --platform linux/amd64 --format '\{\{\.Id\}\}' "
+        r"docker image inspect --format '\{\{\.Os\}\}/\{\{\.Architecture\}\}.*"
         r"capsem-host-builder@sha256:"
     ) > runner.index_of(r"docker build .*Dockerfile\.install-builder")
     assert runner.last_index_of(
-        r"--format '\{\{\.Id\}\}' capsem-install-builder:"
+        r"--format '\{\{\.Os\}\}/\{\{\.Architecture\}\}.*capsem-install-builder:"
     ) > runner.index_of(r"docker build .*Dockerfile\.install-test")
 
 
@@ -427,7 +427,7 @@ def test_install_helper_accepts_a_local_parent_without_repository_digests(
     monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
     runner = RecordingRunner(
         PROJECT_ROOT,
-        failures=("docker image inspect --platform linux/amd64 capsem-install-builder:",),
+        failures=("docker image inspect capsem-install-builder:",),
         replies={"{{json .RepoDigests}}": "[]"},
     )
 

@@ -189,7 +189,7 @@ def test_cold_prefetch_pulls_exact_rust_base_then_builds_locked_helper() -> None
 
     imagebases.prefetch(runner, config, names=("arm64",))
     builder = image_tag(BUILD, "arm64", PROJECT_ROOT)
-    runner.fail_on(f"docker image inspect --platform {resolved.docker_platform} {builder}")
+    runner.fail_on(f"docker image inspect {builder}")
     imagebases.materialize_rust_builders(runner, config, names=("arm64",))
 
     pulled = f"docker pull --platform {resolved.docker_platform} {resolved.base_image}"

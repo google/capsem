@@ -137,10 +137,7 @@ def test_cross_architecture_execution_is_proven_before_rust_builder_prewarm(
     gate, runner = _gate(
         tmp_path,
         monkeypatch,
-        failures=(
-            "docker image inspect --platform linux/arm64 capsem-guest",
-            "docker image inspect --platform linux/amd64 capsem-guest",
-        ),
+        failures=("docker image inspect capsem-guest",),
     )
 
     _run_all(gate)
