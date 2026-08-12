@@ -45,8 +45,7 @@ SOURCE_TREE = "source-tree"
 # Linux inotify/watchdog emits this when a descriptor opened only for reading
 # is closed.  It is explicitly evidence that no write happened, not a
 # best-effort change notification.  Keep it out before `facts_of` hashes the
-# path: a build reads thousands of source/profile files and otherwise turns
-# those reads into false mutations and unbounded observation work.
+# path: a build reads thousands of files and otherwise makes unbounded false mutations.
 READ_ONLY_CLOSE = "closed_no_write"
 
 
@@ -71,6 +70,8 @@ class Watch:
 
         self._live: set[str] = set()
         self._lock = threading.Lock()
+        self._refusal_ready = threading.Condition(self._lock)
+        self._refusals_recording = 0
         self._observer: BaseObserver | None = None
         self._modes: dict[Path, list[int]] = {}
         self._digests: dict[str, Path] = {}
@@ -92,9 +93,23 @@ class Watch:
         with self._lock:
             self._refusal = self._refusal or message
 
+    def refuse_after(self, message: str, evidence: Callable[[], None]) -> None:
+        """Keep checkpoints behind the durable evidence that explains a refusal."""
+        with self._lock:
+            self._refusals_recording += 1
+        try:
+            evidence()
+        finally:
+            with self._refusal_ready:
+                self._refusal = self._refusal or message
+                self._refusals_recording -= 1
+                self._refusal_ready.notify_all()
+
     def checkpoint(self) -> None:
         """Raise a fresh exception on the controlling thread at a safe boundary."""
-        with self._lock:
+        with self._refusal_ready:
+            while self._refusals_recording:
+                self._refusal_ready.wait()
             refusal = self._refusal
         if refusal is not None:
             raise GateError(refusal)

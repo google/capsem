@@ -54,7 +54,8 @@ def observing(
 
     def report(fault: Fault) -> None:
         fatal = publishes and fault.reason == SOURCE_TREE
-        with reporting:
+
+        def record() -> None:
             seen.append(fault)
             level = "FATAL" if fatal else "OBSERVATION"
             print(f"HERMETICITY {level} {fault.render()}", file=sys.stderr, flush=True)
@@ -62,13 +63,17 @@ def observing(
             note = getattr(log, "note", None)
             if note is not None:
                 note(f"fault {fault.reason}: {fault.path}")
+
+        with reporting:
             if not fatal:
+                record()
                 return
-            watch.refuse(
+            watch.refuse_after(
                 f"the source tree changed during a release: {fault.render()}. "
                 "This run would publish an artifact whose recorded provenance "
                 "claims a tree that did not hold still, and no later check can "
-                "tell the difference. Re-run with the checkout left alone."
+                "tell the difference. Re-run with the checkout left alone.",
+                record,
             )
 
     declared = {
