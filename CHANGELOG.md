@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inventory instead of a spelling-sensitive grep. All 12 `just` edges reject
   skipped jobs/steps, ignored failures, shell masks, missing commands, and
   unclassified additions; equivalent YAML/shell presentation remains valid.
+  Its mutation fixtures now transform parsed workflow documents too, so a
+  harmless YAML reformat cannot prevent the intended broken edit from being
+  applied and turn the guard itself into a false failure.
   The guard also exposed and fixed a Rust coverage pipeline that could lose
   `cargo llvm-cov report`'s failure status through `tee`.
 

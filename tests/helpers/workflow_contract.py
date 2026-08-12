@@ -11,6 +11,30 @@ from typing import Any
 
 _CONTINUATION = re.compile(r"\\\r?\n")
 _GITHUB_EXPRESSION = re.compile(r"\$\{\{\s*(.*?)\s*}}")
+# `needs.<job>.result`, read only from inside a `${{ }}` expression: the same
+# text outside one is prose, and matching it anywhere would make a comment
+# authoritative.
+_NEEDS_RESULT = re.compile(r"\bneeds\.([A-Za-z0-9_-]+)\.result\b")
+
+
+def referenced_need_results(value: object) -> frozenset[str]:
+    """Jobs whose `.result` an expression reads.
+
+    Lives beside the expression pattern rather than in a caller, because this
+    module already owns what a `${{ }}` is: `canonical_shell_commands` masks
+    them so `shlex` cannot split one, and a second reader elsewhere would be a
+    second definition to keep in step.
+
+    Non-expression text yields nothing, so a step whose env merely mentions
+    `needs.foo.result` in a comment is not treated as reading it.
+    """
+    if not isinstance(value, str):
+        return frozenset()
+    return frozenset(
+        job
+        for expression in _GITHUB_EXPRESSION.findall(value)
+        for job in _NEEDS_RESULT.findall(expression)
+    )
 
 
 @dataclass(frozen=True)
@@ -95,9 +119,22 @@ def _unconditional(value: object) -> bool:
     return _canonical_condition(value) in (None, True, "true", "${{true}}")
 
 
-def _masks_failure(command: tuple[str, ...]) -> bool:
+def masks_failure(command: tuple[str, ...]) -> bool:
+    """Whether a command's exit status can no longer fail the step running it.
+
+    Public because two contracts ask it of two different step selections:
+    `assert_unmasked_step` for the mandatory `just` steps declared here, and
+    `test_ci_enforcement_contract` for any step turning a dependency's
+    `needs.<job>.result` into a job outcome. One definition, so a fail-open
+    spelling learned in either place is caught in both.
+    """
     pairs = tuple(pairwise(command))
     return "||" in command or any(pair == (";", "true") for pair in pairs)
+
+
+def disables_fail_fast(command: tuple[str, ...]) -> bool:
+    """`set +e` leaves every later command's status advisory."""
+    return command[:2] == ("set", "+e")
 
 
 def assert_unmasked_step(
@@ -145,10 +182,10 @@ def assert_unmasked_step(
         f"{workflow_name}:{job_name}:{step_name}: required step has no command"
     )
     commands = canonical_shell_commands(run)
-    assert not any(_masks_failure(command) for command in commands), (
+    assert not any(masks_failure(command) for command in commands), (
         f"{workflow_name}:{job_name}:{step_name}: shell masks an enforcement failure"
     )
-    assert not any(command[:2] == ("set", "+e") for command in commands), (
+    assert not any(disables_fail_fast(command) for command in commands), (
         f"{workflow_name}:{job_name}:{step_name}: shell disables fail-fast behavior"
     )
     pipeline_indexes = [index for index, command in enumerate(commands) if "|" in command]
