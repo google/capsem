@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Checked-in storage release callers are now validated against the
+  config-owned phase inventory in the fast source gate. Retired release
+  phases can no longer survive as dormant Just commands or fail only after
+  the complete fast module has passed in hosted CI.
 - Install and package dependency helpers now disable Rustup auto-install before
   verifying the config-pinned toolchain and inspect only the local installed
   inventory. A verification probe can no longer become a mutable channel-sync

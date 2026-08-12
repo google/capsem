@@ -216,14 +216,8 @@ _gate-host-package-sbom:
 _clean-host-image:
     @uv run capsem-gate storage clean --scope all
 
-_release-completed-linux-rust-target:
-    @uv run capsem-gate storage release completed-linux-rust-target
-
 _release-completed-docker-rails:
     @uv run capsem-gate storage release completed-docker-rails
-
-_release-completed-buildkit-graph:
-    @uv run capsem-gate storage release completed-buildkit-graph
 
 _release-completed-package-rails:
     @uv run capsem-gate storage release completed-package-arm64
@@ -314,7 +308,6 @@ _docker-gc:
 # Enforce release-rail headroom while preserving content-addressed Cargo,
 # registry, rustup, and recent BuildKit caches that make forward fixes fast.
 _bound-docker-test-storage:
-    @uv run capsem-gate storage release candidate-boundary
     @uv run capsem-gate storage ensure-space default candidate-boundary
 
 # Explicit deep cleanup for a human-requested cold rebuild. The canonical gate

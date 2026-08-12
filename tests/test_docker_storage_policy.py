@@ -11,9 +11,32 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 POLICY_PATH = ROOT / "config" / "storage-policy.toml"
 POLICY_SCRIPT = ROOT / "scripts" / "docker-storage-policy.py"
+
+
+def _storage_release_callers() -> tuple[Path, ...]:
+    """Checked-in executable surfaces allowed to dispatch storage commands."""
+    tracked = subprocess.run(
+        [
+            "git",
+            "ls-files",
+            "-z",
+            "--",
+            "justfile",
+            "bootstrap.sh",
+            "scripts",
+            ".github/workflows",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return tuple(ROOT / relative for relative in tracked.stdout.split("\0") if relative)
 
 
 def _gate_labels(name: str = "candidate") -> tuple[str, ...]:
@@ -38,6 +61,27 @@ def load_policy_module():
 def load_policy() -> dict:
     with POLICY_PATH.open("rb") as stream:
         return tomllib.load(stream)
+
+
+def test_every_checked_in_storage_release_uses_a_configured_release_phase() -> None:
+    """A removed release phase must fail in the fast source gate, not hosted CI."""
+    from capsem.gate import config as gate_config
+
+    configured = set(gate_config.load(ROOT).storage.phases)
+    release_command = re.compile(r"capsem-gate\s+storage\s+release\s+([\w-]+)")
+    seen: list[tuple[str, str]] = []
+
+    for path in _storage_release_callers():
+        source = path.read_text(encoding="utf-8")
+        for match in release_command.finditer(source):
+            phase = match.group(1)
+            seen.append((path.relative_to(ROOT).as_posix(), phase))
+            assert phase in configured, (
+                f"{path.relative_to(ROOT)} dispatches unknown storage release phase "
+                f"{phase!r}; configured phases: {sorted(configured)}"
+            )
+
+    assert seen, "no checked-in storage release caller was inspected"
 
 
 def test_policy_has_one_warm_cache_and_capacity_model() -> None:
@@ -333,7 +377,9 @@ def test_offline_snapshot_reports_every_managed_resource_and_decision() -> None:
     assert resources["capsem-linux-python-venv"]["decision"] == "delete-obsolete"
 
 
-def test_candidate_failure_captures_storage_and_asset_logs_before_next_cleanup() -> None:
+def test_candidate_failure_captures_storage_and_asset_logs_before_next_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Evidence is taken on the way out of a failure, before anything reclaims
     the storage that holds it."""
     import sys as _sys
@@ -352,7 +398,7 @@ def test_candidate_failure_captures_storage_and_asset_logs_before_next_cleanup()
     runner = RecordingRunner(ROOT)
     evidence = FailureEvidence(config, runner)
     order: list[str] = []
-    evidence.release = lambda: order.append("release")  # type: ignore[method-assign]
+    monkeypatch.setattr(evidence, "release", lambda: order.append("release"))
 
     try:
         with held(evidence):
