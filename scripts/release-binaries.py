@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import time
+import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -199,11 +200,10 @@ def _lock_package_versions(
     return versions
 
 
-# The MAJOR.MINOR line this repository releases. Pinned deliberately rather
-# than derived from the version: deriving it would make the cohort check
-# tautological, and the point is to catch a version that moved off the line
-# nobody intended to leave.
-RELEASE_LINE = "0.6"
+# Independent of Cargo.toml so moving off the intended line is not tautological.
+RELEASE_LINE = tomllib.loads((ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))[
+    "release"
+]["line"]
 
 
 def _validate_version_cohort(version: str) -> None:

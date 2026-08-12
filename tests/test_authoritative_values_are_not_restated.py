@@ -8,7 +8,7 @@ test failed while reporting a broken product.
     guest kernel          demanded >= 7    build.toml pinned 6.18
     docker free space     fixture 30 GiB   policy floor rose to 40
     benchmark retention   asserted (1, 6)  Cargo.toml said 0.6
-    release fixtures      spelled 1.6.x    RELEASE_LINE said 0.6
+    release fixtures      spelled 1.6.x    gate.toml release.line said 0.6
     service /version      startswith("1.") Cargo.toml said 0.6.0
 
 None was a defect in Capsem. Each cost between three minutes and a full
@@ -44,12 +44,9 @@ def _authorities() -> dict[str, tuple[str, Path]]:
     ]
     found[version] = ("the workspace version", cargo)
 
-    release_binaries = PROJECT_ROOT / "scripts" / "release-binaries.py"
-    line = re.search(
-        r'^RELEASE_LINE = "([^"]+)"', release_binaries.read_text(encoding="utf-8"), re.M
-    )
-    if line:
-        found[line.group(1)] = ("the release line", release_binaries)
+    gate_config = PROJECT_ROOT / "config" / "gate.toml"
+    release = tomllib.loads(gate_config.read_text(encoding="utf-8"))["release"]
+    found[release["line"]] = ("the release line", gate_config)
 
     build = PROJECT_ROOT / "config" / "docker" / "image" / "build.toml"
     kernel = tomllib.loads(build.read_text(encoding="utf-8"))["build"]["kernel"]

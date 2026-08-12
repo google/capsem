@@ -1,9 +1,10 @@
-"""The public docs deployment is a source-derived Capsem 0.6 holding surface."""
+"""The public docs deployment is a source-derived release-line holding surface."""
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,8 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DOCS_ROOT = PROJECT_ROOT / "docs"
 VERIFIER = PROJECT_ROOT / "scripts" / "check-docs-holding-build.py"
+GATE_CONFIG = PROJECT_ROOT / "config" / "gate.toml"
+RELEASE_LINE = tomllib.loads(GATE_CONFIG.read_text(encoding="utf-8"))["release"]["line"]
 
 
 def _verifier_module():
@@ -23,22 +26,22 @@ def _verifier_module():
 
 
 def _holding_html() -> str:
-    return """<!doctype html>
+    return f"""<!doctype html>
     <html><body><main>
-      <h1>Capsem 0.6 documentation</h1>
-      <p>Capsem 0.6 is in pre-release qualification.</p>
+      <h1>Capsem {RELEASE_LINE} documentation</h1>
+      <p>Capsem {RELEASE_LINE} is in pre-release qualification.</p>
       <p>Documentation is being prepared.</p>
     </main></body></html>
     """
 
 
 def _tombstone_html() -> str:
-    return """<!doctype html>
+    return f"""<!doctype html>
     <html><head>
       <meta name="robots" content="noindex, nofollow">
     </head><body><main>
       <h1>Documentation route unavailable</h1>
-      <p>Capsem 0.6 is in pre-release qualification.</p>
+      <p>Capsem {RELEASE_LINE} is in pre-release qualification.</p>
       <p>Documentation is being prepared.</p>
     </main></body></html>
     """
@@ -56,9 +59,9 @@ def _write_manual_sources(source_root: Path) -> None:
 def _write_holding_artifact(dist: Path) -> None:
     (dist / "index.html").write_text(_holding_html(), encoding="utf-8")
     (dist / "404.html").write_text(
-        """<!doctype html><html><body><main>
+        f"""<!doctype html><html><body><main>
         <h1>Documentation route unavailable</h1>
-        <p>Capsem 0.6 is in pre-release qualification.</p>
+        <p>Capsem {RELEASE_LINE} is in pre-release qualification.</p>
         </main></body></html>""",
         encoding="utf-8",
     )
@@ -163,7 +166,7 @@ def test_docs_source_builds_the_holding_graph_without_deleting_the_manual() -> N
     assert "publicDir: './public-holding'" in astro
     assert "docsLoader" not in content_config
     assert "export const collections = {};" in content_config
-    assert "Capsem 0.6 documentation" in page
+    assert f"Capsem {RELEASE_LINE} documentation" in page
     assert "pre-release" in page
     assert "Documentation is being prepared" in page
     assert "Documentation route unavailable" in not_found
@@ -198,7 +201,7 @@ def test_docs_source_builds_the_holding_graph_without_deleting_the_manual() -> N
 def test_docs_deploy_smokes_replacement_content_at_a_warmed_old_route() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "docs.yaml").read_text(encoding="utf-8")
 
-    assert "Capsem 0.6 documentation" in workflow
+    assert f"Capsem {RELEASE_LINE} documentation" in workflow
     assert "pre-release qualification" in workflow
     assert "OLD_ROUTE_URL: https://docs.capsem.org/getting-started/" in workflow
     assert "Documentation route unavailable" in workflow
@@ -212,7 +215,7 @@ def test_docs_deploy_smokes_replacement_content_at_a_warmed_old_route() -> None:
 def test_readme_does_not_advertise_unreleased_install_or_deep_docs() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "Capsem 0.6" in readme
+    assert f"Capsem {RELEASE_LINE}" in readme
     assert "pre-release" in readme
     assert "releases/latest" not in readme
     assert "install.sh" not in readme

@@ -962,6 +962,7 @@ install = ["cargo", "install", "tauri-cli", "--version", "2.11.1", "--locked"]
 # rather than a script: nothing may stamp a version, mutate a tracked file,
 # push, tag, or dispatch a workflow before the complete local gate has passed
 # against the exact HEAD that gets published.
+line = "0.6"
 precheck = ["scripts/publish-tested-main.py", "--precheck"]
 notes = ["scripts/release-binaries.py", "--precheck"]
 fetch_manifest = "scripts/fetch-channel-source-manifest.py"

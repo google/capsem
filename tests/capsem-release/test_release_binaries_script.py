@@ -24,8 +24,8 @@ NOTES = importlib.util.module_from_spec(NOTES_SPEC)
 NOTES_SPEC.loader.exec_module(NOTES)
 
 # Fixture versions follow the release line the script enforces rather than
-# restating it. Hardcoded 1.6.x fixtures failed this whole suite the moment the
-# line moved to 0.6, reporting an inconsistent cohort instead of a stale test.
+# restating it. Hardcoded fixtures failed this whole suite when the line moved,
+# reporting an inconsistent cohort instead of a stale test.
 _LINE_MAJOR, _LINE_MINOR = (int(part) for part in RELEASE.RELEASE_LINE.split("."))
 COHORT_VERSION = f"{RELEASE.RELEASE_LINE}.2"
 OLDER_VERSION = f"{RELEASE.RELEASE_LINE}.1"

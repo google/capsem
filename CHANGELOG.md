@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Binary release validation, the documentation holding-artifact verifier, and
+  its contracts now consume one typed config-owned release line. Merging the
+  pre-release holding site can no longer make the complete release gate fail
+  because a Python verifier restated the line it was supposed to check.
+
 - Linux sealed-install qualification now prefetches the locked Cargo graph and
   compiles one current-source CLI while building the network-denied source
   image. Update and channel-transition tests consume that exact executable

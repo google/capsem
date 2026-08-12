@@ -9,8 +9,9 @@ own source.
 from __future__ import annotations
 
 from pathlib import PurePosixPath
+from typing import Annotated
 
-from pydantic import model_validator
+from pydantic import StringConstraints, model_validator
 
 from .configschema import Strict
 
@@ -249,6 +250,7 @@ class InitrdConfig(Strict):
 
 
 class ReleaseConfig(Strict):
+    line: Annotated[str, StringConstraints(pattern=r"^\d+\.\d+$")]
     precheck: tuple[str, ...]
     notes: tuple[str, ...]
     fetch_manifest: str

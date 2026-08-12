@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Fail unless docs contain only 0.6 holding pages derived from the manual."""
+"""Fail unless docs contain only release-line holding pages derived from the manual."""
 
 from __future__ import annotations
 
 import argparse
+import tomllib
 from pathlib import Path
 
 
@@ -11,8 +12,12 @@ class HoldingBuildError(RuntimeError):
     """The built docs artifact exposed something beyond the holding page."""
 
 
+ROOT = Path(__file__).resolve().parents[1]
+GATE_CONFIG = ROOT / "config" / "gate.toml"
+RELEASE_LINE = tomllib.loads(GATE_CONFIG.read_text(encoding="utf-8"))["release"]["line"]
+
 REQUIRED_MARKERS = (
-    "Capsem 0.6 documentation",
+    f"Capsem {RELEASE_LINE} documentation",
     "pre-release qualification",
     "Documentation is being prepared",
 )
