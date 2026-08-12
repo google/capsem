@@ -20,15 +20,6 @@ from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
 # ---------------------------------------------------------------------------
 
 
-class Compression(str, Enum):
-    """Historical non-EROFS compression values retained for config parsing."""
-
-    ZSTD = "zstd"
-    GZIP = "gzip"
-    LZO = "lzo"
-    XZ = "xz"
-
-
 class ErofsCompression(str, Enum):
     """Compression algorithm for EROFS rootfs assets."""
 
@@ -174,8 +165,6 @@ class BuildConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    compression: Compression = Compression.ZSTD
-    compression_level: int = Field(default=15, ge=1, le=22)
     materialize_network: Literal[BuildNetwork.DEFAULT]
     erofs: ErofsConfig = Field(default_factory=ErofsConfig)
     kernel: KernelConfig

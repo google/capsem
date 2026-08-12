@@ -16,7 +16,6 @@ from capsem.builder.models import (
     AssetToolsArchitectureConfig,
     AssetToolsConfig,
     BuildConfig,
-    Compression,
     ErofsCompression,
     ErofsConfig,
     GuestImageConfig,
@@ -110,25 +109,6 @@ def _mcp_stdio(**kw):
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
-
-
-class TestCompression:
-    def test_values(self):
-        assert set(Compression) == {
-            Compression.ZSTD,
-            Compression.GZIP,
-            Compression.LZO,
-            Compression.XZ,
-        }
-
-    def test_string_values(self):
-        assert Compression.ZSTD.value == "zstd"
-        assert Compression.GZIP.value == "gzip"
-        assert Compression.LZO.value == "lzo"
-        assert Compression.XZ.value == "xz"
-
-    def test_from_string(self):
-        assert Compression("zstd") is Compression.ZSTD
 
 
 class TestErofsCompression:
@@ -244,10 +224,19 @@ class TestArchConfig:
 class TestBuildConfig:
     def test_defaults(self):
         b = _build()
-        assert b.compression is Compression.ZSTD
-        assert b.compression_level == 15
         assert b.erofs.compression is ErofsCompression.LZ4HC
         assert b.erofs.compression_level == 12
+
+    @pytest.mark.parametrize(
+        "retired",
+        [
+            {"compression": "zstd"},
+            {"compression_level": 15},
+        ],
+    )
+    def test_retired_archive_compression_fields_are_rejected(self, retired):
+        with pytest.raises(ValidationError, match=next(iter(retired))):
+            _build(**retired)
 
     def test_kernel_source_is_exact_and_digest_verified(self):
         kernel = _build().kernel
@@ -281,22 +270,6 @@ class TestBuildConfig:
                     "kernel_branch": "9.9",
                 }
             )
-
-    def test_compression_level_min(self):
-        b = _build(compression_level=1)
-        assert b.compression_level == 1
-
-    def test_compression_level_max(self):
-        b = _build(compression_level=22)
-        assert b.compression_level == 22
-
-    def test_compression_level_too_low(self):
-        with pytest.raises(ValidationError):
-            _build(compression_level=0)
-
-    def test_compression_level_too_high(self):
-        with pytest.raises(ValidationError):
-            _build(compression_level=23)
 
     def test_empty_architectures_rejected(self):
         with pytest.raises(ValidationError):
@@ -694,7 +667,7 @@ class TestVmEnvironmentConfig:
 class TestGuestImageConfig:
     def test_minimal(self):
         g = GuestImageConfig(build=_build())
-        assert g.build.compression is Compression.ZSTD
+        assert g.build.erofs.compression is ErofsCompression.LZ4HC
         assert g.package_sets == {}
         assert g.mcp_servers == {}
         assert g.web_security.http_upstream_ports == [80, 3128, 3713, 8080, 11434]

@@ -17,8 +17,6 @@ PROJECT_ROOT = Path(__file__).parent.parent
 
 MINIMAL_BUILD_TOML = """\
 [build]
-compression = "zstd"
-compression_level = 15
 materialize_network = "default"
 
 [build.kernel]
@@ -191,6 +189,13 @@ def test_invalid_toml_is_e002(guest_valid: Path) -> None:
 
 def test_pydantic_validation_error_is_e003(guest_valid: Path) -> None:
     (guest_valid / "config" / "build.toml").write_text("[build]\ncompression = 'zstd'\n")
+    assert "E003" in _codes(validate_guest(guest_valid))
+
+
+@pytest.mark.parametrize("field", ["compression = 'zstd'", "compression_level = 15"])
+def test_retired_archive_compression_authority_is_e003(guest_valid: Path, field: str) -> None:
+    build = guest_valid / "config" / "build.toml"
+    build.write_text(build.read_text().replace("[build]\n", f"[build]\n{field}\n", 1))
     assert "E003" in _codes(validate_guest(guest_valid))
 
 

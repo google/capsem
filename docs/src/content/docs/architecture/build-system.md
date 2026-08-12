@@ -88,7 +88,7 @@ Four outputs are produced:
 
 | File | Model | Purpose | Key Fields |
 |------|-------|---------|------------|
-| `build.toml` | `BuildConfig` | Kernel source, architectures, compression | `kernel.version`, `kernel.sha256`, `compression`, `compression_level`, `architectures.*` |
+| `build.toml` | `BuildConfig` | Kernel source, architectures, EROFS format | `kernel.version`, `kernel.sha256`, `erofs.compression`, `erofs.compression_level`, `architectures.*` |
 | `manifest.toml` | `ImageManifestConfig` | Image identity and changelog | `name`, `version`, `description`, `changelog` |
 | `packages/apt.toml` | `PackageSetConfig` | Apt package set | `manager`, `install_cmd`, `packages`, `network` |
 | `packages/python.toml` | `PackageSetConfig` | Python package set | `manager`, `install_cmd`, `packages` |
@@ -104,8 +104,7 @@ Example `build.toml`:
 
 ```toml
 [build]
-compression = "zstd"
-compression_level = 15
+materialize_network = "default"
 
 [build.erofs]
 enabled = true

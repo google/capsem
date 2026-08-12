@@ -20,12 +20,7 @@ from capsem.builder.config import (
     load_guest_config,
     parse_toml,
 )
-from capsem.builder.models import (
-    Compression,
-    ErofsCompression,
-    GuestImageConfig,
-    PackageManager,
-)
+from capsem.builder.models import ErofsCompression, GuestImageConfig, PackageManager
 from capsem.builder.schema import McpTransport
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -58,8 +53,6 @@ terminated_retention_days = 365
 
 MINIMAL_BUILD_TOML = """\
 [build]
-compression = "zstd"
-compression_level = 15
 materialize_network = "default"
 
 [build.erofs]
@@ -269,8 +262,6 @@ class TestLoadGuestConfigMinimal:
 
     def test_loads_build(self, guest_minimal):
         cfg = load_guest_config(guest_minimal)
-        assert cfg.build.compression is Compression.ZSTD
-        assert cfg.build.compression_level == 15
         assert cfg.build.erofs.enabled is True
         assert cfg.build.erofs.compression is ErofsCompression.LZ4HC
         assert cfg.build.erofs.compression_level == 12
@@ -374,10 +365,10 @@ class TestLoadGuestConfigErrors:
     def test_invalid_model_data(self, tmp_path):
         config = tmp_path / "guest" / "config"
         config.mkdir(parents=True)
-        # compression_level out of range
+        # Retired non-EROFS compression authority is rejected.
         (config / "build.toml").write_text("""\
 [build]
-compression_level = 99
+compression_level = 15
 
 [build.kernel]
 version = "9.9.9"
@@ -413,8 +404,6 @@ class TestLoadGuestConfigEdgeCases:
         """build.toml with multiple architectures."""
         (guest_minimal / "config" / "build.toml").write_text("""\
 [build]
-compression = "gzip"
-compression_level = 9
 materialize_network = "default"
 
 [build.kernel]
@@ -470,7 +459,7 @@ kernel_image = "arch/x86_64/boot/bzImage"
 defconfig = "kernel/defconfig.x86_64"
 """)
         cfg = load_guest_config(guest_minimal)
-        assert cfg.build.compression is Compression.GZIP
+        assert cfg.build.erofs.compression is ErofsCompression.LZ4HC
         assert len(cfg.build.architectures) == 2
 
 

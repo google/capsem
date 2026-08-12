@@ -1277,6 +1277,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Removed the obsolete top-level zstd archive-compression settings. VM rootfs
+  assets have one fail-closed format authority: EROFS with its independently
+  validated lz4/lz4hc settings. The unrelated zstd runtime tool used to inspect
+  Debian packages remains available.
+
 - The four `capsem-linux-rust-*` volumes are retired, along with the step that
   existed to hand one of them back. Sealing the Linux parity lane stopped it
   mounting anything -- it `COPY`s its source into a thin image on a
