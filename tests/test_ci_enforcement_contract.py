@@ -41,50 +41,113 @@ apart gets deleted the first time it blocks something reasonable.
 
 from __future__ import annotations
 
-import re
+from enum import StrEnum
 from pathlib import Path
 
 import pytest
 import yaml
+from helpers.workflow_contract import (
+    canonical_shell_commands,
+    disables_fail_fast,
+    masks_failure,
+    referenced_need_results,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = PROJECT_ROOT / ".github" / "workflows"
+WORKFLOW_GLOB = "*.yaml"
 
-# `needs.<job>.result` inside a `${{ }}` expression.
-RESULT_REFERENCE = re.compile(r"needs\.([A-Za-z0-9_-]+)\.result")
-# A line that decides the gate: `test "$X" = word`, and nothing after it.
-ENFORCEMENT_LINE = re.compile(r'^\s*test\s+"\$([A-Z_][A-Z0-9_]*)"\s+=\s+\S+\s*$')
+#: The workflow this file's fixtures mutate. The contracts themselves sweep
+#: every workflow; only the mutation cases need to name one.
+CI_WORKFLOW = "ci.yaml"
+#: The aggregating job branch protection requires. Named once, and only the
+#: fixtures use it -- the contracts find gate steps by shape.
+GATE_JOB = "pr-gate"
+
+#: The shell builtin an enforcement comparison is spelled with.
+ENFORCEMENT_COMMAND = "test"
+#: What a `neutralize` mutation appends. `masks_failure` recognizes the whole
+#: family; this is simply the one the fixture writes.
+FAIL_OPEN_SUFFIX = " || true"
+
+
+class Key(StrEnum):
+    """The GitHub workflow keys this contract reads.
+
+    A closed vocabulary of what *this* file depends on, not an attempt to model
+    GitHub's schema. `StrEnum` members are `str`, so mapping access is
+    unchanged and a typo becomes an AttributeError at import instead of a
+    `.get` that quietly returns `None` and makes a contract vacuous.
+    """
+
+    JOBS = "jobs"
+    STEPS = "steps"
+    NEEDS = "needs"
+    ENV = "env"
+    RUN = "run"
+    NAME = "name"
+    IF = "if"
+    CONTINUE_ON_ERROR = "continue-on-error"
+
+
+class Condition(StrEnum):
+    """The two job conditions this contract distinguishes."""
+
+    ALWAYS = "always()"
+    """Required on a gate job: a gate skipped when a dependency fails reports
+    neither success nor failure, which is the one case it exists for."""
+
+    SUCCESS = "${{ success() }}"
+    """What the `skip-gate` mutation substitutes, and what must be rejected."""
 
 
 def _document(name: str) -> dict:
     return yaml.safe_load((WORKFLOWS / name).read_text())
 
 
-def _result_env(step: dict) -> dict[str, str]:
-    """The step's environment names that carry a dependency's result."""
-    return {
-        name: str(value)
-        for name, value in (step.get("env") or {}).items()
-        if RESULT_REFERENCE.search(str(value))
-    }
+def _result_env(step: dict) -> dict[str, frozenset[str]]:
+    """Environment names in `step` that carry a dependency's result.
+
+    The reading of a `${{ }}` belongs to `workflow_contract`, which already
+    owns that syntax for masking; this only decides which env entries count.
+    """
+    found = {}
+    for name, value in (step.get(Key.ENV) or {}).items():
+        referenced = referenced_need_results(value)
+        if referenced:
+            found[name] = referenced
+    return found
 
 
-def _gate_steps() -> list[tuple[str, str, dict, dict, dict[str, str]]]:
+def _gate_steps() -> list[tuple[str, str, dict, dict, dict[str, frozenset[str]]]]:
     """Every (workflow, job name, job, step, result-env) in the repository.
 
     Found by shape, so a second aggregating gate is covered on the day it is
     written rather than the day someone remembers to add it here.
     """
     found = []
-    for path in sorted(WORKFLOWS.glob("*.yaml")):
-        for job_name, job in (_document(path.name).get("jobs") or {}).items():
-            for step in job.get("steps") or []:
+    for path in sorted(WORKFLOWS.glob(WORKFLOW_GLOB)):
+        for job_name, job in (_document(path.name).get(Key.JOBS) or {}).items():
+            for step in job.get(Key.STEPS) or []:
                 if not isinstance(step, dict):
                     continue
                 results = _result_env(step)
                 if results:
                     found.append((path.name, job_name, job, step, results))
     return found
+
+
+def _decides_the_gate(command: tuple[str, ...], results: dict[str, frozenset[str]]) -> bool:
+    """Whether one shell command is a comparison that decides the gate.
+
+    An unrelated `test` in the same script -- a directory probe, a version
+    check -- is not this contract's business, so the command must both be a
+    `test` and mention one of the environment names carrying a dependency's
+    result.
+    """
+    if command[:1] != (ENFORCEMENT_COMMAND,):
+        return False
+    return any(name in token for token in command for name in results)
 
 
 def test_there_is_at_least_one_gate_step() -> None:
@@ -99,31 +162,36 @@ def test_no_gate_step_may_continue_on_error() -> None:
     is a key those assertions never name.
     """
     offenders = [
-        f"{workflow}:{job_name}:{step.get('name', '<unnamed>')}"
+        f"{workflow}:{job_name}:{step.get(Key.NAME, '<unnamed>')}"
         for workflow, job_name, _job, step, _results in _gate_steps()
-        if step.get("continue-on-error") is True
+        if step.get(Key.CONTINUE_ON_ERROR) is True
     ]
     assert not offenders, f"gate steps that cannot fail: {offenders}"
 
 
 def test_no_enforcement_line_is_neutralized() -> None:
-    """Nothing may follow a `test "$RESULT" = ...` inside a gate step.
+    """Nothing may make a `test "$RESULT" = ...` unable to fail its step.
 
-    `|| true`, `|| :`, `; true` and a trailing `&` each leave the literal the
-    doctor contract greps for perfectly intact while removing every effect it
-    has on the job's exit status.
+    `|| true`, `|| :`, `; true` and `set +e` all leave the literal the doctor
+    contract greps for perfectly intact while removing every effect it has on
+    the job's exit status.
+
+    The judgement is `workflow_contract.masks_failure`, not a regex of this
+    file's own: that lexer keeps shell operators as tokens and already
+    normalizes comments, quoting, repeated whitespace and line continuations,
+    so a fail-open suffix cannot hide behind presentation. A second opinion
+    here would be a second thing to keep in step with the first.
     """
     offenders = []
     for workflow, job_name, _job, step, results in _gate_steps():
-        for line in str(step.get("run", "")).splitlines():
-            stripped = line.strip()
-            if not stripped.startswith("test "):
+        for command in canonical_shell_commands(str(step.get(Key.RUN, ""))):
+            if disables_fail_fast(command):
+                offenders.append(f"{workflow}:{job_name}: {' '.join(command)}")
                 continue
-            match = ENFORCEMENT_LINE.match(line)
-            if match is None:
-                referenced = [name for name in results if name in stripped]
-                if referenced:
-                    offenders.append(f"{workflow}:{job_name}: {stripped}")
+            if not _decides_the_gate(command, results):
+                continue
+            if masks_failure(command):
+                offenders.append(f"{workflow}:{job_name}: {' '.join(command)}")
     assert not offenders, f"neutralized enforcement: {offenders}"
 
 
@@ -134,9 +202,9 @@ def test_every_result_a_gate_step_reads_is_a_declared_dependency() -> None:
     it; the comparison downstream just silently stops being about anything.
     """
     for workflow, job_name, job, _step, results in _gate_steps():
-        declared = set(job.get("needs") or [])
-        for name, expression in results.items():
-            for referenced in RESULT_REFERENCE.findall(expression):
+        declared = set(job.get(Key.NEEDS) or [])
+        for name, referenced_jobs in results.items():
+            for referenced in sorted(referenced_jobs):
                 assert referenced in declared, (
                     f"{workflow}:{job_name} reads {name}=needs.{referenced}.result "
                     f"but declares needs: {sorted(declared)}"
@@ -146,9 +214,13 @@ def test_every_result_a_gate_step_reads_is_a_declared_dependency() -> None:
 def test_every_declared_result_is_actually_tested() -> None:
     """Naming a dependency's result and never comparing it gates nothing."""
     for workflow, job_name, _job, step, results in _gate_steps():
-        script = str(step.get("run", ""))
+        commands = canonical_shell_commands(str(step.get(Key.RUN, "")))
         tested = {
-            match.group(1) for match in map(ENFORCEMENT_LINE.match, script.splitlines()) if match
+            name
+            for command in commands
+            if command[:1] == ("test",)
+            for name in results
+            if any(name in token for token in command)
         }
         missing = sorted(set(results) - tested)
         assert not missing, f"{workflow}:{job_name} reads but never tests: {missing}"
@@ -161,40 +233,104 @@ def test_every_job_owning_a_gate_step_runs_when_a_dependency_fails() -> None:
     requiring it either waits forever or treats it as satisfied.
     """
     for workflow, job_name, job, _step, _results in _gate_steps():
-        condition = str(job.get("if", ""))
-        assert "always()" in condition, f"{workflow}:{job_name} has if: {condition!r}"
+        condition = str(job.get(Key.IF, ""))
+        assert Condition.ALWAYS in condition, f"{workflow}:{job_name} has if: {condition!r}"
 
 
 # ---------------------------------------------------------------------------
 # The mutation cases. These are the reason this file exists.
 # ---------------------------------------------------------------------------
 
-NEEDS_LINE = (
-    "    needs: [fast-gate, test-linux, test, test-install, "
-    "docs-build, site-build, release-site-build]\n"
-)
+class Mutation(StrEnum):
+    """The closed set of edits that disable merge protection.
+
+    Each one passed the literal-text contract this file replaces. They are a
+    vocabulary rather than four strings because `_apply` dispatches on them
+    exhaustively: a member added here without a `case` fails loudly instead of
+    falling through to a silently unmutated document.
+    """
+
+    NEUTRALIZE = "neutralize"
+    """`|| true` after each enforcement comparison. The literal a substring
+    contract greps for survives intact; the exit status does not."""
+
+    CONTINUE_ON_ERROR = "continue-on-error"
+    """A key no substring assertion mentions, so text matching cannot see it
+    at all. Makes the deciding step unable to fail its job."""
+
+    DROP_NEED = "drop-need"
+    """Removes a dependency the step still reads, so `needs.<job>.result`
+    becomes the empty string and the comparison stops being about anything."""
+
+    SKIP_GATE = "skip-gate"
+    """`success()` instead of `always()`. The gate is skipped exactly when a
+    dependency failed -- the one case it exists for."""
 
 
-def _apply(text: str, mutation: str) -> str:
-    if mutation == "neutralize":
-        return "\n".join(
-            line + " || true" if ENFORCEMENT_LINE.match(line) else line
-            for line in text.splitlines()
-        )
-    if mutation == "continue-on-error":
-        return text.replace(
-            "      - name: Require all CI jobs\n",
-            "      - name: Require all CI jobs\n        continue-on-error: true\n",
-        )
-    if mutation == "drop-need":
-        return text.replace(
-            NEEDS_LINE,
-            "    needs: [fast-gate, test, test-install, docs-build, "
-            "site-build, release-site-build]\n",
-        )
-    if mutation == "skip-gate":
-        return text.replace("    if: ${{ always() }}\n", "    if: ${{ success() }}\n")
-    raise AssertionError(f"unknown mutation {mutation}")
+class Equivalent(StrEnum):
+    """The closed set of edits GitHub cannot distinguish from the original.
+
+    The half the literal contract got backwards: each of these turned four
+    contracts red while changing nothing that runs.
+    """
+
+    REORDERED_NEEDS = "reordered-needs"
+    BLOCK_STYLE_NEEDS = "block-style-needs"
+    FULL_REFORMAT = "full-reformat"
+
+
+def _apply(document: dict, mutation: Mutation) -> dict:
+    """Break merge protection by editing the parsed document.
+
+    These were text substitutions against literal anchors -- an exact
+    `needs: [...]` line, an exact `- name:` line -- which made the fixtures
+    themselves brittle in precisely the way this file exists to prevent:
+    reformatting `needs:` into block style left the anchors unmatched, the
+    `did not apply` guard fired, and the suite went red over an edit that
+    changes nothing GitHub acts on. Measured, not theorised.
+
+    So every mutation is now derived: the gate job and step are found by shape,
+    and the dropped dependency is whichever one the step actually reads.
+    """
+    jobs = document[Key.JOBS]
+    located = [
+        (job_name, job, index, step)
+        for job_name, job in jobs.items()
+        for index, step in enumerate(job.get(Key.STEPS) or [])
+        if isinstance(step, dict) and _result_env(step)
+    ]
+    assert located, "no gate step to mutate"
+    job_name, job, index, step = located[0]
+    results = _result_env(step)
+
+    match mutation:
+        case Mutation.NEUTRALIZE:
+            job[Key.STEPS][index] = {
+                **step,
+                Key.RUN: "\n".join(
+                    line + FAIL_OPEN_SUFFIX
+                    if line.strip().startswith(f"{ENFORCEMENT_COMMAND} ")
+                    and any(name in line for name in results)
+                    else line
+                    for line in str(step[Key.RUN]).splitlines()
+                )
+                + "\n",
+            }
+        case Mutation.CONTINUE_ON_ERROR:
+            job[Key.STEPS][index] = {**step, Key.CONTINUE_ON_ERROR: True}
+        case Mutation.DROP_NEED:
+            # Whichever dependency the step genuinely reads, so its `.result`
+            # silently becomes the empty string.
+            read = sorted(frozenset().union(*results.values()))
+            assert read, "gate step reads no dependency result"
+            job[Key.NEEDS] = [name for name in job[Key.NEEDS] if name != read[0]]
+        case Mutation.SKIP_GATE:
+            job[Key.IF] = Condition.SUCCESS
+        case _:
+            raise AssertionError(f"unhandled mutation: {mutation}")
+
+    jobs[job_name] = job
+    return document
 
 
 CHECKS = (
@@ -227,40 +363,86 @@ def _contract_accepts(tmp_workflows: Path) -> bool:
         WORKFLOWS = original
 
 
-@pytest.mark.parametrize("mutation", ["neutralize", "continue-on-error", "drop-need", "skip-gate"])
-def test_mutation_is_caught(mutation: str, tmp_path: Path) -> None:
+class _VocabularyDumper(yaml.SafeDumper):
+    """Emit `Key` and `Condition` as the strings they already are.
+
+    `safe_dump` dispatches on exact type, so a `StrEnum` used as a mapping key
+    raises `RepresenterError` even though the member *is* a `str` and every
+    read through `.get(Key.ENV)` works untouched. Registering the representer
+    once here is what lets the mutations write through the same vocabulary they
+    read through, instead of one half of the file reverting to raw literals.
+    """
+
+
+_VocabularyDumper.add_multi_representer(
+    StrEnum, lambda dumper, value: dumper.represent_str(str(value))
+)
+
+
+def _rendered(document: dict, directory: Path) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / CI_WORKFLOW).write_text(
+        yaml.dump(document, Dumper=_VocabularyDumper, sort_keys=False)
+    )
+    return directory
+
+
+@pytest.mark.parametrize("mutation", tuple(Mutation))
+def test_mutation_is_caught(mutation: Mutation, tmp_path: Path) -> None:
     """Each mutation disables merge protection and must be rejected.
 
     All four passed the literal-text contract this file exists to replace. If
     any starts passing here, the contract has regressed to what it replaced.
+
+    Both trees are re-emitted from the parsed document, so the clean one is
+    complete reformat of the real workflow -- different quoting, block style
+    throughout, no comments. Proving it still passes is the false-positive half
+    of this contract, and it costs nothing to assert here.
     """
-    original = (WORKFLOWS / "ci.yaml").read_text()
-    mutated = _apply(original, mutation)
-    assert mutated != original, f"{mutation} did not apply; its anchor text moved"
+    original = _document(CI_WORKFLOW)
+    mutated = _apply(_document(CI_WORKFLOW), mutation)
+    assert mutated != original, f"{mutation} changed nothing"
 
-    clean = tmp_path / "clean"
-    clean.mkdir()
-    (clean / "ci.yaml").write_text(original)
-    assert _contract_accepts(clean), "the real ci.yaml must pass"
-
-    broken = tmp_path / "broken"
-    broken.mkdir()
-    (broken / "ci.yaml").write_text(mutated)
-    assert not _contract_accepts(broken), f"{mutation} was not caught"
+    assert _contract_accepts(_rendered(original, tmp_path / "clean")), (
+        "a reformatted but semantically identical ci.yaml must pass"
+    )
+    assert not _contract_accepts(_rendered(mutated, tmp_path / "broken")), (
+        f"{mutation} was not caught"
+    )
 
 
-@pytest.mark.parametrize("style", ["block", "reordered"])
-def test_equivalent_yaml_is_not_a_failure(style: str) -> None:
-    """Reformatting `needs:` changes nothing GitHub acts on.
+@pytest.mark.parametrize("style", tuple(Equivalent))
+def test_equivalent_yaml_is_not_a_failure(style: Equivalent, tmp_path: Path) -> None:
+    """An edit GitHub cannot distinguish from the original must stay green.
 
-    Both spellings broke four literal contracts. A contract reading the parsed
-    list as a set cannot tell them apart, which is the correct answer.
+    This is the half the literal-text contract got backwards, and it is worth
+    a real assertion rather than a round-trip of a fragment. Reordering
+    `needs:` or writing it in block style each turned four contracts red while
+    changing nothing that runs; `full-reformat` re-emits the entire workflow,
+    which drops every comment and rewrites all quoting and flow style.
+
+    A false red here is not harmless. It trains people to edit the workflow and
+    the contract together without reading either, which is how a real
+    regression gets waved through.
     """
-    required = set(_document("ci.yaml")["jobs"]["pr-gate"]["needs"])
+    document = _document(CI_WORKFLOW)
+    gate = document[Key.JOBS][GATE_JOB]
 
-    if style == "block":
-        rendered = yaml.safe_load("needs:\n" + "".join(f"  - {job}\n" for job in sorted(required)))
-    else:
-        rendered = yaml.safe_load(f"needs: [{', '.join(sorted(required, reverse=True))}]")
+    match style:
+        case Equivalent.REORDERED_NEEDS:
+            gate[Key.NEEDS] = list(reversed(gate[Key.NEEDS]))
+        case Equivalent.BLOCK_STYLE_NEEDS:
+            # `safe_dump` emits block style for every sequence, so rendering is
+            # the mutation; asserting the parse makes that explicit rather than
+            # incidental.
+            rendered = yaml.dump({Key.NEEDS: gate[Key.NEEDS]}, Dumper=_VocabularyDumper)
+            assert set(yaml.safe_load(rendered)[Key.NEEDS]) == set(gate[Key.NEEDS])
+        case Equivalent.FULL_REFORMAT:
+            # Rendering alone drops every comment and rewrites all quoting.
+            pass
+        case _:
+            raise AssertionError(f"unhandled equivalence: {style}")
 
-    assert set(rendered["needs"]) == required
+    assert _contract_accepts(_rendered(document, tmp_path / style)), (
+        f"{style} changes nothing GitHub acts on and must not fail"
+    )
