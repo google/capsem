@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,17 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPO_ROOT / "crates" / "capsem" / "build.rs"
 PROVENANCE_CHECK = REPO_ROOT / "scripts" / "check-build-provenance.sh"
+
+
+def test_release_profile_keeps_codegen_parallel_without_weakening_artifacts() -> None:
+    release = tomllib.loads((REPO_ROOT / "Cargo.toml").read_text())["profile"]["release"]
+
+    assert "codegen-units" not in release, (
+        "the Cargo release default partitions codegen for parallel execution; "
+        "forcing one unit serialized the largest package builds on 16-core hosts"
+    )
+    assert release["lto"] == "thin"
+    assert release["strip"] == "symbols"
 
 
 def _run(
