@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The sealed install-image smoke no longer requires the asset-only CycloneDX
+  generator from the host builder. The digest-verified asset-tools helper is
+  again the single owner, so install qualification cannot fail on a tool its
+  domain neither installs nor uses.
+
 - CI and release workflow enforcement is now a structurally parsed fast-gate
   inventory instead of a spelling-sensitive grep. All 12 `just` edges reject
   skipped jobs/steps, ignored failures, shell masks, missing commands, and

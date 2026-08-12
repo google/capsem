@@ -1173,21 +1173,17 @@ def test_install_source_image_prebuilds_fresh_cli_before_sealed_runtime() -> Non
     assert '["cargo", "build", "-p", "capsem"]' not in tests
 
 
-def test_local_linux_preflight_contains_asset_ci_release_tools() -> None:
-    """The builder image pins its SBOM tool, and the preflight proves it runs."""
+def test_install_preflight_does_not_claim_asset_only_cdxgen() -> None:
+    """The install rail cannot inherit an asset materializer by accident."""
     host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+    asset_tools = (PROJECT_ROOT / "docker/Dockerfile.asset-tools").read_text()
     preflight = _planned("install-image")
-    order = _gate_order()
 
-    assert "@cyclonedx/cdxgen@12.7.0" in host_builder
-    assert "@cyclonedx/cdxgen@latest" not in host_builder
-    assert "cdxgen --version" in preflight
-
-    # The builder image is a step ahead of the preflight rather than a recipe
-    # the preflight calls -- `just _build-host-image` never existed.
-    from capsem.gate import hostimage
-
-    assert _at(order, hostimage.STEP) < _at(order, "install.materialize")
+    assert "cdxgen" not in host_builder
+    assert "cdxgen --version" not in preflight
+    assert "CDXGEN_SHA256" in asset_tools
+    assert "sha256sum -c -" in asset_tools
+    assert "cdxgen --version" in asset_tools
 
 
 def test_cross_arch_tauri_swap_covers_every_native_dev_package() -> None:

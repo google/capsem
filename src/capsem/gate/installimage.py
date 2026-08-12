@@ -75,7 +75,7 @@ def _smoke(runner: Runner, config: GateConfig, *, image: str) -> None:
     names = config.environment.install
     python = settings.venv_python
     command = (
-        "set -e; sudo -n true; cd /src; cdxgen --version; "
+        "set -e; sudo -n true; cd /src; "
         "source /src/scripts/doctor-linux.sh; linux_musl_toolchain_available; "
         f"{python} -m pytest --version; "
         f"{settings.source_cli} version; "
