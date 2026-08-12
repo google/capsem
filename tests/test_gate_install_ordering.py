@@ -353,7 +353,10 @@ def test_a_release_lane_stages_verified_inputs_and_authors_the_exact_package_gra
     assert runner.matching(r"cp -R .*assets/\.")
     assert not runner.ran(r"stage-release-test-inputs\.py")
     assert runner.ran(r"serve-release-test-root\.py")
-    assert runner.ran(r"verify-release-inputs\.py")
+    assert len(runner.matching(r"verify-release-inputs\.py")) == 2, (
+        "the fetched graph and input report must be rehashed once on the host "
+        "and again through the sealed container's read-only mount"
+    )
     assert runner.ran(r"install-manifest-request\.sh write")
     assert runner.ran(r"assets channel build")
     assert runner.ran(r"assets channel record-binary")

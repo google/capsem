@@ -1125,6 +1125,43 @@ def test_stages_every_verified_profile_image_and_exact_config(
         assert staged.read_bytes() == payload
 
 
+def test_selected_install_transport_keeps_the_verified_source_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The immutable input report, not generated file URLs, binds its bytes.
+
+    The hosted install lane fetches and verifies the public release graph into
+    ``inputs/``. Profile staging rewrites a separate runtime projection to its
+    local immutable payloads. Requiring the original graph itself to contain
+    those generated URLs rejected the real stable channel only after the
+    package and sealed install image had spent nearly an hour building.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate.content import ProfileContent, SelectedInstallContent
+
+    manifest, _ = _write_manifest(tmp_path)
+    _add_distinct_profile(manifest, tmp_path)
+    root = tmp_path / "selected-content"
+    inputs = root / "inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
+    original_manifest = (inputs / "manifest.json").read_bytes()
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+    assets = root / "assets"
+    config_root = root / "config"
+
+    staged_manifest = STAGE.stage_profiles(inputs, assets, config_root, ROOT / "config")
+    config_manifest = config_root / "assets/manifest.json"
+    config_manifest.parent.mkdir(parents=True)
+    config_manifest.write_bytes(staged_manifest.read_bytes())
+
+    config = gate_config.load(ROOT)
+    selected = SelectedInstallContent(ProfileContent.isolated(config, root))
+    selected.require_complete(config, arches=(config.architectures["x86_64"],))
+
+    assert (inputs / "manifest.json").read_bytes() == original_manifest
+    assert b"file://" in staged_manifest.read_bytes()
+
+
 def test_stages_manifest_owned_profile_root_payload_without_checkout_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

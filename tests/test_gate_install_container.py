@@ -210,11 +210,14 @@ def _complete_selected_content(tmp_path: Path) -> SelectedInstallContent:
     selected = SelectedInstallContent(ProfileContent.isolated(CONFIG, root))
     inputs = selected.inputs(CONFIG)
     inputs.mkdir(parents=True)
-    payload = inputs / "payload.bin"
-    payload.write_bytes(b"immutable")
     selected_manifest = {
         "channel": "stable",
-        "profiles": {"code": {"architectures": [], "url": payload.resolve().as_uri()}},
+        "profiles": {
+            "code": {
+                "architectures": [],
+                "url": "https://release.capsem.test/profiles/code/profile.toml",
+            }
+        },
     }
     runtime_manifest = {
         "assets": {
@@ -240,20 +243,16 @@ def _complete_selected_content(tmp_path: Path) -> SelectedInstallContent:
     return selected
 
 
-def test_selected_release_transport_refuses_payload_outside_its_paired_root(
+def test_selected_release_transport_accepts_the_published_graph_for_shared_verification(
     tmp_path: Path,
 ) -> None:
     selected = _complete_selected_content(tmp_path)
-    outside = tmp_path / "outside.bin"
-    outside.write_bytes(b"not selected")
     manifest = selected.inputs(CONFIG) / CONFIG.install.manifest_name
-    document = json.loads(manifest.read_text())
-    document["profiles"]["code"]["url"] = outside.resolve().as_uri()
-    encoded = json.dumps(document).encode()
-    manifest.write_bytes(encoded)
 
-    with pytest.raises(GateError, match="escapes its content root"):
-        selected.require_complete(CONFIG, arches=(CONFIG.host_arch(),))
+    selected.require_complete(CONFIG, arches=(CONFIG.host_arch(),))
+
+    document = json.loads(manifest.read_text())
+    assert document["profiles"]["code"]["url"].startswith("https://release.capsem.test/")
 
 
 def test_selected_release_transport_is_distinct_from_the_runtime_projection(

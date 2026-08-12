@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import unquote, urlparse
 
 from .errors import GateError
 
@@ -132,7 +131,7 @@ class SelectedInstallContent:
         return self.content.root / config.install.selected_inputs_dir
 
     def require_complete(self, config, *, arches: tuple) -> None:
-        """Prove the paired projection and its immutable offline transport."""
+        """Prove the paired projection and require its verified source graph."""
         self.content.require_complete(config, arches=arches)
         relative = Path(config.install.selected_inputs_dir)
         if not _relative(relative):
@@ -142,47 +141,22 @@ class SelectedInstallContent:
             if not (inputs / name).is_file():
                 raise GateError(f"selected release input is missing: {inputs / name}")
 
-        # The mounted runtime projection is deliberately legacy-shaped so the
-        # installed service can consume it, while `inputs/manifest.json` is the
-        # immutable release graph whose URLs identify the pulled byte cohort.
-        # They describe the same cohort but are not byte-identical formats.
+        # Keep the fetched graph byte-for-byte. `release-inputs.json` binds its
+        # public URLs to safe local paths and immutable digests; the shared
+        # verifier checks that report on the host and again inside the sealed
+        # container before any byte is consumed. Profile staging rewrites a
+        # separate runtime projection, so requiring generated file:// URLs in
+        # this source graph rejects the real hosted channel.
         manifest = inputs / config.install.manifest_name
         try:
             document = json.loads(manifest.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             raise GateError(f"selected install manifest is invalid: {manifest}: {error}") from None
-        root = self.content.root.resolve()
-        urls = tuple(url for url in _urls(document) if urlparse(url).scheme == "file")
-        if not urls:
-            raise GateError(f"selected install manifest has no immutable payload URLs: {manifest}")
-        for url in urls:
-            parsed = urlparse(url)
-            if parsed.netloc:
-                raise GateError(f"selected install payload has a remote file authority: {url}")
-            path = Path(unquote(parsed.path))
-            try:
-                path.resolve().relative_to(root)
-            except (OSError, ValueError):
-                raise GateError(
-                    f"selected install payload escapes its content root: {path}"
-                ) from None
-            if not path.is_file():
-                raise GateError(f"selected install payload is missing: {path}")
+        if not isinstance(document, dict):
+            raise GateError(f"selected install manifest is not a JSON object: {manifest}")
 
 
 InstallContent = LocalInstallContent | SelectedInstallContent
-
-
-def _urls(value):
-    if isinstance(value, dict):
-        for key, child in value.items():
-            if key == "url" and isinstance(child, str):
-                yield child
-            else:
-                yield from _urls(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _urls(child)
 
 
 def _declared_arches(path: Path, payload: bytes) -> frozenset[str]:

@@ -54,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Selected install qualification now keeps the fetched release graph intact
+  and relies on its twice-executed immutable input report for local byte
+  binding. Hosted stable/nightly manifests are no longer mistaken for a
+  missing offline transport merely because their authoritative URLs remain
+  public while a separate runtime projection is staged locally.
 - Successful focused continuations now retain an explicitly reused private
   prefix after exporting their evidence. A diagnostic `--prefix/--from` slice
   can no longer delete the exact candidate workspace needed by the next
