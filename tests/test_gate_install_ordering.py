@@ -556,6 +556,7 @@ def test_a_host_that_boots_a_guest_runs_the_complete_glowup(tmp_path: Path) -> N
     InstallProof(runner, CONFIG).prove_glowup("/src/x.deb", boots_a_guest=True)
 
     assert runner.ran(r"local-release-glowup\.py")
+    assert runner.ran(r"--profile-revision-policy selected-input")
     assert not runner.ran(r"--skip-install")
 
 

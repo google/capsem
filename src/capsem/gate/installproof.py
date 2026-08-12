@@ -219,7 +219,8 @@ class InstallProof:
             f'--input-deb "{package}" '
             f'--bin-dir {self._settings.bin_dir} --assets-dir "{self._layout.assets}" '
             f'--config-root "{self._layout.config}" '
-            f"--work-dir {self._layout.glowup} --package-ready"
+            f"--work-dir {self._layout.glowup} --package-ready "
+            f"--profile-revision-policy {self._settings.profile_revision_policy.value}"
         )
         self._docker.shell(
             self._container,

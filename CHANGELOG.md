@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Installed-package glow-up now imports immutable selected profiles with the
+  typed legacy-revision compatibility policy while keeping all new public
+  profile authoring on strict SemVer.
 - Diagnostic continuation now re-records source identity after refreshing a
   retained prefix while carrying only steps whose typed resume policy permits
   reuse. The final source guard can no longer spend hours testing the refreshed

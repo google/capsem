@@ -908,6 +908,32 @@ def test_release_pairing_cli_is_all_or_nothing() -> None:
         module.validate_exact_release_pairing(partial)
 
 
+def test_local_channel_import_uses_the_typed_selected_revision_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Public legacy revisions are imported, never accepted for new authoring."""
+    module = _load_local_glowup()
+    commands: list[list[str]] = []
+    monkeypatch.setattr(module, "run", lambda command, **_kwargs: commands.append(command))
+
+    module.build_channel(
+        tmp_path / "capsem-admin",
+        tmp_path / "manifest.json",
+        tmp_path / "assets",
+        tmp_path / "profiles",
+        "stable",
+        tmp_path / "dist",
+        "http://127.0.0.1:31415",
+        profile_revision_policy=module.ProfileRevisionPolicy.SELECTED_INPUT,
+    )
+
+    assert commands and commands[0][-2:] == [
+        "--profile-revision-policy",
+        "selected-input",
+    ]
+
+
 def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
