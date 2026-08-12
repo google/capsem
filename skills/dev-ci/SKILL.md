@@ -172,6 +172,13 @@ Stable has no scheduled trigger. Neither scheduler nor operators dispatch
 
 ## Editing workflows
 
+- Every workflow step that invokes `just` is a declared enforcement edge in
+  `tests/test_exit_status_integrity.py`. The contract parses YAML and shell
+  argv structurally: equivalent quoting, whitespace, comments, and line
+  continuations remain green, while `continue-on-error`, `|| true`, disabled
+  steps/jobs, command removal, and unclassified new `just` steps fail in the
+  fast source-contract module. Extend that one inventory; do not add a local
+  string-grep approximation.
 - `pr-gate` must list every job in `needs:` and test each result explicitly;
   a new job that isn't wired into `pr-gate` is not required and will be
   silently skipped by branch protection.

@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 import yaml
 from helpers.gate import RecordingRunner
+from helpers.workflow_contract import canonical_shell_commands
 
 from capsem.builder import assettools
 from capsem.builder import docker as asset_docker
@@ -191,16 +192,22 @@ def test_profile_release_asset_job_has_no_parallel_package_authority() -> None:
         (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(encoding="utf-8")
     )
     steps = workflow["jobs"]["build-assets"]["steps"]
-    commands = "\n".join(str(item["run"]) for item in steps if "run" in item)
+    commands = tuple(
+        command
+        for item in steps
+        if isinstance(item, dict) and isinstance(item.get("run"), str)
+        for command in canonical_shell_commands(item["run"])
+    )
+    tokens = tuple(token for command in commands for token in command)
 
     # The fresh runner materializes only the locked Python environment needed
     # to invoke the gate. Guest Rust, EROFS, cdxgen, and validation all belong
     # to the gate's config-owned helpers; workflow-local apt/npm/cargo/brew
     # commands would be a second authority and must change this exact counter.
-    assert Counter(TOOL_PATTERN.findall(commands)) == Counter({"uv": 1})
-    assert "uv sync --frozen" in commands
-    assert "CAPSEM_CDXGEN_CMD" not in commands
-    assert "musl-gcc" not in commands
+    assert Counter(token for token in tokens if token in MUTABLE_TOOLS) == Counter({"uv": 1})
+    assert ("uv", "sync", "--frozen") in commands
+    assert "CAPSEM_CDXGEN_CMD" not in tokens
+    assert "musl-gcc" not in tokens
 
 
 def test_asset_tool_identity_changes_with_dockerfile_and_config(tmp_path: Path) -> None:

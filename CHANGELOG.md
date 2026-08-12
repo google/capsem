@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CI and release workflow enforcement is now a structurally parsed fast-gate
+  inventory instead of a spelling-sensitive grep. All 12 `just` edges reject
+  skipped jobs/steps, ignored failures, shell masks, missing commands, and
+  unclassified additions; equivalent YAML/shell presentation remains valid.
+  The guard also exposed and fixed a Rust coverage pipeline that could lose
+  `cargo llvm-cov report`'s failure status through `tee`.
+
 - VM asset builds now inventory every mutable package/fetch tool in an
   executable fast-gate guardrail. Guest Rust always compiles through its
   locked, network-denied architecture helper; EROFS and CycloneDX run from one

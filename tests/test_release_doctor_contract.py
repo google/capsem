@@ -18,6 +18,8 @@ from typing import ClassVar
 
 import pytest
 import variables
+import yaml
+from helpers.workflow_contract import assert_unmasked_step
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -639,27 +641,24 @@ def test_macos_ci_installs_release_site_dependencies_before_integration() -> Non
 
 
 def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
-    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    workflow = yaml.safe_load(
+        (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text(encoding="utf-8")
+    )
 
-    for step_name in [
-        "Unit tests (KVM backend) with coverage",
-        "Unit tests with coverage",
-        "Integration tests with coverage",
-        "Frontend type-check, test, and build",
-        "Python schema tests with coverage",
-        "Python integration tests (non-VM suites)",
-        "Verify all integration test imports",
-        "Schema drift check",
-        "Run install e2e tests",
-        "Build docs",
-        "Build site",
-    ]:
-        assert f"- name: {step_name}" in workflow
-        step = workflow.split(f"- name: {step_name}", maxsplit=1)[1].split(
-            "\n      - name:", maxsplit=1
-        )[0]
-        assert "|| true" not in step, step_name
-        assert "continue-on-error: true" not in step, step_name
+    for job_name, step_name in (
+        ("test-linux", "Unit tests (KVM backend) with coverage"),
+        ("test", "Unit tests with coverage"),
+        ("test", "Integration tests with coverage"),
+        ("test", "Frontend type-check, test, and build"),
+        ("test", "Python schema tests with coverage"),
+        ("test", "Python integration tests (non-VM suites)"),
+        ("test", "Verify all integration test imports"),
+        ("test", "Schema drift check"),
+        ("test-install", "Run install e2e tests"),
+        ("docs-build", "Build docs"),
+        ("site-build", "Build site"),
+    ):
+        assert_unmasked_step("ci.yaml", workflow, job_name, step_name)
 
 
 def test_release_channel_contract_suite_is_in_pr_and_local_gates() -> None:
