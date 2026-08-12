@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from . import crossexec, initrd
 from .actions import Run
+from .assetcondition import AssetRecovery
+from .assetcondition import missing as missing
 from .command import GateCommand
-from .config import Arch, GateConfig
+from .config import GateConfig
 from .errors import GateError
 from .execution import Step, step
 from .imagebases import (
@@ -24,21 +28,6 @@ def profiles(config: GateConfig) -> list[str]:
     if not found:
         raise GateError(f"no profiles under {config.imagebuild.profiles_glob}")
     return found
-
-
-def missing(config: GateConfig, arch: Arch) -> list[str]:
-    """Which required artifacts this architecture's tree does not have.
-
-    Present *and* non-empty. `is_file()` alone accepted a zero-length
-    `vmlinuz`, which is exactly what a build that ran out of disk leaves --
-    and this is the check meant to notice.
-    """
-    tree = config.path(config.imagebuild.output) / arch.name
-    return [
-        name
-        for name in config.artifacts.bootable
-        if not (tree / name).is_file() or (tree / name).stat().st_size == 0
-    ]
 
 
 def build_argv(
@@ -196,57 +185,77 @@ def check_assets(
 ) -> tuple[Step, ...]:
     """Build this host's VM assets if they are not already there.
 
-    Returns the steps a caller should wait for, which is empty when the assets
-    are already present -- so composing this into a larger plan sequences the
-    next phase behind whatever actually ran, and behind nothing when nothing did.
+    The graph is invariant: each action checks asset presence only when it
+    executes. A warm checkout therefore does no recovery work without hiding
+    labels that the private prefix may need to resume.
     """
     arch = config.host_arch()
-    if not missing(config, arch):
-        return after
-
+    recovery = AssetRecovery(config, arch)
     phase = plan.phase("assets")
     names = (arch.name,)
     rust_builders = required_rust_builder_names(config, names)
     bases = phase.add(
-        step(
-            "base-images",
-            Prefetch(names, rust_names=rust_builders, asset_tools=True),
-            contends=(config.exclusive("docker_daemon"),),
+        _when_missing(
+            recovery,
+            step(
+                "base-images",
+                Prefetch(names, rust_names=rust_builders, asset_tools=True),
+                contends=(config.exclusive("docker_daemon"),),
+            ),
         ),
         after=after,
     )
-    checked = phase.add(doctor(config), after=(bases,))
+    checked = phase.add(_when_missing(recovery, doctor(config)), after=(bases,))
     ready = phase.add(
-        step(
-            "guest-execution",
-            crossexec.Require(names),
-            contends=(config.exclusive("docker_daemon"),),
+        _when_missing(
+            recovery,
+            step(
+                "guest-execution",
+                crossexec.Require(names),
+                contends=(config.exclusive("docker_daemon"),),
+            ),
         ),
         after=(checked,),
     )
     if rust_builders:
         ready = phase.add(
-            step(
-                "guest-builders",
-                MaterializeRustBuilders(rust_builders),
-                contends=(config.exclusive("docker_daemon"),),
+            _when_missing(
+                recovery,
+                step(
+                    "guest-builders",
+                    MaterializeRustBuilders(rust_builders),
+                    contends=(config.exclusive("docker_daemon"),),
+                ),
             ),
             after=(ready,),
         )
     ready = phase.add(
-        step(
-            "asset-tools",
-            MaterializeAssetTools(),
-            contends=(config.exclusive("docker_daemon"),),
+        _when_missing(
+            recovery,
+            step(
+                "asset-tools",
+                MaterializeAssetTools(),
+                contends=(config.exclusive("docker_daemon"),),
+            ),
         ),
         after=(ready,),
     )
     return tuple(
         phase.add(
-            build(config, profile=profile, arch=arch.name, template="all"),
+            _when_missing(
+                recovery,
+                build(config, profile=profile, arch=arch.name, template="all"),
+            ),
             after=(ready,),
         )
         for profile in profiles(config)
+    )
+
+
+def _when_missing(recovery: AssetRecovery, subject: Step) -> Step:
+    return replace(
+        subject,
+        actions=tuple(recovery.when(action) for action in subject.actions),
     )
 
 
