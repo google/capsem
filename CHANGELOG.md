@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   joins `broad_ignores` so the suite has one owner rather than two, and
   `tests/citadel/test_guard_scheduling.py` fails if it is ever moved back
   behind the expensive work.
+- The gate's fail-open guard is stated as a whitelist, because the blacklist
+  lost. `masks_failure` enumerated ways to neutralise an enforcement check, and
+  an adversarial pass walked five past it: `; :`, a trailing `&`, `| cat`,
+  `set +ex`, and `set +o errexit` -- each leaving the literal a substring
+  contract greps for perfectly intact. `is_bare_command` inverts the rule: an
+  enforcement comparison must be the whole command, so any token that could
+  consume its exit status fails, predicted or not. `disables_fail_fast` now
+  matches any `set` with a `+` option rather than exactly `set +e`. All
+  fourteen evasions ship as parametrized cases in the citadel guard, alongside
+  four legitimate shapes that must stay green.
 - The workflow shell tokenizer scans characters instead of lines, and its
   grammar is written down. `shlex` was applied per physical line, which is
   wrong because a shell word may contain a newline: four of the 184 `run:`
@@ -31,7 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   construction. It also fixes redirections -- `2>&1` was three tokens, read as
   a background `&`. Validated across 231 scripts (every `run:` step plus 6,821
   lines of tracked shell) with zero unreadable and identical fail-open verdicts
-  wherever the old lexer could read at all. An unterminated quote raises
+  wherever the old lexer could read at all. Pointing it at Dockerfile `RUN`
+  bodies then found a third bug: `$( )` is its own quoting context, and the
+  scanner was closing an outer double quote on the first quote inside a sed
+  script. The corpus now covers all three shell surfaces -- 240 sources --
+  and each found a bug the others did not. An unterminated quote raises
   `UnterminatedQuote` rather than returning nothing, so a caller cannot read
   "could not be read" as "nothing to see".
 - Shell scripts are linted. Python has Ruff and strict Ty, Rust has Clippy with

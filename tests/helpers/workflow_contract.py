@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any
 
-from .shelltokens import tokenize
+from .shelltokens import OPERATORS, REDIRECTS, tokenize
 
 _CONTINUATION = re.compile(r"\\\r?\n")
 _GITHUB_EXPRESSION = re.compile(r"\$\{\{\s*(.*?)\s*}}")
@@ -114,8 +114,38 @@ def masks_failure(command: tuple[str, ...]) -> bool:
 
 
 def disables_fail_fast(command: tuple[str, ...]) -> bool:
-    """`set +e` leaves every later command's status advisory."""
-    return command[:2] == ("set", "+e")
+    """Whether a command turns off the shell's exit-on-error behaviour.
+
+    Any `set` carrying a `+` option, not the exact `set +e` this used to match.
+    An adversarial pass walked `set +ex` and `set +o errexit` straight past that
+    equality while doing the same thing.
+    """
+    if command[:1] != ("set",):
+        return False
+    return any(argument.startswith("+") for argument in command[1:])
+
+
+#: Every token that can change how a command's exit status is consumed.
+STATUS_CONSUMING = frozenset(OPERATORS) | frozenset(REDIRECTS)
+
+
+def is_bare_command(command: tuple[str, ...]) -> bool:
+    """Whether a command stands alone, with nothing consuming its status.
+
+    A whitelist, deliberately, and the reason is measured. `masks_failure`
+    enumerates ways to neutralise a check, and enumerating was losing: an
+    adversarial pass got five past it -- `; :`, a trailing `&`, `| cat`,
+    `set +ex`, `set +o errexit` -- and nothing suggests that list was complete.
+
+    Inverting it is complete by construction. An enforcement comparison must be
+    the whole command: no operator, no redirection, nothing after it. Anything
+    that changes how its exit status is read appears as a token here, whether
+    or not anyone predicted that spelling.
+
+    `masks_failure` stays for `assert_unmasked_step`, which asks a different
+    question of whole declared `just` steps rather than of one comparison.
+    """
+    return not any(token in STATUS_CONSUMING for token in command)
 
 
 def assert_unmasked_step(

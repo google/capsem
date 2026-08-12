@@ -1,8 +1,8 @@
 """The shell tokenizer's grammar, case by case.
 
-Each case is a line of the grammar in `helpers/shelltokens.py`. The two marked
-REGRESSION are the bugs the previous line-based implementation had, kept as
-cases so a future rewrite has to answer them.
+Each case is a line of the grammar in `helpers/shelltokens.py`. The three marked
+REGRESSION are bugs this tokenizer actually had, kept as cases so a future
+rewrite has to answer them.
 """
 
 from __future__ import annotations
@@ -42,6 +42,15 @@ CASES: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
     ("append redirect", "cmd >>log", (("cmd", ">>", "log"),)),
     ("here-string", 'cmd <<<"x"', (("cmd", "<<<", "x"),)),
     ("redirect then pipe", "cmd 2>&1 | tee f", (("cmd", "2>&1", "|", "tee", "f"),)),
+    # REGRESSION: `$( )` is its own quoting context. The scanner closed the
+    # outer double quote on the first quote inside a sed script, which only
+    # showed up when the corpus grew to include Dockerfile RUN bodies.
+    (
+        "REGRESSION: quotes inside command substitution",
+        """x="$(sed -n 's/a "b" c/d/p' f)" """,
+        (('x=$(sed -n \'s/a "b" c/d/p\' f)',),),
+    ),
+    ("nested command substitution", "x=$(a $(b) c)", (("x=$(a $(b) c)",),)),
     (
         "github expression is one token",
         'X="${{ needs.a.result }}"',
@@ -75,12 +84,20 @@ def test_unterminated_quote_refuses_rather_than_guessing(script: str) -> None:
         tokenize(script)
 
 
-def test_every_tracked_script_and_workflow_step_tokenizes() -> None:
-    """The corpus, not a fixture: 46 shell scripts and every `run:` step.
+def test_every_shell_surface_in_the_repository_tokenizes() -> None:
+    """The corpus, not a fixture.
 
-    The previous implementation raised on four of them, all in release.yaml.
+    All three surfaces that carry shell: every workflow `run:` step, every
+    tracked `.sh` file, and every Dockerfile `RUN` body. One module reads all
+    of them, so a construct that appears in any one is caught here rather than
+    when a guard is later pointed at that surface.
+
+    Each surface found a distinct bug the others did not: `run:` steps found
+    line-based lexing, the shell scripts found `2>&1`, and the Dockerfiles
+    found command substitution.
     """
     import pathlib
+    import re
     import subprocess
 
     import yaml
@@ -102,7 +119,15 @@ def test_every_tracked_script_and_workflow_step_tokenizes() -> None:
     ).stdout.split()
     sources.extend((name, (root / name).read_text()) for name in listed)
 
-    assert len(sources) > 200, "corpus looks truncated; this would pass vacuously"
+    dockerfiles = list((root / "docker").glob("Dockerfile*"))
+    dockerfiles += list((root / "config/docker").glob("*.j2"))
+    for path in sorted(dockerfiles):
+        joined = re.findall(r"^RUN\s+((?:.*\\\n)*.*)", path.read_text(), re.M)
+        body = "\n".join(run.replace("\\\n", " ") for run in joined)
+        if body.strip():
+            sources.append((path.name, body))
+
+    assert len(sources) > 230, "corpus looks truncated; this would pass vacuously"
     unreadable = []
     for where, script in sources:
         try:

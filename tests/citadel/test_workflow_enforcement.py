@@ -31,7 +31,7 @@ import yaml
 from helpers.workflow_contract import (
     canonical_shell_commands,
     disables_fail_fast,
-    masks_failure,
+    is_bare_command,
     referenced_need_results,
 )
 
@@ -184,17 +184,18 @@ def test_no_gate_step_may_continue_on_error() -> None:
 
 
 def test_no_enforcement_line_is_neutralized() -> None:
-    """Nothing may make a `test "$RESULT" = ...` unable to fail its step.
+    """An enforcement comparison must be the whole command.
 
-    `|| true`, `|| :`, `; true` and `set +e` all leave the literal the doctor
-    contract greps for perfectly intact while removing every effect it has on
-    the job's exit status.
+    Stated as a whitelist because the blacklist lost. Enumerating neutralising
+    spellings -- `|| true`, `; true`, `set +e` -- let five evasions through an
+    adversarial pass: `; :`, a trailing `&`, `| cat`, `set +ex`, and
+    `set +o errexit`. Every one leaves the literal a substring contract greps
+    for perfectly intact.
 
-    The judgement is `workflow_contract.masks_failure`, not a regex of this
-    file's own: that lexer keeps shell operators as tokens and already
-    normalizes comments, quoting, repeated whitespace and line continuations,
-    so a fail-open suffix cannot hide behind presentation. A second opinion
-    here would be a second thing to keep in step with the first.
+    `is_bare_command` inverts it: any token that could consume the exit status
+    is a failure, predicted or not. Tokens come from
+    `workflow_contract.canonical_shell_commands`, which scans characters and
+    keeps operators separate, so nothing hides behind presentation.
     """
     offenders = []
     for workflow, job_name, _job, step, results in _gate_steps():
@@ -204,7 +205,9 @@ def test_no_enforcement_line_is_neutralized() -> None:
                 continue
             if not _decides_the_gate(command, results):
                 continue
-            if masks_failure(command):
+            # Whitelist: the comparison must be the whole command. Enumerating
+            # ways to neutralise it lost five evasions to an adversarial pass.
+            if not is_bare_command(command):
                 offenders.append(f"{workflow}:{job_name}: {' '.join(command)}")
     assert not offenders, (
         WORKFLOW_ENFORCEMENT_RATIONALE + f"\nneutralized enforcement: {offenders}"
@@ -469,4 +472,71 @@ def test_equivalent_yaml_is_not_a_failure(style: Equivalent, tmp_path: Path) -> 
 
     assert _contract_accepts(_rendered(document, tmp_path / style)), (
         f"{style} changes nothing GitHub acts on and must not fail"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Adversarial cases. These are the reason the rule is a whitelist.
+# ---------------------------------------------------------------------------
+
+#: Every spelling that leaves `test "$R" = success` textually intact while the
+#: shell stops letting it fail the step. Five of these -- `; :`, the trailing
+#: `&`, the pipe, `set +ex`, `set +o errexit` -- walked past the enumerate-the-
+#: bad-spellings predicate this file used to rely on. They are kept as cases
+#: rather than prose because a list of known evasions in a comment protects
+#: nothing.
+EVASIONS: tuple[tuple[str, str], ...] = (
+    ("or-true", 'test "$R" = success || true'),
+    ("or-true-unspaced", 'test "$R" = success ||true'),
+    ("or-noop", 'test "$R" = success || :'),
+    ("or-exit-zero", 'test "$R" = success || exit 0'),
+    ("and-true", 'test "$R" = success && true'),
+    ("semicolon-true", 'test "$R" = success ; true'),
+    ("semicolon-noop", 'test "$R" = success ; :'),
+    ("backgrounded", 'test "$R" = success &'),
+    ("piped", 'test "$R" = success | cat'),
+    ("status-redirected", 'test "$R" = success > /dev/null'),
+    ("set-plus-e", 'set +e\ntest "$R" = success'),
+    ("set-plus-ex", 'set +ex\ntest "$R" = success'),
+    ("set-plus-o-errexit", 'set +o errexit\ntest "$R" = success'),
+    ("continuation-or-true", 'test "$R" = success \\\n  || true'),
+)
+
+#: Shapes that are legitimate and must stay green. A guard that flags these
+#: gets deleted the first time it blocks something reasonable.
+PERMITTED: tuple[tuple[str, str], ...] = (
+    ("bare comparison", 'test "$R" = success'),
+    ("inside an if", 'if [ "$W" = true ]; then\n  test "$R" = skipped\nfi'),
+    ("unrelated fallback", "ls foo || echo missing"),
+    ("unrelated redirect", "cargo build 2>&1 | tee log"),
+)
+
+
+def _neutralized(script: str) -> bool:
+    """The guard's judgement, applied to one script in isolation."""
+    commands = canonical_shell_commands(script)
+    if any(disables_fail_fast(command) for command in commands):
+        return True
+    return any(
+        command[:1] == (ENFORCEMENT_COMMAND,) and not is_bare_command(command)
+        for command in commands
+    )
+
+
+@pytest.mark.parametrize(
+    "script", [script for _name, script in EVASIONS], ids=[n for n, _ in EVASIONS]
+)
+def test_evasion_is_caught(script: str) -> None:
+    assert _neutralized(script), (
+        WORKFLOW_ENFORCEMENT_RATIONALE
+        + f"\nthis neutralizes the gate and was not caught:\n{script}"
+    )
+
+
+@pytest.mark.parametrize(
+    "script", [script for _name, script in PERMITTED], ids=[n for n, _ in PERMITTED]
+)
+def test_legitimate_shell_is_not_flagged(script: str) -> None:
+    assert not _neutralized(script), (
+        WORKFLOW_ENFORCEMENT_RATIONALE + f"\nfalse positive on legitimate shell:\n{script}"
     )

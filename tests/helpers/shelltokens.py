@@ -158,6 +158,19 @@ def tokenize(script: str) -> tuple[tuple[str, ...], ...]:
                 raise AssertionError(f"unhandled operator character {char!r}")
             continue
 
+        if char == "$" and text.startswith("$(", index):
+            # Command substitution is its own quoting context: the quotes
+            # inside `$(sed 's/"//')` do not close a quote outside it. Consume
+            # the balanced region verbatim rather than lexing into it -- what
+            # it evaluates to is not a question this module answers.
+            close = _matching_paren(text, index + 1)
+            if close == -1:
+                raise UnterminatedQuote("unterminated command substitution:\n" + script)
+            word.append(text[index : close + 1])
+            has_word = True
+            index = close + 1
+            continue
+
         if char == "'":
             close = text.find("'", index + 1)
             if close == -1:
@@ -170,6 +183,15 @@ def tokenize(script: str) -> tuple[tuple[str, ...], ...]:
         if char == '"':
             index += 1
             while index < length and text[index] != '"':
+                if text.startswith("$(", index):
+                    close = _matching_paren(text, index + 1)
+                    if close == -1:
+                        raise UnterminatedQuote(
+                            "unterminated command substitution:\n" + script
+                        )
+                    word.append(text[index : close + 1])
+                    index = close + 1
+                    continue
                 if text[index] == "\\" and index + 1 < length:
                     following = text[index + 1]
                     if following == "\n":
@@ -200,3 +222,33 @@ def tokenize(script: str) -> tuple[tuple[str, ...], ...]:
 
     end_line()
     return tuple(lines)
+
+
+def _matching_paren(text: str, opening: int) -> int:
+    """Index of the `)` closing the `(` at `opening`, or -1.
+
+    Quotes inside are skipped so a `)` in a string cannot close the region,
+    and nesting is counted so `$(a $(b))` resolves to the outer one.
+    """
+    depth = 0
+    index = opening
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if char == "\\" and index + 1 < length:
+            index += 2
+            continue
+        if char in "'\"":
+            close = text.find(char, index + 1)
+            if close == -1:
+                return -1
+            index = close + 1
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    return -1
