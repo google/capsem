@@ -162,7 +162,8 @@ def test_warm_identity_skips_build_and_cold_identity_builds_exactly_once() -> No
     identity = hostimage.input_key(CONFIG)
     warm = RecordingRunner(PROJECT_ROOT, replies={"index .Config.Labels": identity})
 
-    hostimage.image(CONFIG).actions[0].perform(_context(warm))
+    for action in hostimage.image(CONFIG).actions:
+        action.perform(_context(warm))
 
     assert not warm.ran(r"docker build")
     assert len(warm.matching(r"docker run --rm --network none")) == 6
@@ -171,7 +172,13 @@ def test_warm_identity_skips_build_and_cold_identity_builds_exactly_once() -> No
         replies={"index .Config.Labels": identity},
         failures=(f"docker image inspect {CONFIG.hostimage.tag}",),
     )
-    hostimage.image(CONFIG).actions[0].perform(_context(cold))
+    materialize, require = hostimage.image(CONFIG).actions
+    materialize.perform(_context(cold))
+    # The cold inspect is what selects the build.  Once it completes, model
+    # the daemon state the following require/probe action must independently
+    # verify instead of claiming the image is missing forever.
+    cold.fail_on()
+    require.perform(_context(cold))
     builds = cold.matching(r"docker build .*Dockerfile\.host-builder")
 
     assert len(builds) == 1

@@ -199,6 +199,10 @@ def test_a_named_prefix_moves_a_focused_command_into_that_checkout(
         return 0
 
     monkeypatch.setattr(prefix, "run_from_private_copy", run_in_prefix)
+    # This test models a new top-level focused invocation.  The complete gate
+    # also runs this contract, so do not let its inherited lock marker turn the
+    # simulated invocation into the nested-gate case guarded by preflight.
+    monkeypatch.delenv(command._config.locks.gate.run_marker, raising=False)
 
     with pytest.raises(SystemExit) as stopped:
         command.execute()
