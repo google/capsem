@@ -130,6 +130,11 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # that cannot be collected is a suite the gate would otherwise discover it
     # was not running an hour later.
     collected = phase.add(pytestsuite.collection(config), after=(syntax,))
+    # The Citadel belongs here and not in the broad suite. Source-level guards
+    # answering in a fifth of a second have no business waiting on an asset
+    # build, and the point of recording a mistake is to catch it before the
+    # expensive work rather than after the VMs are up.
+    guarded = phase.add(pytestsuite.citadel(config).as_step(config), after=(syntax,))
 
     # The web surfaces import `frontend/src/lib/mock-settings.generated.ts`,
     # which is gitignored and therefore never part of the source a run is
@@ -150,6 +155,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
         *audited,
         *checked,
         collected,
+        guarded,
         *(surface for surface in surfaces if surface is not blocking),
         clippy,
     )

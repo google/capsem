@@ -1410,6 +1410,15 @@ source_contract = [
 # Where the tests are. Spelled here rather than in the module, so the broad
 # suite and the compatibility runs cannot come to disagree about it.
 root = "tests/"
+# The Citadel: source-level guards recording architectural mistakes that must
+# not be repeated. Named separately from `root` because it belongs in the fast
+# phase, not the broad suite. It reads files and nothing else -- five tests,
+# 0.17s, no artifact, no VM, no daemon -- and was previously reached only
+# through `root`, which carries `require_artifacts` and runs after the whole
+# asset build. A DB-boundary violation was therefore reported after the VMs
+# booted rather than in the first second, which is the one thing a guard
+# written to "fail before it can ship green" must not do.
+citadel = "tests/citadel/"
 # Collection is a cheap source-shape proof: no cache writes, no artifacts, and
 # strict rejection of unknown configuration or markers.
 collection_flags = ["--collect-only", "-qq", "-p", "no:cacheprovider", "--strict-config", "--strict-markers"]
@@ -1429,11 +1438,15 @@ coverage_flags = ["--cov=src/capsem", "--cov-report=xml:codecov-python.xml"]
 #                    owned by the install gate, which runs it in Docker
 #   capsem-build-chain / capsem-release
 #                    artifact and composition suites with their own entrypoints
+#   citadel          source-level guards owned by the fast phase; collecting
+#                    them here too would run them a second time an hour later,
+#                    and a guard with two owners has none
 broad_ignores = [
     "tests/capsem-recipes",
     "tests/capsem-install",
     "tests/capsem-build-chain",
     "tests/capsem-release",
+    "tests/citadel",
 ]
 
 # Production has one service and one service-scoped save/restore lock. An

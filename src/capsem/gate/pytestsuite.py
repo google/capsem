@@ -98,6 +98,31 @@ class Suite:
         )
 
 
+def citadel(config: GateConfig) -> Suite:
+    """The guards recording architectural mistakes that must not be repeated.
+
+    In the fast phase rather than the broad suite. Every one reads source and
+    asserts on it -- no artifact, no VM, no daemon -- so `require_artifacts` is
+    off and there is nothing to wait for.
+
+    It was reached only through the broad suite's `root`, which carries
+    `require_artifacts` and runs after the whole asset build. That meant a
+    guard whose own docstring says it exists to "fail before a hidden route
+    cache, direct SQLite open, or compatibility fallback can ship green"
+    reported the violation once the VMs were already up.
+
+    `stop_at_first_failure` is off deliberately: these are independent guards
+    over unrelated boundaries, and knowing all of what regressed is worth more
+    than saving a tenth of a second.
+    """
+    return Suite(
+        label="citadel",
+        paths=(config.suites.pytest.citadel,),
+        stop_at_first_failure=False,
+        require_artifacts=False,
+    )
+
+
 def collection(config: GateConfig) -> Step:
     """Strictly import and collect every Python test without touching caches."""
     settings = config.suites.pytest
