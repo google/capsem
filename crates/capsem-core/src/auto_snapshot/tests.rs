@@ -784,6 +784,51 @@ fn reflink_try_reflink_returns_false_on_unsupported_fs() {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn reflink_snapshot_skips_a_source_file_removed_after_enumeration() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("source");
+    let destination = tmp.path().join("destination");
+    std::fs::create_dir_all(&source).unwrap();
+    let transient = source.join("transient.lock");
+    std::fs::write(&transient, "ephemeral").unwrap();
+    let entry = walkdir::WalkDir::new(&source)
+        .min_depth(1)
+        .into_iter()
+        .next()
+        .unwrap()
+        .unwrap();
+    std::fs::remove_file(&transient).unwrap();
+
+    let outcome = ReflinkSnapshot::snapshot_entry(&entry, &source, &destination).unwrap();
+
+    assert_eq!(outcome, ReflinkEntryOutcome::SourceVanished);
+    assert!(!destination.join("transient.lock").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn only_not_found_is_a_transient_source_disappearance() {
+    let tmp = tempfile::tempdir().unwrap();
+    let vanished = tmp.path().join("vanished");
+    let surviving = tmp.path().join("surviving");
+    std::fs::write(&surviving, "present").unwrap();
+
+    assert!(source_entry_vanished(
+        &vanished,
+        &std::io::Error::from(std::io::ErrorKind::NotFound)
+    ));
+    assert!(!source_entry_vanished(
+        &surviving,
+        &std::io::Error::from(std::io::ErrorKind::NotFound)
+    ));
+    assert!(!source_entry_vanished(
+        &vanished,
+        &std::io::Error::from(std::io::ErrorKind::PermissionDenied)
+    ));
+}
+
 // -----------------------------------------------------------------------
 // ApfsSnapshot backend (macOS-only behavior)
 // -----------------------------------------------------------------------

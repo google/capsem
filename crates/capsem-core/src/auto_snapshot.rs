@@ -643,6 +643,24 @@ impl SnapshotBackend for ApfsSnapshot {
 pub struct ReflinkSnapshot;
 
 #[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReflinkEntryOutcome {
+    Other,
+    Reflinked,
+    SourceVanished,
+    SparseCopied,
+}
+
+#[cfg(target_os = "linux")]
+fn source_entry_vanished(path: &Path, error: &std::io::Error) -> bool {
+    if error.kind() != std::io::ErrorKind::NotFound {
+        return false;
+    }
+    std::fs::symlink_metadata(path)
+        .is_err_and(|source_error| source_error.kind() == std::io::ErrorKind::NotFound)
+}
+
+#[cfg(target_os = "linux")]
 impl ReflinkSnapshot {
     /// FICLONE ioctl request number.
     /// Defined in linux/fs.h as _IOW(0x94, 9, int).
@@ -689,6 +707,74 @@ impl ReflinkSnapshot {
             }
         }
     }
+
+    fn snapshot_entry(
+        entry: &walkdir::DirEntry,
+        source: &Path,
+        dest: &Path,
+    ) -> anyhow::Result<ReflinkEntryOutcome> {
+        let rel = entry.path().strip_prefix(source)?;
+        let target = dest.join(rel);
+
+        if entry.file_type().is_dir() {
+            match std::fs::symlink_metadata(entry.path()) {
+                Ok(_) => std::fs::create_dir_all(&target)?,
+                Err(error) if source_entry_vanished(entry.path(), &error) => {
+                    return Ok(ReflinkEntryOutcome::SourceVanished);
+                }
+                Err(error) => return Err(error.into()),
+            }
+            return Ok(ReflinkEntryOutcome::Other);
+        }
+        if entry.file_type().is_symlink() {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let link_target = match std::fs::read_link(entry.path()) {
+                Ok(target) => target,
+                Err(error) if source_entry_vanished(entry.path(), &error) => {
+                    return Ok(ReflinkEntryOutcome::SourceVanished);
+                }
+                Err(error) => return Err(error.into()),
+            };
+            std::os::unix::fs::symlink(&link_target, &target)?;
+            return Ok(ReflinkEntryOutcome::Other);
+        }
+        if !entry.file_type().is_file() {
+            return Ok(ReflinkEntryOutcome::Other);
+        }
+
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        match Self::try_reflink(entry.path(), &target) {
+            Ok(true) => Ok(ReflinkEntryOutcome::Reflinked),
+            Ok(false) => match copy_file_sparse(entry.path(), &target) {
+                Ok(()) => Ok(ReflinkEntryOutcome::SparseCopied),
+                Err(error) if source_entry_vanished(entry.path(), &error) => {
+                    Ok(ReflinkEntryOutcome::SourceVanished)
+                }
+                Err(error) => Err(error.into()),
+            },
+            Err(error) if source_entry_vanished(entry.path(), &error) => {
+                Ok(ReflinkEntryOutcome::SourceVanished)
+            }
+            Err(error) => {
+                warn!(
+                    path = %entry.path().display(),
+                    error = %error,
+                    "FICLONE ioctl failed unexpectedly, falling back to sparse copy"
+                );
+                match copy_file_sparse(entry.path(), &target) {
+                    Ok(()) => Ok(ReflinkEntryOutcome::SparseCopied),
+                    Err(error) if source_entry_vanished(entry.path(), &error) => {
+                        Ok(ReflinkEntryOutcome::SourceVanished)
+                    }
+                    Err(error) => Err(error.into()),
+                }
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -706,46 +792,38 @@ impl SnapshotBackend for ReflinkSnapshot {
             .follow_links(false)
             .min_depth(1)
         {
-            let entry = entry?;
-            let rel = entry.path().strip_prefix(source)?;
-            let target = dest.join(rel);
-
-            if entry.file_type().is_dir() {
-                std::fs::create_dir_all(&target)?;
-            } else if entry.file_type().is_symlink() {
-                // Preserve symlinks as symlinks (not their targets).
-                if let Some(parent) = target.parent() {
-                    std::fs::create_dir_all(parent)?;
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error)
+                    if error.depth() > 0
+                        && error.path().is_some_and(|path| {
+                            error
+                                .io_error()
+                                .is_some_and(|io_error| source_entry_vanished(path, io_error))
+                        }) =>
+                {
+                    debug!(path = ?error.path(), "source entry vanished during snapshot");
+                    continue;
                 }
-                let link_target = std::fs::read_link(entry.path())?;
-                std::os::unix::fs::symlink(&link_target, &target)?;
-            } else if entry.file_type().is_file() {
-                if let Some(parent) = target.parent() {
-                    std::fs::create_dir_all(parent)?;
+                Err(error) => return Err(error.into()),
+            };
+            match Self::snapshot_entry(&entry, source, dest)? {
+                ReflinkEntryOutcome::Reflinked => {
+                    reflink_supported.store(true, Ordering::Relaxed);
                 }
-                match Self::try_reflink(entry.path(), &target) {
-                    Ok(true) => {
-                        reflink_supported.store(true, Ordering::Relaxed);
-                    }
-                    Ok(false) => {
-                        if !reflink_failed_logged {
-                            info!(
-                                path = %entry.path().display(),
-                                "FICLONE not supported on this filesystem, falling back to sparse copy"
-                            );
-                            reflink_failed_logged = true;
-                        }
-                        copy_file_sparse(entry.path(), &target)?;
-                    }
-                    Err(e) => {
-                        warn!(
+                ReflinkEntryOutcome::SparseCopied => {
+                    if !reflink_failed_logged {
+                        info!(
                             path = %entry.path().display(),
-                            error = %e,
-                            "FICLONE ioctl failed unexpectedly, falling back to sparse copy"
+                            "FICLONE not supported on this filesystem, falling back to sparse copy"
                         );
-                        copy_file_sparse(entry.path(), &target)?;
+                        reflink_failed_logged = true;
                     }
                 }
+                ReflinkEntryOutcome::SourceVanished => {
+                    debug!(path = %entry.path().display(), "source entry vanished during snapshot");
+                }
+                ReflinkEntryOutcome::Other => {}
             }
         }
 
