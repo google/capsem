@@ -17,6 +17,7 @@ import socketserver
 import subprocess
 import threading
 import tomllib
+import urllib.request
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
@@ -217,7 +218,7 @@ def _serve_release(health: dict | Callable[[str], dict], files: dict[str, bytes]
     manifest_path = "/assets/stable/manifest.json"
     served_files = {
         **files,
-        manifest_path: _manifest_bytes(_health_to_manifest(health_payload, asset_base=base)),
+        manifest_path: _manifest_bytes(_health_to_manifest(health_payload)),
     }
     handler.files = served_files
     thread.start()
@@ -481,6 +482,44 @@ def _binary_update_health(base_url: str, installer_name: str, payload: bytes) ->
             },
         },
     }
+
+
+def test_binary_update_fixture_preserves_profile_transport_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A binary-only fixture may not manufacture a profile update.
+
+    Installed-package CI supplies the selected public graph through
+    ``CAPSEM_TEST_ASSET_MANIFEST``.  Repointing that graph's ``asset_base`` at
+    the fixture server changes every relative profile image URL, so a binary
+    test unexpectedly stages profiles and then 404s on bytes it never meant
+    to serve.  The package URL is already absolute; profile transport must
+    remain byte-for-byte under the selected graph's authority.
+    """
+    selected = _default_release_graph()
+    selected["asset_base"] = "https://release.example.invalid/assets-v1"
+    for profile in selected["profiles"].values():
+        profile["revision"] = "2030.0101.1"
+        profile["version"] = "2030.0101.1"
+        for architecture in profile["architectures"]:
+            architecture["image_revision"] = "2030.0101.1"
+    manifest = tmp_path / "selected-manifest.json"
+    manifest.write_text(json.dumps(selected), encoding="utf-8")
+    monkeypatch.setitem(globals(), "TEST_ASSET_MANIFEST", str(manifest))
+    package = b"binary-only"
+
+    with (
+        _serve_release(
+            lambda base: _binary_update_health(base, "Capsem_99.99.99_amd64.deb", package),
+            {"/Capsem_99.99.99_amd64.deb": package},
+        ) as (_, manifest_url),
+        urllib.request.urlopen(manifest_url, timeout=5) as response,
+    ):
+        served = json.load(response)
+
+    assert served["asset_base"] == selected["asset_base"]
+    assert served["profiles"] == selected["profiles"]
 
 
 def _profile_toml_bytes(revision: str, *, profile_id: str = "code") -> bytes:
