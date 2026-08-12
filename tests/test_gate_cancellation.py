@@ -196,7 +196,7 @@ def test_a_step_asleep_on_a_resource_is_woken_to_notice() -> None:
     assert elapsed < 2.0, f"the contended step held the run for {elapsed:.2f}s"
 
 
-def test_ctrl_c_reaps_the_running_step_process_tree_before_return(tmp_path: Path) -> None:
+def test_ctrl_c_reaps_foreground_descendants_before_return(tmp_path: Path) -> None:
     pids = tmp_path / "owned-pids"
     plan = Plan("foreground")
     plan.add(step("foreground", _Foreground(pids)))
@@ -230,6 +230,8 @@ def test_ctrl_c_reaps_the_running_step_process_tree_before_return(tmp_path: Path
 def test_a_worker_that_refuses_to_stop_is_named() -> None:
     """The bound is what stops an interrupt being indefinite; saying who is
     still going is what stops it being a mystery."""
+    from helpers.gate import RecordingJournal
+
     started = threading.Event()
     plan = Plan("stubborn")
     plan.add(step("oblivious", _Oblivious(started=started, seconds=1.5)))
@@ -240,7 +242,9 @@ def test_a_worker_that_refuses_to_stop_is_named() -> None:
     with pytest.raises(KeyboardInterrupt):
         execute(plan, context)
 
-    assert any("oblivious" in note for note in context.journal.notes), context.journal.notes
+    journal = context.journal
+    assert isinstance(journal, RecordingJournal)
+    assert any("oblivious" in note for note in journal.notes), journal.notes
 
 
 def test_cancellation_is_off_outside_a_run() -> None:
