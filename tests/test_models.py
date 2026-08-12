@@ -36,16 +36,26 @@ from capsem.builder.schema import McpTransport
 # ---------------------------------------------------------------------------
 
 
-def _arch(*, docker_platform="linux/arm64", rust_target="aarch64-unknown-linux-musl",
-          kernel_image="arch/arm64/boot/Image", defconfig="kernel/defconfig.arm64",
-          **kw):
+def _arch(
+    *,
+    docker_platform="linux/arm64",
+    rust_target="aarch64-unknown-linux-musl",
+    kernel_image="arch/arm64/boot/Image",
+    defconfig="kernel/defconfig.arm64",
+    **kw,
+):
     kw.setdefault("base_image", "docker.io/library/debian@sha256:" + "a" * 64)
     kw.setdefault(
         "rust_builder_base_image",
         "docker.io/library/rust@sha256:" + "c" * 64,
     )
-    return ArchConfig(docker_platform=docker_platform, rust_target=rust_target,
-                      kernel_image=kernel_image, defconfig=defconfig, **kw)
+    return ArchConfig(
+        docker_platform=docker_platform,
+        rust_target=rust_target,
+        kernel_image=kernel_image,
+        defconfig=defconfig,
+        **kw,
+    )
 
 
 def _build(**kw):
@@ -77,8 +87,10 @@ def _mcp_stdio(**kw):
 class TestCompression:
     def test_values(self):
         assert set(Compression) == {
-            Compression.ZSTD, Compression.GZIP,
-            Compression.LZO, Compression.XZ,
+            Compression.ZSTD,
+            Compression.GZIP,
+            Compression.LZO,
+            Compression.XZ,
         }
 
     def test_string_values(self):
@@ -94,8 +106,13 @@ class TestCompression:
 class TestErofsCompression:
     def test_values(self):
         assert set(ErofsCompression) == {
-            ErofsCompression.LZ4, ErofsCompression.LZ4HC, ErofsCompression.ZSTD,
+            ErofsCompression.LZ4,
+            ErofsCompression.LZ4HC,
         }
+
+    def test_zstd_is_not_an_erofs_release_format(self):
+        with pytest.raises(ValueError):
+            ErofsCompression("zstd")
 
     def test_default_config_is_release_lz4hc(self):
         e = ErofsConfig()
@@ -112,17 +129,14 @@ class TestErofsCompression:
         with pytest.raises(ValidationError):
             ErofsConfig(compression=ErofsCompression.LZ4HC, compression_level=13)
 
-    def test_zstd_remains_supported_option(self):
-        e = ErofsConfig(compression=ErofsCompression.ZSTD, compression_level=15)
-        assert e.compression is ErofsCompression.ZSTD
-        assert e.compression_level == 15
-
 
 class TestPackageManager:
     def test_values(self):
         assert set(PackageManager) == {
-            PackageManager.APT, PackageManager.UV,
-            PackageManager.PIP, PackageManager.NPM,
+            PackageManager.APT,
+            PackageManager.UV,
+            PackageManager.PIP,
+            PackageManager.NPM,
             PackageManager.CURL,
         }
 
@@ -308,8 +322,10 @@ class TestBuildConfig:
 class TestPackageSetConfig:
     def test_minimal(self):
         ps = PackageSetConfig(
-            name="Python", manager=PackageManager.UV,
-            install_cmd="uv pip install --system", packages=["pytest"],
+            name="Python",
+            manager=PackageManager.UV,
+            install_cmd="uv pip install --system",
+            packages=["pytest"],
         )
         assert ps.name == "Python"
         assert ps.manager is PackageManager.UV
@@ -318,8 +334,11 @@ class TestPackageSetConfig:
     def test_with_network(self):
         net = PackageNetworkConfig(name="PyPI", domains=["pypi.org"])
         ps = PackageSetConfig(
-            name="Python", manager=PackageManager.UV,
-            install_cmd="uv pip install", packages=["pytest"], network=net,
+            name="Python",
+            manager=PackageManager.UV,
+            install_cmd="uv pip install",
+            packages=["pytest"],
+            network=net,
         )
         assert ps.network is not None
         assert ps.network.name == "PyPI"
@@ -327,28 +346,36 @@ class TestPackageSetConfig:
     def test_empty_packages_rejected(self):
         with pytest.raises(ValidationError):
             PackageSetConfig(
-                name="Empty", manager=PackageManager.APT,
-                install_cmd="apt install", packages=[],
+                name="Empty",
+                manager=PackageManager.APT,
+                install_cmd="apt install",
+                packages=[],
             )
 
     def test_empty_install_cmd_rejected(self):
         with pytest.raises(ValidationError):
             PackageSetConfig(
-                name="Bad", manager=PackageManager.APT,
-                install_cmd="", packages=["pkg"],
+                name="Bad",
+                manager=PackageManager.APT,
+                install_cmd="",
+                packages=["pkg"],
             )
 
     def test_version_commands_default(self):
         ps = PackageSetConfig(
-            name="Test", manager=PackageManager.APT,
-            install_cmd="apt install", packages=["git"],
+            name="Test",
+            manager=PackageManager.APT,
+            install_cmd="apt install",
+            packages=["git"],
         )
         assert ps.version_commands == {}
 
     def test_version_commands_valid(self):
         ps = PackageSetConfig(
-            name="Test", manager=PackageManager.APT,
-            install_cmd="apt install", packages=["git", "curl"],
+            name="Test",
+            manager=PackageManager.APT,
+            install_cmd="apt install",
+            packages=["git", "curl"],
             version_commands={"git": "git --version"},
         )
         assert ps.version_commands["git"] == "git --version"
@@ -356,15 +383,19 @@ class TestPackageSetConfig:
     def test_version_commands_unknown_key_rejected(self):
         with pytest.raises(ValidationError, match="version_commands keys not in packages"):
             PackageSetConfig(
-                name="Bad", manager=PackageManager.APT,
-                install_cmd="apt install", packages=["git"],
+                name="Bad",
+                manager=PackageManager.APT,
+                install_cmd="apt install",
+                packages=["git"],
                 version_commands={"nonexistent": "echo 1"},
             )
 
     def test_roundtrip(self):
         ps = PackageSetConfig(
-            name="Node", manager=PackageManager.NPM,
-            install_cmd="npm install -g", packages=["typescript"],
+            name="Node",
+            manager=PackageManager.NPM,
+            install_cmd="npm install -g",
+            packages=["typescript"],
         )
         data = ps.model_dump()
         q = PackageSetConfig.model_validate(data)
@@ -384,7 +415,8 @@ class TestMcpServerConfig:
 
     def test_sse_transport(self):
         m = McpServerConfig(
-            name="SSE", transport=McpTransport.SSE,
+            name="SSE",
+            transport=McpTransport.SSE,
             url="http://localhost:8080",
         )
         assert m.transport is McpTransport.SSE
@@ -415,6 +447,7 @@ class TestMcpServerConfig:
     def test_mcptransport_reused_from_schema(self):
         """McpTransport is imported from schema.py, not duplicated."""
         from capsem.builder.schema import McpTransport as SchemaMcpTransport
+
         assert McpTransport is SchemaMcpTransport
 
     def test_defaults(self):
@@ -447,9 +480,11 @@ class TestWebServiceConfig:
 
     def test_full(self):
         w = WebServiceConfig(
-            name="Google", enabled=True,
+            name="Google",
+            enabled=True,
             domains=["google.com", "www.google.com"],
-            allow_get=True, allow_post=False,
+            allow_get=True,
+            allow_post=False,
         )
         assert len(w.domains) == 2
         assert w.allow_get is True
@@ -470,10 +505,14 @@ class TestWebSecurityConfig:
 
     def test_with_services(self):
         google = WebServiceConfig(
-            name="Google", domains=["google.com"], allow_get=True,
+            name="Google",
+            domains=["google.com"],
+            allow_get=True,
         )
         pypi = WebServiceConfig(
-            name="PyPI", domains=["pypi.org"], allow_get=True,
+            name="PyPI",
+            domains=["pypi.org"],
+            allow_get=True,
         )
         w = WebSecurityConfig(
             search={"google": google},
@@ -523,17 +562,27 @@ class TestVmResourcesConfig:
 
     def test_min_bounds(self):
         r = VmResourcesConfig(
-            cpu_count=1, ram_gb=1, scratch_disk_size_gb=1,
-            max_body_capture=0, retention_days=1, max_sessions=1,
-            max_disk_gb=1, terminated_retention_days=30,
+            cpu_count=1,
+            ram_gb=1,
+            scratch_disk_size_gb=1,
+            max_body_capture=0,
+            retention_days=1,
+            max_sessions=1,
+            max_disk_gb=1,
+            terminated_retention_days=30,
         )
         assert r.cpu_count == 1
 
     def test_max_bounds(self):
         r = VmResourcesConfig(
-            cpu_count=8, ram_gb=16, scratch_disk_size_gb=128,
-            max_body_capture=1048576, retention_days=365, max_sessions=10000,
-            max_disk_gb=1000, terminated_retention_days=3650,
+            cpu_count=8,
+            ram_gb=16,
+            scratch_disk_size_gb=128,
+            max_body_capture=1048576,
+            retention_days=365,
+            max_sessions=10000,
+            max_disk_gb=1000,
+            terminated_retention_days=3650,
         )
         assert r.cpu_count == 8
 
@@ -627,10 +676,14 @@ class TestGuestImageConfig:
     def test_full(self):
         g = GuestImageConfig(
             build=_build(),
-            package_sets={"python": PackageSetConfig(
-                name="Python", manager=PackageManager.UV,
-                install_cmd="uv pip install", packages=["pytest"],
-            )},
+            package_sets={
+                "python": PackageSetConfig(
+                    name="Python",
+                    manager=PackageManager.UV,
+                    install_cmd="uv pip install",
+                    packages=["pytest"],
+                )
+            },
             mcp_servers={"capsem": _mcp_stdio(name="Capsem")},
             web_security=WebSecurityConfig(http_upstream_ports=[80]),
             vm_resources=VmResourcesConfig(cpu_count=8),
@@ -668,7 +721,9 @@ class TestAdversarial:
     def test_huge_package_list(self):
         packages = [f"pkg-{i}" for i in range(1000)]
         ps = PackageSetConfig(
-            name="Huge", manager=PackageManager.APT,
-            install_cmd="apt install", packages=packages,
+            name="Huge",
+            manager=PackageManager.APT,
+            install_cmd="apt install",
+            packages=packages,
         )
         assert len(ps.packages) == 1000

@@ -1064,22 +1064,18 @@ class TestCreateErofs:
         mock_run.assert_not_called()
 
     @patch("capsem.builder.docker.run_cmd")
-    def test_zstd_uses_modern_erofs_utils_image(self, mock_run):
-        create_erofs(
-            "docker",
-            Path("/tmp/rootfs.tar"),
-            Path("/tmp/rootfs.erofs"),
-            "zstd",
-            "65536",
-            base_image=EXACT_EROFS_BASE,
-        )
-        cmd = mock_run.call_args[0][0]
-        cmd_str = " ".join(cmd)
-        assert "debian:trixie-slim" in cmd
-        assert "mkfs.erofs" in cmd_str
-        assert "-Enosbcrc" in cmd_str
-        assert "-zzstd,level=15" in cmd_str
-        assert "-C65536" in cmd_str
+    def test_zstd_is_not_an_erofs_release_format(self, mock_run):
+        with pytest.raises(ValueError, match="unsupported EROFS compression"):
+            create_erofs(
+                "docker",
+                Path("/tmp/rootfs.tar"),
+                Path("/tmp/rootfs.erofs"),
+                "zstd",
+                "65536",
+                base_image=EXACT_EROFS_BASE,
+            )
+
+        mock_run.assert_not_called()
 
     @patch("capsem.builder.docker.run_cmd")
     def test_lz4hc_uses_release_erofs_utils_image(self, mock_run):
@@ -1105,8 +1101,9 @@ class TestCreateErofs:
             "docker",
             Path("/tmp/rootfs.tar"),
             Path("/tmp/out/rootfs.erofs"),
-            "zstd",
+            "lz4hc",
             "65536",
+            "12",
             base_image=EXACT_EROFS_BASE,
         )
         cmd = mock_run.call_args[0][0]
@@ -1609,14 +1606,15 @@ class TestErofsConfig:
                 ErofsConfig(),
             )
 
-    def test_env_config_parses_enabled_zstd(self):
-        assert experimental_erofs_build_config(
-            {
-                "CAPSEM_BUILD_EXPERIMENTAL_EROFS": "1",
-                "CAPSEM_BUILD_EROFS_COMPRESSION": "zstd",
-                "CAPSEM_BUILD_EROFS_CLUSTER_SIZE": "65536",
-            }
-        ) == (True, "zstd", "65536", "15")
+    def test_env_config_rejects_zstd(self):
+        with pytest.raises(ValueError, match="one of: lz4, lz4hc"):
+            experimental_erofs_build_config(
+                {
+                    "CAPSEM_BUILD_EXPERIMENTAL_EROFS": "1",
+                    "CAPSEM_BUILD_EROFS_COMPRESSION": "zstd",
+                    "CAPSEM_BUILD_EROFS_CLUSTER_SIZE": "65536",
+                }
+            )
 
     def test_env_config_rejects_unknown_compression(self):
         with pytest.raises(ValueError, match="CAPSEM_BUILD_EROFS_COMPRESSION"):
@@ -1624,16 +1622,6 @@ class TestErofsConfig:
                 {
                     "CAPSEM_BUILD_EXPERIMENTAL_EROFS": "1",
                     "CAPSEM_BUILD_EROFS_COMPRESSION": "brotli",
-                }
-            )
-
-    def test_env_config_rejects_zstd_level_outside_range(self):
-        with pytest.raises(ValueError, match=r"0..22"):
-            experimental_erofs_build_config(
-                {
-                    "CAPSEM_BUILD_EXPERIMENTAL_EROFS": "1",
-                    "CAPSEM_BUILD_EROFS_COMPRESSION": "zstd",
-                    "CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL": "23",
                 }
             )
 

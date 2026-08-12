@@ -30,7 +30,6 @@ from capsem.gate import auditfs
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "config" / "docker"
 CLOCK_SYNC_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "sync-container-clock.py"
-ZSTD_EROFS_UTILS_IMAGE = "debian:trixie-slim"
 BOOT_ASSETS = ("vmlinuz", "initrd.img")
 ROOTFS_ASSET_PREFERENCE = ("rootfs.erofs",)
 OBOM_ASSET = "obom.cdx.json"
@@ -414,10 +413,8 @@ def create_erofs(
     base_image: str,
 ) -> None:
     """Create an EROFS image from a tar archive using a container."""
-    if compression not in {"lz4", "lz4hc", "zstd"}:
+    if compression not in {"lz4", "lz4hc"}:
         raise ValueError(f"unsupported EROFS compression: {compression}")
-    if compression == "zstd" and compression_level is None:
-        compression_level = "15"
 
     if compression_level is not None:
         level = int(compression_level)
@@ -425,8 +422,6 @@ def create_erofs(
             raise ValueError("lz4 EROFS compression does not accept a level")
         if compression == "lz4hc" and not 0 <= level <= 12:
             raise ValueError("lz4hc EROFS compression level must be between 0 and 12")
-        if compression == "zstd" and not 0 <= level <= 22:
-            raise ValueError("zstd EROFS compression level must be between 0 and 22")
 
     tar_abs = tar_path.resolve()
     output_abs = output_path.resolve()
@@ -434,7 +429,7 @@ def create_erofs(
     tar_rel = tar_abs.relative_to(common_dir).as_posix()
     out_rel = output_abs.relative_to(common_dir).as_posix()
     out_dir = Path(out_rel).parent.as_posix()
-    image = erofs_utils_image_for(compression, base_image)
+    image = base_image
     cluster_flag = f" -C{cluster_size}" if cluster_size else ""
     level_flag = f",level={compression_level}" if compression_level else ""
     mkdir_output = "" if out_dir == "." else f"mkdir -p /assets/{out_dir} && "
@@ -466,13 +461,6 @@ def create_erofs(
     )
 
 
-def erofs_utils_image_for(compression: str, base_image: str) -> str:
-    """Return the container image used to create an EROFS image."""
-    if compression == "zstd":
-        return ZSTD_EROFS_UTILS_IMAGE
-    return base_image
-
-
 def _native_base_image(config: GuestImageConfig) -> str:
     """Return the exact base child matching the Docker host architecture."""
     platform_name = _native_linux_platform()
@@ -502,8 +490,8 @@ def experimental_erofs_build_config(
     compression = source.get("CAPSEM_BUILD_EROFS_COMPRESSION") or (
         defaults.compression.value if defaults is not None else "lz4hc"
     )
-    if compression not in {"lz4", "lz4hc", "zstd"}:
-        raise ValueError("CAPSEM_BUILD_EROFS_COMPRESSION must be one of: lz4, lz4hc, zstd")
+    if compression not in {"lz4", "lz4hc"}:
+        raise ValueError("CAPSEM_BUILD_EROFS_COMPRESSION must be one of: lz4, lz4hc")
     cluster_size = source.get("CAPSEM_BUILD_EROFS_CLUSTER_SIZE") or (
         str(defaults.cluster_size) if defaults is not None and defaults.cluster_size else None
     )
@@ -512,16 +500,12 @@ def experimental_erofs_build_config(
         if defaults is not None and defaults.compression_level is not None
         else None
     )
-    if compression == "zstd" and compression_level is None:
-        compression_level = "15"
     if compression_level is not None:
         level = int(compression_level)
         if compression == "lz4":
             raise ValueError("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL is not valid for lz4")
         if compression == "lz4hc" and not 0 <= level <= 12:
             raise ValueError("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL must be 0..12 for lz4hc")
-        if compression == "zstd" and not 0 <= level <= 22:
-            raise ValueError("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL must be 0..22 for zstd")
     return enabled, compression, cluster_size, compression_level
 
 
@@ -1891,9 +1875,7 @@ def build_image(
                         "compression": erofs_compression,
                         "compression_level": erofs_level,
                         "cluster_size": erofs_cluster_size,
-                        "utils_image": erofs_utils_image_for(
-                            erofs_compression, _native_base_image(config)
-                        ),
+                        "utils_image": _native_base_image(config),
                     },
                     "outputs": [erofs_entry],
                 },

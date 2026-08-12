@@ -33,7 +33,6 @@ class ErofsCompression(str, Enum):
 
     LZ4 = "lz4"
     LZ4HC = "lz4hc"
-    ZSTD = "zstd"
 
 
 class PackageManager(str, Enum):
@@ -117,11 +116,6 @@ class ErofsConfig(BaseModel):
                 raise ValueError("lz4hc EROFS compression requires a level")
             if not 0 <= self.compression_level <= 12:
                 raise ValueError("lz4hc EROFS compression level must be between 0 and 12")
-        elif self.compression is ErofsCompression.ZSTD:
-            if self.compression_level is None:
-                raise ValueError("zstd EROFS compression requires a level")
-            if not 0 <= self.compression_level <= 22:
-                raise ValueError("zstd EROFS compression level must be between 0 and 22")
         return self
 
 
@@ -180,9 +174,7 @@ class PackageSetConfig(BaseModel):
             raise ValueError("install_cmd must not be empty")
         bad = set(self.version_commands) - set(self.packages)
         if bad:
-            raise ValueError(
-                f"version_commands keys not in packages: {sorted(bad)}"
-            )
+            raise ValueError(f"version_commands keys not in packages: {sorted(bad)}")
         return self
 
 
@@ -238,9 +230,7 @@ class WebSecurityConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    http_upstream_ports: list[int] = Field(
-        default_factory=lambda: [80, 3128, 3713, 8080, 11434]
-    )
+    http_upstream_ports: list[int] = Field(default_factory=lambda: [80, 3128, 3713, 8080, 11434])
     search: dict[str, WebServiceConfig] = Field(default_factory=dict)
     registry: dict[str, WebServiceConfig] = Field(default_factory=dict)
     repository: dict[str, WebServiceConfig] = Field(default_factory=dict)
