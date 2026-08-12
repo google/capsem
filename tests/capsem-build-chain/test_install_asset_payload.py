@@ -1178,6 +1178,22 @@ def test_install_source_image_prebuilds_fresh_cli_before_sealed_runtime() -> Non
     assert '["cargo", "build", "-p", "capsem"]' not in tests
 
 
+def test_dependency_helpers_verify_installed_rust_without_channel_sync() -> None:
+    """A verification probe must not become a mutable Rustup fetch edge."""
+    for relative in (
+        "docker/Dockerfile.install-builder",
+        "docker/Dockerfile.package-builder",
+    ):
+        source = (PROJECT_ROOT / relative).read_text(encoding="utf-8")
+        dependency_stage = source.split("FROM ${BASE}", 2)[1]
+
+        assert "rustup show active-toolchain" not in dependency_stage
+        assert "ENV RUSTUP_AUTO_INSTALL=0" in dependency_stage
+        assert dependency_stage.index("ENV RUSTUP_AUTO_INSTALL=0") < dependency_stage.index(
+            "rustup toolchain list"
+        )
+
+
 def test_install_preflight_does_not_claim_asset_only_cdxgen() -> None:
     """The install rail cannot inherit an asset materializer by accident."""
     host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
@@ -1256,7 +1272,7 @@ def test_cross_compile_reasserts_pinned_rust_target_before_expensive_work() -> N
     helper = (PROJECT_ROOT / config.package.builder.dockerfile).read_text(encoding="utf-8")
     assert "rustup show active-toolchain" in script
     assert "rustup target list" in script
-    assert "rustup show active-toolchain" in helper
+    assert "rustup toolchain list" in helper
     assert 'rustup target list --toolchain "${selected}" --installed' in helper
     assert "rustup target add" not in script + helper
 

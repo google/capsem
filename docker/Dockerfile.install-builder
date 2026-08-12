@@ -6,6 +6,7 @@ FROM ${BASE} AS dependency-fetch
 ARG INSTALL_VENV
 ARG RUST_TARGET
 ARG PNPM_STORE
+ENV RUSTUP_AUTO_INSTALL=0
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml /prefetch/
 COPY .cargo/config.toml /prefetch/.cargo/config.toml
@@ -17,7 +18,7 @@ COPY release-site/package.json release-site/pnpm-lock.yaml \
 WORKDIR /prefetch
 RUN selected="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" \
     && test -n "${selected}" \
-    && rustup show active-toolchain | grep -F "${selected}-" \
+    && rustup toolchain list | grep -F "${selected}-" \
     && rustup target list --toolchain "${selected}" --installed | grep -Fx "${RUST_TARGET}"
 RUN mkdir -p /capsem-deps/cargo/registry /capsem-deps/cargo/git \
     && CARGO_HOME=/capsem-deps/cargo cargo fetch --locked --target "${RUST_TARGET}"

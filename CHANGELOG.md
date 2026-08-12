@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Install and package dependency helpers now disable Rustup auto-install before
+  verifying the config-pinned toolchain and inspect only the local installed
+  inventory. A verification probe can no longer become a mutable channel-sync
+  edge during hosted qualification.
 - Release-proof fixtures now materialize the exact config-owned boot and
   evidence artifact inventory for every selected architecture. The fast gate
   therefore keeps exercising install and deb-proof behavior after

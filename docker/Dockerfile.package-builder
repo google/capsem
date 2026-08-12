@@ -9,6 +9,7 @@ ARG RUST_TARGET
 ARG HOST_RUST_TARGET
 ARG ORT_URL
 ARG ORT_SHA256
+ENV RUSTUP_AUTO_INSTALL=0
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml /prefetch/
 COPY .cargo/config.toml /prefetch/.cargo/config.toml
@@ -23,7 +24,7 @@ WORKDIR /prefetch
 # download hidden inside qualification.
 RUN selected="$(sed -n 's/^channel = \"\(.*\)\"/\1/p' rust-toolchain.toml)" \
     && test -n "${selected}" \
-    && rustup show active-toolchain | grep -F "${selected}-" \
+    && rustup toolchain list | grep -F "${selected}-" \
     && rustup target list --toolchain "${selected}" --installed | grep -Fx "${RUST_TARGET}" \
     && rustup target list --toolchain "${selected}" --installed | grep -Fx "${HOST_RUST_TARGET}"
 
