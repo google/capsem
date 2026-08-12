@@ -234,8 +234,7 @@ class InstallProof:
             },
         )
         self._runner.note(
-            f"Local release glow-up evidence: "
-            f"{self._config.path(self._layout.glowup_evidence)}"
+            f"Local release glow-up evidence: {self._config.path(self._layout.glowup_evidence)}"
         )
 
     def validate_macos_glowup(self, report: str | None, *, cargo_toml: Path) -> None:

@@ -962,6 +962,7 @@ def test_local_glowup_exports_bounded_started_evidence_before_failure(
             "selected-input",
         ],
     )
+
     def fail(_args) -> None:
         raise SystemExit("forced failure")
 
@@ -1013,22 +1014,22 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
             "code": {
                 "revision": revision,
                 "architectures": [
-                        {
-                            "architecture": "arm64",
-                            "images": [
-                                {
-                                    "kind": "rootfs",
-                                    "url": profile_url,
-                                    "bytes": 13,
-                                    "digest": {
-                                        "sha256": "a" * 64,
-                                        "blake3": "b" * 64,
-                                    },
-                                }
-                            ],
-                        }
-                    ],
-                }
+                    {
+                        "architecture": "arm64",
+                        "images": [
+                            {
+                                "kind": "rootfs",
+                                "url": profile_url,
+                                "bytes": 13,
+                                "digest": {
+                                    "sha256": "a" * 64,
+                                    "blake3": "b" * 64,
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
         }
         return manifest
 
@@ -1124,9 +1125,10 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
     assert len(selected) == 1
     assert selected[0]["status"] == "current"
     assert selected[0]["url"] == "/transitions/current/manifest.json"
-    assert selected[0]["digest"]["sha256"] == hashlib.sha256(
-        transport.before_manifest.read_bytes()
-    ).hexdigest()
+    assert (
+        selected[0]["digest"]["sha256"]
+        == hashlib.sha256(transport.before_manifest.read_bytes()).hexdigest()
+    )
 
     assert transport.before_package.read_bytes() == before_package.read_bytes()
     assert transport.after_package.read_bytes() == after_package.read_bytes()
@@ -1146,9 +1148,10 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
     assert not transport.current_manifest.with_suffix(".next").exists()
     promoted_catalog = json.loads(transport.channel_catalog.read_text())
     promoted_record = promoted_catalog["channels"]["nightly"]["manifests"][0]
-    assert promoted_record["digest"]["sha256"] == hashlib.sha256(
-        transport.after_manifest.read_bytes()
-    ).hexdigest()
+    assert (
+        promoted_record["digest"]["sha256"]
+        == hashlib.sha256(transport.after_manifest.read_bytes()).hexdigest()
+    )
 
     candidates = module.stage_adversarial_exact_candidates(
         pairing,
@@ -1157,21 +1160,18 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
     )
 
     assert after_manifest.read_bytes() == after_authority_bytes
-    assert transport.after_manifest.read_text() == json.dumps(
-        projected, indent=2, sort_keys=True
-    ) + "\n"
+    assert (
+        transport.after_manifest.read_text()
+        == json.dumps(projected, indent=2, sort_keys=True) + "\n"
+    )
     tampered = json.loads(candidates.tampered_manifest.read_text())
     incompatible = json.loads(candidates.incompatible_manifest.read_text())
     assert (
-        tampered["profiles"]["code"]["architectures"][0]["images"][0]["digest"][
-            "sha256"
-        ]
+        tampered["profiles"]["code"]["architectures"][0]["images"][0]["digest"]["sha256"]
         == "0" * 64
     )
     assert (
-        tampered["profiles"]["code"]["architectures"][0]["images"][0]["digest"][
-            "blake3"
-        ]
+        tampered["profiles"]["code"]["architectures"][0]["images"][0]["digest"]["blake3"]
         == "0" * 64
     )
     assert incompatible["profiles"]["code"]["min_capsem_version"] == "9999.0.0"
@@ -1591,17 +1591,13 @@ def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Pa
         evidence.candidate_doctor,
         evidence.preserved_doctor,
     ):
-        path.write_text(
-            json.dumps({"schema": "capsem.installed_doctor.v1", "passed": True})
-        )
+        path.write_text(json.dumps({"schema": "capsem.installed_doctor.v1", "passed": True}))
     for path in (
         evidence.fresh_winterfell,
         evidence.candidate_winterfell,
         evidence.preserved_winterfell,
     ):
-        path.write_text(
-            json.dumps({"schema": "capsem.installed_winterfell.v1", "passed": True})
-        )
+        path.write_text(json.dumps({"schema": "capsem.installed_winterfell.v1", "passed": True}))
     evidence.tamper_rejection.write_text(
         json.dumps(
             {

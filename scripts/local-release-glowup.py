@@ -442,9 +442,7 @@ def main() -> int:
                             exact_evidence.tamper_rejection.read_text(encoding="utf-8")
                         ),
                         "incompatible_profile": json.loads(
-                            exact_evidence.incompatible_rejection.read_text(
-                                encoding="utf-8"
-                            )
+                            exact_evidence.incompatible_rejection.read_text(encoding="utf-8")
                         ),
                     },
                 }
@@ -461,9 +459,7 @@ def main() -> int:
                     nightly_package=nightly_deb,
                     package_architecture=arch,
                     packaged_identity=(
-                        packaged_manifest_metadata(stable_deb)
-                        if args.package_ready
-                        else None
+                        packaged_manifest_metadata(stable_deb) if args.package_ready else None
                     ),
                     evidence_out=evidence_path,
                 )
@@ -837,9 +833,7 @@ def stage_exact_release_transport(
                         "label": pairing.channel.replace("-", " ").title(),
                         "manifests": [
                             {
-                                "version": json.loads(current_contents).get(
-                                    "version", "1.0.0"
-                                ),
+                                "version": json.loads(current_contents).get("version", "1.0.0"),
                                 "status": "current",
                                 "url": "/transitions/current/manifest.json",
                                 "digest": {
@@ -900,9 +894,7 @@ def promote_exact_candidate_transport(transport: ExactReleaseTransport) -> None:
         and manifest.get("status") == "current"
     ]
     if len(selected) != 1:
-        raise SystemExit(
-            "exact transition channel catalog must select one current manifest"
-        )
+        raise SystemExit("exact transition channel catalog must select one current manifest")
     contents = transport.after_manifest.read_bytes()
     selected[0]["version"] = json.loads(contents).get("version", selected[0].get("version"))
     selected[0]["digest"] = {
@@ -1250,8 +1242,7 @@ def _stage_graph_manifest_artifacts(
                 rows = architecture.get(section, [])
                 if not isinstance(rows, list):
                     raise SystemExit(
-                        f"local glow-up release profile {profile_id}/{arch} "
-                        f"has malformed {section}"
+                        f"local glow-up release profile {profile_id}/{arch} has malformed {section}"
                     )
                 for index, row in enumerate(rows):
                     if not isinstance(row, dict) or row.get("status") == "revoked":
@@ -1794,7 +1785,9 @@ def _probe_report_passed(path: Path, expected_schema: str) -> bool:
     try:
         report = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise SystemExit(f"installed transition probe report is unreadable: {path}: {error}") from error
+        raise SystemExit(
+            f"installed transition probe report is unreadable: {path}: {error}"
+        ) from error
     if not isinstance(report, dict):
         raise SystemExit(f"installed transition probe report is not an object: {path}")
     if report.get("schema") != expected_schema or report.get("passed") is not True:
@@ -1939,9 +1932,7 @@ def packaged_manifest_metadata(deb: Path) -> dict[str, str]:
         if len(found) != 1:
             root = Path(extracted)
             layout = sorted(
-                str(path.relative_to(root))
-                for path in root.rglob("*capsem*")
-                if path.is_dir()
+                str(path.relative_to(root)) for path in root.rglob("*capsem*") if path.is_dir()
             )[:10]
             raise SystemExit(
                 f"package must declare exactly one manifest metadata, found "
