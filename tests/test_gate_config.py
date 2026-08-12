@@ -88,6 +88,21 @@ def test_the_configuration_is_parsed_once_per_checkout() -> None:
     assert gate_config.for_root(PROJECT_ROOT) is gate_config.for_root(PROJECT_ROOT)
 
 
+def test_semantic_obom_authority_must_be_declared_as_asset_evidence(tmp_path: Path) -> None:
+    checkout = _checkout(tmp_path)
+    path = checkout / "config" / "gate.toml"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            'obom_artifact = "obom.cdx.json"',
+            'obom_artifact = "undeclared-obom.cdx.json"',
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(GateError, match="obom_artifact"):
+        gate_config.load(checkout)
+
+
 # ---------------------------------------------------------------------------
 # Architectures
 # ---------------------------------------------------------------------------
@@ -322,9 +337,7 @@ def test_nothing_reclaimable_can_be_aimed_outside_the_checkout(
 
 
 @pytest.mark.parametrize("escape", ["/etc", "../../elsewhere", "target/../.."])
-def test_a_reclaimable_path_that_escapes_is_refused_at_load(
-    tmp_path: Path, escape: str
-) -> None:
+def test_a_reclaimable_path_that_escapes_is_refused_at_load(tmp_path: Path, escape: str) -> None:
     """Red-first, permanently: the loader must reject the shape it forbids."""
     source = tmp_path / "config"
     source.mkdir()
@@ -371,9 +384,7 @@ def test_the_schema_version_is_the_one_this_code_understands(tmp_path) -> None:
     ("field", "value"),
     [("keep_runs", 0), ("keep_bytes", -1), ("slow_action_seconds", -1)],
 )
-def test_a_retention_policy_that_keeps_nothing_is_refused(
-    tmp_path, field: str, value: int
-) -> None:
+def test_a_retention_policy_that_keeps_nothing_is_refused(tmp_path, field: str, value: int) -> None:
     """`keep_runs = 0` prunes every run including the one being written, and
     the failure surfaces as a missing directory rather than as a bad policy."""
     from capsem.gate.errors import GateError
@@ -408,9 +419,7 @@ def test_no_two_architectures_claim_the_same_alias() -> None:
     seen: dict[str, str] = {}
     for name, arch in CONFIG.architectures.items():
         for alias in arch.aliases:
-            assert alias not in seen, (
-                f"{alias!r} is claimed by both {seen[alias]} and {name}"
-            )
+            assert alias not in seen, f"{alias!r} is claimed by both {seen[alias]} and {name}"
             seen[alias] = name
 
 

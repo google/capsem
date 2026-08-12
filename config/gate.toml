@@ -536,6 +536,8 @@ profiles_glob = "config/profiles/*/profile.toml"
 # Derived from `[artifacts]`: the three bootable files plus this build's own
 # evidence. Spelling the three here as well is how two lists come to disagree.
 evidence_artifacts = ["obom.cdx.json", "software-inventory.json"]
+# The evidence member with a semantic contract beyond manifest identity.
+obom_artifact = "obom.cdx.json"
 failure_tail_lines = 200
 # What the run watches for filesystem faults, and where it writes them the
 # moment they happen. Source trees only: `target/` is where a gate is supposed
@@ -660,7 +662,7 @@ error_on_warning = true
 # Reductions must lower the count immediately, so stale exemptions fail too.
 [lint.ty_ratchet]
 call-top-callable = 3
-invalid-argument-type = 132
+invalid-argument-type = 130
 invalid-assignment = 18
 invalid-attribute-override = 1
 invalid-method-override = 4

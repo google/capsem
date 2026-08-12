@@ -2,21 +2,68 @@
 
 from __future__ import annotations
 
+import json
 from threading import Lock
+
+from capsem.obom import validate_exported_rootfs_obom
 
 from .actions import Action
 from .config import Arch, GateConfig
 from .context import Context
+from .filesystem import digest_of
+
+
+def _current_arch_entries(config: GateConfig, arch: Arch) -> dict | None:
+    manifest = config.path(config.imagebuild.output) / config.install.manifest_name
+    try:
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+        if document.get("format") != 2:
+            return None
+        assets = document["assets"]
+        current = assets["current"]
+        entries = assets["releases"][current]["arches"][arch.name]
+        return entries if isinstance(entries, dict) else None
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, AttributeError):
+        return None
 
 
 def missing(config: GateConfig, arch: Arch) -> list[str]:
-    """Required boot artifacts that are absent or truncated."""
+    """Incomplete or mutated outputs from the final successful producer."""
     tree = config.path(config.imagebuild.output) / arch.name
-    return [
-        name
-        for name in config.artifacts.bootable
-        if not (tree / name).is_file() or (tree / name).stat().st_size == 0
-    ]
+    required = (*config.artifacts.bootable, *config.assets.evidence_artifacts)
+    entries = _current_arch_entries(config, arch)
+    if entries is None:
+        return [config.install.manifest_name, *required]
+
+    incomplete: list[str] = []
+    for name in required:
+        path = tree / name
+        entry = entries.get(name)
+        if not isinstance(entry, dict):
+            incomplete.append(name)
+            continue
+        try:
+            size = path.stat().st_size
+            expected_size = entry["size"]
+            expected_hash = entry["hash"]
+            if (
+                not path.is_file()
+                or size == 0
+                or type(expected_size) is not int
+                or expected_size != size
+                or not isinstance(expected_hash, str)
+                or digest_of(path, algorithm="blake3") != expected_hash
+            ):
+                incomplete.append(name)
+        except (OSError, KeyError, TypeError):
+            incomplete.append(name)
+    obom = tree / config.assets.obom_artifact
+    if obom.name not in incomplete:
+        try:
+            validate_exported_rootfs_obom(obom, architecture=arch.name)
+        except (OSError, UnicodeError, RuntimeError):
+            incomplete.append(obom.name)
+    return incomplete
 
 
 class AssetRecovery:

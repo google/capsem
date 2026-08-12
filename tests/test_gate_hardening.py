@@ -12,8 +12,10 @@ easier question than the one being asked.
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
+import blake3
 import pytest
 from helpers.gate import RecordingJournal, RecordingRunner
 
@@ -30,6 +32,59 @@ CONFIG = gate_config.load(PROJECT_ROOT)
 def _rooted(config, root: Path):
     """The same configuration, reading a different checkout."""
     return config.model_copy(update={"root": root})
+
+
+def _seed_completed_assets(config, root: Path) -> Path:
+    arch = config.host_arch()
+    tree = root / config.imagebuild.output / arch.name
+    tree.mkdir(parents=True)
+    entries = {}
+    for name in (*config.artifacts.bootable, *config.assets.evidence_artifacts):
+        payload = (
+            json.dumps(
+                {
+                    "bomFormat": "CycloneDX",
+                    "metadata": {
+                        "tools": {"components": [{"name": "cdxgen", "version": "12.7.0"}]},
+                        "component": {
+                            "type": "operating-system",
+                            "name": f"capsem-rootfs-{arch.name}",
+                            "version": "guest-rootfs",
+                            "properties": [
+                                {
+                                    "name": "capsem:evidence:scope",
+                                    "value": "exported-rootfs",
+                                },
+                                {"name": "capsem:guest:architecture", "value": arch.name},
+                            ],
+                        },
+                    },
+                    "components": [{"purl": "pkg:deb/debian/base-files@1"}],
+                }
+            ).encode()
+            if name == config.assets.obom_artifact
+            else b"bytes"
+        )
+        (tree / name).write_bytes(payload)
+        entries[name] = {
+            "hash": blake3.blake3(payload).hexdigest(),
+            "sha256": "0" * 64,
+            "size": len(payload),
+        }
+    manifest = root / config.imagebuild.output / config.install.manifest_name
+    manifest.write_text(
+        json.dumps(
+            {
+                "format": 2,
+                "assets": {
+                    "current": "test",
+                    "releases": {"test": {"arches": {arch.name: entries}}},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return tree
 
 
 @pytest.fixture
@@ -52,26 +107,20 @@ def test_a_zero_length_required_asset_does_not_count_as_built(tmp_path: Path) ->
 
     config = gate_config.load(PROJECT_ROOT)
     arch = config.host_arch()
-    tree = tmp_path / config.imagebuild.output / arch.name
-    tree.mkdir(parents=True)
+    tree = _seed_completed_assets(config, tmp_path)
     for name in config.artifacts.bootable:
         (tree / name).write_bytes(b"")
 
-    assert imagebuild.missing(_rooted(config, tmp_path), arch) == list(
-        config.artifacts.bootable
-    )
+    assert imagebuild.missing(_rooted(config, tmp_path), arch) == list(config.artifacts.bootable)
 
 
-def test_a_present_non_empty_asset_counts(tmp_path: Path) -> None:
-    """The other half, so the check above cannot pass by always failing."""
+def test_a_manifest_bound_complete_asset_cohort_counts(tmp_path: Path) -> None:
+    """The other half, so the completion check cannot pass by always failing."""
     from capsem.gate import imagebuild
 
     config = gate_config.load(PROJECT_ROOT)
     arch = config.host_arch()
-    tree = tmp_path / config.imagebuild.output / arch.name
-    tree.mkdir(parents=True)
-    for name in config.artifacts.bootable:
-        (tree / name).write_bytes(b"bytes")
+    _seed_completed_assets(config, tmp_path)
 
     assert imagebuild.missing(_rooted(config, tmp_path), arch) == []
 
@@ -99,14 +148,12 @@ def test_a_symlink_is_verified_by_where_it_actually_points(
     link = tmp_path / "current"
     link.symlink_to(decoy)
 
-    Symlink(link, wanted).perform(context)
+    Symlink(link, str(wanted)).perform(context)
 
     assert link.resolve() == wanted.resolve()
 
 
-def test_a_symlink_refuses_to_replace_a_real_directory(
-    tmp_path: Path, context: Context
-) -> None:
+def test_a_symlink_refuses_to_replace_a_real_directory(tmp_path: Path, context: Context) -> None:
     """Replacing a directory with a link would delete whatever is in it."""
     from capsem.gate.fileactions import Symlink
 
@@ -117,7 +164,7 @@ def test_a_symlink_refuses_to_replace_a_real_directory(
     (occupied / "keep").write_text("bytes")
 
     with pytest.raises(GateError):
-        Symlink(occupied, target).perform(context)
+        Symlink(occupied, str(target)).perform(context)
 
     assert (occupied / "keep").is_file()
 

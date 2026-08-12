@@ -21,6 +21,7 @@ from typing import Literal
 from pydantic import Field, ValidationError, model_validator
 
 from . import host
+from .assetschema import ArtifactsConfig, AssetsConfig
 from .buildschema import (
     AuditsConfig,
     DevLoopConfig,
@@ -37,7 +38,6 @@ from .buildschema import (
     SigningConfig,
     SmokeConfig,
     SuitesConfig,
-    ToolchainConfig,
     WebSurfacesConfig,
 )
 from .configschema import (
@@ -65,11 +65,10 @@ from .harnessschema import (
 )
 from .productschema import (
     AptSnapshotConfig,
-    ArtifactsConfig,
-    AssetsConfig,
     InstallConfig,
     PackageConfig,
 )
+from .toolchainschema import ToolchainConfig
 
 CONFIG_RELATIVE = Path("config") / "gate.toml"
 

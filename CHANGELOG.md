@@ -49,6 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Asset resume now treats the final manifest as the producer completion
+  record: every boot and evidence file must match its recorded size and BLAKE3
+  digest. Profile producers are ordered and invalidate that record before
+  starting, so non-empty output from a failed build can never turn a resumed
+  qualification green.
 - Sealed asset scanners now return generated OBOM files to the invoking host
   owner before deterministic normalization, so rootless qualification can
   finish without weakening the scanner container or its network denial.

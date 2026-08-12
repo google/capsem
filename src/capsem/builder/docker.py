@@ -28,6 +28,7 @@ from capsem.builder.doctor import check_container_runtime
 from capsem.builder.guestbuilder import image_tag
 from capsem.builder.models import BuildConfig, ErofsConfig, GuestImageConfig
 from capsem.gate import auditfs
+from capsem.obom import validate_exported_rootfs_obom
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "config" / "docker"
 CLOCK_SYNC_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "sync-container-clock.py"
@@ -998,58 +999,7 @@ def _normalize_cyclonedx_obom(
     path.write_text(json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n")
 
 
-def _validate_cyclonedx_obom(path: Path) -> None:
-    """Validate that an OBOM describes Capsem's exported Debian guest rootfs."""
-    try:
-        document = json.loads(path.read_text())
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"cdxgen wrote invalid JSON OBOM at {path}: {exc}") from exc
-    if document.get("bomFormat") != "CycloneDX":
-        raise RuntimeError(f"OBOM {path} must be CycloneDX JSON")
-    metadata = document.get("metadata")
-    if not isinstance(metadata, dict):
-        raise RuntimeError(f"OBOM {path} is missing metadata")
-    tools = metadata.get("tools")
-    candidates: list[dict[str, Any]] = []
-    if isinstance(tools, dict) and isinstance(tools.get("components"), list):
-        candidates = [tool for tool in tools["components"] if isinstance(tool, dict)]
-    elif isinstance(tools, list):
-        candidates = [tool for tool in tools if isinstance(tool, dict)]
-    if not any(
-        str(tool.get("name", "")).lower() == "cdxgen" and str(tool.get("version", ""))
-        for tool in candidates
-    ):
-        raise RuntimeError(f"OBOM {path} must record cdxgen name and version in metadata.tools")
-
-    component = metadata.get("component")
-    if not isinstance(component, dict):
-        raise RuntimeError(f"OBOM {path} is missing metadata.component")
-    properties = component.get("properties")
-    if not isinstance(properties, list) or not any(
-        isinstance(prop, dict)
-        and prop.get("name") == "capsem:evidence:scope"
-        and prop.get("value") == "exported-rootfs"
-        for prop in properties
-    ):
-        raise RuntimeError(f"OBOM {path} is not scoped to the exported rootfs")
-
-    components = document.get("components")
-    if not isinstance(components, list) or not components:
-        raise RuntimeError(f"OBOM {path} must inventory guest rootfs components")
-    if not any(
-        isinstance(item, dict) and str(item.get("purl", "")).startswith("pkg:deb/debian/")
-        for item in components
-    ):
-        raise RuntimeError(f"OBOM {path} does not contain Debian guest packages")
-    for item in components:
-        if not isinstance(item, dict):
-            continue
-        item_properties = item.get("properties")
-        if isinstance(item_properties, list) and any(
-            isinstance(prop, dict) and prop.get("name") == "cdx:osquery:category"
-            for prop in item_properties
-        ):
-            raise RuntimeError(f"OBOM {path} contains live-host inventory")
+_validate_cyclonedx_obom = validate_exported_rootfs_obom
 
 
 def generate_cyclonedx_obom(
@@ -1126,7 +1076,7 @@ def generate_cyclonedx_obom(
             timeout=OBOM_COMMAND_TIMEOUT_SECONDS,
         )
         _normalize_cyclonedx_obom(output_path, rootfs_dir, architecture=architecture)
-    _validate_cyclonedx_obom(output_path)
+    _validate_cyclonedx_obom(output_path, architecture=architecture)
     run_cmd(
         [
             runtime,

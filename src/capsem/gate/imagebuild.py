@@ -12,6 +12,7 @@ from .command import GateCommand
 from .config import GateConfig
 from .errors import GateError
 from .execution import Step, step
+from .fileactions import Remove
 from .imagedoctor import doctor
 from .plan import Plan
 
@@ -32,14 +33,7 @@ def build_argv(
     template: str,
     output: str | None = None,
 ) -> list[str]:
-    """The one spelling of `capsem-admin image build`.
-
-    `output` defaults to the configured assets tree and is overridable because
-    the concurrent asset lanes each need their own. It used to be a `just`
-    parameter that the recipe accepted and never forwarded, so every lane wrote
-    into the one shared directory while each checked a private one -- two
-    architectures overwriting each other, and nothing looking at the result.
-    """
+    """The one spelling of `capsem-admin image build` for either output rail."""
     settings = config.imagebuild
     if template not in settings.templates:
         raise GateError(
@@ -240,16 +234,14 @@ def check_assets(
         ),
         after=(ready,),
     )
-    return tuple(
-        phase.add(
-            _when_missing(
-                recovery,
-                build(config, profile=profile, arch=arch.name, template="all"),
-            ),
-            after=(ready,),
-        )
-        for profile in profiles(config)
-    )
+    images: list[Step] = []
+    manifest = config.path(config.imagebuild.output) / config.install.manifest_name
+    for profile in profiles(config):
+        subject = build(config, profile=profile, arch=arch.name, template="all")
+        subject = replace(subject, actions=(Remove(manifest), *subject.actions))
+        ready = phase.add(_when_missing(recovery, subject), after=(ready,))
+        images.append(ready)
+    return tuple(images)
 
 
 def _when_missing(recovery: AssetRecovery, subject: Step) -> Step:

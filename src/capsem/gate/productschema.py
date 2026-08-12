@@ -201,19 +201,6 @@ class PackageProof(Strict):
         return tuple(name for name in self.binaries if name not in self.binaries_without_version)
 
 
-class ArtifactsConfig(Strict):
-    """The three files a bootable per-architecture asset tree is made of."""
-
-    kernel: str
-    initrd: str
-    rootfs: str
-
-    @property
-    def bootable(self) -> tuple[str, ...]:
-        """What must exist for a tree to boot, in build order."""
-        return (self.kernel, self.initrd, self.rootfs)
-
-
 class PackageSigningConfig(Strict):
     """Where the local Tauri signing material lives, and how it is exported."""
 
@@ -270,27 +257,3 @@ class PackageConfig(Strict):
     container_output_contents: str
     dist_dir: str
     proof: PackageProof
-
-
-class AssetsConfig(Strict):
-    test_root: str
-    profiles_glob: str
-    evidence_artifacts: tuple[str, ...]
-    failure_tail_lines: int
-    shell_proof_timeout_seconds: int
-    run_dir_template: str
-    admin_command: tuple[str, ...]
-    capsem_binary: str
-    hash_assets_script: str
-    shell_proof_script: str
-    container_cleanup_script: str
-    cross_platform_probe_command: str
-    cross_platform_probe_network: str
-    merged_assets_dir: str
-    merged_config_dir: str
-    profile_home_dir: str
-    failure_evidence_dir: str
-    materialized_profiles_dir: str
-    current_link: str
-    evidence_suffixes: tuple[str, ...]
-    evidence_prune_dirs: tuple[str, ...]

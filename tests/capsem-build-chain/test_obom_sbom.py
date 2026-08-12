@@ -80,8 +80,9 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
 
 def test_builder_emits_obom_and_keeps_build_ledger_debug_scoped() -> None:
     builder = _read("src/capsem/builder/docker.py")
+    evidence = _read("src/capsem/obom.py")
     syntax = ast.parse(builder)
-    cdxgen_commands: list[list[str]] = []
+    cdxgen_calls: list[ast.Call] = []
     for node in ast.walk(syntax):
         if (
             not isinstance(node, ast.Call)
@@ -93,32 +94,38 @@ def test_builder_emits_obom_and_keeps_build_ledger_debug_scoped() -> None:
             continue
         command = node.args[0]
         if not any(
-            isinstance(element, ast.Starred)
-            and isinstance(element.value, ast.Call)
-            and isinstance(element.value.func, ast.Name)
-            and element.value.func.id == "_cdxgen_command"
-            for element in command.elts
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Name)
+            and child.func.id == "_cdxgen_command"
+            for child in ast.walk(command)
         ):
             continue
-        cdxgen_commands.append(
-            [
-                element.value
-                for element in command.elts
-                if isinstance(element, ast.Constant) and isinstance(element.value, str)
-            ]
-        )
+        cdxgen_calls.append(node)
 
     assert 'OBOM_ASSET = "obom.cdx.json"' in builder
     assert 'BUILD_LEDGER_NAME = "build-ledger.log"' in builder
-    assert len(cdxgen_commands) == 1
-    assert {"--pull", "never", "--network", "/rootfs", "-t", "rootfs", "-o"} <= set(
-        cdxgen_commands[0]
+    assert len(cdxgen_calls) == 1
+    cdxgen_call = cdxgen_calls[0]
+    cdxgen_command = [
+        child.value
+        for child in ast.walk(cdxgen_call.args[0])
+        if isinstance(child, ast.Constant) and isinstance(child.value, str)
+    ]
+    assert {"--pull", "never", "--network", "/rootfs", "-t", "rootfs", "-o"} <= set(cdxgen_command)
+    assert any(
+        isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Name)
+        and child.func.id == "_scanner_output_command"
+        for child in ast.walk(cdxgen_call.args[0])
     )
+    keywords = {keyword.arg: keyword.value for keyword in cdxgen_call.keywords}
+    assert isinstance(keywords["capture"], ast.Constant) and keywords["capture"].value is True
+    assert isinstance(keywords["timeout"], ast.Name)
+    assert keywords["timeout"].id == "OBOM_COMMAND_TIMEOUT_SECONDS"
     assert "def _normalize_cyclonedx_obom" in builder
     assert "def _cdx_validate_command" in builder
-    assert '"capsem:evidence:scope", "value": "exported-rootfs"' in builder
-    assert 'prop.get("name") == "cdx:osquery:category"' in builder
-    assert "], capture=True)" in builder
+    assert '"capsem:evidence:scope", "exported-rootfs"' in evidence
+    assert 'prop.get("name") == "cdx:osquery:category"' in evidence
     assert "def generate_cyclonedx_obom" in builder
     assert "cdxgen" in builder
     assert "CAPSEM_CDXGEN_CMD" not in builder
