@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Synthetic real-runner tests now receive the same config-owned cancellation
+  policy as the complete gate instead of trying to discover a second gate
+  configuration inside their minimal Git fixtures. The exact Ty debt ratchet
+  also records the newly reduced diagnostic count rather than treating an
+  improvement as an unexplained source-contract failure.
+
 - Interrupting a gate now terminates the exact foreground process tree it
   owns, including descendants moved into a Bubblewrap session, before releasing
   the workspace lock. The grace and cancellation polling bounds are config-owned;
