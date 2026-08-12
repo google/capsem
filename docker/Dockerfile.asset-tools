@@ -3,6 +3,10 @@
 # config-owned platform child and a Dockerfile fallback would reopen a mutable
 # direct-build rail.
 ARG BASE
+ARG TRUSTSTORE_IMAGE
+
+FROM ${TRUSTSTORE_IMAGE} AS truststore
+
 FROM ${BASE}
 
 ARG DEBIAN_SNAPSHOT_BASE
@@ -19,6 +23,11 @@ LABEL org.capsem.asset-tools.input-key="${INPUT_IDENTITY}"
 # This is the sole network-open asset post-processing materializer. APT's
 # signed metadata and every downloaded executable are selected by checked-in
 # timestamp/digest; the publishable pack/OBOM phase runs this image offline.
+# Debian's minimal base has no CA bundle, so HTTPS cannot bootstrap the
+# ca-certificates package itself. Reuse the exact, already-prefetched Rust
+# builder's official Alpine trust store, then replace it with Debian's package.
+COPY --from=truststore /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
 RUN set -eux; \
     test -n "${DEBIAN_SNAPSHOT_BASE}"; \
     test -n "${DEBIAN_SECURITY_SNAPSHOT_BASE}"; \

@@ -26,6 +26,7 @@ def image_tag(build: BuildConfig, arch_name: str, root: Path) -> str:
         arch_name,
         arch.docker_platform,
         arch.base_image,
+        arch.rust_builder_base_image,
         settings.debian_snapshot_base,
         settings.debian_security_snapshot_base,
         settings.debian_snapshot_id,
@@ -53,6 +54,7 @@ def build_arguments(build: BuildConfig, arch_name: str, identity: str) -> list[s
     downloads = settings.architectures[arch_name]
     return [
         f"BASE={arch.base_image}",
+        f"TRUSTSTORE_IMAGE={arch.rust_builder_base_image}",
         f"DEBIAN_SNAPSHOT_BASE={settings.debian_snapshot_base}",
         f"DEBIAN_SECURITY_SNAPSHOT_BASE={settings.debian_security_snapshot_base}",
         f"DEBIAN_SNAPSHOT_ID={settings.debian_snapshot_id}",

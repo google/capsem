@@ -270,14 +270,30 @@ def test_asset_tool_identity_changes_with_dockerfile_and_config(tmp_path: Path) 
         BUILD, "x86_64", PROJECT_ROOT
     )
 
+    arch = BUILD.architectures["x86_64"]
+    changed_arch = arch.model_copy(
+        update={"rust_builder_base_image": ("docker.io/library/rust@sha256:" + "f" * 64)}
+    )
+    changed_build = BUILD.model_copy(
+        update={"architectures": {**BUILD.architectures, "x86_64": changed_arch}}
+    )
+    assert assettools.image_tag(changed_build, "x86_64", PROJECT_ROOT) != assettools.image_tag(
+        BUILD, "x86_64", PROJECT_ROOT
+    )
+
 
 def test_asset_tool_helper_replaces_inherited_apt_authority_before_fetch() -> None:
     source = (PROJECT_ROOT / BUILD.asset_tools.dockerfile).read_text(encoding="utf-8")
 
+    trust_stage = source.index("FROM ${TRUSTSTORE_IMAGE} AS truststore")
+    trust_copy = source.index(
+        "COPY --from=truststore /etc/ssl/certs/ca-certificates.crt "
+        "/etc/ssl/certs/ca-certificates.crt"
+    )
     remove = source.index("rm -f /etc/apt/sources.list.d/*")
     write = source.index("> /etc/apt/sources.list")
     update = source.index("apt-get -o Acquire::Check-Date=false update")
-    assert remove < write < update
+    assert trust_stage < trust_copy < remove < write < update
     assert "deb.debian.org" not in source
     assert "security.debian.org" not in source
 
@@ -299,6 +315,7 @@ def test_asset_tool_materializer_is_the_only_network_open_helper_build() -> None
     assert f"--platform {arch.docker_platform}" in builds[0]
     assert "--network default" in builds[0]
     assert f"BASE={arch.base_image}" in builds[0]
+    assert f"TRUSTSTORE_IMAGE={arch.rust_builder_base_image}" in builds[0]
     assert f"INPUT_IDENTITY={tag}" in builds[0]
     assert runner.ran(r"index \.Config\.Labels.*org\.capsem\.asset-tools\.input-key")
     assert any("sealed asset tools identity" in note for note in runner.notes)
