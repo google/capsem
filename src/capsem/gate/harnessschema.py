@@ -108,7 +108,11 @@ class LintConfig(Strict):
 class BoundaryConfig(Strict):
     max_recipe_lines: int
     max_module_lines: int
+    #: One rule per first-party source family. `scripts` and `rust` are the
+    #: same shape -- roots, suffixes, a ceiling, an exact debt inventory --
+    #: because they are the same rule asked of different trees.
     scripts: ScriptSizeConfig
+    rust: ScriptSizeConfig
     shell_control_flow: tuple[str, ...]
     recipes_with_inline_control_flow: tuple[str, ...]
     direct_machine_access: tuple[str, ...]

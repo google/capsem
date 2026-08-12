@@ -806,6 +806,25 @@ max_lines = 300
 # Only Git-tracked files in the first-party roots above are considered. That
 # excludes build-generated output and vendored dependency trees by rule while
 # still catching suffix-less package scripts through their shebang.
+# Rust, at a ceiling read from its own distribution rather than borrowed from
+# Python. Rust's median tracked file is 232 lines and p90 is 1265; a 300-line
+# ceiling would flag 169 of 388 files, which is a rewrite mandate rather than
+# an outlier detector and would be deleted the first time it blocked someone.
+# 1000 sits just under p90 and flags 58 -- the genuine outliers.
+#
+# Rolled out by scope, one crate at a time, because the ceiling applies to
+# everything in `roots` and listing only some files would fail the rest.
+# capsem-service first: two entries freeze the two largest files in the
+# repository, in the crate CLAUDE.md calls a thin shell.
+[boundary.rust]
+roots = ["crates/capsem-service"]
+suffixes = [".rs"]
+max_lines = 1000
+
+[boundary.rust.oversized_line_counts]
+"crates/capsem-service/src/main.rs" = 13851
+"crates/capsem-service/src/tests.rs" = 11937
+
 [boundary.scripts.oversized_line_counts]
 "scripts/bootstrap-linux.sh" = 608
 "scripts/build-pkg.sh" = 352
@@ -1419,7 +1438,6 @@ source_contract = [
     "tests/test_retired_version_formats.py",
     "tests/test_rust_test_layout.py",
     "tests/test_rust_test_name_assertions.py",
-    "tests/test_script_size_contract.py",
     "tests/test_skills.py",
     "tests/test_source_syntax_gate.py",
     "tests/test_sync_container_clock.py",

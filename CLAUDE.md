@@ -59,6 +59,9 @@ assets/                   Built VM assets (gitignored, per-arch: assets/{arch}/)
 graphics/                 Brand icons and Tauri app icons (source of truth)
 skills/                   Shared AI agent skills (SKILL.md format)
 tests/                    Cross-crate suites (ironbank/ black-box gates, citadel/ guards)
+                          citadel/ is source-level and runs in the fast phase: a
+                          recorded mistake must fail before the expensive work, and
+                          each guard carries the reason in its failure message
 src/capsem/gate/          The build and release gate: the justfile dispatches, this decides
 scripts/                  CI and release gate scripts invoked by the gate
 ```

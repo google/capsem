@@ -8,6 +8,25 @@ description: Capsem testing policy and workflow. Use whenever running or writing
 Read `tests/README.md` before adding or moving test fixtures. Test-only config
 belongs under `tests/fixtures/`, not root `config/`.
 
+## Where a new guard belongs
+
+A test that records an architectural mistake -- something that must not be
+repeated, checkable from source -- is a Citadel guard, in `tests/citadel/`, not
+another file at `tests/` root. It runs in the fast phase, so it costs seconds
+rather than waiting on an asset build.
+
+Two rules the existing guards follow:
+
+State the reason in a named `*_RATIONALE` appended to the assertion, so a
+violation teaches. `test_db_boundary.py` is the model. Where the reason is
+already stated canonically -- `config/gate.toml [boundary]`, AGENTS.md, a skill
+-- cite it instead of restating it.
+
+Write the adversarial case, not just the conformance case. A guard proved only
+by inputs it was built for is not proved. `test_workflow_enforcement.py` carries
+fourteen evasions and four legitimate shapes because enumerating bad spellings
+let five through; the rule is now a whitelist for that reason.
+
 ## Test execution
 
 | Command | What | VM? |

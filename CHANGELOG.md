@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Source-size rules are one guard in the Citadel rather than one per tree.
+  `[boundary.scripts]` and `[boundary.rust]` are the same rule -- roots,
+  suffixes, a ceiling, an exact debt inventory -- asked of two trees, and two
+  implementations of one rule is how they drift. `tests/test_script_size_contract.py`
+  is retired into `tests/citadel/test_shape_boundaries.py`, which owns every
+  declared family and gained the negative tests the old one lacked: a growing
+  file and a new file over the ceiling each prove the ratchet fires.
+- Rust files have a ceiling for the first time, at 1000 lines, chosen from
+  Rust's own distribution rather than borrowed from Python. Rust's median
+  tracked file is 232 lines, so a 300-line ceiling would flag 169 of 388 files
+  -- a rewrite mandate that would be deleted the first time it blocked someone.
+  1000 sits just under p90 and flags 58. Rolled out by scope one crate at a
+  time, starting with `capsem-service`: two entries freeze the two largest
+  files in the repository, 25,788 lines between them, in the crate CLAUDE.md
+  calls a thin shell.
 - The Citadel now runs in the fast phase instead of the broad suite. Its guards
   are source-level -- no artifact, no VM, no daemon, seconds rather than
   minutes -- and were reachable only through the broad suite's `root`, which carries

@@ -233,6 +233,7 @@ repoint `latest` at the question.
 | `test_gate_execute_funnel.py` | recursion refused; every subprocess logged; plan construction inert; isolation from acquired resources |
 | `test_gate_no_nested_commands.py` | the same recursion rule statically, plus every named recipe and subcommand resolves |
 | `test_gate_boundary.py` | no shell bodies; ≤5 recipe lines; ≤300 module lines; `ty` strict |
+| `citadel/test_shape_boundaries.py` | every `[boundary.*]` source ceiling and its exact debt inventory |
 | `test_gate_primitives_are_the_only_way.py` | only the harness touches the machine; only `planrunner` schedules |
 | `test_gate_has_no_literal_data.py` | no path, architecture or channel spelled in code |
 | `test_gate_hardening.py` | mutation is exclusive; plans are pure; verifications ask the real question |
@@ -293,6 +294,35 @@ passed on first write because I listed what was already non-exclusive. Write the
 claim, watch it fail, then make it true.
 
 Break every guard once and watch it go red. Clear `__pycache__` between runs.
+
+## The Citadel runs in the fast phase
+
+`tests/citadel/` records architectural mistakes that must not be repeated. It
+is source-level -- no artifact, no VM, no daemon -- so it is scheduled beside
+Ruff and the source-syntax audit, not in the broad suite. It was reachable only
+through the broad suite's `root` for a while, which meant a DB-boundary
+violation surfaced after the VMs were up rather than in the first seconds.
+
+`tests/citadel` is in `broad_ignores`: one collector, so its failures have one
+owner. `citadel/test_guard_scheduling.py` fails if it is moved back behind the
+expensive work.
+
+Every guard states its reasoning in a named `*_RATIONALE` appended to the
+assertion, so a violation teaches instead of printing a bare comparison. When
+the reason is already stated somewhere canonical -- `[boundary]`, AGENTS.md, a
+skill -- the rationale cites it rather than restating it; a second wording is a
+second thing to keep in step.
+
+| guard | what it holds |
+|---|---|
+| `test_db_boundary.py` | only `capsem-logger` executes ledger queries |
+| `test_shape_boundaries.py` | every `[boundary.*]` ceiling and debt inventory |
+| `test_workflow_enforcement.py` | a gating step cannot pass while failing |
+| `test_container_workspace.py` | the guest builder's `/src/*` glob skips dotfiles |
+| `test_skill_context_budget.py` | the skill description budget every session pays |
+| `test_hot_build_contract.py` | hot codecs stay optimized in the dev profile |
+| `test_package_architecture_boundary.py` | package and machine architecture never cross |
+| `test_guard_scheduling.py` | the Citadel itself runs before the expensive work |
 
 ## See also
 
