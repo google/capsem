@@ -39,6 +39,7 @@ from .sourcestate import (
     RequireSourceUnchanged,
 )
 from .storage import Storage
+from .timingratchet import EnforceTimingRegression, TimingBoundary
 
 
 def compose(
@@ -82,7 +83,14 @@ def compose(
     contracts = module_contracts.release_contracts(plan, config, after=fast)
     modules = compose_modules(plan, config, qualification=qualification, after=(contracts,))
 
-    return plan.add(step("source.verify", RequireSourceUnchanged()), after=(modules,))
+    return plan.add(
+        step(
+            TimingBoundary.QUALIFICATION.value,
+            RequireSourceUnchanged(),
+            EnforceTimingRegression(TimingBoundary.QUALIFICATION),
+        ),
+        after=(modules,),
+    )
 
 
 def compose_modules(

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Every recorded gate command now prints its critical-path timing summary;
+  nobody has to remember `--timing` before starting a multi-hour proof.
+  Complete qualification also fails when its critical path or any of the prior
+  comparable run's ten slowest steps grows beyond the config-owned relative
+  factor. The baseline is the latest successful journal with the same typed
+  plan shape, invocation, platform, machine, and core count, so no duration is
+  guessed or hardcoded and a graph/host change seeds a new baseline.
+
 - Guest binaries for a foreign architecture are cross-compiled instead of
   emulated. The builder image is now resolved from the *host* rather than the
   target: it is always the host platform's exact `rust:1.97.1-alpine3.23`

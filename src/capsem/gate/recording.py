@@ -62,15 +62,28 @@ class Recorded:
         """
         return self.records
 
+    @contextmanager
     def _recording(self):
         """The run log, or a journal that keeps nothing.
 
         A command that only reads runs must not create one; everything else
         below is identical either way, which is the point.
         """
-        if self.should_record():
-            return RunLog.open(self._config, self.name, argv=self._argv())
-        return _no_record()
+        if not self.should_record():
+            with _no_record() as log:
+                yield log
+            if self._args.timing:
+                self._summarize(log)
+            return
+
+        recorded = None
+        try:
+            with RunLog.open(self._config, self.name, argv=self._argv()) as log:
+                recorded = log
+                yield log
+        finally:
+            if isinstance(recorded, RunLog):
+                self._summarize(recorded)
 
     def _summarize(self, log: RunLog) -> None:
         """Say where the time went, on the way out.
@@ -80,8 +93,6 @@ class Recorded:
         readers ended in `AttributeError: 'NullJournal' object has no
         attribute 'directory'` after printing the answer.
         """
-        if not self._args.timing:
-            return
         if not self.should_record():
             print(f"{self.name} records no run, so there is no timing to report")
             return

@@ -81,7 +81,7 @@ Never overridden — a contract test fails if a subclass defines it. In order:
    doing.
 4. `reexec()`, outside the lock.
 5. `RunLog.open` → `GuardedRunner` → `held(*resources)` → `plan.run(context)`.
-6. `_summarize` — outside the log's context, so `run.end` is on disk first.
+6. `RunLog` closes, then every recorded command prints its timing summary; complete gates also enforce the config-owned, evidence-derived slowdown ratchet.
 
 ## The host kernel owns the network boundary
 

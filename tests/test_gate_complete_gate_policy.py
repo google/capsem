@@ -24,6 +24,8 @@ from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
 from capsem.gate.errors import GateError
 from capsem.gate.qualification import LocalQualification
+from capsem.gate.sourcestate import RequireSourceUnchanged
+from capsem.gate.timingratchet import EnforceTimingRegression, TimingBoundary
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -114,6 +116,21 @@ def test_complete_qualification_defaults_to_enforcement() -> None:
 
     assert all(command.complete_qualification for command in commands)
     assert all(command._sandbox_mode is sandbox.ENFORCE for command in commands)
+
+
+@pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
+def test_timing_ratcheting_precedes_every_publication_boundary(name: str) -> None:
+    plan = _command(name, **COMPLETE_GATE[name])._describe()
+    ordered = list(plan.labels)
+    ratchet = ordered.index(TimingBoundary.QUALIFICATION.value)
+    actions = plan.step_named(TimingBoundary.QUALIFICATION.value).actions
+
+    assert isinstance(actions[0], RequireSourceUnchanged)
+    assert isinstance(actions[-1], EnforceTimingRegression)
+    if name.startswith("release-"):
+        assert ratchet < ordered.index("confirm-head") < ordered.index("release")
+    else:
+        assert ratchet == len(ordered) - 1
 
 
 @pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
@@ -245,13 +262,12 @@ def test_every_complete_gate_command_keeps_the_host_awake(name, macos) -> None:
     # outermost thing or the process that adopts it is not the one that runs
     # the gate. What matters is that the machine still cannot sleep through an
     # unattended run, which is the argv containing the command, wherever it is.
-    assert list(CONFIG.candidate.keep_awake_command) == [
-        part
-        for part in replacement
-        if part in set(CONFIG.candidate.keep_awake_command)
-    ][: len(CONFIG.candidate.keep_awake_command)], (
-        f"{name} lost its keep-awake wrapper: {replacement}"
-    )
+    assert (
+        list(CONFIG.candidate.keep_awake_command)
+        == [part for part in replacement if part in set(CONFIG.candidate.keep_awake_command)][
+            : len(CONFIG.candidate.keep_awake_command)
+        ]
+    ), f"{name} lost its keep-awake wrapper: {replacement}"
 
 
 @pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
@@ -292,9 +308,7 @@ def test_the_wrapper_is_applied_exactly_once(name, macos, monkeypatch) -> None:
     assert _command(name, **COMPLETE_GATE[name]).reexec() is None
 
 
-def test_forging_the_keep_awake_marker_cannot_disable_the_macos_sandbox(
-    macos, monkeypatch
-) -> None:
+def test_forging_the_keep_awake_marker_cannot_disable_the_macos_sandbox(macos, monkeypatch) -> None:
     monkeypatch.setenv(CONFIG.candidate.keep_awake_marker, "1")
 
     replacement = _command("candidate").reexec()

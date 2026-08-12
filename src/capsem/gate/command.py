@@ -169,7 +169,10 @@ class GateCommand(Recorded, ABC):
         Module commands share the complete gate's host wrapper, so direct
         release-CI fragment invocations retain the qualification boundary."""
         return sandbox.reexec(
-            self._config, self._runner, default=self._sandbox_mode, requested=None,
+            self._config,
+            self._runner,
+            default=self._sandbox_mode,
+            requested=None,
             outside_egress=self.outside_egress,
         )
 
@@ -284,10 +287,6 @@ class GateCommand(Recorded, ABC):
                         carried=carried,
                     )
                 )
-        # Outside the run log's own context, so `run.end` is on disk before
-        # anything reads the run back. Inside it, `--timing` measured a run
-        # that had not finished and reported `total_ms == 0`.
-        self._summarize(log)
 
     def _describe(self) -> Plan:
         """Build the plan with the machine sealed off.

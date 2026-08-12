@@ -19,6 +19,7 @@ from typing import Annotated
 from pydantic import (
     NonNegativeFloat,
     NonNegativeInt,
+    PositiveFloat,
     PositiveInt,
     StringConstraints,
     field_validator,
@@ -40,6 +41,7 @@ PythonRoot = Annotated[str, StringConstraints(min_length=1, pattern=r"^[A-Za-z0-
 #: `--ignore`, so a misspelt entry held nothing back and looked exactly like a
 #: rule somebody had fixed.
 TyRule = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$")]
+
 
 class SuppressionBudget(Strict):
     """Exact Python-analysis debt that may only shrink deliberately."""
@@ -184,6 +186,20 @@ class LocksConfig(Strict):
     gate: LockConfig
 
 
+class TimingRegressionConfig(Strict):
+    """Evidence-derived slowdown guard; no authored duration belongs here."""
+
+    maximum_factor: PositiveFloat
+    slowest_steps: PositiveInt
+
+    @field_validator("maximum_factor")
+    @classmethod
+    def _must_allow_some_variance(cls, factor: float) -> float:
+        if factor <= 1.0:
+            raise ValueError("maximum_factor must be greater than one")
+        return factor
+
+
 class RunLogConfig(Strict):
     """Retention that keeps nothing prunes the run being written.
 
@@ -214,6 +230,7 @@ class RunLogConfig(Strict):
     artifact_digest: str
     slow_action_seconds: NonNegativeFloat
     failure_tail_lines: PositiveInt
+    timing_regression: TimingRegressionConfig
 
 
 class DiskConfig(Strict):

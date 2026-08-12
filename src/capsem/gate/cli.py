@@ -118,7 +118,7 @@ def _inspection() -> argparse.ArgumentParser:
     shared.add_argument(
         "--timing",
         action="store_true",
-        help="print where the time went, by critical path",
+        help="compatibility flag; recorded commands always print their timing",
     )
     return shared
 

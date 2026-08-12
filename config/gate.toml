@@ -1762,6 +1762,15 @@ slow_action_seconds = 30
 # reading the failure, without putting a gigabyte of compiler output in JSONL.
 failure_tail_lines = 40
 
+[runlog.timing_regression]
+# A release guard, not a stopwatch SLA. Compare complete qualification with
+# its latest successful run on the same platform/machine/core count and exact
+# graph. Durations come only from those journals: config owns the allowed
+# relative increase and how many baseline-ranked slow steps matter, never a
+# guessed number of seconds.
+maximum_factor = 1.5
+slowest_steps = 10
+
 # ---------------------------------------------------------------------------
 # Disk the gate is allowed to occupy
 # ---------------------------------------------------------------------------
