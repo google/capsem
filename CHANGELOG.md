@@ -61,6 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Standalone static qualification now materializes its own Node workspace,
+  generated settings, and Tauri frontend bundle before Rust coverage. A fresh
+  private checkout no longer depends on `frontend/dist` produced in another
+  gate command's discarded prefix.
 - A focused gate command given an existing `--prefix` now actually executes
   inside that retained checkout. Cross-compile and other diagnostic rails can
   no longer accept the shared option while writing their artifacts and run

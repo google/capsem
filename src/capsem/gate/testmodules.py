@@ -199,6 +199,9 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
     settings = config.modules
     leaves: list[Step] = []
     ort = phase.add(toolchain.ort(config, toolchain.OrtConsumer.STATIC), after=after)
+    node = phase.add(toolchain.node(config), after=after)
+    generated = phase.add(audits.generated_settings(config), after=(node,))
+    frontend = phase.add(audits.frontend_bundle(config), after=(generated,))
 
     # Start the install-harness preflight early, but do not make unrelated
     # asset and functional work depend on it.  A retained-prefix refresh can
@@ -265,7 +268,7 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
             ),
             contends=(config.exclusive("workspace_binaries"),),
         ),
-        after=(agents, ort),
+        after=(agents, ort, frontend),
     )
     leaves.append(phase.add(hostpackage.sign_step(config), after=(coverage,)))
     return tuple(leaves)

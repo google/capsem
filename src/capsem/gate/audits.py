@@ -108,6 +108,19 @@ def web_surfaces(config: GateConfig) -> list[Step]:
     ]
 
 
+def frontend_bundle(config: GateConfig) -> Step:
+    """Build the exact bundle Tauri embeds, without rerunning frontend tests."""
+    frontend = config.frontend
+    return step(
+        "web.frontend-bundle",
+        Run(["bash", frontend.build_script, frontend.build_target]),
+        contends=(
+            config.exclusive("astro_build"),
+            config.exclusive("node_modules"),
+        ),
+    )
+
+
 def clippy(config: GateConfig) -> Step:
     """The Rust lint gate.
 

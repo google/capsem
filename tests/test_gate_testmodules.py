@@ -72,6 +72,29 @@ def test_clippy_waits_for_the_frontend_build() -> None:
     assert _wave_of(FastModule, "fast.clippy") > _wave_of(FastModule, "fast.web.frontend")
 
 
+def test_static_owns_the_frontend_bundle_before_rust_coverage() -> None:
+    """A private static checkout cannot inherit ``frontend/dist`` from fast.
+
+    Tauri reads that directory while compiling ``capsem-app`` tests, so the
+    static module has to own the ignored Node tree, generated settings, and
+    bundle rather than relying on a different gate command's prefix.
+    """
+    plan = _plan(StaticModule)
+    node = "static.toolchain.node"
+    settings = "static.audit.generated-settings"
+    bundle = "static.web.frontend-bundle"
+    coverage = "static.rust-coverage"
+
+    assert _wave_of(StaticModule, node) < _wave_of(StaticModule, settings)
+    assert _wave_of(StaticModule, settings) < _wave_of(StaticModule, bundle)
+    assert _wave_of(StaticModule, bundle) < _wave_of(StaticModule, coverage)
+    assert plan.after_of(coverage) >= {bundle}
+
+    rendered = "\n".join(plan.step_named(bundle).render())
+    assert CONFIG.frontend.build_script in rendered
+    assert CONFIG.frontend.build_target in rendered
+
+
 @pytest.mark.parametrize(
     ("module", "materializer", "consumer"),
     [
