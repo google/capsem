@@ -81,7 +81,7 @@ Never overridden — a contract test fails if a subclass defines it. In order:
    doing.
 4. `reexec()`, outside the lock.
 5. `RunLog.open` → `GuardedRunner` → `held(*resources)` → `plan.run(context)`.
-6. `_summarize` — outside the log's context, so `run.end` is on disk first.
+6. `RunLog` closes, then every recorded command prints its timing summary; complete gates also enforce the config-owned, evidence-derived slowdown ratchet.
 
 ## The host kernel owns the network boundary
 
@@ -204,9 +204,9 @@ not a design, and usually wants to become a named action.
 
 `cancellation.check("what you are doing")` at points a partial unit can be
 abandoned from — between files, between chunks, never mid-write. Ctrl-C sets
-the switch, cancels pending steps, wakes lock waiters, and waits a bounded ten
-seconds before naming whatever refused to stop. Pool workers do **not** inherit
-the submitting context: `planrunner` hands the switch to `_guarded` explicitly.
+the switch, cancels pending steps, and waits the config-owned grace before naming
+what refused to stop. `planrunner` explicitly hands workers the switch. Foreground
+commands are exact owned process trees; only `Runner.launch` may outlive an action.
 
 ## Asking without running
 

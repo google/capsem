@@ -24,6 +24,9 @@ from typing import TextIO
 from .errors import GateError
 from .invocation import Command, ConsoleMode
 from .planseal import _refuse_while_sealed
+from .processgroup import StopPolicy
+from .processgroup import run as run_foreground
+from .processgroup import tee as tee_foreground
 
 #: Concurrent steps write to one terminal. Their own logs are private, so this
 #: guards the shared stream and nothing else -- a lock around the sinks would
@@ -42,9 +45,27 @@ class Runner:
     Subclass and override `execute` to observe or simulate them instead.
     """
 
-    def __init__(self, root: Path, *, stream: TextIO | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        stream: TextIO | None = None,
+        stop_policy: StopPolicy | None = None,
+    ) -> None:
         self.root = Path(root)
         self._stream: TextIO = stream if stream is not None else sys.stderr
+        self._configured_stop_policy = stop_policy
+
+    def _stop_policy(self) -> StopPolicy:
+        if self._configured_stop_policy is not None:
+            return self._configured_stop_policy
+        from .config import for_root
+
+        execution = for_root(self.root).execution
+        return StopPolicy(
+            grace_seconds=execution.cancellation_grace_seconds,
+            poll_seconds=execution.cancellation_poll_seconds,
+        )
 
     # -- reporting ---------------------------------------------------------
 
@@ -77,14 +98,12 @@ class Runner:
         environment = {**os.environ, **command.env}
         if command.log is not None:
             return self._teed(command, command.log, environment)
-        return subprocess.run(
-            list(command.argv),
-            cwd=str(command.cwd) if command.cwd else str(self.root),
+        return run_foreground(
+            command.argv,
+            cwd=command.cwd or self.root,
             env=environment,
-            check=False,
-            text=True,
-            stdout=subprocess.PIPE if command.capture else None,
-            stderr=subprocess.PIPE if command.capture else None,
+            capture=command.capture,
+            policy=self._stop_policy(),
         )
 
     def _teed(self, command: Command, log: Path, environment: dict[str, str]) -> Completed:
@@ -108,18 +127,9 @@ class Runner:
             # -- and that `tail -f` on a running step showed nothing until the
             # step ended. One write syscall per line is the price of both.
             log.open("a", encoding="utf-8", buffering=1) as sink,
-            subprocess.Popen(
-                list(command.argv),
-                cwd=str(command.cwd) if command.cwd else str(self.root),
-                env=environment,
-                text=True,
-                bufsize=1,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-            ) as process,
         ):
-            assert process.stdout is not None
-            for line in process.stdout:
+
+            def record(line: str) -> None:
                 sink.write(line)
                 # Only the terminal is serialized. Each step owns its own sink,
                 # so those need no lock and must not wait behind one.
@@ -127,7 +137,15 @@ class Runner:
                     with _TERMINAL:
                         self._stream.write(line)
                         self._stream.flush()
-        return subprocess.CompletedProcess(args=list(command.argv), returncode=process.returncode)
+
+            status = tee_foreground(
+                command.argv,
+                cwd=command.cwd or self.root,
+                env=environment,
+                write=record,
+                policy=self._stop_policy(),
+            )
+        return subprocess.CompletedProcess(args=list(command.argv), returncode=status)
 
     def run(
         self,

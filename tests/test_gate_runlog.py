@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,8 @@ from capsem.gate import config as gate_config
 from capsem.gate.actions import Run
 from capsem.gate.errors import GateError
 from capsem.gate.execution import step
+from capsem.gate.proc import Runner
+from capsem.gate.recording import Recorded
 from capsem.gate.runhistory import read, rotate, runs
 from capsem.gate.runlog import RunLog
 from capsem.gate.runlogschema import PAYLOADS
@@ -46,6 +49,23 @@ def _checkout(tmp_path: Path, **overrides: object) -> gate_config.GateConfig:
 
 def _events(log: RunLog) -> list[dict]:
     return read(log.directory, log.settings)
+
+
+def test_recorded_runs_always_print_their_timing_summary(tmp_path: Path, capsys) -> None:
+    """Nobody has to remember a flag before a three-hour run starts."""
+
+    class RecordedProbe(Recorded):
+        name = "candidate"
+
+    config = _checkout(tmp_path)
+    recorded = RecordedProbe()
+    recorded._config = config
+    recorded._args = Namespace(timing=False)
+    recorded._invocation = ()
+    with recorded._recording() as log:
+        log.shape(("build",), ())
+
+    assert "candidate --" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -584,11 +604,8 @@ def _recorded_argv(raw: list[str], tmp_path: Path) -> tuple[str, ...]:
     return command._argv()
 
 
-class _Recording:
+class _Recording(Runner):
     """Just enough runner for a command to be constructed."""
-
-    def __init__(self, root: Path) -> None:
-        self.root = root
 
 
 @pytest.mark.parametrize(

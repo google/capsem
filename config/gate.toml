@@ -660,7 +660,7 @@ error_on_warning = true
 # Reductions must lower the count immediately, so stale exemptions fail too.
 [lint.ty_ratchet]
 call-top-callable = 3
-invalid-argument-type = 135
+invalid-argument-type = 132
 invalid-assignment = 18
 invalid-attribute-override = 1
 invalid-method-override = 4
@@ -741,6 +741,9 @@ direct_machine_access = [
     "fileactions.py",
     "filesystem.py",
     "proc.py",
+    # The process half of proc's one execution funnel, split at the module
+    # ceiling. It owns exact foreground process trees across sandbox sessions.
+    "processgroup.py",
     "pidfiles.py",
     "locks.py",
     "runlog.py",
@@ -826,7 +829,7 @@ max_lines = 1000
 "crates/capsem-service/src/tests.rs" = 11937
 
 [boundary.scripts.oversized_line_counts]
-"scripts/bootstrap-linux.sh" = 608
+"scripts/bootstrap-linux.sh" = 613
 "scripts/build-pkg.sh" = 352
 "scripts/check-hardcoded-release-selections.py" = 305
 "scripts/check-public-binary-release.py" = 1097
@@ -851,7 +854,7 @@ max_lines = 1000
 "scripts/release_glowup.py" = 823
 "scripts/release_inputs.py" = 337
 "scripts/resolve-reusable-profile-assets.py" = 334
-"scripts/stage-release-test-inputs.py" = 562
+"scripts/stage-release-test-inputs.py" = 557
 
 # ---------------------------------------------------------------------------
 # What may not run beside what
@@ -874,6 +877,11 @@ max_lines = 1000
 # from measurement rather than from cores -- a gate step is rarely one process,
 # and eight steps each starting four pytest workers is not eight-way anything.
 max_parallel_steps = 8
+# Foreground actions own a dedicated process group. Cancellation checks this
+# often, then gives the exact group this long to stop before SIGKILL. Both are
+# operational policy rather than subprocess call-site folklore.
+cancellation_poll_seconds = 0.1
+cancellation_grace_seconds = 10.0
 
 [execution.exclusives.apple_vz]
 reason = "two benchmark files launching VMs at once measure each other, not Capsem"
@@ -1167,6 +1175,17 @@ lane_container = "capsem-linux-rust-run"
 tag = "capsem-host-builder:latest"
 dockerfile = "docker/Dockerfile.host-builder"
 context = "docker/"
+builder_identity_inputs = [
+    "docker/Dockerfile.host-builder",
+    "docker/sources-multiarch.sh",
+    "docker/swap-dev-libs.sh",
+    "rust-toolchain.toml",
+]
+materialize_network = "default"
+pnpm_version = "10.34.5"
+rust_image = "rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97"
+uv_image = "ghcr.io/astral-sh/uv:0.12.3@sha256:2d890623d310b57771ce840f0da5eed5fc6d657da05ffaa45d82797b53fa3abc"
+cargo_tool_args = { TAURI_CLI_VERSION = "cargo-tauri", CARGO_NEXTEST_VERSION = "cargo-nextest", CARGO_LLVM_COV_VERSION = "cargo-llvm-cov" }
 script = "scripts/test-linux-rust.sh"
 mount = "/src"
 # `probe_user` and `probe_network` are gone with the probe they configured.
@@ -1348,7 +1367,6 @@ max_lines = 20
 "release-assets.yaml:publish-profile-release:16:Publish immutable GitHub profile release" = 33
 "release-assets.yaml:test-profile-pairing:15:Prepare exact profile and pulled binary pairing" = 54
 "release-binary-staging.yaml:assemble-binary-channel:9:Prove VM asset metadata did not change" = 34
-"release.yaml:build-app-macos:14:Install cargo tools" = 23
 "release.yaml:build-app-macos:22:Verify macOS package installation path policy" = 31
 "release.yaml:create-release:8:Build summary" = 25
 "release.yaml:preflight:3:Import Apple certificate (preflight)" = 23
@@ -1478,6 +1496,7 @@ source_contract = [
     "tests/test_gate_actions.py",
     "tests/test_gate_assetlanes.py",
     "tests/test_gate_assets.py",
+    "tests/test_gate_asset_recovery.py",
     "tests/test_guest_rust_builder_hermetic.py",
     "tests/test_gate_boundary.py",
     "tests/test_gate_candidate.py",
@@ -1496,6 +1515,7 @@ source_contract = [
     "tests/test_gate_hardening.py",
     "tests/test_gate_has_no_literal_data.py",
     "tests/test_gate_hostimage_composition.py",
+    "tests/test_host_builder_materializer.py",
     "tests/test_gate_install_container.py",
     "tests/test_gate_no_nested_commands.py",
     "tests/test_gate_install_ordering.py",
@@ -1772,6 +1792,21 @@ linux_args = [
     "--dev-bind", "/dev", "/dev",
 ]
 linux_device_mount = "/dev"
+# A pre-gate kernel proof, not a marker: only loopback may exist and a numeric
+# external connection must fail. The timeout is config-owned so runner/network
+# variance is never hidden in a script literal.
+linux_probe_loopback_host = "127.0.0.1"
+linux_probe_egress_host = "1.1.1.1"
+linux_probe_egress_port = 53
+linux_probe_timeout_seconds = 1.0
+# Ubuntu 24.04 hosted runners can permit user namespaces but deny Bubblewrap's
+# loopback RTM_NEWADDR under AppArmor. Only that exact ephemeral-host signature
+# may lift the one sysctl, and the complete kernel proof must then pass again.
+linux_hosted_failure_marker = "Failed RTM_NEWADDR"
+linux_hosted_repair_command = ["sudo", "sysctl", "-w"]
+linux_hosted_userns_sysctl = "kernel.apparmor_restrict_unprivileged_userns"
+linux_hosted_userns_required_value = 1
+linux_hosted_userns_repair_value = 0
 profile_name = "gate.sb"
 
 # Three live advisory queries, plus a release's manifest resolution, exact-main
@@ -1926,6 +1961,15 @@ slow_action_seconds = 30
 # log stays in `steps/`; this is the part that has to be in front of whoever is
 # reading the failure, without putting a gigabyte of compiler output in JSONL.
 failure_tail_lines = 40
+
+[runlog.timing_regression]
+# A release guard, not a stopwatch SLA. Compare complete qualification with
+# its latest successful run on the same platform/machine/core count and exact
+# graph. Durations come only from those journals: config owns the allowed
+# relative increase and how many baseline-ranked slow steps matter, never a
+# guessed number of seconds.
+maximum_factor = 1.5
+slowest_steps = 10
 
 # ---------------------------------------------------------------------------
 # Disk the gate is allowed to occupy

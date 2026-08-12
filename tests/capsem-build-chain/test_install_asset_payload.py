@@ -15,6 +15,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+import yaml
 from blake3 import blake3
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -1173,21 +1174,17 @@ def test_install_source_image_prebuilds_fresh_cli_before_sealed_runtime() -> Non
     assert '["cargo", "build", "-p", "capsem"]' not in tests
 
 
-def test_local_linux_preflight_contains_asset_ci_release_tools() -> None:
-    """The builder image pins its SBOM tool, and the preflight proves it runs."""
+def test_install_preflight_does_not_claim_asset_only_cdxgen() -> None:
+    """The install rail cannot inherit an asset materializer by accident."""
     host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+    asset_tools = (PROJECT_ROOT / "docker/Dockerfile.asset-tools").read_text()
     preflight = _planned("install-image")
-    order = _gate_order()
 
-    assert "@cyclonedx/cdxgen@12.7.0" in host_builder
-    assert "@cyclonedx/cdxgen@latest" not in host_builder
-    assert "cdxgen --version" in preflight
-
-    # The builder image is a step ahead of the preflight rather than a recipe
-    # the preflight calls -- `just _build-host-image` never existed.
-    from capsem.gate import hostimage
-
-    assert _at(order, hostimage.STEP) < _at(order, "install.materialize")
+    assert "cdxgen" not in host_builder
+    assert "cdxgen --version" not in preflight
+    assert "CDXGEN_SHA256" in asset_tools
+    assert "sha256sum -c -" in asset_tools
+    assert "cdxgen --version" in asset_tools
 
 
 def test_cross_arch_tauri_swap_covers_every_native_dev_package() -> None:
@@ -1277,18 +1274,15 @@ def test_deb_repacker_strips_each_elf_with_its_target_tool_and_fails_closed() ->
     assert "could not be stripped" not in repack
 
 
-def test_cross_compile_refreshes_the_cached_host_builder_image() -> None:
-    """Always rebuilt, never asked about.
-
-    Asking whether the tag exists lets a stale local image hide a change to the
-    Dockerfile, and then the gate proves an environment nobody else has. Docker
-    keeps unchanged layers, so the rebuild is nearly free.
-    """
+def test_cross_compile_reuses_only_the_exact_host_builder_identity() -> None:
+    """A warm retry skips six minutes without accepting a stale Dockerfile."""
     host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
     issued = _planned("cross-compile", arch="arm64")
 
-    assert "docker build -t capsem-host-builder" in issued
-    assert "docker image inspect capsem-host-builder" not in issued
+    assert "docker image inspect --platform" in issued
+    assert "org.capsem.host-builder.input-key" in issued
+    assert "docker build -t capsem-host-builder" not in issued
+    assert "org.capsem.host-builder.input-key" in host_builder
     assert host_builder.index("COPY swap-dev-libs.sh") > host_builder.index("FROM")
 
 
@@ -1512,15 +1506,12 @@ def test_cross_compile_does_not_bypass_apt_date_validation() -> None:
 def test_cross_compile_apt_sources_are_encrypted_retried_and_fail_closed() -> None:
     sources = (PROJECT_ROOT / "docker/sources-multiarch.sh").read_text()
 
-    mirror_assignments = [
-        line.strip()
-        for line in sources.splitlines()
-        if line.strip().startswith(
-            ("NATIVE_MIRROR=", "NATIVE_SECURITY=", "FOREIGN_MIRROR=", "FOREIGN_SECURITY=")
-        )
-    ]
-    assert mirror_assignments
-    assert all('="https://' in line for line in mirror_assignments)
+    assert "${1:?Ubuntu snapshot base is required}" in sources
+    assert "${2:?Ubuntu snapshot ID is required}" in sources
+    assert "${snapshot_base%/}/${snapshot_id}" in sources
+    assert "archive.ubuntu.com" not in sources
+    assert "ports.ubuntu.com" not in sources
+    assert "security.ubuntu.com" not in sources
     assert 'Acquire::Retries "5";' in sources
     assert 'Acquire::https::Timeout "30";' in sources
     assert 'APT::Update::Error-Mode "any";' in sources
@@ -1569,7 +1560,7 @@ def test_host_builder_does_not_refetch_multiarch_indexes_for_python() -> None:
     native_tools = host_builder.split(
         "# ---- Native build tools + cross-compilation toolchains ----", maxsplit=1
     )[1].split("# ---- Node.js 24 + pnpm 10 ----", maxsplit=1)[0]
-    python = host_builder.split("# ---- Python 3 + uv", maxsplit=1)[1].split(
+    python = host_builder.split("# ---- Exact uv binary", maxsplit=1)[1].split(
         "# ---- Helper script", maxsplit=1
     )[0]
 
@@ -1578,7 +1569,7 @@ def test_host_builder_does_not_refetch_multiarch_indexes_for_python() -> None:
     assert native_tools.count("apt-get update") == 1
     assert host_builder.count("apt-get update") == 1
     assert "apt-get update" not in python
-    assert "astral.sh/uv/install.sh" in python
+    assert "COPY --from=uv-runtime /uv /uvx /usr/local/bin/" in python
 
 
 def test_host_builder_uses_digest_pinned_prebuilt_node_runtime() -> None:
@@ -2899,37 +2890,46 @@ def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -
     assert "-p capsem-admin" in workflow
 
 
-def test_release_workflow_retries_app_cargo_tool_installs() -> None:
-    workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
-    build_app_macos = workflow.split("  build-app-macos:", 1)[1].split("\n  build-app-linux:", 1)[0]
-    build_app_linux = workflow.split("  build-app-linux:", 1)[1].split(
-        "\n  author-binary-candidate:", 1
-    )[0]
+def test_release_workflow_retries_app_cargo_tool_installs_through_config_authority() -> None:
+    workflow_path = PROJECT_ROOT / ".github" / "workflows" / "release.yaml"
+    workflow = yaml.safe_load(workflow_path.read_text())
+    mac_steps = workflow["jobs"]["build-app-macos"]["steps"]
+    linux_steps = workflow["jobs"]["build-app-linux"]["steps"]
+    installer = next(
+        step for step in mac_steps if step.get("name") == "Install exact config-owned Cargo tools"
+    )
+    config = tomllib.loads((PROJECT_ROOT / "config" / "gate.toml").read_text())
+    configured = {tool["name"]: tool for tool in config["toolchain"]["crates"]}
 
-    assert "cargo install tauri-cli cargo-auditable cargo-sbom --locked" not in workflow
-    assert "cargo install tauri-cli cargo-auditable --locked" not in workflow
+    assert installer["run"].split() == [
+        "uv",
+        "run",
+        "python",
+        "scripts/install-configured-cargo-tools.py",
+        "cargo-tauri",
+        "cargo-sbom",
+    ]
+    assert str(installer["env"]["CARGO_NET_RETRY"]) == "10"
+    assert "continue-on-error" not in installer
+    for name in ("cargo-tauri", "cargo-sbom"):
+        tool = configured[name]
+        assert tool["install"][:2] == ["cargo", "install"]
+        assert "--version" in tool["install"]
+        assert tool["install"][-1] == "--locked"
 
-    for block, required_tools in ((build_app_macos, ("tauri-cli", "cargo-auditable")),):
-        assert "CARGO_NET_RETRY: 10" in block
-        assert "install_cargo_tool() {" in block
-        assert "for attempt in 1 2 3; do" in block
-        assert 'cargo install "$tool" --locked' in block
-        assert 'echo "cargo install $tool failed on attempt $attempt/3"' in block
-        for tool in required_tools:
-            assert f"install_cargo_tool {tool}" in block
-    assert "cargo install cargo-sbom --locked" in build_app_macos
-    assert "cargo install cargo-sbom --locked" not in build_app_linux
-    assert "install_cargo_tool cargo-sbom" not in workflow
+    build_app_linux = "\n".join(str(step.get("run", "")) for step in linux_steps)
     assert "uv run capsem-gate cross-compile" in build_app_linux
+    assert "install-configured-cargo-tools.py" not in build_app_linux
     assert "cargo install" not in build_app_linux
     assert "sudo apt-get" not in build_app_linux
-    assert "-p capsem-tui" in workflow
-    assert "-p capsem-mcp-aggregator" in workflow
-    assert "-p capsem-mcp-builtin" in workflow
-    assert "capsem-admin" in workflow
-    assert "capsem-tui" in workflow
-    assert "capsem-mcp-aggregator" in workflow
-    assert "capsem-mcp-builtin" in workflow
+    workflow_text = workflow_path.read_text()
+    assert "-p capsem-tui" in workflow_text
+    assert "-p capsem-mcp-aggregator" in workflow_text
+    assert "-p capsem-mcp-builtin" in workflow_text
+    assert "capsem-admin" in workflow_text
+    assert "capsem-tui" in workflow_text
+    assert "capsem-mcp-aggregator" in workflow_text
+    assert "capsem-mcp-builtin" in workflow_text
 
 
 def test_release_workflow_sets_up_uv_before_uv_run_steps() -> None:

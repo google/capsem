@@ -176,6 +176,8 @@ def _workflow_job(path: str, name: str) -> str:
 SETUP_JUST = "extractions/setup-just"
 SETUP_PNPM = "pnpm/action-setup"
 SETUP_NODE = "actions/setup-node"
+SETUP_UV = "astral-sh/setup-uv"
+UV_CALL = re.compile(r"(?<![\w-])uv[ \t]")
 
 PROVISIONED_WORKFLOWS = (
     ".github/workflows/ci.yaml",
@@ -252,13 +254,14 @@ def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
     safe one -- a spare tool costs seconds, a missing one is a red gate.
 
     It only covers tools whose need is unconditional once reached (`just`,
-    `pnpm`, `node`). System packages like musl-tools are deliberately excluded:
+    `uv`, `pnpm`, `node`). System packages like musl-tools are deliberately excluded:
     `_gate-linux-rust` reaches `doctor` statically but exits before it on
     Linux, so requiring them here would fail jobs that are already correct."""
     just_tests = _tests_requiring_just()
     assert just_tests, "the just-dependent test scan must find the release contracts"
 
     missing: list[str] = []
+    recipes_reaching_uv = GRAPH.recipes_reaching(JUSTFILE, UV_CALL)
     for path in PROVISIONED_WORKFLOWS:
         for name in _workflow_job_names(path):
             job = _workflow_job(path, name)
@@ -267,10 +270,14 @@ def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
                 shell, just_tests
             )
             needs_pnpm = GRAPH.shell_reaches_pnpm(shell, JUSTFILE)
+            needs_uv = bool(UV_CALL.search(shell)) or any(
+                recipe in recipes_reaching_uv for recipe in GRAPH.JUST_RECIPE.findall(shell)
+            )
             for required, needed in (
                 (SETUP_JUST, needs_just),
                 (SETUP_PNPM, needs_pnpm),
                 (SETUP_NODE, needs_pnpm),
+                (SETUP_UV, needs_uv),
             ):
                 if needed and required not in job:
                     missing.append(f"{path}::{name} invokes it but never installs {required}")

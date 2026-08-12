@@ -185,6 +185,53 @@ def test_a_carried_step_is_not_recorded_as_one_that_ran() -> None:
     assert recorded == ["assets.assemble"]
 
 
+def test_a_carried_runtime_dependency_is_checked_before_any_plan_work() -> None:
+    """A retained prefix cannot retain a Docker image another rail reclaimed."""
+    from helpers.gate import RecordingJournal, RecordingRunner
+
+    from capsem.gate.actions import Action
+    from capsem.gate.context import Context
+    from capsem.gate.errors import GateError
+    from capsem.gate.execution import step
+    from capsem.gate.plan import Plan
+
+    ran: list[str] = []
+
+    class Missing(Action, name="missing-carried-product"):
+        def render(self) -> str:
+            return "require the carried helper image"
+
+        def perform(self, context: Context) -> None:
+            del context
+            raise GateError("exact helper image is absent")
+
+    class Work(Action, name="work-after-carried-product"):
+        def render(self) -> str:
+            return "consume the carried helper image"
+
+        def perform(self, context: Context) -> None:
+            del context
+            ran.append("ran")
+
+    plan = Plan("resume-product")
+    materialized = plan.add(step("materialize", carry_checks=(Missing(),)))
+    plan.add(step("consume", Work()), after=(materialized,))
+    context = Context(
+        RecordingRunner(PROJECT_ROOT),
+        _config(),
+        journal=RecordingJournal(),
+        carried=frozenset({"materialize"}),
+    )
+
+    with pytest.raises(
+        GateError,
+        match=r"cannot carry 'materialize'.*exact helper image is absent.*--from materialize",
+    ):
+        plan.run(context)
+
+    assert ran == []
+
+
 def test_every_command_can_be_told_to_resume() -> None:
     """The flags live on the shared parser, so no command can lack them.
 

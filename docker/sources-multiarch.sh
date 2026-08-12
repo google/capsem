@@ -1,26 +1,28 @@
 #!/bin/bash
 # Configure apt sources for multiarch cross-compilation on Ubuntu 24.04.
 #
-# Ubuntu arm64 images use ports.ubuntu.com (which only has arm64/armhf/etc).
-# Ubuntu amd64 images use archive.ubuntu.com (which only has amd64/i386).
-# Security updates follow the same split: arm64 from ports, amd64 from
-# security.ubuntu.com. For multiarch we need both repos, scoped by arch.
+# Both architectures come from one signed timestamped Ubuntu snapshot. The
+# caller must select it explicitly; inheriting a mirror makes a cold rebuild
+# resolve different -dev bytes under the same source revision.
 set -euo pipefail
+
+snapshot_base=${1:?Ubuntu snapshot base is required}
+snapshot_id=${2:?Ubuntu snapshot ID is required}
+if [[ ! "$snapshot_base" =~ ^https://[^[:space:]]+$ ]]; then
+    echo "ERROR: Ubuntu snapshot base must be an HTTPS URL" >&2
+    exit 1
+fi
+if [[ ! "$snapshot_id" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
+    echo "ERROR: invalid Ubuntu snapshot ID '$snapshot_id'" >&2
+    exit 1
+fi
 
 NATIVE_ARCH=$(dpkg --print-architecture)
 
 if [ "$NATIVE_ARCH" = "arm64" ]; then
     FOREIGN_ARCH="amd64"
-    NATIVE_MIRROR="https://ports.ubuntu.com/ubuntu-ports"
-    NATIVE_SECURITY="https://ports.ubuntu.com/ubuntu-ports"
-    FOREIGN_MIRROR="https://archive.ubuntu.com/ubuntu"
-    FOREIGN_SECURITY="https://security.ubuntu.com/ubuntu"
 elif [ "$NATIVE_ARCH" = "amd64" ]; then
     FOREIGN_ARCH="arm64"
-    NATIVE_MIRROR="https://archive.ubuntu.com/ubuntu"
-    NATIVE_SECURITY="https://security.ubuntu.com/ubuntu"
-    FOREIGN_MIRROR="https://ports.ubuntu.com/ubuntu-ports"
-    FOREIGN_SECURITY="https://ports.ubuntu.com/ubuntu-ports"
 else
     echo "ERROR: unsupported native arch '$NATIVE_ARCH'"
     exit 1
@@ -44,35 +46,15 @@ Acquire::https::Timeout "30";
 APT::Update::Error-Mode "any";
 EOF
 
-# Write arch-scoped multiarch sources (DEB822 format)
+# Write one arch-scoped immutable source (DEB822 format).
+snapshot_url="${snapshot_base%/}/${snapshot_id}"
 cat > /etc/apt/sources.list.d/ubuntu.sources << EOF
 Types: deb
-URIs: $NATIVE_MIRROR
-Suites: noble noble-updates noble-backports
+URIs: $snapshot_url
+Suites: noble noble-updates noble-backports noble-security
 Components: main restricted universe multiverse
-Architectures: $NATIVE_ARCH
-Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-
-Types: deb
-URIs: $NATIVE_SECURITY
-Suites: noble-security
-Components: main restricted universe multiverse
-Architectures: $NATIVE_ARCH
-Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-
-Types: deb
-URIs: $FOREIGN_MIRROR
-Suites: noble noble-updates noble-backports
-Components: main restricted universe multiverse
-Architectures: $FOREIGN_ARCH
-Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-
-Types: deb
-URIs: $FOREIGN_SECURITY
-Suites: noble-security
-Components: main restricted universe multiverse
-Architectures: $FOREIGN_ARCH
+Architectures: $NATIVE_ARCH $FOREIGN_ARCH
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 EOF
 
-echo "Configured multiarch: native=$NATIVE_ARCH ($NATIVE_MIRROR), foreign=$FOREIGN_ARCH ($FOREIGN_MIRROR)"
+echo "Configured immutable multiarch snapshot: $snapshot_url ($NATIVE_ARCH $FOREIGN_ARCH)"

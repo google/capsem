@@ -36,6 +36,7 @@ class Step:
     actions: tuple[Action, ...]
     contends: tuple[Exclusive, ...] = ()
     produces: tuple[Path, ...] = field(default_factory=tuple)
+    carry_checks: tuple[Action, ...] = ()
 
     def render(self) -> list[str]:
         """One line per action, for the dry run."""
@@ -73,6 +74,7 @@ def step(
     *actions: Action,
     contends: tuple[Exclusive, ...] = (),
     produces: tuple[Path, ...] = (),
+    carry_checks: tuple[Action, ...] = (),
 ) -> Step:
     """Build a step from actions given positionally, which reads better.
 
@@ -81,4 +83,10 @@ def step(
     rather than passing a tuple, because at every call site the actions are
     written out literally and the extra brackets are noise.
     """
-    return Step(label=label, actions=actions, contends=contends, produces=produces)
+    return Step(
+        label=label,
+        actions=actions,
+        contends=contends,
+        produces=produces,
+        carry_checks=carry_checks,
+    )

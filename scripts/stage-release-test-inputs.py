@@ -103,9 +103,8 @@ def _validated_shared_config_sources(
     shared_config_root: Path,
     *staging_roots: Path,
 ) -> list[tuple[Path, str]]:
-    # Settings and corp policy are not profile publication bytes. The release
-    # gate still needs the checked-in defaults in its isolated config root so
-    # capsem-admin can validate and materialize the manifest-owned profiles.
+    # Settings/corp policy are not publication bytes; the isolated gate still
+    # needs their defaults to materialize and validate manifest-owned profiles.
     if shared_config_root.is_symlink() or not shared_config_root.is_dir():
         raise ValueError(f"shared config root is missing or unsafe: {shared_config_root}")
     shared_resolved = shared_config_root.resolve()
@@ -128,13 +127,9 @@ def _validated_shared_config_sources(
             raise ValueError(f"shared config subtree is missing or unsafe: {source}")
         for child in source.rglob("*"):
             if child.is_symlink():
-                raise ValueError(
-                    f"shared config must not contain symlinks: {child}"
-                )
+                raise ValueError(f"shared config must not contain symlinks: {child}")
             if not child.is_dir() and not child.is_file():
-                raise ValueError(
-                    f"shared config contains an unsupported entry: {child}"
-                )
+                raise ValueError(f"shared config contains an unsupported entry: {child}")
         sources.append((source, name))
 
     for relative in ("settings/settings.toml", "corp/corp.toml"):
@@ -201,9 +196,7 @@ def _scope_profile_to_arch(path: Path, arch: str, profile_id: str) -> None:
     if not isinstance(architectures, dict):
         return
     if arch not in architectures:
-        raise ValueError(
-            f"staged profile {profile_id} declares no {arch} assets to materialize"
-        )
+        raise ValueError(f"staged profile {profile_id} declares no {arch} assets to materialize")
     if set(architectures) == {arch}:
         return
     document["assets"]["arch"] = {arch: architectures[arch]}
@@ -216,6 +209,8 @@ def stage_profiles(
     config_root: Path = Path("target/release-config"),
     shared_config_root: Path = Path("config"),
 ) -> Path:
+    from profile_root_payload import stage_legacy_root
+
     report, manifest = _load(input_dir)
     if report.get("kind") != "profiles":
         raise ValueError("profile staging requires profile release inputs")
@@ -288,6 +283,7 @@ def stage_profiles(
         if expected_profile not in staged_config_paths:
             raise ValueError(f"release profile {profile_id}/{arch} lacks {expected_profile}")
         _scope_profile_to_arch(config_root / expected_profile, arch, profile_id)
+        stage_legacy_root(shared_config_root, config_root, profile_id, staged_config_paths)
 
         images = architecture.get("images")
         if not isinstance(images, list):
@@ -390,6 +386,7 @@ def functional_binary_cohort_readiness(input_dir: Path) -> dict[str, Any]:
     for index, record in enumerate(inventory):
         if not isinstance(record, dict):
             raise ValueError(f"package binary[{index}] inventory row is malformed")
+        record = cast(dict[str, Any], record)
         if record.get("status") == "revoked":
             continue
         names.add(safe_component(record.get("name"), f"package binary[{index}] inventory name"))
@@ -524,9 +521,7 @@ def main() -> int:
             readiness = functional_binary_cohort_readiness(args.input_dir)
             if args.github_output is not None:
                 with args.github_output.open("a", encoding="utf-8") as output:
-                    output.write(
-                        f"functional-ready={str(readiness['ready']).lower()}\n"
-                    )
+                    output.write(f"functional-ready={str(readiness['ready']).lower()}\n")
             print(json.dumps(readiness, indent=2, sort_keys=True))
             return 0
         if args.print_package_path:

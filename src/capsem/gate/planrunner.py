@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from operator import attrgetter
 from typing import TYPE_CHECKING
 
+from . import carry
 from .cancellation import cancellable, observing
 from .contention import Claims
 from .context import Context
@@ -42,11 +43,6 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
 #: a step that never ran because its dependency broke did not fail, and a
 #: report that conflates the two hides the blast radius of the real failure.
 from .runlogschema import CARRIED, FAILED, OK, SKIPPED
-
-#: How long an interrupted run waits for its workers before saying who is still
-#: going. Long enough for a primitive to reach its next boundary, short enough
-#: that Ctrl-C means something.
-GRACE_SECONDS = 10.0
 
 
 @dataclass
@@ -87,6 +83,7 @@ def execute(plan: Plan, context: Context, *, max_parallel: int | None = None) ->
     """Run every step the graph allows, and report what each one did."""
     sorter = plan.sorter()
     context.journal.shape(plan.labels, plan.edges)
+    carry.validate(plan, context)
     outcomes: dict[str, Outcome] = {}
     broken: set[str] = set()
     claims = Claims()
@@ -188,12 +185,11 @@ def _abandon(
         future.cancel()
 
     pool.shutdown(wait=False, cancel_futures=True)
-    _done, pending = wait(running, timeout=GRACE_SECONDS)
+    grace = context.config.execution.cancellation_grace_seconds
+    _done, pending = wait(running, timeout=grace)
     if pending:
         stubborn = sorted(running[future].step.label for future in pending)
-        context.journal.note(
-            f"interrupted; still running after {GRACE_SECONDS:.0f}s: {', '.join(stubborn)}"
-        )
+        context.journal.note(f"interrupted; still running after {grace:g}s: {', '.join(stubborn)}")
 
 
 def _guarded(pending: _Pending, context: Context, abandoned: threading.Event) -> float:

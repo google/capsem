@@ -26,11 +26,16 @@ from capsem.gate.observation import Watch
 from capsem.gate.observing import observing
 from capsem.gate.plan import Plan
 from capsem.gate.proc import Runner
+from capsem.gate.processgroup import StopPolicy
 from capsem.gate.runhistory import read
 from capsem.gate.runlog import RunLog
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
+STOP_POLICY = StopPolicy(
+    grace_seconds=CONFIG.execution.cancellation_grace_seconds,
+    poll_seconds=CONFIG.execution.cancellation_poll_seconds,
+)
 
 
 def _checkout(tmp_path: Path):
@@ -94,7 +99,11 @@ def test_external_transient_source_fault_fails_the_plan_without_killing_watchdog
         errors = log.directory / config.runlog.error_log
         assert watch is not None
         runner = GuardedRunner(
-            Runner(config.root),
+            # This is deliberately a minimal synthetic Git checkout rather
+            # than a second Capsem checkout.  Supply the authoritative policy
+            # already loaded above instead of asking Runner to find another
+            # config/gate.toml inside the fixture.
+            Runner(config.root, stop_policy=STOP_POLICY),
             journal=log,
             checkpoint=watch.checkpoint,
         )
@@ -130,9 +139,10 @@ def test_external_transient_source_fault_fails_the_plan_without_killing_watchdog
     assert fault_note < command_end < failed_step < run_end, (
         "the finding and command result must be durable before failure unwinds"
     )
-    assert json.loads((log.directory / config.runlog.events).read_text().splitlines()[-1])[
-        "status"
-    ] == "failed"
+    assert (
+        json.loads((log.directory / config.runlog.events).read_text().splitlines()[-1])["status"]
+        == "failed"
+    )
 
 
 def test_pending_fault_stops_before_the_next_in_process_action(tmp_path: Path) -> None:
@@ -175,9 +185,7 @@ def test_launch_records_its_pid_before_the_post_action_refusal(tmp_path: Path) -
             return 12345
 
     journal = NullJournal()
-    runner = GuardedRunner(
-        ArmsDuringLaunch(tmp_path), journal=journal, checkpoint=watch.checkpoint
-    )
+    runner = GuardedRunner(ArmsDuringLaunch(tmp_path), journal=journal, checkpoint=watch.checkpoint)
     pidfile = tmp_path / "daemon.pid"
     plan = Plan("launch-checkpoint")
     plan.add(step("daemon", Launch(("daemon",), pidfile=pidfile)))

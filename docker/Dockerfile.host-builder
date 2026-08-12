@@ -1,3 +1,4 @@
+# check=skip=InvalidDefaultArgInFrom
 # Purpose-built build environment for cross-compiling the Capsem host
 # binary (Tauri 2.0 desktop app) targeting Linux x86_64 and arm64.
 #
@@ -16,11 +17,27 @@
 # We install native -dev first, then swap in foreign -dev for cross builds.
 # The justfile recipe handles this swap at container runtime.
 
+ARG RUST_IMAGE
+ARG UV_IMAGE
+
 FROM node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS node-runtime
+
+FROM ${RUST_IMAGE} AS rust-toolchain
+
+FROM ${UV_IMAGE} AS uv-runtime
 
 FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce AS truststore
 
 FROM ubuntu:24.04@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea
+
+ARG APT_SNAPSHOT_BASE
+ARG APT_SNAPSHOT_ID
+ARG PNPM_VERSION
+ARG RUST_TOOLCHAIN
+ARG TAURI_CLI_VERSION
+ARG CARGO_NEXTEST_VERSION
+ARG CARGO_LLVM_COV_VERSION
+ARG INPUT_IDENTITY
 
 # Ubuntu's minimal base has no system CA bundle, but every configured package
 # source is HTTPS. Bootstrap trust from a tiny immutable official image; the
@@ -33,7 +50,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Ubuntu arm64 uses ports.ubuntu.com; amd64 uses archive.ubuntu.com.
 # We need both repos scoped to their architectures.
 COPY sources-multiarch.sh /tmp/
-RUN bash /tmp/sources-multiarch.sh && rm /tmp/sources-multiarch.sh
+RUN bash /tmp/sources-multiarch.sh "$APT_SNAPSHOT_BASE" "$APT_SNAPSHOT_ID" \
+    && rm /tmp/sources-multiarch.sh
 
 # ---- Native build tools + cross-compilation toolchains ----
 # Native-arch Tauri dev libraries are installed in the same transaction so
@@ -70,21 +88,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # tree intact preserves npm/npx's relative symlink targets while avoiding a
 # NodeSource setup script that performs another full multiarch apt refresh.
 COPY --from=node-runtime /usr/local/ /usr/local/
-RUN npm install -g pnpm@10
+RUN test -n "$PNPM_VERSION" && npm install -g "pnpm@${PNPM_VERSION}"
 
 # ---- Rust toolchain (kept identical to rust-toolchain.toml and CI) ----
 ENV RUSTUP_HOME=/usr/local/rustup
 ENV CARGO_HOME=/usr/local/cargo
 ENV PATH="/usr/local/cargo/bin:$PATH"
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-    sh -s -- -y --default-toolchain 1.97.1 --profile minimal \
-    && rustup target add \
+COPY --from=rust-toolchain /usr/local/rustup/ /usr/local/rustup/
+COPY --from=rust-toolchain /usr/local/cargo/ /usr/local/cargo/
+RUN rustc_version="$(rustc --version)" \
+    && case "$rustc_version" in "rustc ${RUST_TOOLCHAIN} "*) ;; *) exit 1 ;; esac \
+    && rustup target add --toolchain "$RUST_TOOLCHAIN" \
         aarch64-unknown-linux-gnu \
         x86_64-unknown-linux-gnu \
         aarch64-unknown-linux-musl \
         x86_64-unknown-linux-musl \
-    && rustup component add llvm-tools
+    && rustup component add --toolchain "$RUST_TOOLCHAIN" llvm-tools
 
 # No `cargo fetch` here, deliberately. Baking the dependency graph needs the
 # whole crate tree -- the workspace manifest lists members, and `--locked`
@@ -95,19 +115,19 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
 # reason than caching: `capsem-cargo-registry`, `-cargo-git` and `-rustup`
 # mounted over `/usr/local/cargo` and `/usr/local/rustup`, which is exactly
 # where the layers above install the toolchain, the cross-targets, tauri-cli
-# and cargo-auditable. The image carried all of it and every container saw the
+# and the Cargo tools. The image carried all of it and every container saw the
 # volume instead.
 
-RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install tauri-cli --locked && exit 0; sleep $((attempt * 5)); done; exit 1
-RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo-auditable --locked && exit 0; sleep $((attempt * 5)); done; exit 1
-RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo-nextest --version 0.9.137 --locked && exit 0; sleep $((attempt * 5)); done; exit 1
-RUN installed=0; for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo-llvm-cov --locked && { installed=1; break; }; sleep $((attempt * 5)); done; \
+RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install tauri-cli --version "${TAURI_CLI_VERSION}" --locked && exit 0; sleep $((attempt * 5)); done; exit 1
+RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo-nextest --version "${CARGO_NEXTEST_VERSION}" --locked && exit 0; sleep $((attempt * 5)); done; exit 1
+RUN installed=0; for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo-llvm-cov --version "${CARGO_LLVM_COV_VERSION}" --locked && { installed=1; break; }; sleep $((attempt * 5)); done; \
     [ "$installed" = 1 ] && rm -rf /usr/local/cargo/registry/cache /usr/local/cargo/registry/src
 
-# ---- Python 3 + uv (for capsem-builder scripts) ----
-RUN curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh \
-    && install -m 555 /root/.local/bin/uv /usr/local/bin/uv \
-    && install -m 555 /root/.local/bin/uvx /usr/local/bin/uvx
+# ---- Exact uv binary (for capsem-builder scripts) ----
+COPY --from=uv-runtime /uv /uvx /usr/local/bin/
+RUN uv --version
+
+LABEL org.capsem.host-builder.input-key="${INPUT_IDENTITY}"
 
 # ---- Helper script to swap -dev libs for cross-compilation ----
 # Keep this after the expensive stable toolchain layers so edits to the swap

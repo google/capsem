@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Linux and macOS build rails now share exact config-owned Rust, uv, pnpm, and
+  Cargo-tool authorities. The network-open host-builder materializer is keyed
+  by those values plus its immutable Ubuntu snapshot and source inputs; a warm
+  match is reused, while package and install work stays network-denied. A
+  focused recorded `capsem-gate host-image` rail proves cold/warm behavior
+  without continuing into an unrelated package build.
+
+- Every recorded gate command now prints its critical-path timing summary;
+  nobody has to remember `--timing` before starting a multi-hour proof.
+  Complete qualification also fails when its critical path or any of the prior
+  comparable run's ten slowest steps grows beyond the config-owned relative
+  factor. The baseline is the latest successful journal with the same typed
+  plan shape, invocation, platform, machine, and core count, so no duration is
+  guessed or hardcoded and a graph/host change seeds a new baseline.
 - Source-size rules are one guard in the Citadel rather than one per tree.
   `[boundary.scripts]` and `[boundary.rust]` are the same rule -- roots,
   suffixes, a ceiling, an exact debt inventory -- asked of two trees, and two
@@ -130,6 +144,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a tag.
 
 ### Fixed
+
+- Linux bootstrap and hosted fast CI now run the same config-owned Bubblewrap
+  kernel proof before qualification. The ephemeral Ubuntu runner may repair
+  only its exact AppArmor user-namespace failure, then must still prove a
+  loopback-only namespace, working loopback/devices, and denied direct egress.
+
+- macOS CI now keeps Rust target selectors on the Nextest execution command;
+  its coverage-report command receives only report-compatible arguments, so a
+  fully passing Rust cohort cannot be turned red after execution.
+
+- Legacy published profiles whose root bytes are selected by a nested root
+  manifest now rehydrate only byte-for-byte verified checkout cache hits. This
+  keeps current manifests fully self-contained while allowing install CI to
+  pair a new binary with the existing stable profile graph.
+
+- Workflow provisioning contracts now follow Just reachability for `uv` as
+  well as Node tools, so every Linux lane installs the exact gate interpreter
+  before invoking `capsem-gate`.
+
+- Diagnostic continuation now validates carried Docker authorities before any
+  resumed work. If storage reclamation removed an exact helper image, the gate
+  refuses immediately and names its owning `--from` step instead of rebuilding
+  kernels or profiles before failing at the first hidden consumer.
+
+- The snapshot-pinned asset-tools image now proves `mkfs.erofs` through its
+  portable help contract instead of the unsupported `-V` flag used by Debian's
+  erofs-utils 1.5. Required helper bases also carry narrow first-line BuildKit
+  waivers while remaining argument-only, so warning cleanup cannot introduce a
+  mutable fallback image.
+
+- Synthetic real-runner tests now receive the same config-owned cancellation
+  policy as the complete gate instead of trying to discover a second gate
+  configuration inside their minimal Git fixtures. The exact Ty debt ratchet
+  also records the newly reduced diagnostic count rather than treating an
+  improvement as an unexplained source-contract failure.
+
+- Interrupting a gate now terminates the exact foreground process tree it
+  owns, including descendants moved into a Bubblewrap session, before releasing
+  the workspace lock. The grace and cancellation polling bounds are config-owned;
+  unrelated developer processes are never selected by name or touched.
+
+- The sealed install-image smoke no longer requires the asset-only CycloneDX
+  generator from the host builder. The digest-verified asset-tools helper is
+  again the single owner, so install qualification cannot fail on a tool its
+  domain neither installs nor uses.
 
 - CI and release workflow enforcement is now a structurally parsed fast-gate
   inventory instead of a spelling-sensitive grep. All 12 `just` edges reject

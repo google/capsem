@@ -13,27 +13,37 @@ attempt cost a rebuild to learn nothing.
 
 from __future__ import annotations
 
+import importlib.util
+import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
+from types import ModuleType
 
 import pytest
+import yaml
 from helpers.gate import RecordingRunner
+from helpers.workflow_contract import assert_unmasked_step
 from pydantic import ValidationError
 
+from capsem.gate import cancellation, egress, sandbox
 from capsem.gate import config as gate_config
-from capsem.gate import egress, sandbox
 from capsem.gate.actions import Run, Script
 from capsem.gate.config import GateConfig
 from capsem.gate.context import Context
 from capsem.gate.errors import GateError
 from capsem.gate.harnessschema import SandboxConfig
+from capsem.gate.proc import Runner
+from capsem.gate.processgroup import StopPolicy
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
 
 macos_only = pytest.mark.skipif(sys.platform != "darwin", reason="Seatbelt is macOS")
 linux_only = pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux")
+
 
 #: A sandbox cannot be meaningfully nested. Seatbelt refuses the second
 #: application, while Bubblewrap cannot create the pre-boundary helper from
@@ -62,6 +72,131 @@ ONLINE_AUDITS = {
     "fast.audit.pnpm",
     "fast.audit.python-lock",
 }
+
+
+def _linux_sandbox_preparer() -> ModuleType:
+    path = PROJECT_ROOT / "scripts" / "prepare-linux-sandbox.py"
+    spec = importlib.util.spec_from_file_location("prepare_linux_sandbox", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_hosted_linux_sandbox_repairs_only_the_known_apparmor_restriction() -> None:
+    module = _linux_sandbox_preparer()
+    calls: list[tuple[str, ...]] = []
+    results = iter(
+        (
+            subprocess.CompletedProcess(
+                (), 1, "", "bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted"
+            ),
+            subprocess.CompletedProcess((), 0, "", ""),
+            subprocess.CompletedProcess((), 0, "", ""),
+        )
+    )
+
+    def run(argv: tuple[str, ...], **_kwargs) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return next(results)
+
+    module.prepare(
+        PROJECT_ROOT,
+        allow_hosted_repair=True,
+        environment={"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"},
+        run=run,
+        read_restriction=lambda _name: "1",
+    )
+
+    assert calls[0] == calls[2]
+    assert calls[0][: 1 + len(CONFIG.sandbox.linux_args)] == (
+        CONFIG.sandbox.linux_command,
+        *CONFIG.sandbox.linux_args,
+    )
+    assert calls[1] == (
+        *CONFIG.sandbox.linux_hosted_repair_command,
+        f"{CONFIG.sandbox.linux_hosted_userns_sysctl}="
+        f"{CONFIG.sandbox.linux_hosted_userns_repair_value}",
+    )
+
+
+def test_hosted_linux_sandbox_requires_the_complete_probe_after_repair() -> None:
+    module = _linux_sandbox_preparer()
+    calls: list[tuple[str, ...]] = []
+    results = iter(
+        (
+            subprocess.CompletedProcess(
+                (), 1, "", "bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted"
+            ),
+            subprocess.CompletedProcess((), 0, "", ""),
+            subprocess.CompletedProcess((), 1, "", "direct egress remained reachable"),
+        )
+    )
+
+    def run(argv: tuple[str, ...], **_kwargs) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return next(results)
+
+    with pytest.raises(module.PreparationError, match="still fails after"):
+        module.prepare(
+            PROJECT_ROOT,
+            allow_hosted_repair=True,
+            environment={"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"},
+            run=run,
+            read_restriction=lambda _name: "1",
+        )
+    assert len(calls) == 3
+    assert calls[0] == calls[2]
+
+
+@pytest.mark.parametrize(
+    ("stderr", "environment"),
+    (
+        ("bwrap: creating new namespace failed", {"GITHUB_ACTIONS": "true"}),
+        (
+            "bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted",
+            {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "self-hosted"},
+        ),
+    ),
+)
+def test_hosted_linux_sandbox_refuses_unknown_or_unhosted_failures(
+    stderr: str, environment: dict[str, str]
+) -> None:
+    module = _linux_sandbox_preparer()
+    calls: list[tuple[str, ...]] = []
+
+    def run(argv: tuple[str, ...], **_kwargs) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 1, "", stderr)
+
+    with pytest.raises(module.PreparationError):
+        module.prepare(
+            PROJECT_ROOT,
+            allow_hosted_repair=True,
+            environment=environment,
+            run=run,
+            read_restriction=lambda _name: "1",
+        )
+    assert len(calls) == 1, "an unrecognized host failure triggered a privileged repair"
+
+
+def test_fast_gate_proves_hosted_linux_sandbox_before_dependency_work() -> None:
+    workflow_path = PROJECT_ROOT / ".github" / "workflows" / "fast-gate.yaml"
+    workflow = yaml.safe_load(workflow_path.read_text())
+    steps = workflow["jobs"]["static"]["steps"]
+    names = [step.get("name") for step in steps]
+    prepare = next(step for step in steps if step.get("name") == "Prove Linux sandbox boundary")
+
+    assert prepare["run"] == ("python3 scripts/prepare-linux-sandbox.py --repair-hosted-runner")
+    assert "continue-on-error" not in prepare
+    assert names.index("Prove Linux sandbox boundary") < names.index(
+        "Materialize locked qualification dependencies"
+    )
+    assert names.index("Prove Linux sandbox boundary") < names.index(
+        "Run complete shared fast module"
+    )
+    assert_unmasked_step("fast-gate.yaml", workflow, "static", "Prove Linux sandbox boundary")
 
 
 def test_the_profile_denies_the_network() -> None:
@@ -216,12 +351,12 @@ def test_linux_enforcement_uses_bubblewrap_network_namespace(monkeypatch) -> Non
     assert wrapped[0] == CONFIG.sandbox.linux_command
     assert tuple(CONFIG.sandbox.linux_args) == wrapped[1 : 1 + len(CONFIG.sandbox.linux_args)]
     assert "--unshare-net" in wrapped
-    assert wrapped[
-        wrapped.index("--bind") : wrapped.index("--bind") + 3
-    ] == ("--bind", "/", "/")
-    assert wrapped[
-        wrapped.index("--dev-bind") : wrapped.index("--dev-bind") + 3
-    ] == ("--dev-bind", "/dev", "/dev")
+    assert wrapped[wrapped.index("--bind") : wrapped.index("--bind") + 3] == ("--bind", "/", "/")
+    assert wrapped[wrapped.index("--dev-bind") : wrapped.index("--dev-bind") + 3] == (
+        "--dev-bind",
+        "/dev",
+        "/dev",
+    )
     assert wrapped[-3:] == ("python3", "-c", "print('inside')")
 
 
@@ -239,6 +374,26 @@ def test_linux_sandbox_config_cannot_remove_an_enforcement_property(
 ) -> None:
     raw = CONFIG.sandbox.model_dump()
     raw["linux_args"] = linux_args
+
+    with pytest.raises(ValidationError):
+        SandboxConfig.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("linux_probe_loopback_host", "1.1.1.1"),
+        ("linux_probe_egress_host", "127.0.0.1"),
+        ("linux_probe_egress_port", 65536),
+        ("linux_hosted_repair_command", ("sudo", "sh", "-c")),
+        ("linux_hosted_userns_sysctl", "net.ipv4.ip_forward"),
+        ("linux_hosted_userns_required_value", 0),
+        ("linux_hosted_userns_repair_value", 1),
+    ),
+)
+def test_linux_sandbox_config_cannot_widen_the_hosted_repair(field: str, value: object) -> None:
+    raw = CONFIG.sandbox.model_dump()
+    raw[field] = value
 
     with pytest.raises(ValidationError):
         SandboxConfig.model_validate(raw)
@@ -487,9 +642,7 @@ def test_only_live_advisory_queries_cross_the_fast_gate_network_boundary(
 
     assert marked >= ONLINE_AUDITS
     assert not {
-        label
-        for label in marked
-        if label.startswith("fast.") and label not in ONLINE_AUDITS
+        label for label in marked if label.startswith("fast.") and label not in ONLINE_AUDITS
     }
 
 
@@ -557,3 +710,44 @@ def test_the_egress_broker_crosses_the_boundary_without_giving_children_its_capa
         assert not metadata.exists(), "the child-readable capability survived acquisition"
     finally:
         resource.release()
+
+
+@linux_only
+@unnested_only
+def test_cancelling_the_outer_runner_reaps_the_bubblewrap_session(tmp_path: Path) -> None:
+    """Bubblewrap's new session remains owned through its die-with-parent rail."""
+    pid_file = tmp_path / "sandboxed-pid"
+    probe = (
+        "import os,signal,sys; signal.alarm(5); "
+        "open(sys.argv[1],'w').write(str(os.getpid())); signal.pause()"
+    )
+    wrapped = sandbox.linux_wrap(CONFIG, (sys.executable, "-c", probe, str(pid_file)))
+    policy = StopPolicy(
+        grace_seconds=CONFIG.execution.cancellation_poll_seconds,
+        poll_seconds=CONFIG.execution.cancellation_poll_seconds,
+    )
+
+    with cancellation.cancellable() as flag:
+
+        def cancel_when_started() -> None:
+            deadline = time.monotonic() + 2
+            while not pid_file.is_file() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            flag.set()
+
+        trigger = threading.Thread(target=cancel_when_started, daemon=True)
+        trigger.start()
+        with pytest.raises(cancellation.Cancelled):
+            Runner(PROJECT_ROOT, stop_policy=policy).run(wrapped)
+        trigger.join(timeout=2)
+
+    pid = int(pid_file.read_text())
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail(f"sandboxed process {pid} survived cancellation")

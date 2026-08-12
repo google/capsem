@@ -30,6 +30,8 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - run: uv sync --frozen
 
       # `just` recipes reach `_pnpm-install`, which installs every Node
       # workspace. Without pnpm on PATH those recipes die with exit 127.
@@ -39,7 +41,7 @@ jobs:
       # reachability can justify installing a tool, never declaring a cache.
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
-          version: 10
+          version: 10.34.5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
@@ -151,7 +153,7 @@ jobs:
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
-          version: 10
+          version: 10.34.5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
@@ -190,7 +192,7 @@ jobs:
         run: |
           set -o pipefail
           cargo llvm-cov nextest --no-cfg-coverage --bins --profile ci --codecov --output-path codecov-unit.json -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server
-          cargo llvm-cov report --bins --summary-only -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server 2>&1 | tee coverage-summary.txt
+          cargo llvm-cov report --summary-only -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server 2>&1 | tee coverage-summary.txt
 
       # Integration tests (tests/ directory, cross-crate)
       - name: Integration tests with coverage
@@ -463,7 +465,7 @@ jobs:
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
-          version: 10
+          version: 10.34.5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
@@ -483,7 +485,7 @@ jobs:
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
-          version: 10
+          version: 10.34.5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
@@ -505,7 +507,7 @@ jobs:
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
-          version: 10
+          version: 10.34.5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24

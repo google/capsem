@@ -14,6 +14,8 @@ writing turns an interrupt into corruption.
 
 from __future__ import annotations
 
+import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -27,6 +29,7 @@ from capsem.gate.context import Context
 from capsem.gate.execution import step
 from capsem.gate.plan import Plan
 from capsem.gate.planrunner import execute
+from capsem.gate.proc import Runner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -80,10 +83,30 @@ class _Ran(Action, name="ran"):
         self.ran = True
 
 
-def _context() -> Context:
+class _Foreground(Action, name="foreground-cancellation-fixture"):
+    def __init__(self, pids: Path) -> None:
+        self.pids = pids
+
+    def render(self) -> str:
+        return "run a foreground process tree"
+
+    def perform(self, context: Context) -> None:
+        child = "import signal; signal.alarm(5); signal.pause()"
+        helper = (
+            "import os,signal,subprocess,sys; signal.alarm(5); "
+            f"child=subprocess.Popen([sys.executable,'-c',{child!r}]); "
+            "open(sys.argv[1],'w').write(f'{os.getpid()} {child.pid}'); signal.pause()"
+        )
+        context.runner.run(
+            (sys.executable, "-c", helper, str(self.pids)),
+            log=self.pids.with_suffix(".log"),
+        )
+
+
+def _context(config=CONFIG) -> Context:
     from helpers.gate import RecordingJournal, RecordingRunner
 
-    return Context(RecordingRunner(PROJECT_ROOT), CONFIG, journal=RecordingJournal())
+    return Context(RecordingRunner(PROJECT_ROOT), config, journal=RecordingJournal())
 
 
 def _interrupt_when(flag: threading.Event) -> threading.Thread:
@@ -106,6 +129,14 @@ def _interrupt_when(flag: threading.Event) -> threading.Thread:
     thread = threading.Thread(target=fire, daemon=True)
     thread.start()
     return thread
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 def test_an_interrupt_stops_a_long_action_at_its_next_boundary() -> None:
@@ -165,17 +196,46 @@ def test_a_step_asleep_on_a_resource_is_woken_to_notice() -> None:
     assert elapsed < 2.0, f"the contended step held the run for {elapsed:.2f}s"
 
 
-def test_a_worker_that_refuses_to_stop_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ctrl_c_reaps_the_running_step_process_tree_before_return(tmp_path: Path) -> None:
+    pids = tmp_path / "owned-pids"
+    plan = Plan("foreground")
+    plan.add(step("foreground", _Foreground(pids)))
+
+    # The interrupt trigger needs the child boundary, not merely submission.
+    started = threading.Event()
+
+    def notice_child() -> None:
+        deadline = time.monotonic() + 2
+        while not pids.is_file() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        started.set()
+
+    watcher = threading.Thread(target=notice_child, daemon=True)
+    watcher.start()
+    _interrupt_when(started)
+    config = CONFIG.model_copy(
+        update={
+            "execution": CONFIG.execution.model_copy(update={"cancellation_grace_seconds": 0.5})
+        }
+    )
+    context = Context(Runner(PROJECT_ROOT), config)
+    with pytest.raises(KeyboardInterrupt):
+        execute(plan, context)
+    watcher.join(timeout=2)
+
+    owned = [int(raw) for raw in pids.read_text().split()]
+    assert all(not _pid_alive(pid) for pid in owned), owned
+
+
+def test_a_worker_that_refuses_to_stop_is_named() -> None:
     """The bound is what stops an interrupt being indefinite; saying who is
     still going is what stops it being a mystery."""
-    from capsem.gate import planrunner
-
-    monkeypatch.setattr(planrunner, "GRACE_SECONDS", 0.2)
     started = threading.Event()
     plan = Plan("stubborn")
     plan.add(step("oblivious", _Oblivious(started=started, seconds=1.5)))
 
-    context = _context()
+    execution = CONFIG.execution.model_copy(update={"cancellation_grace_seconds": 0.2})
+    context = _context(CONFIG.model_copy(update={"execution": execution}))
     _interrupt_when(started)
     with pytest.raises(KeyboardInterrupt):
         execute(plan, context)

@@ -143,6 +143,7 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
         "fileactions.py",
         "filesystem.py",
         "proc.py",
+        "processgroup.py",
         "pidfiles.py",
         "locks.py",
         "runlog.py",
