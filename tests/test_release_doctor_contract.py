@@ -6313,7 +6313,6 @@ def test_release_recipes_reject_a_dirty_tree_before_running_the_gate() -> None:
 
 
 def test_web_only_prs_do_not_depend_on_product_or_release_jobs() -> None:
-    workflow = _workflow_text("ci.yaml")
     docs_job = _workflow_job_block("docs-build")
     gate = _workflow_job_block("pr-gate")
 
