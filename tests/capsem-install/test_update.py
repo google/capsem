@@ -264,9 +264,7 @@ def _health_to_manifest(health: dict, *, asset_base: str | None = None) -> dict:
     return _update_manifest(
         binary.get("latest") or binary.get("current") or "0.0.0",
         assets.get("latest") or assets.get("current") or "2026.0627.8",
-        min_binary=(assets.get("compatibility") or {}).get(
-            "min_binary", COMPATIBLE_MINIMUM
-        ),
+        min_binary=(assets.get("compatibility") or {}).get("min_binary"),
         binary_files=binary.get("files", []),
         asset_base=asset_base,
     )
@@ -276,7 +274,7 @@ def _update_manifest(
     binary_version: str,
     asset_version: str,
     *,
-    min_binary: str = COMPATIBLE_MINIMUM,
+    min_binary: str | None = None,
     binary_files: list[dict] | None = None,
     asset_base: str | None = None,
 ) -> dict:
@@ -308,7 +306,7 @@ def _update_manifest(
         **template_asset,
         "date": "2030-01-01",
         "deprecated": False,
-        "min_binary": min_binary,
+        "min_binary": min_binary or COMPATIBLE_MINIMUM,
     }
     return manifest
 
@@ -318,7 +316,7 @@ def _update_release_graph(
     binary_version: str,
     asset_version: str,
     *,
-    min_binary: str,
+    min_binary: str | None,
     binary_files: list[dict] | None,
     asset_base: str | None,
 ) -> dict:
@@ -351,7 +349,8 @@ def _update_release_graph(
             continue
         profile["revision"] = asset_version
         profile["version"] = asset_version
-        profile["min_capsem_version"] = min_binary
+        if min_binary is not None:
+            profile["min_capsem_version"] = min_binary
         for architecture in profile.get("architectures", []):
             architecture["image_revision"] = asset_version
     return manifest
@@ -502,6 +501,7 @@ def test_binary_update_fixture_preserves_profile_transport_authority(
     for profile in selected["profiles"].values():
         profile["revision"] = "2030.0101.1"
         profile["version"] = "2030.0101.1"
+        profile["min_capsem_version"] = "99.99.98"
         for architecture in profile["architectures"]:
             architecture["image_revision"] = "2030.0101.1"
     manifest = tmp_path / "selected-manifest.json"

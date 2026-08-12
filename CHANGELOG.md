@@ -61,6 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Binary-only update fixtures now preserve the selected profiles' compatibility
+  bounds unless the fixture explicitly declares an asset compatibility change.
+  Hosted install checks can no longer manufacture a profile update while
+  exercising an unrelated package transition.
 - Standalone static qualification now materializes its own Node workspace,
   generated settings, and Tauri frontend bundle before Rust coverage. A fresh
   private checkout no longer depends on `frontend/dist` produced in another
