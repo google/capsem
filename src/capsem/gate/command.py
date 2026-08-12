@@ -235,7 +235,7 @@ class GateCommand(Recorded, ABC):
         # holding it would wait out its own timeout. The copy is built by this
         # process and reclaimed by it after the child returns, which is what
         # gives the export somewhere to run even when the run failed.
-        if self.private_checkout and prefix.source_checkout(self._config) is None:
+        if (self.private_checkout or reuse) and prefix.source_checkout(self._config) is None:
             raise SystemExit(
                 prefix.run_from_private_copy(self._runner, self._config, sys.argv[1:], reuse=reuse)
             )

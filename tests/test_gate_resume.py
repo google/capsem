@@ -160,6 +160,53 @@ def test_a_named_prefix_that_does_not_exist_is_refused() -> None:
         resume.existing(_config(), str(missing))
 
 
+def test_a_named_prefix_moves_a_focused_command_into_that_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The shared flag is an execution contract, not candidate-only syntax.
+
+    Cross-compile accepted a retained prefix and its selected content, then
+    wrote the package and run journal into the source checkout because the
+    command does not request a fresh private checkout.  A caller naming an
+    existing prefix is different: every compatible focused command must run
+    there so its products and evidence have one location.
+    """
+    from helpers.gate import built_command
+
+    from capsem.gate import prefix, resume
+    from capsem.gate.plan import Plan
+
+    reused = tmp_path / "retained-prefix"
+    reused.mkdir()
+    command = built_command(
+        PROJECT_ROOT,
+        "cross-compile",
+        (
+            ("arch", "x86_64"),
+            ("content_root", None),
+            ("defer_proof", False),
+            ("prefix", str(reused)),
+            ("resume_from", None),
+        ),
+    )
+    monkeypatch.setattr(command, "plan", lambda: Plan(command.name))
+    monkeypatch.setattr(resume, "resolve", lambda *args, **kwargs: (frozenset(), reused))
+    monkeypatch.setattr(prefix, "source_checkout", lambda _config: None)
+    entered: list[Path | None] = []
+
+    def run_in_prefix(_runner, _config, _arguments, *, reuse=None) -> int:
+        entered.append(reuse)
+        return 0
+
+    monkeypatch.setattr(prefix, "run_from_private_copy", run_in_prefix)
+
+    with pytest.raises(SystemExit) as stopped:
+        command.execute()
+
+    assert stopped.value.code == 0
+    assert entered == [reused]
+
+
 # -- the evidence ------------------------------------------------------------
 
 

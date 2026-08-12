@@ -61,6 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A focused gate command given an existing `--prefix` now actually executes
+  inside that retained checkout. Cross-compile and other diagnostic rails can
+  no longer accept the shared option while writing their artifacts and run
+  journal into the source checkout instead.
 - Release-graph profile materialization now preserves every supported evidence
   artifact in the paired runtime manifest. In particular, a verified published
   software inventory can no longer be staged on disk and then silently lose
