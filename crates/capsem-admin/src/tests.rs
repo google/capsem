@@ -1538,6 +1538,11 @@ fn profile_materialize_release_channel_manifest_uses_profile_image_urls() {
     let local_obom = temp.path().join("resolved-obom.cdx.json");
     fs::write(&local_obom, test_obom_json()).expect("write resolved OBOM");
     let local_obom_url = file_url(&local_obom);
+    let software_inventory = test_software_inventory_json("arm64");
+    let local_software_inventory = temp.path().join("resolved-software-inventory.json");
+    fs::write(&local_software_inventory, &software_inventory)
+        .expect("write resolved software inventory");
+    let local_software_inventory_url = file_url(&local_software_inventory);
     let digest = |bytes: &[u8]| {
         serde_json::json!({
             "sha256": format!("{:x}", Sha256::digest(bytes)),
@@ -1592,6 +1597,13 @@ fn profile_materialize_release_channel_manifest_uses_profile_image_urls() {
                                 "url": local_obom_url,
                                 "bytes": test_obom_json().len(),
                                 "digest": digest(test_obom_json().as_bytes()),
+                                "status": "current"
+                            },
+                            {
+                                "kind": "software_inventory",
+                                "url": local_software_inventory_url,
+                                "bytes": software_inventory.len(),
+                                "digest": digest(software_inventory.as_bytes()),
                                 "status": "current"
                             }
                         ]
@@ -1658,6 +1670,11 @@ fn profile_materialize_release_channel_manifest_uses_profile_image_urls() {
         .get("arm64")
         .expect("converted arm64 assets");
     assert!(converted_assets.contains_key("obom.cdx.json"));
+    assert!(converted_assets.contains_key("software-inventory.json"));
+    assert_eq!(
+        converted_assets["software-inventory.json"].sha256,
+        format!("{:x}", Sha256::digest(software_inventory.as_bytes()))
+    );
     assert_eq!(
         converted_assets["initrd.img"].sha256,
         format!("{:x}", Sha256::digest(b"initrd-arm64"))

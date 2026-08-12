@@ -61,6 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Release-graph profile materialization now preserves every supported evidence
+  artifact in the paired runtime manifest. In particular, a verified published
+  software inventory can no longer be staged on disk and then silently lose
+  its manifest identity before sealed install qualification authors its local
+  graph.
 - Sealed install qualification can now import the path-safe legacy revision
   carried by already-published immutable profiles without weakening SemVer for
   any new first-party or corporate profile. A new SemVer revision may migrate

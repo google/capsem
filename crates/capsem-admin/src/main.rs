@@ -7564,7 +7564,9 @@ fn release_channel_profile_artifact_logical_name(
         "kernel" => Some("vmlinuz"),
         "initrd" => Some("initrd.img"),
         "rootfs" => Some("rootfs.erofs"),
+        "abom" => Some("abom.cdx.json"),
         "obom" => Some("obom.cdx.json"),
+        "software_inventory" => Some("software-inventory.json"),
         _ if artifact.name == "obom.cdx.json" => Some("obom.cdx.json"),
         _ => None,
     }
