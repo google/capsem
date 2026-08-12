@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 import tomllib
 from dataclasses import dataclass
@@ -13,13 +14,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_python_coverage_gate_does_not_round_subthreshold_total() -> None:
-    report = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())["tool"][
-        "coverage"
-    ]["report"]
+    report = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())["tool"]["coverage"][
+        "report"
+    ]
 
-    assert report["precision"] >= 2, (
-        "a floor compared against a rounded total passes at 84.5%"
-    )
+    assert report["precision"] >= 2, "a floor compared against a rounded total passes at 84.5%"
     assert report["fail_under"] > 0, "coverage must actually block"
 
 
@@ -31,19 +30,48 @@ def test_no_caller_restates_the_coverage_floor() -> None:
     -- so that step measured coverage and enforced nothing, invisibly, for as
     long as it existed. Reading the config is the only way all of them agree.
     """
-    restating = [
-        path.relative_to(PROJECT_ROOT)
+    restating = {
+        path.relative_to(PROJECT_ROOT): sorted(
+            value
+            for value in re.findall(
+                r"--cov-fail-under(?:=|\s+)([0-9]+(?:\.[0-9]+)?)",
+                path.read_text(encoding="utf-8"),
+            )
+            if float(value) > 0
+        )
         for path in (
             PROJECT_ROOT / "justfile",
             *sorted((PROJECT_ROOT / ".github" / "workflows").glob("*.yaml")),
             *sorted((PROJECT_ROOT / "scripts").rglob("*.sh")),
         )
-        if "--cov-fail-under" in path.read_text(encoding="utf-8")
-    ]
+    }
+    restating = {path: values for path, values in restating.items() if values}
 
     assert not restating, (
-        "pass no --cov-fail-under; pyproject's [tool.coverage.report] fail_under "
-        f"already applies to every reporting run: {restating}"
+        "do not restate a positive --cov-fail-under; pyproject's "
+        "[tool.coverage.report] fail_under is the authority: "
+        f"{restating}"
+    )
+
+
+def test_python_coverage_floor_runs_after_the_complete_appended_cohort() -> None:
+    """The first macOS cohort records data; only the complete cohort judges it."""
+    ci = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    test_job = workflow_job_block(ci, "test")
+    selected = python_pytest_command_containing(test_job, "tests/test_agent_skill_index.py")
+    appended = python_pytest_command_containing(test_job, "tests/capsem-release/")
+
+    assert "--cov=src/capsem" in selected
+    assert "--cov-report=" in selected
+    assert "--cov-fail-under=0" in selected
+    assert "--cov-append" not in selected
+
+    assert "--cov=src/capsem" in appended
+    assert "--cov-append" in appended
+    assert "--cov-report=xml:codecov-python.xml" in appended
+    assert "--cov-fail-under" not in appended
+    assert test_job.index("- name: Python schema tests with coverage") < test_job.index(
+        "- name: Python integration tests (non-VM suites)"
     )
 
 
@@ -93,9 +121,7 @@ def test_workspace_crates_and_bins_enumerated() -> None:
         "capsem-tui",
     }
     discovered_binary_targets = {
-        binary
-        for package in packages.values()
-        for binary in package.binary_targets
+        binary for package in packages.values() for binary in package.binary_targets
     }
     missing_binary_targets = sorted(release_binary_targets - discovered_binary_targets)
     assert not missing_binary_targets, (
@@ -135,8 +161,7 @@ def test_all_workspace_crates_reported() -> None:
 
     missing = missing_workspace_crates_in_codecov(packages, components)
     assert not missing, (
-        "codecov.yml components must report every Cargo workspace crate; "
-        f"missing {missing}"
+        f"codecov.yml components must report every Cargo workspace crate; missing {missing}"
     )
 
     mcp_builtin_path = "crates/capsem-mcp-builtin/src/**"
@@ -173,8 +198,7 @@ def test_low_coverage_components_visible() -> None:
 
     missing = sorted(set(required) - set(components))
     assert not missing, (
-        "low-coverage MCP/process crates need dedicated Codecov components; "
-        f"missing {missing}"
+        f"low-coverage MCP/process crates need dedicated Codecov components; missing {missing}"
     )
 
     wrong_paths = {
@@ -199,9 +223,7 @@ def test_low_coverage_components_visible() -> None:
 
     duplicated_paths = {
         path: sorted(
-            component.component_id
-            for component in components.values()
-            if path in component.paths
+            component.component_id for component in components.values() if path in component.paths
         )
         for path in required.values()
     }
@@ -215,7 +237,7 @@ def test_low_coverage_components_visible() -> None:
 
 
 def test_rust_coverage_includes_bins() -> None:
-    commands = rust_coverage_commands(
+    commands = rust_coverage_execution_commands(
         [
             PROJECT_ROOT / ".github" / "workflows" / "ci.yaml",
             PROJECT_ROOT / ".github" / "workflows" / "release.yaml",
@@ -223,9 +245,7 @@ def test_rust_coverage_includes_bins() -> None:
         ]
     )
     unit_or_workspace_commands = {
-        source: command
-        for source, command in commands.items()
-        if "--test" not in command
+        source: command for source, command in commands.items() if "--test" not in command
     }
 
     missing_bins = {
@@ -261,9 +281,7 @@ def test_release_critical_crates_are_reported() -> None:
         "release-site/src/**",
         "src/capsem/**",
     }
-    missing_components = sorted(
-        path for path in required_component_paths if path not in codecov
-    )
+    missing_components = sorted(path for path in required_component_paths if path not in codecov)
     assert not missing_components, (
         "release-critical code paths must be visible in Codecov components; "
         f"missing {missing_components}"
@@ -329,8 +347,7 @@ def test_release_binaries_and_package_rails_covered() -> None:
         test_path for test_path in package_rail_tests if test_path not in test_job
     )
     assert not missing_package_rails, (
-        "CI must execute release/package rail tests; "
-        f"missing {missing_package_rails}"
+        f"CI must execute release/package rail tests; missing {missing_package_rails}"
     )
 
     release_integration_command = python_pytest_command_containing(
@@ -358,15 +375,13 @@ def test_binary_targets_in_coverage_workflow() -> None:
         for package in packages.values()
         if package.binary_targets
     }
-    missing_binary_packages = sorted(
-        set(binary_owning_packages) - macos_coverage_packages
-    )
+    missing_binary_packages = sorted(set(binary_owning_packages) - macos_coverage_packages)
     assert not missing_binary_packages, (
         "binary-owning workspace crates must be included in macOS coverage; "
         f"missing {missing_binary_packages}"
     )
 
-    commands = rust_coverage_commands(
+    commands = rust_coverage_execution_commands(
         [
             PROJECT_ROOT / ".github" / "workflows" / "ci.yaml",
             PROJECT_ROOT / ".github" / "workflows" / "release.yaml",
@@ -416,11 +431,7 @@ def workspace_packages() -> dict[str, WorkspacePackage]:
             continue
         manifest_path = Path(package["manifest_path"])
         binary_targets = tuple(
-            sorted(
-                target["name"]
-                for target in package["targets"]
-                if "bin" in target["kind"]
-            )
+            sorted(target["name"] for target in package["targets"] if "bin" in target["kind"])
         )
         packages[package["name"]] = WorkspacePackage(
             name=package["name"],
@@ -475,17 +486,11 @@ def missing_workspace_crates_in_codecov(
     packages: dict[str, WorkspacePackage],
     components: dict[str, CodecovComponent],
 ) -> list[str]:
-    component_paths = {
-        path
-        for component in components.values()
-        for path in component.paths
-    }
+    component_paths = {path for component in components.values() for path in component.paths}
     return [
         package.name
         for package in sorted(packages.values(), key=lambda item: item.name)
-        if not any(
-            path.startswith(f"{package.path}/") for path in component_paths
-        )
+        if not any(path.startswith(f"{package.path}/") for path in component_paths)
     ]
 
 
@@ -498,6 +503,15 @@ def rust_coverage_commands(paths: list[Path]) -> dict[str, str]:
                 continue
             commands[f"{path.relative_to(PROJECT_ROOT)}:{line_number}"] = command
     return commands
+
+
+def rust_coverage_execution_commands(paths: list[Path]) -> dict[str, str]:
+    """Return commands that execute tests, excluding report-only subcommands."""
+    return {
+        source: command
+        for source, command in rust_coverage_commands(paths).items()
+        if shlex.split(command)[:3] != ["cargo", "llvm-cov", "report"]
+    }
 
 
 def codecov_upload_files(workflow: str) -> set[str]:
@@ -521,7 +535,7 @@ def python_pytest_command_containing(shell: str, needle: str) -> str:
             if needle in command:
                 return command
             continue
-        for continuation in lines[index + 1:]:
+        for continuation in lines[index + 1 :]:
             stripped = continuation.strip()
             if not stripped or stripped.startswith("#"):
                 continue

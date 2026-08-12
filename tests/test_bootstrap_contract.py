@@ -100,26 +100,13 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert "[SKIP] docker (install via your package manager" not in bootstrap
     assert "[SKIP] docker daemon" not in bootstrap
 
-    # Ubuntu/Debian host prerequisites cover the native fast gate as well as
-    # the image builder. Buildx is the Ubuntu archive package name; the
-    # Docker-CE repository's *-plugin name is only a fallback.
-    for package in [
-        "build-essential",
-        "bubblewrap",
-        "cpio",
-        "pkg-config",
-        "libssl-dev",
-        "libgtk-3-dev",
-        "libwebkit2gtk-4.1-dev",
-        "libayatana-appindicator3-dev",
-        "libxdo-dev",
-        "librsvg2-dev",
-        "musl-tools",
-        "docker.io",
-        "docker-buildx",
-        "acl",
-    ]:
+    # Host infrastructure stays here; native workspace packages come from the
+    # same validated config rail as CI and the host-builder image.
+    for package in ["cpio", "docker.io", "docker-buildx", "acl"]:
         assert package in linux
+    assert 'provision-linux-workspace.py" --packages apt' in linux
+    assert 'provision-linux-workspace.py" --packages dnf' in linux
+    assert 'provision-linux-workspace.py" --verify' in linux
     assert "apt-get update" in linux
     assert "apt-get install" in linux
     assert "systemctl enable --now docker" in linux
@@ -141,11 +128,11 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert "docker buildx version" in linux
     assert "bwrap --unshare-net" in linux
     assert 'python3 "$CAPSEM_BUBBLEWRAP_PROJECT_ROOT/scripts/prepare-linux-sandbox.py"' in linux
-    assert '[ -r /dev/kvm ] && [ -w /dev/kvm ]' in linux
-    assert '[ -r /dev/vhost-vsock ] && [ -w /dev/vhost-vsock ]' in linux
+    assert "[ -r /dev/kvm ] && [ -w /dev/kvm ]" in linux
+    assert "[ -r /dev/vhost-vsock ] && [ -w /dev/vhost-vsock ]" in linux
 
     doctor = _read("scripts/doctor-linux.sh")
-    assert 'for device in /dev/kvm /dev/vhost-vsock' in doctor
+    assert "for device in /dev/kvm /dev/vhost-vsock" in doctor
     assert "--bind / / --dev-bind /dev /dev -- sh -c ': > /dev/null'" in linux
     assert "--bind / / --dev-bind /dev /dev -- sh -c ': > /dev/null'" in doctor
     assert "gate network namespace active (loopback only)" in doctor
@@ -159,11 +146,11 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert "config/docker/image/build.toml" in bootstrap
     assert "latest-v${CAPSEM_NODE_MAJOR}.x/SHASUMS256.txt" in linux
     assert "sha256sum" in linux
-    assert 'CAPSEM_NODE_COMMAND=$(command -v node 2>/dev/null || true)' in linux
+    assert "CAPSEM_NODE_COMMAND=$(command -v node 2>/dev/null || true)" in linux
     assert '"$HOME/.local/bin/node"' in linux
     assert "refusing to replace unmanaged" in linux
     assert 'npm install --global pnpm@10 --prefix "$HOME/.local"' in bootstrap
-    assert 'PNPM_MAJOR=${PNPM_VERSION%%.*}' in bootstrap
+    assert "PNPM_MAJOR=${PNPM_VERSION%%.*}" in bootstrap
     assert '"$PNPM_MAJOR" = 10' in bootstrap
     assert "pnpm 10 is required after bootstrap" in bootstrap
     assert "uv run capsem-gate install-node" in bootstrap
@@ -172,8 +159,9 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert "cd frontend && CI=true pnpm install" not in bootstrap
     assert 'if [ -n "${CAPSEM_GATE_RUN:-}" ]; then' in bootstrap
     assert "fast.toolchain.node already owns every locked workspace" in bootstrap
-    assert bootstrap.index('if [ -n "${CAPSEM_GATE_RUN:-}" ]; then') \
-        < bootstrap.index("uv run capsem-gate install-node")
+    assert bootstrap.index('if [ -n "${CAPSEM_GATE_RUN:-}" ]; then') < bootstrap.index(
+        "uv run capsem-gate install-node"
+    )
 
     # Daemon activation and a new socket are asynchronous on a fresh host.
     # Bootstrap waits for both the socket and post-ACL client access instead
@@ -268,8 +256,7 @@ capsem_linux_prepare_bubblewrap "$3"
 
     host = tmp_path / "host-net-dev"
     host.write_text(
-        loopback.read_text(encoding="utf-8")
-        + "  eth0: 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0\n",
+        loopback.read_text(encoding="utf-8") + "  eth0: 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0\n",
         encoding="utf-8",
     )
     ordinary = subprocess.run(
@@ -295,8 +282,7 @@ def test_linux_bootstrap_verifies_in_gate_and_provisions_only_on_host(
     )
     host = tmp_path / "host-net-dev"
     host.write_text(
-        loopback.read_text(encoding="utf-8")
-        + "  eth0: 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0\n",
+        loopback.read_text(encoding="utf-8") + "  eth0: 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0\n",
         encoding="utf-8",
     )
     script = PROJECT_ROOT / "scripts/bootstrap-linux.sh"
@@ -334,10 +320,7 @@ bootstrap_linux "$2" 1 "$3"
 
 
 def test_linux_bootstrap_node_major_parser_requires_one_shared_value() -> None:
-    command = (
-        '. scripts/bootstrap-linux.sh; '
-        'capsem_linux_node_major config/docker/image/build.toml'
-    )
+    command = ". scripts/bootstrap-linux.sh; capsem_linux_node_major config/docker/image/build.toml"
     completed = subprocess.run(
         ["sh", "-c", command],
         cwd=PROJECT_ROOT,
@@ -350,10 +333,7 @@ def test_linux_bootstrap_node_major_parser_requires_one_shared_value() -> None:
 
 
 def test_bootstrap_rust_toolchain_parser_requires_the_checked_in_pin() -> None:
-    command = (
-        '. scripts/bootstrap-rust.sh; '
-        'capsem_rust_toolchain rust-toolchain.toml'
-    )
+    command = ". scripts/bootstrap-rust.sh; capsem_rust_toolchain rust-toolchain.toml"
     completed = subprocess.run(
         ["sh", "-c", command],
         cwd=PROJECT_ROOT,
@@ -408,7 +388,7 @@ def test_bootstrap_exposes_rustup_proxies_to_the_agent_path(tmp_path: Path) -> N
         [
             "sh",
             "-c",
-            '. scripts/bootstrap-rust.sh; capsem_expose_rustup_tools; '
+            ". scripts/bootstrap-rust.sh; capsem_expose_rustup_tools; "
             'readlink "$HOME/.local/bin/rustup"; '
             'readlink "$HOME/.local/bin/rustc"; '
             'readlink "$HOME/.local/bin/cargo"',
@@ -457,8 +437,7 @@ def test_rust_bootstrap_reads_the_complete_gate_cargo_tool_inventory() -> None:
         [
             "sh",
             "-c",
-            ". scripts/bootstrap-rust.sh; "
-            "capsem_gate_cargo_tools config/gate.toml",
+            ". scripts/bootstrap-rust.sh; capsem_gate_cargo_tools config/gate.toml",
         ],
         cwd=PROJECT_ROOT,
         check=True,
@@ -481,8 +460,7 @@ def test_rust_bootstrap_reads_exact_cargo_tool_versions_from_the_same_inventory(
         [
             "sh",
             "-c",
-            ". scripts/bootstrap-rust.sh; "
-            "capsem_gate_cargo_tool_versions config/gate.toml",
+            ". scripts/bootstrap-rust.sh; capsem_gate_cargo_tool_versions config/gate.toml",
         ],
         cwd=PROJECT_ROOT,
         check=True,
@@ -519,8 +497,7 @@ def test_rust_bootstrap_rejects_missing_or_duplicate_cargo_tool_inventory(
             [
                 "sh",
                 "-c",
-                ". scripts/bootstrap-rust.sh; "
-                f"capsem_gate_cargo_tools {config}",
+                f". scripts/bootstrap-rust.sh; capsem_gate_cargo_tools {config}",
             ],
             cwd=PROJECT_ROOT,
             check=False,
@@ -536,8 +513,8 @@ def test_bootstrap_and_doctor_install_then_expose_config_owned_cargo_tools() -> 
     bootstrap = _read("bootstrap.sh")
     doctor = _read("scripts/doctor-common.sh")
 
-    assert '_doctor_install_gate_tools' in doctor
-    assert 'uv run capsem-gate install-tools' in doctor
+    assert "_doctor_install_gate_tools" in doctor
+    assert "uv run capsem-gate install-tools" in doctor
     assert 'capsem_gate_cargo_tool_versions "$PROJECT_ROOT/config/gate.toml"' in doctor
     assert '[[ "$actual" == "$expected"* ]]' in doctor
     assert 'actual=$("${probe_argv[@]}"' in doctor
@@ -579,8 +556,7 @@ def test_gate_cargo_tool_exposure_is_limited_to_the_configured_inventory(
         [
             "sh",
             "-c",
-            ". scripts/bootstrap-rust.sh; "
-            f"capsem_expose_gate_cargo_tools {config}",
+            f". scripts/bootstrap-rust.sh; capsem_expose_gate_cargo_tools {config}",
         ],
         cwd=PROJECT_ROOT,
         env={
@@ -610,8 +586,7 @@ def test_managed_tool_exposure_requires_a_regular_executable(tmp_path: Path) -> 
         [
             "sh",
             "-c",
-            ". scripts/bootstrap-rust.sh; "
-            f"_capsem_expose_managed_tools {rust_bin} cargo-broken",
+            f". scripts/bootstrap-rust.sh; _capsem_expose_managed_tools {rust_bin} cargo-broken",
         ],
         cwd=PROJECT_ROOT,
         env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
@@ -689,7 +664,10 @@ def test_linux_doctor_uses_ubuntu_buildx_name_and_enforces_node_major() -> None:
     assert 'apt) echo "sudo apt install docker-buildx"' in doctor_linux
     assert "required Node.js major" in doctor_common
     assert "config/docker/image/build.toml" in doctor_common
-    assert "for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum flock zstd cpio" in doctor_common
+    assert (
+        "for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum flock zstd cpio"
+        in doctor_common
+    )
 
 
 def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:

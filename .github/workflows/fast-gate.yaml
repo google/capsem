@@ -42,17 +42,7 @@ jobs:
             release-site/pnpm-lock.yaml
 
       - name: Install Linux workspace lint prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            bubblewrap \
-            musl-tools \
-            pkg-config \
-            libssl-dev \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            libxdo-dev
+        run: sudo python3 scripts/provision-linux-workspace.py --install apt
 
       - name: Prove Linux sandbox boundary
         run: python3 scripts/prepare-linux-sandbox.py --repair-hosted-runner

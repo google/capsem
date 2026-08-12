@@ -645,21 +645,16 @@ def test_static_module_audits_the_locked_python_graph_fail_closed() -> None:
 
 
 def test_reusable_fast_gate_installs_workspace_static_prerequisites() -> None:
+    ci = (PROJECT_ROOT / ".github/workflows/ci.yaml").read_text(encoding="utf-8")
     workflow = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(encoding="utf-8")
     prerequisites = workflow.index("Install Linux workspace lint prerequisites")
     shared_module = workflow.index("Run shared static module")
 
     assert prerequisites < shared_module
-    for package in (
-        "musl-tools",
-        "pkg-config",
-        "libssl-dev",
-        "libgtk-3-dev",
-        "libwebkit2gtk-4.1-dev",
-        "libayatana-appindicator3-dev",
-        "libxdo-dev",
-    ):
-        assert package in workflow[prerequisites:shared_module]
+    provision = "sudo python3 scripts/provision-linux-workspace.py --install apt"
+    assert provision in workflow[prerequisites:shared_module]
+    linux_coverage = ci.index("Unit tests (KVM backend) with coverage")
+    assert provision in ci[:linux_coverage]
     shared_block = workflow[shared_module:]
     assert "CC_x86_64_unknown_linux_musl: musl-gcc" in shared_block
     assert "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc" in shared_block

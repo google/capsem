@@ -32,6 +32,7 @@ from capsem.builder.docker import (
     _file_ledger_entry,
     _normalize_cyclonedx_obom,
     _rootfs_config_input_record,
+    _scanner_output_command,
     _validate_cyclonedx_obom,
     build_all_architectures,
     build_image,
@@ -76,6 +77,28 @@ def test_cdxgen_is_the_digest_verified_helper_binary(monkeypatch):
 def test_cdx_validate_is_the_paired_digest_verified_helper_binary(monkeypatch):
     monkeypatch.setenv("CAPSEM_CDX_VALIDATE_CMD", "npx --yes mutable-validator")
     assert _cdx_validate_command() == ["cdx-validate"]
+
+
+def test_scanner_output_handoff_is_executable_and_host_writable(tmp_path):
+    output = tmp_path / "scanner-output.json"
+    command = _scanner_output_command(
+        [
+            "sh",
+            "-eu",
+            "-c",
+            "printf '%s\\n' '{\"scanner\":true}' > \"$1\"",
+            "fixture-scanner",
+            str(output),
+        ],
+        output_path=str(output),
+    )
+
+    subprocess.run(command, check=True)
+
+    stat = output.stat()
+    assert (stat.st_uid, stat.st_gid) == (os.getuid(), os.getgid())
+    output.write_text('{"normalized":true}\n')
+    assert json.loads(output.read_text()) == {"normalized": True}
 
 
 def test_run_cmd_surfaces_captured_subprocess_stderr(monkeypatch, capsys):
@@ -1294,6 +1317,14 @@ class TestBuildLedger:
             "none",
         ]
         cdxgen_at = cdxgen_cmd.index("cdxgen")
+        handoff = cdxgen_cmd[cdxgen_cmd.index(EXACT_EROFS_BASE) + 1 : cdxgen_at]
+        assert handoff[:3] == ["sh", "-eu", "-c"]
+        assert 'chown "$uid:$gid" "$output"' in handoff[3]
+        assert handoff[5:] == [
+            f"/output/{output.name}",
+            str(os.getuid()),
+            str(os.getgid()),
+        ]
         assert cdxgen_cmd[cdxgen_at + 1 :] == [
             "/rootfs",
             "-t",

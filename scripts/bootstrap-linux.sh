@@ -117,32 +117,24 @@ capsem_linux_dnf_binfmt_package() {
 }
 
 capsem_linux_install_apt_packages() {
-    CAPSEM_APT_ASSUME_YES=$1
+    CAPSEM_APT_PROJECT_ROOT=$1
+    CAPSEM_APT_ASSUME_YES=$2
     CAPSEM_APT_BINFMT_PACKAGE=$(capsem_linux_apt_binfmt_package)
+    CAPSEM_APT_WORKSPACE_PACKAGES=$(python3 \
+        "$CAPSEM_APT_PROJECT_ROOT/scripts/provision-linux-workspace.py" --packages apt)
     CAPSEM_APT_BASE_PACKAGES="
         acl
-        build-essential
-        bubblewrap
         ca-certificates
         cpio
         docker.io
-        file
-        libayatana-appindicator3-dev
-        librsvg2-dev
-        libssl-dev
-        libwebkit2gtk-4.1-dev
-        libxdo-dev
-        libgtk-3-dev
-        musl-tools
-        pkg-config
         python3
         python3-venv
         sqlite3
         util-linux
-        xdg-utils
         xvfb
         xz-utils
         zstd
+        $CAPSEM_APT_WORKSPACE_PACKAGES
         $CAPSEM_APT_BINFMT_PACKAGE
     "
 
@@ -158,6 +150,7 @@ capsem_linux_install_apt_packages() {
         CAPSEM_APT_NEEDS_INSTALL=1
     fi
     if [ "$CAPSEM_APT_NEEDS_INSTALL" -eq 0 ]; then
+        python3 "$CAPSEM_APT_PROJECT_ROOT/scripts/provision-linux-workspace.py" --verify
         printf "  [ok]   Linux system packages\n"
         return 0
     fi
@@ -173,36 +166,27 @@ capsem_linux_install_apt_packages() {
         --no-install-recommends \
         $CAPSEM_APT_BASE_PACKAGES \
         "$CAPSEM_APT_BUILDX_PACKAGE"
+    python3 "$CAPSEM_APT_PROJECT_ROOT/scripts/provision-linux-workspace.py" --verify
     printf "  [ok]   Linux system packages installed\n"
 }
 
 capsem_linux_install_dnf_packages() {
-    CAPSEM_DNF_ASSUME_YES=$1
+    CAPSEM_DNF_PROJECT_ROOT=$1
+    CAPSEM_DNF_ASSUME_YES=$2
     CAPSEM_DNF_BINFMT_PACKAGE=$(capsem_linux_dnf_binfmt_package)
+    CAPSEM_DNF_WORKSPACE_PACKAGES=$(python3 \
+        "$CAPSEM_DNF_PROJECT_ROOT/scripts/provision-linux-workspace.py" --packages dnf)
     CAPSEM_DNF_PACKAGES="
         acl
-        bubblewrap
         cpio
         docker
         docker-buildx-plugin
-        file
-        gcc
-        gcc-c++
-        gtk3-devel
-        libappindicator-gtk3-devel
-        librsvg2-devel
-        libxdo-devel
-        make
-        musl-gcc
-        openssl-devel
-        pkgconf-pkg-config
         python3
         sqlite
         util-linux
-        webkit2gtk4.1-devel
-        xdg-utils
         xz
         zstd
+        $CAPSEM_DNF_WORKSPACE_PACKAGES
         $CAPSEM_DNF_BINFMT_PACKAGE
     "
 
@@ -214,6 +198,7 @@ capsem_linux_install_dnf_packages() {
         fi
     done
     if [ "$CAPSEM_DNF_NEEDS_INSTALL" -eq 0 ]; then
+        python3 "$CAPSEM_DNF_PROJECT_ROOT/scripts/provision-linux-workspace.py" --verify
         printf "  [ok]   Linux system packages\n"
         return 0
     fi
@@ -222,6 +207,7 @@ capsem_linux_install_dnf_packages() {
         return 1
     fi
     capsem_linux_as_root dnf install -y $CAPSEM_DNF_PACKAGES
+    python3 "$CAPSEM_DNF_PROJECT_ROOT/scripts/provision-linux-workspace.py" --verify
     printf "  [ok]   Linux system packages installed\n"
 }
 
@@ -592,9 +578,9 @@ bootstrap_linux() {
 
     printf "\n== Provisioning Linux host ==\n"
     if command -v apt-get >/dev/null 2>&1; then
-        capsem_linux_install_apt_packages "$CAPSEM_LINUX_ASSUME_YES"
+        capsem_linux_install_apt_packages "$CAPSEM_LINUX_PROJECT_ROOT" "$CAPSEM_LINUX_ASSUME_YES"
     elif command -v dnf >/dev/null 2>&1; then
-        capsem_linux_install_dnf_packages "$CAPSEM_LINUX_ASSUME_YES"
+        capsem_linux_install_dnf_packages "$CAPSEM_LINUX_PROJECT_ROOT" "$CAPSEM_LINUX_ASSUME_YES"
     else
         printf "  [FAIL] unsupported Linux package manager (expected apt-get or dnf)\n" >&2
         return 1

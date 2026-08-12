@@ -38,6 +38,7 @@ ARG TAURI_CLI_VERSION
 ARG CARGO_NEXTEST_VERSION
 ARG CARGO_LLVM_COV_VERSION
 ARG INPUT_IDENTITY
+ARG WORKSPACE_APT_PACKAGES
 
 # Ubuntu's minimal base has no system CA bundle, but every configured package
 # source is HTTPS. Bootstrap trust from a tiny immutable official image; the
@@ -58,16 +59,13 @@ RUN bash /tmp/sources-multiarch.sh "$APT_SNAPSHOT_BASE" "$APT_SNAPSHOT_ID" \
 # the complete multiarch indexes are fetched exactly once. Cross builds swap
 # these packages at container runtime (see swap-dev-libs.sh).
 # ---- Native-arch Tauri dev libraries ----
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    pkg-config \
-    file \
+RUN test -n "$WORKSPACE_APT_PACKAGES" \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    $WORKSPACE_APT_PACKAGES \
     curl \
     wget \
     ca-certificates \
     git \
-    musl-tools \
-    xdg-utils \
     sqlite3 \
     python3 \
     python3-venv \
@@ -76,11 +74,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++-x86-64-linux-gnu \
     gcc-aarch64-linux-gnu \
     g++-aarch64-linux-gnu \
-    libssl-dev \
-    libgtk-3-dev \
-    libwebkit2gtk-4.1-dev \
-    libayatana-appindicator3-dev \
-    libxdo-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Node.js 24 + pnpm 10 ----

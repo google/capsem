@@ -49,6 +49,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sealed asset scanners now return generated OBOM files to the invoking host
+  owner before deterministic normalization, so rootless qualification can
+  finish without weakening the scanner container or its network denial.
+- macOS CI records its partial Python cohort without prematurely enforcing the
+  full-suite coverage floor, then applies the one config-owned threshold after
+  the non-VM integration cohort is appended.
+- Linux bootstrap, hosted ARM coverage, hosted static checks, and the sealed
+  host builder now consume one config-owned native dependency inventory and
+  prove its pkg-config modules before compiling. A missing GTK/glib package
+  therefore fails during provisioning instead of one minute into Clippy.
+
 - Linux bootstrap and hosted fast CI now run the same config-owned Bubblewrap
   kernel proof before qualification. The ephemeral Ubuntu runner may repair
   only its exact AppArmor user-namespace failure, then must still prove a

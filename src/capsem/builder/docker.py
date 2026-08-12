@@ -881,6 +881,21 @@ def _cdx_validate_command() -> list[str]:
     return ["cdx-validate"]
 
 
+def _scanner_output_command(command: list[str], *, output_path: str) -> list[str]:
+    """Run a root scanner, then return its bind-mounted output to the host."""
+    return [
+        "sh",
+        "-eu",
+        "-c",
+        'output=$1; uid=$2; gid=$3; shift 3; "$@"; chown "$uid:$gid" "$output"',
+        "capsem-scanner-output",
+        output_path,
+        str(os.getuid()),
+        str(os.getgid()),
+        *command,
+    ]
+
+
 def _normalize_cyclonedx_obom(
     path: Path,
     rootfs_dir: Path,
@@ -1094,13 +1109,18 @@ def generate_cyclonedx_obom(
                 "-v",
                 f"{output_path.parent.resolve()}:/output",
                 tool_image,
-                *_cdxgen_command(),
-                "/rootfs",
-                "-t",
-                "rootfs",
-                "--no-validate",
-                "-o",
-                f"/output/{output_path.name}",
+                *_scanner_output_command(
+                    [
+                        *_cdxgen_command(),
+                        "/rootfs",
+                        "-t",
+                        "rootfs",
+                        "--no-validate",
+                        "-o",
+                        f"/output/{output_path.name}",
+                    ],
+                    output_path=f"/output/{output_path.name}",
+                ),
             ],
             capture=True,
             timeout=OBOM_COMMAND_TIMEOUT_SECONDS,

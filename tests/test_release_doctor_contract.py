@@ -5024,6 +5024,9 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
 ) -> None:
     from helpers.gate import gate_issued, gate_plan
 
+    from capsem.gate import config as gate_config
+    from capsem.gate.hostimage import cargo_tool
+
     canonical_gate = _recipe_block("test:")
     linux_rust_recipe = _recipe_body("_gate-linux-rust:")
     linux_ci = _workflow_job_block("test-linux")
@@ -5122,9 +5125,18 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
     assert "capsem-service" in runner
     assert 'package_args+=( -p "$package" )' in runner
     assert "--profile ci" in runner
-    assert "cargo install cargo-nextest --version 0.9.137 --locked" in host_builder
-    assert "cargo install cargo-llvm-cov" in host_builder
-    assert host_builder.count("for attempt in 1 2 3") >= 4
+    config = gate_config.load(PROJECT_ROOT)
+    for argument, tool_name in config.hostimage.cargo_tool_args.items():
+        package, version = cargo_tool(config=config, argument=argument)
+        configured = next(tool for tool in config.toolchain.crates if tool.name == tool_name)
+        assert package == configured.install[2]
+        assert version == configured.install[configured.install.index("--version") + 1]
+        assert f"ARG {argument}" in host_builder
+        assert f'cargo install {package} --version "${{{argument}}}" --locked' in host_builder
+        assert version not in host_builder, (
+            f"{package}'s version must remain config-owned, not duplicated in Docker"
+        )
+    assert host_builder.count("for attempt in 1 2 3") >= len(config.hostimage.cargo_tool_args)
     assert "CARGO_NET_RETRY=10" in host_builder
 
 

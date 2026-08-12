@@ -810,7 +810,7 @@ max_lines = 300
 # excludes build-generated output and vendored dependency trees by rule while
 # still catching suffix-less package scripts through their shebang.
 [boundary.scripts.oversized_line_counts]
-"scripts/bootstrap-linux.sh" = 613
+"scripts/bootstrap-linux.sh" = 599
 "scripts/build-pkg.sh" = 352
 "scripts/check-hardcoded-release-selections.py" = 305
 "scripts/check-public-binary-release.py" = 1097
@@ -926,6 +926,51 @@ node_env = { CI = "true" }
 rust_targets = ["aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]
 # rust-lld comes from here.
 rust_components = ["llvm-tools"]
+
+# One native Linux dependency authority. Bootstrap, both hosted Linux gates,
+# and the Docker host builder consume these exact values; none keeps a private
+# package list. The probes make a removed/transitively-missing dev package fail
+# before Clippy spends a minute discovering the first missing .pc file.
+[toolchain.linux]
+apt_packages = [
+    "build-essential",
+    "bubblewrap",
+    "file",
+    "libayatana-appindicator3-dev",
+    "librsvg2-dev",
+    "libssl-dev",
+    "libwebkit2gtk-4.1-dev",
+    "libxdo-dev",
+    "libgtk-3-dev",
+    "musl-tools",
+    "pkg-config",
+    "xdg-utils",
+]
+dnf_packages = [
+    "bubblewrap",
+    "file",
+    "gcc",
+    "gcc-c++",
+    "gtk3-devel",
+    "libappindicator-gtk3-devel",
+    "librsvg2-devel",
+    "libxdo-devel",
+    "make",
+    "musl-gcc",
+    "openssl-devel",
+    "pkgconf-pkg-config",
+    "webkit2gtk4.1-devel",
+    "xdg-utils",
+]
+pkg_config_modules = [
+    "glib-2.0",
+    "gtk+-3.0",
+    "webkit2gtk-4.1",
+    "ayatana-appindicator3-0.1",
+    "openssl",
+    "librsvg-2.0",
+]
+required_commands = ["bwrap", "file", "musl-gcc", "pkg-config"]
 
 # `probe` is what proves it is already present; `install` is what puts it
 # there. A table rather than eight code blocks, so adding one is a line.
@@ -1363,6 +1408,7 @@ source_contract = [
     "tests/test_gate_hardening.py",
     "tests/test_gate_has_no_literal_data.py",
     "tests/test_gate_hostimage_composition.py",
+    "tests/test_linux_workspace_prerequisites.py",
     "tests/test_host_builder_materializer.py",
     "tests/test_gate_install_container.py",
     "tests/test_gate_no_nested_commands.py",

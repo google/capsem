@@ -53,6 +53,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
 
+      - name: Install Linux workspace lint prerequisites
+        run: sudo python3 scripts/provision-linux-workspace.py --install apt
+
       # Try to enable KVM for integration tests. GitHub-hosted runners don't
       # always expose nested virt -- when /dev/kvm is absent the udev trigger
       # fails with "Failed to open the device 'kvm': Invalid argument". We
@@ -235,7 +238,8 @@ jobs:
             tests/capsem-cleanup-script/test_clean_stale.py \
             tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py \
             --cov=src/capsem \
-            --cov-report=xml:codecov-python.xml \
+            --cov-report= \
+            --cov-fail-under=0 \
             --junitxml=python-junit.xml
 
       # Python integration tests that need no VM

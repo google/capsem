@@ -37,6 +37,32 @@ class CrateTool(Strict):
         return self
 
 
+LinuxPackage = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9+._-]*$")]
+PkgConfigModule = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9+._-]*$")]
+
+
+class LinuxWorkspaceConfig(Strict):
+    """Native dependencies shared by bootstrap, CI, and the Linux builder."""
+
+    apt_packages: tuple[LinuxPackage, ...]
+    dnf_packages: tuple[LinuxPackage, ...]
+    pkg_config_modules: tuple[PkgConfigModule, ...]
+    required_commands: tuple[LinuxPackage, ...]
+
+    @model_validator(mode="after")
+    def inventories_are_nonempty_and_unique(self) -> LinuxWorkspaceConfig:
+        for name in (
+            "apt_packages",
+            "dnf_packages",
+            "pkg_config_modules",
+            "required_commands",
+        ):
+            values = getattr(self, name)
+            if not values or len(values) != len(set(values)):
+                raise ValueError(f"toolchain.linux.{name} must be non-empty and unique")
+        return self
+
+
 class ToolchainConfig(Strict):
     sync: tuple[str, ...]
     node_workspaces: tuple[str, ...]
@@ -44,6 +70,7 @@ class ToolchainConfig(Strict):
     node_env: dict[str, str]
     rust_targets: tuple[str, ...]
     rust_components: tuple[str, ...]
+    linux: LinuxWorkspaceConfig
     crates: tuple[CrateTool, ...]
 
 

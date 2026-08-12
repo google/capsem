@@ -78,6 +78,9 @@ def input_key(config: GateConfig) -> str:
         settings.rust_image,
         settings.uv_image,
         pinned_toolchain(config.root),
+        *config.toolchain.linux.apt_packages,
+        *config.toolchain.linux.pkg_config_modules,
+        *config.toolchain.linux.required_commands,
     ]
     for argument in sorted(settings.cargo_tool_args):
         package, version = cargo_tool(config=config, argument=argument)
@@ -161,6 +164,7 @@ class _Build(Action, name="host-image-build"):
                 f"UV_IMAGE={settings.uv_image}",
                 f"RUST_TOOLCHAIN={pinned_toolchain(context.config.root)}",
                 f"INPUT_IDENTITY={identity}",
+                "WORKSPACE_APT_PACKAGES=" + " ".join(context.config.toolchain.linux.apt_packages),
             ]
             for argument in sorted(settings.cargo_tool_args):
                 _package, version = cargo_tool(config=context.config, argument=argument)
