@@ -1,0 +1,70 @@
+# check=skip=InvalidDefaultArgInFrom
+# BASE is required; the gate passes the exact platform child and owns the sole caller.
+# Materialize every third-party rootfs dependency before first-party assembly.
+ARG BASE
+FROM ${BASE}
+
+ARG INPUT_IDENTITY
+LABEL org.capsem.asset-dependencies.input-key="${INPUT_IDENTITY}"
+
+RUN set -eux; \
+    rm -f /etc/apt/sources.list.d/*; \
+    printf 'deb [check-valid-until=no] %s/%s bookworm main\n' \
+        "{{ debian_snapshot_base }}" "{{ debian_snapshot_id }}" \
+        > /etc/apt/sources.list; \
+    printf 'deb [check-valid-until=no] %s/%s bookworm-updates main\n' \
+        "{{ debian_snapshot_base }}" "{{ debian_snapshot_id }}" \
+        >> /etc/apt/sources.list; \
+    printf 'deb [check-valid-until=no] %s/%s bookworm-security main\n' \
+        "{{ debian_security_snapshot_base }}" "{{ debian_snapshot_id }}" \
+        >> /etc/apt/sources.list; \
+    apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update; \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+        {{ apt_packages | join(' \\
+        ') }} && \
+    ln -sf vim.tiny /usr/bin/vim && \
+    rm -f /usr/sbin/iptables-legacy /usr/sbin/iptables-legacy-restore /usr/sbin/iptables-legacy-save \
+          /usr/sbin/ip6tables-legacy /usr/sbin/ip6tables-legacy-restore /usr/sbin/ip6tables-legacy-save && \
+    pip3 install --break-system-packages --upgrade pip
+
+ENV NVM_DIR=/usr/local/nvm
+RUN mkdir -p $NVM_DIR && \
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash && \
+    bash -c '. $NVM_DIR/nvm.sh && nvm install {{ arch.node_major }} && npm install -g npm@latest && \
+    for bin in node npm npx; do ln -sf "$(which $bin)" /usr/local/bin/$bin; done'
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh && \
+    install -m 555 /root/.local/bin/uv /usr/local/bin/uv && \
+    install -m 555 /root/.local/bin/uvx /usr/local/bin/uvx
+
+{% if npm_packages %}
+RUN npm install -g --prefix {{ npm_prefix }} \
+        {{ npm_packages | join(' \\
+        ') }} && \
+    npm config set prefix {{ npm_prefix }} -g && \
+    npm cache clean --force
+ENV PATH="{{ npm_prefix }}/bin:$PATH"
+{% endif %}
+
+{% if profile_build_script %}
+COPY profile-build.sh /tmp/profile-build.sh
+RUN chmod 555 /tmp/profile-build.sh && /tmp/profile-build.sh && rm -f /tmp/profile-build.sh
+{% endif %}
+
+RUN uv pip install --system --break-system-packages certifi
+
+{% if python_packages %}
+RUN {{ python_install_cmd }} \
+        {{ python_packages | join(' \\
+        ') }}
+{% endif %}
+
+RUN rm -rf /root && mkdir -p /root
+
+{% for url in curl_installs %}
+RUN curl -fsSL {{ url }} | bash && \
+    for bin in /root/.local/bin/*; do \
+        [ -f "$bin" ] && install -m 555 "$bin" /usr/local/bin/; \
+    done
+{% endfor %}

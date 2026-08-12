@@ -657,9 +657,9 @@ error_on_warning = true
 # A ratchet in two dimensions: no family may join and no count may grow.
 # Reductions must lower the count immediately, so stale exemptions fail too.
 [lint.ty_ratchet]
-call-top-callable = 3
-invalid-argument-type = 128
-invalid-assignment = 17
+call-top-callable = 1
+invalid-argument-type = 122
+invalid-assignment = 15
 invalid-attribute-override = 1
 invalid-method-override = 2
 invalid-return-type = 6
@@ -1344,9 +1344,14 @@ cli = "target/debug/capsem"
 # thing that varies. Four recipes spelled it out, and the shape of the argv was
 # the same in all four.
 admin = ["cargo", "run", "-p", "capsem-admin", "--", "image", "build"]
+workspace_admin = ["cargo", "run", "-p", "capsem-admin", "--", "image", "workspace"]
+dependency_backend = ["uv", "run", "python", "-m", "capsem.builder.image_build_backend"]
 # The profile materializer copies this directory byte-for-byte. It is also the
 # one authority the gate uses to prefetch exact per-platform base manifests.
 source_config = "config/docker/image"
+guest_dir = "guest"
+workspace_root = "target/image-workspace/{profile}/{arch}"
+workspace_guest_dir = "guest"
 # The stages a concurrent asset lane builds, in order. Named here because the
 # lanes build kernel and rootfs separately while a single-shot build uses
 # "all", and a second copy of that list in code is a second opinion.

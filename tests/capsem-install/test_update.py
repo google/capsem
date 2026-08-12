@@ -214,7 +214,7 @@ def _serve_release(health: dict | Callable[[str], dict], files: dict[str, bytes]
     server = socketserver.TCPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     base = f"http://127.0.0.1:{server.server_address[1]}"
-    health_payload = health(base) if callable(health) else health
+    health_payload = health if isinstance(health, dict) else health(base)
     manifest_path = "/assets/stable/manifest.json"
     served_files = {
         **files,
@@ -243,7 +243,7 @@ def _serve_manifest_release(
     server = socketserver.TCPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     base = f"http://127.0.0.1:{server.server_address[1]}"
-    handler.files = files(base) if callable(files) else files
+    handler.files = files if isinstance(files, dict) else files(base)
     thread.start()
     try:
         yield base, requests

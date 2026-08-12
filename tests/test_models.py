@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from capsem.builder.models import (
     ArchConfig,
+    AssetDependencyConfig,
     AssetToolBinaryConfig,
     AssetToolsArchitectureConfig,
     AssetToolsConfig,
@@ -34,6 +35,7 @@ from capsem.builder.models import (
     WebServiceConfig,
 )
 from capsem.builder.schema import McpTransport
+from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -73,8 +75,8 @@ def _build(**kw):
             debian_snapshot_base="http://snapshot.example/debian",
             debian_security_snapshot_base="http://snapshot.example/debian-security",
             debian_snapshot_id="20260810T000000Z",
-            materialize_network="default",
-            runtime_network="none",
+            materialize_network=BuildNetwork.DEFAULT,
+            runtime_network=ContainerNetwork.NONE,
             architectures={
                 name: AssetToolsArchitectureConfig(
                     cdxgen=binary,
@@ -83,15 +85,21 @@ def _build(**kw):
                 for name in architectures
             },
         )
-    defaults = {
-        "materialize_network": "default",
+    defaults: dict[str, object] = {
+        "materialize_network": BuildNetwork.DEFAULT,
+        "asset_dependencies": AssetDependencyConfig(
+            tag_template="capsem-{template}-dependencies-{arch}:{digest}",
+            rootfs_template="Dockerfile.rootfs-dependencies.j2",
+            kernel_template="Dockerfile.kernel-dependencies.j2",
+            source_build_network=BuildNetwork.NONE,
+        ),
         "kernel": KernelConfig(version="9.9.9", sha256="a" * 64),
         "guest_rust_builder": GuestRustBuilderConfig(
             dockerfile="docker/Dockerfile.guest-rust-builder",
             tag_template="capsem-guest-rust-{arch}:{digest}",
             identity_inputs=("Cargo.lock", "rust-toolchain.toml"),
             cross_packages=("clang21=21.1.2-r2",),
-            runtime_network="none",
+            runtime_network=ContainerNetwork.NONE,
         ),
         "asset_tools": asset_tools,
         "architectures": architectures,

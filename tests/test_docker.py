@@ -18,13 +18,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from capsem.builder import guestbuilder
+from capsem.builder import assetdependencies, guestbuilder
 from capsem.builder.config import load_guest_config
 from capsem.builder.docker import (
     BUILD_LEDGER_NAME,
     GUEST_BINARIES,
     ROOTFS_SCRIPTS,
     _append_build_ledger,
+    _asset_dependency_tag,
     _asset_tools_image,
     _cdx_validate_command,
     _cdxgen_command,
@@ -51,12 +52,15 @@ from capsem.builder.docker import (
     generate_cyclonedx_obom,
     get_project_version,
     is_ci,
+    materialize_asset_dependencies,
     prepare_build_context,
     render_dockerfile,
+    require_asset_dependencies,
     run_cmd,
     sync_container_clock,
 )
 from capsem.builder.models import (
+    AssetDependencyConfig,
     AssetToolBinaryConfig,
     AssetToolsArchitectureConfig,
     AssetToolsConfig,
@@ -138,12 +142,22 @@ def real_config(tmp_path):
 
 @pytest.fixture
 def rendered_arm64(real_config):
-    return render_dockerfile("Dockerfile.rootfs.j2", real_config, "arm64")
+    return _rootfs_lineage(real_config, "arm64")
 
 
 @pytest.fixture
 def rendered_x86(real_config):
-    return render_dockerfile("Dockerfile.rootfs.j2", real_config, "x86_64")
+    return _rootfs_lineage(real_config, "x86_64")
+
+
+def _rootfs_lineage(config, arch: str) -> str:
+    """Rendered parent and sealed child, in their effective layer order."""
+    return "\n".join(
+        (
+            render_dockerfile("Dockerfile.rootfs-dependencies.j2", config, arch),
+            render_dockerfile("Dockerfile.rootfs.j2", config, arch),
+        )
+    )
 
 
 def _profile_guest_config(tmp_path: Path, profile_id: str):
@@ -257,7 +271,7 @@ def _write_package_toml(
 
 @pytest.fixture
 def rendered_profile_arm64(generated_profile_guest):
-    return render_dockerfile("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
+    return _rootfs_lineage(generated_profile_guest, "arm64")
 
 
 # ---------------------------------------------------------------------------
@@ -269,11 +283,11 @@ class TestRenderRootfs:
     """Rootfs Dockerfile renders correctly for both architectures."""
 
     def test_arm64_from_line(self, real_config, rendered_arm64):
-        assert f"FROM {real_config.build.architectures['arm64'].base_image}" in rendered_arm64
+        assert rendered_arm64.count("FROM ${BASE}") == 2
         assert "FROM --platform=" not in rendered_arm64
 
     def test_x86_64_from_line(self, real_config, rendered_x86):
-        assert f"FROM {real_config.build.architectures['x86_64'].base_image}" in rendered_x86
+        assert rendered_x86.count("FROM ${BASE}") == 2
         assert "FROM --platform=" not in rendered_x86
 
     def test_apt_packages_present(self, real_config, rendered_arm64):
@@ -342,8 +356,12 @@ class TestRenderRootfs:
     def test_root_cleanup(self, rendered_arm64):
         assert "rm -rf /root" in rendered_arm64
 
-    def test_apt_https_switch(self, rendered_arm64):
-        assert "URIs: https://" in rendered_arm64
+    def test_apt_https_switch(self, real_config, rendered_arm64):
+        snapshot = real_config.build.asset_tools
+        assert snapshot.debian_snapshot_base.startswith("https://")
+        assert snapshot.debian_security_snapshot_base.startswith("https://")
+        assert snapshot.debian_snapshot_base in rendered_arm64
+        assert snapshot.debian_security_snapshot_base in rendered_arm64
 
     def test_x86_64_has_same_packages(self, real_config, rendered_x86):
         """x86_64 gets the same packages as arm64 (arch-agnostic)."""
@@ -405,7 +423,7 @@ class TestRootfsLayerOrdering:
         """Guest binaries are COPYed into /usr/local/bin -- must happen before
         /root cleanup which wipes the build context landing area."""
         binary_pos = self._pos(rendered_arm64, "COPY capsem-pty-agent", "guest binary")
-        cleanup_pos = self._pos(rendered_arm64, "rm -rf /root", "/root cleanup")
+        cleanup_pos = rendered_arm64.rfind("rm -rf /root")
         assert binary_pos < cleanup_pos, "Guest binaries must be COPYed before /root cleanup"
 
     def test_curl_installs_after_root_cleanup(self, rendered_arm64):
@@ -418,17 +436,18 @@ class TestRootfsLayerOrdering:
         curl_pos = self._pos(rendered_arm64, "curl -fsSL", "curl install")
         assert cleanup_pos < curl_pos, "Curl installs must come after /root cleanup"
 
-    def test_apt_https_switch_is_last(self, rendered_arm64):
-        """Switching apt to HTTPS must be the last step -- earlier RUN commands
-        need HTTP apt (ca-certificates not yet installed at the start)."""
-        https_pos = self._pos(rendered_arm64, "URIs: https://", "apt HTTPS switch")
-        # Nothing else should be installed after the HTTPS switch
-        last_run = rendered_arm64.rfind("RUN ")
-        https_run = rendered_arm64.rfind("RUN ", 0, https_pos + 1)
-        assert https_run == last_run, (
-            "apt HTTPS switch must be in the final RUN layer -- "
-            "no package installs should follow it"
+    def test_snapshot_sources_replace_inherited_sources_before_apt(self, real_config):
+        """Every apt resolution must consume the checked-in HTTPS snapshot."""
+        rendered_arm64 = render_dockerfile(
+            "Dockerfile.rootfs-dependencies.j2", real_config, "arm64"
         )
+        sources = self._pos(
+            rendered_arm64,
+            real_config.build.asset_tools.debian_snapshot_base,
+            "Debian snapshot",
+        )
+        update = self._pos(rendered_arm64, "apt-get -o", "apt update")
+        assert sources < update
 
     def test_setuid_strip_after_all_installs(self, rendered_profile_arm64):
         """Setuid strip must come after all package installs so no new
@@ -458,7 +477,7 @@ class TestRootfsLayerOrdering:
             "EXTERNALLY-MANAGED",
             "-4000",
             "rm -rf /root",
-            "URIs: https://",
+            "snapshot.debian.org",
         ]
         arm64_order = [m for m in key_markers if m in rendered_arm64]
         x86_order = [m for m in key_markers if m in rendered_x86]
@@ -496,9 +515,13 @@ class TestRootfsSecurityInvariants:
         assert "perm -2000" in rendered_arm64
         assert "chmod u-s,g-s" in rendered_arm64
 
-    def test_apt_sources_https(self, rendered_arm64):
+    def test_apt_sources_https(self, real_config, rendered_arm64):
         """Runtime apt must use HTTPS -- VM blocks port 80."""
-        assert "URIs: https://" in rendered_arm64
+        snapshot = real_config.build.asset_tools
+        assert snapshot.debian_snapshot_base.startswith("https://")
+        assert snapshot.debian_security_snapshot_base.startswith("https://")
+        assert snapshot.debian_snapshot_base in rendered_arm64
+        assert snapshot.debian_security_snapshot_base in rendered_arm64
 
     def test_rootfs_strips_iptables_legacy_frontend(self, rendered_arm64):
         """The guest uses iptables-nft only; strip Debian's legacy frontend."""
@@ -533,6 +556,130 @@ class TestRootfsVersionExtractability:
         assert "install -m 555 /root/.local/bin/uv /usr/local/bin/uv" in rendered_arm64
 
 
+_NETWORK_ACQUISITION = re.compile(
+    r"\b(?:apt-get|apk|dnf|yum|brew)\s+(?:update|upgrade|install)|"
+    r"\b(?:curl|wget)\b[^\n]*(?:https?://)|"
+    r"\b(?:uv\s+(?:sync|pip\s+install)|pip\d*\s+install|npm\s+(?:install|update)|"
+    r"npx\s|pnpm\s+(?:fetch|install)|cargo\s+(?:fetch|install|update)|"
+    r"rustup\s+(?:toolchain\s+install|target\s+add|component\s+add))"
+)
+
+
+@pytest.mark.parametrize("template", ["rootfs", "kernel"])
+def test_publishable_asset_source_dockerfiles_are_network_sealed(real_config, template):
+    rendered = render_dockerfile(f"Dockerfile.{template}.j2", real_config, "arm64")
+
+    assert rendered.splitlines()[0] == "# check=skip=InvalidDefaultArgInFrom"
+    assert "ARG BASE" in rendered
+    assert "ARG BASE=" not in rendered
+    assert "FROM ${BASE}" in rendered
+    assert _NETWORK_ACQUISITION.search(rendered) is None
+
+
+@pytest.mark.parametrize("template", ["rootfs", "kernel"])
+def test_asset_dependency_materializers_own_network_acquisition(real_config, template):
+    rendered = render_dockerfile(
+        f"Dockerfile.{template}-dependencies.j2",
+        real_config,
+        "arm64",
+    )
+
+    assert _NETWORK_ACQUISITION.search(rendered) is not None
+    assert "ARG INPUT_IDENTITY" in rendered
+    assert "org.capsem.asset-dependencies.input-key" in rendered
+
+
+@pytest.mark.parametrize("template", ["rootfs", "kernel"])
+def test_asset_dependency_materializers_replace_mutable_apt_sources(
+    real_config,
+    template,
+):
+    rendered = render_dockerfile(
+        f"Dockerfile.{template}-dependencies.j2",
+        real_config,
+        "arm64",
+    )
+    snapshot = real_config.build.asset_tools
+
+    assert snapshot.debian_snapshot_base in rendered
+    assert snapshot.debian_security_snapshot_base in rendered
+    assert snapshot.debian_snapshot_id in rendered
+    assert rendered.index("rm -f /etc/apt/sources.list.d/*") < rendered.index("apt-get -o")
+
+
+def test_asset_dependency_identity_changes_with_every_executable_input(real_config):
+    original = _asset_dependency_tag(real_config, "arm64", "rootfs")
+    script = Path(real_config.profile_build_script_path)
+    script.write_bytes(script.read_bytes() + b"\n# changed\n")
+    assert _asset_dependency_tag(real_config, "arm64", "rootfs") != original
+
+    assert assetdependencies.image_tag(
+        real_config, "arm64", "kernel", b"first rendered materializer"
+    ) != assetdependencies.image_tag(
+        real_config, "arm64", "kernel", b"second rendered materializer"
+    )
+
+
+def test_asset_dependency_require_returns_only_exact_matching_platform_image(
+    real_config, monkeypatch: pytest.MonkeyPatch
+):
+    tag = _asset_dependency_tag(real_config, "arm64", "kernel")
+    exact = "sha256:" + "d" * 64
+    seen: list[list[str]] = []
+
+    def inspect(argv, **_kwargs):
+        seen.append(argv)
+        return subprocess.CompletedProcess(
+            argv, 0, stdout=f"linux/arm64\t{exact}\t{tag}\n", stderr=""
+        )
+
+    monkeypatch.setattr("capsem.builder.docker.run_cmd", inspect)
+
+    assert require_asset_dependencies("docker", real_config, "arm64", "kernel") == exact
+    assert seen[0][-1] == tag
+
+
+@patch("capsem.builder.docker.require_asset_dependencies")
+@patch("capsem.builder.docker.docker_build")
+def test_asset_dependency_materializer_is_the_only_network_open_build(
+    docker_build_mock,
+    require_mock,
+    real_config,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    missing = subprocess.CalledProcessError(1, ["docker", "image", "inspect"])
+    monkeypatch.setattr("capsem.builder.docker.detect_runtime", lambda: "docker")
+    monkeypatch.setattr("capsem.builder.docker.run_cmd", MagicMock(side_effect=missing))
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    exact = "sha256:" + "e" * 64
+    require_mock.return_value = exact
+
+    assert (
+        materialize_asset_dependencies(
+            real_config,
+            "arm64",
+            template="kernel",
+            repo_root=PROJECT_ROOT,
+        )
+        == exact
+    )
+
+    tag = assetdependencies.image_tag(
+        real_config,
+        "arm64",
+        "kernel",
+        render_dockerfile("Dockerfile.kernel-dependencies.j2", real_config, "arm64").encode(),
+    )
+    assert docker_build_mock.call_args.kwargs == {
+        "network": BuildNetwork.DEFAULT,
+        "build_args": {
+            "BASE": real_config.build.architectures["arm64"].base_image,
+            "INPUT_IDENTITY": tag,
+        },
+        "ci_cache": False,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Kernel Dockerfile
 # ---------------------------------------------------------------------------
@@ -548,7 +695,9 @@ class TestRenderKernel:
 
     def test_arm64_from(self, real_config):
         result = render_dockerfile("Dockerfile.kernel.j2", real_config, "arm64")
-        assert f"FROM {real_config.build.architectures['arm64'].base_image}" in result
+        dependency = render_dockerfile("Dockerfile.kernel-dependencies.j2", real_config, "arm64")
+        assert "FROM ${BASE}" in dependency
+        assert "FROM ${BASE}" in result
         assert "FROM --platform=" not in result
 
     def test_arm64_defconfig(self, real_config):
@@ -561,7 +710,9 @@ class TestRenderKernel:
 
     def test_x86_64_from(self, real_config):
         result = render_dockerfile("Dockerfile.kernel.j2", real_config, "x86_64")
-        assert f"FROM {real_config.build.architectures['x86_64'].base_image}" in result
+        dependency = render_dockerfile("Dockerfile.kernel-dependencies.j2", real_config, "x86_64")
+        assert "FROM ${BASE}" in dependency
+        assert "FROM ${BASE}" in result
         assert "FROM --platform=" not in result
 
     def test_x86_64_defconfig(self, real_config):
@@ -573,7 +724,7 @@ class TestRenderKernel:
         assert "arch/x86_64/boot/bzImage" in result
 
     def test_kernel_version_in_url(self, real_config):
-        result = render_dockerfile("Dockerfile.kernel.j2", real_config, "arm64")
+        result = render_dockerfile("Dockerfile.kernel-dependencies.j2", real_config, "arm64")
         assert real_config.build.kernel.version in result
         assert "kernel.org" in result
 
@@ -626,9 +777,12 @@ class TestGenerateBuildContext:
         ctx = generate_build_context("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
         assert ctx["npm_packages"] == ["@openai/codex", "@google/gemini-cli"]
         rendered = render_dockerfile("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
-        assert "@openai/codex" in rendered
-        assert "@google/gemini-cli" in rendered
-        assert "profile-build.sh" in rendered
+        dependencies = render_dockerfile(
+            "Dockerfile.rootfs-dependencies.j2", generated_profile_guest, "arm64"
+        )
+        assert "@openai/codex" in dependencies
+        assert "@google/gemini-cli" in dependencies
+        assert "profile-build.sh" in dependencies
         assert "profile-root/" in rendered
 
     def test_rootfs_curl_installs(self, real_config):
@@ -670,8 +824,8 @@ class TestEdgeCases:
             build=real_config.build,
             package_sets={"apt": real_config.package_sets["apt"]},
         )
-        result = render_dockerfile("Dockerfile.rootfs.j2", minimal, "arm64")
-        assert f"FROM {real_config.build.architectures['arm64'].base_image}" in result
+        result = _rootfs_lineage(minimal, "arm64")
+        assert result.count("FROM ${BASE}") == 2
         assert "FROM --platform=" not in result
         # Should not have python install section
         assert "uv pip install --system" not in result or "certifi" in result
@@ -684,8 +838,8 @@ class TestEdgeCases:
             build=real_config.build,
             package_sets={"apt": real_config.package_sets["apt"]},
         )
-        result = render_dockerfile("Dockerfile.rootfs.j2", minimal, "arm64")
-        assert f"FROM {real_config.build.architectures['arm64'].base_image}" in result
+        result = _rootfs_lineage(minimal, "arm64")
+        assert result.count("FROM ${BASE}") == 2
         assert "FROM --platform=" not in result
         # npm install section should be absent
         assert "npm install -g --prefix" not in result
@@ -923,6 +1077,12 @@ class TestBuildVersionScript:
         config = GuestImageConfig(
             build=BuildConfig(
                 materialize_network=BuildNetwork.DEFAULT,
+                asset_dependencies=AssetDependencyConfig(
+                    tag_template="capsem-{template}-dependencies-{arch}:{digest}",
+                    rootfs_template="Dockerfile.rootfs-dependencies.j2",
+                    kernel_template="Dockerfile.kernel-dependencies.j2",
+                    source_build_network=BuildNetwork.NONE,
+                ),
                 kernel=KernelConfig(version="9.9.9", sha256="a" * 64),
                 guest_rust_builder=GuestRustBuilderConfig(
                     dockerfile="docker/Dockerfile.guest-rust-builder",
@@ -1047,7 +1207,7 @@ class TestAptClockSkewOptions:
             )
 
     def test_kernel_template_has_both_options(self, real_config):
-        rendered = render_dockerfile("Dockerfile.kernel.j2", real_config, "arm64")
+        rendered = render_dockerfile("Dockerfile.kernel-dependencies.j2", real_config, "arm64")
         for opt in self.APT_CLOCK_SKEW_OPTIONS:
             assert opt in rendered, (
                 f"Dockerfile.kernel.j2 missing apt option '{opt}' -- "
@@ -1591,13 +1751,18 @@ class TestBuildLedger:
         mock_extract_versions.side_effect = fake_versions
         mock_extract_inventory.side_effect = fake_inventory
 
-        build_image(
-            real_config,
-            "arm64",
-            template="rootfs",
-            output_dir=tmp_path,
-            repo_root=PROJECT_ROOT,
-        )
+        dependency_id = "sha256:" + "d" * 64
+        with patch(
+            "capsem.builder.docker.require_asset_dependencies",
+            return_value=dependency_id,
+        ):
+            build_image(
+                real_config,
+                "arm64",
+                template="rootfs",
+                output_dir=tmp_path,
+                repo_root=PROJECT_ROOT,
+            )
 
         records = [
             json.loads(line)
@@ -1616,6 +1781,7 @@ class TestBuildLedger:
         assert config_record["profile_inputs"]["root_seed"]["enabled"] is True
         assert "installed_packages" not in config_record
         inventory_record = records[1]
+        assert inventory_record["inputs"]["dependency_image"] == dependency_id
         assert inventory_record["outputs"][0]["path"] == "software-inventory.json"
         erofs_record = records[3]
         assert erofs_record["erofs"] == {
@@ -1656,13 +1822,18 @@ class TestBuildLedger:
 
         mock_extract.side_effect = fake_extract
 
-        build_image(
-            real_config,
-            "arm64",
-            template="kernel",
-            output_dir=tmp_path,
-            repo_root=PROJECT_ROOT,
-        )
+        dependency_id = "sha256:" + "d" * 64
+        with patch(
+            "capsem.builder.docker.require_asset_dependencies",
+            return_value=dependency_id,
+        ):
+            build_image(
+                real_config,
+                "arm64",
+                template="kernel",
+                output_dir=tmp_path,
+                repo_root=PROJECT_ROOT,
+            )
 
         records = [
             json.loads(line)
@@ -1672,7 +1843,12 @@ class TestBuildLedger:
         assert records[0]["stage"] == "kernel.assets"
         assert records[0]["kernel_version"] == real_config.build.kernel.version
         assert records[0]["kernel_sha256"] == real_config.build.kernel.sha256
-        assert "build_args" not in _mock_docker_build.call_args.kwargs
+        assert _mock_docker_build.call_args.kwargs == {
+            "network": BuildNetwork.NONE,
+            "build_args": {"BASE": dependency_id},
+            "ci_cache": False,
+        }
+        assert records[0]["inputs"]["dependency_image"] == dependency_id
         assert {entry["path"] for entry in records[0]["outputs"]} == {
             "vmlinuz",
             "initrd.img",
@@ -1745,7 +1921,7 @@ class TestKernelConfig:
             (PROJECT_ROOT / "config/docker/image/build.toml").read_text(encoding="utf-8")
         )["build"]["kernel"]
         rendered = render_dockerfile(
-            "Dockerfile.kernel.j2",
+            "Dockerfile.kernel-dependencies.j2",
             real_config,
             "arm64",
         )
@@ -1881,12 +2057,26 @@ class TestPrepareBuildContext:
             context_dir,
             PROJECT_ROOT,
         )
-        assert (context_dir / "profile-build.sh").is_file()
         assert (context_dir / "profile-root/root/.antigravity/config.json").is_file()
         assert (context_dir / "profile-root/root/.gemini/config/config.json").is_file()
         assert (context_dir / "profile-root/root/.gemini/antigravity-cli/settings.json").is_file()
         assert (context_dir / "profile-root/root/.codex/config.toml").is_file()
         assert "Credentials are brokered by Capsem" in (context_dir / "tips.txt").read_text()
+
+        dependency_context = tmp_path / "dependency"
+        dependency_context.mkdir()
+        prepare_build_context(
+            generated_profile_guest,
+            "arm64",
+            "Dockerfile.rootfs-dependencies.j2",
+            dependency_context,
+            PROJECT_ROOT,
+        )
+        assert (dependency_context / "profile-build.sh").is_file()
+        assert sorted(path.name for path in dependency_context.iterdir()) == [
+            "Dockerfile",
+            "profile-build.sh",
+        ]
 
         forbidden_fragments = (
             "127.0.0.1:11434",
@@ -1918,7 +2108,7 @@ class TestPrepareBuildContext:
             PROJECT_ROOT,
         )
         content = (context_dir / "Dockerfile").read_text()
-        assert f"FROM {real_config.build.architectures['arm64'].base_image}" in content
+        assert "FROM ${BASE}" in content
         assert "FROM --platform=" not in content
 
     def test_kernel_dockerfile_has_version(self, real_config, tmp_path):
@@ -1932,7 +2122,17 @@ class TestPrepareBuildContext:
             PROJECT_ROOT,
         )
         content = (context_dir / "Dockerfile").read_text()
-        assert real_config.build.kernel.version in content
+        assert "FROM ${BASE}" in content
+        dependency_context = tmp_path / "dependency"
+        dependency_context.mkdir()
+        prepare_build_context(
+            real_config,
+            "arm64",
+            "Dockerfile.kernel-dependencies.j2",
+            dependency_context,
+            PROJECT_ROOT,
+        )
+        assert real_config.build.kernel.version in (dependency_context / "Dockerfile").read_text()
 
 
 # ---------------------------------------------------------------------------

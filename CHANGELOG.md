@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Kernel and rootfs asset construction now exposes one resumable dependency
+  frontier shared by the complete local gate and manual asset CI. It
+  materializes snapshot-selected packages, verified kernel input, and
+  profile-owned third-party tools into input-keyed per-architecture helpers;
+  the publishable source builds consume only the helpers' exact image IDs with
+  BuildKit networking and remote cache disabled.
+
 - Every Docker build and container boundary now requires a typed network-mode
   enum. BuildKit and runtime vocabularies are distinct, raw strings are
   rejected before command execution, and config deserializes directly into

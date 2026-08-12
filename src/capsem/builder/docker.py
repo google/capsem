@@ -22,7 +22,7 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 
-from capsem.builder import guestbuilder
+from capsem.builder import assetdependencies, guestbuilder
 from capsem.builder.assettools import image_tag as asset_tools_image_tag
 from capsem.builder.doctor import check_container_runtime
 from capsem.builder.guestbuilder import image_tag
@@ -101,6 +101,16 @@ def _guest_binary_source(binary: str) -> str:
     return GUEST_BINARY_SOURCES.get(binary, binary)
 
 
+def _debian_snapshot_context(config: GuestImageConfig) -> dict[str, str]:
+    """One checked-in Debian package authority for every asset helper."""
+    settings = config.build.asset_tools
+    return {
+        "debian_snapshot_base": settings.debian_snapshot_base,
+        "debian_security_snapshot_base": settings.debian_security_snapshot_base,
+        "debian_snapshot_id": settings.debian_snapshot_id,
+    }
+
+
 def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
     """Build Jinja context for Dockerfile.rootfs.j2."""
     arch = config.build.architectures[arch_name]
@@ -124,6 +134,7 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
         curl_installs.extend(config.package_sets["curl"].packages)
 
     return {
+        **_debian_snapshot_context(config),
         "arch": arch,
         "arch_name": arch_name,
         "apt_packages": apt_packages,
@@ -142,6 +153,7 @@ def _kernel_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
     """Build Jinja context for Dockerfile.kernel.j2."""
     arch = config.build.architectures[arch_name]
     return {
+        **_debian_snapshot_context(config),
         "arch": arch,
         "arch_name": arch_name,
         "kernel_version": config.build.kernel.version,
@@ -167,9 +179,15 @@ def generate_build_context(
         ValueError: If template_name is not recognized.
         KeyError: If arch_name is not in config.build.architectures.
     """
-    if template_name == "Dockerfile.rootfs.j2":
+    if template_name in {
+        "Dockerfile.rootfs.j2",
+        config.build.asset_dependencies.rootfs_template,
+    }:
         ctx = _rootfs_context(config, arch_name)
-    elif template_name == "Dockerfile.kernel.j2":
+    elif template_name in {
+        "Dockerfile.kernel.j2",
+        config.build.asset_dependencies.kernel_template,
+    }:
         ctx = _kernel_context(config, arch_name)
     else:
         raise ValueError(f"Unknown template: {template_name}")
@@ -363,6 +381,125 @@ def docker_build(
                 str(context_dir),
             ]
         )
+
+
+def _asset_dependency_template(config: GuestImageConfig, template: str) -> str:
+    settings = config.build.asset_dependencies
+    if template == "rootfs":
+        return settings.rootfs_template
+    if template == "kernel":
+        return settings.kernel_template
+    raise ValueError(f"unsupported asset dependency template: {template}")
+
+
+def _asset_dependency_tag(
+    config: GuestImageConfig,
+    arch_name: str,
+    template: str,
+) -> str:
+    rendered = render_dockerfile(
+        _asset_dependency_template(config, template),
+        config,
+        arch_name,
+    )
+    return assetdependencies.image_tag(
+        config,
+        arch_name,
+        template,
+        rendered.encode(),
+    )
+
+
+def require_asset_dependencies(
+    runtime: str,
+    config: GuestImageConfig,
+    arch_name: str,
+    template: str,
+) -> str:
+    """Return the exact local image ID for one keyed dependency helper."""
+    tag = _asset_dependency_tag(config, arch_name, template)
+    arch = config.build.architectures[arch_name]
+    result = run_cmd(
+        [
+            runtime,
+            "image",
+            "inspect",
+            "--format",
+            (
+                "{{.Os}}/{{.Architecture}}\t{{.Id}}\t"
+                '{{ index .Config.Labels "org.capsem.asset-dependencies.input-key" }}'
+            ),
+            tag,
+        ],
+        capture=True,
+    )
+    try:
+        platform, image_id, label = result.stdout.strip().split("\t")
+    except ValueError as error:
+        raise RuntimeError(f"asset dependency image inspection was malformed: {tag}") from error
+    if platform != arch.docker_platform:
+        raise RuntimeError(
+            f"asset dependency image platform mismatch: {tag} is {platform}, "
+            f"expected {arch.docker_platform}"
+        )
+    if label != tag:
+        raise RuntimeError(f"asset dependency image identity mismatch: {tag}")
+    if not image_id.startswith("sha256:"):
+        raise RuntimeError(f"asset dependency image has no exact ID: {tag}")
+    return image_id
+
+
+def materialize_asset_dependencies(
+    config: GuestImageConfig,
+    arch_name: str,
+    *,
+    template: str,
+    repo_root: Path | None = None,
+) -> str:
+    """Build one input-keyed network-open helper before the sealed source lane."""
+    import tempfile
+
+    if repo_root is None:
+        repo_root = Path.cwd()
+    runtime = detect_runtime()
+    tag = _asset_dependency_tag(config, arch_name, template)
+    try:
+        run_cmd([runtime, "image", "inspect", tag], capture=True)
+    except subprocess.CalledProcessError:
+        pass
+    else:
+        return require_asset_dependencies(runtime, config, arch_name, template)
+
+    arch = config.build.architectures[arch_name]
+    build_tmp = repo_root / "target" / "tmp"
+    build_tmp.mkdir(parents=True, exist_ok=True)
+    dependency_template = _asset_dependency_template(config, template)
+    with tempfile.TemporaryDirectory(
+        prefix=f"capsem-{template}-dependencies-",
+        dir=build_tmp,
+    ) as tmpdir:
+        context_dir = Path(tmpdir)
+        dockerfile = prepare_build_context(
+            config,
+            arch_name,
+            dependency_template,
+            context_dir,
+            repo_root,
+        )
+        docker_build(
+            runtime,
+            tag,
+            dockerfile,
+            context_dir,
+            arch.docker_platform,
+            network=config.build.materialize_network,
+            build_args={
+                "BASE": arch.base_image,
+                "INPUT_IDENTITY": tag,
+            },
+            ci_cache=is_ci(),
+        )
+    return require_asset_dependencies(runtime, config, arch_name, template)
 
 
 def extract_kernel_assets(
@@ -1593,7 +1730,15 @@ def prepare_build_context(
     dockerfile_path = context_dir / "Dockerfile"
     dockerfile_path.write_text(dockerfile_content)
 
-    if "rootfs" in template_name:
+    if template_name == config.build.asset_dependencies.rootfs_template:
+        if config.profile_build_script:
+            if not config.profile_build_script_path:
+                raise FileNotFoundError("profile_build_script_path")
+            profile_build = Path(config.profile_build_script_path)
+            if not profile_build.is_file():
+                raise FileNotFoundError(profile_build)
+            shutil.copy2(str(profile_build), str(context_dir / "profile-build.sh"))
+    elif template_name == "Dockerfile.rootfs.j2":
         # CA cert
         shutil.copy2(
             str(repo_root / "security" / "keys" / "capsem-ca.crt"),
@@ -1631,17 +1776,10 @@ def prepare_build_context(
                 str(context_dir / "profile-root"),
                 dirs_exist_ok=True,
             )
-        if config.profile_build_script:
-            if not config.profile_build_script_path:
-                raise FileNotFoundError("profile_build_script_path")
-            profile_build = Path(config.profile_build_script_path)
-            if not profile_build.is_file():
-                raise FileNotFoundError(profile_build)
-            shutil.copy2(str(profile_build), str(context_dir / "profile-build.sh"))
         # Agent binaries (if they exist in context already from cross_compile_agent)
         # They may have been copied to context_dir by the pipeline before this call
 
-    elif "kernel" in template_name:
+    elif template_name == "Dockerfile.kernel.j2":
         # Defconfig -- preserve directory structure for COPY {{ arch.defconfig }}
         arch = config.build.architectures[arch_name]
         defconfig_src = guest_dir / "config" / arch.defconfig
@@ -1683,8 +1821,6 @@ def build_image(
 
     arch = config.build.architectures[arch_name]
     runtime = detect_runtime()
-    ci = is_ci()
-
     # Sync container VM clock with host to prevent apt date errors
     sync_container_clock()
 
@@ -1702,6 +1838,12 @@ def build_image(
 
     with tempfile.TemporaryDirectory(prefix=f"capsem-build-{template}-", dir=build_tmp) as tmpdir:
         context_dir = Path(tmpdir)
+        dependency_image = require_asset_dependencies(
+            runtime,
+            config,
+            arch_name,
+            template,
+        )
 
         if template == "kernel":
             kernel_version = config.build.kernel.version
@@ -1725,14 +1867,16 @@ def build_image(
                 docker_platform=arch.docker_platform,
                 runtime=runtime,
             )
+            build_inputs["dependency_image"] = dependency_image
             docker_build(
                 runtime,
                 tag,
                 context_dir / "Dockerfile",
                 context_dir,
                 arch.docker_platform,
-                network=config.build.materialize_network,
-                ci_cache=ci,
+                network=config.build.asset_dependencies.source_build_network,
+                build_args={"BASE": dependency_image},
+                ci_cache=False,
             )
             vmlinuz, initrd = extract_kernel_assets(
                 runtime,
@@ -1787,6 +1931,7 @@ def build_image(
                 docker_platform=arch.docker_platform,
                 runtime=runtime,
             )
+            build_inputs["dependency_image"] = dependency_image
             _append_build_ledger(
                 arch_output,
                 _rootfs_config_input_record(config, arch_name),
@@ -1797,8 +1942,9 @@ def build_image(
                 context_dir / "Dockerfile",
                 context_dir,
                 arch.docker_platform,
-                network=config.build.materialize_network,
-                ci_cache=ci,
+                network=config.build.asset_dependencies.source_build_network,
+                build_args={"BASE": dependency_image},
+                ci_cache=False,
             )
 
             print("Extracting installed software inventory...")

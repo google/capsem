@@ -55,6 +55,12 @@ MINIMAL_BUILD_TOML = """\
 [build]
 materialize_network = "default"
 
+[build.asset_dependencies]
+tag_template = "capsem-{template}-dependencies-{arch}:{digest}"
+rootfs_template = "Dockerfile.rootfs-dependencies.j2"
+kernel_template = "Dockerfile.kernel-dependencies.j2"
+source_build_network = "none"
+
 [build.erofs]
 enabled = true
 compression = "lz4hc"
@@ -405,6 +411,12 @@ class TestLoadGuestConfigEdgeCases:
         (guest_minimal / "config" / "build.toml").write_text("""\
 [build]
 materialize_network = "default"
+
+[build.asset_dependencies]
+tag_template = "capsem-{template}-dependencies-{arch}:{digest}"
+rootfs_template = "Dockerfile.rootfs-dependencies.j2"
+kernel_template = "Dockerfile.kernel-dependencies.j2"
+source_build_network = "none"
 
 [build.kernel]
 version = "9.9.9"

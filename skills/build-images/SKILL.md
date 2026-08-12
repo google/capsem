@@ -196,8 +196,22 @@ Decision rule:
 ## Dockerfile templates
 
 Templates live in `config/docker/`:
-- `Dockerfile.rootfs.j2` -- rootfs image (apt packages, Python packages, optional npm/curl package sets, profile root/build hook, diagnostics)
-- `Dockerfile.kernel.j2` -- kernel build (defconfig, modules, vmlinuz extraction)
+- `Dockerfile.rootfs-dependencies.j2` -- snapshot-selected Debian packages and
+  the profile's network-resolved Python/npm/vendor inputs;
+- `Dockerfile.kernel-dependencies.j2` -- snapshot-selected kernel toolchain and
+  the SHA-256-verified kernel archive;
+- `Dockerfile.rootfs.j2` -- network-denied first-party rootfs assembly;
+- `Dockerfile.kernel.j2` -- network-denied kernel compilation, initrd assembly,
+  and vmlinuz extraction.
+
+`asset-dependencies` is the visible resumable frontier between those pairs.
+The gate materializes one input-keyed helper for every selected
+profile/architecture/template, validates its platform and identity label, and
+passes only its exact image ID to the source build. Source builds always use
+BuildKit network `none` and never use the remote CI cache. A carried frontier
+must revalidate every helper; it must not silently rebuild inside the sealed
+lane. The dependency helpers reuse the one checked-in Debian snapshot
+authority rather than the mutable sources inherited from the base image.
 
 Templates use Jinja2 with variables from the admin-materialized profile image
 workspace. Do not add a second preview rail for product truth; if a build input
@@ -494,11 +508,12 @@ the materialized image.
 
 ## Clock skew workaround
 
-All `apt-get update` calls use `-o Acquire::Check-Valid-Until=false` to handle container VM clock drift.
+All asset dependency-helper `apt-get update` calls use
+`-o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false` against the
+config-owned HTTPS Debian snapshot to handle container VM clock drift.
 Without this, apt rejects Release files whose timestamp is in the future relative to the VM's clock.
 This can occur with any container VM backend on macOS.
 
 Files affected:
-- `Dockerfile.kernel.j2` (line 11)
-- `Dockerfile.rootfs.j2` (line 11)
-- `docker.py` `create_erofs()` function
+- `Dockerfile.kernel-dependencies.j2`
+- `Dockerfile.rootfs-dependencies.j2`

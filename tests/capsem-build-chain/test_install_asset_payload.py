@@ -457,8 +457,9 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     from helpers.gate import gate_plan
 
     plan = gate_plan("candidate")
+    assert plan.after_of("assets.asset-dependencies") == {"assets.preflight"}
     for arch in ("arm64", "x86_64"):
-        assert "assets.preflight" in plan.after_of(f"assets.build.{arch}")
+        assert plan.after_of(f"assets.build.{arch}") == {"assets.asset-dependencies"}
 
     assets = _storage_rail("assets")
     floor_gib = assets["minimum_free_gib"]

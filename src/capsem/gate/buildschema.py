@@ -127,7 +127,12 @@ class LogsConfig(Strict):
 
 class ImageBuildConfig(Strict):
     admin: tuple[str, ...]
+    workspace_admin: tuple[str, ...]
+    dependency_backend: tuple[str, ...]
     source_config: str
+    guest_dir: str
+    workspace_root: str
+    workspace_guest_dir: str
     lane_templates: tuple[str, ...]
     templates: tuple[str, ...]
     profiles_glob: str
@@ -135,6 +140,20 @@ class ImageBuildConfig(Strict):
     config_root: str
     output: str
     doctor_skips: dict[str, str]
+
+    @model_validator(mode="after")
+    def _workspace_is_profile_and_arch_scoped(self) -> ImageBuildConfig:
+        for field in ("{profile}", "{arch}"):
+            if field not in self.workspace_root:
+                raise ValueError(f"image workspace_root must contain {field}")
+        rendered = self.workspace_root.format(profile="profile", arch="arch")
+        path = PurePosixPath(rendered)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError("image workspace_root must remain inside the checkout")
+        guest = PurePosixPath(self.workspace_guest_dir)
+        if guest.is_absolute() or len(guest.parts) != 1 or guest.name in {"", ".", ".."}:
+            raise ValueError("image workspace_guest_dir must be one relative directory")
+        return self
 
 
 class AuditsConfig(Strict):

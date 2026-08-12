@@ -34,7 +34,11 @@ entrypoint with a local gate. Current required mappings are:
   `just _build-kernel` and `just _build-rootfs` primitives as
   `release-assets.yaml` for every checked-in profile and both published
   architectures, validates the full payload and manifest, and proves a real
-  guest shell from each rebuilt host-architecture image;
+  guest shell from each rebuilt host-architecture image. Both local and CI
+  primitives first materialize the exact profile/architecture dependency
+  helpers on their one named network-open frontier, then require the source
+  kernel/rootfs builds to consume those exact image IDs with BuildKit network
+  `none` and no remote cache;
 - release-channel assembly: the local `release-site` gate and production asset
   and binary workflows execute `scripts/build-complete-release-channel.py`;
   every deployable production dist must contain and validate both `stable` and

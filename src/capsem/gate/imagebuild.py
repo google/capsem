@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from . import crossexec, imagebases, initrd
+from . import assetdependencies, crossexec, imagebases, initrd
 from .actions import Run
 from .assetcondition import AssetRecovery
 from .assetcondition import missing as missing
@@ -100,7 +100,6 @@ class BuildAssetsCommand(
             else imagebases.required_rust_builder_names(config, names)
         )
         needs_asset_tools = self._args.template != "kernel"
-
         bases = plan.add(
             step(
                 "base-images",
@@ -137,6 +136,10 @@ class BuildAssetsCommand(
                 ),
                 after=(ready,),
             )
+        ready = plan.add(
+            assetdependencies.request_step(config, wanted, names, self._args.template),
+            after=(ready,),
+        )
         images = tuple(
             plan.add(
                 build(
@@ -234,6 +237,15 @@ def check_assets(
         ),
         after=(ready,),
     )
+    ready = phase.add(
+        _when_missing(
+            recovery,
+            assetdependencies.dependency_step(
+                config, profiles(config), names, label="recovery-dependencies"
+            ),
+        ),
+        after=(ready,),
+    )
     images: list[Step] = []
     manifest = config.path(config.imagebuild.output) / config.install.manifest_name
     for profile in profiles(config):
@@ -276,8 +288,7 @@ class NodeCommand(
     name="install-node",
     help="install every Node workspace a local gate exercises",
 ):
-    """CI has separate jobs for docs, site and release-site. A local gate
-    builds all of them in one checkout, so all of them are installed here."""
+    """Install every Node workspace that split CI jobs exercise separately."""
 
     exclusive = True
 

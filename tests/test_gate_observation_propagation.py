@@ -136,7 +136,7 @@ def test_external_transient_source_fault_fails_the_plan_without_killing_watchdog
         if event.get("event") == "step.end" and event.get("status") == "failed"
     )
     run_end = next(index for index, event in enumerate(events) if event.get("event") == "run.end")
-    assert fault_note < command_end < failed_step < run_end, (
+    assert max(fault_note, command_end) < failed_step < run_end, (
         "the finding and command result must be durable before failure unwinds"
     )
     assert (

@@ -1219,15 +1219,15 @@ def _stage_graph_manifest_artifacts(
     dist: Path,
     base_url: str,
 ) -> None:
-    profiles = manifest.get("profiles")
+    profiles = cast(dict[str, object], manifest.get("profiles"))
     if not isinstance(profiles, dict) or not profiles:
         raise SystemExit("local glow-up release graph has no profiles")
 
     staged: list[tuple[dict[str, object], Path, Path, bytes]] = []
     for profile_id, profile in sorted(profiles.items()):
-        if not isinstance(profile, dict) or profile.get("status") == "revoked":
+        if not isinstance(profile, dict) or cast(dict[str, object], profile).get("status") == "revoked":
             continue
-        architectures = profile.get("architectures")
+        architectures = cast(dict[str, object], profile).get("architectures")
         if not isinstance(architectures, list) or not architectures:
             raise SystemExit(f"local glow-up release profile {profile_id} has no architectures")
         staged_architectures: list[dict[str, object]] = []
@@ -1236,24 +1236,24 @@ def _stage_graph_manifest_artifacts(
                 raise SystemExit(
                     f"local glow-up release profile {profile_id} has malformed architecture"
                 )
-            arch = architecture.get("architecture", "unknown")
+            arch = cast(dict[str, object], architecture).get("architecture", "unknown")
             active_rows: list[tuple[str, int, dict[str, object], str]] = []
             for section in ("config", "images", "evidence"):
-                rows = architecture.get(section, [])
+                rows = cast(dict[str, object], architecture).get(section, [])
                 if not isinstance(rows, list):
                     raise SystemExit(
                         f"local glow-up release profile {profile_id}/{arch} has malformed {section}"
                     )
                 for index, row in enumerate(rows):
-                    if not isinstance(row, dict) or row.get("status") == "revoked":
+                    if not isinstance(row, dict) or cast(dict[str, object], row).get("status") == "revoked":
                         continue
-                    url = row.get("url")
+                    url = cast(dict[str, object], row).get("url")
                     if not isinstance(url, str):
                         raise SystemExit(
                             f"local glow-up release profile {profile_id}/{arch} "
                             f"{section}[{index}] has no URL"
                         )
-                    active_rows.append((section, index, row, url))
+                    active_rows.append((section, index, cast(dict[str, object], row), url))
             if not active_rows:
                 raise SystemExit(
                     f"local glow-up release profile {profile_id}/{arch} has no active artifacts"
@@ -1270,7 +1270,7 @@ def _stage_graph_manifest_artifacts(
                 )
             if not local_rows:
                 continue
-            staged_architectures.append(architecture)
+            staged_architectures.append(cast(dict[str, object], architecture))
             for section, index, row, url in active_rows:
                 parsed = urlparse(url)
                 source = Path(unquote(parsed.path))
@@ -1296,7 +1296,7 @@ def _stage_graph_manifest_artifacts(
             raise SystemExit(
                 f"local glow-up release profile {profile_id} has no fully staged architectures"
             )
-        profile["architectures"] = staged_architectures
+        cast(dict[str, object], profile)["architectures"] = staged_architectures
 
     if not staged:
         raise SystemExit("local glow-up release graph resolved no profile artifacts")

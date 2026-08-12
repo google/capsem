@@ -10,6 +10,12 @@ compression_level = 12
 version = "6.18.44"
 sha256 = "0f72d938f06828e82c90405174fe572287db7bfe089e2fc46572a99a7f240d43"
 
+[build.asset_dependencies]
+tag_template = "capsem-{template}-dependencies-{arch}:{digest}"
+rootfs_template = "Dockerfile.rootfs-dependencies.j2"
+kernel_template = "Dockerfile.kernel-dependencies.j2"
+source_build_network = "none"
+
 [build.guest_rust_builder]
 dockerfile = "docker/Dockerfile.guest-rust-builder"
 tag_template = "capsem-guest-rust-{arch}:{digest}"
@@ -23,8 +29,8 @@ runtime_network = "none"
 [build.asset_tools]
 dockerfile = "docker/Dockerfile.asset-tools"
 tag_template = "capsem-asset-tools-{arch}:{digest}"
-debian_snapshot_base = "http://snapshot.debian.org/archive/debian"
-debian_security_snapshot_base = "http://snapshot.debian.org/archive/debian-security"
+debian_snapshot_base = "https://snapshot.debian.org/archive/debian"
+debian_security_snapshot_base = "https://snapshot.debian.org/archive/debian-security"
 debian_snapshot_id = "20260810T000000Z"
 materialize_network = "default"
 runtime_network = "none"

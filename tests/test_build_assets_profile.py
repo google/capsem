@@ -156,7 +156,8 @@ def test_standalone_asset_build_proves_execution_before_helper_materialization()
     assert plan.after_of("guest-execution") == {"doctor"}
     assert plan.after_of("guest-builders") == {"guest-execution"}
     assert plan.after_of("asset-tools") == {"guest-builders"}
-    assert plan.after_of("image.code.rootfs.arm64") == {"asset-tools"}
+    assert plan.after_of("asset-dependencies") == {"asset-tools"}
+    assert plan.after_of("image.code.rootfs.arm64") == {"asset-dependencies"}
 
 
 def test_rootfs_materializes_asset_tools_before_repack() -> None:
@@ -164,7 +165,8 @@ def test_rootfs_materializes_asset_tools_before_repack() -> None:
 
     assert plan.after_of("guest-builders") == {"guest-execution"}
     assert plan.after_of("asset-tools") == {"guest-builders"}
-    assert plan.after_of("image.code.rootfs.x86_64") == {"asset-tools"}
+    assert plan.after_of("asset-dependencies") == {"asset-tools"}
+    assert plan.after_of("image.code.rootfs.x86_64") == {"asset-dependencies"}
     assert plan.after_of("pack-initrds") == {"image.code.rootfs.x86_64"}
 
 

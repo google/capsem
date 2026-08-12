@@ -146,6 +146,13 @@ def test_asset_docker_build_network_is_phase_owned_by_config() -> None:
     config = load_guest_config(PROJECT_ROOT / "config/docker/image")
     assert config.build.materialize_network == "default"
     assert config.build.guest_rust_builder.runtime_network == "none"
+    assert config.build.asset_dependencies.source_build_network == "none"
+
+    materialize = inspect.getsource(asset_docker.materialize_asset_dependencies)
+    source = inspect.getsource(asset_docker.build_image)
+    assert "network=config.build.materialize_network" in materialize
+    assert "network=config.build.asset_dependencies.source_build_network" in source
+    assert "ci_cache=False" in source
 
 
 def test_asset_tool_smokes_erofs_through_its_portable_help_contract() -> None:
@@ -157,7 +164,12 @@ def test_asset_tool_smokes_erofs_through_its_portable_help_contract() -> None:
 
 @pytest.mark.parametrize(
     "relative",
-    (BUILD.asset_tools.dockerfile, BUILD.guest_rust_builder.dockerfile),
+    (
+        BUILD.asset_tools.dockerfile,
+        BUILD.guest_rust_builder.dockerfile,
+        f"config/docker/{BUILD.asset_dependencies.kernel_template}",
+        f"config/docker/{BUILD.asset_dependencies.rootfs_template}",
+    ),
 )
 def test_required_helper_base_waivers_never_supply_a_fallback(relative: str) -> None:
     lines = (PROJECT_ROOT / relative).read_text(encoding="utf-8").splitlines()
@@ -170,17 +182,19 @@ def test_required_helper_base_waivers_never_supply_a_fallback(relative: str) -> 
 
 def test_declared_asset_materializers_match_the_exact_mutator_inventory() -> None:
     expected = {
-        "config/docker/Dockerfile.kernel.j2": Counter({"apt-get": 2, "wget": 2, "apt": 1}),
-        "config/docker/Dockerfile.rootfs.j2": Counter(
+        "config/docker/Dockerfile.kernel-dependencies.j2": Counter(
+            {"apt": 5, "apt-get": 2, "wget": 2}
+        ),
+        "config/docker/Dockerfile.rootfs-dependencies.j2": Counter(
             {
                 "npm": 5,
+                "apt": 4,
                 "apt-get": 3,
                 "curl": 3,
                 "uv": 3,
                 "pip": 2,
                 "pip3": 1,
                 "npx": 1,
-                "apt": 1,
             }
         ),
         "config/profiles/co-work/build.sh": Counter({"curl": 3}),
@@ -213,7 +227,7 @@ def test_guest_cross_compiler_packages_are_exact_and_input_keyed() -> None:
 
 
 def test_asset_materializer_builds_name_their_network_explicitly() -> None:
-    source = inspect.getsource(asset_docker.build_image)
+    source = inspect.getsource(asset_docker.materialize_asset_dependencies)
     assert "network=config.build.materialize_network" in source
 
 

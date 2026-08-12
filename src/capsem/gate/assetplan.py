@@ -13,7 +13,7 @@ a thread pool the plan could not see, order against, or attribute a failure to.
 
 from __future__ import annotations
 
-from . import initrd
+from . import assetdependencies, initrd
 from .actions import Call
 from .assetlanes import discover_profiles, lane_assets
 from .assets import AssetGate
@@ -53,6 +53,7 @@ def fragment(plan, config, *, after: tuple = ()):
     exclusive = (config.exclusive("docker_daemon"),)
     shared = (config.shared("docker_daemon"),)
     rust_builders = required_rust_builder_names(config)
+    profiles = discover_profiles(config)
 
     ready = phase.add(
         step(
@@ -75,6 +76,15 @@ def fragment(plan, config, *, after: tuple = ()):
         ),
         after=after,
     )
+    dependencies = phase.add(
+        assetdependencies.dependency_step(
+            config,
+            (profile.name for profile in profiles),
+            config.architectures,
+            config.imagebuild.lane_templates,
+        ),
+        after=(ready,),
+    )
     lanes = tuple(
         phase.add(
             step(
@@ -91,7 +101,7 @@ def fragment(plan, config, *, after: tuple = ()):
                 ),
                 contends=shared,
             ),
-            after=(ready,),
+            after=(dependencies,),
         )
         for name in config.architectures
     )
@@ -112,7 +122,6 @@ def fragment(plan, config, *, after: tuple = ()):
         ),
         after=lanes,
     )
-    profiles = discover_profiles(config)
     targets = {
         name: tuple(
             lane_assets(config, profile, config.arch(name)) / name / config.artifacts.initrd

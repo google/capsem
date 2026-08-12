@@ -133,6 +133,26 @@ class AssetToolsConfig(BaseModel):
         return self
 
 
+class AssetDependencyConfig(BaseModel):
+    """Network-open helpers consumed by sealed kernel/rootfs source builds."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tag_template: str
+    rootfs_template: str
+    kernel_template: str
+    source_build_network: Literal[BuildNetwork.NONE]
+
+    @model_validator(mode="after")
+    def _templates_are_complete(self):
+        for field in ("{template}", "{arch}", "{digest}"):
+            if field not in self.tag_template:
+                raise ValueError(f"tag_template must contain {field}")
+        if self.rootfs_template == self.kernel_template:
+            raise ValueError("rootfs and kernel dependency templates must differ")
+        return self
+
+
 class ErofsConfig(BaseModel):
     """EROFS rootfs asset settings.
 
@@ -168,6 +188,7 @@ class BuildConfig(BaseModel):
     materialize_network: Literal[BuildNetwork.DEFAULT]
     erofs: ErofsConfig = Field(default_factory=ErofsConfig)
     kernel: KernelConfig
+    asset_dependencies: AssetDependencyConfig
     guest_rust_builder: GuestRustBuilderConfig
     asset_tools: AssetToolsConfig
     architectures: dict[str, ArchConfig]

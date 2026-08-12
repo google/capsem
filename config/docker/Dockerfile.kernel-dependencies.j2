@@ -1,0 +1,37 @@
+# check=skip=InvalidDefaultArgInFrom
+# BASE is required; the gate passes the exact platform child and owns the sole caller.
+# Materialize the exact toolchain and verified kernel source before compilation.
+ARG BASE
+FROM ${BASE}
+
+ARG INPUT_IDENTITY
+LABEL org.capsem.asset-dependencies.input-key="${INPUT_IDENTITY}"
+
+RUN set -eux; \
+    rm -f /etc/apt/sources.list.d/*; \
+    printf 'deb [check-valid-until=no] %s/%s bookworm main\n' \
+        "{{ debian_snapshot_base }}" "{{ debian_snapshot_id }}" \
+        > /etc/apt/sources.list; \
+    printf 'deb [check-valid-until=no] %s/%s bookworm-updates main\n' \
+        "{{ debian_snapshot_base }}" "{{ debian_snapshot_id }}" \
+        >> /etc/apt/sources.list; \
+    printf 'deb [check-valid-until=no] %s/%s bookworm-security main\n' \
+        "{{ debian_security_snapshot_base }}" "{{ debian_snapshot_id }}" \
+        >> /etc/apt/sources.list; \
+    apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update; \
+    apt-get install -y --no-install-recommends \
+        build-essential bc bison flex libssl-dev libelf-dev \
+        wget ca-certificates xz-utils cpio busybox-static && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN KERNEL_VERSION="{{ kernel_version }}" && \
+    KERNEL_SHA256="{{ kernel_sha256 }}" && \
+    MAJOR=$(echo ${KERNEL_VERSION} | cut -d. -f1) && \
+    wget -q "https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x/linux-${KERNEL_VERSION}.tar.xz" \
+        -O /tmp/linux.tar.xz && \
+    printf '%s  %s\n' "${KERNEL_SHA256}" /tmp/linux.tar.xz | sha256sum -c - && \
+    tar xf /tmp/linux.tar.xz -C /usr/src && \
+    rm /tmp/linux.tar.xz && \
+    ln -s /usr/src/linux-${KERNEL_VERSION} /usr/src/linux
+
+WORKDIR /usr/src/linux

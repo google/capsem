@@ -129,6 +129,7 @@ struct ImageCommand {
 #[derive(Debug, Subcommand)]
 enum ImageSubcommand {
     Build(ImageBuildArgs),
+    Workspace(ImageWorkspaceArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -1131,6 +1132,7 @@ fn main() -> Result<()> {
         },
         Commands::Image(command) => match command.command {
             ImageSubcommand::Build(args) => image_build_command(args),
+            ImageSubcommand::Workspace(args) => image_workspace_command(args),
         },
     }
 }
@@ -6827,6 +6829,20 @@ fn image_build_command(args: ImageBuildArgs) -> Result<()> {
         run_command(command)?;
     }
     print_image_build_plan(&plan, args.json)?;
+    Ok(())
+}
+
+fn image_workspace_command(args: ImageWorkspaceArgs) -> Result<()> {
+    let json = args.json;
+    let report = materialize_image_workspace(&args)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "profile {} rev {} -> {}",
+            report.profile_id, report.profile_revision, report.workspace
+        );
+    }
     Ok(())
 }
 

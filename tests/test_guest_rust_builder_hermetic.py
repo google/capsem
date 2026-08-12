@@ -315,9 +315,11 @@ def test_macos_check_assets_proves_execution_before_materializing_helper(
     assert plan.after_of("assets.guest-execution") == {"assets.doctor"}
     assert plan.after_of("assets.guest-builders") == {"assets.guest-execution"}
     assert plan.after_of("assets.asset-tools") == {"assets.guest-builders"}
+    assert plan.after_of("assets.recovery-dependencies") == {"assets.asset-tools"}
     assert plan.step_named("assets.guest-builders").carry_checks
     assert plan.step_named("assets.asset-tools").carry_checks
-    previous = "assets.asset-tools"
+    assert plan.step_named("assets.recovery-dependencies").carry_checks
+    previous = "assets.recovery-dependencies"
     for profile in imagebuild.profiles(config):
         label = f"assets.image.{profile}.all.{config.host_arch().name}"
         assert plan.after_of(label) == {previous}
