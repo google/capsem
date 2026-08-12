@@ -1415,18 +1415,15 @@ enforced_by = ["fast.audit.skills", "fast.citadel"]
 #
 # Keyed `document|target`. Removing an entry when the file lands is the fix.
 [lint.markdown.known_missing_targets]
-# Each entry says why it is here. A bare `true` is a suppression; a reason is
-# debt someone can act on or retire. A stale entry fails too -- an inventory
-# that drifts from the tree has stopped ratcheting.
+# Empty, and it should stay that way. A document promising a reader -- usually
+# an agent -- a file that is not there is worse than saying nothing. Fourteen
+# entries went in here and all fourteen were fixed rather than suppressed: ten
+# were index sections listing siblings never brought across with an imported
+# summary, two were pointers written from inside `references/` and resolving to
+# `references/references/`, and two were examples of how to write a pointer
+# that no checker could tell from a real one.
 #
-# Two of these are illustrative rather than broken: the skills about writing
-# skills quote a pointer as an example of how to write one, and no checker can
-# tell that from a real promise. One is a genuine gap. One is a sprint note
-# recording what was not updated at the time.
-"skills/dev-skills/SKILL.md|references/wire-format.md" = "example of how to write a pointer, not a pointer"
-"skills/meta-organize-skills/SKILL.md|references/advanced.md" = "example of how to write a pointer, not a pointer"
-"skills/meta-skill-creation/SKILL.md|references/schemas.md" = "real gap: the skill promises an eval schema reference three times and the file was never written"
-"sprints/observability-stop-the-bleeding/followups.md|references/mcp-wire.md" = "historical sprint note recording what was not updated"
+# An entry that no longer applies fails as well, so this cannot quietly refill.
 
 [websurfaces]
 script = "scripts/check-web-surface.sh"

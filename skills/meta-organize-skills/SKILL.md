@@ -57,7 +57,8 @@ Skills load in three tiers:
 2. **SKILL.md body** -- loaded when skill triggers (<500 lines ideal)
 3. **Bundled resources** -- loaded on demand from references/ (unlimited size)
 
-Keep SKILL.md lean. If approaching 500 lines, split detail into `references/` files and add clear pointers: "Read `references/advanced.md` for the full configuration reference."
+Keep SKILL.md lean. If approaching 500 lines, split detail into `references/` files and add clear pointers naming each one,
+for example: Read references/<topic>.md for the full configuration reference.
 
 ## Adding a skill
 

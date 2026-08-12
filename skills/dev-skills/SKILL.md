@@ -143,7 +143,8 @@ skill-name/
     template.html               Templates, icons
 ```
 
-Reference from SKILL.md with: "Read `references/wire-format.md` for the full protocol details."
+Reference from SKILL.md with a sentence naming the file, for example: Read
+references/<topic>.md for the full protocol details.
 
 ## Community skills
 
