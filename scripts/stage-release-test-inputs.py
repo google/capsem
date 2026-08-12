@@ -103,9 +103,8 @@ def _validated_shared_config_sources(
     shared_config_root: Path,
     *staging_roots: Path,
 ) -> list[tuple[Path, str]]:
-    # Settings and corp policy are not profile publication bytes. The release
-    # gate still needs the checked-in defaults in its isolated config root so
-    # capsem-admin can validate and materialize the manifest-owned profiles.
+    # Settings/corp policy are not publication bytes; the isolated gate still
+    # needs their defaults to materialize and validate manifest-owned profiles.
     if shared_config_root.is_symlink() or not shared_config_root.is_dir():
         raise ValueError(f"shared config root is missing or unsafe: {shared_config_root}")
     shared_resolved = shared_config_root.resolve()
