@@ -288,7 +288,7 @@ def _workflow_job_block(name: str, workflow_name: str = "ci.yaml") -> str:
 
     Structural properties no substring can see -- `continue-on-error`, `if:`,
     the membership of `needs` -- belong in `_workflow_job` and in
-    `tests/test_ci_enforcement_contract.py`, not here.
+    `tests/citadel/test_workflow_enforcement.py`, not here.
     """
     _workflow_job(name, workflow_name)
     text = _workflow_path(workflow_name).read_text()

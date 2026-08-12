@@ -103,7 +103,7 @@ def citadel(config: GateConfig) -> Suite:
 
     In the fast phase rather than the broad suite. Every one reads source and
     asserts on it -- no artifact, no VM, no daemon -- so `require_artifacts` is
-    off and there is nothing to wait for.
+    off and the whole suite answers in seconds.
 
     It was reached only through the broad suite's `root`, which carries
     `require_artifacts` and runs after the whole asset build. That meant a
@@ -113,7 +113,7 @@ def citadel(config: GateConfig) -> Suite:
 
     `stop_at_first_failure` is off deliberately: these are independent guards
     over unrelated boundaries, and knowing all of what regressed is worth more
-    than saving a tenth of a second.
+    than saving a second.
     """
     return Suite(
         label="citadel",

@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The Citadel now runs in the fast phase instead of the broad suite. Its guards
-  are source-level -- five tests, 0.17s, no artifact, no VM, no daemon -- and
-  were reachable only through the broad suite's `root`, which carries
+  are source-level -- no artifact, no VM, no daemon, seconds rather than
+  minutes -- and were reachable only through the broad suite's `root`, which carries
   `require_artifacts` and runs after the whole asset build. A DB-boundary
   violation was therefore reported once the VMs were already up, roughly forty
   minutes after the source that caused it was read, which is exactly what a

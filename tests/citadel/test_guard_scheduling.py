@@ -14,7 +14,7 @@ Citadel guards must run in the fast phase.
 
 Every guard in tests/citadel/ reads source and asserts on it. None needs a
 built artifact, a VM, or a running daemon, and the whole suite answers in
-about a fifth of a second.
+seconds.
 
 They were reachable only through the broad suite's `root`, which carries
 `require_artifacts` and runs after the entire asset build -- so a DB-boundary

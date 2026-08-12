@@ -124,7 +124,7 @@ def masks_failure(command: tuple[str, ...]) -> bool:
 
     Public because two contracts ask it of two different step selections:
     `assert_unmasked_step` for the mandatory `just` steps declared here, and
-    `test_ci_enforcement_contract` for any step turning a dependency's
+    `tests/citadel/test_workflow_enforcement.py` for any step turning a dependency's
     `needs.<job>.result` into a job outcome. One definition, so a fail-open
     spelling learned in either place is caught in both.
     """

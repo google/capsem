@@ -1316,7 +1316,6 @@ source_contract = [
     "tests/test_builder_probe_timeouts.py",
     "tests/test_cargo_audit_gate.py",
     "tests/test_check_cargo_audit.py",
-    "tests/test_ci_enforcement_contract.py",
     "tests/test_complete_release_channel.py",
     "tests/test_docker_storage_policy.py",
     "tests/test_exec_lock.py",
@@ -1412,8 +1411,8 @@ source_contract = [
 root = "tests/"
 # The Citadel: source-level guards recording architectural mistakes that must
 # not be repeated. Named separately from `root` because it belongs in the fast
-# phase, not the broad suite. It reads files and nothing else -- five tests,
-# 0.17s, no artifact, no VM, no daemon -- and was previously reached only
+# phase, not the broad suite. It reads source and asserts on it -- no artifact,
+# no VM, no daemon, seconds not minutes -- and was previously reached only
 # through `root`, which carries `require_artifacts` and runs after the whole
 # asset build. A DB-boundary violation was therefore reported after the VMs
 # booted rather than in the first second, which is the one thing a guard
