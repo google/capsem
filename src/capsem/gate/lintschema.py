@@ -19,13 +19,17 @@ from .harnessschema import PythonRoot, SuppressionBudget, TyRule
 class MarkdownLintConfig(Strict):
     """Documented promises that do not resolve yet, as exact debt.
 
-    Keyed `document|target`. A document telling a reader -- usually an agent --
-    to open a file that is not there is worse than saying nothing, so a new one
-    fails. These are inventoried while the content is written, and removing an
-    entry when the file lands is the fix.
+    Keyed `document|target`, valued with the reason. A document telling a
+    reader -- usually an agent -- to open a file that is not there is worse
+    than saying nothing, so a new one fails.
+
+    The value is a reason rather than a bare `true` because a suppression
+    nobody can evaluate is a suppression nobody removes. An entry that no
+    longer applies is stale and fails too: an inventory that drifts from the
+    tree has stopped ratcheting.
     """
 
-    known_missing_targets: dict[str, bool] = Field(default_factory=dict)
+    known_missing_targets: dict[str, str] = Field(default_factory=dict)
 
 class LintConfig(Strict):
     """Which trees are checked, which strictly, and what is held back."""

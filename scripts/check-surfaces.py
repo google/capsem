@@ -74,6 +74,7 @@ def markdown_links(root: Path) -> Outcome:
     exist, and the reader follows the instruction and finds nothing.
     """
     known = _known_missing(root)
+    unused = set(known)
     findings = []
     checked = 0
     for name, text in lintharness.tracked_files(root, "*.md")():
@@ -89,7 +90,9 @@ def markdown_links(root: Path) -> Outcome:
             # filesystem, so checking it reports a missing page that renders.
             if not Path(target).suffix:
                 continue
-            if f"{name}|{target}" in known:
+            key = f"{name}|{target}"
+            if key in known:
+                unused.discard(key)
                 continue
             if not (source.parent / target).exists():
                 line = next(
@@ -98,6 +101,15 @@ def markdown_links(root: Path) -> Outcome:
                 findings.append(
                     lintharness.Finding("markdown", name, line, "LINK", f"missing target: {target}")
                 )
+    # A stale entry is a ratchet that has stopped ratcheting: it suppresses a
+    # finding nobody has any more, and reads as coverage.
+    findings.extend(
+        lintharness.Finding(
+            "markdown", key.split("|")[0], 1, "STALE",
+            f"inventory entry no longer applies; remove it: {key}",
+        )
+        for key in sorted(unused)
+    )
     return Outcome("markdown", checked, tuple(findings))
 
 

@@ -1415,20 +1415,18 @@ enforced_by = ["fast.audit.skills", "fast.citadel"]
 #
 # Keyed `document|target`. Removing an entry when the file lands is the fix.
 [lint.markdown.known_missing_targets]
-"skills/dev-skills/SKILL.md|references/wire-format.md" = true
-"skills/frontend-design/references/tailwind.md|references/accessibility.md" = true
-"skills/frontend-design/references/tailwind.md|references/animations.md" = true
-"skills/frontend-design/references/tailwind.md|references/component-patterns.md" = true
-"skills/frontend-design/references/tailwind.md|references/configuration.md" = true
-"skills/frontend-design/references/tailwind.md|references/layout-patterns.md" = true
-"skills/frontend-design/references/tailwind.md|references/performance.md" = true
-"skills/frontend-design/references/tailwind.md|references/reference.md" = true
-"skills/frontend-design/references/tailwind.md|references/responsive-design.md" = true
-"skills/meta-organize-skills/SKILL.md|references/advanced.md" = true
-"skills/meta-skill-creation/SKILL.md|references/schemas.md" = true
-"skills/site-architecture/references/tauri-v2.md|references/capabilities-reference.md" = true
-"skills/site-architecture/references/tauri-v2.md|references/ipc-patterns.md" = true
-"sprints/observability-stop-the-bleeding/followups.md|references/mcp-wire.md" = true
+# Each entry says why it is here. A bare `true` is a suppression; a reason is
+# debt someone can act on or retire. A stale entry fails too -- an inventory
+# that drifts from the tree has stopped ratcheting.
+#
+# Two of these are illustrative rather than broken: the skills about writing
+# skills quote a pointer as an example of how to write one, and no checker can
+# tell that from a real promise. One is a genuine gap. One is a sprint note
+# recording what was not updated at the time.
+"skills/dev-skills/SKILL.md|references/wire-format.md" = "example of how to write a pointer, not a pointer"
+"skills/meta-organize-skills/SKILL.md|references/advanced.md" = "example of how to write a pointer, not a pointer"
+"skills/meta-skill-creation/SKILL.md|references/schemas.md" = "real gap: the skill promises an eval schema reference three times and the file was never written"
+"sprints/observability-stop-the-bleeding/followups.md|references/mcp-wire.md" = "historical sprint note recording what was not updated"
 
 [websurfaces]
 script = "scripts/check-web-surface.sh"
