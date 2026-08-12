@@ -1288,9 +1288,15 @@ python_lock = "scripts/audit-python-lock.sh"
 public_surface = "scripts/check_public_surface.py"
 source_syntax = "scripts/check-source-syntax.py"
 hardcoded_selections = "scripts/check-hardcoded-release-selections.sh"
-shell = "scripts/check-shell.sh"
-# Warning and above. `info`/`style` add twenty-five findings that are opinions
-# rather than defects, and a gate nobody believes gets disabled.
+shell = "scripts/check-shell.py"
+# All three surfaces that carry shell -- tracked `*.sh`, every workflow `run:`
+# body, and every Dockerfile `RUN` body including the rendered `.j2` templates.
+# A linter on one of three is a sampling, and the two that were unlinted are
+# where the release logic lives. Fail closed: a surface yielding no sources is
+# an error, never a pass.
+#
+# Warning and above. `info`/`style` add findings that are opinions rather than
+# defects, and a gate nobody believes gets disabled.
 shell_severity = "warning"
 #   SC1091  cannot follow a sourced path it was not given as input; the sourced
 #           files are themselves checked, so following would only double-report
@@ -1309,6 +1315,42 @@ max_skill_description_chars = 200
 # split-to-references/ pattern is established. A ceiling to stop regrowth,
 # not a mandate to rewrite anything.
 max_skill_body_lines = 600
+
+# A shell body is a sequence of simple commands. Control flow, multi-line
+# string building and here-documents inside a YAML `run:` or a Dockerfile `RUN`
+# are a program no test can reach and no reviewer reads in place -- the same
+# reasoning `[boundary]` applies to justfile recipes, asked of the other places
+# shell hides.
+#
+# The measurement says simple is already the norm and only the tail is a
+# problem: across 274 bodies the median is 3 executable lines and p90 is 14.
+# The fix for an entry below is a script under `scripts/`, which ShellCheck
+# lints and a test can call -- not a bigger parser.
+[boundary.shell_bodies]
+max_lines = 20
+
+# Exact ratchets, as everywhere else: an entry may not grow, and a body that
+# shrinks updates or removes its entry in the same change.
+[boundary.shell_bodies.oversized_line_counts]
+"Dockerfile.host-builder:RUN[1]" = 23
+"ci.yaml:pr-gate:0:Require all CI jobs" = 23
+"ci.yaml:test:20:Python schema tests with coverage" = 24
+"docs.yaml:build:6:Smoke public docs site" = 23
+"release-assets.yaml:author-profile-release:17:Author selected channel profile in the source manifest" = 32
+"release-assets.yaml:publish-profile-release:16:Publish immutable GitHub profile release" = 33
+"release-assets.yaml:test-profile-pairing:15:Prepare exact profile and pulled binary pairing" = 54
+"release-binary-staging.yaml:assemble-binary-channel:9:Prove VM asset metadata did not change" = 34
+"release.yaml:build-app-macos:14:Install cargo tools" = 23
+"release.yaml:build-app-macos:22:Verify macOS package installation path policy" = 31
+"release.yaml:create-release:8:Build summary" = 25
+"release.yaml:preflight:3:Import Apple certificate (preflight)" = 23
+"release.yaml:test-binary-pairing:18:Activate exact candidate package binaries for functional tests" = 26
+"release.yaml:test-native-linux-package:5:Install and verify exact release deb" = 26
+"release.yaml:test-native-macos-package:5:Install and verify exact notarized package" = 30
+"release.yaml:verify-release-candidate:4:Verify public GitHub package storage from the candidate manifest" = 34
+"release.yaml:verify-release-candidate:5:Prove install.sh selects and installs the candidate Linux package" = 25
+"release.yaml:verify-release-downloads:4:Verify every URL in the asset channel manifest is reachable" = 42
+"release.yaml:verify-release-downloads:7:Install live public Linux release and prove guest shell execution" = 40
 
 [websurfaces]
 script = "scripts/check-web-surface.sh"

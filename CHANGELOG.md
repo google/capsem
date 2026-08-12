@@ -63,6 +63,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and each found a bug the others did not. An unterminated quote raises
   `UnterminatedQuote` rather than returning nothing, so a caller cannot read
   "could not be read" as "nothing to see".
+- ShellCheck now runs on every surface that carries shell, each failing closed:
+  46 tracked `*.sh`, all 184 workflow `run:` bodies, and 90 Dockerfile `RUN`
+  bodies including the `.j2` templates rendered through the same
+  `render_dockerfile` the image build uses. Linting one of three surfaces is a
+  sampling, and the two that were unchecked are where the release logic lives.
+  It found two real defects in the kernel template -- an unquoted
+  `make -j$(nproc)` and a `for cmd in modprobe` loop over a single item -- both
+  fixed. `[boundary.shell_bodies]` then holds the line at 20 executable lines
+  per body, median being 3, so the next unwieldy program goes into `scripts/`
+  where a test can call it.
 - Shell scripts are linted. Python has Ruff and strict Ty, Rust has Clippy with
   `warnings = "deny"`, the web surfaces fail on warnings -- and 6,821 lines of
   shell across 46 tracked scripts had nothing, while four

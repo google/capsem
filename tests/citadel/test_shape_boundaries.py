@@ -217,3 +217,97 @@ def test_the_ratchet_notices_a_new_file_over_the_ceiling(family: str) -> None:
 
 #: Captured before the negative tests swap it out.
 _REAL_TRACKED_LINE_COUNTS = _tracked_line_counts
+
+
+# ---------------------------------------------------------------------------
+# Shell bodies: the same rule, asked of shell that lives inside other files.
+# ---------------------------------------------------------------------------
+
+SHELL_BODY_RATIONALE = """\
+A shell body is a sequence of simple commands.
+
+Control flow, multi-line string building and here-documents inside a YAML
+`run:` or a Dockerfile `RUN` are a program that no test can call, no reviewer
+reads in place, and -- until recently -- no linter looked at. `[boundary]`
+already says this of justfile recipes; this asks it of the other two places
+shell hides.
+
+Simple is already the norm, so the rule is not an aspiration: across 274 bodies
+the median is 3 executable lines and p90 is 14. Only the tail is a problem, and
+the tail is where the release logic sits.
+
+The fix for an entry is a script under `scripts/`, which ShellCheck already
+lints and a test can call. Not a bigger parser: reaching for one is how four
+extraction bugs got written before this rule existed.
+
+Bodies come from `capsem.gate.shellsurfaces`, the same extractor the shell
+audit lints through, so the linter and the ceiling cannot disagree about what
+a body is.
+"""
+
+
+def _shell_bodies() -> dict[str, str]:
+    from capsem.gate import shellsurfaces
+
+    bodies = dict(shellsurfaces.workflow_bodies(PROJECT_ROOT / ".github" / "workflows"))
+    bodies.update(
+        shellsurfaces.dockerfile_bodies(
+            PROJECT_ROOT / "docker",
+            PROJECT_ROOT / "config" / "docker",
+            lambda templates: shellsurfaces.rendered_templates(
+                templates, PROJECT_ROOT / "config" / "docker" / "image"
+            ),
+        )
+    )
+    return bodies
+
+
+def test_there_are_shell_bodies_to_measure() -> None:
+    """Fail closed: an extractor returning nothing is not a pass."""
+    assert len(_shell_bodies()) > 200, "shell body extraction looks truncated"
+
+
+def test_oversized_shell_bodies_match_the_exact_debt_ratchet() -> None:
+    from capsem.gate import shellsurfaces
+
+    rule = BOUNDARY.shell_bodies
+    actual = {
+        name: len(shellsurfaces.executable_lines(body))
+        for name, body in _shell_bodies().items()
+        if len(shellsurfaces.executable_lines(body)) > rule.max_lines
+    }
+    expected = dict(rule.oversized_line_counts)
+    if actual == expected:
+        return
+
+    added = sorted(set(actual) - set(expected))
+    grew = {n: (expected[n], v) for n, v in actual.items() if n in expected and v > expected[n]}
+    shrank = {n: (expected[n], v) for n, v in actual.items() if n in expected and v < expected[n]}
+    gone = sorted(set(expected) - set(actual))
+
+    detail = [f"ceiling {rule.max_lines} executable lines"]
+    if added:
+        detail.append(f"  new bodies over the ceiling; move them to scripts/: {added}")
+    if grew:
+        detail.append(f"  grew past their ratchet: { {n: f'{a} -> {b}' for n, (a, b) in grew.items()} }")
+    if shrank:
+        detail.append(
+            "  shrank; lower the ratchet in the same change: "
+            f"{ {n: f'{a} -> {b}' for n, (a, b) in shrank.items()} }"
+        )
+    if gone:
+        detail.append(f"  now under the ceiling; remove the entry: {gone}")
+
+    raise AssertionError(SHELL_BODY_RATIONALE + "\n" + "\n".join(detail))
+
+
+def test_a_new_oversized_shell_body_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Break it once: an unlisted body over the ceiling must fail."""
+    rule = BOUNDARY.shell_bodies
+    invented = dict(_shell_bodies())
+    invented["invented.yaml:job:0:too much shell"] = "\n".join(
+        f"echo line {n}" for n in range(rule.max_lines + 1)
+    )
+    monkeypatch.setitem(globals(), "_shell_bodies", lambda: invented)
+    with pytest.raises(AssertionError, match="new bodies over the ceiling"):
+        test_oversized_shell_bodies_match_the_exact_debt_ratchet()

@@ -295,6 +295,25 @@ claim, watch it fail, then make it true.
 
 Break every guard once and watch it go red. Clear `__pycache__` between runs.
 
+## Shell is linted on every surface it lives on
+
+`fast.audit.shell` runs ShellCheck over three surfaces, each failing closed:
+tracked `*.sh`, every workflow `run:` body, and every Dockerfile `RUN` body --
+including the `.j2` templates, **rendered** through `render_dockerfile` rather
+than masked, because the rendered output is what builds.
+
+`capsem.gate.shellsurfaces` extracts all three, and the Citadel's shape guard
+measures the same bodies, so the linter and the ceiling cannot disagree about
+what a body is. Getting that extraction right took five attempts -- flattened
+continuations swallowing comments, comments stripped after continuations
+instead of before, `${{ }}` masked to a literal producing three phantom SC2050
+"bugs", Jinja masked instead of rendered, and a dict key that silently dropped
+five steps into a collision. Add a surface there, not in a second extractor.
+
+`[boundary.shell_bodies]` keeps them simple: 20 executable lines, with an exact
+debt inventory. The fix for an oversized body is a script under `scripts/`,
+which ShellCheck already lints and a test can call.
+
 ## The Citadel runs in the fast phase
 
 `tests/citadel/` records architectural mistakes that must not be repeated. It
@@ -316,7 +335,7 @@ second thing to keep in step.
 | guard | what it holds |
 |---|---|
 | `test_db_boundary.py` | only `capsem-logger` executes ledger queries |
-| `test_shape_boundaries.py` | every `[boundary.*]` ceiling and debt inventory |
+| `test_shape_boundaries.py` | every `[boundary.*]` ceiling and debt inventory, files and shell bodies alike |
 | `test_workflow_enforcement.py` | a gating step cannot pass while failing |
 | `test_container_workspace.py` | the guest builder's `/src/*` glob skips dotfiles |
 | `test_skill_context_budget.py` | the skill description budget every session pays |

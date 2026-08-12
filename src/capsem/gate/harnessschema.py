@@ -105,6 +105,11 @@ class LintConfig(Strict):
         return self
 
 
+class ShellBodyConfig(Strict):
+    max_lines: int
+    oversized_line_counts: dict[str, int]
+
+
 class BoundaryConfig(Strict):
     max_recipe_lines: int
     max_module_lines: int
@@ -113,6 +118,10 @@ class BoundaryConfig(Strict):
     #: because they are the same rule asked of different trees.
     scripts: ScriptSizeConfig
     rust: ScriptSizeConfig
+    #: Shell bodies are measured, not listed: they live inside YAML and
+    #: Dockerfiles rather than in files of their own, so there is no root or
+    #: suffix to declare.
+    shell_bodies: ShellBodyConfig
     shell_control_flow: tuple[str, ...]
     recipes_with_inline_control_flow: tuple[str, ...]
     direct_machine_access: tuple[str, ...]
