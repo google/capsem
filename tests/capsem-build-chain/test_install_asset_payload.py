@@ -645,8 +645,12 @@ def test_systemd_install_image_cannot_flush_host_binfmt_registrations(
     from capsem.gate.installcontainer import InstallContainer
 
     monkeypatch.setattr("capsem.gate.installcontainer.shutil.which", lambda _name: "/colima")
-    for system, expected_checks in (("Linux", 0), ("Darwin", 2)):
+    for system, machine, expected_checks in (
+        ("Linux", "x86_64", 0),
+        ("Darwin", "arm64", 2),
+    ):
         monkeypatch.setattr("capsem.gate.host.system", lambda system=system: system)
+        monkeypatch.setattr("capsem.gate.host.machine", lambda machine=machine: machine)
         runner = RecordingRunner(PROJECT_ROOT)
         install = InstallContainer(runner)
 
@@ -1340,8 +1344,12 @@ def test_the_parity_lane_holds_no_build_tree_for_the_assets_to_wait_on(
     # needs the sealed Docker parity lane, and the asset phase must wait for
     # it there. Assert both plans explicitly so the contract means the same
     # thing regardless of which host collected it.
-    for system, expected in (("Linux", False), ("Darwin", True)):
+    for system, machine, expected in (
+        ("Linux", "x86_64", False),
+        ("Darwin", "arm64", True),
+    ):
         monkeypatch.setattr("capsem.gate.host.system", lambda system=system: system)
+        monkeypatch.setattr("capsem.gate.host.machine", lambda machine=machine: machine)
         plan = gate_plan("candidate")
 
         assert ("linux-rust" in plan.labels) is expected
@@ -3093,8 +3101,12 @@ def test_cross_compile_clock_sync_uses_bounded_colima_command(
     # Clock drift belongs to Colima's VM. Linux package builds keep the same
     # graph phase for stable timing/evidence, but the phase must issue no
     # command on a native Linux daemon.
-    for system, expected in (("Linux", False), ("Darwin", True)):
+    for system, machine, expected in (
+        ("Linux", "x86_64", False),
+        ("Darwin", "arm64", True),
+    ):
         monkeypatch.setattr("capsem.gate.host.system", lambda system=system: system)
+        monkeypatch.setattr("capsem.gate.host.machine", lambda machine=machine: machine)
         runner = RecordingRunner(PROJECT_ROOT)
 
         PackageRail(runner, target, content=ProfileContent.standalone(config)).sync_clock()

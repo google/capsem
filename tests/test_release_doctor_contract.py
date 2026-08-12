@@ -5039,11 +5039,13 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
     # builder/base dependency chain. Exercise both real plans instead of
     # asking the current host's Just recipe to contain the other platform.
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
     native = gate_plan("linux-rust")
     assert native.labels == ("linux-rust",)
     assert "test-linux-rust.sh" in native.step_named("linux-rust").render()[0]
 
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "arm64")
     sealed = gate_plan("linux-rust")
     assert {"host-image", "warm-base", "linux-rust"} <= set(sealed.labels)
     assert sealed.after_of("warm-base") == {"host-image"}
