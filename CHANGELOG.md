@@ -19,6 +19,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   joins `broad_ignores` so the suite has one owner rather than two, and
   `tests/citadel/test_guard_scheduling.py` fails if it is ever moved back
   behind the expensive work.
+- The workflow shell tokenizer scans characters instead of lines, and its
+  grammar is written down. `shlex` was applied per physical line, which is
+  wrong because a shell word may contain a newline: four of the 184 `run:`
+  steps -- all in release.yaml, including verify-release-candidate and
+  verify-release-downloads -- raised `ValueError: No closing quotation`.
+  Accumulating lines until the quotes balanced was tried and is worse: it stops
+  the crash without parsing anything, returning a blob that looks like
+  analysis. `tests/helpers/shelltokens.py` states the subset as a grammar and
+  scans it, so a newline inside a quotation is part of the word by
+  construction. It also fixes redirections -- `2>&1` was three tokens, read as
+  a background `&`. Validated across 231 scripts (every `run:` step plus 6,821
+  lines of tracked shell) with zero unreadable and identical fail-open verdicts
+  wherever the old lexer could read at all. An unterminated quote raises
+  `UnterminatedQuote` rather than returning nothing, so a caller cannot read
+  "could not be read" as "nothing to see".
 - Shell scripts are linted. Python has Ruff and strict Ty, Rust has Clippy with
   `warnings = "deny"`, the web surfaces fail on warnings -- and 6,821 lines of
   shell across 46 tracked scripts had nothing, while four

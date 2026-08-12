@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import re
-import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any
+
+from .shelltokens import tokenize
 
 _CONTINUATION = re.compile(r"\\\r?\n")
 _GITHUB_EXPRESSION = re.compile(r"\$\{\{\s*(.*?)\s*}}")
@@ -57,33 +58,13 @@ class _ObservedJustStep:
 def canonical_shell_commands(script: str) -> tuple[tuple[str, ...], ...]:
     """Return simple shell commands independent of presentation details.
 
-    GitHub expressions contain spaces even though the runner substitutes each
-    expression as one value. Mask them before ``shlex`` and restore a canonical
-    spelling afterward. Comments, quoting, repeated whitespace, and backslash
-    line continuations therefore cannot become accidental contract authority.
-    Shell operators remain tokens, so a fail-open suffix cannot disappear.
+    Delegates to `shelltokens.tokenize`, which scans characters rather than
+    lines. Comments, quoting, repeated whitespace and line continuations
+    therefore cannot become accidental contract authority, shell operators
+    remain their own tokens so a fail-open suffix cannot disappear, and a word
+    containing a newline no longer raises.
     """
-    expressions: dict[str, str] = {}
-
-    def mask(match: re.Match[str]) -> str:
-        marker = f"__CAPSEM_GITHUB_EXPRESSION_{len(expressions)}__"
-        expressions[marker] = "${{ " + " ".join(match.group(1).split()) + " }}"
-        return marker
-
-    commands: list[tuple[str, ...]] = []
-    joined = _CONTINUATION.sub("", script)
-    for line in joined.splitlines():
-        lexer = shlex.shlex(
-            _GITHUB_EXPRESSION.sub(mask, line),
-            posix=True,
-            punctuation_chars=";&|<>()",
-        )
-        lexer.commenters = "#"
-        lexer.whitespace_split = True
-        tokens = tuple(expressions.get(token, token) for token in lexer)
-        if tokens:
-            commands.append(tokens)
-    return tuple(commands)
+    return tokenize(script)
 
 
 def _canonical_condition(value: object) -> object:
