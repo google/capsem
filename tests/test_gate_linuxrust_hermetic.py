@@ -26,6 +26,7 @@ def _macos_issued(monkeypatch: pytest.MonkeyPatch) -> str:
 
     sys.path.insert(0, str(PROJECT_ROOT / "tests"))
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "arm64")
     from helpers.gate import gate_issued
 
     return gate_issued("linux-rust")
@@ -84,11 +85,21 @@ def _identity_files(config) -> tuple[str, ...]:
 
 
 def _docker(root: Path, parent: str):
-    from helpers.gate import RecordingRunner
+    from helpers.gate import RecordingRunner, recorded_image_identity
 
     from capsem.gate.docker import Docker
+    from capsem.gate.dockerimage import IMAGE_IDENTITY_FORMAT
 
-    return Docker(RecordingRunner(root, replies={"{{.Id}}": parent}))
+    return Docker(
+        RecordingRunner(
+            root,
+            replies={
+                IMAGE_IDENTITY_FORMAT: recorded_image_identity(
+                    root, "capsem-host-builder:latest", image_id=parent
+                )
+            },
+        )
+    )
 
 
 def test_every_input_that_defines_the_base_image_changes_its_tag(tmp_path: Path) -> None:
@@ -160,6 +171,7 @@ def test_the_lane_owns_its_base_image_instead_of_asking_the_operator(
     from helpers.gate import gate_labels
 
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "arm64")
     labels = list(gate_labels("candidate"))
 
     assert "warm-base" in labels, (
@@ -176,6 +188,7 @@ def test_the_ownership_steps_are_gone(monkeypatch: pytest.MonkeyPatch) -> None:
     from helpers.gate import gate_labels
 
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: "arm64")
     labels = set(gate_labels("test-static")) | set(gate_labels("linux-rust"))
     assert "cache-ownership" not in labels, sorted(labels)
     assert "output-ownership" not in labels, sorted(labels)

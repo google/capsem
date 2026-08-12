@@ -54,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Docker contract recorders now answer the same portable platform-and-image-ID
+  probe as the production gate, so hosted-CLI compatibility changes cannot
+  leave broad qualification fixtures asserting against an obsolete inspect
+  shape. Synthetic macOS plans also declare the supported Apple Silicon host
+  instead of inheriting the Linux test machine architecture.
 - IronBank asset boot proofs now launch their selected-content service through
   the gate's detached process primitive, persist its configured PID, and wait
   for its socket before entering the foreground shell. A successful proof can

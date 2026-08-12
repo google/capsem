@@ -106,6 +106,13 @@ def _recorded_image_platform(root: Path, reference: str) -> str:
     return host_platform
 
 
+def recorded_image_identity(
+    root: Path, reference: str, *, image_id: str = RECORDED_IMAGE_ID
+) -> str:
+    """Return the complete portable identity shape used by Docker recorders."""
+    return f"{_recorded_image_platform(root, reference)}\t{image_id}"
+
+
 @cache
 def _git_common_dir(root: Path) -> str:
     """What the probe would really have answered in this checkout."""
@@ -177,8 +184,7 @@ class RecordingRunner(Runner):
             if GIT_COMMON_DIR_PROBE in rendered:
                 stdout = _git_common_dir(self.root)
             elif IMAGE_PLATFORM_ID_PROBE in rendered:
-                platform = _recorded_image_platform(self.root, command.argv[-1])
-                stdout = f"{platform}\t{RECORDED_IMAGE_ID}"
+                stdout = recorded_image_identity(self.root, command.argv[-1])
             elif IMAGE_ID_PROBE in rendered:
                 stdout = RECORDED_IMAGE_ID
             elif IMAGE_LABEL_PROBE in rendered:

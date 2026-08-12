@@ -19,8 +19,11 @@ import json
 from pathlib import Path
 
 import pytest
+from helpers.gate import recorded_image_identity
 
 from capsem.gate import config as gate_config
+from capsem.gate.context import NullJournal
+from capsem.gate.dockerimage import IMAGE_IDENTITY_FORMAT
 from capsem.gate.errors import GateError
 from capsem.gate.funnel import GuardedRunner
 from capsem.gate.invocation import Command
@@ -50,8 +53,8 @@ class _Recording(Runner):
         import subprocess
 
         self.commands.append(command)
-        if "{{.Id}}" in command.argv:
-            stdout = "sha256:" + "0" * 64
+        if IMAGE_IDENTITY_FORMAT in command.argv:
+            stdout = recorded_image_identity(self.root, command.argv[-1])
         elif "{{json .RepoDigests}}" in command.argv:
             # Locally built Docker/Colima images legitimately have no
             # repository digest. The identity rail accepts that exact JSON
@@ -147,7 +150,7 @@ def test_a_failing_secret_command_keeps_its_secret_out_of_the_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-class _Journal:
+class _Journal(NullJournal):
     def __init__(self) -> None:
         self.execs: list[dict] = []
         self.launches: list[dict] = []
