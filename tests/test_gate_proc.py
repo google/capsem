@@ -3,14 +3,30 @@
 from __future__ import annotations
 
 import io
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
 from helpers.gate import RecordingRunner
 
+from capsem.gate import cancellation
+from capsem.gate import config as gate_config
 from capsem.gate.errors import GateError
 from capsem.gate.invocation import Command
 from capsem.gate.proc import Runner
+from capsem.gate.processgroup import StopPolicy
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CONFIG = gate_config.load(PROJECT_ROOT)
+STOP_POLICY = StopPolicy(
+    grace_seconds=CONFIG.execution.cancellation_grace_seconds,
+    poll_seconds=CONFIG.execution.cancellation_poll_seconds,
+)
 
 
 def test_a_failing_command_reports_what_ran(tmp_path: Path) -> None:
@@ -82,7 +98,7 @@ def test_script_resolves_against_the_checkout(tmp_path: Path) -> None:
 
 def test_the_real_runner_executes_and_captures(tmp_path: Path) -> None:
     """One test against the genuine subprocess path, so the rest may be fakes."""
-    runner = Runner(tmp_path)
+    runner = Runner(tmp_path, stop_policy=STOP_POLICY)
 
     assert runner.capture(["printf", "%s", "hello"]) == "hello"
     assert runner.run(["true"]) == 0
@@ -94,7 +110,7 @@ def test_the_real_runner_defaults_the_working_directory_to_the_checkout(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "marker").write_text("")
-    runner = Runner(tmp_path)
+    runner = Runner(tmp_path, stop_policy=STOP_POLICY)
 
     assert runner.capture(["ls"]) == "marker"
 
@@ -126,3 +142,118 @@ def test_bash_is_reserved_for_fragments_that_are_genuinely_shell(tmp_path: Path)
     runner.bash("ls -t /bundle/deb/*.deb | head -n1")
 
     assert runner.commands[0].argv == ("bash", "-c", "ls -t /bundle/deb/*.deb | head -n1")
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _owned_group(pids: Path, *, ignore_term: bool = False) -> tuple[str, ...]:
+    disposition = "signal.signal(signal.SIGTERM,signal.SIG_IGN); " if ignore_term else ""
+    child = "import signal; " + disposition + "signal.alarm(3); signal.pause()"
+    helper = (
+        "import os,signal,subprocess,sys; "
+        f"{disposition}"
+        "signal.alarm(3); "
+        f"child=subprocess.Popen([sys.executable,'-c',{child!r}]); "
+        "open(sys.argv[1],'w').write(f'{os.getpid()} {child.pid}'); "
+        "signal.pause()"
+    )
+    return (sys.executable, "-c", helper, str(pids))
+
+
+def _cancel_when_ready(flag: threading.Event, pids: Path) -> threading.Thread:
+    def cancel() -> None:
+        deadline = time.monotonic() + 2
+        while not pids.is_file() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        flag.set()
+
+    trigger = threading.Thread(target=cancel, daemon=True)
+    trigger.start()
+    return trigger
+
+
+def _assert_gone(pids: Path) -> None:
+    owned = [int(raw) for raw in pids.read_text().split()]
+    deadline = time.monotonic() + 2
+    while any(_alive(pid) for pid in owned) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert all(not _alive(pid) for pid in owned), owned
+
+
+def test_cancelling_a_logged_command_reaps_its_exact_process_group(tmp_path: Path) -> None:
+    """A stopped gate must not leave its Docker/build/test descendants behind."""
+    pids = tmp_path / "owned-pids"
+    unrelated = subprocess.Popen(
+        [sys.executable, "-c", "import signal; signal.alarm(10); signal.pause()"],
+        start_new_session=True,
+    )
+
+    with cancellation.cancellable() as flag:
+        trigger = _cancel_when_ready(flag, pids)
+        try:
+            with pytest.raises(cancellation.Cancelled):
+                Runner(PROJECT_ROOT).run(
+                    _owned_group(pids),
+                    log=tmp_path / "step.log",
+                )
+            assert unrelated.poll() is None, "cancellation touched an unrelated process group"
+        finally:
+            trigger.join(timeout=2)
+            unrelated.terminate()
+            unrelated.wait(timeout=2)
+
+    _assert_gone(pids)
+    assert unrelated.returncode == -signal.SIGTERM
+
+
+@pytest.mark.parametrize("capture", [False, True])
+def test_cancellation_reaps_plain_and_captured_commands(tmp_path: Path, capture: bool) -> None:
+    pids = tmp_path / f"owned-{capture}"
+    with cancellation.cancellable() as flag:
+        trigger = _cancel_when_ready(flag, pids)
+        with pytest.raises(cancellation.Cancelled):
+            runner = Runner(PROJECT_ROOT)
+            if capture:
+                runner.capture(_owned_group(pids))
+            else:
+                runner.run(_owned_group(pids))
+        trigger.join(timeout=2)
+    _assert_gone(pids)
+
+
+def test_cancellation_escalates_only_its_own_sigterm_resistant_group(tmp_path: Path) -> None:
+    pids = tmp_path / "resistant-pids"
+    fast = StopPolicy(
+        grace_seconds=CONFIG.execution.cancellation_poll_seconds,
+        poll_seconds=CONFIG.execution.cancellation_poll_seconds,
+    )
+    with cancellation.cancellable() as flag:
+        trigger = _cancel_when_ready(flag, pids)
+        with pytest.raises(cancellation.Cancelled):
+            Runner(PROJECT_ROOT, stop_policy=fast).run(
+                _owned_group(pids, ignore_term=True),
+                log=tmp_path / "resistant.log",
+            )
+        trigger.join(timeout=2)
+    _assert_gone(pids)
+
+
+def test_a_foreground_command_cannot_hide_a_daemon_in_a_new_session(tmp_path: Path) -> None:
+    pids = tmp_path / "hidden-daemon"
+    child = "import signal; signal.alarm(3); signal.pause()"
+    helper = (
+        "import os,subprocess,sys,time; "
+        f"child=subprocess.Popen([sys.executable,'-c',{child!r}],start_new_session=True); "
+        "open(sys.argv[1],'w').write(f'{os.getpid()} {child.pid}'); time.sleep(0.3)"
+    )
+
+    with pytest.raises(GateError, match="descendants remained"):
+        Runner(PROJECT_ROOT).run((sys.executable, "-c", helper, str(pids)))
+
+    _assert_gone(pids)

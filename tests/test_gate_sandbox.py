@@ -13,27 +13,33 @@ attempt cost a rebuild to learn nothing.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
 from helpers.gate import RecordingRunner
 from pydantic import ValidationError
 
+from capsem.gate import cancellation, egress, sandbox
 from capsem.gate import config as gate_config
-from capsem.gate import egress, sandbox
 from capsem.gate.actions import Run, Script
 from capsem.gate.config import GateConfig
 from capsem.gate.context import Context
 from capsem.gate.errors import GateError
 from capsem.gate.harnessschema import SandboxConfig
+from capsem.gate.proc import Runner
+from capsem.gate.processgroup import StopPolicy
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
 
 macos_only = pytest.mark.skipif(sys.platform != "darwin", reason="Seatbelt is macOS")
 linux_only = pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux")
+
 
 #: A sandbox cannot be meaningfully nested. Seatbelt refuses the second
 #: application, while Bubblewrap cannot create the pre-boundary helper from
@@ -216,12 +222,12 @@ def test_linux_enforcement_uses_bubblewrap_network_namespace(monkeypatch) -> Non
     assert wrapped[0] == CONFIG.sandbox.linux_command
     assert tuple(CONFIG.sandbox.linux_args) == wrapped[1 : 1 + len(CONFIG.sandbox.linux_args)]
     assert "--unshare-net" in wrapped
-    assert wrapped[
-        wrapped.index("--bind") : wrapped.index("--bind") + 3
-    ] == ("--bind", "/", "/")
-    assert wrapped[
-        wrapped.index("--dev-bind") : wrapped.index("--dev-bind") + 3
-    ] == ("--dev-bind", "/dev", "/dev")
+    assert wrapped[wrapped.index("--bind") : wrapped.index("--bind") + 3] == ("--bind", "/", "/")
+    assert wrapped[wrapped.index("--dev-bind") : wrapped.index("--dev-bind") + 3] == (
+        "--dev-bind",
+        "/dev",
+        "/dev",
+    )
     assert wrapped[-3:] == ("python3", "-c", "print('inside')")
 
 
@@ -487,9 +493,7 @@ def test_only_live_advisory_queries_cross_the_fast_gate_network_boundary(
 
     assert marked >= ONLINE_AUDITS
     assert not {
-        label
-        for label in marked
-        if label.startswith("fast.") and label not in ONLINE_AUDITS
+        label for label in marked if label.startswith("fast.") and label not in ONLINE_AUDITS
     }
 
 
@@ -557,3 +561,44 @@ def test_the_egress_broker_crosses_the_boundary_without_giving_children_its_capa
         assert not metadata.exists(), "the child-readable capability survived acquisition"
     finally:
         resource.release()
+
+
+@linux_only
+@unnested_only
+def test_cancelling_the_outer_runner_reaps_the_bubblewrap_session(tmp_path: Path) -> None:
+    """Bubblewrap's new session remains owned through its die-with-parent rail."""
+    pid_file = tmp_path / "sandboxed-pid"
+    probe = (
+        "import os,signal,sys; signal.alarm(5); "
+        "open(sys.argv[1],'w').write(str(os.getpid())); signal.pause()"
+    )
+    wrapped = sandbox.linux_wrap(CONFIG, (sys.executable, "-c", probe, str(pid_file)))
+    policy = StopPolicy(
+        grace_seconds=CONFIG.execution.cancellation_poll_seconds,
+        poll_seconds=CONFIG.execution.cancellation_poll_seconds,
+    )
+
+    with cancellation.cancellable() as flag:
+
+        def cancel_when_started() -> None:
+            deadline = time.monotonic() + 2
+            while not pid_file.is_file() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            flag.set()
+
+        trigger = threading.Thread(target=cancel_when_started, daemon=True)
+        trigger.start()
+        with pytest.raises(cancellation.Cancelled):
+            Runner(PROJECT_ROOT, stop_policy=policy).run(wrapped)
+        trigger.join(timeout=2)
+
+    pid = int(pid_file.read_text())
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail(f"sandboxed process {pid} survived cancellation")

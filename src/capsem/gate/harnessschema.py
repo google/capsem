@@ -163,6 +163,9 @@ class ExecutionConfig(Strict):
     one may be taken is scheduling semantics, so that is code.
     """
 
+    cancellation_grace_seconds: PositiveFloat
+    cancellation_poll_seconds: PositiveFloat
+
     @model_validator(mode="after")
     def _name_exclusives(self) -> ExecutionConfig:
         for key, exclusive in self.exclusives.items():

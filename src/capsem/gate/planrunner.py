@@ -43,11 +43,6 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
 #: report that conflates the two hides the blast radius of the real failure.
 from .runlogschema import CARRIED, FAILED, OK, SKIPPED
 
-#: How long an interrupted run waits for its workers before saying who is still
-#: going. Long enough for a primitive to reach its next boundary, short enough
-#: that Ctrl-C means something.
-GRACE_SECONDS = 10.0
-
 
 @dataclass
 class Outcome:
@@ -188,12 +183,11 @@ def _abandon(
         future.cancel()
 
     pool.shutdown(wait=False, cancel_futures=True)
-    _done, pending = wait(running, timeout=GRACE_SECONDS)
+    grace = context.config.execution.cancellation_grace_seconds
+    _done, pending = wait(running, timeout=grace)
     if pending:
         stubborn = sorted(running[future].step.label for future in pending)
-        context.journal.note(
-            f"interrupted; still running after {GRACE_SECONDS:.0f}s: {', '.join(stubborn)}"
-        )
+        context.journal.note(f"interrupted; still running after {grace:g}s: {', '.join(stubborn)}")
 
 
 def _guarded(pending: _Pending, context: Context, abandoned: threading.Event) -> float:

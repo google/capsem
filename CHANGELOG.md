@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Interrupting a gate now terminates the exact foreground process tree it
+  owns, including descendants moved into a Bubblewrap session, before releasing
+  the workspace lock. The grace and cancellation polling bounds are config-owned;
+  unrelated developer processes are never selected by name or touched.
+
 - The sealed install-image smoke no longer requires the asset-only CycloneDX
   generator from the host builder. The digest-verified asset-tools helper is
   again the single owner, so install qualification cannot fail on a tool its

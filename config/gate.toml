@@ -741,6 +741,9 @@ direct_machine_access = [
     "fileactions.py",
     "filesystem.py",
     "proc.py",
+    # The process half of proc's one execution funnel, split at the module
+    # ceiling. It owns exact foreground process trees across sandbox sessions.
+    "processgroup.py",
     "pidfiles.py",
     "locks.py",
     "runlog.py",
@@ -855,6 +858,11 @@ max_lines = 300
 # from measurement rather than from cores -- a gate step is rarely one process,
 # and eight steps each starting four pytest workers is not eight-way anything.
 max_parallel_steps = 8
+# Foreground actions own a dedicated process group. Cancellation checks this
+# often, then gives the exact group this long to stop before SIGKILL. Both are
+# operational policy rather than subprocess call-site folklore.
+cancellation_poll_seconds = 0.1
+cancellation_grace_seconds = 10.0
 
 [execution.exclusives.apple_vz]
 reason = "two benchmark files launching VMs at once measure each other, not Capsem"
