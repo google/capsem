@@ -57,6 +57,7 @@ from .harnessschema import (
     Exclusive,
     ExecutionConfig,
     LintConfig,
+    LintSurface,
     LocksConfig,
     PrefixConfig,
     RunLogConfig,
@@ -95,6 +96,7 @@ class GateConfig(Strict):
     doctor: DoctorConfig
     lint: LintConfig
     boundary: BoundaryConfig
+    lint_surfaces: tuple[LintSurface, ...]
     execution: ExecutionConfig
     locks: LocksConfig
     runlog: RunLogConfig

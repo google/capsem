@@ -17,6 +17,7 @@ from pathlib import PurePosixPath
 from typing import Annotated
 
 from pydantic import (
+    Field,
     NonNegativeFloat,
     NonNegativeInt,
     PositiveInt,
@@ -52,9 +53,22 @@ class SuppressionBudget(Strict):
     justification: Annotated[str, StringConstraints(min_length=20)]
 
 
+class MarkdownLintConfig(Strict):
+    """Documented promises that do not resolve yet, as exact debt.
+
+    Keyed `document|target`. A document telling a reader -- usually an agent --
+    to open a file that is not there is worse than saying nothing, so a new one
+    fails. These are inventoried while the content is written, and removing an
+    entry when the file lands is the fix.
+    """
+
+    known_missing_targets: dict[str, bool] = Field(default_factory=dict)
+
+
 class LintConfig(Strict):
     """Which trees are checked, which strictly, and what is held back."""
 
+    markdown: MarkdownLintConfig = MarkdownLintConfig()
     python_roots: tuple[PythonRoot, ...]
     strict_roots: tuple[PythonRoot, ...]
     python_platform: str
@@ -108,6 +122,14 @@ class LintConfig(Strict):
 class ShellBodyConfig(Strict):
     max_lines: int
     oversized_line_counts: dict[str, int]
+
+
+class LintSurface(Strict):
+    """A kind of first-party file, and the steps that must check it."""
+
+    name: str
+    pattern: str
+    enforced_by: tuple[str, ...]
 
 
 class BoundaryConfig(Strict):

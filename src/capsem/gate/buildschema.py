@@ -166,7 +166,8 @@ class AuditsConfig(Strict):
     public_surface: str
     source_syntax: str
     hardcoded_selections: str
-    shell: str
+    surfaces: str
+    docker_ignore: tuple[str, ...]
     shell_severity: str
     shell_ignore: tuple[str, ...]
     skills_dir: str
