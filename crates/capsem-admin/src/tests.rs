@@ -1001,6 +1001,20 @@ fn image_build_requires_profile_argument() {
 }
 
 #[test]
+fn image_workspace_is_a_supported_command_with_required_inputs() {
+    let error = Cli::try_parse_from(["capsem-admin", "image", "workspace"])
+        .expect_err("workspace inputs are required");
+
+    assert_eq!(
+        error.kind(),
+        clap::error::ErrorKind::MissingRequiredArgument
+    );
+    let rendered = error.to_string();
+    assert!(rendered.contains("--profile"), "{rendered}");
+    assert!(rendered.contains("--output"), "{rendered}");
+}
+
+#[test]
 fn image_build_workspaces_are_isolated_by_profile_and_architecture() {
     let profile = ProfileConfigFile::builtin_primary();
 
@@ -1041,7 +1055,6 @@ fn removed_admin_authoring_commands_are_not_parseable() {
         ["capsem-admin", "detection", "compile"],
         ["capsem-admin", "manifest", "verify"],
         ["capsem-admin", "image", "plan"],
-        ["capsem-admin", "image", "workspace"],
         ["capsem-admin", "image", "verify"],
     ] {
         let error = Cli::try_parse_from(argv).expect_err("removed command rejected");
