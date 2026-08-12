@@ -298,6 +298,23 @@ def _workflow_job_block(name: str, workflow_name: str = "ci.yaml") -> str:
     return "\n".join(text.splitlines()[key.start_mark.line : node.end_mark.line])
 
 
+def _reachable_from(name: str) -> str:
+    """A workflow's own text, plus the scripts its steps invoke.
+
+    Contracts about what a lane *does* should not care which file the command
+    sits in. Only one level deep, and only for scripts this repository tracks:
+    the point is to follow a `bash scripts/x.sh` dispatch, not to inline the
+    world.
+    """
+    text = _workflow_text(name)
+    parts = [text]
+    for match in re.finditer(r"\b(?:bash |sh )?(scripts/[A-Za-z0-9_./-]+\.(?:sh|py))", text):
+        script = PROJECT_ROOT / match.group(1)
+        if script.is_file():
+            parts.append(script.read_text())
+    return "\n".join(parts)
+
+
 def _workflow_text(name: str) -> str:
     return _workflow_path(name).read_text()
 
@@ -772,7 +789,11 @@ def test_install_e2e_generates_manifest_through_admin_rail() -> None:
 
 
 def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
-    workflow = _workflow_text("release-assets.yaml")
+    # The workflow plus every script it dispatches to. A step that grew past
+    # the shell-body ceiling and moved into `scripts/` runs the same commands;
+    # asserting against the workflow text alone made that refactor look like a
+    # regression, which is how a literal contract punishes the right change.
+    workflow = _reachable_from("release-assets.yaml")
     fast_gate = _workflow_text("fast-gate.yaml")
     trigger = workflow.split("\npermissions:", maxsplit=1)[0]
 
