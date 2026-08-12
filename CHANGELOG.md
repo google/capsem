@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   joins `broad_ignores` so the suite has one owner rather than two, and
   `tests/citadel/test_guard_scheduling.py` fails if it is ever moved back
   behind the expensive work.
+- Skill frontmatter descriptions are halved, from 11,162 characters to 5,158.
+  They are loaded into every agent session before any work starts and are the
+  text a router picks from, so length is not neutral: thirty-four paragraphs
+  discriminate worse than thirty-four sentences. The bloat was uniform rather
+  than a few offenders -- median 320 characters, all 34 above 150 -- because
+  each ended with a "Covers X, Y, Z" enumeration restating its own body.
+  Removing that one habit did most of the work; median is now 153 and nothing
+  exceeds 200. Disambiguation was kept where two skills genuinely collide, such
+  as dev-start pointing at dev-setup. `tests/citadel/test_skill_context_budget.py`
+  holds the ceiling, and also holds a floor, since a budget alone is satisfiable
+  by deleting the text. Bodies were already healthy and only gained a ceiling to
+  stop regrowth.
 - Every Citadel guard now states its reasoning in the failure message rather
   than only in a docstring. `test_package_architecture_boundary.py` had neither
   a docstring nor a rationale, and its checks were bare asserts -- a failing

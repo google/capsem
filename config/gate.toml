@@ -1270,6 +1270,17 @@ public_surface = "scripts/check_public_surface.py"
 source_syntax = "scripts/check-source-syntax.py"
 hardcoded_selections = "scripts/check-hardcoded-release-selections.sh"
 skills_dir = "skills"
+# A skill's frontmatter description is loaded into every agent session before
+# any work starts, and it is the text a router chooses from. Both costs point
+# the same way: thirty-four paragraphs discriminate worse than thirty-four
+# sentences, and picking the wrong skill costs far more than the tokens. The
+# set was uniformly over -- median 320 chars, all 34 above 150 -- because each
+# carried a trailing "Covers X, Y, Z" enumeration duplicating its own body.
+max_skill_description_chars = 200
+# Bodies were already healthy at a median of 160 lines, and the
+# split-to-references/ pattern is established. A ceiling to stop regrowth,
+# not a mandate to rewrite anything.
+max_skill_body_lines = 600
 
 [websurfaces]
 script = "scripts/check-web-surface.sh"

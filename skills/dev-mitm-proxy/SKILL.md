@@ -1,6 +1,6 @@
 ---
 name: dev-mitm-proxy
-description: MITM/network intercept development for Capsem -- the air-gapped network interception layer. Use when working on TLS termination, HTTP inspection, cert minting, SSE parsing, telemetry recording, or debugging network issues. Covers the full proxy pipeline, content-encoding handling, and lessons learned from past bugs.
+description: The air-gapped network intercept layer. Use when working on TLS termination, HTTP inspection, cert minting, SSE parsing, or debugging network behaviour.
 ---
 
 # MITM Proxy

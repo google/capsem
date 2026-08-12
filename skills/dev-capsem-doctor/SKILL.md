@@ -1,6 +1,6 @@
 ---
 name: dev-capsem-doctor
-description: The capsem-doctor in-VM diagnostic suite. Use when writing, running, or extending capsem-doctor tests, adding new diagnostic categories, debugging VM sandbox issues, or understanding what capsem-doctor validates. Covers all 11 test categories, how to run subsets, the conftest infrastructure, and how to add new tests.
+description: The capsem-doctor in-VM diagnostic suite. Use when writing, running, or extending doctor tests, or debugging VM sandbox issues.
 ---
 
 # capsem-doctor

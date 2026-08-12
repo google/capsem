@@ -1,6 +1,6 @@
 ---
 name: dev-testing-python
-description: Python test infrastructure for the capsem-builder package. Use when running Python tests, checking coverage, debugging test failures, working with golden fixtures, or generating schemas. Covers pytest config, coverage floors, cross-language conformance tests, and the schema generation pipeline.
+description: Python test infrastructure for capsem-builder. Use when running Python tests, checking coverage, or working with golden fixtures and generated schemas.
 ---
 
 # Python Testing (capsem-builder)

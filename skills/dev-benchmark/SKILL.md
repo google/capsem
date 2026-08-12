@@ -1,6 +1,6 @@
 ---
 name: dev-benchmark
-description: Capsem benchmarking with capsem-bench and capsem-bench-rs. Use when running benchmarks, adding new benchmark categories, interpreting results, or investigating performance regressions. Covers benchmark categories (disk, rootfs, storage, startup, protocol/http, snapshot, all), the JSON output format, and how to add new benchmarks.
+description: Benchmarking with capsem-bench and capsem-bench-rs. Use when running benchmarks, adding a category, interpreting results, or investigating a performance regression.
 ---
 
 # Benchmarking

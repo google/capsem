@@ -1,6 +1,6 @@
 ---
 name: dev-testing
-description: Capsem testing policy and workflow. Use whenever running tests, writing new tests, or verifying changes work. Covers focused native tests, developer smoke feedback, the single public full release gate, TDD red-green-refactor, adversarial security testing, coverage policy, and mandatory end-to-end VM validation. For VM-specific tests see dev-testing-vm, for hypervisor tests see dev-testing-hypervisor, for frontend tests see dev-testing-frontend.
+description: Capsem testing policy and workflow. Use whenever running or writing tests. For VM, hypervisor, frontend, or Python specifics see the dev-testing-* skills.
 ---
 
 # Testing

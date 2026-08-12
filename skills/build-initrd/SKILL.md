@@ -1,6 +1,6 @@
 ---
 name: build-initrd
-description: Initrd repack and guest binary management for Capsem. Use when adding new guest binaries, modifying capsem-init, changing the initrd repack process, or understanding which binaries get injected at boot vs baked into the rootfs. Covers the fast iteration loop, binary list, and how to add new guest binaries.
+description: Initrd repack and guest binary management. Use when adding or changing a guest binary, modifying capsem-init, or iterating on the initrd without a full rebuild.
 ---
 
 # Initrd Repack

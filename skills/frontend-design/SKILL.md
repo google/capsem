@@ -1,6 +1,6 @@
 ---
 name: frontend-design
-description: Capsem frontend design system. Use when building UI components, styling views, working with the design system, choosing colors, or understanding the component library. Covers the stack (Astro 7 + Svelte 5 + Tailwind v4 + Capsem-owned semantic CSS), color scheme, Svelte 5 rune patterns, data fetching, and code reuse policy.
+description: Capsem frontend design system. Use when building UI components, styling views, choosing colors, or working with Svelte 5 runes and the component library.
 ---
 
 # Frontend Design

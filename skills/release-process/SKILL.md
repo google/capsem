@@ -1,6 +1,6 @@
 ---
 name: release-process
-description: Capsem's Python-owned release process, orthogonal binary/profile CI, Apple code signing, notarization, channel deployment, diagnostic-continuation boundary, and post-release verification. Use for release commands, release failures, manifests, publication workflows, or any change that could affect what qualifies or ships.
+description: Capsem's release process: orthogonal binary/profile CI, signing, notarization, channel deployment. Use for release commands, failures, manifests, or anything affecting what ships.
 ---
 
 # Release Process

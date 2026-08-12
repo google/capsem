@@ -1,6 +1,6 @@
 ---
 name: dev-capsem
-description: Capsem project overview and navigation. Use when you need to understand what Capsem is, how the codebase is organized, which crate does what, or which skill to consult for a specific area. This is the map of the project -- start here when orienting on any task.
+description: Capsem project overview and navigation: what it is, how the crates fit, which skill owns what. Start here when orienting on any task.
 ---
 
 # Capsem

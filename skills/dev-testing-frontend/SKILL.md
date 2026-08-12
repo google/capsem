@@ -1,6 +1,6 @@
 ---
 name: dev-testing-frontend
-description: Testing the Capsem frontend (Astro 7 + Svelte 5 + Tailwind v4 + Capsem-owned semantic CSS). Use when writing frontend tests, running type checks, debugging UI issues, or doing visual verification with Chrome DevTools MCP. Covers vitest, svelte-check, astro check, mock mode, and systematic visual verification workflow.
+description: Testing the Capsem frontend. Use when writing frontend tests, running type checks, or doing visual verification with Chrome DevTools MCP.
 ---
 
 # Frontend Testing

@@ -1,6 +1,6 @@
 ---
 name: build-images
-description: Building Capsem VM images from profile-owned inputs. Use when working with profile package files, Docker templates, kernel builds, rootfs builds, capsem-admin image builds, or the capsem-builder backend. Covers the profile-derived build rail, multi-arch assets, build ledgers, OBOMs, Dockerfile templates, and backend internals.
+description: Building Capsem VM images from profile-owned inputs. Use when working on profile package files, Dockerfile templates, kernel or rootfs builds, or the capsem-builder backend.
 ---
 
 # Building VM Images

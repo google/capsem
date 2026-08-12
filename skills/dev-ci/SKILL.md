@@ -1,6 +1,6 @@
 ---
 name: dev-ci
-description: CI triage and red-gate response discipline. Use when any GitHub Actions run is red, when pr-gate blocks a PR, when deciding whether to rerun a failed workflow, when asked about CI health or history, or before merging anything while a gate is failing. Also use when a workflow file under .github/workflows/ is being edited. Covers stop-the-line policy, named-diagnosis-before-rerun, failure classification, and the job map of ci.yaml.
+description: CI triage and red-gate discipline. Use when an Actions run is red, pr-gate blocks a PR, you are deciding whether to rerun, or you are editing .github/workflows/.
 ---
 
 # CI Triage and Red-Gate Discipline

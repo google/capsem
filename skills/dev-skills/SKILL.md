@@ -1,6 +1,6 @@
 ---
 name: dev-skills
-description: How AI agent skills work -- discovery, loading, triggering, format, and organization. Use when building Capsem's skills system, implementing skill discovery for guest AI agents, or understanding how Claude Code, Gemini CLI, Codex, and Cursor consume SKILL.md files. Covers the SKILL.md format, discovery mechanics, progressive disclosure, naming conventions, and lessons learned from setting up this project's skills.
+description: How agent skills work: discovery, loading, triggering, format. Use when building Capsem's skills system or changing how agents consume SKILL.md files.
 ---
 
 # AI Agent Skills System

@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Annotated
 
-from pydantic import StringConstraints, model_validator
+from pydantic import PositiveInt, StringConstraints, model_validator
 
 from .configschema import Strict
 
@@ -167,6 +167,8 @@ class AuditsConfig(Strict):
     source_syntax: str
     hardcoded_selections: str
     skills_dir: str
+    max_skill_description_chars: PositiveInt
+    max_skill_body_lines: PositiveInt
 
 
 class WebSurfacesConfig(Strict):

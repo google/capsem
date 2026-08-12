@@ -1,6 +1,6 @@
 ---
 name: dev-setup
-description: Setting up a Capsem development environment from scratch. Use when onboarding a new developer, setting up a new machine, or troubleshooting environment issues. Covers prerequisites, first-time setup, tool installation, VM asset builds, container runtime configuration (Colima/Docker memory and CPU requirements), and verification steps.
+description: Setting up a Capsem dev environment from scratch. Use when onboarding, provisioning a machine, or troubleshooting environment and container-runtime issues.
 ---
 
 # Developer Setup
