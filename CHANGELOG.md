@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   joins `broad_ignores` so the suite has one owner rather than two, and
   `tests/citadel/test_guard_scheduling.py` fails if it is ever moved back
   behind the expensive work.
+- Every Citadel guard now states its reasoning in the failure message rather
+  than only in a docstring. `test_package_architecture_boundary.py` had neither
+  a docstring nor a rationale, and its checks were bare asserts -- a failing
+  `assert "fn deb_graph_arch" not in updater` said nothing about why that
+  bridge between `PackageArchitecture` (amd64) and `Architecture` (x86_64) is
+  forbidden. It now collects named violations with reasons in the style
+  `test_db_boundary.py` established, behind
+  `ARCHITECTURE_DOMAIN_RATIONALE`.
 
 ### Changed
 
