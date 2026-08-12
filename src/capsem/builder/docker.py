@@ -495,6 +495,7 @@ def materialize_asset_dependencies(
             network=config.build.materialize_network,
             build_args={
                 "BASE": arch.base_image,
+                "TRUSTSTORE_IMAGE": arch.rust_builder_base_image,
                 "INPUT_IDENTITY": tag,
             },
             ci_cache=is_ci(),

@@ -216,6 +216,23 @@ def test_declared_asset_materializers_match_the_exact_mutator_inventory() -> Non
     assert actual == expected
 
 
+def test_every_debian_asset_materializer_bootstraps_https_trust_before_apt() -> None:
+    materializers = (
+        BUILD.asset_tools.dockerfile,
+        f"config/docker/{BUILD.asset_dependencies.kernel_template}",
+        f"config/docker/{BUILD.asset_dependencies.rootfs_template}",
+    )
+
+    for relative in materializers:
+        source = (PROJECT_ROOT / relative).read_text(encoding="utf-8")
+        assert "ARG TRUSTSTORE_IMAGE" in source, relative
+        trust = source.index(
+            "COPY --from=truststore /etc/ssl/certs/ca-certificates.crt "
+            "/etc/ssl/certs/ca-certificates.crt"
+        )
+        assert trust < source.index("apt-get"), relative
+
+
 def test_guest_cross_compiler_packages_are_exact_and_input_keyed() -> None:
     settings = BUILD.guest_rust_builder
     assert settings.cross_packages == ("clang21=21.1.2-r2",)

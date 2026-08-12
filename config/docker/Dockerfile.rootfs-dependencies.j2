@@ -2,10 +2,14 @@
 # BASE is required; the gate passes the exact platform child and owns the sole caller.
 # Materialize every third-party rootfs dependency before first-party assembly.
 ARG BASE
+ARG TRUSTSTORE_IMAGE
+FROM ${TRUSTSTORE_IMAGE} AS truststore
 FROM ${BASE}
 
 ARG INPUT_IDENTITY
 LABEL org.capsem.asset-dependencies.input-key="${INPUT_IDENTITY}"
+
+COPY --from=truststore /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 RUN set -eux; \
     rm -f /etc/apt/sources.list.d/*; \

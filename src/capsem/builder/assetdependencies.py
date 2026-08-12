@@ -23,6 +23,7 @@ def image_tag(
         arch_name,
         template,
         config.build.architectures[arch_name].docker_platform,
+        config.build.architectures[arch_name].rust_builder_base_image,
         config.manifest.name if config.manifest else "unscoped",
         config.manifest.version if config.manifest else "unversioned",
     ):

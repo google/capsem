@@ -607,6 +607,26 @@ def test_asset_dependency_materializers_replace_mutable_apt_sources(
     assert rendered.index("rm -f /etc/apt/sources.list.d/*") < rendered.index("apt-get -o")
 
 
+@pytest.mark.parametrize("template", ["rootfs", "kernel"])
+def test_asset_dependency_materializers_bootstrap_https_trust_before_apt(
+    real_config,
+    template,
+):
+    rendered = render_dockerfile(
+        f"Dockerfile.{template}-dependencies.j2",
+        real_config,
+        "arm64",
+    )
+
+    trust_stage = rendered.index("FROM ${TRUSTSTORE_IMAGE} AS truststore")
+    trust_copy = rendered.index(
+        "COPY --from=truststore /etc/ssl/certs/ca-certificates.crt "
+        "/etc/ssl/certs/ca-certificates.crt"
+    )
+    update = rendered.index("apt-get -o")
+    assert trust_stage < trust_copy < update
+
+
 def test_asset_dependency_identity_changes_with_every_executable_input(real_config):
     original = _asset_dependency_tag(real_config, "arm64", "rootfs")
     script = Path(real_config.profile_build_script_path)
@@ -617,6 +637,20 @@ def test_asset_dependency_identity_changes_with_every_executable_input(real_conf
         real_config, "arm64", "kernel", b"first rendered materializer"
     ) != assetdependencies.image_tag(
         real_config, "arm64", "kernel", b"second rendered materializer"
+    )
+
+    arch = real_config.build.architectures["arm64"]
+    changed_arch = arch.model_copy(
+        update={"rust_builder_base_image": "registry.example/rust@sha256:" + "f" * 64}
+    )
+    changed_build = real_config.build.model_copy(
+        update={"architectures": {**real_config.build.architectures, "arm64": changed_arch}}
+    )
+    changed_config = real_config.model_copy(update={"build": changed_build})
+    assert assetdependencies.image_tag(
+        real_config, "arm64", "kernel", b"same rendered materializer"
+    ) != assetdependencies.image_tag(
+        changed_config, "arm64", "kernel", b"same rendered materializer"
     )
 
 
@@ -674,6 +708,7 @@ def test_asset_dependency_materializer_is_the_only_network_open_build(
         "network": BuildNetwork.DEFAULT,
         "build_args": {
             "BASE": real_config.build.architectures["arm64"].base_image,
+            "TRUSTSTORE_IMAGE": real_config.build.architectures["arm64"].rust_builder_base_image,
             "INPUT_IDENTITY": tag,
         },
         "ci_cache": False,
