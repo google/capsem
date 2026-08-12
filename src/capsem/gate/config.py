@@ -56,14 +56,13 @@ from .harnessschema import (
     DiskConfig,
     Exclusive,
     ExecutionConfig,
-    LintConfig,
-    LintSurface,
     LocksConfig,
     PrefixConfig,
     RunLogConfig,
     SandboxConfig,
     WorkspaceConfig,
 )
+from .lintschema import LintConfig, LintSurface
 from .productschema import (
     AptSnapshotConfig,
     ArtifactsConfig,
