@@ -21,10 +21,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = gate_config.load(PROJECT_ROOT)
 MODULES = CONFIG.modules
 
-#: The steps that between them have to cover the whole Rust surface.
-CLIPPY_STEP = "fast.clippy"
-COVERAGE_STEP = "static.rust-coverage"
-DOCTEST_STEP = "static.rust-doctests"
+#: Read from the one inventory rather than restated here. `[[lint_surfaces]]`
+#: already records which steps must check each kind of file; a second list in
+#: this file would be a second place to keep in step, and the first thing that
+#: happens to a second list is that it stops matching.
+RUST = next(surface for surface in CONFIG.lint_surfaces if surface.name == "rust")
+CHECKERS = (*RUST.enforced_by, *RUST.checked_by)
+CLIPPY_STEP = RUST.enforced_by[0]
 
 RUST_COVERAGE_RATIONALE = """\
 Every Rust target must be linted, and every Rust test must be run by something.
@@ -108,6 +111,10 @@ def test_doctests_are_run_by_something() -> None:
     if not carrying:
         pytest.skip("no doc comments carry code blocks; nothing to run")
 
+    assert any("doctest" in step for step in CHECKERS), (
+        RUST_COVERAGE_RATIONALE
+        + "\nthe rust surface names no doctest step in [[lint_surfaces]]"
+    )
     assert MODULES.rust_doctests, (
         RUST_COVERAGE_RATIONALE
         + f"\n{len(carrying)} file(s) carry doctests and no command runs them: "
@@ -129,7 +136,7 @@ def test_clippy_covers_every_target() -> None:
         )
 
 
-@pytest.mark.parametrize("label", [CLIPPY_STEP, COVERAGE_STEP, DOCTEST_STEP])
+@pytest.mark.parametrize("label", CHECKERS)
 def test_each_checker_is_in_the_plan(label: str) -> None:
     """A configured command that no plan builds is a check nobody runs."""
     assert label in _labels(), (

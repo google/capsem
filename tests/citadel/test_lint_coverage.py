@@ -94,6 +94,18 @@ def test_the_surface_is_checked_by_a_step_that_exists(surface) -> None:
 
 
 @pytest.mark.parametrize("surface", SURFACES, ids=[s.name for s in SURFACES])
+def test_every_late_checker_also_exists(surface) -> None:
+    """`checked_by` is for checks that cannot be early, not for checks that
+    are absent. Late is acceptable; missing is not."""
+    labels = _plan_labels()
+    missing = [step for step in surface.checked_by if step not in labels]
+    assert not missing, (
+        LINT_COVERAGE_RATIONALE
+        + f"\n{surface.name} names checkers no command builds: {missing}"
+    )
+
+
+@pytest.mark.parametrize("surface", SURFACES, ids=[s.name for s in SURFACES])
 def test_the_surface_is_checked_before_the_expensive_work(surface) -> None:
     late = [step for step in surface.enforced_by if not step.startswith(FAST_PHASES)]
     assert not late, (

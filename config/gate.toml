@@ -1509,6 +1509,11 @@ enforced_by = ["fast.audit.source-syntax"]
 name = "rust"
 pattern = "*.rs"
 enforced_by = ["fast.clippy"]
+# Linting is not testing. Clippy answers in the fast phase; the two runners
+# cannot, because both need a compiled workspace. Nextest owns every native
+# target and structurally cannot own doctests -- see `rustinventory` -- so
+# dropping either line leaves a category of Rust code that nothing executes.
+checked_by = ["static.rust-coverage", "static.rust-doctests"]
 
 [[lint_surfaces]]
 name = "shell"

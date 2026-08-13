@@ -92,3 +92,18 @@ class LintSurface(Strict):
     name: str
     pattern: str
     enforced_by: tuple[str, ...]
+    """Steps that must exist *and* answer in the fast phase.
+
+    A lint needs no build, so a lint that reports after the asset build is a
+    lint that reported after the expensive work it should have preceded.
+    """
+
+    checked_by: tuple[str, ...] = ()
+    """Steps that must exist, in any phase.
+
+    For checks that legitimately cannot be early. Rust tests need a compiled
+    workspace, so they belong beside the coverage run and not beside Ruff --
+    but "runs late" and "does not run at all" are different facts, and only
+    the first one is acceptable. Without this the inventory recorded which
+    surfaces were *linted* and said nothing about which were *tested*.
+    """

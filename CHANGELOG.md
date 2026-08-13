@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `[[lint_surfaces]]` gained `checked_by`, so the inventory covers checks that
+  cannot run early instead of only lints that can. The Rust surface previously
+  recorded `fast.clippy` alone -- it mapped which files were *linted* and said
+  nothing about which were *tested*, while the two runners were proven by a
+  separate hardcoded list in a guard. One map now, read by both guards.
+
 - `CLAUDE.md` and `GEMINI.md` are symlinks to `AGENTS.md`, which is now the one
   agent contract. They were three files whose section lists had drifted almost
   disjoint: Claude was never told about the bounded-diagnostics wrapper, the
