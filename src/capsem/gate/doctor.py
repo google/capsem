@@ -23,7 +23,7 @@ from . import config as gate_config
 from .actions import Call
 from .command import GateCommand
 from .errors import GateError
-from .execution import step
+from .execution import Kind, Speed, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .proc import Runner
@@ -153,6 +153,8 @@ class DoctorCommand(
                         effects=machine_effects(Effect.PROCESS),
                     ),
                 ),
+                kind=Kind.STATIC_TEST,
+                speed=Speed.FAST,
             )
         )
         return plan

@@ -18,7 +18,7 @@ from .actions import Call
 from .assetlanes import discover_profiles, lane_assets
 from .assets import AssetGate
 from .command import GateCommand
-from .execution import step
+from .execution import Kind, Needs, Speed, step
 from .imagebases import (
     MaterializeAssetTools,
     MaterializeRustBuilders,
@@ -73,6 +73,9 @@ def fragment(plan, config, *, after: tuple = ()):
             MaterializeAssetTools(),
             contends=exclusive,
             carry_checks=(RequireRustBuilders(rust_builders), RequireAssetTools()),
+            kind=Kind.PACKAGE,
+            needs=frozenset({Needs.DOCKER, Needs.DISK}),
+            speed=Speed.SLOW,
         ),
         after=after,
     )
@@ -100,6 +103,9 @@ def fragment(plan, config, *, after: tuple = ()):
                     ),
                 ),
                 contends=shared,
+                kind=Kind.PACKAGE,
+                needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                speed=Speed.SLOW,
             ),
             after=(dependencies,),
         )
@@ -119,6 +125,9 @@ def fragment(plan, config, *, after: tuple = ()):
                 ),
             ),
             contends=exclusive,
+            kind=Kind.PACKAGE,
+            needs=frozenset({Needs.DOCKER, Needs.DISK}),
+            speed=Speed.SLOW,
         ),
         after=lanes,
     )
@@ -144,6 +153,9 @@ def fragment(plan, config, *, after: tuple = ()):
                 ),
             ),
             contends=exclusive,
+            kind=Kind.PACKAGE,
+            needs=frozenset({Needs.DOCKER, Needs.DISK}),
+            speed=Speed.SLOW,
         ),
         after=(packed,),
     )

@@ -18,7 +18,7 @@ from .actions import Call
 from .command import GateCommand
 from .context import Context
 from .errors import GateError
-from .execution import step
+from .execution import Kind, Needs, Speed, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .runhistory import read, runs
@@ -68,6 +68,9 @@ class RunsCommand(GateCommand, name="runs", help="list recorded gate runs, or ex
                         effects=machine_effects(Effect.FILESYSTEM),
                     ),
                 ),
+                kind=Kind.STATIC_TEST,
+                needs=frozenset({Needs.DISK}),
+                speed=Speed.FAST,
             )
         )
         return plan

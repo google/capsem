@@ -9,7 +9,7 @@ from pathlib import PurePosixPath
 from .actions import Run
 from .config import GateConfig
 from .errors import GateError
-from .execution import Step, step
+from .execution import Kind, Needs, Speed, Step, step
 
 
 class DependencyOperation(StrEnum):
@@ -41,6 +41,9 @@ def dependency_step(
         *materialize_actions(config, selected_profiles, selected_arches, selected),
         contends=(config.exclusive("docker_daemon"),),
         carry_checks=require_actions(config, selected_profiles, selected_arches, selected),
+        kind=Kind.PACKAGE,
+        needs=frozenset({Needs.DOCKER, Needs.DISK}),
+        speed=Speed.SLOW,
     )
 
 

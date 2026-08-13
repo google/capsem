@@ -19,7 +19,7 @@ from .actions import Run
 from .buildschema import SmokeGroup
 from .command import GateCommand
 from .config import GateConfig
-from .execution import Step, step
+from .execution import Kind, Needs, Speed, Step, step
 from .lifecycle import Resource
 from .plan import Plan
 from .proc import Runner
@@ -52,6 +52,9 @@ def _group(config: GateConfig, group: SmokeGroup, *, serial: bool) -> Step:
         suite.label,
         Run(argv, env={settings.run_id_variable: f"smoke-{group.name}"}),
         contends=suite.contends,
+        kind=Kind.CAPSEM,
+        needs=frozenset({Needs.VM, Needs.KVM, Needs.DISK}),
+        speed=Speed.SLOW,
     )
 
 
@@ -77,7 +80,11 @@ class SmokeCommand(
         config = self._config
         base = config.suites.pytest.base_profile
 
-        checked = plan.add(step("doctor", Run(config.smoke.doctor)))
+        checked = plan.add(step("doctor", Run(config.smoke.doctor),
+            kind=Kind.CAPSEM,
+            needs=frozenset({Needs.VM, Needs.KVM, Needs.DISK}),
+            speed=Speed.SLOW,
+        ))
         injection = plan.add(vmproofs.injection(config, profile=base), after=(checked,))
         integration = plan.add(vmproofs.integration(config, profile=base), after=(injection,))
 

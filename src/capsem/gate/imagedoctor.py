@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .actions import Call, Run
 from .config import GateConfig
-from .execution import Step, step
+from .execution import Kind, Speed, Step, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 
 
@@ -27,4 +27,6 @@ def doctor(config: GateConfig) -> Step:
             ["bash", config.doctor.common_script],
             env=dict(config.imagebuild.doctor_skips),
         ),
+        kind=Kind.STATIC_TEST,
+        speed=Speed.FAST,
     )

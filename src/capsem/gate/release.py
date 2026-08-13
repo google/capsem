@@ -16,7 +16,7 @@ from .candidate import CompleteGate
 from .command import GateCommand
 from .config import GateConfig
 from .errors import GateError
-from .execution import step
+from .execution import Kind, Needs, Speed, step
 from .fileactions import MakeDir
 from .plan import Plan
 from .sourcecommit import SourceCommit
@@ -96,6 +96,9 @@ class ReleaseBinariesCommand(
                     root=checkout,
                     outside_sandbox=True,
                 ),
+                kind=Kind.STATIC_TEST,
+                needs=frozenset({Needs.NETWORK}),
+                speed=Speed.FAST,
             )
         )
         prepared = plan.add(
@@ -109,6 +112,8 @@ class ReleaseBinariesCommand(
                     outside_sandbox=True,
                 ),
                 MakeDir(config.path(settings.preflight_dir)),
+                kind=Kind.STATIC_TEST,
+                speed=Speed.FAST,
             ),
             after=(checked,),
         )
@@ -127,6 +132,9 @@ class ReleaseBinariesCommand(
                     settings.channel_source,
                     outside_sandbox=True,
                 ),
+                kind=Kind.STATIC_TEST,
+                needs=frozenset({Needs.NETWORK}),
+                speed=Speed.FAST,
             ),
             after=(prepared,),
         )
@@ -142,6 +150,9 @@ class ReleaseBinariesCommand(
                     root=checkout,
                     outside_sandbox=True,
                 ),
+                kind=Kind.PUBLISH,
+                needs=frozenset({Needs.NETWORK}),
+                speed=Speed.FAST,
             ),
             after=(gate,),
         )
@@ -155,6 +166,9 @@ class ReleaseBinariesCommand(
                     root=checkout,
                     outside_sandbox=True,
                 ),
+                kind=Kind.PUBLISH,
+                needs=frozenset({Needs.NETWORK}),
+                speed=Speed.SLOW,
             ),
             after=(published,),
         )
@@ -208,6 +222,9 @@ class ReleaseProfileCommand(
                     outside_sandbox=True,
                 ),
                 MakeDir(config.path(settings.preflight_dir)),
+                kind=Kind.STATIC_TEST,
+                needs=frozenset({Needs.NETWORK}),
+                speed=Speed.FAST,
             )
         )
         gate = _gate(plan, config, qualification=self.qualification, after=(checked,))
@@ -222,6 +239,9 @@ class ReleaseProfileCommand(
                     root=checkout,
                     outside_sandbox=True,
                 ),
+                kind=Kind.PUBLISH,
+                needs=frozenset({Needs.NETWORK}),
+                speed=Speed.FAST,
             ),
             after=(gate,),
         )
@@ -245,6 +265,9 @@ class ReleaseProfileCommand(
                     cwd=checkout,
                     outside_sandbox=True,
                 ),
+                kind=Kind.PUBLISH,
+                needs=frozenset({Needs.NETWORK}),
+                speed=Speed.SLOW,
             ),
             after=(published,),
         )

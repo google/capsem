@@ -29,7 +29,7 @@ from .config import GateConfig
 from .context import Context
 from .docker import Docker
 from .errors import GateError
-from .execution import Step, step
+from .execution import Kind, Needs, Speed, Step, step
 from .filesystem import make_dir
 from .plan import Plan
 from .storage import Storage
@@ -208,11 +208,19 @@ def lane(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Ste
     already run before any resource is held.
     """
     warmed = plan.add(
-        step("warm-base", WarmBase(), contends=(config.exclusive("docker_daemon"),)),
+        step("warm-base", WarmBase(), contends=(config.exclusive("docker_daemon"),),
+            kind=Kind.COMPILE,
+            needs=frozenset({Needs.DOCKER, Needs.DISK}),
+            speed=Speed.SLOW,
+        ),
         after=after,
     )
     return plan.add(
-        step("linux-rust", RunLane(), contends=(config.exclusive("docker_daemon"),)),
+        step("linux-rust", RunLane(), contends=(config.exclusive("docker_daemon"),),
+            kind=Kind.COMPILE,
+            needs=frozenset({Needs.DOCKER, Needs.DISK}),
+            speed=Speed.SLOW,
+        ),
         after=(warmed,),
     )
 
@@ -235,6 +243,9 @@ class WarmCommand(
                 "warm-base",
                 WarmBase(),
                 contends=(self._config.exclusive("docker_daemon"),),
+                kind=Kind.COMPILE,
+                needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                speed=Speed.SLOW,
             ),
             after=(built,),
         )

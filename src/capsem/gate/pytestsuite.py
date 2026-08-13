@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 
 from .actions import Run
 from .config import GateConfig
-from .execution import Kind, Speed, Step, step
+from .execution import Kind, Needs, Speed, Step, step
 from .harnessschema import Exclusive
 
 
@@ -95,6 +95,9 @@ class Suite:
             self.label,
             Run(self.argv(config), env=self.environment(config)),
             contends=self.contends,
+            kind=Kind.UNIT_TEST,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.SLOW,
         )
 
 

@@ -7,18 +7,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from . import config as gate_config
-from . import hostimage, installbuilder, snapshot
-from .actions import Call
-from .command import GateCommand
+from . import installbuilder, snapshot
 from .config import GateConfig
 from .docker import Docker
 from .errors import GateError
-from .execution import Step, step
 from .imageidentity import exact_image_id, exact_image_reference, require_input_key
 from .invocation import ConsoleMode
-from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
-from .outside import Outside
-from .plan import Plan
 from .proc import Runner
 from .storage import Storage
 
@@ -184,116 +178,3 @@ def require_local_image(runner: Runner, config: GateConfig) -> str:
     )
     runner.note(f"Using install qualification image {tag}, exact child {image_id}")
     return tag
-
-
-def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
-    """Expose the sole egress edge and both sealed phases in the gate graph."""
-    built = hostimage.fragment(plan, config, after=after)
-
-    capacity = plan.shared(
-        step(
-            _step_label(InstallImageStep.CAPACITY),
-            Call(
-                "reserve disk for the install helper and exact source image",
-                lambda context: Storage(context.runner).ensure_space("install-preflight"),
-                justification=CallJustification(
-                    kind=OpaqueKind.RUNTIME_DERIVED,
-                    reason="the storage policy measures and reserves Docker capacity",
-                    effects=machine_effects(Effect.PROCESS, Effect.FILESYSTEM, Effect.HOST_STATE),
-                ),
-            ),
-            contends=(config.exclusive("docker_daemon"),),
-        ),
-        after=(built, *after),
-    )
-
-    def materialize(context) -> None:
-        identity = installbuilder.materialize(context.runner, context.config)
-        context.journal.note(
-            f"install helper: input key {identity.input_key}; exact image {identity.image_id}; "
-            f"build reference {identity.image_reference}"
-        )
-
-    materialized = plan.shared(
-        step(
-            _step_label(InstallImageStep.MATERIALIZE),
-            Outside(
-                Call(
-                    "materialize locked install qualification dependencies",
-                    materialize,
-                    justification=CallJustification(
-                        kind=OpaqueKind.RUNTIME_DERIVED,
-                        reason="the exact host-builder child and helper input key resolve at run time",
-                        effects=machine_effects(
-                            Effect.PROCESS,
-                            Effect.FILESYSTEM,
-                            Effect.NETWORK,
-                            Effect.HOST_STATE,
-                        ),
-                    ),
-                )
-            ),
-            contends=(config.exclusive("docker_daemon"),),
-        ),
-        after=(capacity,),
-    )
-
-    def build(context) -> None:
-        helper = installbuilder.require_current(context.runner, context.config)
-        identity = build_source_image(context.runner, context.config, identity=helper)
-        context.journal.note(
-            f"install image: input key {identity.input_key}; exact image {identity.image_id}; "
-            f"build reference {identity.image_reference}"
-        )
-
-    image = plan.shared(
-        step(
-            _step_label(InstallImageStep.BUILD),
-            Call(
-                "build the network-denied install qualification image",
-                build,
-                justification=CallJustification(
-                    kind=OpaqueKind.RUNTIME_DERIVED,
-                    reason="helper identity and source digest resolve at run time",
-                    effects=machine_effects(Effect.PROCESS, Effect.FILESYSTEM, Effect.HOST_STATE),
-                ),
-            ),
-            contends=(config.exclusive("docker_daemon"),),
-        ),
-        after=(materialized,),
-    )
-
-    def smoke(context) -> None:
-        exact = require_local_image(context.runner, context.config)
-        _smoke(context.runner, context.config, image=exact)
-        context.journal.note(f"sealed install image smoke passed: exact image {exact}")
-
-    return plan.shared(
-        step(
-            _step_label(InstallImageStep.SMOKE),
-            Call(
-                "smoke the exact install image with networking denied",
-                smoke,
-                justification=CallJustification(
-                    kind=OpaqueKind.RUNTIME_DERIVED,
-                    reason="the exact source image ID is revalidated immediately before smoke",
-                    effects=machine_effects(Effect.PROCESS, Effect.HOST_STATE),
-                ),
-            ),
-            contends=(config.exclusive("docker_daemon"),),
-        ),
-        after=(image,),
-    )
-
-
-class InstallImageCommand(
-    GateCommand,
-    name="install-image",
-    help="materialize and smoke the sealed install qualification image",
-):
-    exclusive = True
-
-    def plan(self) -> Plan:
-        plan = Plan(self.name)
-        fragment(plan, self._config)
-        return plan

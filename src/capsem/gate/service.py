@@ -26,7 +26,7 @@ from .command import GateCommand
 from .config import GateConfig
 from .context import Context
 from .errors import GateError
-from .execution import step
+from .execution import Kind, Needs, Speed, step
 from .fileactions import Copy, MakeDir, Remove
 from .lifecycle import Resource
 from .plan import Plan
@@ -212,6 +212,9 @@ class EnsureServiceCommand(
                 # start, so a checkout that predates the change cannot keep
                 # booting from them.
                 *[Remove(target / name) for name in settings.retired_config],
+                kind=Kind.CAPSEM,
+                needs=frozenset({Needs.DISK}),
+                speed=Speed.FAST,
             )
         )
 
@@ -228,6 +231,9 @@ class EnsureServiceCommand(
                 ),
                 Remove(target / settings.home_profiles),
                 Copy(generated, target / settings.home_profiles),
+                kind=Kind.CAPSEM,
+                needs=frozenset({Needs.DISK}),
+                speed=Speed.FAST,
             ),
             after=(prepared,),
         )
@@ -237,6 +243,9 @@ class EnsureServiceCommand(
                 "start",
                 launch(config, home=target, run_dir=run_dir(config)),
                 WaitForSocket(),
+                kind=Kind.CAPSEM,
+                needs=frozenset({Needs.DISK}),
+                speed=Speed.FAST,
             ),
             after=(materialized,),
         )

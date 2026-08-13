@@ -11,17 +11,18 @@ from . import (
     host,
     hostpackage,
     install,
-    installimage,
+    installplan,
 )
 from .actions import Call, Script
 from .command import GateCommand
 from .config import GateConfig
 from .content import LocalInstallContent, ProfileContent
-from .execution import Step, step
+from .execution import Kind, Needs, Speed, Step, step
 from .opacity import CallJustification, OpaqueKind, machine_effects
 from .plan import Plan
 from .qualification import Qualification
-from .testmodules import InWorkspace, storagerelease
+from .staticmodule import storagerelease
+from .testmodules import InWorkspace
 
 
 class GlowupModule(
@@ -95,6 +96,9 @@ def _prove_pulled_package(
                     effects=machine_effects(),
                 ),
             ),
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
         ),
         after=after,
     )
@@ -149,6 +153,9 @@ def _glowup_step(
             env=dict.fromkeys(clear, ""),
         ),
         contends=(config.exclusive("docker_daemon"),),
+        kind=Kind.E2E,
+        needs=frozenset({Needs.DOCKER, Needs.DISK}),
+        speed=Speed.SLOW,
     )
 
 
@@ -202,13 +209,16 @@ def _build_and_prove(plan: Plan, phase, config: GateConfig, after: tuple) -> Ste
                         content.root,
                     ),
                     contends=(config.exclusive("apple_vz"),),
+                    kind=Kind.E2E,
+                    needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                    speed=Speed.SLOW,
                 ),
                 after=previous,
             ),
         )
 
     sbom = phase.add(hostpackage.sbom_step(config), after=previous)
-    exact_install_image = installimage.fragment(plan, config)
+    exact_install_image = installplan.fragment(plan, config)
     return phase.add(
         install.install_step(config, content=LocalInstallContent(content)),
         after=(sbom, exact_install_image),
