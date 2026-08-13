@@ -374,7 +374,7 @@ impl KvmFd {
 
     /// Check if a KVM extension/capability is supported.
     pub fn check_extension(&self, cap: u32) -> Result<i32> {
-        self.ioctl(KVM_CHECK_EXTENSION, cap as u64)
+        self.ioctl(KVM_CHECK_EXTENSION, u64::from(cap))
     }
 
     /// Get the size of the mmap region for vCPU fds.
@@ -510,7 +510,7 @@ impl VmFd {
             libc::ioctl(
                 self.fd.as_raw_fd(),
                 KVM_CREATE_VCPU as libc::c_ulong,
-                id as u64,
+                u64::from(id),
             )
         };
         if raw < 0 {

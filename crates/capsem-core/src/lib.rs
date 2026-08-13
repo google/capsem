@@ -102,7 +102,7 @@ pub fn create_virtiofs_session(session_dir: &Path, system_img_size_gb: u32) -> s
             .truncate(true)
             .mode(0o600)
             .open(&img_path)?;
-        file.set_len(system_img_size_gb as u64 * 1024 * 1024 * 1024)?;
+        file.set_len(u64::from(system_img_size_gb) * 1024 * 1024 * 1024)?;
     }
 
     std::fs::set_permissions(session_dir, std::fs::Permissions::from_mode(0o700))?;
@@ -110,7 +110,7 @@ pub fn create_virtiofs_session(session_dir: &Path, system_img_size_gb: u32) -> s
 }
 
 fn system_overlay_image_len(size_gb: u32) -> u64 {
-    size_gb as u64 * 1024 * 1024 * 1024
+    u64::from(size_gb) * 1024 * 1024 * 1024
 }
 
 /// Return true when a disk image already contains an ext4 superblock.

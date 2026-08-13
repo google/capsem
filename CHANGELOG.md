@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `clippy::cast_lossless` is denied, with its 116 sites converted. It is the
+  one member of the numeric-cast family that cannot be wrong -- it flags
+  `x as u64` where `u64::from(x)` is infallible -- so every fix is mechanical
+  and behaviour-preserving. Its three siblings (truncation, sign loss,
+  wrapping) are 607 sites that each need a judgement about range, and are being
+  taken a crate at a time rather than in a sweep.
+
 - Nine I/O buffers moved off the stack, and `clippy::large_stack_arrays` is
   denied. Three were a megabyte each -- half the 2 MB a spawned thread gets by
   default, in a single frame -- and two of those are on the self-update path,

@@ -122,7 +122,7 @@ impl VhostVsockDevice {
         ];
 
         let dev = Self {
-            guest_cid: guest_cid as u64,
+            guest_cid: u64::from(guest_cid),
             vhost_fd: Some(vhost_fd),
             kick_fds,
             call_fds,
@@ -213,7 +213,7 @@ impl VhostVsockDevice {
             // Set queue size
             let vring_state = VhostVringState {
                 index: i as u32,
-                num: queue.size as u32,
+                num: u32::from(queue.size),
             };
             ioctl
                 .call(
@@ -496,7 +496,7 @@ fn queue_used_idx(mem: &GuestMemoryRef, queue: &QueueConfig) -> Result<u32> {
         .gpa_to_host(queue.device_addr + 2)
         .context("vhost-vsock used ring idx GPA out of range")?;
     let idx = unsafe { u16::from_le(std::ptr::read_unaligned(ptr as *const u16)) };
-    Ok(idx as u32)
+    Ok(u32::from(idx))
 }
 
 fn queue_avail_idx(mem: &GuestMemoryRef, queue: &QueueConfig) -> Result<u32> {
@@ -504,7 +504,7 @@ fn queue_avail_idx(mem: &GuestMemoryRef, queue: &QueueConfig) -> Result<u32> {
         .gpa_to_host(queue.driver_addr + 2)
         .context("vhost-vsock avail ring idx GPA out of range")?;
     let idx = unsafe { u16::from_le(std::ptr::read_unaligned(ptr as *const u16)) };
-    Ok(idx as u32)
+    Ok(u32::from(idx))
 }
 
 /// Bridge vhost-vsock call eventfds into virtio-mmio interrupts.
@@ -945,7 +945,7 @@ fn physical_vsock_port(logical_port: u32, offset: u32) -> std::io::Result<u32> {
     let physical_port = logical_port.checked_add(offset).ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, "vsock port overflow")
     })?;
-    if physical_port > u16::MAX as u32 {
+    if physical_port > u32::from(u16::MAX) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "vsock port exceeds u16 range",

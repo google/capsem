@@ -175,7 +175,7 @@ pub async fn refresh_corp_config_if_stale(capsem_dir: PathBuf) {
 
     // Check TTL
     let age_secs = now_secs().saturating_sub(source.fetched_at);
-    let ttl_secs = source.refresh_interval_hours as u64 * 3600;
+    let ttl_secs = u64::from(source.refresh_interval_hours) * 3600;
     if age_secs < ttl_secs {
         return; // Not stale yet
     }

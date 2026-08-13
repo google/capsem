@@ -9,15 +9,15 @@ fn setup_queue(size: u16) -> (GuestMemory, u64, u64, u64) {
 
     // Place structures at offsets within guest RAM
     let desc_table_gpa = RAM_BASE;
-    let avail_ring_gpa = RAM_BASE + (size as u64) * 16; // after descriptor table
-    let used_ring_gpa = avail_ring_gpa + 6 + (size as u64) * 2; // after avail ring
+    let avail_ring_gpa = RAM_BASE + u64::from(size) * 16; // after descriptor table
+    let used_ring_gpa = avail_ring_gpa + 6 + u64::from(size) * 2; // after avail ring
 
     (mem, desc_table_gpa, avail_ring_gpa, used_ring_gpa)
 }
 
 // Helper: write a descriptor to guest memory
 fn write_desc(mem: &GuestMemory, desc_table_gpa: u64, index: u16, desc: &VirtqDesc) {
-    let offset = (desc_table_gpa - RAM_BASE) + (index as u64) * 16;
+    let offset = (desc_table_gpa - RAM_BASE) + u64::from(index) * 16;
     let mut data = [0u8; 16];
     data[0..8].copy_from_slice(&desc.addr.to_le_bytes());
     data[8..12].copy_from_slice(&desc.len.to_le_bytes());
@@ -38,12 +38,12 @@ fn write_avail_flags(mem: &GuestMemory, avail_ring_gpa: u64, flags: u16) {
 }
 
 fn write_used_event(mem: &GuestMemory, avail_ring_gpa: u64, size: u16, idx: u16) {
-    let offset = (avail_ring_gpa - RAM_BASE) + 4 + (size as u64) * 2;
+    let offset = (avail_ring_gpa - RAM_BASE) + 4 + u64::from(size) * 2;
     mem.write_at(offset, &idx.to_le_bytes()).unwrap();
 }
 
 fn read_avail_event(mem: &GuestMemory, used_ring_gpa: u64, size: u16) -> u16 {
-    let offset = (used_ring_gpa - RAM_BASE) + 4 + (size as u64) * 8;
+    let offset = (used_ring_gpa - RAM_BASE) + 4 + u64::from(size) * 8;
     let mut buf = [0u8; 2];
     mem.read_at(offset, &mut buf).unwrap();
     u16::from_le_bytes(buf)
@@ -56,7 +56,7 @@ fn write_avail_ring_entry(
     ring_index: u16,
     desc_idx: u16,
 ) {
-    let offset = (avail_ring_gpa - RAM_BASE) + 4 + (ring_index as u64) * 2;
+    let offset = (avail_ring_gpa - RAM_BASE) + 4 + u64::from(ring_index) * 2;
     mem.write_at(offset, &desc_idx.to_le_bytes()).unwrap();
 }
 
@@ -75,7 +75,7 @@ fn write_used_idx(mem: &GuestMemory, used_ring_gpa: u64, idx: u16) {
 
 // Helper: read used ring entry
 fn read_used_entry(mem: &GuestMemory, used_ring_gpa: u64, ring_index: u16) -> (u32, u32) {
-    let offset = (used_ring_gpa - RAM_BASE) + 4 + (ring_index as u64) * 8;
+    let offset = (used_ring_gpa - RAM_BASE) + 4 + u64::from(ring_index) * 8;
     let mut buf = [0u8; 8];
     mem.read_at(offset, &mut buf).unwrap();
     let id = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
@@ -454,7 +454,7 @@ fn avail_ring_wraps() {
             desc_gpa,
             i,
             &VirtqDesc {
-                addr: RAM_BASE + (i as u64) * 0x1000,
+                addr: RAM_BASE + u64::from(i) * 0x1000,
                 len: 64,
                 flags: 0,
                 next: 0,

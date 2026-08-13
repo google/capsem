@@ -141,7 +141,7 @@ fn generate_trace_id() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
-    let pid = std::process::id() as u64;
+    let pid = u64::from(std::process::id());
     // FxHash-style mixer -- cheap, deterministic, plenty of bit churn
     // for the "probably unique within this host" bar we need here.
     static MIX: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

@@ -89,7 +89,7 @@ impl DnsAnswerCache {
         let cap = NonZeroUsize::new(capacity.max(1)).expect("capacity > 0 enforced");
         Self {
             inner: Mutex::new(LruCache::new(cap)),
-            max_ttl: Duration::from_secs(max_ttl_secs.max(1) as u64),
+            max_ttl: Duration::from_secs(u64::from(max_ttl_secs.max(1))),
         }
     }
 
@@ -224,7 +224,7 @@ fn ttl_from_answer(answer_bytes: &[u8], max_ttl: Duration) -> Duration {
             .unwrap_or(MIN_TTL_SECS),
         _ => MIN_TTL_SECS,
     };
-    let clamped = answer_ttl.max(MIN_TTL_SECS) as u64;
+    let clamped = u64::from(answer_ttl.max(MIN_TTL_SECS));
     Duration::from_secs(clamped).min(max_ttl)
 }
 

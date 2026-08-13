@@ -37,7 +37,7 @@ fn test_handle_with_control(control: Arc<vcpu::VcpuControl>) -> KvmHandle {
 #[cfg(target_arch = "x86_64")]
 fn snapshot(id: u32) -> checkpoint::VcpuSnapshot {
     let regs = sys::KvmRegs {
-        rip: 0x1000 + id as u64,
+        rip: 0x1000 + u64::from(id),
         ..Default::default()
     };
     checkpoint::VcpuSnapshot {

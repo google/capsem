@@ -120,6 +120,12 @@ todo = "deny"
 unchecked_time_subtraction = "deny"   # panics on a backwards clock
 cast_ptr_alignment = "deny"           # undefined behaviour, not a style note
 large_stack_arrays = "deny"           # stack overflow, on a host that runs VMs
+# The one member of the numeric-cast family that cannot be wrong: it flags
+# `x as u64` where `u64::from(x)` is infallible, so every fix is mechanical and
+# behaviour-preserving. Its three siblings -- truncation, sign loss and
+# wrapping -- are 607 sites that each need a judgement about range, and are
+# being taken one crate at a time rather than in a sweep.
+cast_lossless = "deny"
 ptr_cast_constness = "deny"
 checked_conversions = "deny"
 stable_sort_primitive = "deny"

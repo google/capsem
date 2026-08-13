@@ -186,7 +186,7 @@ fn ttl_from_answer_min_clamps_to_min_secs() {
     // honor the min floor.
     let bytes = build_answer("example.com.", 5, [1, 2, 3, 4]);
     let ttl = ttl_from_answer(&bytes, Duration::from_secs(300));
-    assert_eq!(ttl, Duration::from_secs(MIN_TTL_SECS as u64));
+    assert_eq!(ttl, Duration::from_secs(u64::from(MIN_TTL_SECS)));
 }
 
 #[test]
@@ -209,7 +209,7 @@ fn ttl_from_answer_passes_through_in_range() {
 #[test]
 fn ttl_from_answer_garbage_falls_to_min_secs() {
     let ttl = ttl_from_answer(b"\xff\xff", Duration::from_secs(300));
-    assert_eq!(ttl, Duration::from_secs(MIN_TTL_SECS as u64));
+    assert_eq!(ttl, Duration::from_secs(u64::from(MIN_TTL_SECS)));
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn ttl_from_answer_no_answer_records_falls_to_min_secs() {
     msg.add_query(Query::query(n, RecordType::A));
     let bytes = msg.to_vec().unwrap();
     let ttl = ttl_from_answer(&bytes, Duration::from_secs(300));
-    assert_eq!(ttl, Duration::from_secs(MIN_TTL_SECS as u64));
+    assert_eq!(ttl, Duration::from_secs(u64::from(MIN_TTL_SECS)));
 }
 
 #[test]

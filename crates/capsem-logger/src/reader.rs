@@ -529,7 +529,7 @@ impl DbReader {
             .map(|v| {
                 let boxed: Box<dyn rusqlite::types::ToSql> = match v {
                     Value::Null => Box::new(rusqlite::types::Null),
-                    Value::Bool(b) => Box::new(*b as i64),
+                    Value::Bool(b) => Box::new(i64::from(*b)),
                     Value::Number(n) => {
                         if let Some(i) = n.as_i64() {
                             Box::new(i)

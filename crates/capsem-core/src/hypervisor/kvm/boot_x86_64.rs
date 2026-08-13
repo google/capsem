@@ -75,7 +75,7 @@ pub(super) fn load_kernel(mem: &GuestMemory, kernel_path: &Path) -> Result<Kerne
     let setup_sects = if kernel_data[SETUP_HEADER_OFFSET] == 0 {
         4u32
     } else {
-        kernel_data[SETUP_HEADER_OFFSET] as u32
+        u32::from(kernel_data[SETUP_HEADER_OFFSET])
     };
 
     // Protected-mode kernel starts after boot sector + setup sectors
@@ -236,7 +236,7 @@ const ACPI_CREATOR_ID: &[u8; 4] = b"CAPS";
 /// The application processors remain parked in KVM until Linux reads MADT,
 /// discovers their LAPIC IDs, and starts them through INIT/SIPI.
 pub(super) fn write_acpi_tables(mem: &GuestMemory, cpu_count: u32) -> Result<()> {
-    if cpu_count == 0 || cpu_count > u8::MAX as u32 {
+    if cpu_count == 0 || cpu_count > u32::from(u8::MAX) {
         bail!("ACPI MADT supports 1..=255 vCPUs, got {cpu_count}");
     }
 
@@ -474,8 +474,8 @@ pub(super) fn setup_cpuid(
 }
 
 fn configure_cpuid_topology(entries: &mut [sys::KvmCpuidEntry2], vcpu_id: u32, cpu_count: u32) {
-    let logical_processors = cpu_count.clamp(1, u8::MAX as u32);
-    let apic_id = vcpu_id.min(u8::MAX as u32);
+    let logical_processors = cpu_count.clamp(1, u32::from(u8::MAX));
+    let apic_id = vcpu_id.min(u32::from(u8::MAX));
 
     for entry in entries {
         match entry.function {
