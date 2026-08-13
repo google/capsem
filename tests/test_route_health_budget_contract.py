@@ -66,7 +66,7 @@ def test_cpu_accounting_delta_accepts_an_exact_budget_boundary() -> None:
 
     timing = RouteTiming(
         label="service /profiles/list",
-        samples_ms=[0.6] * HOT_ROUTE_MEASUREMENT_SAMPLES,
+        samples_ms=[1.0] * HOT_ROUTE_MEASUREMENT_SAMPLES,
         service_cpu_s=_cpu_delta_seconds(after=Decimal("1.12"), before=Decimal("1.0")),
         gateway_cpu_s=None,
     )
@@ -84,7 +84,7 @@ def test_cpu_accounting_delta_accepts_an_exact_budget_boundary() -> None:
 def test_cpu_accounting_delta_rejects_the_next_accounted_tick() -> None:
     timing = RouteTiming(
         label="service /profiles/list",
-        samples_ms=[0.6] * HOT_ROUTE_MEASUREMENT_SAMPLES,
+        samples_ms=[1.0] * HOT_ROUTE_MEASUREMENT_SAMPLES,
         service_cpu_s=_cpu_delta_seconds(after=Decimal("1.13"), before=Decimal("1.0")),
         gateway_cpu_s=None,
     )
