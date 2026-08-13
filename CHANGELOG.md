@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Python lint tooling now pins the last verified cross-platform `hadolint-py`
+  cohort. The newer macOS wheel matched its published digest but contained a
+  corrupt deflate stream; a fast Citadel guard now makes future tool-cohort
+  changes explicit instead of discovering them during hosted Mac setup.
+
 - Binary qualification no longer depends on changelog or `LATEST_RELEASE.md`
   bookkeeping. The remote immutable tag is the sole release transition, and
   the GitHub release title and notes record the full qualified source commit;
