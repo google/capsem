@@ -50,6 +50,7 @@ from .configschema import (
     Strict,
     VersionsConfig,
 )
+from .digestschema import BenchmarkRegressionConfig
 from .errors import GateError
 from .harnessschema import (
     BoundaryConfig,
@@ -98,6 +99,7 @@ class GateConfig(Strict):
     execution: ExecutionConfig
     locks: LocksConfig
     runlog: RunLogConfig
+    benchmark_regression: BenchmarkRegressionConfig
     disk: DiskConfig
     prefix: PrefixConfig
     sandbox: SandboxConfig

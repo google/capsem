@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fork and lifecycle performance gates now ratchet against the latest
+  checked-in benchmark evidence with a config-owned relative limit instead of
+  independently authored millisecond and MiB ceilings. The ratchet exposed and
+  fixed generic exponential polling that doubled VM delete latency; destructive
+  delete now claims the instance once and tears down disposable state directly,
+  while retained stop still drains filesystem and WAL owners.
+
+- Hot profile-status reads now share one immutable response cache and compare
+  exact manifest-byte identities before rebuilding it. This removes repeated
+  manifest parsing, validation, and allocation from UI polling without allowing
+  same-size edits to reuse stale status. Linux sparse-copy fallback also scans
+  allocated extents at filesystem-block granularity so isolated nonzero blocks
+  cannot expand into MiB-sized fork artifacts.
+
 - Exported guest root filesystems now persist npm's global prefix and keep its
   command directory extensible. Locked profile tools are bridged into a real
   `/opt/ai-clis/bin` directory instead of replacing it with a symlink, so a

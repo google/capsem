@@ -3,8 +3,8 @@
 Profiles individual operations: provision, exec-ready wait, exec, delete,
 fork, boot-from-image. Reports per-operation timings as a Rich table + JSON.
 
-Fork gates: fork < 500ms, image size <= 18MB after the package-survival probe,
-boot-from-image verifies data.
+Fork and lifecycle gates compare against the latest checked-in evidence using
+the config-owned regression factor. Boot-from-image also verifies data.
 """
 
 import contextlib
@@ -17,6 +17,13 @@ from pathlib import Path
 
 import pytest
 from helpers.benchmark_output import benchmark_output_dir
+from helpers.benchmark_ratchet import (
+    BenchmarkCategory,
+    BenchmarkMetric,
+    assert_within_evidence,
+    latest_checked_in_benchmark,
+    maximum_factor,
+)
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.package_probe import (
     FORK_PROBE_COMMAND,
@@ -46,10 +53,8 @@ def _save_benchmark(category, data):
         json.dump(data, f, indent=2)
     print(f"Benchmark saved to {out_path}")
 
+
 RUNS = 3
-OP_GATE_MS = 1200  # every individual operation must complete under this
-FORK_GATE_MS = 500
-IMAGE_SIZE_GATE_MB = 18
 
 
 def _percentile(values, pct):
@@ -129,10 +134,13 @@ def _run_fork_benchmark(client):
         install_fork_probe_with_service_client(client, src)
 
         # Write workspace file
-        client.post(f"/vms/{src}/files/write", {
-            "path": "/root/bench.txt",
-            "content": "fork-benchmark-marker",
-        })
+        client.post(
+            f"/vms/{src}/files/write",
+            {
+                "path": "/root/bench.txt",
+                "content": "fork-benchmark-marker",
+            },
+        )
 
         # Fork -- time it
         t0 = time.monotonic()
@@ -144,10 +152,15 @@ def _run_fork_benchmark(client):
 
         # Boot from fork -- time provision + exec-ready
         t0 = time.monotonic()
-        client.post("/vms/create", {
-            "name": dst, "from": img,
-            "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
-        })
+        client.post(
+            "/vms/create",
+            {
+                "name": dst,
+                "from": img,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+        )
         boot_provision_ms = (time.monotonic() - t0) * 1000
 
         t0 = time.monotonic()
@@ -167,9 +180,14 @@ def _run_fork_benchmark(client):
         )
 
         # Verify workspace survived
-        resp = client.post(f"/vms/{dst}/exec", {
-            "command": "cat /root/bench.txt", "timeout_secs": 10,
-        }, timeout=15)
+        resp = client.post(
+            f"/vms/{dst}/exec",
+            {
+                "command": "cat /root/bench.txt",
+                "timeout_secs": 10,
+            },
+            timeout=15,
+        )
         ws_survived = resp is not None and "fork-benchmark-marker" in resp.get("stdout", "")
 
         return {
@@ -204,7 +222,7 @@ def test_lifecycle_benchmark():
                 + result["delete_ms"]
             )
             print(
-                f"  run {i+1}: provision={result['provision_ms']:.0f}ms"
+                f"  run {i + 1}: provision={result['provision_ms']:.0f}ms"
                 f"  exec_ready={result['exec_ready_ms']:.0f}ms"
                 f"  exec={result['exec_ms']:.0f}ms"
                 f"  delete={result['delete_ms']:.0f}ms"
@@ -231,10 +249,11 @@ def test_lifecycle_benchmark():
         summary["operations"][op] = _summary([r[op] for r in runs])
 
     total_values = [
-        r["provision_ms"] + r["exec_ready_ms"] + r["exec_ms"] + r["delete_ms"]
-        for r in runs
+        r["provision_ms"] + r["exec_ready_ms"] + r["exec_ms"] + r["delete_ms"] for r in runs
     ]
     summary["operations"]["total_ms"] = _summary([round(v, 1) for v in total_values])
+    baseline = latest_checked_in_benchmark(PROJECT_ROOT, BenchmarkCategory.LIFECYCLE)
+    factor = maximum_factor(PROJECT_ROOT)
 
     # Rich table
     print()
@@ -257,16 +276,17 @@ def test_lifecycle_benchmark():
     # JSON output
     _save_benchmark("lifecycle", summary)
 
-    # Gate: every operation mean must be under OP_GATE_MS
-    for op, label in [
-        ("provision_ms", "provision"),
-        ("exec_ready_ms", "exec_ready"),
-        ("exec_ms", "exec"),
-        ("delete_ms", "delete"),
+    for metric, op in [
+        (BenchmarkMetric.LIFECYCLE_PROVISION, "provision_ms"),
+        (BenchmarkMetric.LIFECYCLE_READY, "exec_ready_ms"),
+        (BenchmarkMetric.LIFECYCLE_EXEC, "exec_ms"),
+        (BenchmarkMetric.LIFECYCLE_DELETE, "delete_ms"),
     ]:
-        mean = summary["operations"][op]["mean"]
-        assert mean < OP_GATE_MS, (
-            f"{label} mean {mean:.0f}ms exceeds {OP_GATE_MS}ms gate"
+        assert_within_evidence(
+            metric=metric,
+            current=summary["operations"][op]["mean"],
+            baseline=baseline,
+            factor=factor,
         )
 
 
@@ -282,7 +302,7 @@ def test_fork_benchmark():
             result = _run_fork_benchmark(client)
             runs.append(result)
             print(
-                f"  run {i+1}: fork={result['fork_ms']:.0f}ms"
+                f"  run {i + 1}: fork={result['fork_ms']:.0f}ms"
                 f"  size={result['image_size_mb']:.1f}MB"
                 f"  boot={result['boot_provision_ms']:.0f}ms"
                 f"  ready={result['boot_ready_ms']:.0f}ms"
@@ -314,43 +334,40 @@ def test_fork_benchmark():
             "max": mx(op),
             "values": [r[op] for r in runs],
         }
+    baseline = latest_checked_in_benchmark(PROJECT_ROOT, BenchmarkCategory.FORK)
+    factor = maximum_factor(PROJECT_ROOT)
 
     # Rich table
     print()
     print(f"Fork Benchmark  [{RUNS} runs]")
-    print(f"{'Metric':<20} {'Min':>10} {'Mean':>10} {'Max':>10} {'Gate':>10}")
-    print("-" * 65)
+    print(f"{'Metric':<20} {'Min':>10} {'Mean':>10} {'Max':>10}")
+    print("-" * 54)
     s = summary["fork"]["fork_ms"]
-    print(f"{'fork':<20} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms {s['max']:>9.0f}ms {FORK_GATE_MS:>9}ms")
+    print(f"{'fork':<20} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms {s['max']:>9.0f}ms")
     s = summary["fork"]["image_size_mb"]
-    print(f"{'image_size':<20} {s['min']:>9.1f}MB {s['mean']:>9.1f}MB {s['max']:>9.1f}MB {IMAGE_SIZE_GATE_MB:>9}MB")
+    print(f"{'image_size':<20} {s['min']:>9.1f}MB {s['mean']:>9.1f}MB {s['max']:>9.1f}MB")
     s = summary["fork"]["boot_provision_ms"]
-    print(f"{'boot_provision':<20} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms {s['max']:>9.0f}ms {OP_GATE_MS:>9}ms")
+    print(f"{'boot_provision':<20} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms {s['max']:>9.0f}ms")
     s = summary["fork"]["boot_ready_ms"]
-    print(f"{'boot_ready':<20} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms {s['max']:>9.0f}ms {OP_GATE_MS:>9}ms")
+    print(f"{'boot_ready':<20} {s['min']:>9.0f}ms {s['mean']:>9.0f}ms {s['max']:>9.0f}ms")
 
     # JSON output
     _save_benchmark("fork", summary)
 
-    # Gate: fork speed
-    fork_mean = summary["fork"]["fork_ms"]["mean"]
-    assert fork_mean < FORK_GATE_MS, (
-        f"fork mean {fork_mean:.0f}ms exceeds {FORK_GATE_MS}ms gate"
-    )
-
-    # Gate: image size (not a bloated 2GB sparse lie)
-    size_max = summary["fork"]["image_size_mb"]["max"]
-    assert size_max <= IMAGE_SIZE_GATE_MB, (
-        f"image size {size_max:.1f}MB exceeds {IMAGE_SIZE_GATE_MB}MB gate"
-    )
-
-    # Gate: boot-from-image speed
-    boot_mean = summary["fork"]["boot_provision_ms"]["mean"]
-    assert boot_mean < OP_GATE_MS, (
-        f"boot_provision mean {boot_mean:.0f}ms exceeds {OP_GATE_MS}ms gate"
-    )
+    for metric, op, statistic in [
+        (BenchmarkMetric.FORK_DURATION, "fork_ms", "mean"),
+        (BenchmarkMetric.FORK_IMAGE_SIZE, "image_size_mb", "max"),
+        (BenchmarkMetric.FORK_BOOT_PROVISION, "boot_provision_ms", "mean"),
+        (BenchmarkMetric.FORK_BOOT_READY, "boot_ready_ms", "mean"),
+    ]:
+        assert_within_evidence(
+            metric=metric,
+            current=summary["fork"][op][statistic],
+            baseline=baseline,
+            factor=factor,
+        )
 
     # Gate: data survival (every run must preserve both rootfs and workspace)
     for i, r in enumerate(runs):
-        assert r["pkg_survived"], f"run {i+1}: packages did not survive fork"
-        assert r["ws_survived"], f"run {i+1}: workspace files did not survive fork"
+        assert r["pkg_survived"], f"run {i + 1}: packages did not survive fork"
+        assert r["ws_survived"], f"run {i + 1}: workspace files did not survive fork"

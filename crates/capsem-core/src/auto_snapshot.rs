@@ -922,7 +922,12 @@ fn copy_sparse_extents(
     use std::io::{Read, Seek, SeekFrom, Write};
     use std::os::unix::io::AsRawFd;
 
-    const CHUNK_SIZE: usize = 1024 * 1024;
+    // Ext4 system-overlay files often contain large allocated extents with
+    // only a few non-zero filesystem blocks. Writing one whole MiB whenever
+    // any byte in it is non-zero turns tiny layout shifts into MiB-sized fork
+    // regressions. Scan allocated extents at the ordinary filesystem block
+    // granularity; SEEK_DATA/SEEK_HOLE already keeps us away from true holes.
+    const CHUNK_SIZE: usize = 4096;
 
     let mut offset = 0_u64;
     let mut buffer = vec![0_u8; CHUNK_SIZE];

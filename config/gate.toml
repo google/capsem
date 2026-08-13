@@ -2129,6 +2129,12 @@ failure_tail_lines = 40
 maximum_factor = 1.5
 slowest_steps = 10
 
+[benchmark_regression]
+# Product benchmarks use the latest checked-in result as evidence. A release
+# fails when any measured duration or allocated-byte metric grows by more than
+# this ratio; there is deliberately no independently authored seconds/MB cap.
+maximum_factor = 1.2
+
 [runlog.ledger]
 # What survives rotation. `keep_runs` above is twenty and a day of gating
 # spends that before lunch, so every question worth asking -- is this getting

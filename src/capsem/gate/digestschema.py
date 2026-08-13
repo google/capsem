@@ -88,3 +88,14 @@ class DigestConfig(Strict):
     hotspots: PositiveInt
     """How many hotspots the digest names. A ranked list nobody finishes is a
     list that ranked nothing."""
+
+
+class BenchmarkRegressionConfig(Strict):
+    """How recorded product benchmarks become release guards.
+
+    The limit is relative to checked-in evidence, never an authored duration
+    or size. One policy covers time and bytes because both are regression
+    ratios, and the benchmark still reports their native units.
+    """
+
+    maximum_factor: PositiveFloat

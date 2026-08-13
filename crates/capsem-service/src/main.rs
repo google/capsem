@@ -267,7 +267,7 @@ struct ServiceState {
     /// and refreshed by explicit profile/asset mutation routes. Hot status
     /// routes must not re-read profile TOML, re-hash assets, or validate the
     /// manifest on every UI/TUI poll.
-    profile_status_cache: Mutex<Option<ProfileStatusCache>>,
+    profile_status_cache: Mutex<Option<Arc<ProfileStatusCache>>>,
     /// Route-owned compiled rule DTOs loaded once at service startup and
     /// refreshed by profile/corp mutation routes. Polling UI/TUI routes must
     /// not parse profile TOML or compile CEL on every request.
@@ -6496,10 +6496,41 @@ fn profile_for_route(profile_id: String) -> Result<Profile, AppError> {
 
 #[derive(Clone, Debug)]
 struct ProfileStatusCache {
+    inputs: ProfileStatusInputs,
     catalog: serde_json::Value,
     catalog_body: Bytes,
     profiles: BTreeMap<String, serde_json::Value>,
     profile_bodies: BTreeMap<String, Bytes>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProfileStatusInputs {
+    manifest: ProfileStatusFileIdentity,
+    metadata: ProfileStatusFileIdentity,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ProfileStatusFileIdentity {
+    Missing,
+    Digest(String),
+    Unreadable(String),
+}
+
+fn profile_status_file_identity(path: &StdPath) -> ProfileStatusFileIdentity {
+    if !path.exists() {
+        return ProfileStatusFileIdentity::Missing;
+    }
+    match capsem_core::asset_manager::hash_file(path) {
+        Ok(digest) => ProfileStatusFileIdentity::Digest(digest),
+        Err(error) => ProfileStatusFileIdentity::Unreadable(error.to_string()),
+    }
+}
+
+fn profile_status_inputs(state: &ServiceState) -> ProfileStatusInputs {
+    ProfileStatusInputs {
+        manifest: profile_status_file_identity(&state.assets_dir.join("manifest.json")),
+        metadata: profile_status_file_identity(&state.assets_dir.join("manifest-metadata.json")),
+    }
 }
 
 #[cfg(test)]
@@ -6507,12 +6538,13 @@ fn profile_catalog_status_value(
     state: &ServiceState,
     catalog: &ProfileCatalog,
 ) -> serde_json::Value {
-    build_profile_status_cache(state, catalog).catalog
+    build_profile_status_cache(state, catalog, profile_status_inputs(state)).catalog
 }
 
 fn build_profile_status_cache(
     state: &ServiceState,
     catalog: &ProfileCatalog,
+    inputs: ProfileStatusInputs,
 ) -> ProfileStatusCache {
     let mut profile_statuses = BTreeMap::new();
     let mut profile_bodies = BTreeMap::new();
@@ -6568,6 +6600,7 @@ fn build_profile_status_cache(
     });
     let catalog_body = Bytes::from(serde_json::to_vec(&catalog_status).unwrap_or_default());
     ProfileStatusCache {
+        inputs,
         catalog: catalog_status,
         catalog_body,
         profiles: profile_statuses,
@@ -6610,19 +6643,34 @@ fn refresh_reconcile_fields(
     value
 }
 
-fn rebuild_profile_status_cache(state: &ServiceState) -> Result<ProfileStatusCache, AppError> {
+fn build_stable_profile_status_cache(
+    state: &ServiceState,
+) -> Result<Arc<ProfileStatusCache>, AppError> {
+    let inputs = profile_status_inputs(state);
     let catalog = load_profile_catalog_for_service()?;
-    let cache = build_profile_status_cache(state, &catalog);
+    let cache = Arc::new(build_profile_status_cache(state, &catalog, inputs.clone()));
+    if profile_status_inputs(state) != inputs {
+        return Err(AppError(
+            StatusCode::CONFLICT,
+            "asset manifest changed while profile status was being built".to_string(),
+        ));
+    }
+    Ok(cache)
+}
+
+fn rebuild_profile_status_cache(state: &ServiceState) -> Result<Arc<ProfileStatusCache>, AppError> {
+    let cache = build_stable_profile_status_cache(state)?;
     *state.profile_status_cache.lock().map_err(|error| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("profile status cache lock poisoned: {error}"),
         )
-    })? = Some(cache.clone());
+    })? = Some(Arc::clone(&cache));
     Ok(cache)
 }
 
-fn profile_status_cache(state: &ServiceState) -> Result<ProfileStatusCache, AppError> {
+fn profile_status_cache(state: &ServiceState) -> Result<Arc<ProfileStatusCache>, AppError> {
+    let inputs = profile_status_inputs(state);
     if let Some(cache) = state
         .profile_status_cache
         .lock()
@@ -6632,18 +6680,17 @@ fn profile_status_cache(state: &ServiceState) -> Result<ProfileStatusCache, AppE
                 format!("profile status cache lock poisoned: {error}"),
             )
         })?
-        .clone()
+        .as_ref()
+        .filter(|cache| cache.inputs == inputs)
+        .cloned()
     {
-        let current_manifest = asset_manifest_status_value(state);
-        if cache.catalog.get("asset_manifest") == Some(&current_manifest) {
-            return Ok(cache);
-        }
+        return Ok(cache);
     }
     rebuild_profile_status_cache(state)
 }
 
 fn profile_status_catalog_body(state: &ServiceState) -> Result<Bytes, AppError> {
-    Ok(profile_status_cache(state)?.catalog_body)
+    Ok(profile_status_cache(state)?.catalog_body.clone())
 }
 
 fn cached_profile_status_for_route(
@@ -6823,10 +6870,7 @@ fn refresh_profile_route_caches(state: &ServiceState) -> Result<(), AppError> {
     let profile_rule_cache = build_profile_rule_cache(None)?;
     let profile_mcp_default_cache = build_profile_mcp_default_cache(None)?;
     let profile_plugin_policy_cache = build_profile_plugin_policy_cache(None)?;
-    let status_cache = {
-        let catalog = load_profile_catalog_for_service()?;
-        build_profile_status_cache(state, &catalog)
-    };
+    let status_cache = build_stable_profile_status_cache(state)?;
 
     *state.profile_summary_cache.lock().map_err(|error| {
         AppError(
@@ -6989,7 +7033,7 @@ async fn handle_profiles_status(
         return Ok(json_bytes_response(profile_status_catalog_body(&state)?));
     }
     let cache = profile_status_cache(&state)?;
-    let value = refresh_reconcile_fields(&state, cache.catalog);
+    let value = refresh_reconcile_fields(&state, cache.catalog.clone());
     let body = serde_json::to_vec(&value).map_err(|error| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -7005,7 +7049,7 @@ async fn handle_profiles_reload(
     let cache = rebuild_profile_status_cache(&state)?;
     Ok(Json(json!({
         "reloaded": true,
-        "catalog": refresh_reconcile_fields(&state, cache.catalog),
+        "catalog": refresh_reconcile_fields(&state, cache.catalog.clone()),
     })))
 }
 
@@ -11438,7 +11482,7 @@ async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
     }
     let pid_i32 = pid as i32;
     let exited = || async move { (unsafe { nix::libc::kill(pid_i32, 0) } != 0).then_some(()) };
-    if poll_until(PollOpts::new("vm-process-exit", timeout), exited)
+    if poll_until(process_exit_poll_options(timeout), exited)
         .await
         .is_ok()
     {
@@ -11463,15 +11507,44 @@ async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
     }
 }
 
+fn process_exit_poll_options(timeout: std::time::Duration) -> PollOpts {
+    let cadence = std::time::Duration::from_millis(20);
+    PollOpts {
+        label: "vm-process-exit",
+        timeout,
+        initial_delay: cadence,
+        max_delay: cadence,
+    }
+}
+
 /// Atomically claim teardown ownership for an instance. The child watcher
 /// uses the same map removal as its ownership token, so only one side wins.
 fn claim_shutdown_instance(state: &ServiceState, id: &str) -> bool {
     state.instances.lock().unwrap().remove(id).is_some()
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ShutdownMode {
+    Retain,
+    Discard,
+}
+
+impl ShutdownMode {
+    fn retains_state(self) -> bool {
+        matches!(self, Self::Retain)
+    }
+
+    fn exit_timeout(self) -> std::time::Duration {
+        match self {
+            Self::Retain => std::time::Duration::from_secs(5),
+            Self::Discard => std::time::Duration::from_secs(1),
+        }
+    }
+}
+
 /// Shutdown a running VM process by ID. Returns (session_dir, persistent, pid).
 ///
-/// When `graceful` is true: sends `ServiceToProcess::Shutdown` via IPC so
+/// `ShutdownMode::Retain` sends `ServiceToProcess::Shutdown` via IPC so
 /// the guest agent can `sync()` and bash can run traps / save history, then
 /// waits up to 5s for natural exit. The in-process 2.5s self-timer in
 /// capsem-process (capsem-process/src/vsock.rs, ServiceToProcess::Shutdown
@@ -11479,14 +11552,11 @@ fn claim_shutdown_instance(state: &ServiceState, id: &str) -> bool {
 /// persistent VMs (preserves workspace state) and `handle_run` (session DB
 /// rollup reads main.db after exit).
 ///
-/// When `graceful` is false: skips the IPC and sends SIGTERM directly to
-/// capsem-process. Its SIGTERM handler (capsem-process/src/main.rs, added
-/// in 9b14618) calls `CFRunLoopStop` so the process exits as soon as the
-/// main runloop returns -- typically well under 500ms. VZ tears down the
-/// VM when capsem-process exits, which kills the agent and bash without
-/// grace. Use for `delete` / `purge`: the workspace is about to be removed,
-/// so guest `sync()` and bash history are irrelevant. Polls up to 1s and
-/// escalates to SIGKILL on miss.
+/// `ShutdownMode::Discard` means the caller is permanently deleting the session,
+/// so its guest state and per-session ledger are explicitly disposable. Kill
+/// capsem-process directly rather than paying its retained-session fs-monitor
+/// reconciliation and WAL checkpoint. Closing the process tears down the VM;
+/// the service still waits for that exit before deleting the session tree.
 ///
 /// Either way, UDS socket / `.ready` files are removed inline and the
 /// instance is removed from the registry before return. The leak detector
@@ -11494,7 +11564,7 @@ fn claim_shutdown_instance(state: &ServiceState, id: &str) -> bool {
 async fn shutdown_vm_process(
     state: &ServiceState,
     id: &str,
-    graceful: bool,
+    mode: ShutdownMode,
 ) -> Result<Option<(PathBuf, bool, u32)>, AppError> {
     // Teardown must not overlap save_state/restore_state, but it does not
     // need to block independent cold starts. Take the shared lifecycle rail
@@ -11524,7 +11594,13 @@ async fn shutdown_vm_process(
         )
     };
 
-    if graceful {
+    // Claim before signalling. The watcher may already have claimed a process
+    // which exited independently; otherwise this intentional shutdown owns
+    // the record and the watcher must not preserve it as a crash.
+    let shutdown_claimed = claim_shutdown_instance(state, id);
+    state.unregister_session_db_handle(id);
+
+    if mode.retains_state() && shutdown_claimed {
         // Send shutdown command via IPC (or SIGTERM as fallback).
         let stream_res = tokio::net::UnixStream::connect(&uds_path).await;
         if let Ok(stream) = stream_res {
@@ -11552,37 +11628,26 @@ async fn shutdown_vm_process(
                 nix::sys::signal::Signal::SIGTERM,
             );
         }
-    } else if pid > 0 {
-        // Fast path: SIGTERM capsem-process directly. CFRunLoopStop fires
-        // before the guest's SHUTDOWN_GRACE_SECS sleep or the 2.5s in-process
-        // self-timer would, so delete/purge don't pay for bash's graceful
-        // exit when the VM is about to be destroyed anyway.
+    } else if shutdown_claimed && pid > 0 {
+        // Destructive delete has no state to flush. SIGKILL also prevents the
+        // ordinary signal handler from doing a full workspace reconciliation
+        // whose output would be deleted immediately afterward.
         let _ = nix::sys::signal::kill(
             nix::unistd::Pid::from_raw(pid as i32),
-            nix::sys::signal::Signal::SIGTERM,
+            nix::sys::signal::Signal::SIGKILL,
         );
     }
 
-    // The earlier lookup only supplied shutdown coordinates; it did not grant
-    // ownership. The child watcher can exit and remove the instance while the
-    // IPC send awaits. This actual remove is the sole preservation token.
-    let shutdown_claimed = claim_shutdown_instance(state, id);
     tracing::debug!(
         id,
         shutdown_claimed,
         "shutdown_vm_process removing instance"
     );
-    state.unregister_session_db_handle(id);
 
     // Wait for actual exit (poll_until + SIGKILL fallback), then clean up
     // sockets. Synchronous: callers must not see "shutdown returned" while
     // the process is still alive (leak detector + suspend/resume rely on it).
-    let exit_timeout = if graceful {
-        std::time::Duration::from_secs(5)
-    } else {
-        std::time::Duration::from_secs(1)
-    };
-    wait_for_process_exit(pid, exit_timeout).await;
+    wait_for_process_exit(pid, mode.exit_timeout()).await;
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
     if !shutdown_claimed {
@@ -11823,7 +11888,9 @@ async fn handle_stop(
     // socket inline -- when it returns, resume can immediately reuse the
     // path without a SO_REUSEADDR-style race. Graceful so persistent VMs
     // get bash history + filesystem sync before teardown.
-    if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id, true).await? {
+    if let Some((session_dir, persistent, _pid)) =
+        shutdown_vm_process(&state, &id, ShutdownMode::Retain).await?
+    {
         if !persistent {
             let dir = session_dir;
             tokio::task::spawn_blocking(move || {
@@ -11843,22 +11910,23 @@ async fn handle_delete(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // Delete fast-paths through SIGTERM + 1s poll: session dir is about
-    // to be removed, guest sync() and bash history don't matter.
-    let session_dir =
-        if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id, false).await? {
-            session_dir
+    // Delete fast-paths through direct process teardown: the session dir is
+    // about to be removed, so guest sync() and bash history don't matter.
+    let session_dir = if let Some((session_dir, _, _pid)) =
+        shutdown_vm_process(&state, &id, ShutdownMode::Discard).await?
+    {
+        session_dir
+    } else {
+        // Not running -- check persistent registry for stopped VM
+        if let Some(entry) = find_persistent_entry_by_route_id(&state, &id) {
+            entry.session_dir
         } else {
-            // Not running -- check persistent registry for stopped VM
-            if let Some(entry) = find_persistent_entry_by_route_id(&state, &id) {
-                entry.session_dir
-            } else {
-                return Err(AppError(
-                    StatusCode::NOT_FOUND,
-                    format!("sandbox not found: {id}"),
-                ));
-            }
-        };
+            return Err(AppError(
+                StatusCode::NOT_FOUND,
+                format!("sandbox not found: {id}"),
+            ));
+        }
+    };
 
     // DELETE is a destructive contract. Validate registry-derived paths,
     // perform the blocking removal off the async runtime, and do not report
@@ -12177,7 +12245,7 @@ async fn handle_purge(
             // Purge fast-paths for the same reason as delete: every VM
             // here is being destroyed, so the 2.5s graceful floor is pure
             // waste per VM. join_all still runs them concurrently.
-            shutdown_vm_process(state_ref, &id, false)
+            shutdown_vm_process(state_ref, &id, ShutdownMode::Discard)
                 .await
                 .map(|result| result.map(|(session_dir, _, _pid)| (id, session_dir, persistent)))
         }
@@ -12318,7 +12386,7 @@ async fn handle_run(
             // fallback) and cleans the UDS socket inline. Graceful because
             // preserve_failed_session_dir inspects session logs that capsem-process
             // is still flushing.
-            let shutdown_result = shutdown_vm_process(&state, &id, true).await?;
+            let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain).await?;
             preserve_failed_run_shutdown_result(Arc::clone(&state), id.clone(), shutdown_result)
                 .await?;
             return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e));
@@ -12343,7 +12411,7 @@ async fn handle_run(
     // blocks until the process is actually gone -- the leak detector needs
     // that guarantee. Route handlers must not mine session.db before returning;
     // durable telemetry is recovered by the ledger rails.
-    let _ = shutdown_vm_process(&state, &id, true).await?;
+    let _ = shutdown_vm_process(&state, &id, ShutdownMode::Retain).await?;
 
     let response = match exec_result {
         Ok(ProcessToService::ExecResult {
@@ -12630,9 +12698,9 @@ async fn handle_system_status(
     let manifest_metadata =
         read_manifest_metadata_status_document(&state.assets_dir.join("manifest-metadata.json"))?;
     let profiles = if asset_reconcile_has_route_fields(&state) {
-        refresh_reconcile_fields(&state, profile_status_cache(&state)?.catalog)
+        refresh_reconcile_fields(&state, profile_status_cache(&state)?.catalog.clone())
     } else {
-        profile_status_cache(&state)?.catalog
+        profile_status_cache(&state)?.catalog.clone()
     };
     Ok(Json(api::SystemStatusResponse {
         version: state.current_version.clone(),
