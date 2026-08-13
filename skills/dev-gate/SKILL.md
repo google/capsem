@@ -257,6 +257,31 @@ If you add something that needs git inside the prefix, it needs the index:
 `git ls-files` and `git check-ignore` read it, and `faults`, `auditfs` and
 `sourcestate` all depend on them.
 
+## The plan is a graph, and it says what it is
+
+Every step declares `kind`, `needs`, `arch`, `speed` and `concurrency`;
+every edge declares `Requires`. `workgraph.from_plan` turns a `Plan` into a
+typed DAG, and the questions get asked there rather than of source text.
+
+Ask the graph, not the file. `uv run capsem-gate runs schedule <command>`
+reports the binding set -- the nodes with no slack, whose cost *is* the run's
+cost, which is not the same as the list of slowest steps.
+
+Three rules when adding a step:
+
+- `needs` is a set, and `NETWORK` must agree with whether any action is
+  `outside_sandbox`. Hermeticity is derived from it over `ARTIFACT` edges, and
+  is never declared: a flag would let a step claim a property its inputs
+  contradict.
+- a capability that must not be shared (`DOCKER`, `VM`, `KVM`) needs a matching
+  `contends`. `static.guest-agents` drove the daemon without claiming it and
+  could have raced `install.materialize`.
+- `speed` is relative to what the lane protects, not a second count. A
+  two-minute step in a four-minute lane guarding a two-hour run is the trade
+  that lane exists to make.
+
+`tests/citadel/test_work_graph_invariants.py` holds all of it.
+
 ## History outlives the run directories
 
 `keep_runs` is twenty, so every longitudinal question -- is this getting

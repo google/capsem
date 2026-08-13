@@ -42,6 +42,15 @@ class Timing:
     this there is nothing to print either.
     """
 
+    dependency_waits: dict[str, float] = field(default_factory=dict)
+    """How long each step sat after becoming runnable, measured from run start.
+
+    The scheduling signal, and it was being thrown away. `step.waits` carries
+    it on every run; only `resource_ms` was kept, so the one number that says
+    "this step could have started much earlier" never reached the ledger and
+    no analysis could ask.
+    """
+
     resource_waits: dict[str, float] = field(default_factory=dict)
     """How long each step sat with its dependencies met and its claims held
     by somebody else.
@@ -97,6 +106,7 @@ def measure(events: list[dict]) -> Timing:
                 timing.skipped.append(event["step"])
         elif kind == "step.waits":
             timing.resource_waits[event["step"]] = event["resource_ms"]
+            timing.dependency_waits[event["step"]] = event.get("dependency_ms", 0.0)
         elif kind == "action":
             timing.actions.append((event["step"], event["render"], event["duration_ms"]))
         elif kind == "run.end":

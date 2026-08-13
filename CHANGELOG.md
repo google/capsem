@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `capsem-gate runs schedule <command>` reports what a graph's shape costs: the
+  binding set (nodes with no slack, whose duration is the run's duration) and
+  the `FAST` steps owning a large share of the critical path. On `test-fast`
+  the critical path is 3m24s and two steps are 100% of it --
+  `fast.web.release-site` at 2m13s and `fast.audit.generated-settings` at 1m11s.
+
+  `StepRow` records `dependency_ms`, which the run log measured on every run and
+  `timing.measure` discarded. Ledger schema bumped to v2; older rows are dropped
+  by the reader rather than breaking it.
+
 - `tests/citadel/test_work_graph_invariants.py` asserts the plan's properties
   against the graph rather than against text: no orphans, every node declared,
   a step that escapes the sandbox declares `NETWORK`, a capability implies a

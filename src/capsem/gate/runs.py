@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import digestreport
+from . import digestreport, scheduling, workgraph
 from .actions import Call
 from .command import GateCommand
 from .context import Context
@@ -45,6 +45,11 @@ class RunsCommand(GateCommand, name="runs", help="list recorded gate runs, or ex
         )
 
         actions.add_parser("digest", help="the cross-run overview, regenerated")
+
+        schedule = actions.add_parser(
+            "schedule", help="what a command's graph shape costs, from recorded runs"
+        )
+        schedule.add_argument("command", nargs="?", default="candidate")
 
         trend = actions.add_parser("trend", help="one step's history across comparable runs")
         trend.add_argument(
@@ -82,6 +87,8 @@ class RunsCommand(GateCommand, name="runs", help="list recorded gate runs, or ex
             return lambda ctx: _explain(ctx, self._latest(ctx, failed=self._args.failed))
         if action == "digest":
             return _digest
+        if action == "schedule":
+            return lambda ctx: _schedule(ctx, self._args.command)
         if action == "trend":
             return lambda ctx: _trend(ctx, self._args.step)
         return _list
@@ -130,6 +137,71 @@ def _digest(context: Context) -> None:
     text or the digest becomes another thing to reconcile.
     """
     context.runner.note(digestreport.write(context.config).read_text(encoding="utf-8"))
+
+
+def _schedule(context: Context, command: str) -> None:
+    """Where a command's graph forces it to be slow, and what owns the wait.
+
+    Built here rather than folded into the digest: the digest is rewritten from
+    inside `RunLog.close`, and constructing a plan while one is running is
+    exactly the recursion the gate refuses everywhere else.
+
+    Slack, not a ranked list of slow steps. The slowest step is not the
+    bottleneck if it runs beside something longer; the nodes with no slack are
+    the ones whose duration is the run's duration.
+    """
+    settings = context.config.runlog.digest
+    graph = workgraph.from_plan(_plan_for(context, command))
+    found = scheduling.analyse(
+        graph, rows(context.config), window=settings.compare_runs, lane_share=settings.lane_share
+    )
+    if not found.measurable:
+        context.runner.note(
+            f"No recorded run has timed any step of {command}. Structure is known, "
+            "cost is not -- run it once and ask again."
+        )
+        return
+
+    span = max(entry.earliest_ms + found.costs.get(entry.node, 0.0) for entry in found.slack)
+    binding = [entry for entry in found.slack if entry.binding]
+    context.runner.note(
+        f"{command}: {len(found.costs)} steps timed, critical path {clock(span)}"
+    )
+    if found.unmeasured:
+        # Named, never assumed free: a new expensive step defaulting to zero
+        # would be invisible to the analysis meant to find it.
+        context.runner.note(f"  unmeasured, treated as free: {', '.join(found.unmeasured)}")
+
+    context.runner.note("\nbinding set -- no slack, so their cost is the run's cost")
+    for entry in binding:
+        context.runner.note(
+            f"  {entry.node:<44} {clock(found.costs.get(entry.node, 0.0)):>9}"
+        )
+    if found.breaches:
+        context.runner.note("\nfast steps owning much of that path")
+        for breach in found.breaches:
+            context.runner.note(
+                f"  {breach.node:<44} {clock(breach.median_ms):>9}  {breach.share:.0%}"
+            )
+
+
+def _plan_for(context: Context, command: str):
+    """The named command's plan, built under the same seal a dry run uses.
+
+    Sealed, because plan construction must stay inert: this is an inspection,
+    and asking what a command would do must never do any of it.
+    """
+    from argparse import Namespace
+
+    from . import planseal
+    from .command import GateCommand
+
+    known = GateCommand.registry
+    if command not in known:
+        raise GateError(f"no gate command called {command!r}; try one of {sorted(known)}")
+    built = known[command](context.runner, Namespace(gate_command=command))
+    with planseal.sealed():
+        return built.plan()
 
 
 def _trend(context: Context, label: str) -> None:
