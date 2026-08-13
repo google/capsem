@@ -60,6 +60,7 @@ from capsem.builder.docker import (
     sync_container_clock,
 )
 from capsem.builder.models import (
+    AssetDependencyArchitectureConfig,
     AssetDependencyConfig,
     AssetToolBinaryConfig,
     AssetToolsArchitectureConfig,
@@ -67,6 +68,8 @@ from capsem.builder.models import (
     ErofsConfig,
     GuestRustBuilderConfig,
     KernelConfig,
+    NodeDownloadConfig,
+    VersionedDownloadConfig,
 )
 from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
 
@@ -218,6 +221,23 @@ def _profile_guest_config(tmp_path: Path, profile_id: str):
     shutil.copytree(PROJECT_ROOT / "guest" / "artifacts", guest / "artifacts")
     shutil.copytree(profile_root / "root", guest / "profile-root")
     shutil.copy2(profile_root / "build.sh", guest / "profile-build.sh")
+    shutil.copy2(
+        profile_root / "python-requirements.lock",
+        packages / "python-requirements.lock",
+    )
+    npm_lock = json.loads((profile_root / "npm-package-lock.json").read_text())
+    shutil.copy2(profile_root / "npm-package-lock.json", packages / "npm-package-lock.json")
+    (packages / "npm-package.json").write_text(
+        json.dumps(
+            {
+                "name": "capsem-profile-ai-clis",
+                "private": True,
+                "dependencies": npm_lock["packages"][""]["dependencies"],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     shutil.copy2(profile_root / "tips.txt", guest / "artifacts" / "tips.txt")
     return load_guest_config(guest)
 
@@ -294,17 +314,31 @@ class TestRenderRootfs:
         for pkg in real_config.package_sets["apt"].packages:
             assert pkg in rendered_arm64, f"apt package '{pkg}' missing"
 
-    def test_python_packages_present(self, real_config, rendered_arm64):
-        for pkg in real_config.package_sets["python"].packages:
-            assert pkg in rendered_arm64, f"python package '{pkg}' missing"
+    def test_python_packages_are_consumed_from_the_hashed_lock(self, real_config, rendered_arm64):
+        lock = Path(real_config.guest_dir_path) / "config/packages/python-requirements.lock"
+        payload = lock.read_text()
+        for package in real_config.package_sets["python"].packages:
+            assert package in payload
+        assert "COPY python-requirements.lock" in rendered_arm64
+        assert "--require-hashes" in rendered_arm64
 
     def test_python_install_cmd(self, real_config, rendered_arm64):
         cmd = real_config.package_sets["python"].install_cmd
         assert cmd in rendered_arm64
 
-    def test_npm_packages_from_package_sets(self, generated_profile_guest, rendered_profile_arm64):
-        for pkg in generated_profile_guest.package_sets["npm"].packages:
-            assert pkg in rendered_profile_arm64, f"npm package '{pkg}' missing"
+    def test_npm_packages_are_consumed_from_the_integrity_lock(
+        self, generated_profile_guest, rendered_profile_arm64
+    ):
+        lock = (
+            Path(generated_profile_guest.guest_dir_path) / "config/packages/npm-package-lock.json"
+        )
+        dependencies = json.loads(lock.read_text())["packages"][""]["dependencies"]
+        assert dependencies == {
+            package.rsplit("@", 1)[0]: package.rsplit("@", 1)[1]
+            for package in generated_profile_guest.package_sets["npm"].packages
+        }
+        assert "COPY npm-package-lock.json" in rendered_profile_arm64
+        assert "npm ci" in rendered_profile_arm64
 
     def test_npm_prefix(self, rendered_profile_arm64):
         assert "/opt/ai-clis" in rendered_profile_arm64
@@ -342,10 +376,12 @@ class TestRenderRootfs:
             )
 
     def test_node_version(self, rendered_arm64):
-        assert "nvm install 24" in rendered_arm64
+        assert "node-v24.19.0-linux-arm64.tar.xz" in rendered_arm64
+        assert "test \"$(npm --version)\" = '11.17.0'" in rendered_arm64
 
     def test_uv_installed(self, rendered_arm64):
-        assert "astral.sh/uv" in rendered_arm64
+        assert "uv-aarch64-unknown-linux-gnu.tar.gz" in rendered_arm64
+        assert "test \"$(uv --version)\" = 'uv 0.12.3'" in rendered_arm64
 
     def test_pep668_removal(self, rendered_arm64):
         assert "EXTERNALLY-MANAGED" in rendered_arm64
@@ -367,8 +403,9 @@ class TestRenderRootfs:
         """x86_64 gets the same packages as arm64 (arch-agnostic)."""
         for pkg in real_config.package_sets["apt"].packages:
             assert pkg in rendered_x86
-        for pkg in real_config.package_sets["python"].packages:
-            assert pkg in rendered_x86
+        assert "COPY python-requirements.lock" in rendered_x86
+        assert "COPY npm-package-lock.json" in rendered_x86
+        assert "node-v24.19.0-linux-x64.tar.xz" in rendered_x86
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +437,7 @@ class TestRootfsLayerOrdering:
         )
 
     def test_env_path_after_npm_install(self, rendered_profile_arm64):
-        npm_pos = self._pos(rendered_profile_arm64, "npm install -g --prefix", "npm install")
+        npm_pos = self._pos(rendered_profile_arm64, "npm ci --prefix", "npm install")
         path_pos = self._pos(rendered_profile_arm64, 'ENV PATH="/opt/ai-clis/bin', "ENV PATH")
         assert npm_pos < path_pos, "ENV PATH must come after npm install"
 
@@ -415,8 +452,8 @@ class TestRootfsLayerOrdering:
 
     def test_node_before_npm_install(self, rendered_profile_arm64):
         """npm install requires node to be installed first."""
-        node_pos = self._pos(rendered_profile_arm64, "nvm install", "node install")
-        npm_pos = self._pos(rendered_profile_arm64, "npm install -g --prefix", "npm install")
+        node_pos = self._pos(rendered_profile_arm64, "node.tar.xz", "node install")
+        npm_pos = self._pos(rendered_profile_arm64, "npm ci --prefix", "npm install")
         assert node_pos < npm_pos, "Node.js must be installed before npm install"
 
     def test_guest_binaries_before_root_cleanup(self, rendered_arm64):
@@ -426,15 +463,12 @@ class TestRootfsLayerOrdering:
         cleanup_pos = rendered_arm64.rfind("rm -rf /root")
         assert binary_pos < cleanup_pos, "Guest binaries must be COPYed before /root cleanup"
 
-    def test_curl_installs_after_root_cleanup(self, rendered_arm64):
-        """Curl-installed CLIs (claude) write to ~/.local/bin then copy to
-        /usr/local/bin. They must come after /root cleanup (mkdir -p /root)
-        so the installer has a writable home directory."""
-        if "curl -fsSL" not in rendered_arm64:
-            pytest.skip("No curl installs in config")
-        cleanup_pos = self._pos(rendered_arm64, "rm -rf /root && mkdir -p /root", "/root cleanup")
-        curl_pos = self._pos(rendered_arm64, "curl -fsSL", "curl install")
-        assert cleanup_pos < curl_pos, "Curl installs must come after /root cleanup"
+    def test_profile_downloads_are_verified_before_root_cleanup(self, rendered_profile_arm64):
+        profile = self._pos(rendered_profile_arm64, "CAPSEM_CLAUDE_SHA256", "profile build")
+        cleanup = rendered_profile_arm64.rfind("rm -rf /root")
+        assert profile < cleanup
+        assert "claude.ai/install.sh" not in rendered_profile_arm64
+        assert "ollama.com/install.sh" not in rendered_profile_arm64
 
     def test_snapshot_sources_replace_inherited_sources_before_apt(self, real_config):
         """Every apt resolution must consume the checked-in HTTPS snapshot."""
@@ -454,7 +488,7 @@ class TestRootfsLayerOrdering:
         setuid binaries sneak in after the strip."""
         strip_pos = self._pos(rendered_profile_arm64, "-4000", "setuid strip")
         # Must be after npm, python, and guest binary installs
-        npm_pos = self._pos(rendered_profile_arm64, "npm install -g --prefix", "npm install")
+        npm_pos = self._pos(rendered_profile_arm64, "npm ci --prefix", "npm install")
         assert strip_pos > npm_pos, "setuid strip must come after npm install"
         if "uv pip install --system" in rendered_profile_arm64:
             # Find the LAST uv pip install (python packages, not certifi)
@@ -467,8 +501,8 @@ class TestRootfsLayerOrdering:
         """Both architectures must have the same layer ordering."""
         key_markers = [
             "apt-get",
-            "nvm install",
-            "npm install -g --prefix",
+            "node.tar.xz",
+            "npm ci --prefix",
             "ENV PATH",
             "capsem-ca.crt",
             "certifi",
@@ -555,10 +589,10 @@ class TestRootfsVersionExtractability:
     def test_system_tools_on_default_path(self, real_config, rendered_arm64):
         """System tools (node, npm, uv, git, etc.) must be symlinked or
         installed into /usr/local/bin which is on the default PATH."""
-        # node/npm are symlinked by the nvm install step
-        assert "ln -sf" in rendered_arm64 and "node" in rendered_arm64
+        # node/npm are linked from the exact verified Node archive.
+        assert 'ln -s "/usr/local/lib/node/bin/$bin"' in rendered_arm64
         # uv is explicitly installed to /usr/local/bin
-        assert "install -m 555 /root/.local/bin/uv /usr/local/bin/uv" in rendered_arm64
+        assert "install -m 555 /tmp/uv/uv /usr/local/bin/uv" in rendered_arm64
 
 
 _NETWORK_ACQUISITION = re.compile(
@@ -657,6 +691,17 @@ def test_asset_dependency_identity_changes_with_every_executable_input(real_conf
     ) != assetdependencies.image_tag(
         changed_config, "arm64", "kernel", b"same rendered materializer"
     )
+
+
+@pytest.mark.parametrize(
+    "name",
+    ("python-requirements.lock", "npm-package.json", "npm-package-lock.json"),
+)
+def test_rootfs_dependency_identity_changes_with_each_profile_lock(real_config, name):
+    original = _asset_dependency_tag(real_config, "arm64", "rootfs")
+    lock = Path(real_config.guest_dir_path) / "config/packages" / name
+    lock.write_bytes(lock.read_bytes() + b"\n")
+    assert _asset_dependency_tag(real_config, "arm64", "rootfs") != original
 
 
 def test_asset_dependency_require_returns_only_exact_matching_platform_image(
@@ -826,19 +871,23 @@ class TestGenerateBuildContext:
 
     def test_rootfs_npm_packages_can_come_from_profile_package_set(self, generated_profile_guest):
         ctx = generate_build_context("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
-        assert ctx["npm_packages"] == ["@openai/codex", "@google/gemini-cli"]
+        assert ctx["npm_packages"] == [
+            "@openai/codex@0.147.0",
+            "@google/gemini-cli@0.55.1",
+        ]
         rendered = render_dockerfile("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
         dependencies = render_dockerfile(
             "Dockerfile.rootfs-dependencies.j2", generated_profile_guest, "arm64"
         )
-        assert "@openai/codex" in dependencies
-        assert "@google/gemini-cli" in dependencies
+        assert "COPY npm-package-lock.json" in dependencies
+        assert "npm ci" in dependencies
         assert "profile-build.sh" in dependencies
         assert "profile-root/" in rendered
 
-    def test_rootfs_curl_installs(self, real_config):
+    def test_rootfs_has_no_generic_curl_installer_rail(self, real_config):
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
-        assert ctx["curl_installs"] == []
+        assert "curl_installs" not in ctx
+        assert "curl" not in real_config.package_sets
 
     def test_rootfs_arch_config(self, real_config):
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
@@ -1133,6 +1182,7 @@ class TestBuildVersionScript:
                     rootfs_template="Dockerfile.rootfs-dependencies.j2",
                     kernel_template="Dockerfile.kernel-dependencies.j2",
                     source_build_network=BuildNetwork.NONE,
+                    architectures={"arm64": dependency_architecture()},
                 ),
                 kernel=KernelConfig(version="9.9.9", sha256="a" * 64),
                 guest_rust_builder=GuestRustBuilderConfig(
@@ -1168,6 +1218,25 @@ class TestBuildVersionScript:
         )
         script = build_version_script(config)
         assert script == ""
+
+
+def dependency_architecture() -> AssetDependencyArchitectureConfig:
+    download = VersionedDownloadConfig(
+        version="1.2.3",
+        url="https://example.test/tool-1.2.3-linux-arm64",
+        sha256="f" * 64,
+    )
+    return AssetDependencyArchitectureConfig(
+        node=NodeDownloadConfig(
+            version="24.19.0",
+            url="https://example.test/node-v24.19.0-linux-arm64.tar.xz",
+            sha256="e" * 64,
+            npm_version="11.17.0",
+        ),
+        uv=download,
+        claude=download,
+        ollama=download,
+    )
 
 
 def real_arch():
@@ -1458,11 +1527,11 @@ class TestBuildLedger:
         assert record["arch"] == "arm64"
         assert "curl" in record["package_inputs"]["apt"]["packages"]
         assert "zstd" in record["package_inputs"]["apt"]["packages"]
-        assert "pytest" in record["package_inputs"]["python"]["packages"]
-        assert "openai" in record["package_inputs"]["python"]["packages"]
+        assert "pytest==9.1.1" in record["package_inputs"]["python"]["packages"]
+        assert "openai==2.54.0" in record["package_inputs"]["python"]["packages"]
         assert record["package_inputs"]["npm"]["packages"] == [
-            "@openai/codex",
-            "@google/gemini-cli",
+            "@openai/codex@0.147.0",
+            "@google/gemini-cli@0.55.1",
         ]
         assert record["package_inputs"]["python"]["install_cmd"] == (
             "uv pip install --system --break-system-packages"
@@ -2143,7 +2212,10 @@ class TestPrepareBuildContext:
         assert (dependency_context / "profile-build.sh").is_file()
         assert sorted(path.name for path in dependency_context.iterdir()) == [
             "Dockerfile",
+            "npm-package-lock.json",
+            "npm-package.json",
             "profile-build.sh",
+            "python-requirements.lock",
         ]
 
         forbidden_fragments = (

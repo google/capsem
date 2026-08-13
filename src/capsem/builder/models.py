@@ -133,6 +133,40 @@ class AssetToolsConfig(BaseModel):
         return self
 
 
+class VersionedDownloadConfig(BaseModel):
+    """One exact third-party download admitted to a dependency helper."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    version: str = Field(min_length=1, pattern=r"^[A-Za-z0-9][A-Za-z0-9.+-]*$")
+    url: str = Field(pattern=r"^https://")
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def _url_names_version(self):
+        if self.version not in self.url:
+            raise ValueError("versioned download URL must contain its exact version")
+        return self
+
+
+class NodeDownloadConfig(VersionedDownloadConfig):
+    """Exact Node archive plus the npm version bundled inside it."""
+
+    version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
+    npm_version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
+
+
+class AssetDependencyArchitectureConfig(BaseModel):
+    """Exact network inputs for one guest architecture's rootfs helper."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    node: NodeDownloadConfig
+    uv: VersionedDownloadConfig
+    claude: VersionedDownloadConfig
+    ollama: VersionedDownloadConfig
+
+
 class AssetDependencyConfig(BaseModel):
     """Network-open helpers consumed by sealed kernel/rootfs source builds."""
 
@@ -142,6 +176,7 @@ class AssetDependencyConfig(BaseModel):
     rootfs_template: str
     kernel_template: str
     source_build_network: Literal[BuildNetwork.NONE]
+    architectures: dict[str, AssetDependencyArchitectureConfig]
 
     @model_validator(mode="after")
     def _templates_are_complete(self):
@@ -150,6 +185,8 @@ class AssetDependencyConfig(BaseModel):
                 raise ValueError(f"tag_template must contain {field}")
         if self.rootfs_template == self.kernel_template:
             raise ValueError("rootfs and kernel dependency templates must differ")
+        if not self.architectures:
+            raise ValueError("asset dependency architectures must not be empty")
         return self
 
 
@@ -200,6 +237,16 @@ class BuildConfig(BaseModel):
             raise ValueError("architectures must have at least one entry")
         if set(self.asset_tools.architectures) != set(self.architectures):
             raise ValueError("asset tool architectures must exactly match build architectures")
+        if set(self.asset_dependencies.architectures) != set(self.architectures):
+            raise ValueError(
+                "asset dependency architectures must exactly match build architectures"
+            )
+        for name, arch in self.architectures.items():
+            node = self.asset_dependencies.architectures[name].node
+            if int(node.version.partition(".")[0]) != arch.node_major:
+                raise ValueError(
+                    f"asset dependency Node major for {name} must match architecture node_major"
+                )
         return self
 
 

@@ -33,8 +33,8 @@ config/
     detection.yaml        Profile Sigma detections
     mcp.json              Profile MCP declarations
     apt-packages.txt      Profile apt package input
-    python-requirements.txt
-    npm-packages.txt
+    python-requirements.txt / python-requirements.lock
+    npm-packages.txt / npm-package-lock.json
     build.sh              Profile image build hook
     tips.txt              Profile guest tips
     root/                 Guest / seed, projected by capsem-init
@@ -128,7 +128,9 @@ on every run; stale generated roots are a release blocker, not a cache.
 
 1. Edit the profile-owned package file, for example
    `config/profiles/code/apt-packages.txt`,
-   `python-requirements.txt`, or `npm-packages.txt`.
+   `python-requirements.txt`, or `npm-packages.txt`. Python and npm direct
+   selections must be exact, and their checked-in integrity locks must be
+   regenerated together; never install from the direct list alone.
 2. Run the admin/profile validation path.
 3. Run `just _build-assets code` to rebuild the rootfs.
 4. Verify with `capsem-doctor` inside a booted VM.
@@ -152,10 +154,11 @@ profile declares the package/build hook and any required guest root seed files.
 6. Rebuild with `just _build-assets code` and verify with `capsem-doctor`.
 
 `build.sh` is executed only while constructing the rootfs image. It is the
-right place for official installer commands such as Claude, AGY, or Ollama
-when they cannot be represented as apt/npm/Python package inputs. It must
-install stable runtime binaries under system paths such as `/usr/local/bin`;
-anything left only under `/root` can be hidden by the runtime overlay.
+right place for digest-bound official binary archives such as Claude, AGY, or
+Ollama when they cannot be represented as apt/npm/Python package inputs. Never
+pipe or invoke a mutable installer endpoint. Install verified runtime binaries
+under system paths such as `/usr/local/bin`; anything left only under `/root`
+can be hidden by the runtime overlay.
 
 ## Profile `build.sh` contract
 

@@ -53,11 +53,16 @@ def test_profiles_ship_ollama_without_cuda_payload_bloat() -> None:
         requirements = _package_lines(requirements_path)
 
         profile_id = profile["id"]
-        if "https://ollama.com/install.sh" not in build_script:
-            failures.append(f"{profile_id}: build script does not install Ollama")
+        if not all(
+            marker in build_script
+            for marker in ("CAPSEM_OLLAMA_URL", "CAPSEM_OLLAMA_SHA256", "sha256sum")
+        ):
+            failures.append(f"{profile_id}: build script does not verify exact Ollama bytes")
+        if "https://ollama.com/install.sh" in build_script:
+            failures.append(f"{profile_id}: build script still uses the floating Ollama installer")
         if "rm -rf /usr/local/lib/ollama/cuda_*" not in build_script:
             failures.append(f"{profile_id}: build script does not prune Ollama CUDA libraries")
-        if "ollama" not in requirements:
+        if not any(requirement.startswith("ollama==") for requirement in requirements):
             failures.append(f"{profile_id}: python requirements do not include the Ollama SDK")
 
     assert not failures, "invalid profile payload contract:\n" + "\n".join(failures)
@@ -139,11 +144,28 @@ def test_profiles_package_claude_bypass_permissions_bootstrap() -> None:
                 failures.append(
                     f"{profile_id}: Claude autoUpdatesProtectedForNative must be true"
                 )
-        if 'install_from_url "https://claude.ai/install.sh" "claude"' not in build_script:
-            failures.append(f"{profile_id}: build script does not install Claude")
-        if 'install -m 555 "/root/.local/bin/$name" "/usr/local/bin/$name"' not in build_script:
+        if not all(
+            marker in build_script
+            for marker in (
+                "CAPSEM_CLAUDE_URL",
+                "CAPSEM_CLAUDE_SHA256",
+                "sha256sum",
+                'install_exact_binary "$CAPSEM_CLAUDE_URL"',
+            )
+        ):
+            failures.append(f"{profile_id}: build script does not verify exact Claude bytes")
+        if "https://claude.ai/install.sh" in build_script:
+            failures.append(f"{profile_id}: build script still uses the floating Claude installer")
+        if (
+            'install_exact_binary "$CAPSEM_CLAUDE_URL" "$CAPSEM_CLAUDE_SHA256" '
+            "/usr/local/bin/claude"
+        ) not in build_script:
             failures.append(
-                f"{profile_id}: build script does not promote CLI binaries to /usr/local/bin"
+                f"{profile_id}: build script does not install Claude to /usr/local/bin"
+            )
+        if 'install -m 555 "$payload" "$destination"' not in build_script:
+            failures.append(
+                f"{profile_id}: exact binary helper does not install verified bytes read-only"
             )
         shell_paths = {
             "root/.bashrc": profile_dir / "root/root/.bashrc",

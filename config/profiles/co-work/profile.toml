@@ -77,8 +77,14 @@ path = "profiles/co-work/apt-packages.txt"
 [files.python_requirements]
 path = "profiles/co-work/python-requirements.txt"
 
+[files.python_requirements_lock]
+path = "profiles/co-work/python-requirements.lock"
+
 [files.npm_packages]
 path = "profiles/co-work/npm-packages.txt"
+
+[files.npm_package_lock]
+path = "profiles/co-work/npm-package-lock.json"
 
 [files.build]
 path = "profiles/co-work/build.sh"

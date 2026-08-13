@@ -1765,8 +1765,14 @@ fn assign_file_descriptor_profile(
         "python-requirements.txt" => {
             profile.files.python_requirements = Some(descriptor);
         }
+        "python-requirements.lock" => {
+            profile.files.python_requirements_lock = Some(descriptor);
+        }
         "npm-packages.txt" => {
             profile.files.npm_packages = Some(descriptor);
+        }
+        "npm-package-lock.json" => {
+            profile.files.npm_package_lock = Some(descriptor);
         }
         "build.sh" => {
             profile.files.build = Some(descriptor);
@@ -1798,7 +1804,9 @@ fn pin_checked_in_profile_files(profile: &mut ProfileConfigFile) {
         "mcp.json",
         "apt-packages.txt",
         "python-requirements.txt",
+        "python-requirements.lock",
         "npm-packages.txt",
+        "npm-package-lock.json",
         "build.sh",
         "tips.txt",
         "root.manifest.json",
@@ -1840,7 +1848,9 @@ fn install_file_asset_profile_fixture(dir: &tempfile::TempDir) -> (PathBuf, Prof
         "mcp.json",
         "apt-packages.txt",
         "python-requirements.txt",
+        "python-requirements.lock",
         "npm-packages.txt",
+        "npm-package-lock.json",
         "build.sh",
         "tips.txt",
         "root.manifest.json",

@@ -1,2 +1,2 @@
-@openai/codex
-@google/gemini-cli
+@openai/codex@0.147.0
+@google/gemini-cli@0.55.1

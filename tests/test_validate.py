@@ -25,6 +25,27 @@ rootfs_template = "Dockerfile.rootfs-dependencies.j2"
 kernel_template = "Dockerfile.kernel-dependencies.j2"
 source_build_network = "none"
 
+[build.asset_dependencies.architectures.arm64.node]
+version = "24.19.0"
+url = "https://example.test/node-v24.19.0-linux-arm64.tar.xz"
+sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
+npm_version = "11.17.0"
+
+[build.asset_dependencies.architectures.arm64.uv]
+version = "1.2.3"
+url = "https://example.test/uv-1.2.3-linux-arm64"
+sha256 = "2222222222222222222222222222222222222222222222222222222222222222"
+
+[build.asset_dependencies.architectures.arm64.claude]
+version = "1.2.3"
+url = "https://example.test/claude-1.2.3-linux-arm64"
+sha256 = "3333333333333333333333333333333333333333333333333333333333333333"
+
+[build.asset_dependencies.architectures.arm64.ollama]
+version = "1.2.3"
+url = "https://example.test/ollama-1.2.3-linux-arm64"
+sha256 = "4444444444444444444444444444444444444444444444444444444444444444"
+
 [build.kernel]
 version = "9.9.9"
 sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -167,7 +188,7 @@ def _errors(diags):
 
 
 def test_find_toml_line_section_and_key() -> None:
-    text = "[web.search.google]\nname = \"Google\"\nallow_get = true\n"
+    text = '[web.search.google]\nname = "Google"\nallow_get = true\n'
     assert find_toml_line(text, "web.search.google") == 1
     assert find_toml_line(text, "allow_get") == 3
     assert find_toml_line(text, "missing") is None
@@ -212,30 +233,37 @@ def test_legacy_per_arch_kernel_branch_is_e003(guest_valid: Path) -> None:
 
 
 def test_empty_package_list_is_e004(guest_valid: Path) -> None:
-    (guest_valid / "config" / "packages" / "python.toml").write_text(textwrap.dedent("""\
+    (guest_valid / "config" / "packages" / "python.toml").write_text(
+        textwrap.dedent("""\
         [python]
         name = "Python"
         manager = "uv"
         install_cmd = "uv pip install"
         packages = []
-    """))
+    """)
+    )
     assert "E004" in _codes(validate_guest(guest_valid))
 
 
 def test_invalid_package_manager_is_e005(guest_valid: Path) -> None:
-    (guest_valid / "config" / "packages" / "python.toml").write_text(textwrap.dedent("""\
+    (guest_valid / "config" / "packages" / "python.toml").write_text(
+        textwrap.dedent("""\
         [python]
         name = "Python"
         manager = "conda"
         install_cmd = "conda install"
         packages = ["numpy"]
-    """))
+    """)
+    )
     assert "E005" in _codes(validate_guest(guest_valid))
 
 
-@pytest.mark.parametrize("domain", ["https://example.com", "example.com/path", "example.com:443", "   "])
+@pytest.mark.parametrize(
+    "domain", ["https://example.com", "example.com/path", "example.com:443", "   "]
+)
 def test_invalid_web_domain_is_e006(guest_valid: Path, domain: str) -> None:
-    (guest_valid / "config" / "security" / "web.toml").write_text(textwrap.dedent(f"""\
+    (guest_valid / "config" / "security" / "web.toml").write_text(
+        textwrap.dedent(f"""\
         [web]
 
         [web.search.bad]
@@ -243,7 +271,8 @@ def test_invalid_web_domain_is_e006(guest_valid: Path, domain: str) -> None:
         enabled = true
         domains = ["{domain}"]
         allow_get = true
-    """))
+    """)
+    )
     assert "E006" in _codes(validate_guest(guest_valid))
 
 
@@ -274,40 +303,47 @@ def test_missing_registry_for_package_set_is_w001(guest_valid: Path) -> None:
 
 
 def test_dev_package_warning_is_w002(guest_valid: Path) -> None:
-    (guest_valid / "config" / "packages" / "python.toml").write_text(textwrap.dedent("""\
+    (guest_valid / "config" / "packages" / "python.toml").write_text(
+        textwrap.dedent("""\
         [python]
         name = "Python"
         manager = "uv"
         install_cmd = "uv pip install"
         packages = ["openssl-dev"]
-    """))
+    """)
+    )
     assert "W002" in _codes(validate_guest(guest_valid))
 
 
 def test_secret_in_mcp_or_shell_is_w003(guest_valid: Path) -> None:
-    (guest_valid / "config" / "mcp" / "capsem.toml").write_text(textwrap.dedent("""\
+    (guest_valid / "config" / "mcp" / "capsem.toml").write_text(
+        textwrap.dedent("""\
         [capsem]
         name = "Capsem"
         transport = "stdio"
         command = "/run/capsem-mcp-server"
         headers = { Authorization = "Bearer ghp_realtoken12345678901234567890" }
-    """))
+    """)
+    )
     assert "W003" in _codes(validate_guest(guest_valid))
 
 
 def test_package_set_without_network_is_w004(guest_valid: Path) -> None:
-    (guest_valid / "config" / "packages" / "python.toml").write_text(textwrap.dedent("""\
+    (guest_valid / "config" / "packages" / "python.toml").write_text(
+        textwrap.dedent("""\
         [python]
         name = "Python"
         manager = "uv"
         install_cmd = "uv pip install"
         packages = ["pytest"]
-    """))
+    """)
+    )
     assert "W004" in _codes(validate_guest(guest_valid))
 
 
 def test_broad_web_wildcard_is_w007(guest_valid: Path) -> None:
-    (guest_valid / "config" / "security" / "web.toml").write_text(textwrap.dedent("""\
+    (guest_valid / "config" / "security" / "web.toml").write_text(
+        textwrap.dedent("""\
         [web]
 
         [web.search.anything]
@@ -315,29 +351,34 @@ def test_broad_web_wildcard_is_w007(guest_valid: Path) -> None:
         enabled = true
         domains = ["*.com"]
         allow_get = true
-    """))
+    """)
+    )
     assert "W007" in _codes(validate_guest(guest_valid))
 
 
 def test_shell_metacharacter_in_install_cmd_is_w009(guest_valid: Path) -> None:
-    (guest_valid / "config" / "packages" / "python.toml").write_text(textwrap.dedent("""\
+    (guest_valid / "config" / "packages" / "python.toml").write_text(
+        textwrap.dedent("""\
         [python]
         name = "Python"
         manager = "uv"
         install_cmd = "uv pip install; rm -rf /"
         packages = ["pytest"]
-    """))
+    """)
+    )
     assert "W009" in _codes(validate_guest(guest_valid))
 
 
 def test_bad_path_is_w010(guest_valid: Path) -> None:
-    (guest_valid / "config" / "vm" / "environment.toml").write_text(textwrap.dedent("""\
+    (guest_valid / "config" / "vm" / "environment.toml").write_text(
+        textwrap.dedent("""\
         [environment.shell]
         term = "xterm-256color"
         home = "/root"
         path = "/opt/custom"
         lang = "C"
-    """))
+    """)
+    )
     assert "W010" in _codes(validate_guest(guest_valid))
 
 

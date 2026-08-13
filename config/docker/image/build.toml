@@ -16,6 +16,48 @@ rootfs_template = "Dockerfile.rootfs-dependencies.j2"
 kernel_template = "Dockerfile.kernel-dependencies.j2"
 source_build_network = "none"
 
+[build.asset_dependencies.architectures.arm64.node]
+version = "24.19.0"
+url = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-arm64.tar.xz"
+sha256 = "01443c1e1a29e531ccad5a46fefa6df490d2189c49f7955904aecdbb0fe86fdc"
+npm_version = "11.17.0"
+
+[build.asset_dependencies.architectures.arm64.uv]
+version = "0.12.3"
+url = "https://github.com/astral-sh/uv/releases/download/0.12.3/uv-aarch64-unknown-linux-gnu.tar.gz"
+sha256 = "bb66cb52e7b1823aed1183630d8d8e5c958840d584a4c55ec10a4cfc168dcca2"
+
+[build.asset_dependencies.architectures.arm64.claude]
+version = "2.1.229"
+url = "https://downloads.claude.ai/claude-code-releases/2.1.229/linux-arm64/claude"
+sha256 = "ba53130acbda3ddb00b3dd5641f11733867f5d837a258b7e6ccef4927cc1a509"
+
+[build.asset_dependencies.architectures.arm64.ollama]
+version = "0.32.9"
+url = "https://github.com/ollama/ollama/releases/download/v0.32.9/ollama-linux-arm64.tar.zst"
+sha256 = "79617139521db251c716d6229505d7530171ff4d68e476d0c22dabc15726a237"
+
+[build.asset_dependencies.architectures.x86_64.node]
+version = "24.19.0"
+url = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-x64.tar.xz"
+sha256 = "14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647"
+npm_version = "11.17.0"
+
+[build.asset_dependencies.architectures.x86_64.uv]
+version = "0.12.3"
+url = "https://github.com/astral-sh/uv/releases/download/0.12.3/uv-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "600cf9a742aca00d292673b16b5acffaa7b8c269a364ad0c2e79498dcb1fe101"
+
+[build.asset_dependencies.architectures.x86_64.claude]
+version = "2.1.229"
+url = "https://downloads.claude.ai/claude-code-releases/2.1.229/linux-x64/claude"
+sha256 = "200338139a3df04a9ad22233837d1fb53fb6dffa21cd82e47559bfaa115acc1b"
+
+[build.asset_dependencies.architectures.x86_64.ollama]
+version = "0.32.9"
+url = "https://github.com/ollama/ollama/releases/download/v0.32.9/ollama-linux-amd64.tar.zst"
+sha256 = "5d747a43369f61e38f20b5a39fcc5c90647e562cdc61e2e56034f1c5b113d540"
+
 [build.guest_rust_builder]
 dockerfile = "docker/Dockerfile.guest-rust-builder"
 tag_template = "capsem-guest-rust-{arch}:{digest}"

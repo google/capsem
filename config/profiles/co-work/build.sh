@@ -1,22 +1,29 @@
 #!/bin/sh
 set -eu
 
-install_from_url() {
+install_exact_binary() {
     url="$1"
-    name="$2"
+    sha256="$2"
+    destination="$3"
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
-    curl -fsSL "$url" -o "$tmp/install.sh"
-    bash "$tmp/install.sh"
-    if [ -x "/root/.local/bin/$name" ]; then
-        install -m 555 "/root/.local/bin/$name" "/usr/local/bin/$name"
-    elif command -v "$name" >/dev/null 2>&1; then
-        src="$(command -v "$name")"
-        install -m 555 "$src" "/usr/local/bin/$name"
-    else
-        echo "installer did not produce $name" >&2
-        exit 1
-    fi
+    payload="$tmp/payload"
+    curl -fsSL "$url" -o "$payload"
+    printf '%s  %s\n' "$sha256" "$payload" | sha256sum -c -
+    install -m 555 "$payload" "$destination"
+    rm -rf "$tmp"
+    trap - EXIT
+}
+
+install_exact_ollama() {
+    url="$1"
+    sha256="$2"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    archive="$tmp/ollama.tar.zst"
+    curl -fsSL "$url" -o "$archive"
+    printf '%s  %s\n' "$sha256" "$archive" | sha256sum -c -
+    zstd -dc "$archive" | tar -xf - -C /usr
     rm -rf "$tmp"
     trap - EXIT
 }
@@ -50,11 +57,20 @@ install_agy() {
     trap - EXIT
 }
 
-install_from_url "https://claude.ai/install.sh" "claude"
+: "${CAPSEM_CLAUDE_URL:?}"
+: "${CAPSEM_CLAUDE_SHA256:?}"
+: "${CAPSEM_CLAUDE_VERSION:?}"
+: "${CAPSEM_OLLAMA_URL:?}"
+: "${CAPSEM_OLLAMA_SHA256:?}"
+: "${CAPSEM_OLLAMA_VERSION:?}"
+
+install_exact_binary "$CAPSEM_CLAUDE_URL" "$CAPSEM_CLAUDE_SHA256" /usr/local/bin/claude
+claude --version | grep -F "$CAPSEM_CLAUDE_VERSION"
 install_agy
 
-curl -fsSL https://ollama.com/install.sh | sh
+install_exact_ollama "$CAPSEM_OLLAMA_URL" "$CAPSEM_OLLAMA_SHA256"
 command -v ollama >/dev/null 2>&1
+ollama --version 2>&1 | grep -F "$CAPSEM_OLLAMA_VERSION"
 rm -rf /usr/local/lib/ollama/cuda_*
 
 cleanup_agent_runtime_state() {

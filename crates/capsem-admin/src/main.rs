@@ -5973,8 +5973,14 @@ fn profile_file_descriptors(
     if let Some(value) = profile.files.python_requirements.as_ref() {
         descriptors.push(("python_requirements", value));
     }
+    if let Some(value) = profile.files.python_requirements_lock.as_ref() {
+        descriptors.push(("python_requirements_lock", value));
+    }
     if let Some(value) = profile.files.npm_packages.as_ref() {
         descriptors.push(("npm_packages", value));
+    }
+    if let Some(value) = profile.files.npm_package_lock.as_ref() {
+        descriptors.push(("npm_package_lock", value));
     }
     if let Some(value) = profile.files.build.as_ref() {
         descriptors.push(("build", value));
@@ -7039,8 +7045,174 @@ fn validate_profile_payload_semantics(kind: &str, path: &Path) -> Result<()> {
         "apt_packages" | "python_requirements" | "npm_packages" => {
             read_profile_package_lines(path).map(|_| ())
         }
+        "python_requirements_lock" => validate_python_requirements_lock(path, None).map(|_| ()),
+        "npm_package_lock" => validate_npm_package_lock(path, None).map(|_| ()),
         _ => Ok(()),
     }
+}
+
+fn normalized_python_name(name: &str) -> String {
+    name.to_ascii_lowercase().replace(['_', '.'], "-")
+}
+
+fn exact_python_dependencies(packages: &[String]) -> Result<BTreeMap<String, String>> {
+    packages
+        .iter()
+        .map(|package| {
+            let (name, version) = package.split_once("==").ok_or_else(|| {
+                anyhow!("Python requirement {package} must select one exact version")
+            })?;
+            if name.is_empty()
+                || version.is_empty()
+                || version.contains(['=', ';', '@'])
+                || version.contains(char::is_whitespace)
+            {
+                return Err(anyhow!(
+                    "Python requirement {package} must select one exact version"
+                ));
+            }
+            Ok((normalized_python_name(name), version.to_string()))
+        })
+        .collect()
+}
+
+fn validate_python_requirements_lock(
+    path: &Path,
+    expected: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, String>> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("read Python requirements lock {}", path.display()))?;
+    let mut dependencies = BTreeMap::new();
+    let mut current: Option<String> = None;
+    let mut current_hashed = false;
+    for line in content.lines().filter(|line| !line.trim().is_empty()) {
+        if line.starts_with(char::is_whitespace) {
+            if line.trim_start().starts_with("--hash=sha256:") {
+                current_hashed = true;
+            }
+            continue;
+        }
+        if current.is_some() && !current_hashed {
+            return Err(anyhow!(
+                "Python requirements lock {} entry {} has no SHA-256 hash",
+                path.display(),
+                current.as_deref().unwrap_or_default()
+            ));
+        }
+        let (name, version) = line
+            .trim_end_matches(" \\")
+            .split_once("==")
+            .ok_or_else(|| anyhow!("Python lock entry {line} is not exact"))?;
+        let normalized = normalized_python_name(name);
+        dependencies.insert(normalized.clone(), version.to_string());
+        current = Some(normalized);
+        current_hashed = line.contains("--hash=sha256:");
+    }
+    if dependencies.is_empty() {
+        return Err(anyhow!(
+            "Python requirements lock {} must contain exact requirements",
+            path.display()
+        ));
+    }
+    if !current_hashed {
+        return Err(anyhow!(
+            "Python requirements lock {} entry {} has no SHA-256 hash",
+            path.display(),
+            current.as_deref().unwrap_or_default()
+        ));
+    }
+    if expected.is_some_and(|wanted| {
+        wanted
+            .iter()
+            .any(|(name, version)| dependencies.get(name) != Some(version))
+    }) {
+        return Err(anyhow!(
+            "Python requirements lock {} does not match the profile's exact direct packages",
+            path.display()
+        ));
+    }
+    Ok(dependencies)
+}
+
+fn exact_npm_dependencies(packages: &[String]) -> Result<BTreeMap<String, String>> {
+    packages
+        .iter()
+        .map(|package| {
+            let (name, version) = package
+                .rsplit_once('@')
+                .ok_or_else(|| anyhow!("npm package {package} must select one exact version"))?;
+            if name.is_empty()
+                || version.is_empty()
+                || version
+                    .chars()
+                    .next()
+                    .is_some_and(|prefix| matches!(prefix, '^' | '~' | '>' | '<' | '='))
+                || version.contains(char::is_whitespace)
+            {
+                return Err(anyhow!(
+                    "npm package {package} must select one exact version"
+                ));
+            }
+            Ok((name.to_string(), version.to_string()))
+        })
+        .collect()
+}
+
+fn validate_npm_package_lock(
+    path: &Path,
+    expected: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, String>> {
+    let value: serde_json::Value = serde_json::from_slice(
+        &fs::read(path).with_context(|| format!("read npm lock {}", path.display()))?,
+    )
+    .with_context(|| format!("parse npm lock {}", path.display()))?;
+    if value
+        .get("lockfileVersion")
+        .and_then(serde_json::Value::as_u64)
+        != Some(3)
+    {
+        return Err(anyhow!(
+            "npm lock {} must use lockfileVersion 3",
+            path.display()
+        ));
+    }
+    let packages = value
+        .get("packages")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| anyhow!("npm lock {} has no packages object", path.display()))?;
+    let root = packages
+        .get("")
+        .and_then(|entry| entry.get("dependencies"))
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| anyhow!("npm lock {} has no root dependencies", path.display()))?;
+    let dependencies: BTreeMap<String, String> = root
+        .iter()
+        .map(|(name, version)| {
+            let version = version
+                .as_str()
+                .ok_or_else(|| anyhow!("npm lock dependency {name} is not a string"))?;
+            Ok((name.clone(), version.to_string()))
+        })
+        .collect::<Result<_>>()?;
+    if expected.is_some_and(|wanted| wanted != &dependencies) {
+        return Err(anyhow!(
+            "npm lock {} does not match the profile's exact direct packages",
+            path.display()
+        ));
+    }
+    for (name, package) in packages.iter().filter(|(name, _)| !name.is_empty()) {
+        let integrity = package
+            .get("integrity")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if !integrity.starts_with("sha512-") {
+            return Err(anyhow!(
+                "npm lock {} package {name} has no SHA-512 integrity",
+                path.display()
+            ));
+        }
+    }
+    Ok(dependencies)
 }
 
 #[derive(Debug, Deserialize)]
@@ -7703,7 +7875,9 @@ fn materialize_profile_file_descriptors(
     pin(profile.files.mcp.as_mut(), config_root)?;
     pin(profile.files.apt_packages.as_mut(), config_root)?;
     pin(profile.files.python_requirements.as_mut(), config_root)?;
+    pin(profile.files.python_requirements_lock.as_mut(), config_root)?;
     pin(profile.files.npm_packages.as_mut(), config_root)?;
+    pin(profile.files.npm_package_lock.as_mut(), config_root)?;
     pin(profile.files.build.as_mut(), config_root)?;
     pin(profile.files.tips.as_mut(), config_root)?;
     pin(profile.files.root_manifest.as_mut(), config_root)?;
@@ -8402,7 +8576,10 @@ fn materialize_profile_guest_inputs(
             &packages,
         )?;
     }
-    if let Some(descriptor) = profile.files.python_requirements.as_ref() {
+    if let (Some(descriptor), Some(lock_descriptor)) = (
+        profile.files.python_requirements.as_ref(),
+        profile.files.python_requirements_lock.as_ref(),
+    ) {
         let packages = read_profile_package_lines(&config_root.join(&descriptor.path))?;
         write_profile_package_toml(
             &packages_dir.join("python.toml"),
@@ -8412,8 +8589,16 @@ fn materialize_profile_guest_inputs(
             "uv pip install --system --break-system-packages",
             &packages,
         )?;
+        let lock_source = config_root.join(&lock_descriptor.path);
+        let expected = exact_python_dependencies(&packages)?;
+        validate_python_requirements_lock(&lock_source, Some(&expected))?;
+        fs::copy(&lock_source, packages_dir.join("python-requirements.lock"))
+            .with_context(|| format!("copy Python requirements lock {}", lock_source.display()))?;
     }
-    if let Some(descriptor) = profile.files.npm_packages.as_ref() {
+    if let (Some(descriptor), Some(lock_descriptor)) = (
+        profile.files.npm_packages.as_ref(),
+        profile.files.npm_package_lock.as_ref(),
+    ) {
         let packages = read_profile_package_lines(&config_root.join(&descriptor.path))?;
         write_profile_package_toml(
             &packages_dir.join("npm.toml"),
@@ -8422,6 +8607,19 @@ fn materialize_profile_guest_inputs(
             "npm",
             "npm install -g --prefix /opt/ai-clis",
             &packages,
+        )?;
+        let expected = exact_npm_dependencies(&packages)?;
+        let lock_source = config_root.join(&lock_descriptor.path);
+        validate_npm_package_lock(&lock_source, Some(&expected))?;
+        fs::copy(&lock_source, packages_dir.join("npm-package-lock.json"))
+            .with_context(|| format!("copy npm package lock {}", lock_source.display()))?;
+        fs::write(
+            packages_dir.join("npm-package.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "name": "capsem-profile-ai-clis",
+                "private": true,
+                "dependencies": expected,
+            }))?,
         )?;
     }
     if let Some(descriptor) = profile.files.build.as_ref() {

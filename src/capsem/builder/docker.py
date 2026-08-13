@@ -129,10 +129,6 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
     npm_prefix = "/opt/ai-clis"
     if "npm" in config.package_sets:
         npm_packages.extend(config.package_sets["npm"].packages)
-    curl_installs: list[str] = []
-    if "curl" in config.package_sets:
-        curl_installs.extend(config.package_sets["curl"].packages)
-
     return {
         **_debian_snapshot_context(config),
         "arch": arch,
@@ -142,7 +138,7 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
         "python_install_cmd": python_install_cmd,
         "npm_packages": npm_packages,
         "npm_prefix": npm_prefix,
-        "curl_installs": curl_installs,
+        "dependency_artifacts": config.build.asset_dependencies.architectures[arch_name],
         "guest_binaries": GUEST_BINARIES,
         "profile_root_seed": config.profile_root_seed,
         "profile_build_script": config.profile_build_script,
@@ -1445,7 +1441,9 @@ def _rootfs_config_input_record(
             "python_install_cmd": ctx["python_install_cmd"],
             "npm_packages": list(ctx["npm_packages"]),
             "npm_prefix": ctx["npm_prefix"],
-            "curl_installs": list(ctx["curl_installs"]),
+            "dependency_artifacts": config.build.asset_dependencies.architectures[
+                arch_name
+            ].model_dump(mode="json"),
         },
         "profile_inputs": {
             "root_seed": {
@@ -1732,6 +1730,18 @@ def prepare_build_context(
     dockerfile_path.write_text(dockerfile_content)
 
     if template_name == config.build.asset_dependencies.rootfs_template:
+        packages_dir = guest_dir / "config" / "packages"
+        if "python" in config.package_sets:
+            python_lock = packages_dir / "python-requirements.lock"
+            if not python_lock.is_file():
+                raise FileNotFoundError(python_lock)
+            shutil.copy2(str(python_lock), str(context_dir / python_lock.name))
+        if "npm" in config.package_sets:
+            for name in ("npm-package.json", "npm-package-lock.json"):
+                source = packages_dir / name
+                if not source.is_file():
+                    raise FileNotFoundError(source)
+                shutil.copy2(str(source), str(context_dir / name))
         if config.profile_build_script:
             if not config.profile_build_script_path:
                 raise FileNotFoundError("profile_build_script_path")

@@ -68,8 +68,14 @@ path = "profiles/code/apt-packages.txt"
 [files.python_requirements]
 path = "profiles/code/python-requirements.txt"
 
+[files.python_requirements_lock]
+path = "profiles/code/python-requirements.lock"
+
 [files.npm_packages]
 path = "profiles/code/npm-packages.txt"
+
+[files.npm_package_lock]
+path = "profiles/code/npm-package-lock.json"
 
 [files.build]
 path = "profiles/code/build.sh"

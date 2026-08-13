@@ -51,6 +51,23 @@ def image_tag(
             raise ValueError(f"profile build script is missing: {path}")
         digest.update(path.read_bytes())
         digest.update(b"\0")
+    if template == "rootfs":
+        if config.guest_dir_path is None:
+            raise ValueError("rootfs dependency identity requires a generated guest directory")
+        packages_dir = Path(config.guest_dir_path) / "config" / "packages"
+        lock_names: list[str] = []
+        if "python" in config.package_sets:
+            lock_names.append("python-requirements.lock")
+        if "npm" in config.package_sets:
+            lock_names.extend(("npm-package.json", "npm-package-lock.json"))
+        for name in lock_names:
+            path = packages_dir / name
+            if not path.is_file():
+                raise ValueError(f"profile dependency lock is missing: {path}")
+            digest.update(name.encode())
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
     return settings.tag_template.format(
         template=template,
         arch=arch_name,

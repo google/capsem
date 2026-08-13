@@ -29,46 +29,58 @@ RUN set -eux; \
         ') }} && \
     ln -sf vim.tiny /usr/bin/vim && \
     rm -f /usr/sbin/iptables-legacy /usr/sbin/iptables-legacy-restore /usr/sbin/iptables-legacy-save \
-          /usr/sbin/ip6tables-legacy /usr/sbin/ip6tables-legacy-restore /usr/sbin/ip6tables-legacy-save && \
-    pip3 install --break-system-packages --upgrade pip
+          /usr/sbin/ip6tables-legacy /usr/sbin/ip6tables-legacy-restore /usr/sbin/ip6tables-legacy-save
 
-ENV NVM_DIR=/usr/local/nvm
-RUN mkdir -p $NVM_DIR && \
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash && \
-    bash -c '. $NVM_DIR/nvm.sh && nvm install {{ arch.node_major }} && npm install -g npm@latest && \
-    for bin in node npm npx; do ln -sf "$(which $bin)" /usr/local/bin/$bin; done'
+RUN set -eux; \
+    curl -fsSL '{{ dependency_artifacts.node.url }}' -o /tmp/node.tar.xz; \
+    printf '%s  %s\n' '{{ dependency_artifacts.node.sha256 }}' /tmp/node.tar.xz | sha256sum -c -; \
+    mkdir -p /usr/local/lib/node; \
+    tar -xJf /tmp/node.tar.xz --strip-components=1 -C /usr/local/lib/node; \
+    rm -f /tmp/node.tar.xz; \
+    for bin in node npm npx; do ln -s "/usr/local/lib/node/bin/$bin" "/usr/local/bin/$bin"; done; \
+    test "$(node --version)" = 'v{{ dependency_artifacts.node.version }}'; \
+    test "$(npm --version)" = '{{ dependency_artifacts.node.npm_version }}'
 
-RUN curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh && \
-    install -m 555 /root/.local/bin/uv /usr/local/bin/uv && \
-    install -m 555 /root/.local/bin/uvx /usr/local/bin/uvx
+RUN set -eux; \
+    curl -fsSL '{{ dependency_artifacts.uv.url }}' -o /tmp/uv.tar.gz; \
+    printf '%s  %s\n' '{{ dependency_artifacts.uv.sha256 }}' /tmp/uv.tar.gz | sha256sum -c -; \
+    mkdir -p /tmp/uv; \
+    tar -xzf /tmp/uv.tar.gz --strip-components=1 -C /tmp/uv; \
+    install -m 555 /tmp/uv/uv /usr/local/bin/uv; \
+    install -m 555 /tmp/uv/uvx /usr/local/bin/uvx; \
+    rm -rf /tmp/uv /tmp/uv.tar.gz; \
+    test "$(uv --version)" = 'uv {{ dependency_artifacts.uv.version }}'
 
 {% if npm_packages %}
-RUN npm install -g --prefix {{ npm_prefix }} \
-        {{ npm_packages | join(' \\
-        ') }} && \
-    npm config set prefix {{ npm_prefix }} -g && \
+COPY npm-package.json /tmp/npm/package.json
+COPY npm-package-lock.json /tmp/npm/package-lock.json
+RUN npm ci --prefix /tmp/npm --ignore-scripts --no-audit --no-fund && \
+    mkdir -p {{ npm_prefix }} && \
+    mv /tmp/npm/node_modules {{ npm_prefix }}/node_modules && \
+    ln -s {{ npm_prefix }}/node_modules/.bin {{ npm_prefix }}/bin && \
+    rm -rf /tmp/npm && \
     npm cache clean --force
 ENV PATH="{{ npm_prefix }}/bin:$PATH"
 {% endif %}
 
 {% if profile_build_script %}
 COPY profile-build.sh /tmp/profile-build.sh
-RUN chmod 555 /tmp/profile-build.sh && /tmp/profile-build.sh && rm -f /tmp/profile-build.sh
+RUN chmod 555 /tmp/profile-build.sh && \
+    CAPSEM_CLAUDE_URL='{{ dependency_artifacts.claude.url }}' \
+    CAPSEM_CLAUDE_SHA256='{{ dependency_artifacts.claude.sha256 }}' \
+    CAPSEM_CLAUDE_VERSION='{{ dependency_artifacts.claude.version }}' \
+    CAPSEM_OLLAMA_URL='{{ dependency_artifacts.ollama.url }}' \
+    CAPSEM_OLLAMA_SHA256='{{ dependency_artifacts.ollama.sha256 }}' \
+    CAPSEM_OLLAMA_VERSION='{{ dependency_artifacts.ollama.version }}' \
+    /tmp/profile-build.sh && \
+    rm -f /tmp/profile-build.sh
 {% endif %}
 
-RUN uv pip install --system --break-system-packages certifi
-
 {% if python_packages %}
-RUN {{ python_install_cmd }} \
-        {{ python_packages | join(' \\
-        ') }}
+COPY python-requirements.lock /tmp/python-requirements.lock
+RUN uv pip install --system --break-system-packages --require-hashes \
+        --requirements /tmp/python-requirements.lock && \
+    rm -f /tmp/python-requirements.lock
 {% endif %}
 
 RUN rm -rf /root && mkdir -p /root
-
-{% for url in curl_installs %}
-RUN curl -fsSL {{ url }} | bash && \
-    for bin in /root/.local/bin/*; do \
-        [ -f "$bin" ] && install -m 555 "$bin" /usr/local/bin/; \
-    done
-{% endfor %}

@@ -371,7 +371,30 @@ def _write_profile_catalog(root: Path, revision: str = PROFILE_REVISION) -> Path
     profile_dir.mkdir(parents=True, exist_ok=True)
     (profile_dir / "apt-packages.txt").write_text("zstd\n", encoding="utf-8")
     (profile_dir / "python-requirements.txt").write_text("pytest==8.0.0\n", encoding="utf-8")
-    (profile_dir / "npm-packages.txt").write_text("@openai/codex\n", encoding="utf-8")
+    (profile_dir / "python-requirements.lock").write_text(
+        "pytest==8.0.0 \\\n    --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+        encoding="utf-8",
+    )
+    (profile_dir / "npm-packages.txt").write_text(
+        "@openai/codex@0.147.0\n", encoding="utf-8"
+    )
+    (profile_dir / "npm-package-lock.json").write_text(
+        json.dumps(
+            {
+                "name": "capsem-profile-ai-clis",
+                "lockfileVersion": 3,
+                "packages": {
+                    "": {"dependencies": {"@openai/codex": "0.147.0"}},
+                    "node_modules/@openai/codex": {
+                        "version": "0.147.0",
+                        "integrity": "sha512-dGVzdA==",
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     root_payload = b"fixture profile root\n"
     (profile_dir / "root/root").mkdir(parents=True)
     (profile_dir / "root/root/.profile").write_bytes(root_payload)
@@ -433,8 +456,14 @@ path = "profiles/code/apt-packages.txt"
 [files.python_requirements]
 path = "profiles/code/python-requirements.txt"
 
+[files.python_requirements_lock]
+path = "profiles/code/python-requirements.lock"
+
 [files.npm_packages]
 path = "profiles/code/npm-packages.txt"
+
+[files.npm_package_lock]
+path = "profiles/code/npm-package-lock.json"
 
 [files.root_manifest]
 path = "profiles/code/root.manifest.json"

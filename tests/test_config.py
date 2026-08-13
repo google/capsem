@@ -61,6 +61,27 @@ rootfs_template = "Dockerfile.rootfs-dependencies.j2"
 kernel_template = "Dockerfile.kernel-dependencies.j2"
 source_build_network = "none"
 
+[build.asset_dependencies.architectures.arm64.node]
+version = "24.19.0"
+url = "https://example.test/node-v24.19.0-linux-arm64.tar.xz"
+sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
+npm_version = "11.17.0"
+
+[build.asset_dependencies.architectures.arm64.uv]
+version = "1.2.3"
+url = "https://example.test/uv-1.2.3-linux-arm64"
+sha256 = "2222222222222222222222222222222222222222222222222222222222222222"
+
+[build.asset_dependencies.architectures.arm64.claude]
+version = "1.2.3"
+url = "https://example.test/claude-1.2.3-linux-arm64"
+sha256 = "3333333333333333333333333333333333333333333333333333333333333333"
+
+[build.asset_dependencies.architectures.arm64.ollama]
+version = "1.2.3"
+url = "https://example.test/ollama-1.2.3-linux-arm64"
+sha256 = "4444444444444444444444444444444444444444444444444444444444444444"
+
 [build.erofs]
 enabled = true
 compression = "lz4hc"
@@ -417,6 +438,48 @@ tag_template = "capsem-{template}-dependencies-{arch}:{digest}"
 rootfs_template = "Dockerfile.rootfs-dependencies.j2"
 kernel_template = "Dockerfile.kernel-dependencies.j2"
 source_build_network = "none"
+
+[build.asset_dependencies.architectures.arm64.node]
+version = "24.19.0"
+url = "https://example.test/node-v24.19.0-linux-arm64.tar.xz"
+sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
+npm_version = "11.17.0"
+
+[build.asset_dependencies.architectures.arm64.uv]
+version = "1.2.3"
+url = "https://example.test/uv-1.2.3-linux-arm64"
+sha256 = "2222222222222222222222222222222222222222222222222222222222222222"
+
+[build.asset_dependencies.architectures.arm64.claude]
+version = "1.2.3"
+url = "https://example.test/claude-1.2.3-linux-arm64"
+sha256 = "3333333333333333333333333333333333333333333333333333333333333333"
+
+[build.asset_dependencies.architectures.arm64.ollama]
+version = "1.2.3"
+url = "https://example.test/ollama-1.2.3-linux-arm64"
+sha256 = "4444444444444444444444444444444444444444444444444444444444444444"
+
+[build.asset_dependencies.architectures.x86_64.node]
+version = "24.19.0"
+url = "https://example.test/node-v24.19.0-linux-x64.tar.xz"
+sha256 = "5555555555555555555555555555555555555555555555555555555555555555"
+npm_version = "11.17.0"
+
+[build.asset_dependencies.architectures.x86_64.uv]
+version = "1.2.3"
+url = "https://example.test/uv-1.2.3-linux-x64"
+sha256 = "6666666666666666666666666666666666666666666666666666666666666666"
+
+[build.asset_dependencies.architectures.x86_64.claude]
+version = "1.2.3"
+url = "https://example.test/claude-1.2.3-linux-x64"
+sha256 = "7777777777777777777777777777777777777777777777777777777777777777"
+
+[build.asset_dependencies.architectures.x86_64.ollama]
+version = "1.2.3"
+url = "https://example.test/ollama-1.2.3-linux-x64"
+sha256 = "8888888888888888888888888888888888888888888888888888888888888888"
 
 [build.kernel]
 version = "9.9.9"

@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from capsem.builder.models import (
     ArchConfig,
+    AssetDependencyArchitectureConfig,
     AssetDependencyConfig,
     AssetToolBinaryConfig,
     AssetToolsArchitectureConfig,
@@ -23,12 +24,14 @@ from capsem.builder.models import (
     GuestRustBuilderConfig,
     KernelConfig,
     McpServerConfig,
+    NodeDownloadConfig,
     PackageManager,
     PackageNetworkConfig,
     PackageSetConfig,
     ShellConfig,
     ShellFileConfig,
     TlsConfig,
+    VersionedDownloadConfig,
     VmEnvironmentConfig,
     VmResourcesConfig,
     WebSecurityConfig,
@@ -92,6 +95,7 @@ def _build(**kw):
             rootfs_template="Dockerfile.rootfs-dependencies.j2",
             kernel_template="Dockerfile.kernel-dependencies.j2",
             source_build_network=BuildNetwork.NONE,
+            architectures={name: _dependency_arch(name) for name in architectures},
         ),
         "kernel": KernelConfig(version="9.9.9", sha256="a" * 64),
         "guest_rust_builder": GuestRustBuilderConfig(
@@ -108,10 +112,45 @@ def _build(**kw):
     return BuildConfig.model_validate(defaults)
 
 
+def _dependency_arch(name: str) -> AssetDependencyArchitectureConfig:
+    suffix = "arm64" if name == "arm64" else "x64"
+    download = VersionedDownloadConfig(
+        version="1.2.3",
+        url=f"https://example.test/tool-1.2.3-linux-{suffix}",
+        sha256="f" * 64,
+    )
+    return AssetDependencyArchitectureConfig(
+        node=NodeDownloadConfig(
+            version="24.19.0",
+            url=f"https://example.test/node-v24.19.0-linux-{suffix}.tar.xz",
+            sha256="e" * 64,
+            npm_version="11.17.0",
+        ),
+        uv=download,
+        claude=download,
+        ollama=download,
+    )
+
+
 def _mcp_stdio(**kw):
     defaults = {"name": "Test", "transport": McpTransport.STDIO, "command": "/bin/test"}
     defaults.update(kw)
     return McpServerConfig(**defaults)
+
+
+def test_asset_dependency_node_major_must_match_architecture() -> None:
+    dependency = _dependency_arch("arm64")
+    bad_node = dependency.node.model_copy(update={"version": "23.11.0"})
+    with pytest.raises(ValidationError, match="Node major"):
+        _build(
+            asset_dependencies=AssetDependencyConfig(
+                tag_template="capsem-{template}-dependencies-{arch}:{digest}",
+                rootfs_template="Dockerfile.rootfs-dependencies.j2",
+                kernel_template="Dockerfile.kernel-dependencies.j2",
+                source_build_network=BuildNetwork.NONE,
+                architectures={"arm64": dependency.model_copy(update={"node": bad_node})},
+            )
+        )
 
 
 # ---------------------------------------------------------------------------

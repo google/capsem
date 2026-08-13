@@ -132,7 +132,11 @@ pub struct ProfileFileReferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub python_requirements: Option<ProfileFileDescriptor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python_requirements_lock: Option<ProfileFileDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub npm_packages: Option<ProfileFileDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub npm_package_lock: Option<ProfileFileDescriptor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<ProfileFileDescriptor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1718,7 +1722,9 @@ impl ProfileFileReferences {
             && self.mcp.is_none()
             && self.apt_packages.is_none()
             && self.python_requirements.is_none()
+            && self.python_requirements_lock.is_none()
             && self.npm_packages.is_none()
+            && self.npm_package_lock.is_none()
             && self.build.is_none()
             && self.tips.is_none()
             && self.root_manifest.is_none()
@@ -1734,7 +1740,15 @@ impl ProfileFileReferences {
                 "profile.files.python_requirements",
                 self.python_requirements.as_ref(),
             ),
+            (
+                "profile.files.python_requirements_lock",
+                self.python_requirements_lock.as_ref(),
+            ),
             ("profile.files.npm_packages", self.npm_packages.as_ref()),
+            (
+                "profile.files.npm_package_lock",
+                self.npm_package_lock.as_ref(),
+            ),
             ("profile.files.build", self.build.as_ref()),
             ("profile.files.tips", self.tips.as_ref()),
             ("profile.files.root_manifest", self.root_manifest.as_ref()),
@@ -1742,6 +1756,17 @@ impl ProfileFileReferences {
             if let Some(descriptor) = descriptor {
                 descriptor.validate(field)?;
             }
+        }
+        if self.python_requirements.is_some() != self.python_requirements_lock.is_some() {
+            return Err(
+                "profile.files.python_requirements and python_requirements_lock must be paired"
+                    .to_string(),
+            );
+        }
+        if self.npm_packages.is_some() != self.npm_package_lock.is_some() {
+            return Err(
+                "profile.files.npm_packages and npm_package_lock must be paired".to_string(),
+            );
         }
         Ok(())
     }
@@ -1753,7 +1778,12 @@ impl ProfileFileReferences {
             ("mcp", self.mcp.as_ref()),
             ("apt_packages", self.apt_packages.as_ref()),
             ("python_requirements", self.python_requirements.as_ref()),
+            (
+                "python_requirements_lock",
+                self.python_requirements_lock.as_ref(),
+            ),
             ("npm_packages", self.npm_packages.as_ref()),
+            ("npm_package_lock", self.npm_package_lock.as_ref()),
             ("build", self.build.as_ref()),
             ("tips", self.tips.as_ref()),
             ("root_manifest", self.root_manifest.as_ref()),
@@ -2106,7 +2136,9 @@ fn overlay_release_manifest_assets(
                         "mcp" => &mut profile.files.mcp,
                         "apt_packages" => &mut profile.files.apt_packages,
                         "python_requirements" => &mut profile.files.python_requirements,
+                        "python_requirements_lock" => &mut profile.files.python_requirements_lock,
                         "npm_packages" => &mut profile.files.npm_packages,
+                        "npm_package_lock" => &mut profile.files.npm_package_lock,
                         "build" => &mut profile.files.build,
                         "tips" => &mut profile.files.tips,
                         "root_manifest" => &mut profile.files.root_manifest,

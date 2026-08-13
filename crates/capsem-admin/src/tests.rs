@@ -368,9 +368,12 @@ fn checked_in_profile_build_wraps_agy_with_skip_permissions() {
         "profile-owned AGY wrapper must opt into the Capsem permission model"
     );
     assert!(
-        content.contains("https://ollama.com/install.sh"),
-        "profile build script must ship Ollama through its official installer"
+        content.contains("CAPSEM_OLLAMA_URL")
+            && content.contains("CAPSEM_OLLAMA_SHA256")
+            && content.contains("sha256sum"),
+        "profile build script must install the exact digest-bound Ollama archive"
     );
+    assert!(!content.contains("https://ollama.com/install.sh"));
 }
 
 #[test]
@@ -682,6 +685,11 @@ fn profile_check_rejects_empty_profile_package_file_even_when_hash_matches() {
     fs::create_dir_all(&profile_dir).expect("profile dir");
     let packages = "# intentionally empty\n";
     fs::write(profile_dir.join("python-requirements.txt"), packages).expect("packages");
+    fs::write(
+        profile_dir.join("python-requirements.lock"),
+        "pytest==9.1.1 \\\n    --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+    )
+    .expect("lock");
     let mut profile = ProfileConfigFile::builtin_primary();
     profile.rule_files.enforcement = None;
     profile.rule_files.sigma = None;
@@ -690,6 +698,12 @@ fn profile_check_rejects_empty_profile_package_file_even_when_hash_matches() {
     profile.files.python_requirements =
         Some(capsem_core::net::policy_config::ProfileFileDescriptor {
             path: "profiles/code/python-requirements.txt".to_string(),
+            hash: None,
+            size: None,
+        });
+    profile.files.python_requirements_lock =
+        Some(capsem_core::net::policy_config::ProfileFileDescriptor {
+            path: "profiles/code/python-requirements.lock".to_string(),
             hash: None,
             size: None,
         });
@@ -705,6 +719,49 @@ fn profile_check_rejects_empty_profile_package_file_even_when_hash_matches() {
     .expect_err("empty package file rejected");
 
     assert!(format!("{error:#}").contains("package list"), "{error:#}");
+}
+
+#[test]
+fn profile_dependency_locks_reject_direct_version_drift() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let python_lock = temp.path().join("python-requirements.lock");
+    fs::write(
+        &python_lock,
+        "pytest==9.1.0 \\\n    --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+    )
+    .expect("python lock");
+    let expected_python = BTreeMap::from([("pytest".to_string(), "9.1.1".to_string())]);
+    let python_error = validate_python_requirements_lock(&python_lock, Some(&expected_python))
+        .expect_err("direct Python version drift must be rejected");
+    assert!(
+        format!("{python_error:#}").contains("does not match the profile's exact direct packages"),
+        "{python_error:#}"
+    );
+
+    let npm_lock = temp.path().join("npm-package-lock.json");
+    fs::write(
+        &npm_lock,
+        serde_json::to_vec(&serde_json::json!({
+            "name": "capsem-profile-ai-clis",
+            "lockfileVersion": 3,
+            "packages": {
+                "": {"dependencies": {"@openai/codex": "0.146.0"}},
+                "node_modules/@openai/codex": {
+                    "version": "0.146.0",
+                    "integrity": "sha512-dGVzdA=="
+                }
+            }
+        }))
+        .expect("npm lock json"),
+    )
+    .expect("npm lock");
+    let expected_npm = BTreeMap::from([("@openai/codex".to_string(), "0.147.0".to_string())]);
+    let npm_error = validate_npm_package_lock(&npm_lock, Some(&expected_npm))
+        .expect_err("direct npm version drift must be rejected");
+    assert!(
+        format!("{npm_error:#}").contains("does not match the profile's exact direct packages"),
+        "{npm_error:#}"
+    );
 }
 
 #[test]
@@ -1322,7 +1379,14 @@ fn image_workspace_materializes_self_contained_profile_config() {
         "Ollama's official installer consumes .tar.zst payloads, so shipped profiles must include zstd"
     );
     assert!(generated_config.join("packages/python.toml").is_file());
+    assert!(generated_config
+        .join("packages/python-requirements.lock")
+        .is_file());
     assert!(generated_config.join("packages/npm.toml").is_file());
+    assert!(generated_config.join("packages/npm-package.json").is_file());
+    assert!(generated_config
+        .join("packages/npm-package-lock.json")
+        .is_file());
     let resources = fs::read_to_string(generated_config.join("vm/resources.toml"))
         .expect("materialized VM resources");
     assert!(resources.contains("ram_gb = 12"));
@@ -1330,7 +1394,8 @@ fn image_workspace_materializes_self_contained_profile_config() {
     assert!(args.output.join("guest/profile-build.sh").is_file());
     let profile_build = fs::read_to_string(args.output.join("guest/profile-build.sh"))
         .expect("materialized profile build script");
-    assert!(profile_build.contains("https://ollama.com/install.sh"));
+    assert!(profile_build.contains("CAPSEM_OLLAMA_SHA256"));
+    assert!(!profile_build.contains("https://ollama.com/install.sh"));
     assert!(args
         .output
         .join("guest/profile-root/root/.codex/config.toml")

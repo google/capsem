@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Profile rootfs dependencies are now closed over exact per-architecture Node,
+  uv, Claude, and Ollama bytes plus checked-in Python hash locks and npm
+  integrity locks. Rootfs construction no longer invokes floating installer,
+  upgrade, or global-package rails for those tools.
+
 - Kernel and rootfs asset construction now exposes one resumable dependency
   frontier shared by the complete local gate and manual asset CI. It
   materializes snapshot-selected packages, verified kernel input, and
