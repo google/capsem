@@ -381,7 +381,10 @@ class TestRenderRootfs:
 
     def test_uv_installed(self, rendered_arm64):
         assert "uv-aarch64-unknown-linux-gnu.tar.gz" in rendered_arm64
-        assert "test \"$(uv --version)\" = 'uv 0.12.3'" in rendered_arm64
+        assert 'uv_version="$(uv --version)"' in rendered_arm64
+        assert "test \"$1\" = uv" in rendered_arm64
+        assert "test \"$2\" = '0.12.3'" in rendered_arm64
+        assert 'test "$(uv --version)"' not in rendered_arm64
 
     def test_pep668_removal(self, rendered_arm64):
         assert "EXTERNALLY-MANAGED" in rendered_arm64

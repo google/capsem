@@ -55,7 +55,10 @@ RUN set -eux; \
     install -m 555 /tmp/uv/uv /usr/local/bin/uv; \
     install -m 555 /tmp/uv/uvx /usr/local/bin/uvx; \
     rm -rf /tmp/uv /tmp/uv.tar.gz; \
-    test "$(uv --version)" = 'uv {{ dependency_artifacts.uv.version }}'
+    uv_version="$(uv --version)"; \
+    set -- $uv_version; \
+    test "$1" = uv; \
+    test "$2" = '{{ dependency_artifacts.uv.version }}'
 
 {% if npm_packages %}
 COPY npm-package.json /tmp/npm/package.json
