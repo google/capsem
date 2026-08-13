@@ -27,6 +27,7 @@ from pydantic import (
 )
 
 from .configschema import Strict
+from .digestschema import DigestConfig, LedgerConfig
 from .sandboxschema import SandboxConfig as SandboxConfig
 from .sourcecontractschema import ScriptSizeConfig
 
@@ -194,6 +195,11 @@ class RunLogConfig(Strict):
     slow_action_seconds: NonNegativeFloat
     failure_tail_lines: PositiveInt
     timing_regression: TimingRegressionConfig
+    #: The distilled history that outlives the directories above, and the
+    #: overview computed from it. In `digestschema` because this module is at
+    #: its own line boundary and thresholds are what people come to tune.
+    ledger: LedgerConfig
+    digest: DigestConfig
 
 
 class DiskConfig(Strict):

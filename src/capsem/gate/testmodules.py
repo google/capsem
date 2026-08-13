@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from . import (
     audits,
+    digestreport,
     host,
     hostimage,
     hostpackage,
@@ -111,7 +112,8 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     docstring; this threw its answer away.
     """
     phase = plan.phase("fast")
-
+    # Readable before the next run finishes; it needs no build output.
+    digest = phase.add(step("digest", digestreport.RefreshDigest()), after=after)
     # The environment first: everything below runs through uv or pnpm, and a
     # gate that assumes the lockfile is already installed is a gate that works
     # on the machine it was written on.
@@ -159,6 +161,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
         *checked,
         collected,
         guarded,
+        digest,
         *(surface for surface in surfaces if surface is not blocking),
         clippy,
     )

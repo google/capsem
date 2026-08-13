@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Gate history now outlives its run directories. `target/gate-runs/ledger.jsonl`
+  keeps one distilled row per finished run -- identity, plan-shape digest, and
+  every step's duration and status -- so the longitudinal questions survive a
+  `keep_runs` of twenty. `capsem-gate runs digest` renders the cross-run state
+  with advice attached, `runs trend --step <label>` follows one step run by run,
+  and `fast.digest` rebuilds the digest at the start of the fast phase so it is
+  readable while the run it precedes is still going. A session-start hook prints
+  it to agents, and `tests/citadel/test_run_digest_echo.py` fails if any part of
+  that wiring is removed.
+
+  Durations are compared only under `runledger.identity` -- the same
+  comparability rule the release ratchet uses, now defined once rather than
+  spelled out twice. Failure counts deliberately are not: a step that keeps
+  failing is worth naming whatever command ran it. Steps that were skipped or
+  carried are excluded from every median, and an empty baseline reports that
+  nothing was compared rather than that nothing was wrong.
+
 ### Changed
 
 - Profile rootfs dependencies are now closed over exact per-architecture Node,

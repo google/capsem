@@ -26,6 +26,14 @@ just release-profile nightly code
 
 See `/dev-just` for the full recipe reference and dependency chains.
 
+## Gate status
+
+`target/gate-runs/DIGEST.md` carries the cross-run state of the build --
+last run, steps that keep failing, where the time goes, and what to do about
+it. A session-start hook prints it; `uv run capsem-gate runs digest` rebuilds
+it. Read it before reporting that anything passes: one green run says nothing
+about a step that fails one time in four.
+
 ## Project Layout
 
 ```

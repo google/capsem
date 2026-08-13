@@ -140,16 +140,16 @@ def report(timing: Timing, *, command: str, settings: RunLogConfig, run_id: str)
     # fail at. Classifying by them reported a run whose workspace refused to
     # release as a success.
     status = "FAILED" if timing.outcome == "failed" else "ok"
-    lines = [f"{command} -- {_clock(timing.total_ms)} -- {status}", ""]
+    lines = [f"{command} -- {clock(timing.total_ms)} -- {status}", ""]
 
     if timing.critical_path:
-        lines.append(f"critical path ({_clock(timing.critical_ms)} of {_clock(timing.total_ms)})")
+        lines.append(f"critical path ({clock(timing.critical_ms)} of {clock(timing.total_ms)})")
         widest = max(len(label) for label in timing.critical_path)
         longest = max(timing.steps.get(name, 0.0) for name in timing.critical_path) or 1.0
         for label in timing.critical_path:
             spent = timing.steps.get(label, 0.0)
             bar = "#" * max(1, round(24 * spent / longest))
-            lines.append(f"  {label:<{widest}}  {_clock(spent):>9}  {bar}")
+            lines.append(f"  {label:<{widest}}  {clock(spent):>9}  {bar}")
         lines.append("")
 
     queued = sorted(
@@ -162,7 +162,7 @@ def report(timing: Timing, *, command: str, settings: RunLogConfig, run_id: str)
     )[:5]
     if queued:
         lines.append("longest resource waits")
-        lines += [f"  {_clock(spent):>9}  {label}" for spent, label in queued]
+        lines += [f"  {clock(spent):>9}  {label}" for spent, label in queued]
         lines.append("")
 
     slow = [
@@ -172,7 +172,7 @@ def report(timing: Timing, *, command: str, settings: RunLogConfig, run_id: str)
     ]
     if slow:
         lines.append("slowest actions")
-        lines += [f"  {_clock(spent):>9}  {render[:64]}  ({step})" for step, render, spent in slow]
+        lines += [f"  {clock(spent):>9}  {render[:64]}  ({step})" for step, render, spent in slow]
         lines.append("")
 
     if timing.failures or timing.run_failures:
@@ -193,7 +193,7 @@ def report(timing: Timing, *, command: str, settings: RunLogConfig, run_id: str)
     return "\n".join(lines)
 
 
-def _clock(milliseconds: float) -> str:
+def clock(milliseconds: float) -> str:
     seconds = milliseconds / 1000
     if seconds < 60:
         return f"{seconds:.1f}s"
