@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path
-from typing import TypeVar
 
 from .actions import Action
 from .config import GateConfig
@@ -18,11 +17,10 @@ from .context import Context
 from .errors import GateError
 from .harnessschema import TimingRegressionConfig
 from .runhistory import read, runs
+from .runledger import identity, one_event
 from .runlog import RunLog
 from .runlogschema import OK, PlanShape, RunEnd, RunStart
 from .timing import Timing, longest_chain, measure
-
-Model = TypeVar("Model", RunStart, PlanShape, RunEnd)
 
 
 class TimingBoundary(StrEnum):
@@ -55,30 +53,20 @@ class EnforceTimingRegression(Action, name="timing-ratchet"):
         context.journal.note(message)
 
 
-def _one(events: list[dict], model: type[Model]) -> Model | None:
-    kind = model.model_fields["event"].default
-    matches = [event for event in events if event.get("event") == kind]
-    if len(matches) != 1:
-        return None
-    payload = {key: matches[0][key] for key in model.model_fields if key in matches[0]}
-    return model.model_validate(payload)
-
-
 def comparable(
     current: RunStart,
     current_shape: PlanShape,
     prior: RunStart,
     prior_shape: PlanShape,
 ) -> bool:
-    """Whether elapsed-time evidence describes the same work and host class."""
-    return (
-        current.command == prior.command
-        and current.argv == prior.argv
-        and current.platform == prior.platform
-        and current.machine == prior.machine
-        and current.cores == prior.cores
-        and current_shape == prior_shape
-    )
+    """Whether elapsed-time evidence describes the same work and host class.
+
+    Delegated, because the digest asks exactly this about ledger rows. Spelled
+    out in two places they were free to disagree about a field, and the
+    disagreement would surface as a release refused or allowed for a reason
+    nobody could locate.
+    """
+    return identity(current, current_shape) == identity(prior, prior_shape)
 
 
 def enforce_regression(
@@ -170,8 +158,8 @@ def enforce_current(
 ) -> str | None:
     """Ratchet one finished plan against its latest comparable clean run."""
     current_events = read(current_directory, config.runlog)
-    current_start = _one(current_events, RunStart)
-    current_shape = _one(current_events, PlanShape)
+    current_start = one_event(current_events, RunStart)
+    current_shape = one_event(current_events, PlanShape)
     if current_start is None or current_shape is None:
         raise GateError("the current run lacks typed timing identity or plan shape")
     qualification_shape = _before(current_shape, boundary)
@@ -180,9 +168,9 @@ def enforce_current(
         if directory == current_directory:
             continue
         events = read(directory, config.runlog)
-        prior_start = _one(events, RunStart)
-        prior_shape = _one(events, PlanShape)
-        prior_end = _one(events, RunEnd)
+        prior_start = one_event(events, RunStart)
+        prior_shape = one_event(events, PlanShape)
+        prior_end = one_event(events, RunEnd)
         if (
             prior_start is None
             or prior_shape is None

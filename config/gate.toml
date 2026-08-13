@@ -1970,6 +1970,40 @@ failure_tail_lines = 40
 maximum_factor = 1.5
 slowest_steps = 10
 
+[runlog.ledger]
+# What survives rotation. `keep_runs` above is twenty and a day of gating
+# spends that before lunch, so every question worth asking -- is this getting
+# slower, does that keep failing, did the change help -- was answerable only
+# across whatever had not yet been deleted. A row is a couple of kilobytes.
+path = "target/gate-runs/ledger.jsonl"
+row_schema = "capsem.gate.ledger.v1"
+# Months of history for a few megabytes. Trimmed at every append, so the file
+# cannot become the thing that fills the disk it was added to protect.
+keep_rows = 2000
+
+[runlog.digest]
+# The overview regenerated on every run and injected into every agent session.
+# It is read far more often than it is written, and it is paid for in context
+# on work that has nothing to do with the gate, so both bounds below are about
+# staying worth reading rather than about storage.
+path = "target/gate-runs/DIGEST.md"
+# Comparable in the ledger's sense: same command, argv, host class and plan
+# shape. Ten is enough for a median to survive one bad neighbour.
+compare_runs = 10
+recent_runs = 8
+# Looser than the release ratchet's 1.5x, which refuses a release. This writes
+# a sentence, and a sentence that fires on ordinary variance gets ignored.
+regression_factor = 1.6
+improvement_factor = 1.5
+# Two failures is not noise and not yet a pattern. Naming it is the point: an
+# intermittent step is excused every time it is seen alone.
+thrash_runs = 2
+residency_fraction = 0.6
+# Past this, the advice changes from "make it faster" to "it is queueing" --
+# a critical path made of waiting does not shorten when its steps do.
+wait_fraction = 0.3
+hotspots = 6
+
 # ---------------------------------------------------------------------------
 # Disk the gate is allowed to occupy
 # ---------------------------------------------------------------------------

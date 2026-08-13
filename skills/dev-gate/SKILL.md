@@ -220,11 +220,38 @@ uv run capsem-gate <command> --graph      # the same graph as mermaid
 uv run capsem-gate runs last --failed     # what broke, where, how long
 ```
 ```bash
+uv run capsem-gate runs digest            # the cross-run state, and what to do
+```
+```bash
+uv run capsem-gate runs trend --step <label>   # one step, run by run
+```
+```bash
 uv run capsem-gate gc --dry-run           # what disk the gate holds, per tree
 ```
 
 `runs` and `gc` do not record themselves: `runs last` used to open a run and
 repoint `latest` at the question.
+
+## History outlives the run directories
+
+`keep_runs` is twenty, so every longitudinal question -- is this getting
+slower, does that keep failing, did the change help -- used to be answerable
+only across whatever rotation had not reached. `target/gate-runs/ledger.jsonl`
+keeps one distilled row per finished run instead: identity, plan-shape digest,
+and each step's duration and status. A couple of kilobytes, kept for months.
+
+`fast.digest` rebuilds `DIGEST.md` from it at the start of the fast phase, and
+`RunLog.close` rebuilds it again with the finished run included. Close is
+best-effort on purpose -- it runs on the failure path, where raising would
+replace the error somebody needs -- and the fast-phase step is the half that is
+allowed to fail.
+
+Two rules when reading or extending it. Durations are comparable only under
+`runledger.identity` (same command, argv, host class and plan shape), which is
+the one definition the release ratchet also uses. And a step whose status is
+`skipped` or `carried` records a near-zero duration that is not a measurement:
+`LedgerRow.measured` is how you ask, and taking `duration_ms` directly is how
+a median comes to report a build that never ran as the fastest on record.
 
 ## The guards that will fail you
 

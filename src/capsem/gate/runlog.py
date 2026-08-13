@@ -28,6 +28,7 @@ from typing import Any
 
 from capsem.gatelaunch import PYCACHE
 
+from . import digestreport, runledger
 from .config import GateConfig
 from .harnessschema import RunLogConfig
 from .journal import _CURRENT, FAILED, OK, EventJournal
@@ -82,6 +83,10 @@ class RunLog(EventJournal):
             log.close(OK)
 
     def _begin(self, config: GateConfig, argv: tuple[str, ...]) -> None:
+        # Kept for `close`, which has to record this run in the ledger and
+        # regenerate the digest, and both are questions about the whole
+        # history rather than about this directory.
+        self._config = config
         # Everything that makes this directory visible, and everything that
         # could act on another one, inside a single hold of the history lock.
         # The comment here used to claim the marker was taken before anything
@@ -126,8 +131,32 @@ class RunLog(EventJournal):
                 )
             )
             write_summary(self.directory, self.settings, command=self.command, run_id=self.run_id)
+            self._record_history()
         finally:
             self._active = release_active(self._active)
+
+    def _record_history(self) -> None:
+        """Add this run to the ledger and rewrite the digest.
+
+        Best-effort *here* and enforced elsewhere, deliberately. `close` runs
+        on the failure path too, and a bookkeeping error raised from it would
+        replace the failure somebody actually needs to read -- the lifecycle
+        rule that a primary error survives cleanup. So a problem is written
+        into this run's own log and the run keeps its real outcome.
+
+        That would be an invisible degradation on its own, which is why the
+        fast phase regenerates the digest as an ordinary step that is allowed
+        to fail. Between the two, a broken ledger is caught in seconds without
+        ever being able to eat a failure.
+        """
+        config = getattr(self, "_config", None)
+        if config is None:
+            return
+        try:
+            runledger.append(config, self.directory, self.settings)
+            digestreport.write(config)
+        except OSError as error:
+            self.note(f"run history not updated: {error}")
 
     def step_log(self, label: str) -> Path:
         """Where a step's own output goes, so concurrent lanes stay readable."""

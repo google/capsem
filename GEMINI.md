@@ -15,6 +15,19 @@ For release inputs, the manifest is the bible: absent means nonexistent.
 Mutable manifests are fetched fresh; immutable caches are keyed only by
 manifest-recorded artifact digests, never by channel, and reverified on use.
 
+## Read the Gate Digest First
+
+`target/gate-runs/DIGEST.md` is the state of the build across recent runs: what
+the last run did, which steps keep failing, where the time goes, and what to do
+about it. Every gate run regenerates it; `uv run capsem-gate runs digest`
+rebuilds it on demand and `uv run capsem-gate runs trend --step <label>` follows
+one step run by run.
+
+Read it before starting work and before reporting that anything passes. One
+green run says nothing about a step that fails one time in four, and an
+intermittent failure is the most expensive kind here precisely because each
+sighting looks like bad luck.
+
 ## Skills -- LOAD BEFORE CODING
 
 Skills contain hard-won lessons and project-specific patterns. **Before writing or modifying code, load the relevant skill.** Skipping skills leads to repeated bugs (e.g., blocking async, serde_json::Value on hot paths, missing VM tests).

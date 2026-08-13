@@ -10,6 +10,19 @@ Before code changes, load the relevant project skill from `skills/`. For tests
 and release gates, load `/dev-testing` and `/ironbank`. For debugging, load
 `/dev-debugging`. For architecture changes, load `/site-architecture`.
 
+## Read the Gate Digest First
+
+`target/gate-runs/DIGEST.md` is the state of the build across recent runs: what
+the last run did, which steps keep failing, where the time goes, and what to do
+about it. Every gate run regenerates it; `uv run capsem-gate runs digest`
+rebuilds it on demand and `uv run capsem-gate runs trend --step <label>` follows
+one step run by run.
+
+Read it before starting work and before reporting that anything passes. One
+green run says nothing about a step that fails one time in four, and an
+intermittent failure is the most expensive kind here precisely because each
+sighting looks like bad luck.
+
 ## Bound Direct Diagnostics
 
 Any direct development command that can block, build, launch children, or wait
