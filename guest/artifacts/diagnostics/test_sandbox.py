@@ -27,17 +27,20 @@ def _require_local_mock_url(path, reason):
 
 # -- Clock synchronization --
 
+
 def test_clock_is_synchronized():
     """System clock should be within 60 seconds of real time."""
     result = run("date +%s")
     assert result.returncode == 0
     guest_time = int(result.stdout.strip())
     host_time = int(time.time())
-    assert abs(guest_time - host_time) < 60, \
+    assert abs(guest_time - host_time) < 60, (
         f"clock drift too large: guest={guest_time}, host={host_time}, delta={abs(guest_time - host_time)}s"
+    )
 
 
 # -- Filesystem isolation --
+
 
 def test_rootfs_block_device_is_immutable():
     """The rootfs block device (/dev/vda) must be an immutable filesystem."""
@@ -45,8 +48,7 @@ def test_rootfs_block_device_is_immutable():
     # independent of mount visibility from inside the chroot.
     result = run("blkid -o value -s TYPE /dev/vda 2>&1")
     assert result.returncode == 0, f"/dev/vda not found or blkid failed: {result.stdout}"
-    assert result.stdout.strip() == "erofs", \
-        f"/dev/vda is not EROFS: {result.stdout}"
+    assert result.stdout.strip() == "erofs", f"/dev/vda is not EROFS: {result.stdout}"
 
 
 def test_overlay_configured():
@@ -106,6 +108,7 @@ def guest_binary(request):
 def test_guest_binary_not_writable(guest_binary):
     """Guest binaries must not be writable (chmod 555)."""
     import stat
+
     mode = os.stat(guest_binary).st_mode
     writable = mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
     assert writable == 0, f"{guest_binary} has write bits set (mode={oct(mode)})"
@@ -118,21 +121,25 @@ def test_guest_binary_executable(guest_binary):
 
 # -- No setuid/setgid --
 
+
 def test_no_setuid_binaries():
     """No setuid binaries should exist in the rootfs."""
-    result = run("find / -xdev -perm -4000 -type f 2>/dev/null", timeout=30)
+    result = run("find / -xdev -perm -4000 -type f", timeout=30)
+    assert result.returncode == 0, f"setuid scan failed:\n{result.stderr}"
     files = result.stdout.strip()
     assert files == "", f"setuid binaries found:\n{files}"
 
 
 def test_no_setgid_binaries():
     """No setgid binaries should exist in the rootfs."""
-    result = run("find / -xdev -perm -2000 -type f 2>/dev/null", timeout=30)
+    result = run("find / -xdev -perm -2000 -type f", timeout=30)
+    assert result.returncode == 0, f"setgid scan failed:\n{result.stderr}"
     files = result.stdout.strip()
     assert files == "", f"setgid binaries found:\n{files}"
 
 
 # -- Kernel hardening --
+
 
 def test_no_kernel_modules():
     """Kernel module loading must be disabled (CONFIG_MODULES=n)."""
@@ -160,6 +167,7 @@ def test_no_proc_kcore():
 
 # -- Network isolation (air-gapped SNI proxy) --
 
+
 def test_dummy_interface_exists():
     """dummy0 interface must exist for air-gapped networking."""
     result = run("ip link show dummy0")
@@ -172,10 +180,12 @@ def test_dns_resolves_via_capsem_proxy():
     `10.0.0.1`; post-T3 we forward to a real recursive resolver
     (host hickory -> 1.1.1.1) and return the actual answer."""
     result = run("getent hosts capsem-doctor-hermetic.invalid 2>&1", timeout=10)
-    assert result.returncode != 0, \
+    assert result.returncode != 0, (
         f"reserved .invalid domain unexpectedly resolved:\n{result.stdout}"
-    assert "10.0.0.1" not in result.stdout, \
+    )
+    assert "10.0.0.1" not in result.stdout, (
         f"reserved .invalid domain hit legacy dnsmasq sentinel:\n{result.stdout}"
+    )
 
 
 def test_iptables_redirect():
@@ -204,7 +214,7 @@ def test_allowed_domain():
 
     # Step 1: TCP connect directly to net-proxy port.
     r = run(
-        "python3 -c \""
+        'python3 -c "'
         "import socket; s=socket.socket(); s.settimeout(5); "
         "s.connect(('127.0.0.1', 10443)); "
         "print('PROXY_OK'); s.close()\"",
@@ -215,7 +225,7 @@ def test_allowed_domain():
 
     # Step 2: TLS handshake through the redirected rail.
     r = run(
-        "python3 -c \""
+        'python3 -c "'
         "import socket, ssl; "
         "s = socket.socket(); s.settimeout(10); "
         "s.connect(('10.0.0.1', 443)); "
@@ -224,7 +234,7 @@ def test_allowed_domain():
         "ctx.verify_mode = ssl.CERT_NONE; "
         "ws = ctx.wrap_socket(s, server_hostname='capsem-doctor.local'); "
         "print('TLS_OK version=' + str(ws.version())); "
-        "ws.close()\" 2>&1",
+        'ws.close()" 2>&1',
         timeout=15,
     )
     if "TLS_OK" not in r.stdout:
@@ -238,15 +248,18 @@ def test_allowed_domain():
         errors.append(f"curl no HTTP response: {r.stdout.strip()}")
 
     assert not errors, "HTTPS handshake diagnostic:\n" + "\n".join(
-        f"  [{i+1}] {e}" for i, e in enumerate(errors)
+        f"  [{i + 1}] {e}" for i, e in enumerate(errors)
     )
 
 
 def test_denied_domain():
     """Public deny proof requires an explicit deny-rule profile."""
-    result = run("curl -skI --connect-timeout 5 https://evil-never-allowed.invalid 2>&1", timeout=15)
-    assert result.returncode != 0 or "403" in result.stdout, \
+    result = run(
+        "curl -skI --connect-timeout 5 https://evil-never-allowed.invalid 2>&1", timeout=15
+    )
+    assert result.returncode != 0 or "403" in result.stdout, (
         f"curl to denied domain should fail or return 403: {result.stdout}"
+    )
 
 
 def test_no_real_nics():
@@ -261,6 +274,7 @@ def test_no_real_nics():
 
 
 # -- Process integrity --
+
 
 def test_pty_agent_running():
     """capsem-pty-agent must be running."""
@@ -300,6 +314,7 @@ def test_no_cron():
 
 # -- Additional kernel hardening --
 
+
 def test_proc_modules_empty():
     """/proc/modules must be empty or absent (CONFIG_MODULES=n)."""
     if not os.path.exists("/proc/modules"):
@@ -317,8 +332,7 @@ def test_no_debugfs():
 
 def test_no_ipv6():
     """IPv6 must be disabled (CONFIG_IPV6=n)."""
-    assert not os.path.exists("/proc/net/if_inet6"), \
-        "IPv6 is enabled (/proc/net/if_inet6 exists)"
+    assert not os.path.exists("/proc/net/if_inet6"), "IPv6 is enabled (/proc/net/if_inet6 exists)"
 
 
 def test_kernel_cmdline_has_ro():
@@ -336,16 +350,14 @@ def test_swap_active():
     is_virtiofs = "virtiofs" in mount_result.stdout
     result = run("cat /proc/swaps")
     assert result.returncode == 0
-    swap_lines = [line for line in result.stdout.strip().split('\n') if line.strip()]
+    swap_lines = [line for line in result.stdout.strip().split("\n") if line.strip()]
     if is_virtiofs:
         # VirtioFS mode: no swap file expected.
-        assert len(swap_lines) <= 1, \
-            f"swap should not be active in VirtioFS mode:\n{result.stdout}"
+        assert len(swap_lines) <= 1, f"swap should not be active in VirtioFS mode:\n{result.stdout}"
     else:
         # Block mode: swap on scratch disk.
         assert len(swap_lines) >= 2, f"swap is not active:\n{result.stdout}"
-        assert "/root/.swapfile" in result.stdout, \
-            f"swap not on scratch disk:\n{result.stdout}"
+        assert "/root/.swapfile" in result.stdout, f"swap not on scratch disk:\n{result.stdout}"
 
 
 def test_loopback_interface_up():
@@ -367,32 +379,31 @@ def test_no_kallsyms():
 
 # -- Kernel cmdline hardening --
 
+
 def test_init_on_alloc():
     """Kernel cmdline must include init_on_alloc=1 for heap zeroing."""
     result = run("cat /proc/cmdline")
     assert result.returncode == 0
-    assert "init_on_alloc=1" in result.stdout, \
-        f"init_on_alloc=1 not in cmdline: {result.stdout}"
+    assert "init_on_alloc=1" in result.stdout, f"init_on_alloc=1 not in cmdline: {result.stdout}"
 
 
 def test_slab_nomerge():
     """Kernel cmdline must include slab_nomerge for heap isolation."""
     result = run("cat /proc/cmdline")
     assert result.returncode == 0
-    assert "slab_nomerge" in result.stdout, \
-        f"slab_nomerge not in cmdline: {result.stdout}"
+    assert "slab_nomerge" in result.stdout, f"slab_nomerge not in cmdline: {result.stdout}"
 
 
 def test_page_alloc_shuffle():
     """Kernel cmdline must include page_alloc.shuffle=1 for page randomization."""
     result = run("cat /proc/cmdline")
     assert result.returncode == 0
-    assert "page_alloc.shuffle=1" in result.stdout, \
+    assert "page_alloc.shuffle=1" in result.stdout, (
         f"page_alloc.shuffle=1 not in cmdline: {result.stdout}"
+    )
 
 
 def test_seccomp_available():
     """Seccomp must be available (CONFIG_SECCOMP=y)."""
     result = run("grep '^Seccomp:' /proc/self/status")
-    assert result.returncode == 0, \
-        "Seccomp line not found in /proc/self/status"
+    assert result.returncode == 0, "Seccomp line not found in /proc/self/status"

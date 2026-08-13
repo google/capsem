@@ -514,6 +514,11 @@ class TestRootfsSecurityInvariants:
         assert "perm -4000" in rendered_arm64
         assert "perm -2000" in rendered_arm64
         assert "chmod u-s,g-s" in rendered_arm64
+        assert 'remaining="$(find / -xdev' in rendered_arm64
+        assert 'test -z "$remaining"' in rendered_arm64
+        hardening = rendered_arm64[rendered_arm64.index("RUN set -eu;") :]
+        assert "|| true" not in hardening
+        assert "/dev/null" not in hardening
 
     def test_apt_sources_https(self, real_config, rendered_arm64):
         """Runtime apt must use HTTPS -- VM blocks port 80."""

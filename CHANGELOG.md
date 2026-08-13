@@ -74,6 +74,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rootfs publication now fails closed while removing setuid and setgid bits.
+  The sealed build propagates traversal and `chmod` failures, independently
+  verifies that no privileged file remains, and the in-guest acceptance scan
+  likewise refuses filesystem errors instead of treating them as an empty
+  result.
 - Hosted install qualification now exports bounded glow-up JSON through a
   dedicated host mount and uploads it with the exact gate journal; a missing
   failure artifact is fatal instead of a warning.

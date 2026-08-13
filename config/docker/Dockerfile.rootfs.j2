@@ -41,6 +41,11 @@ RUN chmod 555 /usr/local/bin/snapshots
 # This is an ephemeral sandboxed VM; package-manager writes land in its overlay.
 RUN rm -f /usr/lib/python*/EXTERNALLY-MANAGED
 
-# Every dependency is already present, so this final hardening is the last mutation.
-RUN find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -exec chmod u-s,g-s {} + 2>/dev/null || true
+# Every dependency is already present. Strip privilege bits, then independently
+# prove none remain; an unreadable path or failed chmod must fail the build.
+RUN set -eu; \
+    find / -xdev -type f \( -perm -4000 -o -perm -2000 \) \
+        -exec chmod u-s,g-s {} +; \
+    remaining="$(find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -print)"; \
+    test -z "$remaining"
 RUN rm -rf /root && mkdir -p /root

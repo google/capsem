@@ -11,6 +11,9 @@ from __future__ import annotations
 import ast
 import inspect
 import re
+import shlex
+import stat
+import subprocess
 from collections import Counter
 from pathlib import Path
 
@@ -54,6 +57,151 @@ MUTABLE_TOOLS = (
 TOOL_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_.-])(" + "|".join(map(re.escape, MUTABLE_TOOLS)) + r")(?![A-Za-z0-9_.-])"
 )
+
+
+def _dockerfile_instructions(source: str) -> tuple[str, ...]:
+    """Return whitespace-normalized Dockerfile instructions.
+
+    The contract intentionally ignores comments, indentation, and line wrapping
+    so harmless Dockerfile refactors do not look like security regressions.
+    """
+    instructions: list[str] = []
+    current: list[str] = []
+    for raw_line in source.splitlines():
+        line = raw_line.strip()
+        if current:
+            current.append(line)
+        elif re.match(r"^[A-Z][A-Z0-9]*\s", line):
+            current = [line]
+        else:
+            continue
+
+        if line.endswith("\\"):
+            continue
+        instructions.append(" ".join(part.removesuffix("\\").rstrip() for part in current))
+        current = []
+
+    assert not current, "Dockerfile ends inside a continued instruction"
+    return tuple(instructions)
+
+
+def _rootfs_privilege_hardening(source: str) -> str:
+    """Validate and return the one fail-closed privilege hardening command."""
+    instructions = _dockerfile_instructions(source)
+    matches = [
+        (index, instruction)
+        for index, instruction in enumerate(instructions)
+        if instruction.startswith("RUN ") and "chmod u-s,g-s" in instruction
+    ]
+    assert len(matches) == 1, "rootfs must have exactly one privilege-bit scrub"
+    hardening_index, hardening = matches[0]
+
+    assert "set -eu" in hardening, "privilege-bit scrub must fail on every error"
+    assert "||" not in hardening, "privilege-bit scrub must not swallow failures"
+    assert "/dev/null" not in hardening, "privilege-bit failures must remain visible"
+    assert hardening.count("find / -xdev") == 2, (
+        "rootfs must strip privileged files and independently verify none remain"
+    )
+    assert 'test -z "$remaining"' in hardening, (
+        "rootfs must fail when privileged files remain after the scrub"
+    )
+    strip = hardening.index("chmod u-s,g-s")
+    verify_find = hardening.index("find / -xdev", strip)
+    verify_empty = hardening.index('test -z "$remaining"')
+    assert strip < verify_find < verify_empty
+
+    later = instructions[hardening_index + 1 :]
+    assert not any(instruction.startswith(("COPY ", "ADD ")) for instruction in later), (
+        "rootfs content must not be copied after privilege verification"
+    )
+    forbidden_later = re.compile(
+        r"(?<![A-Za-z0-9_.-])(?:apt|apt-get|aptitude|dnf|yum|apk|brew|uv|pip|pip3|"
+        r"npm|npx|pnpm|cargo|rustup|curl|wget|install)(?![A-Za-z0-9_.-])"
+    )
+    assert not any(forbidden_later.search(instruction) for instruction in later), (
+        "rootfs dependency acquisition must finish before privilege verification"
+    )
+    return hardening
+
+
+def test_rootfs_privilege_hardening_is_fail_closed() -> None:
+    source = (PROJECT_ROOT / "config/docker/Dockerfile.rootfs.j2").read_text(encoding="utf-8")
+
+    _rootfs_privilege_hardening(source)
+
+
+def test_rootfs_privilege_hardening_accepts_equivalent_formatting() -> None:
+    source = (PROJECT_ROOT / "config/docker/Dockerfile.rootfs.j2").read_text(encoding="utf-8")
+    reformatted = source.replace(
+        "# Every dependency is already present, so this final hardening is the last mutation.",
+        "# Equivalent prose and whitespace must not weaken this executable contract.",
+    ).replace("RUN set -eu;", "RUN    set -eu;")
+
+    _rootfs_privilege_hardening(reformatted)
+
+
+@pytest.mark.parametrize(
+    ("needle", "replacement"),
+    (
+        (
+            "-exec chmod u-s,g-s {} +;",
+            "-exec chmod u-s,g-s {} + || true;",
+        ),
+        (
+            "-exec chmod u-s,g-s {} +;",
+            "-exec chmod u-s,g-s {} + 2>/dev/null;",
+        ),
+        ('test -z "$remaining"', "true"),
+    ),
+    ids=("swallowed-exit", "hidden-errors", "deleted-verification"),
+)
+def test_rootfs_privilege_hardening_rejects_fail_open_mutations(
+    needle: str, replacement: str
+) -> None:
+    source = (PROJECT_ROOT / "config/docker/Dockerfile.rootfs.j2").read_text(encoding="utf-8")
+    assert needle in source
+
+    with pytest.raises(AssertionError):
+        _rootfs_privilege_hardening(source.replace(needle, replacement, 1))
+
+
+def test_rootfs_privilege_hardening_rejects_later_acquisition() -> None:
+    source = (PROJECT_ROOT / "config/docker/Dockerfile.rootfs.j2").read_text(encoding="utf-8")
+
+    with pytest.raises(AssertionError, match="acquisition must finish"):
+        _rootfs_privilege_hardening(source + "\nRUN npm install late-package\n")
+
+
+def test_rootfs_privilege_hardening_strips_a_synthetic_file(tmp_path: Path) -> None:
+    source = (PROJECT_ROOT / "config/docker/Dockerfile.rootfs.j2").read_text(encoding="utf-8")
+    instruction = _rootfs_privilege_hardening(source)
+    root = tmp_path / "rootfs"
+    root.mkdir()
+    privileged = root / "synthetic-privileged"
+    privileged.write_text("fixture\n", encoding="utf-8")
+    privileged.chmod(0o6755)
+    privilege_bits = stat.S_ISUID | stat.S_ISGID
+    assert privileged.stat().st_mode & privilege_bits == privilege_bits
+
+    command = instruction.removeprefix("RUN ").replace(
+        "find / -xdev", f"find {shlex.quote(str(root))} -xdev"
+    )
+    subprocess.run(["sh", "-c", command], check=True)
+
+    assert privileged.stat().st_mode & privilege_bits == 0
+
+
+def test_guest_privilege_scans_propagate_find_failures() -> None:
+    source = (PROJECT_ROOT / "guest/artifacts/diagnostics/test_sandbox.py").read_text(
+        encoding="utf-8"
+    )
+
+    for privilege in ("setuid", "setgid"):
+        function = source[source.index(f"def test_no_{privilege}_binaries") :]
+        function = function[: function.index("\n\ndef ")]
+        assert "2>/dev/null" not in function
+        assert "result.returncode == 0" in function
+        assert "result.stderr" in function
 
 
 def _function_string_inventory(path: Path) -> dict[str, Counter[str]]:
