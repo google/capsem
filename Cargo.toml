@@ -107,15 +107,18 @@ todo = "deny"
 # facade rather than finding a bug. It did find one thing worth keeping: two
 # docstrings promising backpressure that no synchronous body could deliver.
 #
-# `cast_ptr_alignment` (11 sites) and `large_stack_arrays` (9) are held back for
-# the same reason and are the most valuable of the three. Every alignment site
-# is a KVM ioctl buffer cast from `*mut u8` to a struct pointer, where the
-# allocation is aligned in practice and clippy cannot see it; clearing them
-# means auditing each guarantee or moving to an aligned buffer type, which is
-# the hypervisor owner's call rather than a lint sweep's. Enabling either
-# without that audit would mean eleven un-reviewed `allow`s, which is worse
-# than the lint being off: it reads as reviewed.
+# `cast_ptr_alignment` was held back until its eleven sites had been audited,
+# because enabling it any earlier would have meant eleven un-reviewed `allow`s
+# -- worse than the lint being off, since an un-reviewed allow reads as
+# reviewed. All eleven are in the KVM ioctl path and fall into two patterns: a
+# CPUID buffer whose `Layout` alignment is now derived from the types it is
+# cast to rather than hardcoded, and the `kvm_run` mmap, which POSIX returns
+# page-aligned and whose base is now asserted at creation. Both carry the
+# finding at the call site.
+#
+# `large_stack_arrays` (9 sites) is still held back on the same terms.
 unchecked_time_subtraction = "deny"   # panics on a backwards clock
+cast_ptr_alignment = "deny"           # undefined behaviour, not a style note
 ptr_cast_constness = "deny"
 checked_conversions = "deny"
 stable_sort_primitive = "deny"

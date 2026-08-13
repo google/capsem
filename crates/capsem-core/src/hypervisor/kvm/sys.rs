@@ -385,13 +385,19 @@ impl KvmFd {
 
     /// Get CPUID entries supported by this KVM host.
     #[cfg(target_arch = "x86_64")]
+    /// The `*mut u8` casts below are reviewed: the buffer is allocated through
+    /// `Layout::from_size_align(_, CPUID_BUFFER_ALIGN)`, whose alignment is
+    /// derived from the very types being cast to, and `CPUID_HEADER_SIZE` is
+    /// asserted at compile time to keep the entry array aligned.
+    #[allow(clippy::cast_ptr_alignment, reason = "buffer alignment is derived from the cast types")]
     pub fn get_supported_cpuid(&self) -> Result<Vec<KvmCpuidEntry2>> {
         const MAX_ENTRIES: usize = 256;
         let entry_size = std::mem::size_of::<KvmCpuidEntry2>();
-        let header_size = std::mem::size_of::<u32>() * 2; // nent + padding
+        let header_size = CPUID_HEADER_SIZE;
         let total_size = header_size + MAX_ENTRIES * entry_size;
 
-        let layout = std::alloc::Layout::from_size_align(total_size, 8).context("cpuid layout")?;
+        let layout = std::alloc::Layout::from_size_align(total_size, CPUID_BUFFER_ALIGN)
+            .context("cpuid layout")?;
         let buf = unsafe { std::alloc::alloc_zeroed(layout) };
         if buf.is_null() {
             bail!("failed to allocate CPUID buffer");
@@ -536,6 +542,17 @@ impl VmFd {
         if run_ptr == libc::MAP_FAILED {
             bail!("mmap kvm_run failed: {}", std::io::Error::last_os_error());
         }
+        // Every exit accessor reinterprets this region as a kernel struct at a
+        // fixed offset, which is only sound if the base is aligned for the
+        // widest of them. `mmap` with a null hint returns page-aligned memory,
+        // so this always holds -- but it holds by a POSIX guarantee made
+        // somewhere else, and an assumption that is never stated is one nobody
+        // rechecks. Failing here costs one comparison per vCPU and turns a
+        // silent misread into a refusal to start.
+        assert!(
+            (run_ptr as usize).is_multiple_of(std::mem::align_of::<u64>()),
+            "kvm_run mmap returned {run_ptr:p}, which is not aligned for the exit structs read from it",
+        );
 
         Ok(VcpuFd {
             fd,
@@ -786,6 +803,10 @@ impl VcpuFd {
     }
 
     /// Run the vCPU. Returns the exit reason.
+    /// The casts into the mmap'd region are reviewed: `mmap` returns
+    /// page-aligned memory and the constructor asserts it, so every fixed
+    /// offset into the kernel's naturally-aligned `kvm_run` is aligned too.
+    #[allow(clippy::cast_ptr_alignment, reason = "kvm_run mmap is page-aligned, asserted at creation")]
     pub fn run(&self) -> Result<VcpuExit> {
         let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_RUN as libc::c_ulong, 0u64) };
         if ret < 0 {
@@ -1086,6 +1107,33 @@ pub(super) struct KvmCpuidEntry2 {
     pub edx: u32,
     pub padding: [u32; 3],
 }
+
+/// Bytes of header before the CPUID entry array: `nent` and its padding.
+#[cfg(target_arch = "x86_64")]
+const CPUID_HEADER_SIZE: usize = std::mem::size_of::<u32>() * 2;
+
+/// Alignment the CPUID ioctl buffer must satisfy.
+///
+/// Derived, not written as `8`. Eight is what it happens to be today, and the
+/// buffer is reinterpreted as both a `u32` header and an array of
+/// `KvmCpuidEntry2`, so it has to satisfy whichever is stricter. A field with
+/// a wider alignment added to the entry struct would leave a hand-written
+/// constant silently under-aligning every entry the kernel writes back --
+/// undefined behaviour that no test would show, because the allocator usually
+/// returns generously aligned memory anyway.
+#[cfg(target_arch = "x86_64")]
+const CPUID_BUFFER_ALIGN: usize =
+    if std::mem::align_of::<KvmCpuidEntry2>() > std::mem::align_of::<u32>() {
+        std::mem::align_of::<KvmCpuidEntry2>()
+    } else {
+        std::mem::align_of::<u32>()
+    };
+
+/// The entry array starts at `CPUID_HEADER_SIZE`, so that offset has to be a
+/// multiple of the entry alignment or every entry after the header is
+/// misaligned. Checked at compile time because the failure is silent.
+#[cfg(target_arch = "x86_64")]
+const _: () = assert!(CPUID_HEADER_SIZE.is_multiple_of(std::mem::align_of::<KvmCpuidEntry2>()));
 
 /// Header for KVM_GET_SUPPORTED_CPUID / KVM_SET_CPUID2.
 /// Followed by `nent` KvmCpuidEntry2 structs.
@@ -1647,12 +1695,18 @@ impl VcpuFd {
     }
 
     /// Set CPUID entries for this vCPU.
+    /// The `*mut u8` casts below are reviewed: the buffer is allocated through
+    /// `Layout::from_size_align(_, CPUID_BUFFER_ALIGN)`, whose alignment is
+    /// derived from the very types being cast to, and `CPUID_HEADER_SIZE` is
+    /// asserted at compile time to keep the entry array aligned.
+    #[allow(clippy::cast_ptr_alignment, reason = "buffer alignment is derived from the cast types")]
     pub fn set_cpuid2(&self, entries: &[KvmCpuidEntry2]) -> Result<()> {
         let entry_size = std::mem::size_of::<KvmCpuidEntry2>();
-        let header_size = std::mem::size_of::<u32>() * 2;
+        let header_size = CPUID_HEADER_SIZE;
         let total_size = header_size + std::mem::size_of_val(entries);
 
-        let layout = std::alloc::Layout::from_size_align(total_size, 8).context("cpuid layout")?;
+        let layout = std::alloc::Layout::from_size_align(total_size, CPUID_BUFFER_ALIGN)
+            .context("cpuid layout")?;
         let buf = unsafe { std::alloc::alloc_zeroed(layout) };
         if buf.is_null() {
             bail!("failed to allocate CPUID buffer");
@@ -1907,6 +1961,10 @@ impl VcpuFd {
     }
 
     /// Get the IO exit data from the kvm_run mmap'd region.
+    /// The casts into the mmap'd region are reviewed: `mmap` returns
+    /// page-aligned memory and the constructor asserts it, so every fixed
+    /// offset into the kernel's naturally-aligned `kvm_run` is aligned too.
+    #[allow(clippy::cast_ptr_alignment, reason = "kvm_run mmap is page-aligned, asserted at creation")]
     pub fn io_data(&self) -> &KvmRunIo {
         unsafe { &*(self.run.add(KVM_RUN_EXIT_DATA_OFFSET) as *const KvmRunIo) }
     }

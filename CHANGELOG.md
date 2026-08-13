@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The KVM CPUID ioctl buffers derive their allocation alignment from the types
+  they are reinterpreted as, instead of a hardcoded `8`. The constant was
+  correct only by coincidence -- `KvmCpuidEntry2` is all `u32` -- and a field
+  with a wider alignment would have left every entry the kernel writes back
+  undefined to read, with nothing failing, because allocators generally return
+  more alignment than asked for. A compile-time assertion now holds the header
+  offset that keeps the entry array aligned, and the `kvm_run` mmap base is
+  asserted page-aligned where it is created rather than assumed at each of the
+  six accessors that depend on it.
+
 ### Changed
+
+- `clippy::cast_ptr_alignment` is denied workspace-wide, after auditing its
+  eleven sites rather than before. All eleven are in the KVM ioctl path and
+  reduce to two patterns, both now resting on a checked invariant instead of an
+  assumption; each carries the finding at the call site. Enabling it earlier
+  would have meant eleven un-reviewed `allow`s, and an un-reviewed allow reads
+  as reviewed -- strictly worse than the lint being off.
 
 - Eight `clippy::pedantic` lints are denied workspace-wide, chosen from a
   measurement rather than a group: the full group is 7,448 warnings across 74
