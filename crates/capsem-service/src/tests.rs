@@ -1472,7 +1472,7 @@ fn enforcement_evaluate_body(request: &EnforcementEvaluateRequest) -> Bytes {
     Bytes::from(serde_json::to_vec(request).unwrap())
 }
 
-fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
+pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
     let run_dir = assets_dir.join("run");
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
     let manifest = capsem_core::asset_manager::load_manifest_for_assets(&assets_dir).map(Arc::new);
@@ -3618,46 +3618,6 @@ async fn profiles_status_byte_cache_refreshes_when_asset_manifest_appears() {
         refreshed_status["asset_manifest"]["assets_current"],
         "2099.0101.1"
     );
-}
-
-#[test]
-fn profile_status_cache_shares_warm_bytes_and_invalidates_same_size_edits() {
-    let dir = tempfile::tempdir().unwrap();
-    let manifest = dir.path().join("manifest.json");
-    std::fs::write(&manifest, b"{}").unwrap();
-    let state = make_asset_state(dir.path().to_path_buf());
-
-    let first = profile_status_cache(&state).unwrap();
-    let warm = profile_status_cache(&state).unwrap();
-    assert!(
-        Arc::ptr_eq(&first, &warm),
-        "a warm status read must share one cached allocation"
-    );
-
-    std::fs::write(&manifest, b"[]").unwrap();
-    let changed = profile_status_cache(&state).unwrap();
-    assert!(
-        !Arc::ptr_eq(&first, &changed),
-        "same-size manifest byte edits must invalidate the cache"
-    );
-}
-
-#[test]
-fn process_exit_poll_does_not_use_the_generic_exponential_backoff() {
-    let timeout = std::time::Duration::from_secs(1);
-    let exit = process_exit_poll_options(timeout);
-    let generic = PollOpts::new("generic", timeout);
-
-    assert_eq!(exit.timeout, timeout);
-    assert_eq!(exit.initial_delay, exit.max_delay);
-    assert!(exit.max_delay < generic.max_delay);
-}
-
-#[test]
-fn shutdown_mode_keeps_retained_and_discarded_teardown_distinct() {
-    assert!(ShutdownMode::Retain.retains_state());
-    assert!(!ShutdownMode::Discard.retains_state());
-    assert!(ShutdownMode::Retain.exit_timeout() > ShutdownMode::Discard.exit_timeout());
 }
 
 #[test]

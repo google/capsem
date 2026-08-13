@@ -41,7 +41,12 @@ use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
 
 mod proctable;
+mod profile_status_cache;
+mod shutdown_policy;
 mod startup;
+
+use profile_status_cache::*;
+use shutdown_policy::*;
 
 /// Ceiling on a session log tail returned over the API. `serial.log` is guest
 /// console output written through `CappedLogWriter`, so its size is the guest's
@@ -6494,45 +6499,6 @@ fn profile_for_route(profile_id: String) -> Result<Profile, AppError> {
     profile_from_catalog_entry(profile, catalog.source())
 }
 
-#[derive(Clone, Debug)]
-struct ProfileStatusCache {
-    inputs: ProfileStatusInputs,
-    catalog: serde_json::Value,
-    catalog_body: Bytes,
-    profiles: BTreeMap<String, serde_json::Value>,
-    profile_bodies: BTreeMap<String, Bytes>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ProfileStatusInputs {
-    manifest: ProfileStatusFileIdentity,
-    metadata: ProfileStatusFileIdentity,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ProfileStatusFileIdentity {
-    Missing,
-    Digest(String),
-    Unreadable(String),
-}
-
-fn profile_status_file_identity(path: &StdPath) -> ProfileStatusFileIdentity {
-    if !path.exists() {
-        return ProfileStatusFileIdentity::Missing;
-    }
-    match capsem_core::asset_manager::hash_file(path) {
-        Ok(digest) => ProfileStatusFileIdentity::Digest(digest),
-        Err(error) => ProfileStatusFileIdentity::Unreadable(error.to_string()),
-    }
-}
-
-fn profile_status_inputs(state: &ServiceState) -> ProfileStatusInputs {
-    ProfileStatusInputs {
-        manifest: profile_status_file_identity(&state.assets_dir.join("manifest.json")),
-        metadata: profile_status_file_identity(&state.assets_dir.join("manifest-metadata.json")),
-    }
-}
-
 #[cfg(test)]
 fn profile_catalog_status_value(
     state: &ServiceState,
@@ -6641,56 +6607,6 @@ fn refresh_reconcile_fields(
     }
     append_asset_reconcile_status(&mut value, &reconcile);
     value
-}
-
-fn build_stable_profile_status_cache(
-    state: &ServiceState,
-) -> Result<Arc<ProfileStatusCache>, AppError> {
-    let inputs = profile_status_inputs(state);
-    let catalog = load_profile_catalog_for_service()?;
-    let cache = Arc::new(build_profile_status_cache(state, &catalog, inputs.clone()));
-    if profile_status_inputs(state) != inputs {
-        return Err(AppError(
-            StatusCode::CONFLICT,
-            "asset manifest changed while profile status was being built".to_string(),
-        ));
-    }
-    Ok(cache)
-}
-
-fn rebuild_profile_status_cache(state: &ServiceState) -> Result<Arc<ProfileStatusCache>, AppError> {
-    let cache = build_stable_profile_status_cache(state)?;
-    *state.profile_status_cache.lock().map_err(|error| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("profile status cache lock poisoned: {error}"),
-        )
-    })? = Some(Arc::clone(&cache));
-    Ok(cache)
-}
-
-fn profile_status_cache(state: &ServiceState) -> Result<Arc<ProfileStatusCache>, AppError> {
-    let inputs = profile_status_inputs(state);
-    if let Some(cache) = state
-        .profile_status_cache
-        .lock()
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("profile status cache lock poisoned: {error}"),
-            )
-        })?
-        .as_ref()
-        .filter(|cache| cache.inputs == inputs)
-        .cloned()
-    {
-        return Ok(cache);
-    }
-    rebuild_profile_status_cache(state)
-}
-
-fn profile_status_catalog_body(state: &ServiceState) -> Result<Bytes, AppError> {
-    Ok(profile_status_cache(state)?.catalog_body.clone())
 }
 
 fn cached_profile_status_for_route(
@@ -11507,41 +11423,6 @@ async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
     }
 }
 
-fn process_exit_poll_options(timeout: std::time::Duration) -> PollOpts {
-    let cadence = std::time::Duration::from_millis(20);
-    PollOpts {
-        label: "vm-process-exit",
-        timeout,
-        initial_delay: cadence,
-        max_delay: cadence,
-    }
-}
-
-/// Atomically claim teardown ownership for an instance. The child watcher
-/// uses the same map removal as its ownership token, so only one side wins.
-fn claim_shutdown_instance(state: &ServiceState, id: &str) -> bool {
-    state.instances.lock().unwrap().remove(id).is_some()
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ShutdownMode {
-    Retain,
-    Discard,
-}
-
-impl ShutdownMode {
-    fn retains_state(self) -> bool {
-        matches!(self, Self::Retain)
-    }
-
-    fn exit_timeout(self) -> std::time::Duration {
-        match self {
-            Self::Retain => std::time::Duration::from_secs(5),
-            Self::Discard => std::time::Duration::from_secs(1),
-        }
-    }
-}
-
 /// Shutdown a running VM process by ID. Returns (session_dir, persistent, pid).
 ///
 /// `ShutdownMode::Retain` sends `ServiceToProcess::Shutdown` via IPC so
@@ -13915,5 +13796,7 @@ async fn spawn_companions(
     children
 }
 
+#[cfg(test)]
+mod performance_contract_tests;
 #[cfg(test)]
 mod tests;
