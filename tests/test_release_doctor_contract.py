@@ -594,7 +594,9 @@ def test_ci_python_schema_pytest_paths_exist() -> None:
 def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     trigger = workflow.split("permissions:", maxsplit=1)[0]
-    gate = _workflow_job_block("pr-gate")
+    gate = workflow_reachable_text(
+        PROJECT_ROOT, PROJECT_ROOT / ".github" / "workflows" / "ci.yaml", job="pr-gate"
+    )
     release_site_job = _workflow_job_block("release-site-build")
 
     assert "pull_request:" in workflow
@@ -626,7 +628,9 @@ def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
     workflow = _workflow_text("ci.yaml")
     docs_job = _workflow_job_block("docs-build")
     site_job = _workflow_job_block("site-build")
-    gate = _workflow_job_block("pr-gate")
+    gate = workflow_reachable_text(
+        PROJECT_ROOT, PROJECT_ROOT / ".github" / "workflows" / "ci.yaml", job="pr-gate"
+    )
     docs_deploy = _workflow_text("docs.yaml")
     site_deploy = _workflow_text("site.yaml")
     docs_ci = _source_text("docs/src/content/docs/development/ci.md")
@@ -1520,7 +1524,8 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         site_url,
         failure,
     ) in expectations:
-        workflow = _workflow_text(workflow_name)
+        workflow_path = PROJECT_ROOT / ".github" / "workflows" / workflow_name
+        workflow = workflow_reachable_text(PROJECT_ROOT, workflow_path)
         trigger = workflow.split("\njobs:", maxsplit=1)[0]
         push_trigger = trigger.split("  push:", maxsplit=1)[1]
         ci_block = _workflow_job_block(ci_job)
@@ -6404,7 +6409,9 @@ def test_release_recipes_require_fresh_remote_main_before_running_the_gate() -> 
 
 def test_web_only_prs_do_not_depend_on_product_or_release_jobs() -> None:
     docs_job = _workflow_job_block("docs-build")
-    gate = _workflow_job_block("pr-gate")
+    gate = workflow_reachable_text(
+        PROJECT_ROOT, PROJECT_ROOT / ".github" / "workflows" / "ci.yaml", job="pr-gate"
+    )
 
     assert "fetch-depth: 0" in docs_job
     assert 'git diff --name-only "$BASE_SHA"...HEAD' in docs_job

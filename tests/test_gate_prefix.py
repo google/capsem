@@ -823,6 +823,41 @@ def test_a_linked_worktree_gets_a_repository_of_its_own(tmp_path: Path) -> None:
     )
 
 
+def test_repository_copy_does_not_hardlink_across_filesystems(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inspection checkouts may live on a different device from the source."""
+    from capsem.gate import snapshot
+
+    source = tmp_path / "source"
+    source.mkdir()
+    _git(source, "init", "-q", "-b", "main")
+    _git(source, "config", "user.email", "t@example.com")
+    _git(source, "config", "user.name", "t")
+    (source / "tracked.txt").write_text("one\n")
+    _git(source, "add", "tracked.txt")
+    _git(source, "commit", "-qm", "first")
+
+    target = tmp_path / "prefix"
+    target.mkdir()
+    real_stat = Path.stat
+
+    def other_device(path: Path, *args, **kwargs):
+        result = real_stat(path, *args, **kwargs)
+        if path == target.parent:
+            values = list(result)
+            values[2] += 1
+            return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(Path, "stat", other_device)
+    snapshot._materialize_repository(source, target)
+
+    assert _git(target, "rev-parse", "HEAD") == _git(source, "rev-parse", "HEAD")
+    assert _git(target, "ls-files") == "tracked.txt"
+    assert not (target / ".git" / "objects" / "info" / "alternates").exists()
+
+
 def _git(cwd: Path, *args: str) -> str:
     import subprocess
 

@@ -8,6 +8,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from helpers.workflow_contract import workflow_reachable_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DOCS_ROOT = PROJECT_ROOT / "docs"
@@ -199,7 +200,9 @@ def test_docs_source_builds_the_holding_graph_without_deleting_the_manual() -> N
 
 
 def test_docs_deploy_smokes_replacement_content_at_a_warmed_old_route() -> None:
-    workflow = (PROJECT_ROOT / ".github" / "workflows" / "docs.yaml").read_text(encoding="utf-8")
+    workflow = workflow_reachable_text(
+        PROJECT_ROOT, PROJECT_ROOT / ".github" / "workflows" / "docs.yaml"
+    )
 
     assert f"Capsem {RELEASE_LINE} documentation" in workflow
     assert "pre-release qualification" in workflow

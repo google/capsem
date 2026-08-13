@@ -503,7 +503,9 @@ def _inspection_checkout(source: Path) -> Iterator[Path]:
     from capsem.gate import config as gate_config
     from capsem.gate import host, snapshot
 
-    with tempfile.TemporaryDirectory(prefix="capsem-gate-inspect-") as temporary:
+    with tempfile.TemporaryDirectory(
+        prefix=".capsem-gate-inspect-", dir=source.parent
+    ) as temporary:
         checkout = Path(temporary) / "checkout"
         # Plan contracts deliberately monkeypatch the gate's host to render a
         # Darwin plan on Linux.  The copy itself still runs on this kernel, so

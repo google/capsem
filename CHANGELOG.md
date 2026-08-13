@@ -26,16 +26,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   there is no argument now.
 
 - The gate runs from a linked worktree. Its private copy now clones the
-  repository with `git clone --local --no-checkout` instead of carrying `.git`
-  as a path, which only worked when `.git` was a directory: in a worktree it is
-  a file holding an absolute `gitdir:` pointer, so the copy stayed attached to
-  the original's HEAD and the case was refused outright. That made the
-  isolation machinery unusable from a worktree, which is how an agent gets an
-  isolated tree in the first place -- an agent could not verify its own work
-  without running in the shared checkout.
+  repository instead of carrying `.git` as a path, which only worked when
+  `.git` was a directory: in a worktree it is a file holding an absolute
+  `gitdir:` pointer, so the copy stayed attached to the original's HEAD and the
+  case was refused outright. That made the isolation machinery unusable from a
+  worktree, which is how an agent gets an isolated tree in the first place --
+  an agent could not verify its own work without running in the shared
+  checkout.
 
-  The clone costs about 200ms against a 108 MB `.git` and is faster than the
-  `cp -R` it replaces, because `--local` hardlinks the object store. No
+  On one filesystem the clone costs about 200ms against a 108 MB `.git` because
+  `--local` hardlinks the object store. Cross-filesystem inspection checkouts
+  use `--no-local` and copy the objects without network access instead of
+  failing with `Invalid cross-device link`. Neither mode creates an
   `alternates` file, so a `gc` in the original cannot prune bytes out from
   under a running gate, and the copy owns its HEAD and refs -- the property the
   refusal was protecting. Normal checkouts and worktrees now take one path with
