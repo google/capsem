@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Rust tests run under Nextest, and doctests now run at all. The `ci` profile in
+  `.config/nextest.toml` -- `slow-timeout` of 120s, three retries -- was written
+  and never selected, so a hung test hung the whole gate until the
+  7200-second lock timeout; runs have died past the two-hour mark. Measured at
+  99s against 115s for the plain runner on a warm workspace, with line coverage
+  65.11% against 65.13%; the 23-line difference is process-per-test isolation
+  rather than a selector mismatch, and both clear the 63% floor by two points.
+
+  `cargo test --doc` lands in the same change because it has to: `rustinventory`
+  models doctests as a separate target set precisely because "Nextest never owns
+  doctests", so swapping the runner alone would have silently stopped running
+  them -- a faster gate proving less, with nothing reporting the difference.
+  `tests/citadel/test_rust_check_coverage.py` now holds the three-way division
+  between clippy, Nextest and `--doc` so a future gap has to be deliberate.
+
 ### Fixed
 
 - Exporting a run out of its private checkout no longer destroys an unrelated

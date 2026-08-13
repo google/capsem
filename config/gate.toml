@@ -1800,8 +1800,24 @@ contract_glob = "tests/test_*contract.py"
 # are covered by the integration suites rather than by unit tests. The floor
 # exists to catch "we deleted half the test suite", not to gate an honest
 # defensive branch.
-rust_coverage = ["cargo", "llvm-cov", "--workspace", "--bins", "--lib", "--tests", "--no-cfg-coverage"]
+# Through Nextest, whose `ci` profile is the reason: a test that hangs
+# currently hangs the whole gate until the 7200-second lock timeout, and runs
+# have died past the two-hour mark. `slow-timeout` bounds it at 120s with three
+# retries. Measured at 99s against 115s for the plain runner on a warm
+# workspace -- 14% -- with line coverage 65.11% against 65.13%. The 23-line
+# difference is process-per-test isolation, not a selector mismatch; it is the
+# same with and without the target flags, and both clear the floor by 2pp.
+rust_coverage = ["cargo", "llvm-cov", "nextest", "--workspace", "--bins", "--lib", "--tests", "--no-cfg-coverage"]
 rust_coverage_floor = "--fail-under-lines=63"
+# Nextest reads its profile from the environment; `--profile` on the command
+# line belongs to cargo-llvm-cov and would select a build profile instead.
+rust_test_profile_variable = "NEXTEST_PROFILE"
+rust_test_profile = "ci"
+# Doctests, which Nextest does not run and never will -- `rustinventory` says
+# so and models them as a separate target set for exactly this reason. Swapping
+# the runner without this line silently stops executing them, which is how a
+# passing gate comes to prove less than it did before.
+rust_doctests = ["cargo", "test", "--workspace", "--doc"]
 
 guest_binary_tests = [
     "tests/capsem-bootstrap/test_cross_compile.py",

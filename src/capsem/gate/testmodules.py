@@ -26,6 +26,7 @@ from . import (
     imagebases,
     installimage,
     pytestsuite,
+    rustchecks,
     sandbox,
     sourcechecks,
     storage,
@@ -268,17 +269,12 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
         # mount, so the volume, its boundary and that step all went with it.
         leaves.append(hostimage.linux_rust(plan, config, after=after))
 
-    coverage = phase.add(
-        step(
-            "rust-coverage",
-            Run(
-                [*settings.rust_coverage, settings.rust_coverage_floor],
-                env=toolchain.ort_environment(config, toolchain.OrtConsumer.STATIC),
-            ),
-            contends=(config.exclusive("workspace_binaries"),),
-        ),
-        after=(agents, ort, frontend),
-    )
+    # Both need a built workspace, so both wait on the same three and share
+    # one exclusive. They live in `rustchecks` because this module is at the
+    # size ceiling the gate holds itself to.
+    built = (agents, ort, frontend)
+    coverage = phase.add(rustchecks.coverage(config), after=built)
+    leaves.append(phase.add(rustchecks.doctests(config), after=built))
     leaves.append(phase.add(hostpackage.sign_step(config), after=(coverage,)))
     return tuple(leaves)
 
