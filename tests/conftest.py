@@ -35,6 +35,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from helpers.constants import ASSETS_DIR as _SELECTED_ASSETS_DIR
 
+from capsem.gate import config as gate_config
+
 # Every service this suite starts spawns a real capsem-tray: the spawn falls
 # back to `find_sibling_binary("capsem-tray")` when --tray-binary is omitted,
 # and the tray's singleton lock lives under CAPSEM_RUN_DIR, which each service
@@ -172,6 +174,7 @@ threading.excepthook = _thread_exception_hook
 # set by every developer's Docker dev-loop and would turn local iteration
 # into a fail-fast trap.
 _PROJECT_ROOT = Path(__file__).parent.parent
+_GATE_SOURCE_COMMIT_VARIABLE = gate_config.load(_PROJECT_ROOT).environment.source_commit
 _ARCH = "arm64" if os.uname().machine == "arm64" else "x86_64"
 _REQUIRED_ARTIFACTS = {
     # Manifest is flat/top-level (single file covering all arches). Every
@@ -185,6 +188,21 @@ _REQUIRED_ARTIFACTS = {
 }
 
 _DEFAULT_TEST_NOFILE_LIMIT = 8192
+
+
+@pytest.fixture(autouse=True)
+def _tests_do_not_inherit_the_parent_gate_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep synthetic test checkouts independent of their parent gate.
+
+    A complete release runs pytest from its immutable commit prefix and
+    exports the selected source commit to the gate process.  That marker
+    describes the parent command; a unit test constructing a fresh Context
+    under ``tmp_path`` is not another release invocation.  Let tests that
+    exercise release identity opt in explicitly with ``monkeypatch.setenv``.
+    """
+    monkeypatch.delenv(_GATE_SOURCE_COMMIT_VARIABLE, raising=False)
 
 
 def _required_artifacts_for_run(

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Test processes spawned by an immutable-commit release no longer leak the
+  parent gate's source marker into synthetic checkout tests; release identity
+  remains fail-closed in production while each test must opt into it explicitly.
+
 - Python lint tooling now pins the last verified cross-platform `hadolint-py`
   cohort. The newer macOS wheel matched its published digest but contained a
   corrupt deflate stream; a fast Citadel guard now makes future tool-cohort

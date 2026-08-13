@@ -37,6 +37,7 @@ the suite has one collector and its failures have one owner.
 | `test_workflow_enforcement.py` | a gating step cannot pass while failing |
 | `test_container_workspace.py` | the guest builder's `/src/*` glob skips dotfiles |
 | `test_cross_platform_tool_lock.py` | platform-specific Python tools stay on one reviewed artifact cohort |
+| `test_release_test_environment.py` | nested tests cannot inherit their parent release's source identity |
 | `test_skill_context_budget.py` | the skill description budget every session pays |
 | `test_hot_build_contract.py` | hot codecs stay optimized in the dev profile |
 | `test_package_architecture_boundary.py` | package and machine architecture never cross |
