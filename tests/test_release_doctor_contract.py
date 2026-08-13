@@ -19,7 +19,7 @@ from typing import ClassVar
 import pytest
 import variables
 import yaml
-from helpers.workflow_contract import assert_unmasked_step
+from helpers.workflow_contract import assert_unmasked_step, workflow_reachable_text
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -288,7 +288,7 @@ def _workflow_job_block(name: str, workflow_name: str = "ci.yaml") -> str:
 
     Structural properties no substring can see -- `continue-on-error`, `if:`,
     the membership of `needs` -- belong in `_workflow_job` and in
-    `tests/test_ci_enforcement_contract.py`, not here.
+    `tests/citadel/test_workflow_enforcement.py`, not here.
     """
     _workflow_job(name, workflow_name)
     text = _workflow_path(workflow_name).read_text()
@@ -773,7 +773,11 @@ def test_install_e2e_generates_manifest_through_admin_rail() -> None:
 
 
 def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
-    workflow = _workflow_text("release-assets.yaml")
+    # The workflow plus every script it dispatches to. A step that grew past
+    # the shell-body ceiling and moved into `scripts/` runs the same commands;
+    # asserting against the workflow text alone made that refactor look like a
+    # regression, which is how a literal contract punishes the right change.
+    workflow = workflow_reachable_text(PROJECT_ROOT, _workflow_path("release-assets.yaml"))
     fast_gate = _workflow_text("fast-gate.yaml")
     trigger = workflow.split("\npermissions:", maxsplit=1)[0]
 

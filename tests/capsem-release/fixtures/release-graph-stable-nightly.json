@@ -815,7 +815,7 @@
                       "blake3": "4e80c5b966157941dd36285b9af0e8bac8c6ad74deeac9c1156d4b3a91c5d24c",
                       "sha256": "528a5ff25f4ed6ee4315e9459e88ab65ee8f08a21b9381a1c52eec77beaee576"
                     },
-                    "kind": "apt",
+                    "kind": "apt_packages",
                     "path": "profiles/co-work/apt-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/apt-packages.txt"
@@ -826,10 +826,21 @@
                       "blake3": "3df1789a7ad1c8fe71bffdd8bf8ee831182fbf7d285a6afa89ad0a14dc1fb96b",
                       "sha256": "6a636384181ab27a2294c224c972b62d2202447aaef97ebd63071c02af94f06a"
                     },
-                    "kind": "python",
+                    "kind": "python_requirements",
                     "path": "profiles/co-work/python-requirements.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 246121,
+                    "digest": {
+                      "blake3": "cb8b01541a324152c9b772963e2f14a48879c55ca8b7e87bebd12267aa2f25f6",
+                      "sha256": "191010ff50a153d41631cd4aa98806b390d21ee32ba30193ea4806a77326ee24"
+                    },
+                    "kind": "python_requirements_lock",
+                    "path": "profiles/co-work/python-requirements.lock",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/python-requirements.lock"
                   },
                   {
                     "bytes": 62,
@@ -837,10 +848,21 @@
                       "blake3": "a2f2bea70f4ac5a58359cee07ed2d14e1f69e83dbb733790f38e853c6830898c",
                       "sha256": "440810727767880e86e42b169fa21363ada0203d8a1aa91d62fe9a1bee89b0c3"
                     },
-                    "kind": "npm",
+                    "kind": "npm_packages",
                     "path": "profiles/co-work/npm-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 9866,
+                    "digest": {
+                      "blake3": "e485879bbc5bdb7fbe781c34ec777930d78ecc6b6b7caec03b4e36875e182cef",
+                      "sha256": "dc4c8d921ae226aaf6b84fd626ad1d46eda6d5616a9af552273af776bdc50bae"
+                    },
+                    "kind": "npm_package_lock",
+                    "path": "profiles/co-work/npm-package-lock.json",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/npm-package-lock.json"
                   },
                   {
                     "bytes": 54,
@@ -1022,7 +1044,7 @@
                       "blake3": "4e80c5b966157941dd36285b9af0e8bac8c6ad74deeac9c1156d4b3a91c5d24c",
                       "sha256": "528a5ff25f4ed6ee4315e9459e88ab65ee8f08a21b9381a1c52eec77beaee576"
                     },
-                    "kind": "apt",
+                    "kind": "apt_packages",
                     "path": "profiles/co-work/apt-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/apt-packages.txt"
@@ -1033,10 +1055,21 @@
                       "blake3": "3df1789a7ad1c8fe71bffdd8bf8ee831182fbf7d285a6afa89ad0a14dc1fb96b",
                       "sha256": "6a636384181ab27a2294c224c972b62d2202447aaef97ebd63071c02af94f06a"
                     },
-                    "kind": "python",
+                    "kind": "python_requirements",
                     "path": "profiles/co-work/python-requirements.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 246121,
+                    "digest": {
+                      "blake3": "cb8b01541a324152c9b772963e2f14a48879c55ca8b7e87bebd12267aa2f25f6",
+                      "sha256": "191010ff50a153d41631cd4aa98806b390d21ee32ba30193ea4806a77326ee24"
+                    },
+                    "kind": "python_requirements_lock",
+                    "path": "profiles/co-work/python-requirements.lock",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/python-requirements.lock"
                   },
                   {
                     "bytes": 62,
@@ -1044,10 +1077,21 @@
                       "blake3": "a2f2bea70f4ac5a58359cee07ed2d14e1f69e83dbb733790f38e853c6830898c",
                       "sha256": "440810727767880e86e42b169fa21363ada0203d8a1aa91d62fe9a1bee89b0c3"
                     },
-                    "kind": "npm",
+                    "kind": "npm_packages",
                     "path": "profiles/co-work/npm-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 9866,
+                    "digest": {
+                      "blake3": "e485879bbc5bdb7fbe781c34ec777930d78ecc6b6b7caec03b4e36875e182cef",
+                      "sha256": "dc4c8d921ae226aaf6b84fd626ad1d46eda6d5616a9af552273af776bdc50bae"
+                    },
+                    "kind": "npm_package_lock",
+                    "path": "profiles/co-work/npm-package-lock.json",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/npm-package-lock.json"
                   },
                   {
                     "bytes": 54,
@@ -1240,7 +1284,7 @@
                       "blake3": "75bbc129ff2ce55abe83c14cbbdce670c242acfeb6691c32cd233d1477d3d0cc",
                       "sha256": "639c4898017a6765969eb899f8bfe1dd038801b5bd0ddfab971bf538b12dea90"
                     },
-                    "kind": "apt",
+                    "kind": "apt_packages",
                     "path": "profiles/code/apt-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/apt-packages.txt"
@@ -1251,10 +1295,21 @@
                       "blake3": "1011ca2c038214c6b447759d0053883f3f1ce77d9e1b9174524c1985f1053637",
                       "sha256": "5a22b7987adebe185056a62c01dcf6a2495b0647ec648968d8a4882f1eaafcb3"
                     },
-                    "kind": "python",
+                    "kind": "python_requirements",
                     "path": "profiles/code/python-requirements.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 246121,
+                    "digest": {
+                      "blake3": "cb8b01541a324152c9b772963e2f14a48879c55ca8b7e87bebd12267aa2f25f6",
+                      "sha256": "191010ff50a153d41631cd4aa98806b390d21ee32ba30193ea4806a77326ee24"
+                    },
+                    "kind": "python_requirements_lock",
+                    "path": "profiles/code/python-requirements.lock",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/python-requirements.lock"
                   },
                   {
                     "bytes": 59,
@@ -1262,10 +1317,21 @@
                       "blake3": "a70791718dd9fd5a621150714a55ddc55ef6df87d733a153747c88140a6385e9",
                       "sha256": "253513b2dc4dcf55e074a2f8cf71e669bb4ce9b0374eb96d7bcd0ee1a46ff689"
                     },
-                    "kind": "npm",
+                    "kind": "npm_packages",
                     "path": "profiles/code/npm-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 9866,
+                    "digest": {
+                      "blake3": "e485879bbc5bdb7fbe781c34ec777930d78ecc6b6b7caec03b4e36875e182cef",
+                      "sha256": "dc4c8d921ae226aaf6b84fd626ad1d46eda6d5616a9af552273af776bdc50bae"
+                    },
+                    "kind": "npm_package_lock",
+                    "path": "profiles/code/npm-package-lock.json",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/npm-package-lock.json"
                   },
                   {
                     "bytes": 51,
@@ -1447,7 +1513,7 @@
                       "blake3": "75bbc129ff2ce55abe83c14cbbdce670c242acfeb6691c32cd233d1477d3d0cc",
                       "sha256": "639c4898017a6765969eb899f8bfe1dd038801b5bd0ddfab971bf538b12dea90"
                     },
-                    "kind": "apt",
+                    "kind": "apt_packages",
                     "path": "profiles/code/apt-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/apt-packages.txt"
@@ -1458,10 +1524,21 @@
                       "blake3": "1011ca2c038214c6b447759d0053883f3f1ce77d9e1b9174524c1985f1053637",
                       "sha256": "5a22b7987adebe185056a62c01dcf6a2495b0647ec648968d8a4882f1eaafcb3"
                     },
-                    "kind": "python",
+                    "kind": "python_requirements",
                     "path": "profiles/code/python-requirements.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 246121,
+                    "digest": {
+                      "blake3": "cb8b01541a324152c9b772963e2f14a48879c55ca8b7e87bebd12267aa2f25f6",
+                      "sha256": "191010ff50a153d41631cd4aa98806b390d21ee32ba30193ea4806a77326ee24"
+                    },
+                    "kind": "python_requirements_lock",
+                    "path": "profiles/code/python-requirements.lock",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/python-requirements.lock"
                   },
                   {
                     "bytes": 59,
@@ -1469,10 +1546,21 @@
                       "blake3": "a70791718dd9fd5a621150714a55ddc55ef6df87d733a153747c88140a6385e9",
                       "sha256": "253513b2dc4dcf55e074a2f8cf71e669bb4ce9b0374eb96d7bcd0ee1a46ff689"
                     },
-                    "kind": "npm",
+                    "kind": "npm_packages",
                     "path": "profiles/code/npm-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 9866,
+                    "digest": {
+                      "blake3": "e485879bbc5bdb7fbe781c34ec777930d78ecc6b6b7caec03b4e36875e182cef",
+                      "sha256": "dc4c8d921ae226aaf6b84fd626ad1d46eda6d5616a9af552273af776bdc50bae"
+                    },
+                    "kind": "npm_package_lock",
+                    "path": "profiles/code/npm-package-lock.json",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/npm-package-lock.json"
                   },
                   {
                     "bytes": 51,
@@ -2307,7 +2395,7 @@
                       "blake3": "cfcdb3f875c5416749f4e270ef7e161287fd6aa569e7ac9da461d85c7d3e09f2",
                       "sha256": "f2712f34a9dc7aff0efe55e95d8f8f4f29387b95b17f0e40317e70214bf62540"
                     },
-                    "kind": "apt",
+                    "kind": "apt_packages",
                     "path": "profiles/co-work/apt-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/apt-packages.txt"
@@ -2318,10 +2406,21 @@
                       "blake3": "9c86b81dc09c7ce1fee956e2abb945abcd5bcb63a48371c3f14d3db8d8b94b4f",
                       "sha256": "dc733bb17a54c74211ec521f209f42d2aa3e1c14c195dd9acbd1c97e78963dc5"
                     },
-                    "kind": "python",
+                    "kind": "python_requirements",
                     "path": "profiles/co-work/python-requirements.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 246121,
+                    "digest": {
+                      "blake3": "cb8b01541a324152c9b772963e2f14a48879c55ca8b7e87bebd12267aa2f25f6",
+                      "sha256": "191010ff50a153d41631cd4aa98806b390d21ee32ba30193ea4806a77326ee24"
+                    },
+                    "kind": "python_requirements_lock",
+                    "path": "profiles/co-work/python-requirements.lock",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/python-requirements.lock"
                   },
                   {
                     "bytes": 44,
@@ -2329,10 +2428,21 @@
                       "blake3": "d93c5e967f72d4a069952f7774530cc9a60d49684f9cdc62f218e9bda12be16e",
                       "sha256": "94629267c795b60481679ac063789818eaf2cf9333b75b8ee453801dcca3af57"
                     },
-                    "kind": "npm",
+                    "kind": "npm_packages",
                     "path": "profiles/co-work/npm-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 9866,
+                    "digest": {
+                      "blake3": "e485879bbc5bdb7fbe781c34ec777930d78ecc6b6b7caec03b4e36875e182cef",
+                      "sha256": "dc4c8d921ae226aaf6b84fd626ad1d46eda6d5616a9af552273af776bdc50bae"
+                    },
+                    "kind": "npm_package_lock",
+                    "path": "profiles/co-work/npm-package-lock.json",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/npm-package-lock.json"
                   },
                   {
                     "bytes": 36,
@@ -2514,7 +2624,7 @@
                       "blake3": "cfcdb3f875c5416749f4e270ef7e161287fd6aa569e7ac9da461d85c7d3e09f2",
                       "sha256": "f2712f34a9dc7aff0efe55e95d8f8f4f29387b95b17f0e40317e70214bf62540"
                     },
-                    "kind": "apt",
+                    "kind": "apt_packages",
                     "path": "profiles/co-work/apt-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/apt-packages.txt"
@@ -2525,10 +2635,21 @@
                       "blake3": "9c86b81dc09c7ce1fee956e2abb945abcd5bcb63a48371c3f14d3db8d8b94b4f",
                       "sha256": "dc733bb17a54c74211ec521f209f42d2aa3e1c14c195dd9acbd1c97e78963dc5"
                     },
-                    "kind": "python",
+                    "kind": "python_requirements",
                     "path": "profiles/co-work/python-requirements.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 246121,
+                    "digest": {
+                      "blake3": "cb8b01541a324152c9b772963e2f14a48879c55ca8b7e87bebd12267aa2f25f6",
+                      "sha256": "191010ff50a153d41631cd4aa98806b390d21ee32ba30193ea4806a77326ee24"
+                    },
+                    "kind": "python_requirements_lock",
+                    "path": "profiles/co-work/python-requirements.lock",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/python-requirements.lock"
                   },
                   {
                     "bytes": 44,
@@ -2536,10 +2657,21 @@
                       "blake3": "d93c5e967f72d4a069952f7774530cc9a60d49684f9cdc62f218e9bda12be16e",
                       "sha256": "94629267c795b60481679ac063789818eaf2cf9333b75b8ee453801dcca3af57"
                     },
-                    "kind": "npm",
+                    "kind": "npm_packages",
                     "path": "profiles/co-work/npm-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 9866,
+                    "digest": {
+                      "blake3": "e485879bbc5bdb7fbe781c34ec777930d78ecc6b6b7caec03b4e36875e182cef",
+                      "sha256": "dc4c8d921ae226aaf6b84fd626ad1d46eda6d5616a9af552273af776bdc50bae"
+                    },
+                    "kind": "npm_package_lock",
+                    "path": "profiles/co-work/npm-package-lock.json",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/npm-package-lock.json"
                   },
                   {
                     "bytes": 36,
@@ -2732,7 +2864,7 @@
                       "blake3": "ce8cc7c9a92f4acd82849d2138fe4cc84af84a128de3aa14260fa3bc30c7500a",
                       "sha256": "8b62cd9198537a56d55d2655697a35968f1095e3671823be7cf910aeef0266e9"
                     },
-                    "kind": "apt",
+                    "kind": "apt_packages",
                     "path": "profiles/code/apt-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/apt-packages.txt"
@@ -2743,10 +2875,21 @@
                       "blake3": "223371148d7be187417cd84f748d05c1ebc02be55c1023b863551baf2d5c5694",
                       "sha256": "3bd82a15997fe8c376b6c0bde94cb8bae143e2e97f0532fd5a28370094fc5a91"
                     },
-                    "kind": "python",
+                    "kind": "python_requirements",
                     "path": "profiles/code/python-requirements.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 246121,
+                    "digest": {
+                      "blake3": "cb8b01541a324152c9b772963e2f14a48879c55ca8b7e87bebd12267aa2f25f6",
+                      "sha256": "191010ff50a153d41631cd4aa98806b390d21ee32ba30193ea4806a77326ee24"
+                    },
+                    "kind": "python_requirements_lock",
+                    "path": "profiles/code/python-requirements.lock",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/python-requirements.lock"
                   },
                   {
                     "bytes": 41,
@@ -2754,10 +2897,21 @@
                       "blake3": "8e930968495267fc4079f6bda8b2b06e665392a3e4960138a8108000c792c0f7",
                       "sha256": "ca4b07e503f308bf73ed473914c953e007bfd00af6c34f0865fdf606ff8394be"
                     },
-                    "kind": "npm",
+                    "kind": "npm_packages",
                     "path": "profiles/code/npm-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 9866,
+                    "digest": {
+                      "blake3": "e485879bbc5bdb7fbe781c34ec777930d78ecc6b6b7caec03b4e36875e182cef",
+                      "sha256": "dc4c8d921ae226aaf6b84fd626ad1d46eda6d5616a9af552273af776bdc50bae"
+                    },
+                    "kind": "npm_package_lock",
+                    "path": "profiles/code/npm-package-lock.json",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/npm-package-lock.json"
                   },
                   {
                     "bytes": 33,
@@ -2939,7 +3093,7 @@
                       "blake3": "ce8cc7c9a92f4acd82849d2138fe4cc84af84a128de3aa14260fa3bc30c7500a",
                       "sha256": "8b62cd9198537a56d55d2655697a35968f1095e3671823be7cf910aeef0266e9"
                     },
-                    "kind": "apt",
+                    "kind": "apt_packages",
                     "path": "profiles/code/apt-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/apt-packages.txt"
@@ -2950,10 +3104,21 @@
                       "blake3": "223371148d7be187417cd84f748d05c1ebc02be55c1023b863551baf2d5c5694",
                       "sha256": "3bd82a15997fe8c376b6c0bde94cb8bae143e2e97f0532fd5a28370094fc5a91"
                     },
-                    "kind": "python",
+                    "kind": "python_requirements",
                     "path": "profiles/code/python-requirements.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 246121,
+                    "digest": {
+                      "blake3": "cb8b01541a324152c9b772963e2f14a48879c55ca8b7e87bebd12267aa2f25f6",
+                      "sha256": "191010ff50a153d41631cd4aa98806b390d21ee32ba30193ea4806a77326ee24"
+                    },
+                    "kind": "python_requirements_lock",
+                    "path": "profiles/code/python-requirements.lock",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/python-requirements.lock"
                   },
                   {
                     "bytes": 41,
@@ -2961,10 +3126,21 @@
                       "blake3": "8e930968495267fc4079f6bda8b2b06e665392a3e4960138a8108000c792c0f7",
                       "sha256": "ca4b07e503f308bf73ed473914c953e007bfd00af6c34f0865fdf606ff8394be"
                     },
-                    "kind": "npm",
+                    "kind": "npm_packages",
                     "path": "profiles/code/npm-packages.txt",
                     "status": "current",
                     "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 9866,
+                    "digest": {
+                      "blake3": "e485879bbc5bdb7fbe781c34ec777930d78ecc6b6b7caec03b4e36875e182cef",
+                      "sha256": "dc4c8d921ae226aaf6b84fd626ad1d46eda6d5616a9af552273af776bdc50bae"
+                    },
+                    "kind": "npm_package_lock",
+                    "path": "profiles/code/npm-package-lock.json",
+                    "status": "current",
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/npm-package-lock.json"
                   },
                   {
                     "bytes": 33,

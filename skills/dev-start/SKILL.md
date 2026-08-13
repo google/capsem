@@ -1,6 +1,6 @@
 ---
 name: dev-start
-description: Quick-start guide for new Capsem developers. Use when someone asks "how do I get started", "how to set up", "first time setup", or "bootstrap". Points to the bootstrap script and full docs. For detailed environment troubleshooting, use /dev-setup instead.
+description: Quick start for new Capsem developers. Use for "how do I get started" or "first time setup"; for environment troubleshooting use dev-setup instead.
 ---
 
 # Developer Quick Start

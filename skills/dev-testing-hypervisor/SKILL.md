@@ -1,6 +1,6 @@
 ---
 name: dev-testing-hypervisor
-description: Testing the Capsem hypervisor layer -- Apple VZ (macOS) and KVM (Linux) backends. Use when writing or running tests for VM configuration, VirtioFS FUSE operations, vsock, serial console, virtio devices, or the hypervisor abstraction traits. Covers unit tests, integration tests, KVM CI, and what each backend needs.
+description: Testing the hypervisor layer, Apple VZ and KVM. Use when testing VM configuration, VirtioFS, vsock, serial console, or the backend abstraction.
 ---
 
 # Hypervisor Testing

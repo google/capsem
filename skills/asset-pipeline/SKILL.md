@@ -1,6 +1,6 @@
 ---
 name: asset-pipeline
-description: Asset building, manifest format, hash verification, and boot-time resolution for Capsem VM images. Use when debugging boot failures, manifest issues, hash mismatches, or understanding how assets flow from build to boot.
+description: Asset manifests, hash verification, and boot-time resolution for Capsem VM images. Use when debugging boot failures, manifest issues, or hash mismatches.
 ---
 
 # Asset Pipeline

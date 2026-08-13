@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
-from pydantic import StringConstraints, model_validator
+from pydantic import PositiveInt, StringConstraints, model_validator
 
 from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
 
@@ -163,7 +163,13 @@ class AuditsConfig(Strict):
     public_surface: str
     source_syntax: str
     hardcoded_selections: str
+    surfaces: str
+    docker_ignore: tuple[str, ...]
+    shell_severity: str
+    shell_ignore: tuple[str, ...]
     skills_dir: str
+    max_skill_description_chars: PositiveInt
+    max_skill_body_lines: PositiveInt
 
 
 class WebSurfacesConfig(Strict):
@@ -174,6 +180,7 @@ class WebSurfacesConfig(Strict):
 
 class PytestConfig(Strict):
     root: str
+    citadel: str
     collection_flags: tuple[str, ...]
     base_flags: tuple[str, ...]
     stop_at_first: str

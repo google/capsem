@@ -136,16 +136,6 @@ runtime or manual `dark:` prefixes required for token-based styles.
 - **Dark Mode**: Requires correct configuration (`class` or `media` strategy)
 - **Browser Support**: Check Tailwind docs for compatibility notes
 
-## References
-
-- **[references/layout-patterns.md](references/layout-patterns.md)** — Flexbox, grid, spacing, typography, colors
-- **[references/component-patterns.md](references/component-patterns.md)** — Cards, navigation, forms, modals, React patterns
-- **[references/responsive-design.md](references/responsive-design.md)** — Responsive patterns, dark mode, container queries
-- **[references/animations.md](references/animations.md)** — Transitions, transforms, built-in animations, motion preferences
-- **[references/performance.md](references/performance.md)** — Bundle optimization, CSS optimization, production builds
-- **[references/accessibility.md](references/accessibility.md)** — Focus management, screen readers, color contrast, ARIA
-- **[references/configuration.md](references/configuration.md)** — CSS-first config, JavaScript config, plugins, presets
-- **[references/reference.md](references/reference.md)** — Additional reference materials
 
 ## External Resources
 

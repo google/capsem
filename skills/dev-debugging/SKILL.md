@@ -1,6 +1,6 @@
 ---
 name: dev-debugging
-description: Debugging methodology for Capsem, including Python gate/release failures and diagnostic continuation of expensive candidate runs. Use for bugs, test failures, unexpected behavior, CI/local parity failures, or any issue needing diagnosis. Reproduce first, identify the root cause, then fix the whole pattern; never treat a diagnostic run as qualification.
+description: Debugging methodology: reproduce first, find the root cause, fix the whole pattern. Use for bugs, test failures, or CI/local parity failures.
 ---
 
 # Debugging

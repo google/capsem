@@ -1,6 +1,6 @@
 ---
 name: dev-session-debug
-description: Debugging Capsem session databases -- the telemetry pipeline output. Use when inspecting session.db, diagnosing missing or incorrect telemetry, understanding table schemas, checking data quality, or correlating events across tables. Covers the session ledger tables, the main.db rollup, the inspect-session tool, and common data quality issues.
+description: Debugging session.db and the telemetry pipeline. Use when inspecting a session ledger, diagnosing missing telemetry, or correlating events across tables.
 ---
 
 # Session Database Debugging

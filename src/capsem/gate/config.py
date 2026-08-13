@@ -56,13 +56,13 @@ from .harnessschema import (
     DiskConfig,
     Exclusive,
     ExecutionConfig,
-    LintConfig,
     LocksConfig,
     PrefixConfig,
     RunLogConfig,
     SandboxConfig,
     WorkspaceConfig,
 )
+from .lintschema import LintConfig, LintSurface
 from .productschema import (
     AptSnapshotConfig,
     InstallConfig,
@@ -94,6 +94,7 @@ class GateConfig(Strict):
     doctor: DoctorConfig
     lint: LintConfig
     boundary: BoundaryConfig
+    lint_surfaces: tuple[LintSurface, ...]
     execution: ExecutionConfig
     locks: LocksConfig
     runlog: RunLogConfig

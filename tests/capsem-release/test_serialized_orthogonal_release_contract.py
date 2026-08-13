@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 import pytest
+from helpers.workflow_contract import workflow_reachable_text
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -448,8 +449,11 @@ def test_binary_lane_pulls_profiles_and_never_builds_them() -> None:
 
 
 def test_profile_lane_installs_pulled_package_runtime_dependencies() -> None:
-    workflow = _workflow("release-assets.yaml")
-    pairing = _job_block(workflow, "test-profile-pairing")
+    pairing = workflow_reachable_text(
+        ROOT,
+        WORKFLOWS / "release-assets.yaml",
+        job="test-profile-pairing",
+    )
 
     resolve_package = pairing.index("--print-package-path")
     install_dependencies = pairing.index('scripts/install-deb-runtime-dependencies.py "$package"')
@@ -522,7 +526,7 @@ def test_binary_pairing_uses_exact_public_before_and_candidate_after_cohorts() -
 
 
 def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
-    workflow = _workflow("release-assets.yaml")
+    workflow = workflow_reachable_text(ROOT, WORKFLOWS / "release-assets.yaml")
 
     assert "Validate selected channel profile through capsem-admin" in workflow
     assert "Select exact public-before manifest" in workflow
@@ -576,7 +580,11 @@ def test_profile_pairing_reuses_one_staged_publication_and_exact_public_before()
     workflow = _workflow("release-assets.yaml")
     resolve = _job_block(workflow, "resolve-current-binary")
     author = _job_block(workflow, "author-profile-release")
-    pairing = _job_block(workflow, "test-profile-pairing")
+    pairing = workflow_reachable_text(
+        ROOT,
+        WORKFLOWS / "release-assets.yaml",
+        job="test-profile-pairing",
+    )
     publish = _job_block(workflow, "publish-profile-release")
 
     assert "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}" in resolve

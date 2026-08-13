@@ -1,6 +1,6 @@
 ---
 name: dev-mcp
-description: MCP development for Capsem. Covers the capsem-mcp host MCP server (AI agent sandbox control via stdio), the guest MCP relay and host MITM MCP endpoint (tool routing to external servers via framed vsock), and using capsem MCP tools for fast debugging. Use when working on the MCP server, endpoint, tool routing, policy evaluation, canonical tool_calls telemetry, MCP transport evidence, or when you need to debug anything inside a VM. Also use this skill when capsem MCP tools are available and you want to understand the fastest way to test changes interactively.
+description: MCP for Capsem: the host server, the guest relay, and tool routing. Use when working on MCP servers, tool policy, or telemetry, or to debug quickly inside a VM.
 ---
 
 # MCP in Capsem

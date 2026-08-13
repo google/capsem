@@ -159,9 +159,9 @@ _test-candidate:
 # and every JavaScript/web check run before Colima, bootstrap, artifacts, or
 # VMs. This is private composition, not a public release shortcut.
 _test-fast:
+    uv run capsem-gate test-fast
     just _check-generated-settings
     just _test-release-contracts
-    uv run capsem-gate test-fast
 
 _test-static: _clean-stale _check-generated-settings
     just _bound-docker-test-storage

@@ -19,27 +19,35 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _rootfs_obom_bytes(architecture: str) -> bytes:
-    return (json.dumps({
-        "bomFormat": "CycloneDX",
-        "metadata": {
-            "component": {
-                "type": "operating-system",
-                "name": f"capsem-rootfs-{architecture}",
-                "version": "guest-rootfs",
-                "properties": [
-                    {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
-                    {"name": "capsem:guest:architecture", "value": architecture},
+    return (
+        json.dumps(
+            {
+                "bomFormat": "CycloneDX",
+                "metadata": {
+                    "component": {
+                        "type": "operating-system",
+                        "name": f"capsem-rootfs-{architecture}",
+                        "version": "guest-rootfs",
+                        "properties": [
+                            {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
+                            {"name": "capsem:guest:architecture", "value": architecture},
+                        ],
+                    },
+                    "tools": {"components": [{"name": "cdxgen", "version": "12.7.0"}]},
+                },
+                "components": [
+                    {
+                        "type": "library",
+                        "name": "apt",
+                        "version": "2.6.1",
+                        "purl": "pkg:deb/debian/apt@2.6.1?distro=debian-12",
+                    }
                 ],
             },
-            "tools": {"components": [{"name": "cdxgen", "version": "12.7.0"}]},
-        },
-        "components": [{
-            "type": "library",
-            "name": "apt",
-            "version": "2.6.1",
-            "purl": "pkg:deb/debian/apt@2.6.1?distro=debian-12",
-        }],
-    }, sort_keys=True) + "\n").encode()
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode()
 
 
 def _run_admin(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -76,9 +84,7 @@ def _build_release_site(dist: Path) -> None:
         check=False,
     )
     assert install.returncode == 0, (
-        "release-site pnpm install failed\n"
-        f"stdout:\n{install.stdout}\n"
-        f"stderr:\n{install.stderr}"
+        f"release-site pnpm install failed\nstdout:\n{install.stdout}\nstderr:\n{install.stderr}"
     )
     # build:channel renders through the shared release-site/dist before
     # overlaying into `dist`, so it has to serialize with every other build.
@@ -97,9 +103,7 @@ def _build_release_site(dist: Path) -> None:
             check=False,
         )
     assert build.returncode == 0, (
-        "release-site Astro build failed\n"
-        f"stdout:\n{build.stdout}\n"
-        f"stderr:\n{build.stderr}"
+        f"release-site Astro build failed\nstdout:\n{build.stdout}\nstderr:\n{build.stderr}"
     )
 
 
@@ -123,21 +127,21 @@ def _write_minimal_deb(path: Path, executable_name: str = "capsem-app") -> bytes
         gzip.GzipFile(fileobj=data_tar, mode="wb", mtime=0) as gz,
         tarfile.open(fileobj=gz, mode="w") as tar,
     ):
-            info = tarfile.TarInfo(f"usr/bin/{executable_name}")
-            info.mode = 0o755
-            info.size = len(executable)
-            info.mtime = 0
-            tar.addfile(info, io.BytesIO(executable))
+        info = tarfile.TarInfo(f"usr/bin/{executable_name}")
+        info.mode = 0o755
+        info.size = len(executable)
+        info.mtime = 0
+        tar.addfile(info, io.BytesIO(executable))
     control_tar = io.BytesIO()
     with (
         gzip.GzipFile(fileobj=control_tar, mode="wb", mtime=0) as gz,
         tarfile.open(fileobj=gz, mode="w") as tar,
     ):
-            info = tarfile.TarInfo("./control")
-            info.mode = 0o644
-            info.size = len(control)
-            info.mtime = 0
-            tar.addfile(info, io.BytesIO(control))
+        info = tarfile.TarInfo("./control")
+        info.mode = 0o644
+        info.size = len(control)
+        info.mtime = 0
+        tar.addfile(info, io.BytesIO(control))
     deb = (
         b"!<arch>\n"
         + _ar_member("debian-binary", b"2.0\n")
@@ -183,14 +187,7 @@ def _write_minimal_pkg(path: Path) -> bytes:
 
 
 def _ar_member(name: str, data: bytes) -> bytes:
-    header = (
-        f"{name + '/':<16}"
-        f"{0:<12}"
-        f"{0:<6}"
-        f"{0:<6}"
-        f"{0o100644:<8}"
-        f"{len(data):<10}`\n"
-    ).encode("ascii")
+    header = (f"{name + '/':<16}{0:<12}{0:<6}{0:<6}{0o100644:<8}{len(data):<10}`\n").encode("ascii")
     return header + data + (b"\n" if len(data) % 2 else b"")
 
 
@@ -375,9 +372,7 @@ def _write_profile_catalog(root: Path, revision: str = PROFILE_REVISION) -> Path
         "pytest==8.0.0 \\\n    --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
         encoding="utf-8",
     )
-    (profile_dir / "npm-packages.txt").write_text(
-        "@openai/codex@0.147.0\n", encoding="utf-8"
-    )
+    (profile_dir / "npm-packages.txt").write_text("@openai/codex@0.147.0\n", encoding="utf-8")
     (profile_dir / "npm-package-lock.json").write_text(
         json.dumps(
             {
@@ -561,28 +556,25 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "Capsem-1.4.1.pkg" in channel_html
     assert "capsem-1-4-1-pkg-sbom.spdx.json" in channel_html
     assert "The fastest way to ship with AI securely." not in index_html
-    profile_html = (
-        dist / "channels" / "stable" / "profiles" / "code" / "index.html"
-    ).read_text(encoding="utf-8")
+    profile_html = (dist / "channels" / "stable" / "profiles" / "code" / "index.html").read_text(
+        encoding="utf-8"
+    )
     assert "Architecture arm64" in profile_html
     assert "Architecture x86_64" in profile_html
     assert "Profile Evidence" in profile_html
     assert "ABOM" in profile_html
+    assert (f"/profiles/releases/stable/code/{PROFILE_REVISION}/arm64/rootfs.erofs") in profile_html
     assert (
-        f"/profiles/releases/stable/code/{PROFILE_REVISION}/"
-        "arm64/rootfs.erofs"
+        f"/profiles/releases/stable/code/{PROFILE_REVISION}/arm64/obom.cdx.json"
     ) in profile_html
     assert (
-        f"/profiles/releases/stable/code/{PROFILE_REVISION}/"
-        "arm64/obom.cdx.json"
+        f"/profiles/releases/stable/code/{PROFILE_REVISION}/x86_64/rootfs.erofs"
     ) in profile_html
-    assert (
-        f"/profiles/releases/stable/code/{PROFILE_REVISION}/"
-        "x86_64/rootfs.erofs"
-    ) in profile_html
-    assert "apt_packages" in profile_html
-    assert "python_requirements" in profile_html
-    assert "npm_packages" in profile_html
+    assert "APT package list" in profile_html
+    assert "Python requirements" in profile_html
+    assert "Python requirements lock" in profile_html
+    assert "NPM package list" in profile_html
+    assert "NPM package lock" in profile_html
     assert "Root manifest" in profile_html
 
     headers = (dist / "_headers").read_text(encoding="utf-8")
@@ -682,8 +674,7 @@ def test_release_index_bootstraps_before_binary_evidence_exists(tmp_path: Path) 
     assert health["evidence"]["host_binary_files"] == []
     assert health["evidence"]["host_sboms"] == []
     assert all(
-        item["name"] != "github_attestations_host"
-        for item in health["evidence"]["attestations"]
+        item["name"] != "github_attestations_host" for item in health["evidence"]["attestations"]
     )
     assert any(
         item["name"] == "github_attestations_vm_assets"
@@ -836,19 +827,14 @@ def test_profile_release_deploys_generated_preview_only_when_activation_ready() 
     assert "source_changed: ${{ steps.profile-delta.outputs.source_changed }}" in author
     assert "activation_needed: ${{ steps.profile-delta.outputs.activation_needed }}" in author
     assert "release_needed: ${{ steps.profile-delta.outputs.release_needed }}" in author
-    assert (
-        "product_compatible: ${{ steps.author-release.outputs.product_compatible }}"
-        in author
-    )
+    assert "product_compatible: ${{ steps.author-release.outputs.product_compatible }}" in author
     assert "functional_ready: ${{ steps.author-release.outputs.functional_ready }}" in author
     assert "activation_ready: ${{ steps.author-release.outputs.activation_ready }}" in author
     assert "if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}" in author
 
     assert "needs.author-profile-release.outputs.release_needed == 'true'" in pairing
     assert (
-        pairing.count(
-            "if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}"
-        )
+        pairing.count("if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}")
         == 2
     )
 
@@ -857,16 +843,12 @@ def test_profile_release_deploys_generated_preview_only_when_activation_ready() 
     assert "--out-dir target/release-channel" in publish
     assert "name: asset-channel-preview" in publish
     assert "path: target/release-channel/" in publish
-    assert (
-        "if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}"
-        in publish
-    )
+    assert "if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}" in publish
 
     assert (
         "if: ${{ inputs.dry_run == false && "
         "needs.publish-profile-release.outputs.release_needed == 'true' && "
-        "needs.publish-profile-release.outputs.activation_ready == 'true' }}"
-        in deploy_channel
+        "needs.publish-profile-release.outputs.activation_ready == 'true' }}" in deploy_channel
     )
     assert "uses: ./.github/workflows/release-channel.yaml" in deploy_channel
     assert "dist_artifact: asset-channel-preview" in deploy_channel
@@ -874,9 +856,9 @@ def test_profile_release_deploys_generated_preview_only_when_activation_ready() 
 
 def test_profile_release_publishes_deferred_assets_but_withholds_channel_deploy() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(encoding="utf-8")
-    reusable_fast_gate = (
-        PROJECT_ROOT / ".github/workflows/fast-gate.yaml"
-    ).read_text(encoding="utf-8")
+    reusable_fast_gate = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(
+        encoding="utf-8"
+    )
     pairing = workflow.split("  test-profile-pairing:", maxsplit=1)[1].split(
         "  author-profile-release:", maxsplit=1
     )[0]
@@ -902,18 +884,13 @@ def test_profile_release_publishes_deferred_assets_but_withholds_channel_deploy(
     )
     assert "activation-ready profile cannot defer complete pairing gates" in pairing
     assert "complete functional release binary cohort" in pairing
-    assert (
-        "needs.author-profile-release.outputs.activation_ready != 'true'" in pairing
-    )
+    assert "needs.author-profile-release.outputs.activation_ready != 'true'" in pairing
     assert "Publish immutable GitHub profile release" in publish
     immutable_release = publish.split(
         "- name: Publish immutable GitHub profile release", maxsplit=1
     )[1].split("- uses: actions/upload-artifact@", maxsplit=1)[0]
     assert "outputs.activation_ready" not in immutable_release
-    assert (
-        "needs.publish-profile-release.outputs.activation_ready == 'true'"
-        in deploy_channel
-    )
+    assert "needs.publish-profile-release.outputs.activation_ready == 'true'" in deploy_channel
 
 
 def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path) -> None:
@@ -953,7 +930,9 @@ def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path)
     )
 
     assert result.returncode != 0
-    assert "health.json profile update latest target does not match manifest profiles" in result.stderr
+    assert (
+        "health.json profile update latest target does not match manifest profiles" in result.stderr
+    )
 
 
 def test_release_index_check_rejects_stale_human_index_state(tmp_path: Path) -> None:
@@ -1162,9 +1141,10 @@ def test_release_index_check_rejects_vm_obom_content_drift(tmp_path: Path) -> No
     obom_path = manifest_path.parent / "arm64" / "obom.cdx.json"
     obom_path.write_bytes(bad_obom)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["assets"]["releases"]["2030.0101.1"]["arches"]["arm64"][
-        "obom.cdx.json"
-    ] = {"hash": blake3(bad_obom).hexdigest(), "size": len(bad_obom)}
+    manifest["assets"]["releases"]["2030.0101.1"]["arches"]["arm64"]["obom.cdx.json"] = {
+        "hash": blake3(bad_obom).hexdigest(),
+        "size": len(bad_obom),
+    }
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     dist = tmp_path / "target" / "release-channel"
     _run_admin(
@@ -1265,9 +1245,7 @@ def test_release_index_check_rejects_mismatched_vm_attestation_predicate_evidenc
         for item in health["evidence"]["attestations"]
         if item["name"] == "github_attestations_vm_assets"
     )
-    vm_attestation["predicate_url"] = (
-        "/assets/releases/2030.0101.1/missing-obom.cdx.json"
-    )
+    vm_attestation["predicate_url"] = "/assets/releases/2030.0101.1/missing-obom.cdx.json"
     health_path.write_text(json.dumps(health, indent=2) + "\n", encoding="utf-8")
 
     result = _run_admin(
@@ -1759,8 +1737,7 @@ def test_binary_release_profile_catalog_index_builds_release_site_without_rebuil
     }
     assert health["urls"]["asset_base"] == asset_base
     rootfs_url = (
-        "https://github.com/google/capsem/releases/download/"
-        "assets-v2030.0101.1/arm64-rootfs.erofs"
+        "https://github.com/google/capsem/releases/download/assets-v2030.0101.1/arm64-rootfs.erofs"
     )
     assert any(file["url"] == rootfs_url for file in health["assets"]["files"])
     channel_manifest_text = (dist / "assets" / "stable" / "manifest.json").read_text(

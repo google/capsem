@@ -1,3 +1,7 @@
+# shellcheck shell=bash
+# Deliberately no shebang: this file is sourced, never executed. The directive
+# tells ShellCheck which dialect to assume.
+#
 # Capsem execution-lock helper.
 #
 # Source this file, then call `acquire_exec_lock <path>` to open fd 3 on

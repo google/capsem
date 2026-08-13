@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from helpers.workflow_contract import workflow_reachable_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "tests"))
@@ -216,8 +217,8 @@ WORKFLOWS = PROJECT_ROOT / ".github/workflows"
 
 
 def exported(workflow: str) -> set[str]:
-    """Variable names the workflow writes into `GITHUB_ENV`."""
-    text = (WORKFLOWS / workflow).read_text(encoding="utf-8")
+    """Variable names the workflow or its direct script writes to `GITHUB_ENV`."""
+    text = workflow_reachable_text(PROJECT_ROOT, WORKFLOWS / workflow)
     return {name for name in VALUES if f'echo "{name}=' in text}
 
 

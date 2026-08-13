@@ -1,6 +1,6 @@
 ---
 name: dev-bug-review
-description: Triage and resolve incoming bug reports one by one. Use when the user brings in one or more bug reports (from a tracker, a dump, a "here are three bugs" paste, etc.) and expects each to be confirmed, the proposed fix evaluated or pushed back on, implemented only after agreement, then committed with a changelog entry. Enforces confirm-before-fixing, push-back-with-reasoning, and per-bug commit discipline. Do NOT use for ad-hoc single-bug debugging where the user hasn't framed it as a review queue -- use dev-debugging for that.
+description: Work a queue of bug reports one by one: confirm, push back, fix only after agreement, commit each. Use when handed several bugs to triage; for a single ad-hoc bug use dev-debugging.
 ---
 
 # Bug Review

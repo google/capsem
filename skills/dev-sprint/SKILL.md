@@ -1,6 +1,6 @@
 ---
 name: dev-sprint
-description: How to run a development sprint in Capsem. Use when starting a new feature, multi-step task, or any work that spans multiple changes. Covers sprint planning, progress tracking, changelog discipline, commit strategy, testing gates, and release. Enforces the workflow -- plan first, track progress, commit at functional milestones, always finish with testing.
+description: Running a multi-step development sprint. Use when starting a feature or work spanning several changes: plan, track, commit at milestones, finish with tests.
 ---
 
 # Development Sprint

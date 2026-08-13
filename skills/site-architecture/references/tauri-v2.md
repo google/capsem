@@ -286,15 +286,6 @@ channel.onmessage = (msg) => console.log(msg.event, msg.data);
 await invoke('download', { url: 'https://...', onEvent: channel });
 ```
 
-## Bundled Resources
-
-### References
-
-Located in `references/`:
-- [`capabilities-reference.md`](references/capabilities-reference.md) - Permission patterns and examples
-- [`ipc-patterns.md`](references/ipc-patterns.md) - Complete IPC examples
-
-> **Note:** For deep dives on specific topics, see the reference files above.
 
 ## Dependencies
 

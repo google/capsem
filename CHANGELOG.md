@@ -53,6 +53,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   factor. The baseline is the latest successful journal with the same typed
   plan shape, invocation, platform, machine, and core count, so no duration is
   guessed or hardcoded and a graph/host change seeds a new baseline.
+- Source-size rules are one guard in the Citadel rather than one per tree.
+  `[boundary.scripts]` and `[boundary.rust]` are the same rule -- roots,
+  suffixes, a ceiling, an exact debt inventory -- asked of two trees, and two
+  implementations of one rule is how they drift. `tests/test_script_size_contract.py`
+  is retired into `tests/citadel/test_shape_boundaries.py`, which owns every
+  declared family and gained the negative tests the old one lacked: a growing
+  file and a new file over the ceiling each prove the ratchet fires.
+- The shared Citadel lint harness now fails closed when a tool exits
+  abnormally or claims findings its adapter cannot parse, and gives every
+  extracted source an indexed staging name so sanitization cannot silently
+  collapse two inputs into one. Both failure modes have adversarial guards.
+- Citadel lint coverage now declares the existing fast YAML, JSON, and TOML
+  syntax proof alongside Python, Rust, shell, Dockerfile, Markdown, web, and
+  skill surfaces. The shell tokenizer's grammar and whole-repository corpus
+  proof moved into Citadel too, so the guard infrastructure is tested in the
+  same five-second phase that consumes it.
+- The public fast-test path now enters the timed fast graph before the
+  eight-minute release-contract suite, so Citadel, syntax, Ruff, Ty, Clippy,
+  and audit failures answer before expensive contract rendering. A scheduling
+  guard holds that user-visible order as well as the internal graph edge.
+- Profile dependency lockfiles now remain first-class typed release-graph
+  config artifacts. The Rust enum, generated manifest, public renderer,
+  readiness validator, and stable/nightly fixture use the same
+  `python_requirements_lock` and `npm_package_lock` vocabulary; a profile can
+  no longer publish the locks while silently omitting them from its public
+  graph.
+- Rust files have a ceiling for the first time, at 1000 lines, chosen from
+  Rust's own distribution rather than borrowed from Python. Rust's median
+  tracked file is 232 lines, so a 300-line ceiling would flag 169 of 388 files
+  -- a rewrite mandate that would be deleted the first time it blocked someone.
+  1000 sits just under p90 and flags 58. Rolled out by scope one crate at a
+  time, starting with `capsem-service`: two entries freeze the two largest
+  files in the repository, 25,798 lines between them, in the crate CLAUDE.md
+  calls a thin shell.
+- The Citadel now runs in the fast phase instead of the broad suite. Its guards
+  are source-level -- no artifact, no VM, no daemon, seconds rather than
+  minutes -- and were reachable only through the broad suite's `root`, which carries
+  `require_artifacts` and runs after the whole asset build. A DB-boundary
+  violation was therefore reported once the VMs were already up, roughly forty
+  minutes after the source that caused it was read, which is exactly what a
+  guard written to "fail before it can ship green" must not do. `tests/citadel`
+  joins `broad_ignores` so the suite has one owner rather than two, and
+  `tests/citadel/test_guard_scheduling.py` fails if it is ever moved back
+  behind the expensive work.
+- The gate's fail-open guard is stated as a whitelist, because the blacklist
+  lost. `masks_failure` enumerated ways to neutralise an enforcement check, and
+  an adversarial pass walked five past it: `; :`, a trailing `&`, `| cat`,
+  `set +ex`, and `set +o errexit` -- each leaving the literal a substring
+  contract greps for perfectly intact. `is_bare_command` inverts the rule: an
+  enforcement comparison must be the whole command, so any token that could
+  consume its exit status fails, predicted or not. `disables_fail_fast` now
+  matches any `set` with a `+` option rather than exactly `set +e`. All
+  fourteen evasions ship as parametrized cases in the citadel guard, alongside
+  four legitimate shapes that must stay green.
+- The workflow shell tokenizer scans characters instead of lines, and its
+  grammar is written down. `shlex` was applied per physical line, which is
+  wrong because a shell word may contain a newline: four of the 184 `run:`
+  steps -- all in release.yaml, including verify-release-candidate and
+  verify-release-downloads -- raised `ValueError: No closing quotation`.
+  Accumulating lines until the quotes balanced was tried and is worse: it stops
+  the crash without parsing anything, returning a blob that looks like
+  analysis. `tests/helpers/shelltokens.py` states the subset as a grammar and
+  scans it, so a newline inside a quotation is part of the word by
+  construction. It also fixes redirections -- `2>&1` was three tokens, read as
+  a background `&`. Validated across 236 scripts (every `run:` step plus 6,991
+  lines of tracked shell) with zero unreadable and identical fail-open verdicts
+  wherever the old lexer could read at all. Pointing it at Dockerfile `RUN`
+  bodies then found a third bug: `$( )` is its own quoting context, and the
+  scanner was closing an outer double quote on the first quote inside a sed
+  script. The corpus now covers all three shell surfaces -- 321 sources --
+  and each found a bug the others did not. An unterminated quote raises
+  `UnterminatedQuote` rather than returning nothing, so a caller cannot read
+  "could not be read" as "nothing to see".
+- ShellCheck now runs on every surface that carries shell, each failing closed:
+  47 tracked `*.sh`, all 189 workflow `run:` bodies, and 85 Dockerfile `RUN`
+  bodies including the `.j2` templates rendered through the same
+  `render_dockerfile` the image build uses. Linting one of three surfaces is a
+  sampling, and the two that were unchecked are where the release logic lives.
+  It found two real defects in the kernel template -- an unquoted
+  `make -j$(nproc)` and a `for cmd in modprobe` loop over a single item -- both
+  fixed. `[boundary.shell_bodies]` then holds the line at 20 executable lines
+  per body, median being 3, so the next unwieldy program goes into `scripts/`
+  where a test can call it.
+- Shell scripts are linted. Python has Ruff and strict Ty, Rust has Clippy with
+  `warnings = "deny"`, the web surfaces fail on warnings -- and 6,991 lines of
+  shell across 47 tracked scripts had nothing, while four
+  `# shellcheck disable=` directives already sat in the tree, written for a
+  linter no lane ran. `fast.audit.shell` runs ShellCheck at warning severity
+  over `git ls-files -- '*.sh'`, the same tracked-file rule the script size
+  ratchet uses. It found no real defects: the only two hits were a deliberate
+  `CDPATH= cd` and a sourced library with no shebang, both now carrying a
+  directive that records why. ShellCheck arrives through `shellcheck-py` in
+  `uv.lock`, so it needs no new bootstrap step.
+- Skill frontmatter descriptions are halved, from 11,162 characters to 5,158.
+  They are loaded into every agent session before any work starts and are the
+  text a router picks from, so length is not neutral: thirty-four paragraphs
+  discriminate worse than thirty-four sentences. The bloat was uniform rather
+  than a few offenders -- median 320 characters, all 34 above 150 -- because
+  each ended with a "Covers X, Y, Z" enumeration restating its own body.
+  Removing that one habit did most of the work; median is now 153 and nothing
+  exceeds 200. Disambiguation was kept where two skills genuinely collide, such
+  as dev-start pointing at dev-setup. `tests/citadel/test_skill_context_budget.py`
+  holds the ceiling, and also holds a floor, since a budget alone is satisfiable
+  by deleting the text. Bodies were already healthy and only gained a ceiling to
+  stop regrowth.
+- Every Citadel guard now states its reasoning in the failure message rather
+  than only in a docstring. `test_package_architecture_boundary.py` had neither
+  a docstring nor a rationale, and its checks were bare asserts -- a failing
+  `assert "fn deb_graph_arch" not in updater` said nothing about why that
+  bridge between `PackageArchitecture` (amd64) and `Architecture` (x86_64) is
+  forbidden. It now collects named violations with reasons in the style
+  `test_db_boundary.py` established, behind
+  `ARCHITECTURE_DOMAIN_RATIONALE`.
+
+### Changed
 
 - Guest binaries for a foreign architecture are cross-compiled instead of
   emulated. The builder image is now resolved from the *host* rather than the

@@ -861,6 +861,26 @@ fn profile_image_versions_removed_image_is_absent_not_status_removed() {
 
 #[test]
 fn profile_config_kind_rejects_unknown_values() {
+    for kind in [
+        "apt_packages",
+        "python_requirements",
+        "python_requirements_lock",
+        "npm_packages",
+        "npm_package_lock",
+    ] {
+        let value = serde_json::json!({
+            "kind": kind,
+            "path": format!("profiles/co-work/{kind}"),
+            "url": format!("/profiles/releases/1.0.0/co-work/arm64/{kind}"),
+            "bytes": 42,
+            "digest": digest_json(),
+            "status": "current"
+        });
+        serde_json::from_value::<ProfileConfigRef>(value).unwrap_or_else(|error| {
+            panic!("profile config kind {kind} must deserialize: {error}")
+        });
+    }
+
     let invalid_kind = serde_json::json!({
         "kind": "misc",
         "path": "profiles/co-work/misc.json",

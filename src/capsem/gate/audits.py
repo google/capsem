@@ -41,7 +41,21 @@ def all_of(config: GateConfig) -> list[Step]:
             Run(["uv", "run", "capsem-builder", "validate-skills", audits.skills_dir]),
         ),
         step("audit.release-selections", Run(["bash", audits.hardcoded_selections])),
+        # Python has Ruff and strict Ty, Rust has Clippy with warnings denied,
+        # the web surfaces fail on warnings -- and every line of shell had
+        # nothing at all. Four `# shellcheck disable=` directives were already
+        # in the tree, written for a linter no lane ran. All three surfaces are
+        # checked and each fails closed.
+        step("audit.shell", Run(_surface(audits, "shell", ",".join(audits.shell_ignore)))),
+        step("audit.docker", Run(_surface(audits, "dockerfile", ",".join(audits.docker_ignore)))),
+        step("audit.markdown", Run(_surface(audits, "markdown", ""))),
     ]
+
+
+def _surface(audits, name: str, exclude: str) -> list[str]:
+    """One entry point per surface, through the shared Citadel harness."""
+    argv = ["uv", "run", "python", audits.surfaces, name, "--severity", audits.shell_severity]
+    return [*argv, "--exclude", exclude] if exclude else argv
 
 
 def source_syntax(config: GateConfig) -> Step:

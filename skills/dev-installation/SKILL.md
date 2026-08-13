@@ -1,6 +1,6 @@
 ---
 name: dev-installation
-description: Capsem native package installer -- package install, service registration, self-update, manifest-driven asset download, corp config provisioning, and the install test harness. Use when working on package install/update/uninstall commands, service install/uninstall, asset management, corp config, install test infrastructure, or the installed layout (~/.capsem/).
+description: The native package installer: install, update, uninstall, service registration, asset download, corp config. Use when working on those or the installed ~/.capsem/ layout.
 ---
 
 # Native Package Installer

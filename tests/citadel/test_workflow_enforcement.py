@@ -1,38 +1,20 @@
-"""What a substring check cannot see about a gating workflow.
+"""Citadel guard: a gating workflow step must be unable to pass while failing.
 
-`test_release_doctor_contract` proves the pr-gate wiring by matching literal
-text against the workflow source. That catches a renamed variable, and it is
-blind in both directions. Measured against the real `ci.yaml`, replaying the
-twenty-four assertions of `test_ci_has_stable_pr_gate_over_all_required_jobs`
-against four mutations:
-
-    reformat needs[] to YAML block style   identical gate     contract went RED
-    reorder needs[] alphabetically         identical gate     contract went RED
-    append `|| true` to every enforcement  CI now advisory    contract stayed GREEN
-    add `continue-on-error: true`          step cannot fail   contract stayed GREEN
-
-Exactly inverted: the two edits GitHub cannot distinguish from the original
-broke the build, and the two that disable merge protection passed. The first
-pair is noise. The second pair is the failure that matters -- `pr-gate` is the
-only status branch protection requires, so a `pr-gate` that cannot fail is a
-main branch with no gate at all, reported green by the test written to prevent
-exactly that.
-
-The reason is mechanical. `assert 'test "$X" = success' in gate` is a substring
-test, and `test "$X" = success || true` contains that substring. So does a
-commented-out copy. `continue-on-error` is invisible to it entirely, being a
-key the assertion never mentions.
+The Citadel is where Capsem records architectural mistakes that must not be
+repeated. Why this one exists, and the measurements behind it, are in
+`WORKFLOW_ENFORCEMENT_RATIONALE` below -- stated there rather than here so a
+violation prints it instead of a bare assertion.
 
 ## What counts as enforcement here
 
-Narrowly: a **gate step** is a step that maps an environment name to an
+Narrowly: a **gate step** is a step mapping an environment name to an
 expression reading `needs.<job>.result`. That is the step which turns a
 dependency's outcome into this job's outcome, and it is the only place these
 rules apply.
 
 The looser reading -- any step running `test "$..."` -- was tried first and is
 wrong twice over. It swept in `release.yaml:preflight` comparing a tag to a
-ref, which is an ordinary precondition and not a merge gate. And it would have
+ref, an ordinary precondition rather than a merge gate. And it would have
 failed `ci.yaml:test-linux`, whose "Enable KVM (best-effort)" step carries
 `continue-on-error: true` legitimately: a best-effort setup step is allowed to
 fail, the step that decides the gate is not. A guard that cannot tell those
@@ -49,11 +31,41 @@ import yaml
 from helpers.workflow_contract import (
     canonical_shell_commands,
     disables_fail_fast,
-    masks_failure,
+    is_bare_command,
     referenced_need_results,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+WORKFLOW_ENFORCEMENT_RATIONALE = """\
+A gating workflow step must be provably unable to pass while failing.
+
+`pr-gate` is the only status branch protection requires, so a `pr-gate` that
+cannot fail is a main branch with no gate at all.
+
+The contract that used to prove this matched literal text against the workflow
+source, and measurement showed it inverted in both directions. Replaying its
+twenty-four assertions against four mutations of the real ci.yaml:
+
+    reformat needs[] to YAML block style   identical gate     went RED
+    reorder needs[] alphabetically         identical gate     went RED
+    append `|| true` to every enforcement  CI now advisory    stayed GREEN
+    add `continue-on-error: true`          step cannot fail   stayed GREEN
+
+The two edits GitHub cannot distinguish from the original broke the build; the
+two that disable merge protection passed. `assert 'test "$X" = success' in gate`
+is a substring test, and `test "$X" = success || true` contains that substring.
+`continue-on-error` is a key the assertion never mentions, so it is invisible.
+
+Ask the parsed document, never the source text, and judge fail-open spellings
+with `workflow_contract.masks_failure`, which keeps shell operators as tokens.
+A second opinion here is a second thing to keep in step with the first.
+
+The mutations below are executable cases rather than prose: if any starts
+passing, this contract has regressed to the thing it replaced.
+
+See skills/dev-ci/SKILL.md and tests/helpers/workflow_contract.py.
+"""
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = PROJECT_ROOT / ".github" / "workflows"
 WORKFLOW_GLOB = "*.yaml"
 
@@ -166,21 +178,24 @@ def test_no_gate_step_may_continue_on_error() -> None:
         for workflow, job_name, _job, step, _results in _gate_steps()
         if step.get(Key.CONTINUE_ON_ERROR) is True
     ]
-    assert not offenders, f"gate steps that cannot fail: {offenders}"
+    assert not offenders, (
+        WORKFLOW_ENFORCEMENT_RATIONALE + f"\ngate steps that cannot fail: {offenders}"
+    )
 
 
 def test_no_enforcement_line_is_neutralized() -> None:
-    """Nothing may make a `test "$RESULT" = ...` unable to fail its step.
+    """An enforcement comparison must be the whole command.
 
-    `|| true`, `|| :`, `; true` and `set +e` all leave the literal the doctor
-    contract greps for perfectly intact while removing every effect it has on
-    the job's exit status.
+    Stated as a whitelist because the blacklist lost. Enumerating neutralising
+    spellings -- `|| true`, `; true`, `set +e` -- let five evasions through an
+    adversarial pass: `; :`, a trailing `&`, `| cat`, `set +ex`, and
+    `set +o errexit`. Every one leaves the literal a substring contract greps
+    for perfectly intact.
 
-    The judgement is `workflow_contract.masks_failure`, not a regex of this
-    file's own: that lexer keeps shell operators as tokens and already
-    normalizes comments, quoting, repeated whitespace and line continuations,
-    so a fail-open suffix cannot hide behind presentation. A second opinion
-    here would be a second thing to keep in step with the first.
+    `is_bare_command` inverts it: any token that could consume the exit status
+    is a failure, predicted or not. Tokens come from
+    `workflow_contract.canonical_shell_commands`, which scans characters and
+    keeps operators separate, so nothing hides behind presentation.
     """
     offenders = []
     for workflow, job_name, _job, step, results in _gate_steps():
@@ -190,9 +205,11 @@ def test_no_enforcement_line_is_neutralized() -> None:
                 continue
             if not _decides_the_gate(command, results):
                 continue
-            if masks_failure(command):
+            # Whitelist: the comparison must be the whole command. Enumerating
+            # ways to neutralise it lost five evasions to an adversarial pass.
+            if not is_bare_command(command):
                 offenders.append(f"{workflow}:{job_name}: {' '.join(command)}")
-    assert not offenders, f"neutralized enforcement: {offenders}"
+    assert not offenders, WORKFLOW_ENFORCEMENT_RATIONALE + f"\nneutralized enforcement: {offenders}"
 
 
 def test_every_result_a_gate_step_reads_is_a_declared_dependency() -> None:
@@ -206,8 +223,9 @@ def test_every_result_a_gate_step_reads_is_a_declared_dependency() -> None:
         for name, referenced_jobs in results.items():
             for referenced in sorted(referenced_jobs):
                 assert referenced in declared, (
-                    f"{workflow}:{job_name} reads {name}=needs.{referenced}.result "
-                    f"but declares needs: {sorted(declared)}"
+                    WORKFLOW_ENFORCEMENT_RATIONALE
+                    + f"\n{workflow}:{job_name} reads {name}=needs.{referenced}.result "
+                    + f"but declares needs: {sorted(declared)}"
                 )
 
 
@@ -223,7 +241,10 @@ def test_every_declared_result_is_actually_tested() -> None:
             if any(name in token for token in command)
         }
         missing = sorted(set(results) - tested)
-        assert not missing, f"{workflow}:{job_name} reads but never tests: {missing}"
+        assert not missing, (
+            WORKFLOW_ENFORCEMENT_RATIONALE
+            + f"\n{workflow}:{job_name} reads but never tests: {missing}"
+        )
 
 
 def test_every_job_owning_a_gate_step_runs_when_a_dependency_fails() -> None:
@@ -234,7 +255,9 @@ def test_every_job_owning_a_gate_step_runs_when_a_dependency_fails() -> None:
     """
     for workflow, job_name, job, _step, _results in _gate_steps():
         condition = str(job.get(Key.IF, ""))
-        assert Condition.ALWAYS in condition, f"{workflow}:{job_name} has if: {condition!r}"
+        assert Condition.ALWAYS in condition, (
+            WORKFLOW_ENFORCEMENT_RATIONALE + f"\n{workflow}:{job_name} has if: {condition!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -446,4 +469,71 @@ def test_equivalent_yaml_is_not_a_failure(style: Equivalent, tmp_path: Path) -> 
 
     assert _contract_accepts(_rendered(document, tmp_path / style)), (
         f"{style} changes nothing GitHub acts on and must not fail"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Adversarial cases. These are the reason the rule is a whitelist.
+# ---------------------------------------------------------------------------
+
+#: Every spelling that leaves `test "$R" = success` textually intact while the
+#: shell stops letting it fail the step. Five of these -- `; :`, the trailing
+#: `&`, the pipe, `set +ex`, `set +o errexit` -- walked past the enumerate-the-
+#: bad-spellings predicate this file used to rely on. They are kept as cases
+#: rather than prose because a list of known evasions in a comment protects
+#: nothing.
+EVASIONS: tuple[tuple[str, str], ...] = (
+    ("or-true", 'test "$R" = success || true'),
+    ("or-true-unspaced", 'test "$R" = success ||true'),
+    ("or-noop", 'test "$R" = success || :'),
+    ("or-exit-zero", 'test "$R" = success || exit 0'),
+    ("and-true", 'test "$R" = success && true'),
+    ("semicolon-true", 'test "$R" = success ; true'),
+    ("semicolon-noop", 'test "$R" = success ; :'),
+    ("backgrounded", 'test "$R" = success &'),
+    ("piped", 'test "$R" = success | cat'),
+    ("status-redirected", 'test "$R" = success > /dev/null'),
+    ("set-plus-e", 'set +e\ntest "$R" = success'),
+    ("set-plus-ex", 'set +ex\ntest "$R" = success'),
+    ("set-plus-o-errexit", 'set +o errexit\ntest "$R" = success'),
+    ("continuation-or-true", 'test "$R" = success \\\n  || true'),
+)
+
+#: Shapes that are legitimate and must stay green. A guard that flags these
+#: gets deleted the first time it blocks something reasonable.
+PERMITTED: tuple[tuple[str, str], ...] = (
+    ("bare comparison", 'test "$R" = success'),
+    ("inside an if", 'if [ "$W" = true ]; then\n  test "$R" = skipped\nfi'),
+    ("unrelated fallback", "ls foo || echo missing"),
+    ("unrelated redirect", "cargo build 2>&1 | tee log"),
+)
+
+
+def _neutralized(script: str) -> bool:
+    """The guard's judgement, applied to one script in isolation."""
+    commands = canonical_shell_commands(script)
+    if any(disables_fail_fast(command) for command in commands):
+        return True
+    return any(
+        command[:1] == (ENFORCEMENT_COMMAND,) and not is_bare_command(command)
+        for command in commands
+    )
+
+
+@pytest.mark.parametrize(
+    "script", [script for _name, script in EVASIONS], ids=[n for n, _ in EVASIONS]
+)
+def test_evasion_is_caught(script: str) -> None:
+    assert _neutralized(script), (
+        WORKFLOW_ENFORCEMENT_RATIONALE
+        + f"\nthis neutralizes the gate and was not caught:\n{script}"
+    )
+
+
+@pytest.mark.parametrize(
+    "script", [script for _name, script in PERMITTED], ids=[n for n, _ in PERMITTED]
+)
+def test_legitimate_shell_is_not_flagged(script: str) -> None:
+    assert not _neutralized(script), (
+        WORKFLOW_ENFORCEMENT_RATIONALE + f"\nfalse positive on legitimate shell:\n{script}"
     )

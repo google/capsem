@@ -1,6 +1,6 @@
 ---
 name: site-architecture
-description: Capsem system architecture -- service daemon, per-VM processes, CLI, MCP server, guest agent, vsock, network proxy. Use when you need to understand the system design to write code, review changes, write documentation, or debug cross-component issues. Covers the service architecture, IPC protocols, vsock ports, storage modes, network policy, MITM proxy, and key source files.
+description: Capsem system architecture: service, per-VM processes, CLI, guest agent, vsock, network proxy. Use when you need the design to write, review, or debug across components.
 ---
 
 # Capsem Architecture

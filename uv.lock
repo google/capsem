@@ -134,6 +134,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "hadolint-py" },
     { name = "pip-audit" },
     { name = "psutil" },
     { name = "pygments" },
@@ -142,6 +143,7 @@ dev = [
     { name = "pytest-xdist" },
     { name = "pyyaml" },
     { name = "ruff" },
+    { name = "shellcheck-py" },
     { name = "ty" },
     { name = "watchdog" },
     { name = "websockets" },
@@ -157,6 +159,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "hadolint-py", specifier = ">=2.12.1b3" },
     { name = "pip-audit", specifier = ">=2.9.0" },
     { name = "psutil", specifier = ">=7.2.2" },
     { name = "pygments", specifier = ">=2.20.0" },
@@ -165,6 +168,7 @@ dev = [
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "ruff", specifier = ">=0.15.16" },
+    { name = "shellcheck-py", specifier = ">=0.11.0.1" },
     { name = "ty", specifier = ">=0.0.46" },
     { name = "watchdog", specifier = ">=6.0.0" },
     { name = "websockets", specifier = ">=16.0" },
@@ -434,6 +438,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c0/80/8232b582c4b318b817cf1274ba74976b07b34d35ef439b3eb948f98645a1/filelock-3.32.0.tar.gz", hash = "sha256:7be2ad23a14607ccc71808e68fe30848aeace7058ace17852f68e2a68e310402", size = 213757, upload-time = "2026-07-21T13:17:42.898Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/06/79/b4c714bef36bc4ec2beeae1e0c124f0223888cd8c6feb1cdc56038116920/filelock-3.32.0-py3-none-any.whl", hash = "sha256:d396bea984af47333ef05e50eae7eff88c84256de6112aea0ec48a233c064fe3", size = 97732, upload-time = "2026-07-21T13:17:41.55Z" },
+]
+
+[[package]]
+name = "hadolint-py"
+version = "2.15.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b5/36/ca7181bda86742dcc26853b729a04b35aeb0d1ecdc810f39527c896f7574/hadolint_py-2.15.1.2.tar.gz", hash = "sha256:2bab20951d5497461c1c15350d6af97866fdb2842af77777a8bfe8a3668c07ec", size = 8323, upload-time = "2026-07-31T23:28:40.11Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d6/2f/fafcaae9e38a4a128663ad3302bc9a40c4b852fdf4ed7cfbc99472e5336a/hadolint_py-2.15.1.2-py3-none-macosx_10_15_universal2.whl", hash = "sha256:58b641d14257ec3a4ec1e5c2677068b951c3804c629a8e732be570def2c09231", size = 21352551, upload-time = "2026-07-31T23:28:29.448Z" },
+    { url = "https://files.pythonhosted.org/packages/3a/28/2d8d8819031b9c4171784acd892eff957a121641686737f4e321aed86acc/hadolint_py-2.15.1.2-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:e85fda1da903e53b892a698c2e0eff7cea1f2e90f87f5f29bebbdbf0d4d8e332", size = 13065544, upload-time = "2026-07-31T23:28:32.514Z" },
+    { url = "https://files.pythonhosted.org/packages/45/c2/6039d33dbdc3c909c8b4ea598a8b0231e430747f7189d46b140a4aeeed9b/hadolint_py-2.15.1.2-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:4d0c2e4c2569fddc8774072690f0d23abf5643d69a9bb64277f5d0c8fabd49bd", size = 12157639, upload-time = "2026-07-31T23:28:35.361Z" },
+    { url = "https://files.pythonhosted.org/packages/49/34/1029ec8a3ecb1a680be72d2754250fd4e26145b63e4b9ddc7214e7213755/hadolint_py-2.15.1.2-py3-none-win_amd64.whl", hash = "sha256:dc636b2c96f61e372bf016703cbe07b3b31e9a16b6995f6175fd974f2474c5fd", size = 15596538, upload-time = "2026-07-31T23:28:38.236Z" },
 ]
 
 [[package]]
@@ -1046,6 +1062,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/74/0d/f2cd247ad32633a5c36e97141a2c21b11c6279f7957bc2ff360b1e08fddd/ruff-0.15.16-py3-none-win32.whl", hash = "sha256:580378f7bd4aa25f72e74aa54948a9622f142b1e509521dd10902e886681cc1e", size = 10735541, upload-time = "2026-06-04T16:32:30.145Z" },
     { url = "https://files.pythonhosted.org/packages/8b/9e/02e845ef151b1dee585e55c4739f8e1734ae1d9f1221dff65761c162208b/ruff-0.15.16-py3-none-win_amd64.whl", hash = "sha256:408256017284eddf98fff77b29aa4fb30f586042d535b2d9befc6512f400aaec", size = 11843403, upload-time = "2026-06-04T16:32:39.76Z" },
     { url = "https://files.pythonhosted.org/packages/15/19/016553f86f207450aebebc2b2b5088d086b901cc8186c02ac4284db3bd88/ruff-0.15.16-py3-none-win_arm64.whl", hash = "sha256:8cd61783afb39638a7133ef0d2dfb1e91277593962f81b5a8423eb0b888a6121", size = 11134555, upload-time = "2026-06-04T16:33:00.136Z" },
+]
+
+[[package]]
+name = "shellcheck-py"
+version = "0.11.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/df/55/455b097417b3df3d330eff029c72c32f08b25739e3010acb30ad06d268ef/shellcheck_py-0.11.0.1.tar.gz", hash = "sha256:5c620c88901e8f1d3be5934b31ea99e3310065e1245253741eafd0a275c8c9cc", size = 3139, upload-time = "2025-08-09T17:53:42.492Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/54/27/d75b03e5458cefdb6d3b674566cd20476c3e4d3fe6cc9d68b7e3b854b296/shellcheck_py-0.11.0.1-py2.py3-none-macosx_10_9_x86_64.whl", hash = "sha256:b6a3fee28efda2e16e38d6e6d59faf7224300256456639727370d404730849e8", size = 6774472, upload-time = "2025-08-09T17:53:34.573Z" },
+    { url = "https://files.pythonhosted.org/packages/61/ac/2a84c37171c0cf5a10ea4b0a27d43eb0a1d29bd98b49c2c5ffe17ad24bbe/shellcheck_py-0.11.0.1-py2.py3-none-macosx_11_0_arm64.whl", hash = "sha256:6b88d0a244c82ed07e06a53e444da841f69330ca59ae15d4a66c391655dae7a0", size = 11381835, upload-time = "2025-08-09T17:53:36.852Z" },
+    { url = "https://files.pythonhosted.org/packages/96/55/250e0e3367613a5c22bd82e33b16b889287d81ab0f7dda67e6514a4cccf4/shellcheck_py-0.11.0.1-py2.py3-none-manylinux1_x86_64.manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:1b274df81de5b000ff78db433e7328b87e52e3c38481c60f8e488c3095beef05", size = 3800600, upload-time = "2025-08-09T17:53:38.643Z" },
+    { url = "https://files.pythonhosted.org/packages/15/5b/bb14c0a7474463b1aa3c09e866cb172dffc66ed2993b7ea8f1db581e86ee/shellcheck_py-0.11.0.1-py2.py3-none-win_amd64.whl", hash = "sha256:784156289ecb17e91c692cd783ab5152333309588cabb10032a047331c63e759", size = 8027541, upload-time = "2025-08-09T17:53:40.889Z" },
 ]
 
 [[package]]

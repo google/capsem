@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import re
-import shlex
+import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from itertools import pairwise
+from pathlib import Path
 from typing import Any
+
+import yaml
+
+from .shelltokens import OPERATORS, REDIRECTS, tokenize
 
 _CONTINUATION = re.compile(r"\\\r?\n")
 _GITHUB_EXPRESSION = re.compile(r"\$\{\{\s*(.*?)\s*}}")
@@ -15,6 +20,62 @@ _GITHUB_EXPRESSION = re.compile(r"\$\{\{\s*(.*?)\s*}}")
 # text outside one is prose, and matching it anywhere would make a comment
 # authoritative.
 _NEEDS_RESULT = re.compile(r"\bneeds\.([A-Za-z0-9_-]+)\.result\b")
+_DIRECT_SCRIPT = re.compile(r"^scripts/[A-Za-z0-9_./-]+\.(?:sh|py)$")
+
+
+def workflow_reachable_text(
+    root: Path,
+    workflow: Path,
+    *,
+    job: str | None = None,
+) -> str:
+    """Render workflow steps with directly dispatched tracked scripts inline.
+
+    A contract about what a lane executes must follow a command moved from a
+    YAML ``run:`` body into a checked-in script. Each script is inserted after
+    the step dispatching it, so ordering assertions keep their meaning. The
+    traversal is deliberately one level: this follows a workflow dispatch,
+    not an arbitrary shell call graph.
+    """
+    workflow_source = workflow.read_text(encoding="utf-8")
+    document = yaml.safe_load(workflow_source) or {}
+    jobs = document.get("jobs") or {}
+    selected = jobs if job is None else {job: jobs.get(job)}
+    assert all(isinstance(definition, dict) for definition in selected.values()), (
+        f"{workflow.name}: missing or invalid job {job!r}"
+    )
+    tracked = set(
+        subprocess.run(
+            ["git", "ls-files"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+    )
+
+    rendered: list[str] = [workflow_source] if job is None else []
+    for job_name, definition in selected.items():
+        assert isinstance(definition, dict)
+        if job is not None:
+            metadata = {key: value for key, value in definition.items() if key != "steps"}
+            rendered.append(yaml.safe_dump({job_name: metadata}, sort_keys=False))
+        for step in definition.get("steps") or ():
+            assert isinstance(step, dict), f"{workflow.name}:{job_name}: invalid step"
+            if job is not None:
+                rendered.append(yaml.safe_dump(step, sort_keys=False))
+            if not isinstance(step.get("run"), str):
+                continue
+            for command in canonical_shell_commands(step["run"]):
+                for token in command:
+                    candidate = token.removeprefix("./")
+                    if not _DIRECT_SCRIPT.fullmatch(candidate):
+                        continue
+                    assert candidate in tracked, (
+                        f"{workflow.name}:{job_name} dispatches untracked {candidate}"
+                    )
+                    rendered.append((root / candidate).read_text(encoding="utf-8"))
+    return "\n".join(rendered)
 
 
 def referenced_need_results(value: object) -> frozenset[str]:
@@ -57,33 +118,13 @@ class _ObservedJustStep:
 def canonical_shell_commands(script: str) -> tuple[tuple[str, ...], ...]:
     """Return simple shell commands independent of presentation details.
 
-    GitHub expressions contain spaces even though the runner substitutes each
-    expression as one value. Mask them before ``shlex`` and restore a canonical
-    spelling afterward. Comments, quoting, repeated whitespace, and backslash
-    line continuations therefore cannot become accidental contract authority.
-    Shell operators remain tokens, so a fail-open suffix cannot disappear.
+    Delegates to `shelltokens.tokenize`, which scans characters rather than
+    lines. Comments, quoting, repeated whitespace and line continuations
+    therefore cannot become accidental contract authority, shell operators
+    remain their own tokens so a fail-open suffix cannot disappear, and a word
+    containing a newline no longer raises.
     """
-    expressions: dict[str, str] = {}
-
-    def mask(match: re.Match[str]) -> str:
-        marker = f"__CAPSEM_GITHUB_EXPRESSION_{len(expressions)}__"
-        expressions[marker] = "${{ " + " ".join(match.group(1).split()) + " }}"
-        return marker
-
-    commands: list[tuple[str, ...]] = []
-    joined = _CONTINUATION.sub("", script)
-    for line in joined.splitlines():
-        lexer = shlex.shlex(
-            _GITHUB_EXPRESSION.sub(mask, line),
-            posix=True,
-            punctuation_chars=";&|<>()",
-        )
-        lexer.commenters = "#"
-        lexer.whitespace_split = True
-        tokens = tuple(expressions.get(token, token) for token in lexer)
-        if tokens:
-            commands.append(tokens)
-    return tuple(commands)
+    return tokenize(script)
 
 
 def _canonical_condition(value: object) -> object:
@@ -124,7 +165,7 @@ def masks_failure(command: tuple[str, ...]) -> bool:
 
     Public because two contracts ask it of two different step selections:
     `assert_unmasked_step` for the mandatory `just` steps declared here, and
-    `test_ci_enforcement_contract` for any step turning a dependency's
+    `tests/citadel/test_workflow_enforcement.py` for any step turning a dependency's
     `needs.<job>.result` into a job outcome. One definition, so a fail-open
     spelling learned in either place is caught in both.
     """
@@ -133,8 +174,38 @@ def masks_failure(command: tuple[str, ...]) -> bool:
 
 
 def disables_fail_fast(command: tuple[str, ...]) -> bool:
-    """`set +e` leaves every later command's status advisory."""
-    return command[:2] == ("set", "+e")
+    """Whether a command turns off the shell's exit-on-error behaviour.
+
+    Any `set` carrying a `+` option, not the exact `set +e` this used to match.
+    An adversarial pass walked `set +ex` and `set +o errexit` straight past that
+    equality while doing the same thing.
+    """
+    if command[:1] != ("set",):
+        return False
+    return any(argument.startswith("+") for argument in command[1:])
+
+
+#: Every token that can change how a command's exit status is consumed.
+STATUS_CONSUMING = frozenset(OPERATORS) | frozenset(REDIRECTS)
+
+
+def is_bare_command(command: tuple[str, ...]) -> bool:
+    """Whether a command stands alone, with nothing consuming its status.
+
+    A whitelist, deliberately, and the reason is measured. `masks_failure`
+    enumerates ways to neutralise a check, and enumerating was losing: an
+    adversarial pass got five past it -- `; :`, a trailing `&`, `| cat`,
+    `set +ex`, `set +o errexit` -- and nothing suggests that list was complete.
+
+    Inverting it is complete by construction. An enforcement comparison must be
+    the whole command: no operator, no redirection, nothing after it. Anything
+    that changes how its exit status is read appears as a token here, whether
+    or not anyone predicted that spelling.
+
+    `masks_failure` stays for `assert_unmasked_step`, which asks a different
+    question of whole declared `just` steps rather than of one comparison.
+    """
+    return not any(token in STATUS_CONSUMING for token in command)
 
 
 def assert_unmasked_step(

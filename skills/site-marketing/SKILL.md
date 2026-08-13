@@ -1,6 +1,6 @@
 ---
 name: site-marketing
-description: Capsem marketing website (capsem.org). Use when editing marketing copy, adding sections, working with components, or changing the site theme. Covers site structure, data-driven content, component library, Tailwind theme, and dev workflow.
+description: The marketing website, capsem.org. Use when editing copy, adding sections, or changing the site theme.
 ---
 
 # Marketing Website

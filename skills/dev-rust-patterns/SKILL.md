@@ -1,6 +1,6 @@
 ---
 name: dev-rust-patterns
-description: Rust patterns and lessons learned in Capsem. Use when writing Rust code for capsem-core, capsem-app, or capsem-agent. Covers async/tokio patterns, non-blocking I/O, cross-compilation gotchas, error handling, and hard-won lessons from past bugs. Read references/rust-async-patterns.md for the full tokio reference.
+description: Rust patterns and hard-won lessons. Use when writing Rust in capsem-core, capsem-app, or capsem-agent: async/tokio, non-blocking I/O, cross-compilation.
 ---
 
 # Rust Patterns

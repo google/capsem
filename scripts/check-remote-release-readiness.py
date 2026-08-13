@@ -54,7 +54,9 @@ ALLOWED_PROFILE_CONFIG_KINDS = {
     "detection",
     "apt_packages",
     "python_requirements",
+    "python_requirements_lock",
     "npm_packages",
+    "npm_package_lock",
     "build",
     "tips",
     "root_manifest",
@@ -220,10 +222,13 @@ def pr_gate_contract_failures(job_block: str) -> list[str]:
 
 
 def result_success_asserted(job_block: str, env_name: str) -> bool:
-    return re.search(
-        rf"(?m)^\s*(?:test|\[)\s+[\"']?\${re.escape(env_name)}[\"']?\s*=\s*success",
-        job_block,
-    ) is not None
+    return (
+        re.search(
+            rf"(?m)^\s*(?:test|\[)\s+[\"']?\${re.escape(env_name)}[\"']?\s*=\s*success",
+            job_block,
+        )
+        is not None
+    )
 
 
 def check_remote_branch_protection(repo: str, branch: str) -> CheckResult:
@@ -432,9 +437,8 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
 
 
 def is_release_graph_manifest(manifest_data: dict[str, Any]) -> bool:
-    return (
-        isinstance(manifest_data.get("packages"), list)
-        and isinstance(manifest_data.get("profiles"), dict)
+    return isinstance(manifest_data.get("packages"), list) and isinstance(
+        manifest_data.get("profiles"), dict
     )
 
 
@@ -547,9 +551,7 @@ def check_release_graph_manifest_contract(
         if not isinstance(profile_id, str) or not isinstance(profile, dict):
             failures.append("manifest profile entry malformed")
             continue
-        failures.extend(
-            check_release_graph_profile(site, channel, profile_id, profile)
-        )
+        failures.extend(check_release_graph_profile(site, channel, profile_id, profile))
 
     failures.extend(
         check_release_graph_cache_headers(
@@ -574,9 +576,7 @@ def check_release_graph_index_page(
         ("manifest version", manifest_record.get("version")),
         ("manifest URL", manifest_record.get("url")),
     ):
-        require_rendered_value(
-            index_text, f"release index {channel}", label, value, failures
-        )
+        require_rendered_value(index_text, f"release index {channel}", label, value, failures)
     return failures
 
 
@@ -594,9 +594,7 @@ def check_release_graph_channel_page(
         ("manifest version", manifest_record.get("version")),
         ("manifest URL", manifest_record.get("url")),
     ):
-        require_rendered_value(
-            page_text, f"channel page {channel}", label, value, failures
-        )
+        require_rendered_value(page_text, f"channel page {channel}", label, value, failures)
     for package in packages:
         if not isinstance(package, dict):
             continue
@@ -623,9 +621,7 @@ def check_release_graph_channel_page(
             ("profile revision", profile.get("revision")),
             ("profile minimum Capsem", profile.get("min_capsem_version")),
         ):
-            require_rendered_value(
-                page_text, f"channel page {channel}", label, value, failures
-            )
+            require_rendered_value(page_text, f"channel page {channel}", label, value, failures)
     return failures
 
 
@@ -825,7 +821,9 @@ def check_release_graph_profile(
                 )
             )
             if isinstance(software, dict) and software.get("digest") in software_inventory_digests:
-                name = software.get("name") if isinstance(software.get("name"), str) else "<unknown>"
+                name = (
+                    software.get("name") if isinstance(software.get("name"), str) else "<unknown>"
+                )
                 failures.append(
                     f"profile {profile_id} architecture {arch} software {name} "
                     "digest reuses software_inventory evidence digest"
@@ -890,7 +888,9 @@ def check_release_graph_profile(
                 )
             )
         for evidence in evidence_entries:
-            evidence_kind = str(evidence.get("kind", "")).lower() if isinstance(evidence, dict) else ""
+            evidence_kind = (
+                str(evidence.get("kind", "")).lower() if isinstance(evidence, dict) else ""
+            )
             evidence_url = evidence.get("url") if isinstance(evidence, dict) else None
             if evidence_kind in {"abom", "obom"} and isinstance(evidence_url, str):
                 expected_arch_segment = f"/{arch}/"
@@ -1014,9 +1014,7 @@ def check_release_graph_artifact(
     if url.startswith(("http://", "https://")):
         pass
     elif not url.startswith(allowed_prefixes):
-        failures.append(
-            f"{label} {url} must be under one of {', '.join(allowed_prefixes)}"
-        )
+        failures.append(f"{label} {url} must be under one of {', '.join(allowed_prefixes)}")
     digest = item.get("digest")
     if not isinstance(digest, dict):
         return [*failures, f"{label} {url} digest missing"]
@@ -1039,17 +1037,21 @@ def check_release_graph_artifact(
     if isinstance(expected_bytes, int) and len(artifact.data) != expected_bytes:
         failures.append(f"{label} {url} size mismatch")
     expected_sha256 = digest.get("sha256")
-    if isinstance(expected_sha256, str) and hashlib.sha256(artifact.data).hexdigest() != expected_sha256:
+    if (
+        isinstance(expected_sha256, str)
+        and hashlib.sha256(artifact.data).hexdigest() != expected_sha256
+    ):
         failures.append(f"{label} {url} sha256 mismatch")
     expected_blake3 = digest.get("blake3")
     if blake3 is None:
         failures.append(f"{label} {url} cannot verify blake3 without Python dependency blake3")
-    elif isinstance(expected_blake3, str) and blake3.blake3(artifact.data).hexdigest() != expected_blake3:
+    elif (
+        isinstance(expected_blake3, str)
+        and blake3.blake3(artifact.data).hexdigest() != expected_blake3
+    ):
         failures.append(f"{label} {url} blake3 mismatch")
     if expected_document is not None:
-        content_failure = validate_evidence_document(
-            artifact.data, expected_document, label, url
-        )
+        content_failure = validate_evidence_document(artifact.data, expected_document, label, url)
         if content_failure is not None:
             failures.append(content_failure)
     return failures
@@ -1106,9 +1108,7 @@ def add_release_artifact_cache_check(
     if not isinstance(item, dict):
         return
     url = item.get("url")
-    if isinstance(url, str) and (
-        url.startswith(("/profiles/releases/", "/assets/releases/"))
-    ):
+    if isinstance(url, str) and (url.startswith(("/profiles/releases/", "/assets/releases/"))):
         checks.append(
             (
                 "immutable profile artifact",
@@ -1198,9 +1198,7 @@ def check_release_evidence(site: str, release_data: dict[str, Any]) -> list[str]
         if host_binary.get("name") != "capsem-sbom.spdx.json":
             failures.append(f"host SBOM evidence {url} binary file name mismatch")
         failures.extend(
-            fetch_and_verify_evidence_artifact(
-                site, sbom, "sha256", "host SBOM evidence", "spdx"
-            )
+            fetch_and_verify_evidence_artifact(site, sbom, "sha256", "host SBOM evidence", "spdx")
         )
 
     for obom in vm_oboms:
@@ -1242,7 +1240,9 @@ def check_release_evidence(site: str, release_data: dict[str, Any]) -> list[str]
             failures.append("health evidence attestation predicate_type missing")
         verify_command = attestation.get("verify_command")
         if not isinstance(verify_command, str) or "gh attestation verify" not in verify_command:
-            failures.append("health evidence attestation verify_command must use gh attestation verify")
+            failures.append(
+                "health evidence attestation verify_command must use gh attestation verify"
+            )
         predicate_url = attestation.get("predicate_url")
         subjects = attestation.get("subjects")
         if not isinstance(subjects, list) or not subjects:
@@ -1265,7 +1265,9 @@ def check_release_evidence(site: str, release_data: dict[str, Any]) -> list[str]
             vm_obom_urls,
         )
         if predicate_url is not None and predicate_url not in predicate_urls:
-            failures.append(f"attestation predicate_url {predicate_url} missing from {predicate_label}")
+            failures.append(
+                f"attestation predicate_url {predicate_url} missing from {predicate_label}"
+            )
         for subject in subjects:
             if not isinstance(subject, str):
                 failures.append("health evidence attestation subject is not a string")
@@ -1323,9 +1325,7 @@ def attestation_predicate_evidence_urls(
     return host_sbom_urls | vm_obom_urls, "host SBOM or VM OBOM evidence"
 
 
-def require_object(
-    root: Any, key: str, label: str, failures: list[str]
-) -> dict[str, Any]:
+def require_object(root: Any, key: str, label: str, failures: list[str]) -> dict[str, Any]:
     if not isinstance(root, dict):
         failures.append(f"{label} parent is not an object")
         return {}
@@ -1542,7 +1542,9 @@ def check_host_binary_files(
     return failures
 
 
-def entries_by_url(entries: list[Any], failures: list[str], label: str) -> dict[str, dict[str, Any]]:
+def entries_by_url(
+    entries: list[Any], failures: list[str], label: str
+) -> dict[str, dict[str, Any]]:
     by_url: dict[str, dict[str, Any]] = {}
     for entry in entries:
         if not isinstance(entry, dict):
@@ -1663,8 +1665,7 @@ def validate_evidence_document(
         if not isinstance(components, list) or not components:
             return f"{label} {url} guest rootfs components missing"
         if not any(
-            isinstance(item, dict)
-            and str(item.get("purl", "")).startswith("pkg:deb/debian/")
+            isinstance(item, dict) and str(item.get("purl", "")).startswith("pkg:deb/debian/")
             for item in components
         ):
             return f"{label} {url} Debian guest packages missing"
@@ -1770,9 +1771,9 @@ def classic_protection_requires_pr_gate(data: Any) -> bool:
     required = data.get("required_status_checks")
     if not isinstance(required, dict):
         return False
-    return required_checks_include_pr_gate(required.get("contexts")) or required_checks_include_pr_gate(
-        required.get("checks")
-    )
+    return required_checks_include_pr_gate(
+        required.get("contexts")
+    ) or required_checks_include_pr_gate(required.get("checks"))
 
 
 def active_branch_rules_require_pr_gate(data: Any) -> bool:

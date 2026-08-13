@@ -1,6 +1,6 @@
 ---
 name: dev-just
-description: Capsem's deliberately small Just command surface and its boundary with the Python capsem-gate system. Use when choosing, changing, documenting, or reviewing a Just recipe, or when deciding whether build/test/release logic belongs in Just, a Python plan, an action, a resource, or gate configuration.
+description: Capsem's small Just surface and its boundary with the Python gate. Use when adding or changing a recipe, or deciding whether logic belongs in Just or in a gate plan.
 ---
 
 # Capsem Just discipline

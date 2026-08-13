@@ -18,23 +18,11 @@ from test_release_site_html_contract import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_GRAPH = (
-    PROJECT_ROOT
-    / "tests"
-    / "capsem-release"
-    / "fixtures"
-    / "release-graph-stable-nightly.json"
+    PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-graph-stable-nightly.json"
 )
-FIXTURE_FILE_ROOT = (
-    PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-channel-files"
-)
+FIXTURE_FILE_ROOT = PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-channel-files"
 RELEASE_OUTPUT_DOC = (
-    PROJECT_ROOT
-    / "docs"
-    / "src"
-    / "content"
-    / "docs"
-    / "architecture"
-    / "release-output.md"
+    PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "release-output.md"
 )
 
 
@@ -122,10 +110,7 @@ def test_full_machine_digests() -> None:
 def test_human_hash_display_truncates_to_8_prefixes() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    pages = [
-        path.read_text(encoding="utf-8")
-        for path in sorted(RELEASE_SITE_DIST.rglob("*.html"))
-    ]
+    pages = [path.read_text(encoding="utf-8") for path in sorted(RELEASE_SITE_DIST.rglob("*.html"))]
     html = "\n".join(pages)
 
     for category, subject, digest in _digest_subjects(graph):
@@ -165,9 +150,7 @@ def test_repeated_row_digest_theater(monkeypatch) -> None:
     monkeypatch.setattr(
         checker,
         "fetch_text",
-        lambda _url: checker.FetchText(
-            text="co-work Co-work 1.0.0-stable.20260702 arm64"
-        ),
+        lambda _url: checker.FetchText(text="co-work Co-work 1.0.0-stable.20260702 arm64"),
     )
     monkeypatch.setattr(
         checker,
@@ -194,6 +177,26 @@ def test_repeated_row_digest_theater(monkeypatch) -> None:
 
 def test_no_repeated_digest_for_distinct_files() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    assert _unexpected_digest_reuse(graph) == []
+
+
+def test_profile_config_digest_reuse_requires_the_same_kind() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    config = graph["manifests"]["stable"]["1.0.2"]["profiles"]["code"]["architectures"][0]["config"]
+    python_lock = next(row for row in config if row["kind"] == "python_requirements_lock")
+    npm_lock = next(row for row in config if row["kind"] == "npm_package_lock")
+    npm_lock["digest"] = python_lock["digest"]
+
+    collisions = _unexpected_digest_reuse(graph)
+
+    assert any(
+        "profile_config:python_requirements_lock" in collision
+        and "profile_config:npm_package_lock" in collision
+        for collision in collisions
+    )
+
+
+def _unexpected_digest_reuse(graph: dict) -> list[str]:
     seen: dict[tuple[str, str], tuple[str, str]] = {}
     collisions: list[str] = []
 
@@ -201,14 +204,16 @@ def test_no_repeated_digest_for_distinct_files() -> None:
         key = (digest["sha256"], digest["blake3"])
         existing = seen.get(key)
         if existing is not None and existing != (category, subject):
-            collisions.append(
-                f"{digest['sha256']} reused by {existing[0]} {existing[1]} "
-                f"and {category} {subject}"
-            )
+            same_config_kind = category.startswith("profile_config:") and (existing[0] == category)
+            if not same_config_kind:
+                collisions.append(
+                    f"{digest['sha256']} reused by {existing[0]} {existing[1]} "
+                    f"and {category} {subject}"
+                )
         else:
             seen[key] = (category, subject)
 
-    assert collisions == []
+    return collisions
 
 
 def test_software_inventory_row_digests_are_row_owned() -> None:
@@ -305,9 +310,7 @@ def test_package_binary_hashes_from_bytes() -> None:
 
             for binary in package["binaries"]:
                 component = files_by_id.get(binary["sbom_component_ref"])
-                assert component is not None, (
-                    f"{channel}:{package['name']}:{binary['name']}"
-                )
+                assert component is not None, f"{channel}:{package['name']}:{binary['name']}"
                 sha256_checksums = [
                     checksum["checksumValue"]
                     for checksum in component.get("checksums", [])
@@ -332,7 +335,9 @@ def _assert_software_rows_do_not_reuse_inventory_digest() -> None:
                     if item.get("kind") == "software_inventory"
                 }
                 for software in architecture["software"]:
-                    label = f"{channel}:{profile_id}:{architecture['architecture']}:{software['name']}"
+                    label = (
+                        f"{channel}:{profile_id}:{architecture['architecture']}:{software['name']}"
+                    )
                     assert software["digest"] == _software_row_digest(software), label
                     assert software["digest"]["sha256"] not in evidence_digests, label
 
@@ -373,7 +378,11 @@ def _digest_subjects(graph: dict):
             for _profile_id, profile in manifest["profiles"].items():
                 for architecture in profile["architectures"]:
                     for config in architecture["config"]:
-                        yield "profile_config", config["path"], config["digest"]
+                        yield (
+                            f"profile_config:{config['kind']}",
+                            config["path"],
+                            config["digest"],
+                        )
                     for image in architecture["images"]:
                         yield "profile_image", image["url"], image["digest"]
                     for software in architecture["software"]:

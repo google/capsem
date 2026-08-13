@@ -21,7 +21,7 @@ COPY {{ arch.defconfig }} .config
 RUN make olddefconfig
 
 # Compile kernel
-RUN make -j$(nproc) {{ arch.kernel_image | replace('arch/' ~ arch_name ~ '/boot/', '') }} && \
+RUN make -j"$(nproc)" {{ arch.kernel_image | replace('arch/' ~ arch_name ~ '/boot/', '') }} && \
     ls -lh {{ arch.kernel_image }}
 
 # ---- Build minimal initrd with busybox + capsem-init ----
@@ -35,9 +35,7 @@ RUN mkdir -p /tmp/initrd/bin /tmp/initrd/sbin /tmp/initrd/dev /tmp/initrd/proc \
                chroot mknod mv rm find grep sed awk; do \
         ln -s busybox /tmp/initrd/bin/$cmd; \
     done && \
-    for cmd in modprobe; do \
-        ln -s ../bin/busybox /tmp/initrd/sbin/$cmd; \
-    done && \
+    ln -s ../bin/busybox /tmp/initrd/sbin/modprobe && \
     cp /tmp/capsem-init /tmp/initrd/init && \
     chmod 755 /tmp/initrd/init && \
     cd /tmp/initrd && \

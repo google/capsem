@@ -31,7 +31,7 @@ Public graph rules:
   `Cache-Control: public, max-age=31536000, immutable`;
 - every fetched artifact is verified by recorded digest before use.
 
-Read `references/release-graph.md` before changing graph generation or channel
+Read `release-graph.md` before changing graph generation or channel
 deployment.
 
 ## Native installation and platform gates
@@ -94,9 +94,9 @@ manifest, metadata, readiness, corporate state, and update comparison. CLI and
 UI consume the same status contract; the UI must not synthesize publication
 state.
 
-Read `references/apple-signing.md` when touching signing, notarization,
+Read `apple-signing.md` when touching signing, notarization,
 certificates, Tauri keys, or Apple agreements. Read
-`references/post-release-verification.md` after any public deployment.
+`post-release-verification.md` after any public deployment.
 
 ## Published artifacts are load-bearing
 
@@ -172,7 +172,7 @@ Both release commands must reject these flags. Never use the result to stamp,
 tag, push, dispatch, activate, or qualify. After the fix, rerun the public
 release command from the beginning; only its clean complete plan may publish.
 
-Read `references/ci-invariants.md` before editing release workflows. It carries
+Read `ci-invariants.md` before editing release workflows. It carries
 the platform, toolchain, scanner, disk, Docker, package, and runner lessons
 learned from prior failures.
 

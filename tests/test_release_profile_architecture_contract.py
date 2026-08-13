@@ -20,7 +20,14 @@ from test_release_site_html_contract import (
 )
 
 PROFILE_PAGE = (
-    PROJECT_ROOT / "release-site" / "src" / "pages" / "channels" / "[channel]" / "profiles" / "[id].astro"
+    PROJECT_ROOT
+    / "release-site"
+    / "src"
+    / "pages"
+    / "channels"
+    / "[channel]"
+    / "profiles"
+    / "[id].astro"
 )
 SEMVER_RE = re.compile(
     r"^(0|[1-9]\d*)\."
@@ -34,9 +41,11 @@ CONFIG_KIND_LABELS = {
     "mcp": "MCP configuration",
     "enforcement": "Enforcement rules",
     "detection": "Detection rules",
-    "apt": "APT package list",
-    "python": "Python requirements",
-    "npm": "NPM package list",
+    "apt_packages": "APT package list",
+    "python_requirements": "Python requirements",
+    "python_requirements_lock": "Python requirements lock",
+    "npm_packages": "NPM package list",
+    "npm_package_lock": "NPM package lock",
     "build": "Build script",
     "tips": "Usage tips",
     "root_manifest": "Root manifest",
@@ -59,12 +68,7 @@ def test_profile_no_current_binary() -> None:
 
     source = PROFILE_PAGE.read_text(encoding="utf-8")
     stable = (
-        RELEASE_SITE_DIST
-        / "channels"
-        / "stable"
-        / "profiles"
-        / "co-work"
-        / "index.html"
+        RELEASE_SITE_DIST / "channels" / "stable" / "profiles" / "co-work" / "index.html"
     ).read_text(encoding="utf-8")
 
     assert "current_binary" not in source
@@ -121,9 +125,14 @@ def test_profile_architecture_packages_and_images_are_separate() -> None:
                 assert architecture["software"], label
                 assert architecture["images"], label
                 for software in architecture["software"]:
-                    assert {"name", "version", "source", "architecture", "evidence", "digest"} <= set(
-                        software
-                    ), label
+                    assert {
+                        "name",
+                        "version",
+                        "source",
+                        "architecture",
+                        "evidence",
+                        "digest",
+                    } <= set(software), label
                     assert "url" not in software, label
                     assert software["evidence"].endswith("software-inventory.json"), label
                 for image in architecture["images"]:
@@ -154,12 +163,11 @@ def test_profile_image_versions_are_semver_compatible() -> None:
                 assert architecture["image_revision"] == profile["revision"], arch_label
                 assert architecture["image_revision"] not in package_versions, arch_label
 
-    assert seen_profile_versions[("stable", "co-work")] != seen_profile_versions[
-        ("nightly", "co-work")
-    ]
-    assert seen_profile_versions[("stable", "code")] != seen_profile_versions[
-        ("nightly", "code")
-    ]
+    assert (
+        seen_profile_versions[("stable", "co-work")]
+        != seen_profile_versions[("nightly", "co-work")]
+    )
+    assert seen_profile_versions[("stable", "code")] != seen_profile_versions[("nightly", "code")]
 
 
 def test_abom_obom_architecture_scoped() -> None:
@@ -171,12 +179,7 @@ def test_abom_obom_architecture_scoped() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id, profile in manifest["profiles"].items():
             page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 arch = architecture["architecture"]
@@ -198,9 +201,9 @@ def test_abom_obom_architecture_scoped() -> None:
                 )
                 for kind, item in evidence.items():
                     if kind == "software_inventory":
-                        assert item["url"].endswith(
-                            f"/{arch}-software-inventory.json"
-                        ), f"{channel}:{profile_id}:{arch}:{kind}"
+                        assert item["url"].endswith(f"/{arch}-software-inventory.json"), (
+                            f"{channel}:{profile_id}:{arch}:{kind}"
+                        )
                         assert item["url"] in profile_evidence_block, (
                             f"{channel}:{profile_id}:{arch}:{kind}"
                         )
@@ -246,12 +249,7 @@ def test_abom_obom_image_scoped_evidence(monkeypatch) -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id, profile in manifest["profiles"].items():
             profile_page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 arch = architecture["architecture"]
@@ -315,12 +313,7 @@ def test_profile_image_evidence() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id, profile in manifest["profiles"].items():
             page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 label = f"{channel}:{profile_id}:{architecture['architecture']}"
@@ -430,12 +423,7 @@ def test_image_entries_own_abom_obom() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id, profile in manifest["profiles"].items():
             profile_page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 label = f"{channel}:{profile_id}:{architecture['architecture']}"
@@ -449,9 +437,7 @@ def test_image_entries_own_abom_obom() -> None:
                 )[0]
                 image_block = section.split("Profile Images", maxsplit=1)[1]
                 image_evidence = [
-                    item
-                    for item in architecture["evidence"]
-                    if item["kind"] in {"abom", "obom"}
+                    item for item in architecture["evidence"] if item["kind"] in {"abom", "obom"}
                 ]
 
                 assert {item["kind"] for item in image_evidence} == {"abom", "obom"}, label
@@ -474,12 +460,7 @@ def test_installed_inventory_not_channel_packages() -> None:
         for profile_id, profile in manifest["profiles"].items():
             assert "packages" not in profile
             page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 assert "packages" not in architecture
@@ -510,12 +491,7 @@ def test_software_evidence_scope() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id, profile in manifest["profiles"].items():
             page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 section = page.split(f"Architecture {architecture['architecture']}", maxsplit=1)[
@@ -530,9 +506,7 @@ def test_software_evidence_scope() -> None:
                     maxsplit=1,
                 )[0]
                 software_evidence = {
-                    item["evidence"]
-                    for item in architecture["software"]
-                    if item.get("evidence")
+                    item["evidence"] for item in architecture["software"] if item.get("evidence")
                 }
 
                 assert software_evidence
@@ -550,12 +524,7 @@ def test_software_inventory_evidence_once_per_architecture() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id, profile in manifest["profiles"].items():
             page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 label = f"{channel}:{profile_id}:{architecture['architecture']}"
@@ -595,12 +564,7 @@ def test_profile_architecture_sections() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id, profile in manifest["profiles"].items():
             page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
 
             for architecture in profile["architectures"]:
@@ -635,12 +599,7 @@ def test_all_profiles() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id in manifest["profiles"]:
             assert (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).is_file()
 
 
@@ -649,12 +608,7 @@ def test_config_and_images_are_separate() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     manifest = graph["manifests"]["stable"]["1.0.2"]
     page = (
-        RELEASE_SITE_DIST
-        / "channels"
-        / "stable"
-        / "profiles"
-        / "co-work"
-        / "index.html"
+        RELEASE_SITE_DIST / "channels" / "stable" / "profiles" / "co-work" / "index.html"
     ).read_text(encoding="utf-8")
 
     for architecture in manifest["profiles"]["co-work"]["architectures"]:
@@ -682,12 +636,7 @@ def test_profile_arch_packages_and_images_blocks() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id, profile in manifest["profiles"].items():
             page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 label = f"{channel}:{profile_id}:{architecture['architecture']}"
@@ -721,7 +670,9 @@ def test_profile_arch_packages_and_images_blocks() -> None:
                     assert image["url"] not in software_block, label
                     assert image["url"] not in config_block, label
                 for evidence in architecture["evidence"]:
-                    owner_block = image_block if evidence["kind"] in {"abom", "obom"} else evidence_block
+                    owner_block = (
+                        image_block if evidence["kind"] in {"abom", "obom"} else evidence_block
+                    )
                     assert evidence["url"] in owner_block, label
 
 
@@ -760,12 +711,7 @@ def test_all_profile_config_files() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id, profile in manifest["profiles"].items():
             page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 assert len(architecture["config"]) >= 8, f"{channel}:{profile_id}"
@@ -781,9 +727,11 @@ def test_all_config_classes_render() -> None:
         "mcp",
         "enforcement",
         "detection",
-        "apt",
-        "python",
-        "npm",
+        "apt_packages",
+        "python_requirements",
+        "python_requirements_lock",
+        "npm_packages",
+        "npm_package_lock",
         "build",
         "tips",
         "root_manifest",
@@ -794,12 +742,7 @@ def test_all_config_classes_render() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id, profile in manifest["profiles"].items():
             page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 label = f"{channel}:{profile_id}:{architecture['architecture']}"
@@ -822,12 +765,6 @@ def test_all_config_classes_render() -> None:
 def test_profile_config_inventory_includes_security_and_detection() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    file_kind_map = {
-        "apt_packages": "apt",
-        "python_requirements": "python",
-        "npm_packages": "npm",
-    }
-
     for channel, record in graph["channels"].items():
         current = next(item for item in record["manifests"] if item["status"] == "current")
         manifest = graph["manifests"][channel][current["version"]]
@@ -838,17 +775,11 @@ def test_profile_config_inventory_includes_security_and_detection() -> None:
                 )
             )
             expected_paths = {
-                file_kind_map.get(kind, kind): file_record["path"]
-                for kind, file_record in profile_config["files"].items()
+                kind: file_record["path"] for kind, file_record in profile_config["files"].items()
             }
             assert {"enforcement", "detection", "mcp"}.issubset(expected_paths), profile_id
             page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 label = f"{channel}:{profile_id}:{architecture['architecture']}"
@@ -888,9 +819,11 @@ def test_config_inventory_all_classes() -> None:
         "mcp",
         "enforcement",
         "detection",
-        "apt",
-        "python",
-        "npm",
+        "apt_packages",
+        "python_requirements",
+        "python_requirements_lock",
+        "npm_packages",
+        "npm_package_lock",
         "build",
         "tips",
         "root_manifest",
@@ -901,12 +834,7 @@ def test_config_inventory_all_classes() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id, profile in manifest["profiles"].items():
             page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 label = f"{channel}:{profile_id}:{architecture['architecture']}"
@@ -922,7 +850,7 @@ def test_config_inventory_all_classes() -> None:
                 )[0]
                 for kind in expected_kinds:
                     assert CONFIG_KIND_LABELS[kind] in config_block, label
-                assert config_block.count("<tr class=\"border-b border-zinc-100 align-top\">") >= len(
+                assert config_block.count('<tr class="border-b border-zinc-100 align-top">') >= len(
                     expected_kinds
                 ), label
 
@@ -932,21 +860,12 @@ def test_config_kind_enum_contract(monkeypatch) -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]))
     generated_kind_profile = json.loads(json.dumps(profile))
-    for architecture in generated_kind_profile["architectures"]:
-        for config in architecture["config"]:
-            config["kind"] = {
-                "apt": "apt_packages",
-                "python": "python_requirements",
-                "npm": "npm_packages",
-            }.get(config["kind"], config["kind"])
     profile["architectures"][0]["config"][0]["kind"] = "misc"
 
     monkeypatch.setattr(
         checker,
         "fetch_text",
-        lambda _url: checker.FetchText(
-            text="co-work Co-work 1.0.0-stable.20260702 arm64"
-        ),
+        lambda _url: checker.FetchText(text="co-work Co-work 1.0.0-stable.20260702 arm64"),
     )
     monkeypatch.setattr(
         checker,
@@ -973,10 +892,7 @@ def test_config_kind_enum_contract(monkeypatch) -> None:
         profile,
     )
 
-    assert (
-        "profile co-work architecture arm64 config kind misc is not allowed"
-        in failures
-    )
+    assert "profile co-work architecture arm64 config kind misc is not allowed" in failures
 
 
 def test_config_kinds_are_typed_enums() -> None:
@@ -992,12 +908,7 @@ def test_config_kinds_are_typed_enums() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id, profile in manifest["profiles"].items():
             page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 label = f"{channel}:{profile_id}:{architecture['architecture']}"
@@ -1025,12 +936,7 @@ def test_all_profile_image_artifacts() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id, profile in manifest["profiles"].items():
             page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 label = f"{channel}:{profile_id}:{architecture['architecture']}"
@@ -1069,12 +975,7 @@ def test_profile_images_grouped_by_architecture_complete_set(monkeypatch) -> Non
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id, profile in manifest["profiles"].items():
             profile_page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 arch = architecture["architecture"]
@@ -1133,12 +1034,7 @@ def test_software_inventory_not_all_arch() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for profile_id, profile in manifest["profiles"].items():
             page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 arch = architecture["architecture"]
@@ -1168,12 +1064,7 @@ def test_software_inventory_grouped_by_architecture_blocks() -> None:
         for profile_id, profile in manifest["profiles"].items():
             assert "software" not in profile, f"{channel}:{profile_id}"
             page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "profiles"
-                / profile_id
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "profiles" / profile_id / "index.html"
             ).read_text(encoding="utf-8")
 
             sections = {}
@@ -1226,9 +1117,7 @@ def test_software_versions_are_real(monkeypatch) -> None:
     monkeypatch.setattr(
         checker,
         "fetch_text",
-        lambda _url: checker.FetchText(
-            text="co-work Co-work 1.0.0-stable.20260702 arm64"
-        ),
+        lambda _url: checker.FetchText(text="co-work Co-work 1.0.0-stable.20260702 arm64"),
     )
     monkeypatch.setattr(
         checker,
@@ -1243,7 +1132,9 @@ def test_software_versions_are_real(monkeypatch) -> None:
         "latest": "version is latest",
     }
     for version, expected in forbidden.items():
-        profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]))
+        profile = json.loads(
+            json.dumps(graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"])
+        )
         profile["architectures"][0]["software"][0]["version"] = version
 
         failures = checker.check_release_graph_profile(
@@ -1271,7 +1162,9 @@ def test_software_versions_and_hashes() -> None:
                     if item.get("digest")
                 }
                 for software in architecture["software"]:
-                    label = f"{channel}:{profile_id}:{architecture['architecture']}:{software['name']}"
+                    label = (
+                        f"{channel}:{profile_id}:{architecture['architecture']}:{software['name']}"
+                    )
                     assert software["version"].strip().lower() not in forbidden_versions, label
                     assert software["digest"] == _software_row_digest(software), label
                     assert software["digest"]["sha256"] not in evidence_digests, label
@@ -1283,18 +1176,14 @@ def test_software_rows_do_not_reuse_inventory_digest(monkeypatch) -> None:
     profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]))
     architecture = profile["architectures"][0]
     inventory_digest = next(
-        item["digest"]
-        for item in architecture["evidence"]
-        if item["kind"] == "software_inventory"
+        item["digest"] for item in architecture["evidence"] if item["kind"] == "software_inventory"
     )
     architecture["software"][0]["digest"] = inventory_digest
 
     monkeypatch.setattr(
         checker,
         "fetch_text",
-        lambda _url: checker.FetchText(
-            text="co-work Co-work 1.0.0-stable.20260702 arm64"
-        ),
+        lambda _url: checker.FetchText(text="co-work Co-work 1.0.0-stable.20260702 arm64"),
     )
     monkeypatch.setattr(
         checker,
@@ -1345,9 +1234,7 @@ def test_software_inventory_rejects_repeated_hashes_for_distinct_rows(monkeypatc
     monkeypatch.setattr(
         checker,
         "fetch_text",
-        lambda _url: checker.FetchText(
-            text="co-work Co-work 1.0.0-stable.20260702 arm64"
-        ),
+        lambda _url: checker.FetchText(text="co-work Co-work 1.0.0-stable.20260702 arm64"),
     )
     monkeypatch.setattr(
         checker,

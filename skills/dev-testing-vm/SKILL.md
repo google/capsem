@@ -1,6 +1,6 @@
 ---
 name: dev-testing-vm
-description: In-VM diagnostics and test fixtures for Capsem. Use when working with capsem-doctor, adding new in-VM tests, debugging test failures inside the guest, inspecting session databases, or updating the test fixture. Covers the full capsem-doctor test suite, how to run subsets, how to add new VM tests, session inspection, and fixture management.
+description: In-VM diagnostics and test fixtures. Use when adding in-VM tests, debugging failures inside the guest, or updating the test fixture.
 ---
 
 # In-VM Testing

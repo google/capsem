@@ -1,6 +1,6 @@
 ---
 name: site-infra
-description: Capsem documentation site infrastructure and conventions. Use when writing, editing, or maintaining docs in the docs/ directory (docs.capsem.org), adding new doc pages, updating the sidebar, or working with Astro Starlight. Covers site structure, frontmatter, writing style, sidebar config, release pages, and dev workflow.
+description: The documentation site, docs.capsem.org. Use when writing or editing docs, adding pages, or working with Astro Starlight.
 ---
 
 # Documentation Site

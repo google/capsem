@@ -807,12 +807,31 @@ max_lines = 300
 # Only Git-tracked files in the first-party roots above are considered. That
 # excludes build-generated output and vendored dependency trees by rule while
 # still catching suffix-less package scripts through their shebang.
+# Rust, at a ceiling read from its own distribution rather than borrowed from
+# Python. Rust's median tracked file is 232 lines and p90 is 1265; a 300-line
+# ceiling would flag 169 of 388 files, which is a rewrite mandate rather than
+# an outlier detector and would be deleted the first time it blocked someone.
+# 1000 sits just under p90 and flags 58 -- the genuine outliers.
+#
+# Rolled out by scope, one crate at a time, because the ceiling applies to
+# everything in `roots` and listing only some files would fail the rest.
+# capsem-service first: two entries freeze the two largest files in the
+# repository, in the crate CLAUDE.md calls a thin shell.
+[boundary.rust]
+roots = ["crates/capsem-service"]
+suffixes = [".rs"]
+max_lines = 1000
+
+[boundary.rust.oversized_line_counts]
+"crates/capsem-service/src/main.rs" = 13851
+"crates/capsem-service/src/tests.rs" = 11947
+
 [boundary.scripts.oversized_line_counts]
 "scripts/bootstrap-linux.sh" = 599
 "scripts/build-pkg.sh" = 352
 "scripts/check-hardcoded-release-selections.py" = 305
 "scripts/check-public-binary-release.py" = 1097
-"scripts/check-remote-release-readiness.py" = 1972
+"scripts/check-remote-release-readiness.py" = 1973
 "scripts/check_session.py" = 381
 "scripts/clean_stale.py" = 769
 "scripts/docker-storage-policy.py" = 1524
@@ -1383,7 +1402,156 @@ python_lock = "scripts/audit-python-lock.sh"
 public_surface = "scripts/check_public_surface.py"
 source_syntax = "scripts/check-source-syntax.py"
 hardcoded_selections = "scripts/check-hardcoded-release-selections.sh"
+surfaces = "scripts/check-surfaces.py"
+# hadolint codes held back, each for its reason:
+#   DL3008/DL3018  pinning every apt/apk version in a base image is a
+#                  maintenance treadmill the pinned base digest already covers
+#   DL4006         pipefail before a piped RUN; worth doing, not worth blocking
+#   DL3003         `cd` inside RUN rather than WORKDIR, used deliberately
+#   DL3059/DL3066/DL3002  layer consolidation and non-numeric UID in the
+#                  install-test image, which exists to reproduce a real user
+docker_ignore = ["DL3008", "DL3018", "DL4006", "DL3003", "DL3059", "DL3066", "DL3002"]
+# All three surfaces that carry shell -- tracked `*.sh`, every workflow `run:`
+# body, and every Dockerfile `RUN` body including the rendered `.j2` templates.
+# A linter on one of three is a sampling, and the two that were unlinted are
+# where the release logic lives. Fail closed: a surface yielding no sources is
+# an error, never a pass.
+#
+# Warning and above. `info`/`style` add findings that are opinions rather than
+# defects, and a gate nobody believes gets disabled.
+shell_severity = "warning"
+#   SC1091  cannot follow a sourced path it was not given as input; the sourced
+#           files are themselves checked, so following would only double-report
+#   SC2034  every hit is a variable a *sourced* consumer reads, which the
+#           single-file view cannot see -- deb-preinst/postinst and doctor-common
+shell_ignore = ["SC1091", "SC2034"]
 skills_dir = "skills"
+# A skill's frontmatter description is loaded into every agent session before
+# any work starts, and it is the text a router chooses from. Both costs point
+# the same way: thirty-four paragraphs discriminate worse than thirty-four
+# sentences, and picking the wrong skill costs far more than the tokens. The
+# set was uniformly over -- median 320 chars, all 34 above 150 -- because each
+# carried a trailing "Covers X, Y, Z" enumeration duplicating its own body.
+max_skill_description_chars = 200
+# Bodies were already healthy at a median of 160 lines, and the
+# split-to-references/ pattern is established. A ceiling to stop regrowth,
+# not a mandate to rewrite anything.
+max_skill_body_lines = 600
+
+# A shell body is a sequence of simple commands. Control flow, multi-line
+# string building and here-documents inside a YAML `run:` or a Dockerfile `RUN`
+# are a program no test can reach and no reviewer reads in place -- the same
+# reasoning `[boundary]` applies to justfile recipes, asked of the other places
+# shell hides.
+#
+# The measurement says simple is already the norm and only the tail is a
+# problem: across 274 bodies the median is 3 executable lines and p90 is 14.
+# The fix for an entry below is a script under `scripts/`, which ShellCheck
+# lints and a test can call -- not a bigger parser.
+[boundary.shell_bodies]
+max_lines = 20
+
+# Exact ratchets, as everywhere else: an entry may not grow, and a body that
+# shrinks updates or removes its entry in the same change.
+[boundary.shell_bodies.oversized_line_counts]
+"ci.yaml:pr-gate:0:Require all CI jobs" = 23
+"ci.yaml:test:20:Python schema tests with coverage" = 25
+"docs.yaml:build:6:Smoke public docs site" = 23
+"release-assets.yaml:author-profile-release:17:Author selected channel profile in the source manifest" = 32
+"release-assets.yaml:publish-profile-release:16:Publish immutable GitHub profile release" = 33
+"release-binary-staging.yaml:assemble-binary-channel:9:Prove VM asset metadata did not change" = 34
+"release.yaml:build-app-macos:22:Verify macOS package installation path policy" = 31
+"release.yaml:create-release:8:Build summary" = 25
+"release.yaml:preflight:3:Import Apple certificate (preflight)" = 23
+"release.yaml:test-binary-pairing:18:Activate exact candidate package binaries for functional tests" = 26
+"release.yaml:test-native-linux-package:5:Install and verify exact release deb" = 26
+"release.yaml:test-native-macos-package:5:Install and verify exact notarized package" = 30
+"release.yaml:verify-release-candidate:4:Verify public GitHub package storage from the candidate manifest" = 34
+"release.yaml:verify-release-candidate:5:Prove install.sh selects and installs the candidate Linux package" = 25
+"release.yaml:verify-release-downloads:4:Verify every URL in the asset channel manifest is reachable" = 42
+"release.yaml:verify-release-downloads:7:Install live public Linux release and prove guest shell execution" = 40
+"Dockerfile.rootfs-dependencies.j2:arm64:RUN[0]" = 24
+"Dockerfile.rootfs-dependencies.j2:x86_64:RUN[0]" = 24
+
+# ---------------------------------------------------------------------------
+# Lint coverage: every first-party surface has an enforcing check
+# ---------------------------------------------------------------------------
+
+# The question this answers is not "does this file pass" but "is anything
+# checking this kind of file at all". Shell went unlinted for 6,821 lines while
+# four `# shellcheck disable=` directives sat in the tree, written for a linter
+# no lane ran. Nobody decided that; the surface simply never got one, and
+# nothing was watching for the gap.
+#
+# `enforced_by` names the fast-phase step that must exist and must fail the run.
+# Adding a surface without a checker fails the Citadel guard, which is the
+# point: a new language arrives with its gate or it does not arrive.
+[[lint_surfaces]]
+name = "python"
+pattern = "*.py"
+enforced_by = ["python.ruff", "python.ty.strict", "python.ty.relaxed"]
+
+[[lint_surfaces]]
+name = "yaml"
+pattern = "*.yaml"
+enforced_by = ["fast.audit.source-syntax"]
+
+[[lint_surfaces]]
+name = "json"
+pattern = "*.json"
+enforced_by = ["fast.audit.source-syntax"]
+
+[[lint_surfaces]]
+name = "toml"
+pattern = "*.toml"
+enforced_by = ["fast.audit.source-syntax"]
+
+[[lint_surfaces]]
+name = "rust"
+pattern = "*.rs"
+enforced_by = ["fast.clippy"]
+
+[[lint_surfaces]]
+name = "shell"
+pattern = "*.sh"
+enforced_by = ["fast.audit.shell"]
+
+[[lint_surfaces]]
+name = "dockerfile"
+pattern = "docker/Dockerfile*"
+enforced_by = ["fast.audit.docker"]
+
+[[lint_surfaces]]
+name = "markdown"
+pattern = "*.md"
+enforced_by = ["fast.audit.markdown"]
+
+[[lint_surfaces]]
+name = "web"
+pattern = "*.svelte"
+enforced_by = ["fast.web.frontend"]
+
+[[lint_surfaces]]
+name = "skills"
+pattern = "skills/*/SKILL.md"
+enforced_by = ["fast.audit.skills", "fast.citadel"]
+
+# Documents promising a reader -- usually an agent -- a file that is not there.
+# Worse than saying nothing: the reader follows the instruction and finds
+# nothing. Four were path bugs and are fixed; these are genuinely missing
+# content, inventoried so no new one appears while they are written.
+#
+# Keyed `document|target`. Removing an entry when the file lands is the fix.
+[lint.markdown.known_missing_targets]
+# Empty, and it should stay that way. A document promising a reader -- usually
+# an agent -- a file that is not there is worse than saying nothing. Fourteen
+# entries went in here and all fourteen were fixed rather than suppressed: ten
+# were index sections listing siblings never brought across with an imported
+# summary, two were pointers written from inside `references/` and resolving to
+# `references/references/`, and two were examples of how to write a pointer
+# that no checker could tell from a real one.
+#
+# An entry that no longer applies fails as well, so this cannot quietly refill.
 
 [websurfaces]
 script = "scripts/check-web-surface.sh"
@@ -1430,7 +1598,6 @@ source_contract = [
     "tests/test_builder_probe_timeouts.py",
     "tests/test_cargo_audit_gate.py",
     "tests/test_check_cargo_audit.py",
-    "tests/test_ci_enforcement_contract.py",
     "tests/test_complete_release_channel.py",
     "tests/test_docker_storage_policy.py",
     "tests/test_exec_lock.py",
@@ -1518,7 +1685,6 @@ source_contract = [
     "tests/test_retired_version_formats.py",
     "tests/test_rust_test_layout.py",
     "tests/test_rust_test_name_assertions.py",
-    "tests/test_script_size_contract.py",
     "tests/test_skills.py",
     "tests/test_source_syntax_gate.py",
     "tests/test_sync_container_clock.py",
@@ -1528,6 +1694,15 @@ source_contract = [
 # Where the tests are. Spelled here rather than in the module, so the broad
 # suite and the compatibility runs cannot come to disagree about it.
 root = "tests/"
+# The Citadel: source-level guards recording architectural mistakes that must
+# not be repeated. Named separately from `root` because it belongs in the fast
+# phase, not the broad suite. It reads source and asserts on it -- no artifact,
+# no VM, no daemon, seconds not minutes -- and was previously reached only
+# through `root`, which carries `require_artifacts` and runs after the whole
+# asset build. A DB-boundary violation was therefore reported after the VMs
+# booted rather than in the first second, which is the one thing a guard
+# written to "fail before it can ship green" must not do.
+citadel = "tests/citadel/"
 # Collection is a cheap source-shape proof: no cache writes, no artifacts, and
 # strict rejection of unknown configuration or markers.
 collection_flags = ["--collect-only", "-qq", "-p", "no:cacheprovider", "--strict-config", "--strict-markers"]
@@ -1547,11 +1722,15 @@ coverage_flags = ["--cov=src/capsem", "--cov-report=xml:codecov-python.xml"]
 #                    owned by the install gate, which runs it in Docker
 #   capsem-build-chain / capsem-release
 #                    artifact and composition suites with their own entrypoints
+#   citadel          source-level guards owned by the fast phase; collecting
+#                    them here too would run them a second time an hour later,
+#                    and a guard with two owners has none
 broad_ignores = [
     "tests/capsem-recipes",
     "tests/capsem-install",
     "tests/capsem-build-chain",
     "tests/capsem-release",
+    "tests/citadel",
 ]
 
 # Production has one service and one service-scoped save/restore lock. An

@@ -25,7 +25,7 @@ import pydantic
 import pytest
 
 from capsem.gate import config as gate_config
-from capsem.gate.harnessschema import LintConfig
+from capsem.gate.lintschema import LintConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
