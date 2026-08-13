@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The docs-site smoke check moved out of `docs.yaml` into
+  `scripts/smoke-docs-site.sh`. Twenty-three executable lines of YAML holding a
+  retry loop and a thirteen-term conjunction, reachable by no linter and
+  callable by nothing; ShellCheck now reads it like any other script. The
+  conjunction is split into two named checks, because after a deploy the useful
+  question is which condition failed rather than that one of thirteen did.
+
 - `clippy::cast_ptr_alignment` is denied workspace-wide, after auditing its
   eleven sites rather than before. All eleven are in the KVM ioctl path and
   reduce to two patterns, both now resting on a checked invariant instead of an

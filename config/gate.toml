@@ -824,7 +824,7 @@ max_lines = 1000
 
 [boundary.rust.oversized_line_counts]
 "crates/capsem-service/src/main.rs" = 13851
-"crates/capsem-service/src/tests.rs" = 11947
+"crates/capsem-service/src/tests.rs" = 11948
 
 [boundary.scripts.oversized_line_counts]
 "scripts/bootstrap-linux.sh" = 599
@@ -1456,7 +1456,6 @@ max_lines = 20
 [boundary.shell_bodies.oversized_line_counts]
 "ci.yaml:pr-gate:0:Require all CI jobs" = 23
 "ci.yaml:test:20:Python schema tests with coverage" = 25
-"docs.yaml:build:6:Smoke public docs site" = 23
 "release-assets.yaml:author-profile-release:17:Author selected channel profile in the source manifest" = 32
 "release-assets.yaml:publish-profile-release:16:Publish immutable GitHub profile release" = 33
 "release-binary-staging.yaml:assemble-binary-channel:9:Prove VM asset metadata did not change" = 34
