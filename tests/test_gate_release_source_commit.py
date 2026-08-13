@@ -331,7 +331,7 @@ def test_same_commit_source_ref_creation_race_converges(
 
 
 @pytest.mark.parametrize("workflow_name", ["release.yaml", "release-assets.yaml"])
-def test_release_workflow_pins_every_checkout_to_required_source_commit(
+def test_release_workflow_evidence_pins_every_checkout_to_required_source_commit(
     workflow_name: str,
 ) -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / workflow_name).read_text(encoding="utf-8")
