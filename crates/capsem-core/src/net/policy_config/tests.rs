@@ -479,7 +479,7 @@ fn definitions_have_unique_ids() {
     let defs = setting_definitions();
     let mut ids: Vec<&str> = defs.iter().map(|d| d.id.as_str()).collect();
     let original_len = ids.len();
-    ids.sort();
+    ids.sort_unstable();
     ids.dedup();
     assert_eq!(ids.len(), original_len, "duplicate setting IDs found");
 }

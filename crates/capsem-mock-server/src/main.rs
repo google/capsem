@@ -1487,7 +1487,7 @@ async fn write_ws_frame(io: &mut TokioIo<Upgraded>, opcode: u8, payload: &[u8]) 
     header.push(0x80 | opcode);
     if payload.len() < 126 {
         header.push(u8::try_from(payload.len()).expect("len < 126"));
-    } else if payload.len() <= usize::from(u16::MAX) {
+    } else if u16::try_from(payload.len()).is_ok() {
         header.push(126);
         header.extend_from_slice(&u16::try_from(payload.len()).expect("fits").to_be_bytes());
     } else {

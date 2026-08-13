@@ -369,7 +369,7 @@ impl VhostVsockDevice {
                 )
                 .with_context(|| format!("VHOST_GET_VRING_BASE queue {index}"))?;
             ensure!(
-                state.num <= u16::MAX as u32,
+                u16::try_from(state.num).is_ok(),
                 "vhost-vsock queue {index} returned invalid vring base {}",
                 state.num
             );
@@ -477,7 +477,7 @@ fn decode_vsock_checkpoint(encoded: &[u8]) -> Result<VsockCheckpointState> {
                 let offset = VSOCK_CHECKPOINT_HEADER_BYTES + index * std::mem::size_of::<u32>();
                 *base = u32::from_le_bytes(encoded[offset..offset + 4].try_into().unwrap());
                 ensure!(
-                    *base <= u16::MAX as u32,
+                    u16::try_from(*base).is_ok(),
                     "invalid vhost-vsock queue {index} vring base: {base}"
                 );
             }

@@ -30,7 +30,7 @@ fn all_names_distinct() {
         RUNTIME_BUSY_RATIO,
     ];
     let mut sorted = names.to_vec();
-    sorted.sort();
+    sorted.sort_unstable();
     sorted.dedup();
     assert_eq!(
         names.len(),

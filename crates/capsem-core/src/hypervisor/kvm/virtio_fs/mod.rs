@@ -172,7 +172,7 @@ fn gather_readable(mem: &GuestMemoryRef, chain: &DescriptorChain) -> Option<Vec<
             }
             if let Some(ptr) = mem.gpa_to_host(desc.addr) {
                 buf.extend_from_slice(unsafe {
-                    std::slice::from_raw_parts(ptr as *const u8, desc.len as usize)
+                    std::slice::from_raw_parts(ptr.cast_const(), desc.len as usize)
                 });
             }
         }

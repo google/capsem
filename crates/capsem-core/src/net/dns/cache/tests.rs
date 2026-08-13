@@ -262,7 +262,7 @@ fn default_capacity_and_max_ttl_match_constants() {
     let cache = DnsAnswerCache::default();
     // Insert N+1 entries to verify capacity is what we claimed.
     let policy = allow_all();
-    for i in 0..(DEFAULT_CAPACITY + 1) {
+    for i in 0..=DEFAULT_CAPACITY {
         let name = format!("h{i}.example.com");
         cache.insert(
             &name,

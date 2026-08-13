@@ -10732,6 +10732,11 @@ struct SettingsEnvGuard {
 struct EnvVarGuard {
     key: &'static str,
     previous: Option<std::ffi::OsString>,
+    // Two questions, not one: the outer `Option` is whether this guard
+    // captured an override at all -- only the `CAPSEM_PROFILES_DIR` key does
+    // -- and the inner one is the value that was there. Flattening loses the
+    // difference between "nothing to restore" and "restore it to unset".
+    #[allow(clippy::option_option, reason = "captured-ness and value are distinct")]
     previous_test_profile_dir_override: Option<Option<PathBuf>>,
 }
 

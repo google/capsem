@@ -42,13 +42,13 @@ impl VirtqDesc {
         unsafe {
             let addr = u64::from_le(std::ptr::read_unaligned(host as *const u64));
             let len = u32::from_le(std::ptr::read_unaligned(
-                (host as *const u8).add(8) as *const u32
+                host.cast_const().add(8) as *const u32
             ));
             let flags = u16::from_le(std::ptr::read_unaligned(
-                (host as *const u8).add(12) as *const u16
+                host.cast_const().add(12) as *const u16
             ));
             let next = u16::from_le(std::ptr::read_unaligned(
-                (host as *const u8).add(14) as *const u16
+                host.cast_const().add(14) as *const u16
             ));
             Some(VirtqDesc {
                 addr,

@@ -601,7 +601,11 @@ async fn auth_failure_tracker_resets_after_window() {
     // Simulate window expiry by backdating the window start
     {
         let mut guard = tracker.inner.lock().await;
-        guard.0 = Instant::now() - AUTH_FAILURE_WINDOW - Duration::from_secs(1);
+        guard.0 = Instant::now()
+            .checked_sub(AUTH_FAILURE_WINDOW)
+            .unwrap()
+            .checked_sub(Duration::from_secs(1))
+            .unwrap();
     }
     // After window reset, should allow again
     assert!(!tracker.record_failure().await);

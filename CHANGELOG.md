@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Eight `clippy::pedantic` lints are denied workspace-wide, chosen from a
+  measurement rather than a group: the full group is 7,448 warnings across 74
+  lints here, over 2,600 of them doc and must-use style, and adopting it
+  wholesale would be a rewrite mandate. The eight describe ways this code can be
+  *wrong* rather than untidy, and enabling them found three real defects --
+  `Writer::write_checked` documented as yielding for backpressure when its body
+  is wholly synchronous and cannot, a `BTreeMap<_, ()>` used as a set in the
+  profile contract, and an unchecked `Duration` subtraction that panics on a
+  backwards clock.
+
+  `unused_async`, `cast_ptr_alignment` and `large_stack_arrays` were each
+  enabled, measured and backed out with the reason recorded in `Cargo.toml`.
+  The pointer and stack ones are the most valuable of the three, which is
+  exactly why they are not being cleared with twenty un-reviewed `allow`s: every
+  alignment site is a KVM ioctl buffer whose guarantee needs auditing, and an
+  un-reviewed allow reads as reviewed.
+
 - Rust tests run under Nextest, and doctests now run at all. The `ci` profile in
   `.config/nextest.toml` -- `slow-timeout` of 120s, three retries -- was written
   and never selected, so a hung test hung the whole gate until the
