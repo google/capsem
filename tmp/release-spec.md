@@ -45,8 +45,8 @@ The resulting rule is:
 The first-party operator surface has exactly two release commands:
 
 ```text
-just release-binaries <channel>
-just release-profile <channel> <profile>
+just release-binaries <channel> <source-commit>
+just release-profile <channel> <profile> <source-commit>
 ```
 
 There is no generic release command and no combined release command. When a
@@ -65,8 +65,8 @@ The release system MUST provide all of the following:
 - Independent channel/profile instances when a profile name exists in more
   than one channel.
 - Daily, scheduled nightly rebuilds of the binary family and every selected
-  profile/asset family from current `main`, through their independent public
-  commands rather than publication after every push.
+  profile/asset family from one full commit snapshot of current `main`, through
+  their independent public commands rather than publication after every push.
 - Manually initiated stable binary and profile publication.
 - Targeted profile publication for exactly one channel/profile pair.
 - An ordered `release-profile` then `release-binaries` path when a new or
@@ -74,8 +74,8 @@ The release system MUST provide all of the following:
 - One shared per-channel concurrency lock covering both release commands from
   manifest read through generated-distribution deployment.
 - Exclusive manifest and profile authoring through `capsem-admin`.
-- Corporate manifests and profiles authored through `capsem-admin` without
-  requiring corporations to build Capsem binaries.
+- Corporate manifests and profiles authored through `capsem-admin` with the
+  profile source commit, without requiring corporations to build Capsem binaries.
 - Regular manifest polling and automatic, verified Capsem updates.
 - Native package proof through the installed-product glow-up suite.
 - Integrity, compatibility, provenance, and rollback safety before any channel
@@ -105,7 +105,8 @@ The following are explicitly outside the intended model:
   mocked install as proof that a release works.
 - Duplicating build, package, profile, manifest, glow-up, or deployment logic
   across workflow files.
-- A standalone commit-SHA qualification workflow or checker.
+- A standalone commit-SHA qualification workflow or checker separate from the
+  two release commands. The explicit commit argument is part of each command.
 - A second release-history, transaction-state, recovery-state, or result
   document beside the manifest.
 - A caller-authored profile tag or publication identity.
@@ -387,11 +388,11 @@ The Capsem project uses `capsem-admin` to:
 
 First-party release entrypoints are deliberately asymmetric:
 
-- `just release-profile <channel> <profile>` calls `capsem-admin release`
+- `just release-profile <channel> <profile> <source-commit>` calls `capsem-admin release`
   directly for the selected channel/profile. The command gives the workflow a
   unique correlation identity, discovers that exact run, and waits for its
   terminal status before returning.
-- `just release-binaries <channel>` calls one checked-in, adversarially tested
+- `just release-binaries <channel> <source-commit>` calls one checked-in, adversarially tested
   binary-release script.
 
 Dispatch acceptance is not release completion. A successful profile command
@@ -486,6 +487,13 @@ including:
 
 The exact internal steps may evolve, but the public meaning of `just test`
 remains “construct and verify the whole system.”
+
+Each release command selects one canonical full lowercase commit that is
+already prepared, committed, and reachable from fresh `origin/main`. It MUST
+materialize and qualify an independent detached repository at a prefix named
+by that full commit. The mutable outer checkout and branch are not release
+inputs and MAY advance during qualification. A release command MUST NOT edit
+tracked source, create a preparation commit, or push `main` after the proof.
 
 Before starting Docker/Colima, bootstrap, package, profile, asset, or VM work,
 `just test` MUST run one checked-in private `_test-fast` module. That same
@@ -585,6 +593,14 @@ inputs, outputs, and tests.
 
 Every module handoff MUST identify inputs and outputs by immutable identity,
 including version/revision and digest.
+
+The source handoff MUST also carry the selected commit as one value. After the
+complete local proof, the command creates or verifies a lightweight
+`capsem-source-<40hex>` tag pointing exactly at it and dispatches the workflow
+from that derived ref while passing the same required `source_commit` input.
+Workflow entry and every reachable checkout MUST verify and use that commit;
+an independently supplied ref, moving branch, implicit event SHA, or
+title-only workflow correlation is insufficient.
 
 Downstream jobs MUST verify those identities before use. A mutable artifact
 name, mutable cache, branch-relative output, or unverified download MUST NOT be
@@ -739,8 +755,8 @@ This module MUST:
 
 - Build the requested platform and architecture matrix.
 - Produce an immutable binary cohort.
-- Record the binary version in the manifest; GitHub records the workflow source
-  in the ordinary run log.
+- Record the binary version and selected source commit on every package row in
+  the manifest; GitHub also records the source in the ordinary run log.
 - Produce per-binary inventory inputs.
 - Avoid reading profile source inputs except where package assembly needs
   immutable, already-selected profile references.
@@ -874,7 +890,7 @@ This module MUST:
 
 Use this flow when Capsem changes but no profile needs rebuilding.
 
-1. Run `just release-binaries <channel>`.
+1. Run `just release-binaries <channel> <source-commit>`.
 2. Acquire the shared per-channel lock.
 3. Resolve the selected channel's existing profile set and immutable assets.
 4. Build the binary cohort.
@@ -902,7 +918,7 @@ builders. A failure against pulled assets is a binary compatibility failure.
 Use this flow when one profile changes and existing channel binaries remain
 compatible.
 
-1. Run `just release-profile <channel> <profile>`.
+1. Run `just release-profile <channel> <profile> <source-commit>`.
 2. Acquire the shared per-channel lock.
 3. Pull the channel's currently selected released binary and package.
 4. Build the selected profile and all assets contained by it.
@@ -935,8 +951,8 @@ This is an ordered composition of the two public commands, not a new lane,
 command, or expanded permission set:
 
 ```text
-just release-profile <channel> <profile>
-just release-binaries <channel>
+just release-profile <channel> <profile> <source-commit>
+just release-binaries <channel> <source-commit>
 ```
 
 #### Phase A: build the profile candidate
@@ -1065,11 +1081,13 @@ Nightly binary and selected profile/asset rebuilds SHOULD run once daily.
 
 Each run MUST:
 
-- Run from the current releasable `main` state selected by the scheduled
-  workflow.
+- Freeze `${{ github.sha }}` from the current releasable `main` state selected
+  by the scheduler, and use that same full SHA for every checkout and lane even
+  if `main` advances during the run.
 - Target only the nightly channel.
-- Invoke `just release-profile nightly <profile>` separately for every selected
-  profile, then invoke `just release-binaries nightly`; it MUST NOT dispatch a
+- Invoke `just release-profile nightly <profile> <source-commit>` separately
+  for every selected profile, then invoke
+  `just release-binaries nightly <source-commit>`; it MUST NOT dispatch a
   downstream workflow or combine artifact ownership itself.
 - Wait for each exact correlated profile run before starting another
   same-channel command. Profile commands MAY be ordered serially while each
@@ -1101,6 +1119,7 @@ The trigger MUST select:
 
 - One prepared binary version.
 - The stable channel.
+- One full source commit already on `main`.
 - Any required release metadata.
 
 Stable MUST use the same reusable binary, package, compatibility, glow-up,
@@ -1113,6 +1132,7 @@ A profile release MUST be explicitly targeted with:
 
 - One channel.
 - One profile.
+- One full source commit already on `main`.
 
 The trigger MUST reject:
 
@@ -1272,10 +1292,20 @@ The system MUST distinguish:
 One lane MUST NOT regenerate another lane's evidence. Preservation is by exact
 reference or exact unchanged bytes, not by lossy conversion.
 
-The manifest is the release authority. Existing host SBOMs, profile OBOMs,
-attestations, and GitHub workflow logs supply the required evidence. The system
-MUST NOT add redundant source-provenance fields or parallel state, history,
-transaction, recovery, or result documents.
+The manifest is the release authority. Every newly authored package row MUST
+record its family's exact `source_commit`; every newly authored selected
+profile document MUST record its family's exact `source_commit`. These fields
+are optional on read so legacy and gradual mixed graphs remain readable, but a
+present value is exactly 40 lowercase hexadecimal characters and explicit null
+is invalid. Source commit MUST NOT appear at graph top level or per-binary:
+those placements imply ownership wider or narrower than the publishing family.
+Status-only updates preserve existing provenance, and one lane preserves the
+other family's fields unchanged.
+
+Existing host SBOMs, profile OBOMs, attestations, structured gate run logs, and
+GitHub workflow logs supply the remaining evidence. The system MUST NOT add a
+parallel state, history, transaction, recovery, or result document. Run id is
+attempt identity and remains distinct from source commit.
 
 ## 17. Publication and transaction safety
 
@@ -1514,6 +1544,7 @@ The manifest, existing SBOM/OBOM and attestations, and ordinary GitHub workflow
 logs MUST together answer:
 
 - Which lane ran?
+- Which exact committed source did that lane qualify and build?
 - Which channel was selected?
 - Which profile and derived publication identity were selected, if any?
 - Which immutable existing artifacts were consumed?
@@ -1540,9 +1571,16 @@ An implementation conforming to this specification MUST demonstrate:
 - [ ] Existing nightly identities are rebuilt and tested without overwriting
       immutable publications.
 - [ ] Stable binary and profile publication is manual.
-- [ ] Binary release accepts exactly one channel.
-- [ ] Profile release accepts exactly one channel and profile and derives its
+- [ ] Both release commands require one canonical full commit already on
+      fresh `origin/main`, qualify its detached full-SHA prefix, and remain
+      valid while the outer checkout advances.
+- [ ] Binary release accepts exactly one channel and one source commit.
+- [ ] Profile release accepts exactly one channel, profile, and source commit and derives its
       immutable publication identity.
+- [ ] Every release workflow checkout and correlated run uses that exact
+      source commit and derived immutable transport ref.
+- [ ] Newly authored package rows and selected profile documents record their
+      family-owned source commit without a graph-wide provenance field.
 - [ ] A profile can exist in zero, one, or multiple channels.
 - [ ] Same-named profiles in different channels remain independent.
 - [ ] Profile changes rebuild the selected profile's complete asset set.

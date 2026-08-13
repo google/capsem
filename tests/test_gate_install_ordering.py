@@ -29,6 +29,7 @@ from capsem.gate.install import InstallGate
 from capsem.gate.installproof import InstallProof
 from capsem.gate.productschema import ProfileRevisionPolicy
 from capsem.gate.releasegraph import ReleaseGraph
+from capsem.gate.sourcecommit import SourceCommit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -36,6 +37,7 @@ INSTALL = CONFIG.install
 LAYOUT = INSTALL.layout
 SERVE_READY_FILE = INSTALL.serve_ready_file
 PREINSTALL_ADMIN = INSTALL.preinstall_admin
+SOURCE_COMMIT = SourceCommit("0" * 40)
 
 
 def test_selected_profile_revision_policy_is_a_typed_install_authority() -> None:
@@ -149,6 +151,7 @@ def gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[InstallGate, 
             runner,
             content=LocalInstallContent(_local_content(root)),
             macos_glowup_report=str(root / "report.json"),
+            source_commit=SOURCE_COMMIT,
         ),
         runner,
     )
@@ -206,6 +209,7 @@ def test_the_manifest_handoff_is_written_before_the_package_is_installed(
         r"install-manifest-request\.sh write",
         r"dpkg -i",
     )
+    assert runner.ran(rf"--source-commit {SOURCE_COMMIT}")
 
 
 def test_package_dependency_authority_is_verified_before_install(
@@ -317,7 +321,7 @@ def test_the_legacy_runtime_projection_is_refused(tmp_path: Path) -> None:
     asks the manifest a question only the graph can answer.
     """
     runner = RecordingRunner(tmp_path)
-    graph = ReleaseGraph(Docker(runner), CONFIG)
+    graph = ReleaseGraph(Docker(runner), CONFIG, source_commit=SOURCE_COMMIT)
 
     with pytest.raises(GateError, match="not the legacy runtime projection"):
         graph.hand_off(f"{LAYOUT.assets}/manifest.json")
@@ -332,7 +336,7 @@ def test_a_handoff_target_that_does_not_exist_is_refused(tmp_path: Path) -> None
     postinst finds no request at all and hydrates from the public channel,
     which is exactly the silent fallback being removed."""
     runner = RecordingRunner(tmp_path, failures=["test -f"])
-    graph = ReleaseGraph(Docker(runner), CONFIG)
+    graph = ReleaseGraph(Docker(runner), CONFIG, source_commit=SOURCE_COMMIT)
 
     with pytest.raises(GateError, match="would find no request"):
         graph.hand_off(AUTHORITATIVE)
@@ -342,7 +346,7 @@ def test_clearing_a_handoff_that_was_never_written_does_nothing(tmp_path: Path) 
     """Cleanup runs on the failure path, where the write may not have happened."""
     runner = RecordingRunner(tmp_path)
 
-    ReleaseGraph(Docker(runner), CONFIG).clear_handoff()
+    ReleaseGraph(Docker(runner), CONFIG, source_commit=SOURCE_COMMIT).clear_handoff()
 
     assert not runner.ran(r"install-manifest-request")
 
@@ -365,6 +369,7 @@ def test_a_release_lane_stages_verified_inputs_and_authors_the_exact_package_gra
         runner,
         content=selected,
         macos_glowup_report=str(root / "report.json"),
+        source_commit=SOURCE_COMMIT,
     ).run()
 
     assert runner.matching(r"cp -R .*assets/\.")
@@ -403,6 +408,7 @@ def test_local_install_mounts_only_the_selected_content_pair(
         runner,
         content=LocalInstallContent(content),
         macos_glowup_report=str(root / "report.json"),
+        source_commit=SOURCE_COMMIT,
     ).run()
 
     started = runner.matching(r"docker run -d")[0]
@@ -422,7 +428,11 @@ def test_local_install_without_a_selected_content_pair_fails_before_docker(
     runner = _recording(root)
 
     with pytest.raises(GateError, match="selected profile content"):
-        InstallGate(runner, macos_glowup_report=str(root / "report.json")).run()
+        InstallGate(
+            runner,
+            macos_glowup_report=str(root / "report.json"),
+            source_commit=SOURCE_COMMIT,
+        ).run()
 
     assert not runner.ran(r"docker build")
     assert not runner.ran(r"docker run -d")
@@ -442,7 +452,7 @@ def test_a_missing_package_names_the_rail_that_builds_it(
     root = _checkout_without_package(tmp_path)
 
     with pytest.raises(GateError, match="just _cross-compile"):
-        InstallGate(RecordingRunner(root)).run()
+        InstallGate(RecordingRunner(root), source_commit=SOURCE_COMMIT).run()
 
 
 def _checkout_without_package(tmp_path: Path) -> Path:
@@ -466,7 +476,11 @@ def test_a_package_from_another_version_is_refused(
     )
 
     with pytest.raises(GateError, match=f"declares version 1.2.3, but this checkout is {VERSION}"):
-        InstallGate(runner, content=LocalInstallContent(_local_content(root))).run()
+        InstallGate(
+            runner,
+            content=LocalInstallContent(_local_content(root)),
+            source_commit=SOURCE_COMMIT,
+        ).run()
 
     assert not runner.ran(r"dpkg -i"), "nothing may be installed after the refusal"
 
@@ -489,6 +503,7 @@ def test_dpkg_reporting_a_different_installed_version_fails(
             runner,
             content=LocalInstallContent(_local_content(root)),
             macos_glowup_report="report.json",
+            source_commit=SOURCE_COMMIT,
         ).run()
 
 
@@ -503,6 +518,7 @@ def test_a_macos_run_without_its_glowup_report_fails(
         InstallGate(
             _recording(root),
             content=LocalInstallContent(_local_content(root)),
+            source_commit=SOURCE_COMMIT,
         ).run()
 
 
@@ -539,6 +555,7 @@ def test_the_container_is_torn_down_even_when_the_proof_fails(
             runner,
             content=LocalInstallContent(_local_content(root)),
             macos_glowup_report="report.json",
+            source_commit=SOURCE_COMMIT,
         ).run()
 
     # The first `docker rm -f` clears a predecessor before the container
@@ -605,6 +622,7 @@ def test_an_install_that_hydrated_from_elsewhere_is_refused(
             runner,
             content=LocalInstallContent(_local_content(root)),
             macos_glowup_report=str(root / "report.json"),
+            source_commit=SOURCE_COMMIT,
         ).run()
 
 
@@ -622,6 +640,7 @@ def test_an_install_that_recorded_no_source_is_refused(
             runner,
             content=LocalInstallContent(_local_content(root)),
             macos_glowup_report=str(root / "report.json"),
+            source_commit=SOURCE_COMMIT,
         ).run()
 
 

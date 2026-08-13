@@ -116,7 +116,7 @@ def stamp(root: Path, runner: Runner) -> str:
     # already locked dependency graph.
     runner.run(["cargo", "update", "--workspace", "--offline"])
     # Keep the editable project metadata in the frozen lockfile on the release
-    # version before release-binaries creates its commit and tag.
+    # version before the prepared release commit is selected and tagged.
     runner.run(["uv", "lock", "--offline"])
     return version
 

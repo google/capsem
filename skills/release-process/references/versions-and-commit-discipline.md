@@ -11,11 +11,19 @@ rails. Their builds remain mandatory source gates.
 
 Keep user-visible changes under `## [Unreleased]` in `CHANGELOG.md`. Historical
 entries describe past behavior and are not normative release instructions.
-`just release-binaries` must validate that this section contains publishable
-notes before it starts `just test`, and the binary release script must recheck
-before version mutation. Never defer release-note validation until after the
-complete local gate or source push. Profile releases are independent and do not
-require binary changelog text.
+Before binary qualification, prepare one ordinary reviewed commit that moves
+the notes into the selected version section, makes `LATEST_RELEASE.md` match
+that section, and leaves `Unreleased` empty. The version cohort must already
+agree in that commit. `just release-binaries` validates this before `just test`
+when the immutable version tag is new; it never stamps, commits, resets, or
+pushes `main`. Profile releases are independent and do not require binary
+changelog text.
+
+Every release command takes the full lowercase source commit explicitly. It
+must already be reachable from local and fresh remote `main`. The full-SHA
+prefix is the qualification subject, `capsem-source-<commit>` is the workflow
+transport ref, and the manifest records that commit only on rows owned by the
+publishing family. Attempt ids remain separate so retries never collide.
 
 Binary and profile versions are orthogonal:
 

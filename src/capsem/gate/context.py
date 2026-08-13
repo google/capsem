@@ -57,6 +57,8 @@ class Journal(Protocol):
     of it goes.
     """
 
+    run_id: str
+
     def note(self, message: str) -> None:
         """Record something worth reading back, without failing anything."""
 
@@ -157,6 +159,8 @@ class NullJournal:
     The default, so a plan or an action can be exercised -- in a test, or in a
     command asked only what it would do -- without a run behind it.
     """
+
+    run_id = ""
 
     def note(self, message: str) -> None:
         """Discarded."""

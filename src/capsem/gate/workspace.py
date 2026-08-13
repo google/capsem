@@ -24,6 +24,9 @@ this and is released last.
 
 from __future__ import annotations
 
+import hashlib
+import os
+import shutil
 from pathlib import Path
 
 from . import pidfiles
@@ -43,8 +46,19 @@ class Workspace(Resource, name="workspace"):
         self._config = config
         self._settings = config.workspace
         self.home = config.path(self._settings.home)
-        self.run_dir = config.path(self._settings.run_dir)
+        root_id = hashlib.blake2s(os.fsencode(config.root.resolve()), digest_size=4).hexdigest()
+        self.run_dir = Path(self._settings.run_dir.format(root_id=root_id))
         self._preserved: Path | None = None
+
+    def _remove_run_dir(self) -> None:
+        """Remove only this config-derived, user-owned temporary run tree."""
+        if self.run_dir.is_symlink():
+            raise RuntimeError(f"workspace run directory {self.run_dir} must not be a symlink")
+        if not self.run_dir.exists():
+            return
+        if self.run_dir.stat().st_uid != os.getuid():
+            raise RuntimeError(f"workspace run directory {self.run_dir} has the wrong owner")
+        shutil.rmtree(self.run_dir)
 
     def environment(self) -> dict[str, str]:
         """What every command inside this workspace inherits.
@@ -73,8 +87,10 @@ class Workspace(Resource, name="workspace"):
 
         if self.home.is_dir():
             _remove_tree(self.home, self._config.root)
+        self._remove_run_dir()
         for relative in self._settings.seeded_dirs:
             (self.home / relative).mkdir(parents=True, exist_ok=True)
+        self.run_dir.mkdir(mode=0o700, parents=True)
         self._config.path(self._settings.coverage_file).parent.mkdir(parents=True, exist_ok=True)
         # Deliberately not the benchmark root: `just test` runs several modules
         # through one workspace, the VM recordings come from the functional
@@ -97,11 +113,8 @@ class Workspace(Resource, name="workspace"):
         self._preserved = destination
 
     def release(self) -> None:
-        from .disk import _remove_tree
-
         pidfiles.stop_gate_service(self.run_dir, self._config.pidfiles)
-        if self.run_dir.is_dir():
-            _remove_tree(self.run_dir, self._config.root)
+        self._remove_run_dir()
 
     # -- evidence ----------------------------------------------------------
 

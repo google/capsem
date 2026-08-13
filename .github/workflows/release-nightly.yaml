@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
@@ -40,7 +40,7 @@ jobs:
       - name: Rebuild nightly ${{ matrix.profile }} profile assets
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: just release-profile nightly ${{ matrix.profile }}
+        run: just release-profile nightly ${{ matrix.profile }} ${{ github.sha }}
 
   release-binaries:
     needs: release-profiles
@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
@@ -62,12 +62,7 @@ jobs:
           CAPSEM_SKIP_ASSET_CHECK: "1"
         run: sh bootstrap.sh --yes
 
-      - name: Configure release commit identity
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-
       - name: Rebuild or release nightly binaries
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: just release-binaries nightly
+        run: just release-binaries nightly ${{ github.sha }}

@@ -611,8 +611,8 @@ class _Recording(Runner):
 @pytest.mark.parametrize(
     "raw",
     (
-        ["release-binaries", "nightly"],
-        ["release-profile", "candidate", "code"],
+        ["release-binaries", "nightly", "0" * 40],
+        ["release-profile", "candidate", "code", "0" * 40],
         ["logs", "service"],
         ["candidate", "--timing"],
         ["cross-compile", "arm64"],
@@ -638,6 +638,28 @@ def test_the_recorded_invocation_reaches_the_run_start_event(tmp_path: Path) -> 
 
     (start,) = [e for e in read(directory, config.runlog) if e["event"] == "run.start"]
     assert tuple(start["argv"]) == invocation
+
+
+def test_release_run_start_records_source_commit_separately_from_attempt_id(
+    tmp_path: Path,
+) -> None:
+    config = _checkout(tmp_path)
+    commit = "1" * 40
+    invocation = ("capsem-gate", "release-binaries", "nightly", commit)
+
+    with RunLog.open(
+        config,
+        "release-binaries",
+        argv=invocation,
+        source_commit=commit,
+    ) as log:
+        directory = log.directory
+        run_id = log.run_id
+
+    (start,) = [event for event in read(directory, config.runlog) if event["event"] == "run.start"]
+    assert start["source_commit"] == commit
+    assert start["run_id"] == run_id
+    assert commit not in run_id
 
 
 # ---------------------------------------------------------------------------

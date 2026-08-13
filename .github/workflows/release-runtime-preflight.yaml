@@ -10,6 +10,9 @@ on:
         required: false
         type: boolean
         default: false
+      source_commit:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -29,6 +32,8 @@ jobs:
             arch: arm64
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
 
       - name: Select fresh manifest-authorized runtime graph
         id: manifest

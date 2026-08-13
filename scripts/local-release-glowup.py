@@ -27,6 +27,7 @@ from typing import cast
 from urllib.parse import unquote, urljoin, urlparse
 
 from capsem.gate.productschema import ProfileRevisionPolicy
+from capsem.gate.sourcecommit import SourceCommit, source_commit_for_checkout
 
 try:
     from release_glowup import (
@@ -238,6 +239,7 @@ def main() -> int:
     nightly_version = stable_version
     arch = deb_arch(args.input_deb)
     admin = args.bin_dir / "capsem-admin"
+    source_commit = source_commit_for_checkout(PROJECT_ROOT)
     if not admin.is_file() or not os.access(admin, os.X_OK):
         raise SystemExit(f"local release glow-up requires executable {admin}")
 
@@ -285,7 +287,6 @@ def main() -> int:
         generate_sbom(stable_sbom, stable_deb)
         generate_sbom(nightly_sbom, nightly_deb)
 
-        # Serve release artifacts from the exact URL shape used by release metadata.
         copy_artifact_tree(
             stable_deb,
             dist / "releases" / "download" / "stable" / f"v{stable_version}" / stable_deb.name,
@@ -305,7 +306,6 @@ def main() -> int:
 
         stable_manifest = manifests / "stable-assets-manifest.json"
         nightly_manifest = manifests / "nightly-assets-manifest.json"
-        # Channel-switch proof stages both identities from the selected candidate.
         clone_manifest_for_channel(
             args.assets_dir / "manifest.json",
             stable_manifest,
@@ -313,14 +313,10 @@ def main() -> int:
         )
         report_disk_capacity(args.work_dir, "before immutable VM blob staging")
         stage_manifest_artifacts(stable_manifest, args.assets_dir, dist, base_url)
-        # Clone nightly from the *staged* stable manifest. Staging drops any
-        # architecture whose blobs are not present locally, and ordinary CI
-        # pulls one architecture's profile inputs. Cloning first left nightly
-        # describing an unstaged architecture whose URLs still pointed at
-        # GitHub, which the hermetic channel rejected as "not local".
+        # Project nightly from the staged single-architecture stable manifest.
         clone_manifest_for_channel(stable_manifest, nightly_manifest, "nightly")
         record_binary(
-            admin, stable_manifest, stable_version, stable_deb, stable_sbom, stable_download_base
+            admin, stable_manifest, stable_version, stable_deb, stable_sbom, stable_download_base, source_commit
         )
         record_binary(
             admin,
@@ -329,6 +325,7 @@ def main() -> int:
             nightly_deb,
             nightly_sbom,
             nightly_download_base,
+            source_commit,
         )
         build_channel(
             admin,
@@ -1079,6 +1076,7 @@ def record_binary(
     deb: Path,
     sbom: Path,
     release_download_base: str,
+    source_commit: SourceCommit,
 ) -> None:
     run(
         [
@@ -1090,6 +1088,8 @@ def record_binary(
             str(manifest),
             "--version",
             version,
+            "--source-commit",
+            str(source_commit),
             "--artifact",
             str(deb),
             "--artifact",

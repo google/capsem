@@ -1377,6 +1377,10 @@ def command_capture_failure(args: argparse.Namespace, policy: dict[str, Any]) ->
     root = ROOT / str(debug["root"])
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     safe_label = re.sub(r"[^A-Za-z0-9_.-]+", "-", args.label).strip("-") or "candidate"
+    if args.run_id is not None and not re.fullmatch(r"[A-Za-z0-9_.-]{1,160}", args.run_id):
+        raise ValueError("failure capture run id is not canonical")
+    if args.source_commit is not None and not re.fullmatch(r"[0-9a-f]{40}", args.source_commit):
+        raise ValueError("failure capture source commit is not canonical")
     destination = root / f"{stamp}-storage-{safe_label}"
     destination.mkdir(parents=True, exist_ok=False)
 
@@ -1430,7 +1434,16 @@ def command_capture_failure(args: argparse.Namespace, policy: dict[str, Any]) ->
         collect(source, destination / "ironbank" / source.relative_to(ironbank))
 
     (destination / "collected.json").write_text(
-        json.dumps({"files": collected}, indent=2, sort_keys=True) + "\n"
+        json.dumps(
+            {
+                "files": collected,
+                "run_id": args.run_id,
+                "source_commit": args.source_commit,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
     )
 
     rotate_debug_artifacts(root, debug)
@@ -1492,6 +1505,8 @@ def build_parser() -> argparse.ArgumentParser:
     capture = subparsers.add_parser("capture-failure")
     capture.add_argument("--rail", default="default")
     capture.add_argument("--label", default="candidate")
+    capture.add_argument("--run-id")
+    capture.add_argument("--source-commit")
     capture.add_argument("--offline", action="store_true")
     return parser
 

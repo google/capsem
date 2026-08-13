@@ -92,7 +92,8 @@ def journal(monkeypatch) -> RecordingJournal:
 
     @classmethod
     @contextmanager
-    def _open(cls, config, command, *, argv=()):
+    def _open(cls, config, command, *, argv=(), source_commit=None):
+        assert source_commit is None
         yield recording
 
     monkeypatch.setattr("capsem.gate.runlog.RunLog.open", _open)
@@ -673,5 +674,7 @@ def test_the_workspace_exports_the_four_variables_that_isolate_a_run() -> None:
         "CAPSEM_BENCHMARK_OUTPUT_ROOT",
         "COVERAGE_FILE",
     }
+    run_dir = exported.pop("CAPSEM_RUN_DIR")
+    assert run_dir.startswith("/tmp/capsem-r-")
     for value in exported.values():
         assert str(CONFIG.root) in value, f"{value} is outside the checkout"

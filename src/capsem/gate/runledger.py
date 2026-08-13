@@ -94,9 +94,12 @@ def identity(start: RunStart, shape: PlanShape) -> tuple:
     a field, and the disagreement would surface as a release refused or
     allowed for a reason nobody could locate.
     """
+    argv = start.argv
+    if start.source_commit is not None and argv[-1:] == (start.source_commit,):
+        argv = argv[:-1]
     return (
         start.command,
-        start.argv,
+        argv,
         start.platform,
         start.machine,
         start.cores,

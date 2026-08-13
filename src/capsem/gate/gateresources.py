@@ -23,6 +23,7 @@ from .lifecycle import Resource
 from .proc import Runner
 from .sandbox import OFF, SandboxMode
 from .sandboxreport import SandboxReport
+from .sourcecommit import SourceCommit
 from .storage import Storage
 from .workspace import Workspace
 
@@ -73,15 +74,28 @@ class FailureEvidence(Resource, name="failure-evidence"):
         """Nothing to give back either."""
 
     def preserve(self, error: BaseException) -> None:
+        del error
+        state = self._state()
+        selected = state.get("source_commit")
+        try:
+            source_commit = SourceCommit(selected) if isinstance(selected, str) else None
+        except ValueError:
+            source_commit = None
         Storage(self._runner).capture_failure(
-            rail=self._config.candidate.failure_rail, label=self._label()
+            rail=self._config.candidate.failure_rail,
+            label=str(state.get("head", self._config.candidate.unknown_head))[:12],
+            run_id=self._runner.run_id,
+            source_commit=source_commit,
         )
 
-    def _label(self) -> str:
+    def _state(self) -> dict:
         recorded = self._config.path(self._config.candidate.source_state_file)
         if not recorded.is_file():
-            return self._config.candidate.unknown_head
-        return json.loads(recorded.read_text(encoding="utf-8"))["head"][:12]
+            return {}
+        try:
+            return json.loads(recorded.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
 
 
 class Colima(Resource, name="colima"):

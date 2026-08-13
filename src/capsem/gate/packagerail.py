@@ -37,6 +37,7 @@ from .invocation import ConsoleMode
 from .packageinputs import package_environment, pinned_toolchain, resolve_channel
 from .packagesigning import signing_key
 from .proc import Runner
+from .sourcecommit import source_commit_for_checkout
 from .storage import Storage
 
 
@@ -265,6 +266,7 @@ class PackageRail:
             content=self.content,
             manifest_url=self.manifest_url,
             channel=self.channel,
+            source_commit=source_commit_for_checkout(self.root),
         ).run()
 
     def defer_proof(self) -> None:

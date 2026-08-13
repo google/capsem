@@ -23,7 +23,9 @@ manifest patch.
 
 Corporate administrators own their corporate manifest and profiles. They may
 choose the latest compatible Capsem package or pin a compatible version. They
-do not build or mutate Capsem-owned binaries or public channels.
+pass the exact commit that built their profiles, while copied official package
+rows preserve Capsem's provenance. They do not build or mutate Capsem-owned
+binaries or public channels.
 
 ## Channel/profile model
 
@@ -40,13 +42,17 @@ manifest owns its package inventory and profile membership. Retained manifest
 records use one status value: `current`, `supported`, `deprecated`, or
 `revoked`.
 
-Packages are delivery containers. Binary inventory is nested under its owning
-package with version, installed path, digests, and SBOM component reference.
-Profiles own their config, images, software inventory, OBOM/evidence, digests,
-architecture coverage, and minimum compatible Capsem version.
+Packages are delivery containers. Each newly authored package row records the
+binary lane's exact `source_commit`; binary inventory is nested under it with
+version, installed path, digests, and SBOM component reference. Each newly
+authored selected profile document records the profile lane's exact
+`source_commit` and owns its config, images, software inventory, OBOM/evidence,
+digests, architecture coverage, and minimum compatible Capsem version. Legacy
+rows may omit the field; top-level and per-binary source fields are forbidden.
 
-SBOM, OBOM, existing attestations, the manifest, and GitHub workflow logs are
-the evidence. Do not add a parallel provenance document.
+SBOM, OBOM, existing attestations, the manifest, structured gate run log, and
+GitHub workflow logs are the evidence. Attempt/run id remains separate from
+source commit. Do not add a parallel provenance document.
 
 ## Immutable and mutable paths
 
@@ -103,7 +109,7 @@ without invoking VM asset builds or host package builds.
 
 ### Binary lane
 
-`just release-binaries <channel>`:
+`just release-binaries <channel> <source-commit>`:
 
 1. acquires the channel lock;
 2. reads the latest source manifest;
@@ -119,10 +125,10 @@ It never invokes a profile/image builder.
 
 ### Profile lane
 
-`just release-profile <channel> <profile>` calls:
+`just release-profile <channel> <profile> <source-commit>` calls:
 
 ```text
-capsem-admin release --channel <channel> --profile <profile>
+capsem-admin release --channel <channel> --profile <profile> --source-commit <source-commit>
 ```
 
 The locked workflow:

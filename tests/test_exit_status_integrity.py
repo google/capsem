@@ -98,13 +98,13 @@ REQUIRED_JUST_STEPS = (
         "release-nightly.yaml",
         "release-profiles",
         "Rebuild nightly ${{ matrix.profile }} profile assets",
-        ("just release-profile nightly ${{ matrix.profile }}",),
+        ("just release-profile nightly ${{ matrix.profile }} ${{ github.sha }}",),
     ),
     RequiredJustStep(
         "release-nightly.yaml",
         "release-binaries",
         "Rebuild or release nightly binaries",
-        ("just release-binaries nightly",),
+        ("just release-binaries nightly ${{ github.sha }}",),
     ),
     RequiredJustStep(
         "release.yaml",

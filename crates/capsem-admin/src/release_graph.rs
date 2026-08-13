@@ -6,6 +6,8 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as ShaDigest, Sha256};
 
+use crate::source_commit::{deserialize_optional, SourceCommit};
+
 const REQUIRED_PROFILE_IMAGE_ARTIFACT_KINDS: [ProfileImageArtifactKind; 3] = [
     ProfileImageArtifactKind::Kernel,
     ProfileImageArtifactKind::Initrd,
@@ -104,6 +106,12 @@ pub struct EvidenceRef {
 pub struct PackageInventoryRow {
     pub name: String,
     pub version: String,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_commit: Option<SourceCommit>,
     pub kind: PackageKind,
     pub platform: String,
     pub architecture: PackageArchitecture,
@@ -159,6 +167,12 @@ pub struct ProfileDocument {
     pub id: String,
     pub name: String,
     pub revision: String,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_commit: Option<SourceCommit>,
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_capsem_version: Option<String>,

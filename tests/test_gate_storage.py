@@ -9,6 +9,7 @@ from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
 from capsem.gate.errors import GateError
+from capsem.gate.sourcecommit import SourceCommit
 from capsem.gate.storage import Storage
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -40,9 +41,17 @@ def test_capture_failure_never_fails_the_run_further() -> None:
     """It runs on the failure path; a second failure would replace the first."""
     runner = RecordingRunner(PROJECT_ROOT, failures=["capture-failure"])
 
-    Storage(runner).capture_failure(rail="default", label="abcdef123456")
+    Storage(runner).capture_failure(
+        rail="default",
+        label="abcdef123456",
+        run_id="20260813-010203-abcdef-release-binaries",
+        source_commit=SourceCommit("1" * 40),
+    )
 
-    assert runner.matching(r"capture-failure --rail default --label abcdef123456")
+    assert runner.matching(
+        r"capture-failure --rail default --label abcdef123456 "
+        r"--run-id 20260813-010203-abcdef-release-binaries --source-commit 1{40}"
+    )
 
 
 def test_ensure_space_passes_the_optional_boundary_through() -> None:
@@ -107,8 +116,6 @@ def test_gc_clean_and_capture_failure_parse_against_the_real_script() -> None:
     for command in runner.commands:
         argv = list(command.argv)
         start = next(
-            index
-            for index, part in enumerate(argv)
-            if part in {"gc", "clean", "capture-failure"}
+            index for index, part in enumerate(argv) if part in {"gc", "clean", "capture-failure"}
         )
         parser.parse_args(argv[start:])

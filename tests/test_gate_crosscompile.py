@@ -1375,8 +1375,10 @@ def test_a_provable_target_runs_the_systemd_kvm_proof(
     # asserted is therefore what it was handed, which is the same claim
     # without a subprocess in the middle.
     from capsem.gate import packagerail
+    from capsem.gate.sourcecommit import SourceCommit
 
     handed = {}
+    source_commit = SourceCommit("0" * 40)
 
     class Recording:
         def __init__(self, _runner, **kwargs):
@@ -1386,6 +1388,7 @@ def test_a_provable_target_runs_the_systemd_kvm_proof(
             handed["ran"] = True
 
     monkeypatch.setattr(packagerail.debproof, "DebProof", Recording)
+    monkeypatch.setattr(packagerail, "source_commit_for_checkout", lambda _root: source_commit)
 
     _run_lane(_rail(runner, channel="nightly", manifest_url="file:///src/m.json"))
 
@@ -1393,6 +1396,7 @@ def test_a_provable_target_runs_the_systemd_kvm_proof(
     assert handed["channel"] == "nightly"
     assert handed["manifest_url"] == "file:///src/m.json"
     assert handed["package"].name == PACKAGE
+    assert handed["source_commit"] == source_commit
 
 
 def test_the_standalone_plan_keeps_the_exact_package_proof() -> None:

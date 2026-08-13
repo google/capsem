@@ -302,6 +302,9 @@ coverage_file = "COVERAGE_FILE"
 # the *source* checkout's path, because a run in a prefix still has to be able
 # to name the tree it is qualifying.
 source_checkout = "CAPSEM_GATE_SOURCE_CHECKOUT"
+# Full immutable release source selected by the parent. Unlike
+# source_checkout, this says the outer working tree is not the subject.
+source_commit = "CAPSEM_GATE_SOURCE_COMMIT"
 # The effective typed owning-command policy, injected into ordinary plan
 # actions and cleared at explicitly outside-sandbox edges. Doctor uses it to
 # distinguish an enforcing candidate from a network-open standalone build
@@ -678,7 +681,7 @@ unused-type-ignore-comment = 3
 # policy change. This is historical debt, not capacity: every value may shrink
 # and no value may grow.
 [lint.suppression_budget]
-noqa = 70
+noqa = 68
 type_ignore = 22
 ty_ignore = 6
 ruff_global_ignore = 1
@@ -745,6 +748,11 @@ direct_machine_access = [
     "pidfiles.py",
     "locks.py",
     "runlog.py",
+    # The ledger and digest are the durable, bounded post-run projections of
+    # that same run directory. They cannot report their own writes through the
+    # action journal after the journal has closed.
+    "runledger.py",
+    "digestreport.py",
     "summary.py",
     "runhistory.py",
     "disk.py",
@@ -767,6 +775,12 @@ direct_machine_access = [
     "prefix.py",
     # Same reason: `snapshot` is the copying half, split out at the ceiling.
     "snapshot.py",
+    # Immutable release source selection is the other pre-run half of prefix:
+    # its Git validation, detached clone, and exact-prefix lease must exist
+    # before the process and journal in that source can start.
+    "sourcecommit.py",
+    "commitsnapshot.py",
+    "prefixlease.py",
     "sandbox.py",
     # `sandboxreport.py` holds a `log stream` open for the entire run, which is
     # the one thing an action cannot express: actions are commands that finish
@@ -829,12 +843,12 @@ max_lines = 1000
 [boundary.scripts.oversized_line_counts]
 "scripts/bootstrap-linux.sh" = 599
 "scripts/build-pkg.sh" = 352
-"scripts/check-hardcoded-release-selections.py" = 305
+"scripts/check-hardcoded-release-selections.py" = 301
 "scripts/check-public-binary-release.py" = 1097
 "scripts/check-remote-release-readiness.py" = 1973
 "scripts/check_session.py" = 381
 "scripts/clean_stale.py" = 769
-"scripts/docker-storage-policy.py" = 1524
+"scripts/docker-storage-policy.py" = 1539
 "scripts/doctor-common.sh" = 446
 "scripts/doctor_session_test.py" = 570
 "scripts/fetch-channel-source-manifest.py" = 329
@@ -847,7 +861,7 @@ max_lines = 1000
 "scripts/preflight.sh" = 338
 "scripts/protocol_fixture_recorder.py" = 500
 "scripts/prove-installed-shell.py" = 318
-"scripts/release-binaries.py" = 549
+"scripts/release-binaries.py" = 493
 "scripts/release_collect_evidence.py" = 462
 "scripts/release_glowup.py" = 823
 "scripts/release_inputs.py" = 337
@@ -1073,15 +1087,15 @@ expected = "tauri-cli 2.11.1"
 install = ["cargo", "install", "tauri-cli", "--version", "2.11.1", "--locked"]
 
 [release]
-# The order is non-negotiable, and it is the reason this exists as a command
-# rather than a script: nothing may stamp a version, mutate a tracked file,
-# push, tag, or dispatch a workflow before the complete local gate has passed
-# against the exact HEAD that gets published.
+# The selected commit is prepared and committed before release. Qualification
+# may create immutable Git refs afterward; it may never edit tracked source.
 line = "0.6"
-precheck = ["scripts/publish-tested-main.py", "--precheck"]
+source = "scripts/publish-release-source.py"
+source_ref_template = "capsem-source-{source_commit}"
+tagger_name = "Capsem Release Gate"
+tagger_email = "release@capsem.org"
 notes = ["scripts/release-binaries.py", "--precheck"]
 fetch_manifest = "scripts/fetch-channel-source-manifest.py"
-publish = "scripts/publish-tested-main.py"
 binaries = "scripts/release-binaries.py"
 profile = ["cargo", "run", "-p", "capsem-admin", "--", "release"]
 preflight_dir = "target/release-preflight"
@@ -1583,6 +1597,7 @@ source_contract = [
     "tests/test_gate_prefix.py",
     "tests/test_gate_resume.py",
     "tests/test_gate_release_isolation.py",
+    "tests/test_gate_release_source_commit.py",
     "tests/test_gate_sandbox.py",
     "tests/test_gate_sandbox_report.py",
     "tests/test_gate_git_worktree_mount.py",
@@ -1648,6 +1663,7 @@ source_contract = [
     "tests/test_gate_step_output.py",
     "tests/test_gate_runlog.py",
     "tests/test_gate_runlog_evidence.py",
+    "tests/test_gate_run_ledger.py",
 
     "tests/test_gate_smoke_lifecycle.py",
     "tests/test_gate_storage.py",
@@ -1854,6 +1870,7 @@ channel_switch_cleared = [
 # `instances/<uuid>-ws.sock` suffix; `/tmp/capsem-gate-<32hex>` is 41
 # characters and reproduced a 12,024-error socket failure. `~/.cg/<8hex>` is 24.
 parent = "~/.cg"
+lease_template = ".{identity}.lock"
 name_length = 8
 
 # How many prefixes survive a sweep. A failed run keeps its tree so it can be
@@ -2002,7 +2019,10 @@ report_stop_timeout = 10.0
 # Wiped at the start of a run, which is why the machine lock is taken first and
 # why the lockfile lives outside it.
 home = "target/test-home/.capsem"
-run_dir = "target/test-home/.capsem/run"
+# AF_UNIX paths must not grow with a full 40-character release prefix. The
+# source-root digest makes parallel synthetic checkouts distinct; the machine
+# lock makes the production path single-owner.
+run_dir = "/tmp/capsem-r-{root_id}"
 # Created up front: the service writes into all three and creating them lazily
 # was how a first run differed from every later one.
 seeded_dirs = ["run", "sessions", "logs"]

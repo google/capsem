@@ -52,12 +52,14 @@ def _release_plan(command: str, *arguments: str):
     from capsem.gate import cli  # noqa: F401 - registers every command
     from capsem.gate.command import GateCommand
     from capsem.gate.proc import Runner
+    from capsem.gate.sourcecommit import SourceCommit
 
     names = ("channel", "profile")
     parsed = argparse.Namespace(
         dry_run=False,
         graph=False,
         timing=False,
+        source_commit=SourceCommit("0" * 40),
         **dict(zip(names, arguments, strict=False)),
     )
     return GateCommand.registry[command](Runner(ROOT), parsed).plan()
@@ -71,7 +73,7 @@ def _publishing(plan) -> str:
     therefore builds both families before publishing either.
     """
     labels = list(plan.labels)
-    after = labels[labels.index("confirm-head") :]
+    after = labels[labels.index("source.publish-ref") :]
     return "\n".join(line for label in after for line in plan.step_named(label).render())
 
 
@@ -157,9 +159,11 @@ def test_nothing_is_published_before_the_complete_gate_passes(
         next(i for i, label in enumerate(order) if label.startswith(prefix))
         for prefix in ("fast.", "static.", "artifacts.", "functional.", "glowup.")
     ]
-    assert order.index("precheck") < min(phases)
-    assert max(phases) < order.index("confirm-head")
-    assert order.index("confirm-head") < order.index(publication)
+    assert order.index("source.remote-main") < min(phases)
+    if command == "release-binaries":
+        assert order.index("precheck") < min(phases)
+    assert max(phases) < order.index("source.publish-ref")
+    assert order.index("source.publish-ref") < order.index(publication)
 
 
 @pytest.mark.parametrize(
@@ -168,12 +172,12 @@ def test_nothing_is_published_before_the_complete_gate_passes(
         (
             "release-binaries",
             ("nightly",),
-            r"scripts/release-binaries\.py nightly",
+            r"scripts/release-binaries\.py nightly 0{40}",
         ),
         (
             "release-profile",
             ("nightly", "code"),
-            r"capsem-admin -- release --channel nightly --profile code",
+            r"capsem-admin -- release --channel nightly --profile code --source-commit 0{40}",
         ),
     ),
 )
@@ -199,11 +203,13 @@ def test_public_release_command_executes_read_only_preflight_then_full_test_befo
     # The read-only preconditions, actually issued. A dirty tree or the wrong
     # branch invalidates everything after, and learning that costs seconds
     # rather than a complete gate.
-    for label in order[: order.index("record-head") + 1]:
+    first_gate = order.index("source.record")
+    for label in order[:first_gate]:
         plan.step_named(label).run(_context(runner))
 
     issued = runner.rendered
-    assert "publish-tested-main.py --precheck" in issued[0]
+    assert "publish-release-source.py" in issued[0]
+    assert "--check" in issued[0]
     if recipe == "release-binaries":
         assert any("release-binaries.py --precheck nightly" in line for line in issued)
         assert any("fetch-channel-source-manifest.py" in line for line in issued)
@@ -214,8 +220,10 @@ def test_public_release_command_executes_read_only_preflight_then_full_test_befo
         next(i for i, label in enumerate(order) if label.startswith(prefix))
         for prefix in ("fast.", "static.", "artifacts.", "functional.", "glowup.")
     ]
-    assert order.index("precheck") < min(phases)
-    assert max(phases) < order.index("confirm-head") < order.index("release")
+    assert order.index("source.remote-main") < min(phases)
+    if recipe == "release-binaries":
+        assert order.index("precheck") < min(phases)
+    assert max(phases) < order.index("source.publish-ref") < order.index("release")
 
     # And the publishing step is the one the trace names.
     import re
@@ -240,8 +248,8 @@ def test_failed_full_test_prevents_every_release_side_effect(
 ) -> None:
     """A failing gate stops everything downstream of it.
 
-    The plan makes this structural: publication is `after=(confirm-head,)`
-    which is `after=(gate,)`, and a step whose dependency failed is never
+    The plan makes this structural: publication follows `source.publish-ref`,
+    which follows the gate, and a step whose dependency failed is never
     submitted. Inspecting recipe text could never have proved this.
     """
     from helpers.gate import RecordingRunner
@@ -267,18 +275,22 @@ def test_failed_full_test_prevents_every_release_side_effect(
     issued = "\n".join(runner.rendered)
     assert "cargo clippy" in issued, "the gate must actually have been attempted"
     for mutation in (
-        "publish-tested-main.py --expected-head",
-        "scripts/release-binaries.py nightly",
+        "scripts/release-binaries.py nightly 0000000000000000000000000000000000000000",
         "capsem-admin -- release",
     ):
         assert mutation not in issued, f"{mutation} ran after a failing gate"
+    source_actions = [line for line in runner.rendered if "publish-release-source.py" in line]
+    assert len(source_actions) == 1
+    assert "--check" in source_actions[0], (
+        "the read-only fresh-origin preflight must run, but source-ref publication must not"
+    )
 
     outcomes = plan.outcomes
     assert outcomes["fast.clippy"].status == "failed"
     # Everything downstream is skipped rather than failed: it did not fail, it
     # never ran, and a report conflating the two hides how far the real
     # failure reached.
-    assert outcomes["confirm-head"].status == "skipped"
+    assert outcomes["source.publish-ref"].status == "skipped"
     assert outcomes["release"].status == "skipped"
 
 
@@ -328,12 +340,14 @@ def test_daily_scheduler_runs_profile_and_binary_lanes_without_direct_dispatch()
     assert "fail-fast: false" in profiles
     assert 'CAPSEM_SKIP_ASSET_CHECK: "1"' in profiles
     assert "sh bootstrap.sh --yes" in profiles
-    assert "just release-profile nightly ${{ matrix.profile }}" in profiles
+    assert "just release-profile nightly ${{ matrix.profile }} ${{ github.sha }}" in profiles
     assert "needs: release-profiles" in binaries
     assert "if: ${{ always() }}" in binaries
     assert 'CAPSEM_SKIP_ASSET_CHECK: "1"' in binaries
     assert "sh bootstrap.sh --yes" in binaries
-    assert "just release-binaries nightly" in binaries
+    assert "just release-binaries nightly ${{ github.sha }}" in binaries
+    assert "ref: main" not in workflow
+    assert workflow.count("ref: ${{ github.sha }}") == 2
     assert "release.yaml" not in workflow
     assert "release-assets.yaml" not in workflow
 
@@ -386,13 +400,13 @@ def test_release_lanes_run_one_reusable_fast_gate_before_builders() -> None:
     assert linux_prerequisites < fast < static
 
     binary = _workflow("release.yaml")
-    assert "  fast-gate:\n    uses: ./.github/workflows/fast-gate.yaml" in binary
+    assert "uses: ./.github/workflows/fast-gate.yaml" in _job_block(binary, "fast-gate")
     assert "needs: [runtime-preflight, fast-gate]" in _job_block(binary, "preflight")
     assert "Run shared static module" not in _job_block(binary, "test-binary-pairing")
     assert "Run complete shared fast module" not in _job_block(binary, "test-binary-pairing")
 
     profile = _workflow("release-assets.yaml")
-    assert "  fast-gate:\n    uses: ./.github/workflows/fast-gate.yaml" in profile
+    assert "uses: ./.github/workflows/fast-gate.yaml" in _job_block(profile, "fast-gate")
     build_assets = _job_block(profile, "build-assets")
     assert "fast-gate" in build_assets.splitlines()[1]
     assert "Run shared static module" not in _job_block(profile, "test-profile-pairing")

@@ -16,6 +16,7 @@ from blake3 import blake3
 from helpers.release_site import release_site_build_lock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SOURCE_COMMIT = "0" * 40
 
 
 def _rootfs_obom_bytes(architecture: str) -> bytes:
@@ -1466,10 +1467,30 @@ def test_release_index_check_rejects_host_binary_hash_drift(tmp_path: Path) -> N
     assert "health.json host binary sha256 mismatch" in result.stderr
 
 
-def test_binary_release_index_records_host_artifacts_without_changing_assets(
+def test_binary_release_index_records_source_on_packages_without_changing_profiles(
     tmp_path: Path,
 ) -> None:
-    manifest_path = _write_release_manifest(tmp_path)
+    legacy_manifest = _write_release_manifest(tmp_path)
+    profiles_dir = _write_profile_catalog(tmp_path)
+    dist = tmp_path / "target" / "candidate-channel"
+    _run_admin(
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        f"file://{legacy_manifest}",
+        "--assets-dir",
+        str(legacy_manifest.parent),
+        "--profiles-dir",
+        str(profiles_dir),
+        "--channel",
+        "stable",
+        "--out-dir",
+        str(dist),
+        "--generated-at",
+        "2030-01-01T00:00:00Z",
+    )
+    manifest_path = dist / "assets/stable/manifest.json"
     before = json.loads(manifest_path.read_text(encoding="utf-8"))
     artifacts = tmp_path / "release-artifacts"
     artifacts.mkdir()
@@ -1488,6 +1509,8 @@ def test_binary_release_index_records_host_artifacts_without_changing_assets(
         str(manifest_path),
         "--version",
         "1.4.2",
+        "--source-commit",
+        SOURCE_COMMIT,
         "--date",
         "2030-02-03",
         "--artifact",
@@ -1503,18 +1526,16 @@ def test_binary_release_index_records_host_artifacts_without_changing_assets(
     after = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert report["schema"] == "capsem.admin.assets_channel_record_binary.v1"
     assert report["version"] == "1.4.2"
-    assert report["min_assets"] == before["assets"]["current"]
-    assert after["assets"] == before["assets"]
-    assert after["binaries"]["current"] == "1.4.2"
-    release = after["binaries"]["releases"]["1.4.2"]
-    assert release["min_assets"] == "2030.0101.1"
-    assert release["version"] == "1.4.2"
-    assert release["date"] == "2030-02-03"
-    files = {entry["name"]: entry for entry in release["files"]}
-    assert files[pkg.name]["sha256"] == hashlib.sha256(pkg_bytes).hexdigest()
-    assert files[deb.name]["sha256"] == hashlib.sha256(deb_bytes).hexdigest()
-    assert files[deb.name]["binaries"]
-    assert files[sbom.name]["sha256"] == hashlib.sha256(sbom.read_bytes()).hexdigest()
+    assert after["profiles"] == before["profiles"]
+    packages = {entry["name"]: entry for entry in after["packages"]}
+    assert packages[pkg.name]["source_commit"] == SOURCE_COMMIT
+    assert packages[deb.name]["source_commit"] == SOURCE_COMMIT
+    assert packages[pkg.name]["digest"]["sha256"] == hashlib.sha256(pkg_bytes).hexdigest()
+    assert packages[deb.name]["digest"]["sha256"] == hashlib.sha256(deb_bytes).hexdigest()
+    assert packages[deb.name]["binaries"]
+    assert packages[deb.name]["evidence"][0]["digest"]["sha256"] == hashlib.sha256(
+        sbom.read_bytes()
+    ).hexdigest()
 
 
 def test_binary_release_index_rejects_bad_spdx_sbom(tmp_path: Path) -> None:
@@ -1534,6 +1555,8 @@ def test_binary_release_index_rejects_bad_spdx_sbom(tmp_path: Path) -> None:
         str(manifest_path),
         "--version",
         "1.4.2",
+        "--source-commit",
+        SOURCE_COMMIT,
         "--date",
         "2030-02-03",
         "--artifact",
@@ -1563,6 +1586,8 @@ def test_binary_release_index_rejects_sbom_without_host_package(tmp_path: Path) 
         str(manifest_path),
         "--version",
         "1.4.2",
+        "--source-commit",
+        SOURCE_COMMIT,
         "--date",
         "2030-02-03",
         "--artifact",
@@ -1592,6 +1617,8 @@ def test_binary_release_index_rejects_non_package_host_artifact(tmp_path: Path) 
         str(manifest_path),
         "--version",
         "1.4.2",
+        "--source-commit",
+        SOURCE_COMMIT,
         "--date",
         "2030-02-03",
         "--artifact",
@@ -1623,6 +1650,8 @@ def test_binary_release_index_rejects_empty_artifact(tmp_path: Path) -> None:
         str(manifest_path),
         "--version",
         "1.4.2",
+        "--source-commit",
+        SOURCE_COMMIT,
         "--date",
         "2030-02-03",
         "--artifact",
@@ -1654,6 +1683,8 @@ def test_binary_release_index_rejects_package_version_mismatch(tmp_path: Path) -
         str(manifest_path),
         "--version",
         "1.4.2",
+        "--source-commit",
+        SOURCE_COMMIT,
         "--date",
         "2030-02-03",
         "--artifact",
@@ -1685,6 +1716,8 @@ def test_binary_release_index_rejects_noncanonical_sbom_artifact(tmp_path: Path)
         str(manifest_path),
         "--version",
         "1.4.2",
+        "--source-commit",
+        SOURCE_COMMIT,
         "--date",
         "2030-02-03",
         "--artifact",

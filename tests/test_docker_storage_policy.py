@@ -509,6 +509,10 @@ def test_the_evidence_bundle_says_what_it_could_not_collect(tmp_path: Path) -> N
             "assets",
             "--label",
             "gap",
+            "--run-id",
+            "20260813-010203-abcdef-release-binaries",
+            "--source-commit",
+            "1" * 40,
             "--offline",
         ],
         cwd=ROOT,
@@ -519,6 +523,8 @@ def test_the_evidence_bundle_says_what_it_could_not_collect(tmp_path: Path) -> N
     capture_dir = next(tmp_path.glob("*-storage-gap"))
 
     collected = json.loads((capture_dir / "collected.json").read_text())
+    assert collected["run_id"] == "20260813-010203-abcdef-release-binaries"
+    assert collected["source_commit"] == "1" * 40
     by_source = {entry["source"]: entry for entry in collected["files"]}
 
     # Every optional source is accounted for by name, present or not.

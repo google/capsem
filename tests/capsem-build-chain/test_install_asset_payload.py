@@ -929,6 +929,8 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
     assert "scripts/repack-deb.sh" in script
     assert "scripts/generate-host-binary-sbom.py" in script
     assert "record-binary" in script
+    assert '"--source-commit"' in script
+    assert "source_commit_for_checkout(PROJECT_ROOT)" in script
     assert "assets" in script and "channel" in script and "build" in script
     assert len(clone_functions) == 1
     assert not any(isinstance(node, ast.Dict) for node in ast.walk(clone_functions[0])), (
@@ -2597,6 +2599,8 @@ def test_native_glowup_owns_exact_manifest_and_installed_shell_evidence() -> Non
     assert "assert_manifest_artifact" in linux
     assert "prove-macos-package-boot.sh" in macos
     assert "verify-installed-release.py" in linux
+    assert '"--source-commit"' in macos
+    assert "source_commit_for_checkout(ROOT)" in macos
 
 
 def test_dev_service_does_not_replace_installed_assets_with_worktree_symlink() -> None:

@@ -31,6 +31,7 @@ import pytest
 from capsem.gate import cli  # noqa: F401 - imported so every command registers
 from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
+from capsem.gate.sourcecommit import SourceCommit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -38,8 +39,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 #: What each command needs beyond the common flags. Release lanes take a
 #: channel; the profile lane also takes a profile.
 ARGUMENTS: dict[str, dict[str, str]] = {
-    "release-binaries": {"channel": "nightly"},
-    "release-profile": {"channel": "nightly", "profile": "code"},
+    "release-binaries": {"channel": "nightly", "source_commit": SourceCommit("0" * 40)},
+    "release-profile": {
+        "channel": "nightly",
+        "profile": "code",
+        "source_commit": SourceCommit("0" * 40),
+    },
 }
 
 

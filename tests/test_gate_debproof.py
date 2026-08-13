@@ -19,11 +19,13 @@ from capsem.gate import config as gate_config
 from capsem.gate.content import ProfileContent
 from capsem.gate.debproof import DebProof
 from capsem.gate.errors import GateError
+from capsem.gate.sourcecommit import SourceCommit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
 PROOF = CONFIG.package.proof
 VERSION = "9.9.9"
+SOURCE_COMMIT = SourceCommit("0" * 40)
 
 
 @pytest.fixture(autouse=True)
@@ -100,6 +102,7 @@ def _proof(
         content=_content(root),
         manifest_url="file:///src/m.json",
         channel="nightly",
+        source_commit=SOURCE_COMMIT,
         sleep=lambda _seconds: None,
     )
     return built, runner
@@ -126,6 +129,7 @@ def test_only_a_package_this_checkout_built_is_accepted(
             content=_content(root),
             manifest_url="file:///src/m.json",
             channel="nightly",
+            source_commit=SOURCE_COMMIT,
         )
 
 
@@ -139,6 +143,7 @@ def test_an_unknown_channel_is_refused(tmp_path: Path) -> None:
             content=_content(root),
             manifest_url="file:///src/m.json",
             channel="prod",
+            source_commit=SOURCE_COMMIT,
         )
 
 
@@ -189,6 +194,7 @@ def test_exact_package_graph_is_checked_and_handed_off_before_dpkg(
     handoff = transcript.index("install-manifest-request.sh write")
     install = transcript.index("dpkg -i")
     assert extract < record < build < check < handoff < install
+    assert f"--source-commit {SOURCE_COMMIT}" in transcript
     assert "--profile-revision-policy selected-input" in transcript
     assert "--network none" in runner.matching(r"docker run -d")[0]
 
@@ -266,6 +272,7 @@ def test_a_binary_carrying_an_older_build_fails(
         content=_content(root),
         manifest_url="file:///src/m.json",
         channel="nightly",
+        source_commit=SOURCE_COMMIT,
         sleep=lambda _seconds: None,
     )
 
@@ -289,6 +296,7 @@ def test_an_installed_version_that_disagrees_with_the_package_fails(
             content=_content(root),
             manifest_url="file:///src/m.json",
             channel="nightly",
+            source_commit=SOURCE_COMMIT,
             sleep=lambda _seconds: None,
         ).run()
 
@@ -313,6 +321,7 @@ def test_a_status_line_that_is_missing_fails_the_proof(
             content=_content(root),
             manifest_url="file:///src/m.json",
             channel="nightly",
+            source_commit=SOURCE_COMMIT,
             sleep=lambda _seconds: None,
         ).run()
 
@@ -339,6 +348,7 @@ def test_profiles_must_all_be_ready(
             content=_content(root),
             manifest_url="file:///src/m.json",
             channel="nightly",
+            source_commit=SOURCE_COMMIT,
             sleep=lambda _seconds: None,
         ).run()
 

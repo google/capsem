@@ -68,12 +68,19 @@ class RunLog(EventJournal):
 
     @classmethod
     @contextmanager
-    def open(cls, config: GateConfig, command: str, *, argv: tuple[str, ...] = ()):
+    def open(
+        cls,
+        config: GateConfig,
+        command: str,
+        *,
+        argv: tuple[str, ...] = (),
+        source_commit: str | None = None,
+    ):
         """A run's directory, for the length of that run."""
         settings = config.runlog
         root = config.path(settings.root)
         log = cls(root, settings, command=command)
-        log._begin(config, argv)
+        log._begin(config, argv, source_commit)
         try:
             yield log
         except BaseException as error:
@@ -82,7 +89,7 @@ class RunLog(EventJournal):
         else:
             log.close(OK)
 
-    def _begin(self, config: GateConfig, argv: tuple[str, ...]) -> None:
+    def _begin(self, config: GateConfig, argv: tuple[str, ...], source_commit: str | None) -> None:
         # Kept for `close`, which has to record this run in the ledger and
         # regenerate the digest, and both are questions about the whole
         # history rather than about this directory.
@@ -103,6 +110,7 @@ class RunLog(EventJournal):
                 command=self.command,
                 argv=argv,
                 head=head_revision(config.root),
+                source_commit=source_commit,
                 platform=platform.system(),
                 machine=platform.machine(),
                 cores=os.cpu_count() or 0,

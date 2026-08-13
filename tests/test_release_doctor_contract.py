@@ -1578,9 +1578,10 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
         "ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json"
         in workflow
     )
-    assert "Verify immutable dispatch tag and channel" in workflow
+    assert "Verify immutable source ref, version tag, and channel" in workflow
     assert 'test "$GITHUB_REF_TYPE" = tag' in workflow
-    assert 'test "$GITHUB_REF_NAME" = "$RELEASE_TAG"' in workflow
+    assert 'test "$GITHUB_REF_NAME" = "capsem-source-$SOURCE_COMMIT"' in workflow
+    assert 'case "$RELEASE_TAG" in v*) ;; *) exit 1 ;; esac' in workflow
     assert "BINARY_RELEASE_CHANNELS" not in workflow
     assert "  build-assets:" not in workflow
     assert "vm-assets-" not in workflow
@@ -1747,6 +1748,8 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     assert "release-artifacts/capsem-sbom.spdx.json" in assemble_channel
     assert "Record binary release metadata in channel manifest" in assemble_channel
     assert "assets channel record-binary" in assemble_channel
+    assert "ref: ${{ github.sha }}" in assemble_channel
+    assert '--source-commit "${{ github.sha }}"' in assemble_channel
     assert "manifest.before.json" in assemble_channel
     assert "binary dry-run changed VM asset metadata" in assemble_channel
     assert '"vm_asset_jobs": "not_run"' in assemble_channel
@@ -2029,8 +2032,8 @@ def test_release_dispatch_has_exactly_two_single_purpose_just_recipes() -> None:
 
     assert '\nrelease tag="" channel="stable":' not in f"\n{justfile}"
     assert "\nprepare-release:" not in justfile
-    assert "\nrelease-binaries channel:" in justfile
-    assert "\nrelease-profile channel profile:" in justfile
+    assert "\nrelease-binaries channel source_commit:" in justfile
+    assert "\nrelease-profile channel profile source_commit:" in justfile
     assert "scripts/release-binaries.py" in _recipe_block("release-binaries")
     assert "capsem-admin -- release" in _recipe_block("release-profile")
 
@@ -2743,8 +2746,8 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     release_skill = _skill_text("skills/release-process/SKILL.md")
     release_skill_text = " ".join(release_skill.split())
 
-    assert "`just release-binaries <channel>`" in release_skill
-    assert "`just release-profile <channel> <profile>`" in release_skill
+    assert "`just release-binaries <channel> <source-commit>`" in release_skill
+    assert "`just release-profile <channel> <profile> <source-commit>`" in release_skill
     assert "binary lane builds packages only" in release_skill_text
     assert "profile lane builds exactly one channel/profile" in release_skill_text
     assert "Neither artifact family is rebuilt twice" in release_skill
@@ -2923,15 +2926,15 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
 
     assert (
-        "| `release-nightly.yaml` | Daily schedule or manual dispatch | Check out current `main`, run the selected `just release-profile nightly <profile>` commands serially, then run `just release-binaries nightly` as a separate lane |"
+        "| `release-nightly.yaml` | Daily schedule or manual dispatch | Freeze `${{ github.sha }}`, pass it to each profile command serially, then pass the same SHA to the binary lane |"
         in docs
     )
     assert (
-        "| `release.yaml` | Correlated dispatch from `release-binaries` with `{tag, channel, publish, dispatch_id}` | Build and install-test exact native packages; publish and advance only a new immutable identity, or finish as a rebuild-only proof when that identity already exists |"
+        "| `release.yaml` | Correlated dispatch from `release-binaries` with `{tag, channel, publish, dispatch_id, source_commit}` | Build and install-test exact native packages from the selected immutable commit; publish and advance only a new immutable identity, or finish as a rebuild-only proof when that identity already exists |"
         in docs
     )
     assert (
-        "| `release-assets.yaml` | Correlated dispatch from `capsem-admin release` | Build exactly one channel/profile's images, config, and evidence against the existing channel package; the public command watches that exact run through success |"
+        "| `release-assets.yaml` | Correlated dispatch from `capsem-admin release` with `source_commit` | Build exactly one channel/profile's images, config, and evidence from that commit against the existing channel package; the public command watches that exact run through success |"
         in docs
     )
     assert (
@@ -5567,7 +5570,6 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         "check-release-" + "qualification.py",
         "qualify-" + "release",
         "cut-" + "release",
-        "exact-" + "SHA",
     )
     for marker in retired_markers:
         doctrine.write_text(f"{marker}\n")
@@ -6386,26 +6388,17 @@ def test_parallel_asset_primitive_does_not_run_docker_gc() -> None:
     assert "_docker-gc" not in lanes
 
 
-def test_release_recipes_reject_a_dirty_tree_before_running_the_gate() -> None:
-    """The clean-tree precondition must be checked when it is still actionable.
-
-    `publish-tested-main.py` refuses a dirty tree, correctly, but it runs after
-    `just test`. A tree with uncommitted work therefore costs a full ~40 minute
-    gate before the release says the one thing the operator could have fixed in
-    seconds. Same rule, checked at the front.
-    """
+def test_release_recipes_require_fresh_remote_main_before_running_the_gate() -> None:
+    """The selected detached commit must already be on fresh origin/main."""
     for recipe in ("release-binaries", "release-profile"):
         block = _recipe_block(recipe)
 
-        assert "publish-tested-main.py --precheck" in block, (
-            f"{recipe} must verify a clean tree before `just test`, not only after"
+        assert "publish-release-source.py" in block
+        assert "--check" in block, (
+            f"{recipe} must verify origin/main membership before the complete proof"
         )
-        # Before the gate itself, which the release plan now contains rather
-        # than launching -- so the thing it must precede is the gate's first
-        # phase.
-        assert block.index("--precheck") < block.index("fast."), (
-            f"{recipe} runs the gate before checking the tree, which is the "
-            "forty-minute failure this exists to prevent"
+        assert block.index("--check") < block.index("fast."), (
+            f"{recipe} runs the gate before checking the immutable remote source"
         )
 
 

@@ -63,7 +63,7 @@ class Recorded:
         return self.records
 
     @contextmanager
-    def _recording(self):
+    def _recording(self, *, source_commit: str | None = None):
         """The run log, or a journal that keeps nothing.
 
         A command that only reads runs must not create one; everything else
@@ -78,7 +78,12 @@ class Recorded:
 
         recorded = None
         try:
-            with RunLog.open(self._config, self.name, argv=self._argv()) as log:
+            with RunLog.open(
+                self._config,
+                self.name,
+                argv=self._argv(),
+                source_commit=source_commit,
+            ) as log:
                 recorded = log
                 yield log
         finally:

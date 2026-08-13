@@ -4,34 +4,38 @@ The normative contract is `tmp/release-spec.md`. Release managers have exactly
 two commands:
 
 ```text
-just release-binaries <channel>
-just release-profile <channel> <profile>
+just release-binaries <channel> <source-commit>
+just release-profile <channel> <profile> <source-commit>
 ```
 
 There is no generic or combined release command.
 
 ## One-command gate
 
-Do not run a separate preparation or qualification command. Each release
-command first runs complete `just test`. If it fails, nothing is pushed,
-stamped, authored, or dispatched. After success, the shared source guard
-requires the exact clean `main` HEAD captured before the test, fast-forwards
-that tested HEAD when needed, and refuses changed, dirty, or diverged source.
-Only then does the selected release implementation run.
+Prepare the version cohort, changelog section, and `LATEST_RELEASE.md` in an
+ordinary reviewed commit on `main`; there is no separate qualification
+command. Pass that full lowercase commit to the release command. The command
+requires it on local and fresh remote `main`, materializes a detached private
+repository at `<prefix-parent>/<source-commit>`, and runs complete `just test`
+there. The outer checkout and `main` may advance while it runs. A failure
+creates no release ref, version tag, manifest mutation, or workflow dispatch.
+After success, the command creates or verifies the immutable lightweight
+`capsem-source-<source-commit>` transport ref. It never edits tracked source or
+pushes `main`.
 
 ## Binary release
 
 Run:
 
 ```sh
-just release-binaries nightly
+just release-binaries nightly <source-commit>
 # or
-just release-binaries stable
+just release-binaries stable <source-commit>
 ```
 
-The command runs complete `just test`, publishes its exact tested `main` HEAD,
-then the binary script stamps the version and release notes, creates and pushes
-the immutable tag, dispatches the binary workflow, and waits for it. The
+The command runs complete `just test`, verifies the prepared version and notes,
+creates the immutable version tag when absent, dispatches the binary workflow
+from the source transport ref, and waits for the exact SHA/ref/title run. The
 serialized workflow:
 
 1. Acquires `capsem-release-<channel>`.
@@ -53,11 +57,11 @@ builders.
 Run:
 
 ```sh
-just release-profile nightly code
+just release-profile nightly code <source-commit>
 ```
 
-The command runs complete `just test`, publishes its exact tested `main` HEAD,
-then calls `capsem-admin release`. The serialized workflow:
+The command runs complete `just test`, publishes the immutable source transport
+ref, then calls `capsem-admin release` with that commit. The serialized workflow:
 
 1. Acquires the same `capsem-release-<channel>` lock.
 2. Resolves the latest source manifest and pulls its current package.
@@ -74,8 +78,8 @@ The profile workflow must never build native packages or release binaries.
 Run the normal commands in order:
 
 ```sh
-just release-profile <channel> <profile>
-just release-binaries <channel>
+just release-profile <channel> <profile> <source-commit>
+just release-binaries <channel> <source-commit>
 ```
 
 The first command builds and publishes the profile once but does not expose an
@@ -97,7 +101,10 @@ Every activated pairing must pass:
   preservation of the prior working state.
 
 The manifest is the authority. SBOM, OBOM, attestations, and GitHub workflow
-logs are the evidence. Do not create a parallel release ledger or result file.
+logs are the evidence. Newly authored package rows record the binary source
+commit; the selected profile document records the profile source commit. Run
+ids remain retry identities, not source identities. Do not create a parallel
+release ledger or result file.
 
 ## Failure rules
 

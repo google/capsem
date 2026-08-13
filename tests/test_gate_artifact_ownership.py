@@ -104,9 +104,16 @@ def test_the_ownership_check_is_no_longer_running_over_nothing() -> None:
 @pytest.mark.parametrize("command", ["candidate", "release-binaries", "release-profile"])
 def test_both_release_lanes_inherit_the_same_producers(command: str) -> None:
     """Declared at the fragment, so composing it carries the claim along."""
+    from capsem.gate.sourcecommit import SourceCommit
+
+    source_commit = SourceCommit("0" * 40)
     args = {
-        "release-binaries": {"channel": "nightly"},
-        "release-profile": {"channel": "nightly", "profile": "code"},
+        "release-binaries": {"channel": "nightly", "source_commit": source_commit},
+        "release-profile": {
+            "channel": "nightly",
+            "profile": "code",
+            "source_commit": source_commit,
+        },
     }.get(command, {})
     import argparse
     import sys as _sys

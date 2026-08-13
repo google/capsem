@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use capsem_core::asset_manager::{BinaryExecutable, BinaryFile, BinaryRelease, ManifestV2};
+use capsem_core::asset_manager::{BinaryExecutable, BinaryFile, ManifestV2};
 use capsem_core::net::policy_config::{
     resolve_profile_rule_file_path, validate_corp_toml_contract, CompiledSecurityRule,
     ProfileCatalog, ProfileConfigFile, ProfileObomConfig, ProfileObomDescriptor,
@@ -22,6 +22,9 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 mod channel_bootstrap;
 #[allow(dead_code)]
 mod release_graph;
+mod source_commit;
+
+use source_commit::SourceCommit;
 
 #[derive(Debug, Parser)]
 #[command(name = "capsem-admin")]
@@ -214,6 +217,9 @@ struct ReleaseArgs {
     /// Profile id to publish.
     #[arg(long)]
     profile: String,
+    /// Exact committed source qualified before this release dispatch.
+    #[arg(long)]
+    source_commit: SourceCommit,
     /// Source config root containing the profile definition.
     #[arg(long, default_value = "config")]
     config_root: PathBuf,
@@ -322,6 +328,9 @@ struct ManifestCorporateArgs {
     /// Official Capsem version to pin, or "latest" for the highest selectable version.
     #[arg(long)]
     binary: String,
+    /// Exact source commit that built the corporation-owned profiles.
+    #[arg(long)]
+    source_commit: SourceCommit,
     /// Root below which capsem-admin owns corporation/channel manifest destinations.
     #[arg(long)]
     output_root: PathBuf,
@@ -397,6 +406,9 @@ struct AssetsChannelRecordBinaryArgs {
     /// Binary version being published, without the leading v.
     #[arg(long)]
     version: String,
+    /// Exact committed source whose packages are being recorded.
+    #[arg(long)]
+    source_commit: SourceCommit,
     /// Oldest asset version compatible with this binary. Defaults to assets.current.
     #[arg(long)]
     min_assets: Option<String>,
@@ -593,6 +605,7 @@ struct ReleaseDispatchReport {
     profile: String,
     profile_revision: String,
     publication_identity: String,
+    source_commit: SourceCommit,
     workflow: &'static str,
     dispatched: bool,
     run_id: Option<u64>,
@@ -604,6 +617,12 @@ struct ProfileWorkflowRun {
     database_id: u64,
     #[serde(rename = "displayTitle")]
     display_title: String,
+    #[serde(rename = "headSha")]
+    head_sha: String,
+    #[serde(rename = "headBranch")]
+    head_branch: String,
+    status: String,
+    conclusion: String,
 }
 
 trait ProfileWorkflowRunner {
@@ -652,6 +671,7 @@ fn dispatch_profile_workflow<R: ProfileWorkflowRunner>(
     workflow: &str,
     channel: &str,
     profile: &str,
+    source_commit: &SourceCommit,
     dispatch_id: &str,
 ) -> Result<u64> {
     if dispatch_id.is_empty()
@@ -662,12 +682,13 @@ fn dispatch_profile_workflow<R: ProfileWorkflowRunner>(
         return Err(anyhow!("profile workflow dispatch id is unsafe"));
     }
     let title = format!("Release profile {channel}/{profile} {dispatch_id}");
+    let source_ref = format!("capsem-source-{source_commit}");
     runner.run(&[
         "workflow".to_string(),
         "run".to_string(),
         workflow.to_string(),
         "--ref".to_string(),
-        "main".to_string(),
+        source_ref.clone(),
         "-f".to_string(),
         format!("channel={channel}"),
         "-f".to_string(),
@@ -676,6 +697,8 @@ fn dispatch_profile_workflow<R: ProfileWorkflowRunner>(
         "dry_run=false".to_string(),
         "-f".to_string(),
         format!("dispatch_id={dispatch_id}"),
+        "-f".to_string(),
+        format!("source_commit={source_commit}"),
     ])?;
 
     for poll in 0..60 {
@@ -685,13 +708,15 @@ fn dispatch_profile_workflow<R: ProfileWorkflowRunner>(
             "--workflow".to_string(),
             workflow.to_string(),
             "--branch".to_string(),
-            "main".to_string(),
+            source_ref.clone(),
+            "--commit".to_string(),
+            source_commit.to_string(),
             "--event".to_string(),
             "workflow_dispatch".to_string(),
             "--limit".to_string(),
             "100".to_string(),
             "--json".to_string(),
-            "databaseId,displayTitle".to_string(),
+            "databaseId,displayTitle,headSha,headBranch,status,conclusion".to_string(),
         ])?;
         let runs: Vec<ProfileWorkflowRun> = serde_json::from_str(&raw)
             .context("GitHub returned invalid profile workflow run JSON")?;
@@ -705,12 +730,44 @@ fn dispatch_profile_workflow<R: ProfileWorkflowRunner>(
             ));
         }
         if let Some(run) = matches.first() {
+            if run.head_sha != source_commit.as_str() || run.head_branch != source_ref {
+                return Err(anyhow!(
+                    "profile workflow correlation matched the wrong source: {run:?}"
+                ));
+            }
+            if run.status == "completed" && run.conclusion != "success" {
+                return Err(anyhow!(
+                    "profile workflow run {} completed with {}",
+                    run.database_id,
+                    run.conclusion
+                ));
+            }
             runner.run(&[
                 "run".to_string(),
                 "watch".to_string(),
                 run.database_id.to_string(),
                 "--exit-status".to_string(),
             ])?;
+            let viewed = runner.output(&[
+                "run".to_string(),
+                "view".to_string(),
+                run.database_id.to_string(),
+                "--json".to_string(),
+                "databaseId,displayTitle,headSha,headBranch,status,conclusion".to_string(),
+            ])?;
+            let completed: ProfileWorkflowRun = serde_json::from_str(&viewed)
+                .context("GitHub returned invalid completed profile workflow JSON")?;
+            if completed.database_id != run.database_id
+                || completed.display_title != title
+                || completed.head_sha != source_commit.as_str()
+                || completed.head_branch != source_ref
+                || completed.status != "completed"
+                || completed.conclusion != "success"
+            {
+                return Err(anyhow!(
+                    "completed profile workflow identity changed: {completed:?}"
+                ));
+            }
             return Ok(run.database_id);
         }
         if poll < 59 {
@@ -1313,6 +1370,7 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
             workflow,
             &args.channel,
             &args.profile,
+            &args.source_commit,
             &dispatch_id,
         )?)
     };
@@ -1323,6 +1381,7 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
         profile: args.profile,
         profile_revision: selection.profile_revision,
         publication_identity: selection.publication_identity,
+        source_commit: args.source_commit.clone(),
         workflow,
         dispatched: !args.dry_run,
         run_id,
@@ -1496,7 +1555,22 @@ fn merge_graph_profile_release(
             profile_version
         ));
     }
+    if let Some(existing) = profile.get("source_commit") {
+        let existing = existing
+            .as_str()
+            .ok_or_else(|| anyhow!("candidate profile source_commit must be a string"))?
+            .parse::<SourceCommit>()?;
+        if existing.as_str() != args.source_commit.as_str() {
+            return Err(anyhow!(
+                "candidate profile {} was built from {}, not selected source {}",
+                args.profile,
+                existing,
+                args.source_commit
+            ));
+        }
+    }
     let compatible = graph_profile_matches_current_binary(&profile, &base)?;
+    profile["source_commit"] = serde_json::to_value(&args.source_commit)?;
     let status_value = serde_json::to_value(status)?;
     profile["status"] = status_value.clone();
     let mut changed_config_refs = 0;
@@ -1918,23 +1992,13 @@ fn author_corporate_manifest(args: &ManifestCorporateArgs) -> Result<CorporateMa
             args.profile_manifest.display()
         )
     })?;
-    let profile_source: serde_json::Value =
-        serde_json::from_slice(&profile_bytes).with_context(|| {
+    let mut profile_source: serde_json::Value = serde_json::from_slice(&profile_bytes)
+        .with_context(|| {
             format!(
                 "parse corporate profile manifest {}",
                 args.profile_manifest.display()
             )
         })?;
-    let profiles = profile_source
-        .get("profiles")
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| anyhow!("corporate profile manifest profiles must be an object"))?;
-    if profiles.is_empty() {
-        return Err(anyhow!(
-            "corporate profile manifest must contain at least one profile"
-        ));
-    }
-
     let (resolved_version, packages) = select_official_packages(&official, &args.binary)?;
     let referenced_packages = profile_source
         .get("packages")
@@ -1945,7 +2009,17 @@ fn author_corporate_manifest(args: &ManifestCorporateArgs) -> Result<CorporateMa
             "corporate profile manifest may reference only the selected official packages"
         ));
     }
-    for (profile_id, profile) in profiles {
+    let profiles = profile_source
+        .get_mut("profiles")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| anyhow!("corporate profile manifest profiles must be an object"))?;
+    if profiles.is_empty() {
+        return Err(anyhow!(
+            "corporate profile manifest must contain at least one profile"
+        ));
+    }
+    for (profile_id, profile) in profiles.iter_mut() {
+        profile["source_commit"] = serde_json::to_value(&args.source_commit)?;
         validate_corporate_profile_document(
             profile_id,
             profile,
@@ -2254,6 +2328,7 @@ fn assets_channel_record_binary_command(args: AssetsChannelRecordBinaryArgs) -> 
     let report = record_binary_release_metadata(
         &args.manifest_path,
         &args.version,
+        &args.source_commit,
         args.min_assets.as_deref(),
         &args.artifacts,
         &date,
@@ -2451,6 +2526,7 @@ fn build_assets_channel_with_policy(
 fn record_binary_release_metadata(
     manifest_path: &Path,
     version: &str,
+    source_commit: &SourceCommit,
     min_assets: Option<&str>,
     artifacts: &[PathBuf],
     date: &str,
@@ -2460,6 +2536,12 @@ fn record_binary_release_metadata(
     }
     validate_binary_version(version)?;
     validate_release_date(date)?;
+    // Validate the candidate bytes independently of the manifest shape. A
+    // legacy graph is no longer writable because it cannot carry package
+    // provenance, but that must not turn a malformed package into a plausible
+    // provenance-only failure.
+    let files = binary_files_from_artifacts(artifacts)?;
+    validate_binary_release_files(version, &files)?;
     let manifest_content = fs::read_to_string(manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let manifest_value: serde_json::Value = serde_json::from_str(&manifest_content)
@@ -2469,45 +2551,14 @@ fn record_binary_release_metadata(
             manifest_path,
             manifest_value,
             version,
+            source_commit,
             min_assets,
-            artifacts,
+            &files,
         );
     }
-    let mut manifest = ManifestV2::from_json(&manifest_content)
-        .with_context(|| format!("parse manifest {}", manifest_path.display()))?;
-    let min_assets = min_assets
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| manifest.assets.current.clone());
-    if !manifest.assets.releases.contains_key(&min_assets) {
-        return Err(anyhow!(
-            "binary min_assets {min_assets} is not present in manifest asset releases"
-        ));
-    }
-    let files = binary_files_from_artifacts(artifacts)?;
-    validate_binary_release_files(version, &files)?;
-    manifest.binaries.current = version.to_string();
-    manifest.binaries.releases.insert(
-        version.to_string(),
-        BinaryRelease {
-            date: date.to_string(),
-            deprecated: false,
-            deprecated_date: None,
-            min_assets: min_assets.clone(),
-            version: version.to_string(),
-            files: files.clone(),
-        },
-    );
-    let mut bytes = serde_json::to_vec_pretty(&manifest).context("serialize updated manifest")?;
-    bytes.push(b'\n');
-    fs::write(manifest_path, &bytes)
-        .with_context(|| format!("write {}", manifest_path.display()))?;
-    Ok(AssetsChannelRecordBinaryReport {
-        schema: "capsem.admin.assets_channel_record_binary.v1",
-        manifest: manifest_path.display().to_string(),
-        version: version.to_string(),
-        min_assets,
-        files,
-    })
+    Err(anyhow!(
+        "record-binary requires a release graph manifest so every package row records source_commit"
+    ))
 }
 
 fn build_assets_channel_from_graph(
@@ -2589,8 +2640,9 @@ fn record_graph_binary_release_metadata(
     manifest_path: &Path,
     mut manifest: serde_json::Value,
     version: &str,
+    source_commit: &SourceCommit,
     min_assets: Option<&str>,
-    artifacts: &[PathBuf],
+    files: &[BinaryFile],
 ) -> Result<AssetsChannelRecordBinaryReport> {
     let profiles = manifest
         .get("profiles")
@@ -2602,9 +2654,7 @@ fn record_graph_binary_release_metadata(
     let min_assets = min_assets
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| graph_profile_revision_summary(profiles));
-    let files = binary_files_from_artifacts(artifacts)?;
-    validate_binary_release_files(version, &files)?;
-    let packages = graph_packages_from_binary_files(version, &files)?;
+    let packages = graph_packages_from_binary_files(version, source_commit, files)?;
     manifest["packages"] = serde_json::Value::Array(packages);
     validate_graph_profiles_match_current_binary(&manifest)?;
     let mut bytes = serde_json::to_vec_pretty(&manifest).context("serialize updated manifest")?;
@@ -2616,7 +2666,7 @@ fn record_graph_binary_release_metadata(
         manifest: manifest_path.display().to_string(),
         version: version.to_string(),
         min_assets,
-        files,
+        files: files.to_vec(),
     })
 }
 
@@ -2649,6 +2699,7 @@ fn validate_binary_release_files(version: &str, files: &[BinaryFile]) -> Result<
 
 fn graph_packages_from_binary_files(
     version: &str,
+    source_commit: &SourceCommit,
     files: &[BinaryFile],
 ) -> Result<Vec<serde_json::Value>> {
     let host_sbom = files
@@ -2658,7 +2709,7 @@ fn graph_packages_from_binary_files(
     let mut packages = files
         .iter()
         .filter(|file| is_host_package_file(&file.name))
-        .map(|file| graph_package_from_binary_file(version, file, host_sbom))
+        .map(|file| graph_package_from_binary_file(version, source_commit, file, host_sbom))
         .collect::<Result<Vec<_>>>()?;
     packages.sort_by(|left, right| {
         let left_name = left
@@ -2676,6 +2727,7 @@ fn graph_packages_from_binary_files(
 
 fn graph_package_from_binary_file(
     version: &str,
+    source_commit: &SourceCommit,
     file: &BinaryFile,
     host_sbom: &BinaryFile,
 ) -> Result<serde_json::Value> {
@@ -2719,6 +2771,7 @@ fn graph_package_from_binary_file(
         "kind": package_kind,
         "name": file.name,
         "version": version,
+        "source_commit": source_commit,
         "platform": platform,
         "architecture": architecture,
         "url": package_url,
@@ -6450,7 +6503,10 @@ fn current_asset_attestations(files: &[AssetsChannelAssetFile]) -> Vec<AssetsCha
 }
 
 fn is_vm_obom_asset_file(file: &AssetsChannelAssetFile) -> bool {
-    file.logical_name == "obom.cdx.json" || file.url.ends_with("-obom.cdx.json")
+    file.logical_name == "obom"
+        || file.logical_name == "obom.cdx.json"
+        || file.url.ends_with("/obom.cdx.json")
+        || file.url.ends_with("-obom.cdx.json")
 }
 
 fn render_assets_channels_catalog(

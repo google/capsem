@@ -24,17 +24,23 @@ from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
 from capsem.gate.errors import GateError
 from capsem.gate.qualification import LocalQualification
+from capsem.gate.sourcecommit import SourceCommit
 from capsem.gate.sourcestate import RequireSourceUnchanged
 from capsem.gate.timingratchet import EnforceTimingRegression, TimingBoundary
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
+SOURCE_COMMIT = SourceCommit("0" * 40)
 
 #: Every command whose plan contains the complete qualification gate.
 COMPLETE_GATE = {
     "candidate": {},
-    "release-binaries": {"channel": "nightly"},
-    "release-profile": {"channel": "nightly", "profile": "code"},
+    "release-binaries": {"channel": "nightly", "source_commit": SOURCE_COMMIT},
+    "release-profile": {
+        "channel": "nightly",
+        "profile": "code",
+        "source_commit": SOURCE_COMMIT,
+    },
 }
 
 PRIVATE_MODULES = (
@@ -128,7 +134,7 @@ def test_timing_ratcheting_precedes_every_publication_boundary(name: str) -> Non
     assert isinstance(actions[0], RequireSourceUnchanged)
     assert isinstance(actions[-1], EnforceTimingRegression)
     if name.startswith("release-"):
-        assert ratchet < ordered.index("confirm-head") < ordered.index("release")
+        assert ratchet < ordered.index("source.publish-ref") < ordered.index("release")
     else:
         assert ratchet == len(ordered) - 1
 

@@ -48,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Release qualification now selects one explicit full commit already on
+  `main`, materializes it in a detached full-SHA prefix, and carries that same
+  identity through run evidence, workflow dispatch, every checkout, and the
+  package/profile manifest rows it authored. The outer checkout may continue
+  moving while qualification runs; release commands no longer edit or push
+  tracked source after the proof.
+
 - Profile rootfs dependencies are now closed over exact per-architecture Node,
   uv, Claude, and Ollama bytes plus checked-in Python hash locks and npm
   integrity locks. Rootfs construction no longer invokes floating installer,

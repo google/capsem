@@ -63,8 +63,7 @@ fn release_graph_manifest_records_use_version_not_schema_version() {
         "digest": digest_json(),
         "min_capsem_version": "1.4.0"
     });
-    serde_json::from_value::<ManifestRecord>(valid)
-        .expect("version is the manifest record key");
+    serde_json::from_value::<ManifestRecord>(valid).expect("version is the manifest record key");
 
     let invalid = serde_json::json!({
         "schema_version": 2,
@@ -115,8 +114,7 @@ fn release_graph_channels_catalog_lists_manifest_records() {
         }
     });
 
-    let parsed: ChannelsCatalog =
-        serde_json::from_value(catalog).expect("channels catalog parses");
+    let parsed: ChannelsCatalog = serde_json::from_value(catalog).expect("channels catalog parses");
     assert_eq!(parsed.channels["stable"].manifests.len(), 2);
     assert_eq!(
         parsed.channels["nightly"].manifests[0].status,
@@ -305,6 +303,7 @@ fn package_inventory_rows_are_separate_from_binary_rows() {
         packages: vec![PackageInventoryRow {
             name: "Capsem-1.4.0.pkg".to_string(),
             version: "1.4.0".to_string(),
+            source_commit: None,
             kind: PackageKind::MacosPkg,
             platform: "macos".to_string(),
             architecture: PackageArchitecture::Arm64,
@@ -333,6 +332,97 @@ fn package_inventory_rows_are_separate_from_binary_rows() {
         manifest.packages[0].binaries[0].installed_path,
         "/usr/local/bin/capsem"
     );
+}
+
+#[test]
+fn source_commit_is_optional_for_legacy_graphs_but_strict_when_present() {
+    let package = PackageInventoryRow {
+        name: "Capsem-1.4.0.pkg".to_string(),
+        version: "1.4.0".to_string(),
+        source_commit: None,
+        kind: PackageKind::MacosPkg,
+        platform: "macos".to_string(),
+        architecture: PackageArchitecture::Arm64,
+        url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
+        bytes: 42,
+        digest: digest_set(),
+        status: Status::Current,
+        binaries: Vec::new(),
+        evidence: Vec::new(),
+    };
+    let profile = profile_with_image_artifacts("1.0.0", Vec::new());
+
+    let package_legacy = serde_json::to_value(&package).expect("serialize package");
+    let profile_legacy = serde_json::to_value(&profile).expect("serialize profile");
+    assert!(package_legacy.get("source_commit").is_none());
+    assert!(profile_legacy.get("source_commit").is_none());
+    serde_json::from_value::<PackageInventoryRow>(package_legacy.clone())
+        .expect("legacy package without source commit remains readable");
+    serde_json::from_value::<ProfileDocument>(profile_legacy.clone())
+        .expect("legacy profile without source commit remains readable");
+
+    for invalid in [
+        serde_json::Value::Null,
+        serde_json::json!("A".repeat(40)),
+        serde_json::json!("a".repeat(39)),
+        serde_json::json!("main"),
+        serde_json::json!(format!("{} ", "a".repeat(40))),
+    ] {
+        let mut package_value = package_legacy.clone();
+        package_value["source_commit"] = invalid.clone();
+        serde_json::from_value::<PackageInventoryRow>(package_value)
+            .expect_err("malformed package source commit must fail");
+
+        let mut profile_value = profile_legacy.clone();
+        profile_value["source_commit"] = invalid;
+        serde_json::from_value::<ProfileDocument>(profile_value)
+            .expect_err("malformed profile source commit must fail");
+    }
+}
+
+#[test]
+fn source_commit_belongs_only_to_package_and_profile_families() {
+    let package = PackageInventoryRow {
+        name: "Capsem-1.4.0.pkg".to_string(),
+        version: "1.4.0".to_string(),
+        source_commit: None,
+        kind: PackageKind::MacosPkg,
+        platform: "macos".to_string(),
+        architecture: PackageArchitecture::Arm64,
+        url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
+        bytes: 42,
+        digest: digest_set(),
+        status: Status::Current,
+        binaries: Vec::new(),
+        evidence: Vec::new(),
+    };
+    let manifest = ReleaseManifest {
+        version: "1.4.0".to_string(),
+        status: Status::Current,
+        packages: vec![package],
+        profiles: BTreeMap::new(),
+    };
+    let mut top_level = serde_json::to_value(&manifest).expect("serialize manifest");
+    top_level["source_commit"] = serde_json::json!("a".repeat(40));
+    serde_json::from_value::<ReleaseManifest>(top_level)
+        .expect_err("a graph-wide source commit would claim ownership it does not have");
+
+    let mut binary = serde_json::to_value(BinaryInventoryRow {
+        name: "capsem".to_string(),
+        version: "1.4.0".to_string(),
+        description: "Capsem executable fixture".to_string(),
+        installed_path: "/usr/local/bin/capsem".to_string(),
+        platform: "macos".to_string(),
+        architecture: PackageArchitecture::Arm64,
+        bytes: 7,
+        digest: digest_set(),
+        status: Status::Current,
+        sbom_component_ref: "SPDXRef-File-capsem".to_string(),
+    })
+    .expect("serialize binary");
+    binary["source_commit"] = serde_json::json!("a".repeat(40));
+    serde_json::from_value::<BinaryInventoryRow>(binary)
+        .expect_err("per-binary source commit duplicates package-family provenance");
 }
 
 #[test]
@@ -371,6 +461,7 @@ fn package_architecture_parser_rejects_aliases_and_filename_lies() {
     let package = PackageInventoryRow {
         name: "Capsem_1.4.0_amd64.deb".to_string(),
         version: "1.4.0".to_string(),
+        source_commit: None,
         kind: PackageKind::DebianPackage,
         platform: "linux".to_string(),
         architecture: PackageArchitecture::Arm64,
@@ -398,6 +489,7 @@ fn package_inventory_requires_package_sbom() {
         packages: vec![PackageInventoryRow {
             name: "Capsem-1.4.0.pkg".to_string(),
             version: "1.4.0".to_string(),
+            source_commit: None,
             kind: PackageKind::MacosPkg,
             platform: "macos".to_string(),
             architecture: PackageArchitecture::Arm64,
@@ -439,6 +531,7 @@ fn package_inventory_requires_sha256_and_blake3() {
         packages: vec![PackageInventoryRow {
             name: "capsem_1.4.0_arm64.deb".to_string(),
             version: "1.4.0".to_string(),
+            source_commit: None,
             kind: PackageKind::DebianPackage,
             platform: "linux".to_string(),
             architecture: PackageArchitecture::Arm64,
@@ -477,6 +570,7 @@ fn executable_inventory_records_every_packaged_binary_with_hashes_and_sbom_refs(
     let package = PackageInventoryRow {
         name: "Capsem-1.4.0.pkg".to_string(),
         version: "1.4.0".to_string(),
+        source_commit: None,
         kind: PackageKind::MacosPkg,
         platform: "macos".to_string(),
         architecture: PackageArchitecture::Arm64,
@@ -512,8 +606,7 @@ fn executable_inventory_records_every_packaged_binary_with_hashes_and_sbom_refs(
         ),
     ]);
 
-    let rows =
-        executable_inventory_from_package_files(&package, &files, &sbom_refs).expect("rows");
+    let rows = executable_inventory_from_package_files(&package, &files, &sbom_refs).expect("rows");
 
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].name, "capsem");
@@ -535,6 +628,7 @@ fn executable_inventory_rejects_missing_sbom_component_ref() {
     let package = PackageInventoryRow {
         name: "capsem_1.4.0_arm64.deb".to_string(),
         version: "1.4.0".to_string(),
+        source_commit: None,
         kind: PackageKind::DebianPackage,
         platform: "linux".to_string(),
         architecture: PackageArchitecture::Arm64,
@@ -566,6 +660,7 @@ fn executable_inventory_matches_macos_and_deb_package_contents() {
     let macos_package = PackageInventoryRow {
         name: "Capsem-1.4.0.pkg".to_string(),
         version: "1.4.0".to_string(),
+        source_commit: None,
         kind: PackageKind::MacosPkg,
         platform: "macos".to_string(),
         architecture: PackageArchitecture::Arm64,
@@ -609,6 +704,7 @@ fn executable_inventory_matches_macos_and_deb_package_contents() {
     let deb_package = PackageInventoryRow {
         name: "Capsem_1.4.0_arm64.deb".to_string(),
         version: "1.4.0".to_string(),
+        source_commit: None,
         kind: PackageKind::DebianPackage,
         platform: "linux".to_string(),
         architecture: PackageArchitecture::Arm64,
@@ -655,6 +751,7 @@ fn executable_inventory_rejects_package_content_hash_drift() {
     let package = PackageInventoryRow {
         name: "Capsem_1.4.0_arm64.deb".to_string(),
         version: "1.4.0".to_string(),
+        source_commit: None,
         kind: PackageKind::DebianPackage,
         platform: "linux".to_string(),
         architecture: PackageArchitecture::Arm64,
@@ -697,6 +794,7 @@ fn profile_with_image_artifacts(
         id: "co-work".to_string(),
         name: "Co-work".to_string(),
         revision: revision.to_string(),
+        source_commit: None,
         status: Status::Current,
         min_capsem_version: Some("1.4.0".to_string()),
         max_capsem_version: None,
@@ -733,9 +831,7 @@ fn profile_architecture(
             },
             EvidenceRef {
                 kind: "software_inventory".to_string(),
-                url: format!(
-                    "/profiles/releases/{revision}/co-work/arm64/software-inventory.json"
-                ),
+                url: format!("/profiles/releases/{revision}/co-work/arm64/software-inventory.json"),
                 digest: digest_set_with('c', 'd'),
             },
         ],
@@ -769,8 +865,7 @@ fn profile_image_artifact_set(revision: &str) -> Vec<ProfileImageArtifactRef> {
 fn profile_image_versions_append_without_deprecating_previous() {
     let first = profile_with_image_artifacts("1.0.0", profile_image_artifact_set("1.0.0"));
     let second = profile_with_image_artifacts("1.0.1", profile_image_artifact_set("1.0.1"));
-    let mut history =
-        ProfileVersionHistory::new("nightly", first).expect("first profile version");
+    let mut history = ProfileVersionHistory::new("nightly", first).expect("first profile version");
 
     history
         .append_version(second)
@@ -807,8 +902,7 @@ fn profile_image_artifact_sets_require_kernel_initrd_and_rootfs() {
 
 #[test]
 fn profile_image_evidence_must_match_owning_architecture() {
-    let mut profile =
-        profile_with_image_artifacts("1.0.0", profile_image_artifact_set("1.0.0"));
+    let mut profile = profile_with_image_artifacts("1.0.0", profile_image_artifact_set("1.0.0"));
     let abom = profile.architectures[0]
         .evidence
         .iter_mut()
@@ -876,9 +970,8 @@ fn profile_config_kind_rejects_unknown_values() {
             "digest": digest_json(),
             "status": "current"
         });
-        serde_json::from_value::<ProfileConfigRef>(value).unwrap_or_else(|error| {
-            panic!("profile config kind {kind} must deserialize: {error}")
-        });
+        serde_json::from_value::<ProfileConfigRef>(value)
+            .unwrap_or_else(|error| panic!("profile config kind {kind} must deserialize: {error}"));
     }
 
     let invalid_kind = serde_json::json!({
@@ -901,6 +994,7 @@ fn profile_json_ownership_has_min_capsem_not_current_binary() {
         id: "co-work".to_string(),
         name: "Co-work".to_string(),
         revision: "1.0.0".to_string(),
+        source_commit: None,
         status: Status::Current,
         min_capsem_version: Some("1.4.0".to_string()),
         max_capsem_version: None,
@@ -1103,6 +1197,7 @@ fn release_ledger_is_derived_from_channels_and_manifests() {
             id: "co-work".to_string(),
             name: "Co-work".to_string(),
             revision: "1.0.0".to_string(),
+            source_commit: None,
             status: Status::Current,
             min_capsem_version: Some("1.4.0".to_string()),
             max_capsem_version: None,
@@ -1158,6 +1253,7 @@ fn release_ledger_is_derived_from_channels_and_manifests() {
                 packages: vec![PackageInventoryRow {
                     name: "Capsem-1.4.0.pkg".to_string(),
                     version: "1.4.0".to_string(),
+                    source_commit: None,
                     kind: PackageKind::MacosPkg,
                     platform: "macos".to_string(),
                     architecture: PackageArchitecture::Arm64,
@@ -1204,12 +1300,12 @@ fn release_ledger_is_derived_from_channels_and_manifests() {
         entry.channel == "stable"
             && entry.kind == ReleaseLedgerKind::ProfileImage
             && entry.profile.as_deref() == Some("co-work")
-            && entry.architecture
-                == Some(ReleaseLedgerArchitecture::Machine(Architecture::Arm64))
+            && entry.architecture == Some(ReleaseLedgerArchitecture::Machine(Architecture::Arm64))
     }));
-    assert!(ledger.entries.iter().any(|entry| {
-        entry.channel == "nightly" && entry.kind == ReleaseLedgerKind::Manifest
-    }));
+    assert!(ledger
+        .entries
+        .iter()
+        .any(|entry| { entry.channel == "nightly" && entry.kind == ReleaseLedgerKind::Manifest }));
 }
 
 // -- Profile revision semver discipline -------------------------------------
@@ -1232,7 +1328,9 @@ fn profile_revision_must_be_semver() {
 fn dated_profile_revisions_are_rejected() {
     // The scheme this replaces. Four components is not semver, and the
     // leading date lied about when the assets were built.
-    let error = parse_profile_revision("2026.06.08.9").unwrap_err().to_string();
+    let error = parse_profile_revision("2026.06.08.9")
+        .unwrap_err()
+        .to_string();
     assert!(
         error.contains("2026.06.08.9"),
         "rejection must name the offending revision: {error}"
@@ -1273,7 +1371,9 @@ fn semver_may_replace_a_published_legacy_revision_once() {
 
 #[test]
 fn republishing_the_same_revision_is_rejected() {
-    let error = ensure_revision_advances("0.6.0", "0.6.0").unwrap_err().to_string();
+    let error = ensure_revision_advances("0.6.0", "0.6.0")
+        .unwrap_err()
+        .to_string();
     assert!(
         error.contains("0.6.0"),
         "rejection must name the revision that failed to advance: {error}"
@@ -1304,5 +1404,8 @@ fn a_profile_revision_is_not_a_capsem_version() {
     // separate axes. A profile at 0.3.2 may require capsem >= 0.6.0.
     let revision = parse_profile_revision("0.3.2").unwrap();
     let minimum = semver::Version::parse("0.6.0").unwrap();
-    assert!(revision < minimum, "these are different axes, not comparable state");
+    assert!(
+        revision < minimum,
+        "these are different axes, not comparable state"
+    );
 }

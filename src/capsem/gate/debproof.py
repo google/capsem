@@ -20,8 +20,8 @@ from .installcontainer import (
 from .installproof import InstallProof
 from .proc import Runner
 from .releasegraph import ReleaseGraph
+from .sourcecommit import SourceCommit
 
-# `Profiles: 3/3 ready`, whose two numbers must match and must not be zero.
 PROFILE_READY = re.compile(r"^Profiles:\s+(\d+)/(\d+) ready", re.M)
 
 
@@ -36,6 +36,7 @@ class DebProof:
         content: ProfileContent,
         manifest_url: str,
         channel: str,
+        source_commit: SourceCommit,
         sleep=time.sleep,
     ) -> None:
         self._runner = runner
@@ -49,6 +50,7 @@ class DebProof:
         self._graph = ReleaseGraph(
             self._docker,
             self._config,
+            source_commit=source_commit,
             container=self._proof.container,
         )
         self._content = content
@@ -57,8 +59,6 @@ class DebProof:
         self.manifest_url = manifest_url
         self.channel = self._resolve_channel(channel)
         self._sleep = sleep
-
-    # -- inputs ------------------------------------------------------------
 
     def _resolve(self, package: Path) -> Path:
         """Only a package this checkout built, named absolutely.

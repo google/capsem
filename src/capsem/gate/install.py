@@ -35,6 +35,7 @@ from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .proc import Runner
 from .releasegraph import ReleaseGraph
+from .sourcecommit import SourceCommit, source_commit_for_checkout
 from .storage import Storage
 from .versions import workspace_version
 
@@ -48,6 +49,7 @@ class InstallGate:
         *,
         content: InstallContent | None = None,
         macos_glowup_report: str | None = None,
+        source_commit: SourceCommit,
     ) -> None:
         self._runner = runner
         self._config = gate_config.for_root(runner.root)
@@ -57,7 +59,7 @@ class InstallGate:
         self._content = content
         self._container = InstallContainer(runner, content=content)
         self._proof = InstallProof(runner, self._config)
-        self._graph = ReleaseGraph(Docker(runner), self._config)
+        self._graph = ReleaseGraph(Docker(runner), self._config, source_commit=source_commit)
         self._macos_report = macos_glowup_report or None
         self.root = runner.root
         self.version = workspace_version(runner.root)
@@ -279,4 +281,5 @@ def _install(context, *, content: InstallContent) -> None:
         context.runner,
         content=content,
         macos_glowup_report=macos_report(config),
+        source_commit=source_commit_for_checkout(config.root),
     ).run()

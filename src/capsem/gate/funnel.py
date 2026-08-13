@@ -114,6 +114,10 @@ class GuardedRunner(Runner):
         self._tail_lines = tail_lines
         self._checkpoint = checkpoint or (lambda: None)
 
+    @property
+    def run_id(self) -> str:
+        return self._journal.run_id
+
     def filed(self, command: Command) -> Command:
         """Send output to the log of whichever step is running.
 

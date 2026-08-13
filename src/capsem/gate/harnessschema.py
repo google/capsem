@@ -228,10 +228,18 @@ class PrefixConfig(Strict):
     """Where a run's private copy of the checkout lives, and what it carries."""
 
     parent: str
+    lease_template: str
     name_length: int
     keep: int
     carried: tuple[str, ...]
     exports: tuple[str, ...]
+
+    @field_validator("lease_template")
+    @classmethod
+    def _lease_is_one_identity_filename(cls, template: str) -> str:
+        if template.count("{identity}") != 1 or PurePosixPath(template).name != template:
+            raise ValueError("lease_template must be one filename containing {identity} once")
+        return template
 
     @model_validator(mode="after")
     def _paths_stay_inside(self) -> PrefixConfig:
@@ -256,3 +264,11 @@ class WorkspaceConfig(Strict):
     benchmark_root: str
     coverage_file: str
     evidence_dir: str
+
+    @field_validator("run_dir")
+    @classmethod
+    def _run_dir_is_short_absolute_template(cls, template: str) -> str:
+        path = PurePosixPath(template)
+        if not path.is_absolute() or template.count("{root_id}") != 1:
+            raise ValueError("workspace run_dir must be absolute and contain {root_id} once")
+        return template

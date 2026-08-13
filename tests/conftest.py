@@ -580,15 +580,10 @@ def pytest_sessionfinish(session, exitstatus):
 # ---------------------------------------------------------------------------
 
 _ROOT = Path(__file__).resolve().parent.parent
-#: What a run records about *what it is qualifying*. A suite that overwrites
-#: any of these makes the gate around it publish the wrong thing, or refuse to
-#: publish at all. Guarded as a set rather than one file, because the first
-#: version of this guard watched only the source state and let `tested-head`
-#: be clobbered by the same bug an hour later.
-_RUN_IDENTITY = (
-    _ROOT / "target/gate-source-state.json",
-    _ROOT / "target/release-preflight/tested-head",
-)
+#: What a run records about *what it is qualifying*. The selected release
+#: commit now lives in the immutable prefix and structured run-start event;
+#: this is the only mutable on-disk source-state record a nested test can hit.
+_RUN_IDENTITY = (_ROOT / "target/gate-source-state.json",)
 
 
 @pytest.fixture(autouse=True)

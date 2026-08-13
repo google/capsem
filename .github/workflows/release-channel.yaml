@@ -22,6 +22,10 @@ on:
         type: boolean
         required: false
         default: true
+      source_commit:
+        type: string
+        required: false
+        default: ""
     secrets:
       CLOUDFLARE_ACCOUNT_ID:
         required: true
@@ -48,6 +52,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit || github.sha }}
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:

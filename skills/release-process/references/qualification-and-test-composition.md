@@ -32,8 +32,8 @@ public dispatch. Do not move orchestration into recipes, workflow YAML, or a rel
 Capsem has exactly two release-facing Just commands:
 
 ```bash
-just release-binaries <channel>
-just release-profile <channel> <profile>
+just release-binaries <channel> <source-commit>
+just release-profile <channel> <profile> <source-commit>
 ```
 
 These are the sole release entrypoints for humans and checked-in automation.
@@ -42,23 +42,26 @@ first. Each Python release plan contains the complete plan used by `just test`
 and has this non-negotiable order:
 
 ```text
-just release-binaries <channel>
-  1. validate release notes and fetch the fresh serialized channel source
+just release-binaries <channel> <source-commit>
+  1. require the detached source commit on fresh origin/main, validate the
+     already-committed release notes, and fetch the serialized channel source
      manifest read-only; fail immediately if the manifest has no staged
      channel/profile authority
   2. compose and execute the complete `just test` candidate plan in-process
   3. only after success: run the binary release script and dispatch binary CI
 
-just release-profile <channel> <profile>
-  1. compose and execute the complete `just test` candidate plan in-process
+just release-profile <channel> <profile> <source-commit>
+  1. require the detached source commit on fresh origin/main, then compose and
+     execute the complete `just test` candidate plan in-process
   2. only after success: invoke capsem-admin release for that channel/profile
   3. correlate and watch that exact profile workflow through terminal success
 ```
 
-The complete gate runs from a private source generation. Prechecks, source-head
-capture/reconfirmation, and publication target the originating checkout because
-work authored only in the disposable copy would disappear. The source guard
-stops publication if the checkout no longer has the recorded HEAD and bytes.
+The complete gate runs from an independent detached repository whose directory
+name is the full commit. Only declared ignored signing input is copied in; Git
+metadata and tracked source come from that commit. The outer checkout is not
+the subject and may move while qualification runs. The source guard verifies
+the frozen tree and records the commit in the run-start event.
 
 The complete executor is also kernel-isolated for the entire candidate graph:
 Bubblewrap provides a loopback-only namespace on Linux and Seatbelt provides
@@ -70,7 +73,8 @@ incomplete modules, so permissive evidence cannot be mistaken for complete
 qualification.
 An authenticated helper created immediately before sandbox re-exec serves only
 the explicitly marked RustSec, npm bulk, and OSV advisory queries plus
-manifest-resolution, exact-main confirmation/push, and final dispatch actions.
+manifest resolution, fresh remote-main validation, immutable source-ref
+publication, and final dispatch actions.
 Its one-time mode-0600 metadata is deleted before plan work; every brokered
 command remains in the owning `GuardedRunner`, step log, and run journal. No
 other candidate-module action may use `outside_sandbox=True`.
@@ -82,22 +86,22 @@ checks, JavaScript checks/builds, and blocking Rust/Python/JavaScript
 vulnerability audits. It is still not release qualification and must never
 replace `just test` in either release command.
 
-`just test` must be the first consequential command. Cheap read-only checks may
-precede it so missing notes, a missing serialized channel source, wrong-case
+The selected version cohort, changelog section, and `LATEST_RELEASE.md` must be
+prepared in the supplied commit before qualification. `just test` is the first
+consequential command. Cheap read-only checks may precede it so missing notes, a missing serialized channel source, wrong-case
 paths, invalid workflow syntax, and similar deterministic failures stop before
 hours of local work. The binary preflight must fetch the mutable manifest/source
 fresh and may not bootstrap profile state. If the staged channel/profile source
 does not exist, the operator must use `release-profile` first. If `just test`
-fails, the release command must stop before stamping versions, changing tracked
-files, committing, tagging, pushing, authoring a shared manifest, or dispatching
-a workflow. Test this fail-stop behavior by executing the public recipes with
+fails, the release command must stop before creating source/version tags,
+authoring a shared manifest, or dispatching a workflow. It never changes
+tracked files, commits, or pushes `main`. Test this fail-stop behavior by executing the public recipes with
 fake downstream commands; inspecting recipe text alone is insufficient.
 
-After that gate succeeds, both commands run the same checked-in source guard.
-It requires the clean `main` HEAD captured before `just test`, then
-fast-forward-pushes that exact tested HEAD when it is ahead of `origin/main`.
-It refuses a changed HEAD, dirty tree, divergence, or force-push. Only after
-this guard may binary stamping or profile dispatch begin.
+After that gate succeeds, both commands create or verify the lightweight
+`capsem-source-<40hex>` tag at the exact commit and dispatch the workflow from
+that tag while also passing `source_commit`. A different existing target,
+malformed run identity, or workflow whose head SHA/ref changes is fatal.
 
 Do not introduce a skip flag, release-only reduced gate, preparation recipe,
 environment-variable bypass, or direct checked-in caller of:
@@ -106,8 +110,9 @@ environment-variable bypass, or direct checked-in caller of:
 - `capsem-admin release` for a first-party public profile;
 - `release.yaml` or `release-assets.yaml`.
 
-Daily nightly automation calls `just release-profile nightly <profile>` once
-for each selected profile and then `just release-binaries nightly`. It never
+Daily nightly automation snapshots `${{ github.sha }}`, calls
+`just release-profile nightly <profile> ${{ github.sha }}` once for each
+selected profile, then `just release-binaries nightly ${{ github.sha }}`. It never
 dispatches either downstream workflow directly. Direct GitHub UI dispatch is
 not the documented or tested release path.
 

@@ -130,6 +130,7 @@ class EnvironmentConfig(Strict):
     benchmark_root: str
     coverage_file: str
     source_checkout: str
+    source_commit: str
     command_sandbox_mode: str
     install: InstallEnvironment
     package: PackageEnvironment

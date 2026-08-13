@@ -26,6 +26,7 @@ from .actions import Action
 from .context import Context
 from .errors import GateError
 from .fileactions import write_text
+from .sourcecommit import SourceCommit, require_detached_checkout
 
 
 def _record_file(context: Context) -> Path:
@@ -74,10 +75,30 @@ def _measure(context: Context) -> dict[str, str]:
     """
     from . import prefix
 
+    selected = os.environ.get(context.config.environment.source_commit)
+    if selected is not None:
+        try:
+            commit = SourceCommit(selected)
+        except ValueError as error:
+            raise GateError("release source marker is not a canonical commit") from error
+        expected = prefix.for_source_commit(context.config, commit)
+        if context.config.root.absolute() != expected.absolute():
+            raise GateError(f"release source {commit} is not running from {expected}")
+        require_detached_checkout(context.config.root, commit)
+        digest = _digest(context)
+        return {
+            "source_kind": "commit",
+            "source_commit": str(commit),
+            "head": str(commit),
+            "digest": digest,
+            "gate_source": str(gate_source()),
+        }
+
     source = prefix.source_checkout(context.config)
     head = context.runner.capture(["git", "rev-parse", "HEAD"])
     digest = _digest(context)
     return {
+        "source_kind": "working-tree",
         "head": head,
         "source_head": (
             head
@@ -154,6 +175,21 @@ class RequireSourceUnchanged(Action, name="require-source-unchanged"):
 
         before = json.loads(recorded.read_text(encoding="utf-8"))
         after = _measure(context)
+
+        if before.get("source_kind") != after.get("source_kind"):
+            raise GateError("the gate's source identity mode changed while it was running")
+        if before.get("source_kind") == "commit":
+            if before.get("source_commit") != after.get("source_commit"):
+                raise GateError(
+                    "the exact release source changed while the gate was running: "
+                    f"{before.get('source_commit')} -> {after.get('source_commit')}"
+                )
+            if before["digest"] != after["digest"]:
+                raise GateError("the gate changed the exact release source working tree")
+            context.journal.note(
+                f"verified exact release source {after['source_commit']} at {after['digest']}"
+            )
+            return
 
         if before["head"] != after["head"]:
             raise GateError(

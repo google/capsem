@@ -38,6 +38,7 @@ from . import host
 from .config import GateConfig
 from .errors import GateError
 from .filesystem import remove
+from .sourcecommit import SourceCommit
 
 #: `cp` flags that ask APFS for copy-on-write. Clonefile is what makes this
 #: cheap enough to do unconditionally -- 2074 files and `.git` measured 2.2s
@@ -218,6 +219,13 @@ def populate(source: Path, target: Path, config: GateConfig) -> None:
     _copy_files(source, target, _subject(source))
     _copy_carried(source, target, config)
     _require_faithful(source, target, config)
+
+
+def populate_commit(source: Path, target: Path, config: GateConfig, commit: SourceCommit) -> None:
+    """Materialize a detached committed release source."""
+    from . import commitsnapshot
+
+    commitsnapshot.populate(source, target, config, commit)
 
 
 def refresh(source: Path, target: Path, config: GateConfig) -> None:

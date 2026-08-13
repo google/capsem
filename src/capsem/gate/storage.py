@@ -21,6 +21,7 @@ from .execution import Step, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .proc import Runner
+from .sourcecommit import SourceCommit
 
 
 class Storage:
@@ -69,12 +70,24 @@ class Storage:
         args = ["clean", "--scope", scope] + (["--rail", rail] if rail else [])
         self._runner.script(self._config.policy_script, *args)
 
-    def capture_failure(self, *, rail: str, label: str) -> None:
+    def capture_failure(
+        self,
+        *,
+        rail: str,
+        label: str,
+        run_id: str | None = None,
+        source_commit: SourceCommit | None = None,
+    ) -> None:
         """Preserve evidence from a failed run.
 
         Never raises: it runs on the failure path, where a second failure would
         replace the first one the operator actually needs to read.
         """
+        identity = []
+        if run_id is not None:
+            identity.extend(("--run-id", run_id))
+        if source_commit is not None:
+            identity.extend(("--source-commit", str(source_commit)))
         self._runner.script(
             self._config.policy_script,
             "capture-failure",
@@ -82,6 +95,7 @@ class Storage:
             rail,
             "--label",
             label,
+            *identity,
             check=False,
         )
 

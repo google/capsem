@@ -44,7 +44,7 @@ fails closed when the signing key is absent or malformed.
 
 ## Profile release
 
-`just release-profile nightly code` invokes:
+`just release-profile nightly code <source-commit>` invokes:
 
 ```bash
 capsem-admin release --channel nightly --profile code
@@ -95,7 +95,7 @@ mutates Capsem-owned binaries or public channels.
 
 ## Binary release
 
-`just release-binaries nightly` invokes the checked-in, adversarially tested
+`just release-binaries nightly <source-commit>` invokes the checked-in, adversarially tested
 binary release script. The locked binary workflow:
 
 1. reads the latest nightly source manifest;
@@ -133,10 +133,10 @@ does not replace the downstream workflows' shared
 
 When a profile requires new Capsem code:
 
-1. run `just release-profile <channel> <profile>`;
+1. run `just release-profile <channel> <profile> <source-commit>`;
 2. publish the immutable assets once and withhold the incompatible public
    channel;
-3. run `just release-binaries <channel>`;
+3. run `just release-binaries <channel> <source-commit>`;
 4. resolve the already-built staged profile by digest;
 5. run the full functional, native install, and glow-up proof over the
    completed pairing;

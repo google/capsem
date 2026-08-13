@@ -20,8 +20,8 @@ just shell         # Build + boot VM (~10s)
 just fast-test     # The fast gate itself -- same module the release lanes run
 just vm-smoke      # Short VM round-trip; runtime liveness, not qualification
 just test          # ALL tests: unit + integration + cross-compile + Docker e2e. No shortcuts.
-just release-binaries nightly
-just release-profile nightly code
+just release-binaries nightly <full-main-commit>
+just release-profile nightly code <full-main-commit>
 ```
 
 See `/dev-just` for the full recipe reference and dependency chains.

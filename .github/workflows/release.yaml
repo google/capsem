@@ -22,6 +22,10 @@ on:
         description: Correlation id supplied by release-binaries.py.
         required: true
         type: string
+      source_commit:
+        description: Exact committed main source qualified by the release gate.
+        required: true
+        type: string
 
 concurrency:
   group: capsem-release-${{ inputs.channel }}
@@ -35,19 +39,41 @@ permissions:
   id-token: write
 
 env:
+  SOURCE_COMMIT: ${{ inputs.source_commit }}
   RELEASE_TAG: ${{ inputs.tag }}
   RELEASE_CHANNEL: ${{ inputs.channel }}
   ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json
 
 jobs:
+  source-identity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+      - name: Require exact immutable dispatch source
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$SOURCE_COMMIT"
+          test "$GITHUB_REF_TYPE" = tag
+          test "$GITHUB_REF" = "refs/tags/capsem-source-$SOURCE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+
   runtime-preflight:
+    needs: source-identity
     uses: ./.github/workflows/release-runtime-preflight.yaml
     with:
       channel: ${{ inputs.channel }}
       bootstrap_missing_first_party: true
+      source_commit: ${{ inputs.source_commit }}
 
   fast-gate:
+    needs: source-identity
     uses: ./.github/workflows/fast-gate.yaml
+    with:
+      source_commit: ${{ inputs.source_commit }}
 
   resolve-channel-source:
     needs: runtime-preflight
@@ -55,6 +81,8 @@ jobs:
     name: Resolve serialized channel source manifest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync --frozen
 
@@ -138,13 +166,15 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
+          ref: ${{ inputs.source_commit }}
           fetch-depth: 0
 
-      - name: Verify immutable dispatch tag and channel
+      - name: Verify immutable source ref, version tag, and channel
         run: |
           set -euo pipefail
           test "$GITHUB_REF_TYPE" = tag
-          test "$GITHUB_REF_NAME" = "$RELEASE_TAG"
+          test "$GITHUB_REF_NAME" = "capsem-source-$SOURCE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
           case "$RELEASE_TAG" in v*) ;; *) exit 1 ;; esac
           case "$RELEASE_CHANNEL" in stable|nightly) ;; *) exit 1 ;; esac
 
@@ -219,6 +249,8 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -464,6 +496,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -541,6 +575,8 @@ jobs:
     name: Author binary candidate source manifest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
@@ -617,6 +653,7 @@ jobs:
           cargo run -p capsem-admin -- assets channel record-binary \
             --manifest-path "target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
             --version "$VERSION" \
+            --source-commit "$SOURCE_COMMIT" \
             "${ARTIFACT_ARGS[@]}"
           test -f "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
 
@@ -658,6 +695,8 @@ jobs:
     name: Install exact candidate macOS package
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -753,6 +792,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -825,6 +866,8 @@ jobs:
     name: Complete binary pairing gate
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync --frozen
@@ -980,6 +1023,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
 
       # Download the exact platform artifacts that passed their install gates.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -1086,6 +1131,8 @@ jobs:
       dist_artifact: binary-channel-preview
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
@@ -1149,6 +1196,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -1250,6 +1299,7 @@ jobs:
     with:
       channel: ${{ inputs.channel }}
       dist_artifact: binary-channel-preview
+      source_commit: ${{ inputs.source_commit }}
     secrets: inherit
 
   # ---------------------------------------------------------------------------
@@ -1261,6 +1311,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:

@@ -71,7 +71,8 @@ def journal(monkeypatch) -> RecordingJournal:
 
     @classmethod
     @contextmanager
-    def _open(cls, config, command, *, argv=()):
+    def _open(cls, config, command, *, argv=(), source_commit=None):
+        assert source_commit is None
         yield recording
 
     monkeypatch.setattr("capsem.gate.runlog.RunLog.open", _open)

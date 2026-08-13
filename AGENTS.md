@@ -43,14 +43,18 @@ The governing contract is `tmp/release-spec.md`. Capsem has exactly two release
 commands:
 
 ```text
-just release-binaries <channel>
-just release-profile <channel> <profile>
+just release-binaries <channel> <source-commit>
+just release-profile <channel> <profile> <source-commit>
 ```
 
 - Each release command itself runs complete `just test` first. There is no
-  separate preparation or qualification command. A shared source guard then
-  requires and, if necessary, fast-forward-pushes the exact clean `main` HEAD
-  that passed; only afterward may stamping, authoring, or dispatch begin.
+  separate qualification command. The operator supplies one full lowercase
+  commit already prepared, committed, and reachable from fresh `origin/main`.
+  Qualification runs from a detached private repository named by that exact
+  commit, so the outer checkout and `main` may advance without changing the
+  subject. After success the command creates or verifies the immutable
+  `capsem-source-<commit>` transport ref and dispatches from it. Release work
+  never edits tracked source or pushes `main`.
 - Local `just test` remains the complete all-artifact proof. It rebuilds
   packages and every configured profile, then runs audits, lint, frontend,
   Rust/Python coverage, all VM suites, Winterfell/MCP lifecycle, IronBank,
@@ -81,7 +85,8 @@ just release-profile <channel> <profile>
   module execute under the host kernel's network boundary: Bubblewrap with
   loopback only on Linux, Seatbelt on macOS. Only the three live advisory
   queries (RustSec, npm bulk, and OSV) and a local release's manifest
-  resolution, exact-main publication, and workflow dispatch run outside that
+  resolution, remote-main validation, immutable source-ref publication, and
+  workflow dispatch run outside that
   boundary through the authenticated one-time egress resource; those commands
   still pass through the same `GuardedRunner` and run journal. Release
   CI materializes locked dependencies and immutable manifest-selected inputs

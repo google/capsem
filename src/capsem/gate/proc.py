@@ -56,6 +56,10 @@ class Runner:
         self._stream: TextIO = stream if stream is not None else sys.stderr
         self._configured_stop_policy = stop_policy
 
+    @property
+    def run_id(self) -> str | None:
+        return None
+
     def _stop_policy(self) -> StopPolicy:
         if self._configured_stop_policy is not None:
             return self._configured_stop_policy

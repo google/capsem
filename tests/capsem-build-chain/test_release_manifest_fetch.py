@@ -15,18 +15,12 @@ SPEC.loader.exec_module(SOURCE)
 
 
 def test_binary_source_manifest_requires_staged_profile_membership() -> None:
-    empty = json.dumps(
-        {"channel": "nightly", "profiles": {}, "packages": []}
-    ).encode()
-    staged = json.dumps(
-        {"channel": "nightly", "profiles": {"code": {}}, "packages": []}
-    ).encode()
+    empty = json.dumps({"channel": "nightly", "profiles": {}, "packages": []}).encode()
+    staged = json.dumps({"channel": "nightly", "profiles": {"code": {}}, "packages": []}).encode()
 
     with pytest.raises(ValueError, match="no staged profiles"):
         SOURCE.validate_binary_source_manifest(empty, "nightly")
-    assert SOURCE.validate_binary_source_manifest(staged, "nightly")[
-        "profiles"
-    ] == {"code": {}}
+    assert SOURCE.validate_binary_source_manifest(staged, "nightly")["profiles"] == {"code": {}}
 
 
 def test_binary_release_fetches_fresh_source_without_bootstrapping_profiles() -> None:
@@ -43,11 +37,16 @@ def test_binary_release_fetches_fresh_source_without_bootstrapping_profiles() ->
 
     from capsem.gate import cli  # noqa: F401 - registers every command
     from capsem.gate.command import GateCommand
+    from capsem.gate.sourcecommit import SourceCommit
 
     plan = GateCommand.registry["release-binaries"](
         RecordingRunner(ROOT),
         argparse.Namespace(
-            dry_run=False, graph=False, timing=False, channel="nightly"
+            dry_run=False,
+            graph=False,
+            timing=False,
+            channel="nightly",
+            source_commit=SourceCommit("0" * 40),
         ),
     )._describe()
     described = plan.describe()

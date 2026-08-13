@@ -116,7 +116,8 @@ sealed asset lanes consume them.
 
 The allowed edges are exact and contract-tested: the shared fast module's
 RustSec, npm bulk, and OSV actions; binary `channel-source`; both
-`confirm-head` steps; and each final `release` step. The advisory authorities
+binary `precheck`; `source.remote-main` and `source.publish-ref`; and each final
+`release` step. The advisory authorities
 are mutable security inputs and therefore cannot be replaced by locked package
 prefetch. Never hand the external runner to any other qualification work.
 Release CI downloads immutable inputs and materializes locked dependencies

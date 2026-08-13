@@ -50,14 +50,14 @@ pytestmark = pytest.mark.build_chain
 
 
 def test_deploy_workflow_runs_authoritative_live_validator_for_both_channels() -> None:
-    workflow = (
-        PROJECT_ROOT / ".github" / "workflows" / "release-channel.yaml"
-    ).read_text(encoding="utf-8")
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "release-channel.yaml").read_text(
+        encoding="utf-8"
+    )
 
     assert "validate_complete_public_channels:" in workflow
     assert "default: true" in workflow
     assert "scripts/check-release-site-contract.py" in workflow
-    assert 'CHANNEL_ARGS=(--channel stable --channel nightly)' in workflow
+    assert "CHANNEL_ARGS=(--channel stable --channel nightly)" in workflow
     assert '--base-url "$RELEASE_SITE_URL"' in workflow
     assert "--attempts 30" in workflow
     assert "group: capsem-public-channel-deploy" in workflow
@@ -122,9 +122,7 @@ def test_deploy_rejects_stale_untouched_channel(
         DEPLOY_FRESHNESS,
         "read_live_manifest",
         lambda _release_site, channel: (
-            live_nightly
-            if channel == "nightly"
-            else (_ for _ in ()).throw(AssertionError(channel))
+            live_nightly if channel == "nightly" else (_ for _ in ()).throw(AssertionError(channel))
         ),
     )
 
@@ -159,9 +157,7 @@ def _run(
         env={**os.environ, **env} if env else None,
     )
     assert result.returncode == 0, (
-        f"command failed: {' '.join(command)}\n"
-        f"stdout:\n{result.stdout}\n"
-        f"stderr:\n{result.stderr}"
+        f"command failed: {' '.join(command)}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     return result
 
@@ -216,9 +212,7 @@ def test_untouched_public_graph_render_is_byte_idempotent(tmp_path: Path) -> Non
             ]
         )
 
-    assert (
-        first / "assets" / "nightly" / "manifest.json"
-    ).read_bytes() == (
+    assert (first / "assets" / "nightly" / "manifest.json").read_bytes() == (
         second / "assets" / "nightly" / "manifest.json"
     ).read_bytes()
 
@@ -241,17 +235,14 @@ def _assert_rootfs_scoped_install_test_obom(document: dict[str, Any]) -> None:
         "value": "exported-rootfs",
     } in properties
     assert any(
-        isinstance(component.get("purl"), str)
-        and component["purl"].startswith("pkg:deb/debian/")
+        isinstance(component.get("purl"), str) and component["purl"].startswith("pkg:deb/debian/")
         for component in document["components"]
     )
     assert "cdx:osquery:category" not in json.dumps(document)
 
 
 def test_install_test_assets_generate_rootfs_scoped_obom(tmp_path: Path) -> None:
-    _assert_rootfs_scoped_install_test_obom(
-        _prepare_install_test_assets(tmp_path / "assets")
-    )
+    _assert_rootfs_scoped_install_test_obom(_prepare_install_test_assets(tmp_path / "assets"))
 
 
 def test_install_test_assets_replace_stale_host_inventory_obom(tmp_path: Path) -> None:
@@ -326,12 +317,37 @@ def _build_release_channel(
         manifest_path = prepared_assets / "manifest.json"
         assets_dir = prepared_assets
     source_manifest = manifest_path
+    source_document = json.loads(source_manifest.read_text(encoding="utf-8"))
+    binary_version = source_document["binaries"]["current"]
+    assets_dir = assets_dir or manifest_path.parent
+    graph_source = dist.parent / "graph-source"
+    source_command = [
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        source_manifest.resolve().as_uri(),
+        "--assets-dir",
+        str(assets_dir),
+        "--profiles-dir",
+        str(PROJECT_ROOT / "config/profiles"),
+        "--channel",
+        CHANNEL,
+        "--out-dir",
+        str(graph_source),
+    ]
+    if asset_source_base is not None:
+        source_command.extend(["--asset-source-base", asset_source_base])
+    _run_admin(*source_command)
     working_manifest = dist.parent / "manifest-with-binary-metadata.json"
     working_manifest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_manifest, working_manifest)
-    _record_test_binary_metadata(working_manifest, dist.parent / "binary-artifacts")
+    shutil.copy2(graph_source / "assets" / CHANNEL / "manifest.json", working_manifest)
+    _record_test_binary_metadata(
+        working_manifest,
+        dist.parent / "binary-artifacts",
+        version=binary_version,
+    )
     manifest_url = working_manifest.resolve().as_uri()
-    assets_dir = assets_dir or manifest_path.parent
     command = [
         "assets",
         "channel",
@@ -348,6 +364,11 @@ def _build_release_channel(
     if asset_source_base is not None:
         command.extend(["--asset-source-base", asset_source_base])
     _run_admin(*command)
+    shutil.copytree(
+        graph_source / "profiles" / "releases",
+        dist / "profiles" / "releases",
+        dirs_exist_ok=True,
+    )
     _run(
         ["pnpm", "--dir", "release-site", "install", "--frozen-lockfile"],
         timeout=180,
@@ -369,9 +390,9 @@ def _build_release_channel(
     _run_admin("assets", "channel", "check", "--channel", CHANNEL, "--dist", str(dist))
 
 
-def _record_test_binary_metadata(manifest_path: Path, artifacts_dir: Path) -> None:
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    version = manifest["binaries"]["current"]
+def _record_test_binary_metadata(
+    manifest_path: Path, artifacts_dir: Path, *, version: str
+) -> None:
     app_executable = b"capsem app install-test executable\n"
     tray_executable = b"capsem tray install-test executable\n"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -417,7 +438,7 @@ def _record_test_binary_metadata(manifest_path: Path, artifacts_dir: Path) -> No
                                 "checksumValue": hashlib.sha256(tray_executable).hexdigest(),
                             }
                         ],
-                    }
+                    },
                 ],
             },
             indent=2,
@@ -433,6 +454,8 @@ def _record_test_binary_metadata(manifest_path: Path, artifacts_dir: Path) -> No
         str(manifest_path),
         "--version",
         version,
+        "--source-commit",
+        "0" * 40,
         "--artifact",
         str(pkg_path),
         "--artifact",
@@ -485,11 +508,7 @@ def _write_minimal_pkg(path: Path, version: str, members: dict[str, bytes]) -> N
 def _write_minimal_deb(path: Path, members: dict[str, bytes]) -> None:
     architecture = path.stem.rsplit("_", maxsplit=1)[-1]
     assert architecture in {"amd64", "arm64"}
-    control = (
-        "Package: capsem\n"
-        "Version: 1.0.0\n"
-        f"Architecture: {architecture}\n"
-    ).encode()
+    control = (f"Package: capsem\nVersion: 1.0.0\nArchitecture: {architecture}\n").encode()
     control_tar_gz = io.BytesIO()
     with tarfile.open(fileobj=control_tar_gz, mode="w:gz") as tar:
         info = tarfile.TarInfo("control")
@@ -511,15 +530,9 @@ def _write_minimal_deb(path: Path, members: dict[str, bytes]) -> None:
 
 
 def _append_ar_member(out: bytearray, name: str, contents: bytes) -> None:
-    header = (
-        f"{name + '/':<16}"
-        f"{0:<12}"
-        f"{0:<6}"
-        f"{0:<6}"
-        f"{0o100644:<8}"
-        f"{len(contents):<10}"
-        "`\n"
-    ).encode("ascii")
+    header = (f"{name + '/':<16}{0:<12}{0:<6}{0:<6}{0o100644:<8}{len(contents):<10}`\n").encode(
+        "ascii"
+    )
     assert len(header) == 60
     out.extend(header)
     out.extend(contents)
@@ -652,7 +665,8 @@ def test_generated_release_channel_passes_public_contract(
     assert (release_channel_dist / "health.json").is_file()
     assert (release_channel_dist / "_headers").is_file()
     assert (release_channel_dist / "assets" / CHANNEL / "manifest.json").is_file()
-    assert (release_channel_dist / "assets" / "releases").is_dir()
+    assert (release_channel_dist / "profiles" / "releases").is_dir()
+    assert not (release_channel_dist / "assets" / "releases").exists()
     assert (release_channel_dist / "profiles" / "releases").is_dir()
     channels = json.loads((release_channel_dist / "channels.json").read_text())
     selected_manifest_url = channels["channels"][CHANNEL]["manifests"][0]["url"]
@@ -682,11 +696,6 @@ def test_fresh_install_assets_generate_release_channel_evidence(
         ["bash", "scripts/prepare-install-test-assets.sh"],
         env={"CAPSEM_ASSETS_DIR": str(assets_dir)},
     )
-    _record_test_binary_metadata(
-        assets_dir / "manifest.json",
-        tmp_path / "binary-artifacts",
-    )
-
     _build_release_channel(
         dist,
         manifest_path=assets_dir / "manifest.json",
@@ -697,7 +706,8 @@ def test_fresh_install_assets_generate_release_channel_evidence(
     vm_oboms = health["evidence"]["vm_oboms"]
     attestations = health["evidence"]["attestations"]
     assert vm_oboms
-    assert vm_oboms[0]["url"].endswith("-obom.cdx.json")
+    assert vm_oboms[0]["url"].startswith("/profiles/releases/")
+    assert vm_oboms[0]["url"].endswith("/obom.cdx.json")
     vm_attestation = next(
         item for item in attestations if item["name"] == "github_attestations_vm_assets"
     )
@@ -790,8 +800,6 @@ def test_local_channel_copy_fails_closed_on_asset_byte_mutation(tmp_path: Path) 
         if name.startswith("rootfs.")
     )
     (assets_dir / arch / rootfs_name).write_bytes(b"tampered but locally present\n")
-    _record_test_binary_metadata(manifest_path, tmp_path / "binary-artifacts")
-
     result = subprocess.run(
         [
             "cargo",

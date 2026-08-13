@@ -1,22 +1,8 @@
-"""The two release commands, and the order that is the whole point of them.
+"""Qualify one immutable source commit, then dispatch one release family.
 
-Nothing may stamp a version, mutate a tracked file, push, tag, or dispatch a
-workflow before the complete local gate has passed against the exact HEAD being
-published. In shell that order was six lines whose correctness was where they
-sat; here it is edges, so a step cannot be moved above the gate by accident.
-
-The cheap prechecks come first deliberately. A dirty tree, the wrong branch, or
-missing notes for a new immutable identity are deterministic failures, and
-finding them after forty minutes of gate is forty minutes nobody gets back.
-
-One plan, two territories. `CompleteGate` runs the whole thing from a private
-copy of the checkout, so the subject cannot move while it is being measured;
-but publication has to reach the repository a human still has afterwards. Every
-step that decides whether to publish, or does, is aimed at that checkout by
-`_checkout` below. `require-source-unchanged` is what makes the pair sound: it
-compares the originating checkout's HEAD and source digest against what was
-recorded, so the copy the gate qualified and the tree being released are
-provably the same bytes or nothing publishes.
+The selected commit is prepared on main before this command starts. The gate
+runs solely from its detached full-SHA prefix; after the complete proof it may
+create immutable transport/version refs, but it never edits tracked source.
 """
 
 from __future__ import annotations
@@ -24,7 +10,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from . import candidateplan, imagebuild, prefix
+from . import candidateplan, imagebuild
 from .actions import Run, Script
 from .candidate import CompleteGate
 from .command import GateCommand
@@ -33,19 +19,12 @@ from .errors import GateError
 from .execution import step
 from .fileactions import MakeDir
 from .plan import Plan
-from .releasehead import ConfirmHead, RecordHead, head_file
+from .sourcecommit import SourceCommit
 
 
 def _checkout(config: GateConfig) -> Path:
-    """The repository a release publishes from: never the copy.
-
-    Under a prefix the gate runs from a clonefiled tree whose `.git` is a copy,
-    so a version stamp, a commit, a tag or a push made there lands somewhere
-    that is reclaimed minutes later -- a release that reports success and
-    publishes nothing anyone can see. Absent a prefix the two are the same
-    path, which is what makes this safe to ask unconditionally.
-    """
-    return prefix.source_checkout(config) or config.root
+    """The detached immutable repository this release qualifies and dispatches."""
+    return config.root
 
 
 def _require_channel(config: GateConfig, channel: str) -> None:
@@ -91,6 +70,10 @@ class ReleaseBinariesCommand(
     @classmethod
     def add_arguments(cls, parser) -> None:
         parser.add_argument("channel")
+        parser.add_argument("source_commit", type=SourceCommit)
+
+    def source_commit(self) -> SourceCommit:
+        return self._args.source_commit
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
@@ -103,19 +86,31 @@ class ReleaseBinariesCommand(
 
         checked = plan.add(
             step(
-                "precheck",
-                # Seconds, not minutes: a dirty tree or the wrong branch is a
-                # deterministic failure and should not cost a gate run. The
-                # authoritative check still runs after, because the state can
-                # drift while the gate is going.
-                #
-                # Against the checkout, not the copy: the copy is clean by
-                # construction and on whatever branch it was cloned from, so
-                # asking it these questions answers about the wrong tree.
-                Script(*settings.precheck, root=checkout),
-                Script(*settings.notes, channel, root=checkout),
-                MakeDir(config.path(settings.preflight_dir)),
+                "source.remote-main",
+                Script(
+                    settings.source,
+                    str(self.source_commit()),
+                    "--ref-template",
+                    settings.source_ref_template,
+                    "--check",
+                    root=checkout,
+                    outside_sandbox=True,
+                ),
             )
+        )
+        prepared = plan.add(
+            step(
+                "precheck",
+                Script(
+                    *settings.notes,
+                    channel,
+                    str(self.source_commit()),
+                    root=checkout,
+                    outside_sandbox=True,
+                ),
+                MakeDir(config.path(settings.preflight_dir)),
+            ),
+            after=(checked,),
         )
 
         fetched = plan.add(
@@ -133,26 +128,35 @@ class ReleaseBinariesCommand(
                     outside_sandbox=True,
                 ),
             ),
-            after=(checked,),
+            after=(prepared,),
         )
-
-        recorded = plan.add(
-            step("record-head", RecordHead(head_file(config), checkout)), after=(fetched,)
-        )
-        gate = _gate(plan, config, qualification=self.qualification, after=(recorded,))
-        confirmed = plan.add(
-            step("confirm-head", ConfirmHead(settings.publish, head_file(config), checkout)),
+        gate = _gate(plan, config, qualification=self.qualification, after=(fetched,))
+        published = plan.add(
+            step(
+                "source.publish-ref",
+                Script(
+                    settings.source,
+                    str(self.source_commit()),
+                    "--ref-template",
+                    settings.source_ref_template,
+                    root=checkout,
+                    outside_sandbox=True,
+                ),
+            ),
             after=(gate,),
         )
-        # Stamps versions, mutates tracked files, commits, tags, pushes and
-        # dispatches. All of that belongs to the checkout; the copy exists to
-        # be measured, not to author a release.
         plan.add(
             step(
                 "release",
-                Script(settings.binaries, channel, root=checkout, outside_sandbox=True),
+                Script(
+                    settings.binaries,
+                    channel,
+                    str(self.source_commit()),
+                    root=checkout,
+                    outside_sandbox=True,
+                ),
             ),
-            after=(confirmed,),
+            after=(published,),
         )
         return plan
 
@@ -172,6 +176,10 @@ class ReleaseProfileCommand(
     def add_arguments(cls, parser) -> None:
         parser.add_argument("channel")
         parser.add_argument("profile")
+        parser.add_argument("source_commit", type=SourceCommit)
+
+    def source_commit(self) -> SourceCommit:
+        return self._args.source_commit
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
@@ -189,17 +197,32 @@ class ReleaseProfileCommand(
 
         checked = plan.add(
             step(
-                "precheck",
-                Script(*settings.precheck, root=checkout),
+                "source.remote-main",
+                Script(
+                    settings.source,
+                    str(self.source_commit()),
+                    "--ref-template",
+                    settings.source_ref_template,
+                    "--check",
+                    root=checkout,
+                    outside_sandbox=True,
+                ),
                 MakeDir(config.path(settings.preflight_dir)),
             )
         )
-        recorded = plan.add(
-            step("record-head", RecordHead(head_file(config), checkout)), after=(checked,)
-        )
-        gate = _gate(plan, config, qualification=self.qualification, after=(recorded,))
-        confirmed = plan.add(
-            step("confirm-head", ConfirmHead(settings.publish, head_file(config), checkout)),
+        gate = _gate(plan, config, qualification=self.qualification, after=(checked,))
+        published = plan.add(
+            step(
+                "source.publish-ref",
+                Script(
+                    settings.source,
+                    str(self.source_commit()),
+                    "--ref-template",
+                    settings.source_ref_template,
+                    root=checkout,
+                    outside_sandbox=True,
+                ),
+            ),
             after=(gate,),
         )
         plan.add(
@@ -216,11 +239,13 @@ class ReleaseProfileCommand(
                         self._args.channel,
                         "--profile",
                         self._args.profile,
+                        "--source-commit",
+                        str(self.source_commit()),
                     ],
                     cwd=checkout,
                     outside_sandbox=True,
                 ),
             ),
-            after=(confirmed,),
+            after=(published,),
         )
         return plan

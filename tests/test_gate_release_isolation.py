@@ -1,4 +1,4 @@
-"""A release qualifies a private copy and publishes from the real checkout.
+"""A release qualifies and dispatches solely from one detached commit prefix.
 
 Phase 7 gave `candidate` a private tree and stopped there, so both release
 commands still spent the hour-long gate against the checkout a developer was
@@ -12,20 +12,10 @@ plan, requires each release command to *contain* the complete proof rather than
 launch it, and forbids a parallel release ledger or result file. A receipt
 binding three processes is that ledger.
 
-So the isolation is composed inside the existing contract instead. One process
-still, one plan still -- and inside it two territories:
-
-  the *gate* runs from the copy, because its subject must not move while it is
-  being measured
-
-  *publication* runs in the checkout the copy was made from, because a commit,
-  tag or push made in the copy lands in a `.git` that is reclaimed minutes
-  later, and because the tree a human still has afterwards is the one being
-  released
-
-`require-source-unchanged` is what makes the pair sound: it compares the
-originating checkout's HEAD *and* source digest against what was recorded, so
-the two territories are provably the same bytes or the release stops.
+The selected commit is already on main and is materialized as an independent
+detached repository. The complete proof and both immutable-ref/dispatch steps
+use that one tree. The outer working tree may advance without changing the
+subject; tracked source is never authored during release.
 """
 
 from __future__ import annotations
@@ -49,12 +39,12 @@ RELEASES = [
 
 #: The steps that reach outside this machine, or decide whether to. Everything
 #: else in a release plan is the gate.
-PUBLICATION = ("precheck", "record-head", "confirm-head", "release")
+PUBLICATION = ("source.remote-main", "source.publish-ref", "release")
 
 # The only steps in either local release command allowed to execute outside
-# the kernel network boundary. Prechecks and the source-head capture are local
-# filesystem/git reads; resolution, source publication and dispatch genuinely
-# need the network.
+# the kernel network boundary. The binary precheck reads the remote version
+# tag; manifest resolution, source validation/publication and dispatch also
+# genuinely need the network.
 NETWORKED = {
     "release-binaries": (
         "channel-source",
@@ -64,9 +54,11 @@ NETWORKED = {
         "fast.toolchain.ort",
         "host-image",
         "install.materialize",
+        "precheck",
         "static.guest-builder",
         "static.toolchain.ort",
-        "confirm-head",
+        "source.remote-main",
+        "source.publish-ref",
         "release",
     ),
     "release-profile": (
@@ -78,7 +70,8 @@ NETWORKED = {
         "install.materialize",
         "static.guest-builder",
         "static.toolchain.ort",
-        "confirm-head",
+        "source.remote-main",
+        "source.publish-ref",
         "release",
     ),
 }
@@ -119,22 +112,15 @@ def test_a_command_containing_the_whole_gate_runs_it_from_a_copy() -> None:
 
 
 @pytest.mark.parametrize(("name", "args"), RELEASES)
-def test_publication_reaches_the_checkout_the_copy_was_made_from(name, args, checkout) -> None:
-    """A push from the copy pushes from a `.git` nobody keeps.
-
-    The prefix carries a *copy* of `.git`, so a version stamp, a commit and a
-    tag made there exist only until the prefix is reclaimed -- a release that
-    reported success and published nothing a human could see.
-    """
+def test_publication_never_reaches_the_mutable_outer_checkout(name, args, checkout) -> None:
+    """All source decisions use the independent detached prefix repository."""
     plan = _plan(name, **args)
     steps = {step.label: step for step in plan.steps}
 
     for label in PUBLICATION:
         rendered = "\n".join(steps[label].render())
-        assert checkout.name in rendered, (
-            f"{label} publishes, so it must run in the originating checkout "
-            f"rather than the copy:\n{rendered}"
-        )
+        assert checkout.name not in rendered
+        assert PROJECT_ROOT.name in rendered
 
 
 @pytest.mark.parametrize(("name", "args"), RELEASES)
@@ -191,16 +177,16 @@ def test_no_receipt_authority_was_invented() -> None:
     """The parallel ledger `AGENTS.md` forbids, refused by name.
 
     Splitting the release across processes needs something to bind them, and a
-    receipt recording the fetched manifest, the HEAD, the source digest and the
-    gate's result is exactly the "release result file" the release contract
-    rules out. `record-head`/`confirm-head` already carry that guarantee inside
-    one plan, so there is nothing for a second authority to add.
+    receipt recording the fetched manifest, source commit, source digest and
+    gate result is exactly the "release result file" the release contract
+    rules out. The detached prefix, structured run log, and family-owned
+    manifest fields carry their own identities without creating that authority.
     """
     settings = CONFIG.release.model_dump()
 
     assert "receipt" not in settings, (
         "a release receipt is a parallel release ledger; the manifest is the "
-        "bible and confirm-head is the fail-stop"
+        "bible and the immutable source prefix is the fail-stop"
     )
 
 

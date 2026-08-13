@@ -12,9 +12,9 @@ payloads.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import Field, StringConstraints
 
 from .configschema import Strict
 
@@ -40,6 +40,7 @@ class RunStart(Payload):
     command: str
     argv: tuple[str, ...]
     head: str
+    source_commit: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")] | None = None
     platform: str
     machine: str
     cores: int

@@ -32,6 +32,7 @@ from . import config as gate_config
 from .docker import Docker
 from .errors import GateError
 from .productschema import ProfileRevisionPolicy
+from .sourcecommit import SourceCommit
 
 
 class ReleaseGraph:
@@ -42,12 +43,14 @@ class ReleaseGraph:
         docker: Docker,
         config: gate_config.GateConfig,
         *,
+        source_commit: SourceCommit,
         container: str | None = None,
     ) -> None:
         self._docker = docker
         self._config = config.install
         self._site = config.environment.release_site
         self._container = container or self._config.container
+        self._source_commit = source_commit
         self._mount = self._config.mount
         self._handoff_written = False
         self.handed_off: str | None = None
@@ -143,6 +146,8 @@ class ReleaseGraph:
                 assets_manifest,
                 "--version",
                 version,
+                "--source-commit",
+                str(self._source_commit),
                 "--artifact",
                 candidate_deb,
                 "--artifact",

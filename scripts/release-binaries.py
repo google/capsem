@@ -17,9 +17,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CHANNELS = {"stable", "nightly"}
-# Every file carrying the released version. Stamping propagates Cargo.toml's
-# human-chosen version into the rest, so these change only when the cohort was
-# not already in agreement -- which is why they are not required to change.
 VERSION_COHORT_PATHS = (
     Path("Cargo.toml"),
     Path("Cargo.lock"),
@@ -28,13 +25,7 @@ VERSION_COHORT_PATHS = (
     Path("uv.lock"),
 )
 
-# Produced from the Unreleased section on every release, so these must change.
-RELEASE_NOTE_PATHS = (
-    Path("CHANGELOG.md"),
-    Path("LATEST_RELEASE.md"),
-)
-
-MUTATED_PATHS = (*VERSION_COHORT_PATHS, *RELEASE_NOTE_PATHS)
+SOURCE_COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 
 
 @dataclass(frozen=True)
@@ -45,6 +36,9 @@ class CommandResult:
 @dataclass(frozen=True)
 class ReleaseRun:
     database_id: str
+    display_title: str
+    head_sha: str
+    head_branch: str
     status: str
     conclusion: str
 
@@ -68,92 +62,22 @@ class Runner:
         return CommandResult(stdout=completed.stdout or "")
 
 
-class OwnedMutation:
-    """Restore only release-owned files when preparation fails before commit."""
-
-    def __init__(self, root: Path, paths: Sequence[Path]) -> None:
-        self._snapshots = {
-            path: (root / path).read_bytes() if (root / path).exists() else None for path in paths
-        }
-        self._root = root
-        self.committed = False
-
-    def restore(self) -> None:
-        if self.committed:
-            return
-        for relative, content in self._snapshots.items():
-            path = self._root / relative
-            if content is None:
-                path.unlink(missing_ok=True)
-            else:
-                path.write_bytes(content)
-
-
 def _capture(runner: Runner, *argv: str) -> str:
     return runner.run(argv, capture=True).stdout.strip()
 
 
-def _single_head_tag(runner: Runner) -> str | None:
-    tags = [
-        line
-        for line in _capture(
-            runner,
-            "git",
-            "tag",
-            "--points-at",
-            "HEAD",
-            "--list",
-            "v*",
-        ).splitlines()
-        if line
-    ]
-    if len(tags) > 1:
-        raise ValueError(f"release HEAD has multiple immutable tags: {tags}")
-    return tags[0] if tags else None
-
-
-def _tag_channel(runner: Runner, tag: str) -> str | None:
-    contents = _capture(
-        runner,
-        "git",
-        "tag",
-        "--list",
-        tag,
-        "--format=%(contents)",
-    )
-    match = re.search(r"(?:^|\s)channel=(stable|nightly)(?:\s|$)", contents)
-    return match.group(1) if match is not None else None
-
-
-def _validate_start(runner: Runner, channel: str) -> str | None:
+def _validate_start(runner: Runner, channel: str, source_commit: str) -> None:
     if channel not in CHANNELS:
         raise ValueError(f"channel must be stable or nightly, got {channel!r}")
+    if SOURCE_COMMIT.fullmatch(source_commit) is None:
+        raise ValueError("source commit must be 40-character lowercase hexadecimal")
     if _capture(runner, "git", "status", "--porcelain", "--untracked-files=all"):
         raise ValueError("release-binaries requires a clean working tree")
-    if _capture(runner, "git", "branch", "--show-current") != "main":
-        raise ValueError("release-binaries must run from main")
-    runner.run(("git", "fetch", "origin", "main"))
+    if _capture(runner, "git", "branch", "--show-current"):
+        raise ValueError("release-binaries must run from a detached source commit")
     head = _capture(runner, "git", "rev-parse", "HEAD")
-    remote = _capture(runner, "git", "rev-parse", "origin/main")
-    if head == remote:
-        return None
-
-    tag = _single_head_tag(runner)
-    ahead = _capture(runner, "git", "rev-list", "--count", "origin/main..HEAD")
-    parent = _capture(runner, "git", "rev-parse", "HEAD^")
-    subject = _capture(runner, "git", "log", "-1", "--format=%s")
-    expected_tag = f"v{_project_version()}"
-    if (
-        ahead == "1"
-        and parent == remote
-        and tag == expected_tag
-        and _tag_channel(runner, expected_tag) == channel
-        and subject == f"release({channel}): {tag}"
-    ):
-        return expected_tag
-    raise ValueError(
-        f"local main differs from origin/main and is not one resumable {channel} release commit"
-    )
+    if head != source_commit:
+        raise ValueError(f"release source is {head}, expected {source_commit}")
 
 
 def _project_version() -> str:
@@ -201,9 +125,13 @@ def _lock_package_versions(
 
 
 # Independent of Cargo.toml so moving off the intended line is not tautological.
-RELEASE_LINE = tomllib.loads((ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))[
+RELEASE_CONFIG = tomllib.loads((ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))[
     "release"
-]["line"]
+]
+RELEASE_LINE = RELEASE_CONFIG["line"]
+SOURCE_REF_TEMPLATE = RELEASE_CONFIG["source_ref_template"]
+TAGGER_NAME = RELEASE_CONFIG["tagger_name"]
+TAGGER_EMAIL = RELEASE_CONFIG["tagger_email"]
 
 
 def _validate_version_cohort(version: str) -> None:
@@ -233,17 +161,89 @@ def _validate_version_cohort(version: str) -> None:
         raise RuntimeError(f"release version cohort is inconsistent for {version}: {mismatches}")
 
 
-def _changed_paths(runner: Runner) -> set[Path]:
-    output = runner.run(
-        ("git", "status", "--porcelain", "--untracked-files=all"),
-        capture=True,
-    ).stdout.rstrip()
-    return {Path(line[3:]) for line in output.splitlines() if len(line) >= 4}
+def _section(content: str, heading: str) -> str | None:
+    match = re.search(rf"^## \[{re.escape(heading)}\](?: - [^\n]+)?\s*$", content, re.MULTILINE)
+    if match is None:
+        return None
+    following = re.search(r"^## \[", content[match.end() :], re.MULTILINE)
+    end = len(content) if following is None else match.end() + following.start()
+    return content[match.end() : end].strip()
+
+
+def _require_prepared_release(version: str) -> None:
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    latest = (ROOT / "LATEST_RELEASE.md").read_text(encoding="utf-8")
+    prefix = f"version: {version}\n---\n"
+    if not latest.startswith(prefix):
+        raise RuntimeError(f"LATEST_RELEASE.md is not prepared for {version}")
+    released = _section(changelog, version)
+    if released is None or released != latest.removeprefix(prefix).strip():
+        raise RuntimeError(f"CHANGELOG.md and LATEST_RELEASE.md disagree for {version}")
+    if _section(changelog, "Unreleased"):
+        raise RuntimeError("publishable release source still has pending Unreleased notes")
+
+
+def _remote_version_target(runner: Runner, tag: str) -> str | None:
+    raw = _capture(
+        runner,
+        "git",
+        "ls-remote",
+        "--tags",
+        "origin",
+        f"refs/tags/{tag}",
+        f"refs/tags/{tag}^{{}}",
+    )
+    rows = [line.split() for line in raw.splitlines() if line]
+    if not rows:
+        return None
+    if any(len(row) != 2 for row in rows):
+        raise RuntimeError(f"remote returned malformed rows for {tag}: {rows}")
+    targets = {row[1]: row[0] for row in rows}
+    if len(targets) != len(rows):
+        raise RuntimeError(f"remote returned duplicate rows for {tag}: {rows}")
+    expected = {f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"}
+    if set(targets) - expected or f"refs/tags/{tag}" not in targets:
+        raise RuntimeError(f"remote returned malformed rows for {tag}: {rows}")
+    return targets.get(f"refs/tags/{tag}^{{}}", targets[f"refs/tags/{tag}"])
+
+
+def _ensure_version_tag(runner: Runner, *, tag: str, channel: str, source_commit: str) -> bool:
+    """Return whether this invocation may publish the selected binary identity."""
+    target = _remote_version_target(runner, tag)
+    if target is None:
+        _require_prepared_release(tag.removeprefix("v"))
+        runner.run(
+            (
+                "git",
+                "-c",
+                f"user.name={TAGGER_NAME}",
+                "-c",
+                f"user.email={TAGGER_EMAIL}",
+                "tag",
+                "-a",
+                tag,
+                source_commit,
+                "-m",
+                f"Capsem {tag[1:]} channel={channel}",
+            )
+        )
+        runner.run(("git", "push", "origin", f"refs/tags/{tag}:refs/tags/{tag}"))
+        if _remote_version_target(runner, tag) != source_commit:
+            raise RuntimeError(
+                f"new immutable version tag {tag} did not resolve to {source_commit}"
+            )
+        return True
+    if target == source_commit:
+        return True
+    if channel == "nightly":
+        return False
+    raise RuntimeError(f"immutable version tag {tag} points at {target}, not {source_commit}")
 
 
 def _matching_run(
     runner: Runner,
     ref: str,
+    source_commit: str,
     tag: str,
     channel: str,
     dispatch_id: str | None = None,
@@ -257,12 +257,14 @@ def _matching_run(
         "release.yaml",
         "--branch",
         ref,
+        "--commit",
+        source_commit,
         "--event",
         "workflow_dispatch",
         "--limit",
         "20",
         "--json",
-        "databaseId,displayTitle,status,conclusion",
+        "databaseId,displayTitle,headSha,headBranch,status,conclusion",
     )
     try:
         rows = json.loads(raw or "[]")
@@ -291,27 +293,37 @@ def _matching_run(
         raise RuntimeError(f"GitHub returned multiple release runs for dispatch {dispatch_id}")
     row = matches[0]
     database_id = row.get("databaseId")
+    display_title = row.get("displayTitle")
+    head_sha = row.get("headSha")
+    head_branch = row.get("headBranch")
     status = row.get("status")
     conclusion = row.get("conclusion")
-    if not isinstance(database_id, int) or not isinstance(status, str):
+    if (
+        not isinstance(database_id, int)
+        or not isinstance(display_title, str)
+        or head_sha != source_commit
+        or head_branch != ref
+        or not isinstance(status, str)
+    ):
         raise RuntimeError(f"GitHub returned a malformed matching release run: {row}")
     if conclusion is None:
         conclusion = ""
     if not isinstance(conclusion, str):
         raise RuntimeError(f"GitHub returned a malformed matching release conclusion: {row}")
-    return ReleaseRun(str(database_id), status, conclusion)
+    return ReleaseRun(str(database_id), display_title, head_sha, head_branch, status, conclusion)
 
 
 def _wait_for_run(
     runner: Runner,
     ref: str,
+    source_commit: str,
     tag: str,
     channel: str,
     dispatch_id: str,
 ) -> ReleaseRun:
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
-        run = _matching_run(runner, ref, tag, channel, dispatch_id)
+        run = _matching_run(runner, ref, source_commit, tag, channel, dispatch_id)
         if run is not None:
             return run
         time.sleep(2)
@@ -322,6 +334,7 @@ def _dispatch_release(
     runner: Runner,
     *,
     ref: str,
+    source_commit: str,
     tag: str,
     channel: str,
     publish: bool,
@@ -343,20 +356,44 @@ def _dispatch_release(
             f"publish={str(publish).lower()}",
             "-f",
             f"dispatch_id={dispatch_id}",
+            "-f",
+            f"source_commit={source_commit}",
         )
     )
 
 
-def _complete_run(runner: Runner, run: ReleaseRun, tag: str, channel: str) -> str:
-    if run.status == "completed" and run.conclusion == "success":
-        return run.database_id
+def _complete_run(
+    runner: Runner, run: ReleaseRun, tag: str, channel: str, source_commit: str, ref: str
+) -> str:
     if run.status == "completed":
-        raise RuntimeError(
-            f"{channel}/{tag} release run {run.database_id} completed with "
-            f"{run.conclusion or 'an unknown conclusion'}; diagnose that run "
-            "before retrying changed code"
+        if run.conclusion != "success":
+            raise RuntimeError(
+                f"{channel}/{tag} release run {run.database_id} completed with "
+                f"{run.conclusion or 'an unknown conclusion'}; diagnose that run "
+                "before retrying changed code"
+            )
+    else:
+        runner.run(("gh", "run", "watch", run.database_id, "--exit-status"))
+    viewed = json.loads(
+        _capture(
+            runner,
+            "gh",
+            "run",
+            "view",
+            run.database_id,
+            "--json",
+            "databaseId,displayTitle,headSha,headBranch,status,conclusion",
         )
-    runner.run(("gh", "run", "watch", run.database_id, "--exit-status"))
+    )
+    if (
+        str(viewed.get("databaseId")) != run.database_id
+        or viewed.get("displayTitle") != run.display_title
+        or viewed.get("headSha") != source_commit
+        or viewed.get("headBranch") != ref
+        or viewed.get("status") != "completed"
+        or viewed.get("conclusion") != "success"
+    ):
+        raise RuntimeError(f"completed release run identity changed: {viewed}")
     return run.database_id
 
 
@@ -364,154 +401,60 @@ def _resume_release(
     runner: Runner,
     *,
     ref: str,
+    source_commit: str,
     tag: str,
     channel: str,
     publish: bool,
     force_rebuild: bool = False,
 ) -> str:
-    run = _matching_run(runner, ref, tag, channel)
+    run = _matching_run(runner, ref, source_commit, tag, channel)
     if run is not None:
         if run.status != "completed" or run.conclusion != "success":
-            return _complete_run(runner, run, tag, channel)
+            return _complete_run(runner, run, tag, channel, source_commit, ref)
         if not force_rebuild:
-            return run.database_id
+            return _complete_run(runner, run, tag, channel, source_commit, ref)
 
     dispatch_id = f"capsem-binaries-{os.getpid()}-{time.time_ns()}"
     _dispatch_release(
         runner,
         ref=ref,
+        source_commit=source_commit,
         tag=tag,
         channel=channel,
         publish=publish,
         dispatch_id=dispatch_id,
     )
-    run = _wait_for_run(runner, ref, tag, channel, dispatch_id)
-    return _complete_run(runner, run, tag, channel)
+    run = _wait_for_run(runner, ref, source_commit, tag, channel, dispatch_id)
+    return _complete_run(runner, run, tag, channel, source_commit, ref)
 
 
-def _tag_exists(runner: Runner, tag: str) -> bool:
-    return _capture(runner, "git", "tag", "--list", tag) == tag
+def precheck_release_binaries(channel: str, source_commit: str, runner: Runner) -> None:
+    """Validate immutable prepared source before the expensive proof."""
+    _validate_start(runner, channel, source_commit)
+    version = _project_version()
+    _validate_version_cohort(version)
+    # A remote version tag may be a nightly rebuild of a newer source. The
+    # no-write dispatcher decides that after qualification. Query the remote:
+    # a stale or missing local tag must never decide whether source is ready.
+    if _remote_version_target(runner, f"v{version}") is None:
+        _require_prepared_release(version)
 
 
-def precheck_release_binaries(channel: str, runner: Runner) -> None:
-    """Require notes only when this invocation can mint a new identity."""
-    if channel not in CHANNELS:
-        raise ValueError(f"channel must be stable or nightly, got {channel!r}")
-    expected_tag = f"v{_project_version()}"
-    head_tag = _single_head_tag(runner)
-    already_released = head_tag == expected_tag and (
-        channel == "nightly" or _tag_channel(runner, expected_tag) == channel
-    )
-    nightly_rebuild = channel == "nightly" and _tag_exists(runner, expected_tag)
-    if already_released or nightly_rebuild:
-        return
-    if _tag_exists(runner, expected_tag):
-        raise RuntimeError(
-            f"immutable release tag already exists: {expected_tag}; bump the stable version"
-        )
-    runner.run((sys.executable, "scripts/extract-release-notes.py", "--check"))
-
-
-def release_binaries(channel: str, runner: Runner) -> tuple[str, str]:
-    pending_release_tag = _validate_start(runner, channel)
-    if pending_release_tag is not None:
-        runner.run(("git", "push", "--atomic", "origin", "main", pending_release_tag))
-        run_id = _resume_release(
-            runner,
-            ref=pending_release_tag,
-            tag=pending_release_tag,
-            channel=channel,
-            publish=True,
-        )
-        return pending_release_tag, run_id
-
-    expected_tag = f"v{_project_version()}"
-    current_release_tag = _single_head_tag(runner)
-    if current_release_tag == expected_tag and (
-        channel == "nightly" or _tag_channel(runner, expected_tag) == channel
-    ):
-        publish = channel != "nightly"
-        run_id = _resume_release(
-            runner,
-            ref=expected_tag,
-            tag=expected_tag,
-            channel=channel,
-            publish=publish,
-            force_rebuild=not publish,
-        )
-        return expected_tag, run_id
-
-    if channel == "nightly" and _tag_exists(runner, expected_tag):
-        run_id = _resume_release(
-            runner,
-            ref="main",
-            tag=expected_tag,
-            channel=channel,
-            publish=False,
-            force_rebuild=True,
-        )
-        return expected_tag, run_id
-
-    base_head = _capture(runner, "git", "rev-parse", "HEAD")
-    runner.run(
-        (
-            sys.executable,
-            "scripts/extract-release-notes.py",
-            "--check",
-        )
-    )
-    mutation = OwnedMutation(ROOT, MUTATED_PATHS)
-    try:
-        runner.run(("just", "_stamp-version"))
-        version = _project_version()
-        _validate_version_cohort(version)
-        tag = f"v{version}"
-        runner.run(
-            (
-                sys.executable,
-                "scripts/extract-release-notes.py",
-                "--version",
-                version,
-            )
-        )
-        changed = _changed_paths(runner)
-        expected = set(MUTATED_PATHS)
-        unexpected = changed - expected
-        # Only the notes must change. A no-op stamp is the correct outcome when
-        # the cohort already agrees on the released version, and that agreement
-        # is proved above by _validate_version_cohort -- a stronger claim than
-        # "the file was rewritten".
-        missing = set(RELEASE_NOTE_PATHS) - changed
-        if unexpected or missing:
-            raise RuntimeError(
-                "release preparation write set is invalid: "
-                f"unexpected={sorted(map(str, unexpected))} "
-                f"missing={sorted(map(str, missing))}"
-            )
-        existing = _capture(runner, "git", "tag", "--list", tag)
-        if existing:
-            raise RuntimeError(f"immutable release tag already exists: {tag}")
-        runner.run(("git", "add", "--", *(str(path) for path in MUTATED_PATHS)))
-        runner.run(("git", "commit", "-m", f"release({channel}): {tag}"))
-        runner.run(("git", "tag", "-a", tag, "-m", f"Capsem {version} channel={channel}"))
-        mutation.committed = True
-    except Exception:
-        # Preparation starts from a validated clean tree and has not pushed.
-        # A commit-hook or tag failure may nevertheless leave the release
-        # cohort staged or HEAD advanced to an untagged commit. Restore the
-        # exact local Git position first with a mixed reset (which preserves
-        # unexpected files for inspection), then restore only our owned bytes.
-        runner.run(("git", "reset", "--mixed", base_head))
-        mutation.restore()
-        raise
-
-    runner.run(("git", "push", "--atomic", "origin", "main", tag))
+def release_binaries(channel: str, source_commit: str, runner: Runner) -> tuple[str, str]:
+    _validate_start(runner, channel, source_commit)
+    version = _project_version()
+    _validate_version_cohort(version)
+    tag = f"v{version}"
+    publish = _ensure_version_tag(runner, tag=tag, channel=channel, source_commit=source_commit)
+    ref = SOURCE_REF_TEMPLATE.format(source_commit=source_commit)
     run_id = _resume_release(
         runner,
-        ref=tag,
+        ref=ref,
+        source_commit=source_commit,
         tag=tag,
         channel=channel,
-        publish=True,
+        publish=publish,
+        force_rebuild=not publish,
     )
     return tag, run_id
 
@@ -524,13 +467,14 @@ def main() -> int:
         help="check release notes only when a new immutable identity is needed",
     )
     parser.add_argument("channel", choices=sorted(CHANNELS))
+    parser.add_argument("source_commit")
     args = parser.parse_args()
     try:
         runner = Runner()
         if args.precheck:
-            precheck_release_binaries(args.channel, runner)
+            precheck_release_binaries(args.channel, args.source_commit, runner)
             return 0
-        tag, run_id = release_binaries(args.channel, runner)
+        tag, run_id = release_binaries(args.channel, args.source_commit, runner)
     except (OSError, subprocess.CalledProcessError, RuntimeError, ValueError) as error:
         print(f"release-binaries failed: {error}", file=sys.stderr)
         return 1

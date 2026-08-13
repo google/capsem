@@ -24,6 +24,7 @@ from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
 from capsem.gate.context import Context
 from capsem.gate.errors import GateError
+from capsem.gate.sourcecommit import SourceCommit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -185,7 +186,12 @@ def test_a_release_profile_refuses_an_unknown_channel_before_the_gate() -> None:
         GateCommand.registry["release-profile"](
             RecordingRunner(PROJECT_ROOT),
             argparse.Namespace(
-                dry_run=False, graph=False, timing=False, channel="prod", profile="code"
+                dry_run=False,
+                graph=False,
+                timing=False,
+                channel="prod",
+                profile="code",
+                source_commit=SourceCommit("0" * 40),
             ),
         )._describe()
 
@@ -201,6 +207,7 @@ def test_a_release_profile_refuses_an_unknown_profile_before_the_gate() -> None:
                 timing=False,
                 channel="nightly",
                 profile="no-such-profile",
+                source_commit=SourceCommit("0" * 40),
             ),
         )._describe()
 
@@ -210,7 +217,12 @@ def test_a_known_channel_and_profile_are_accepted() -> None:
     plan = GateCommand.registry["release-profile"](
         RecordingRunner(PROJECT_ROOT),
         argparse.Namespace(
-            dry_run=False, graph=False, timing=False, channel="nightly", profile="code"
+            dry_run=False,
+            graph=False,
+            timing=False,
+            channel="nightly",
+            profile="code",
+            source_commit=SourceCommit("0" * 40),
         ),
     )._describe()
 
@@ -292,8 +304,15 @@ def test_no_command_touches_the_machine_while_building_its_plan() -> None:
 
     arguments = {
         "exec": {"guest_command": "true"},
-        "release-binaries": {"channel": "nightly"},
-        "release-profile": {"channel": "nightly", "profile": "code"},
+        "release-binaries": {
+            "channel": "nightly",
+            "source_commit": SourceCommit("0" * 40),
+        },
+        "release-profile": {
+            "channel": "nightly",
+            "profile": "code",
+            "source_commit": SourceCommit("0" * 40),
+        },
         "cross-compile": {"arch": "arm64"},
         "storage": {"action": "gc", "rail": None},
         "prove-deb": {

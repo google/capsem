@@ -51,8 +51,8 @@ the normative contract when older repository text disagrees.
 Capsem has exactly two release-facing commands:
 
 ```bash
-just release-binaries <channel>
-just release-profile <channel> <profile>
+just release-binaries <channel> <source-commit>
+just release-profile <channel> <profile> <source-commit>
 ```
 
 They are the sole human and automation entrypoints. Each command contains the
@@ -61,16 +61,19 @@ lock, workspace, and journal; it never launches `just test`, Just, or another
 gate. Do not add preparation, combined-release, reduced-gate, or skip commands,
 nor dispatch `release.yaml` or `release-assets.yaml` directly.
 
-`just test` is the first consequential work. Cheap read-only validation may
-fail earlier, but no version stamp, tracked-file mutation, commit, tag, push,
-manifest authoring, workflow dispatch, or activation may precede the complete
-green candidate. Both commands then require the unchanged clean `main` HEAD
-whose exact bytes passed and may only fast-forward that HEAD to `origin/main`.
+The full lowercase commit is prepared and committed on `main` before the
+command. Qualification runs from an independent detached repository at the
+full-SHA prefix; moving the outer checkout cannot change it. Cheap read-only
+validation may fail earlier, but no source/version tag, manifest authoring,
+workflow dispatch, or activation may precede the complete green candidate.
+Afterward both commands create or verify `capsem-source-<commit>` and dispatch
+from it. They never edit tracked source or push `main`.
 
 The complete candidate remains inside the host-kernel network boundary.
 Bubblewrap on Linux and Seatbelt on macOS provide loopback only; the one-time
 authenticated egress helper serves only marked advisory queries, fresh
-manifest resolution, exact-main confirmation/push, and final dispatch. Every
+manifest/version-ref resolution, remote-main validation, source-ref
+publication, and final dispatch. Every
 brokered command remains runner-guarded and journaled. Never widen the whole
 release because one edge needs network.
 
@@ -107,7 +110,9 @@ Binary and profile workflows share the exact
 deployment. Stable and nightly remain independent. The binary lane may mutate
 only package/per-binary/host-SBOM/existing-attestation fields and never builds a
 profile. The profile lane may mutate only one channel/profile and never builds
-a package. `capsem-admin` is the sole first-party and corporate manifest/profile
+a package. Binary inventory is nested under its owning package. Profiles own
+their config, images, software inventory, OBOM/evidence. `capsem-admin` is the
+sole first-party and corporate manifest/profile
 author; corporations never build or mutate Capsem-owned binaries or channels.
 
 If a profile needs newer code, publish its immutable bytes once as staged

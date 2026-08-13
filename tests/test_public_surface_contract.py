@@ -35,9 +35,9 @@ def test_the_fast_gate_is_public_and_is_not_a_release_shortcut() -> None:
     """
     checker = _load_checker()
     public_just = set(checker.current_surfaces()["just"])
-    policy = tomllib.loads(
-        (ROOT / "config" / "public-surface.toml").read_text(encoding="utf-8")
-    )["just"]
+    policy = tomllib.loads((ROOT / "config" / "public-surface.toml").read_text(encoding="utf-8"))[
+        "just"
+    ]
     assert "test" in public_just
     for recipe in (variables.FAST_TEST, variables.VM_SMOKE):
         assert recipe in public_just, f"{recipe} is not a public recipe"
@@ -57,6 +57,7 @@ def test_the_fast_gate_is_public_and_is_not_a_release_shortcut() -> None:
 
     from capsem.gate import cli  # noqa: F401 - registers every command
     from capsem.gate.command import GateCommand
+    from capsem.gate.sourcecommit import SourceCommit
 
     for name, extra in (
         ("release-binaries", {"channel": "nightly"}),
@@ -64,7 +65,13 @@ def test_the_fast_gate_is_public_and_is_not_a_release_shortcut() -> None:
     ):
         plan = GateCommand.registry[name](
             RecordingRunner(ROOT),
-            argparse.Namespace(dry_run=False, graph=False, timing=False, **extra),
+            argparse.Namespace(
+                dry_run=False,
+                graph=False,
+                timing=False,
+                source_commit=SourceCommit("0" * 40),
+                **extra,
+            ),
         )._describe()
         order = list(plan.labels)
 
@@ -171,9 +178,7 @@ def test_project_skills_do_not_teach_retired_public_just_commands() -> None:
         for line_number, line in enumerate(path.read_text().splitlines(), start=1):
             for match in command.finditer(line):
                 if match.group(1) in retired:
-                    failures.append(
-                        f"{path.relative_to(ROOT)}:{line_number}: {line.strip()}"
-                    )
+                    failures.append(f"{path.relative_to(ROOT)}:{line_number}: {line.strip()}")
 
     assert not failures, (
         "project skills teach retired public Just commands; use the approved "

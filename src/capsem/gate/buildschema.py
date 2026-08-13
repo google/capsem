@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
-from pydantic import PositiveInt, StringConstraints, model_validator
+from pydantic import PositiveInt, StringConstraints, field_validator, model_validator
 
 from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
 
@@ -255,10 +255,12 @@ class InitrdConfig(Strict):
 
 class ReleaseConfig(Strict):
     line: Annotated[str, StringConstraints(pattern=r"^\d+\.\d+$")]
-    precheck: tuple[str, ...]
+    source: str
+    source_ref_template: str
+    tagger_name: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    tagger_email: Annotated[str, StringConstraints(pattern=r"^[^@\s]+@[^@\s]+$")]
     notes: tuple[str, ...]
     fetch_manifest: str
-    publish: str
     binaries: str
     profile: tuple[str, ...]
     preflight_dir: str
@@ -266,6 +268,13 @@ class ReleaseConfig(Strict):
     default_repository: str
     repository_variable: str
     token_variable: str
+
+    @field_validator("source_ref_template")
+    @classmethod
+    def _source_ref_is_one_commit_derived_tag(cls, template: str) -> str:
+        if template != "capsem-source-{source_commit}":
+            raise ValueError("release source_ref_template must be capsem-source-{source_commit}")
+        return template
 
 
 class DevLoopConfig(Strict):

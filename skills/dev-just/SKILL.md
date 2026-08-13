@@ -27,8 +27,8 @@ allowlist update in the same change.
 | `just fast-test` | The fast gate itself -- the same `_test-fast` module `test` and both release lanes run, so it cannot drift from them. |
 | `just vm-smoke` | Short VM round-trip: boot, exercise, tear down. Runtime liveness, never release qualification. |
 | `just test` | Complete local all-artifact construction and test proof. |
-| `just release-binaries <channel>` | Dispatch one Python release plan that contains the complete test graph, then releases only packages for one channel against pulled profiles. |
-| `just release-profile <channel> <profile>` | Dispatch one Python release plan that contains the complete test graph, then calls `capsem-admin release` for one profile against the pulled package. |
+| `just release-binaries <channel> <source-commit>` | Qualify one detached committed source, then release only packages for one channel against pulled profiles. |
+| `just release-profile <channel> <profile> <source-commit>` | Qualify one detached committed source, then call `capsem-admin release` for one profile against the pulled package. |
 
 `just --summary` must print exactly the names in `[just].approved` and nothing
 else. The count is not repeated here on purpose: this line used to say "those

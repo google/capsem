@@ -169,6 +169,7 @@ reject_matches(
     "crates/capsem/src/update.rs",
 )
 
+
 def repository_files() -> Iterable[Path]:
     """Yield tracked and non-ignored untracked files without requiring rg."""
 
@@ -196,9 +197,7 @@ def repository_files() -> Iterable[Path]:
             for path in ROOT.rglob("*")
             if path.is_file()
             and not ignored_parts.intersection(path.relative_to(ROOT).parts)
-            and not any(
-                part.startswith(".sprinty") for part in path.relative_to(ROOT).parts
-            )
+            and not any(part.startswith(".sprinty") for part in path.relative_to(ROOT).parts)
         )
         return
 
@@ -223,7 +222,6 @@ retired_markers = (
     "qualify-" + "release",
     "cut-" + "release",
 )
-retired_sha_pattern = re.compile(r"\bexact[- ]" + r"SHA\b", re.IGNORECASE)
 resurrected: list[str] = []
 for path in repository_files():
     relative = path.relative_to(ROOT)
@@ -237,11 +235,6 @@ for path in repository_files():
         if marker in contents:
             line = contents.count("\n", 0, contents.index(marker)) + 1
             resurrected.append(f"{relative}:{line}:{marker}")
-    match = retired_sha_pattern.search(contents)
-    if match:
-        line = contents.count("\n", 0, match.start()) + 1
-        resurrected.append(f"{relative}:{line}:{match.group(0)}")
-
 if resurrected:
     print("ERROR: retired independent release doctrine was reintroduced", file=sys.stderr)
     print("\n".join(resurrected), file=sys.stderr)
@@ -266,7 +259,7 @@ allowed_writers = {path.resolve() for path in release_workflows}
 writer_markers = (
     "stage-profile-publication.py",
     "capsem-admin -- release",
-    "gh release upload \"$RELEASE_TAG\" \"$named\"",
+    'gh release upload "$RELEASE_TAG" "$named"',
 )
 for workflow in (ROOT / ".github/workflows").glob("*.yaml"):
     if workflow.resolve() in allowed_writers:
@@ -296,7 +289,10 @@ for workflow in (ROOT / ".github/workflows").glob("*.yaml"):
         "deploy_branch: ${{ inputs.deploy_branch }}" not in contents
         or "validate_complete_public_channels: false" not in contents
     ):
-        print("ERROR: release-channel staging caller is not constrained to preview mode", file=sys.stderr)
+        print(
+            "ERROR: release-channel staging caller is not constrained to preview mode",
+            file=sys.stderr,
+        )
         failed = True
 
 if failed:

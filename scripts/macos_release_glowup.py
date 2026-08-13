@@ -26,6 +26,7 @@ from macos_candidate_content import (
 
 from capsem.gate import config as gate_config
 from capsem.gate.content import ProfileContent
+from capsem.gate.sourcecommit import SourceCommit, source_commit_for_checkout
 
 try:
     from release_glowup import (
@@ -83,6 +84,7 @@ def prepare_candidate_manifest(
     channel: str,
     content: ProfileContent,
     config: gate_config.GateConfig,
+    source_commit: SourceCommit,
 ) -> tuple[Path, Path, Path]:
     """Generate the candidate graph from the exact package release pipeline."""
 
@@ -112,6 +114,7 @@ def prepare_candidate_manifest(
             str(source_manifest),
             "--version",
             version,
+            "--source-commit", str(source_commit),
             "--artifact",
             str(package),
             "--artifact",
@@ -229,9 +232,7 @@ def finalize_native_report(
     validate_installed_evidence(installed)
     validate_installed_evidence(preserved_installed)
     if preserved_installed != installed:
-        raise RuntimeError(
-            "tamper rejection did not preserve the exact normalized installed state"
-        )
+        raise RuntimeError("tamper rejection did not preserve the exact normalized installed state")
     rejection = _require_dict(
         adapter_evidence.get("tamper_rejection"),
         "tamper_rejection",
@@ -251,8 +252,7 @@ def finalize_native_report(
     for field, expected in expected_rejection.items():
         if rejection.get(field) != expected:
             raise RuntimeError(
-                f"macOS tamper rejection {field} is "
-                f"{rejection.get(field)!r}, expected {expected!r}"
+                f"macOS tamper rejection {field} is {rejection.get(field)!r}, expected {expected!r}"
             )
 
     manifest_bytes = manifest_path.read_bytes()
@@ -358,7 +358,7 @@ def main() -> int:
         version=args.version,
         channel=args.channel,
         content=content,
-        config=config,
+        config=config, source_commit=source_commit_for_checkout(ROOT),
     )
     tampered_manifest = prepare_tampered_manifest(
         manifest_path,

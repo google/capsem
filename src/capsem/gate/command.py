@@ -35,6 +35,7 @@ from .qualification import from_environment as qualification_for
 from .qualification import is_release as qualification_is_release
 from .recording import Recorded
 from .scopeenv import command_environment
+from .sourcecommit import SourceCommit
 
 
 class GateCommand(Recorded, ABC):
@@ -105,13 +106,10 @@ class GateCommand(Recorded, ABC):
     ) -> None:
         self._runner = runner
         self._args = args
-        # What was typed, captured by `cli` before parsing. A run that cannot
-        # say which channel it attempted is a run nobody can read back.
+        # Captured before parsing so a failed run retains its exact argv.
         self._invocation = invocation
         self._config = gate_config.for_root(runner.root)
         self._sandbox_mode = sandbox.mode(self.sandboxed, getattr(args, "sandbox", None))
-        # Read once so modules cannot disagree, and early so malformed release
-        # state fails before the hour-long work, only for plans that need it.
         self._qualification = qualification
         if qualification is None and self.uses_qualification:
             self._qualification = qualification_for(self._config)
@@ -159,6 +157,9 @@ class GateCommand(Recorded, ABC):
         del runner  # a command with nothing to hold needs no runner to hold it
         return ()
 
+    def source_commit(self) -> SourceCommit | None:
+        return None
+
     def reexec(self) -> tuple[str, ...] | None:
         """A command line to become, instead of running this one.
 
@@ -195,8 +196,8 @@ class GateCommand(Recorded, ABC):
         sandbox.require_complete_qualification(
             self.name, self._sandbox_mode, self.complete_qualification
         )
-        # A plan describes; it does not act. Built against a runner that
-        # refuses everything, so `--dry-run` cannot touch the machine on the
+        # A plan describes; it does not act. Its runner refuses everything, so
+        # `--dry-run` cannot touch the machine on the
         # way to telling you it would not.
         plan = self._describe()
         plan.validate(self._config)
@@ -223,24 +224,24 @@ class GateCommand(Recorded, ABC):
         if carried:
             self._runner.note(f"carrying {len(carried)} steps before {self._args.resume_from}")
 
-        # The same deadlock, reached from inside Python rather than through a
-        # subprocess. `GuardedRunner` cannot see it: nothing is spawned. A
-        # pytest step calling `cli.main(["storage", ...])` simply blocked on
+        # A direct `cli.main(["storage", ...])` nested gate simply blocked on
         # the lock its own grandparent held, and the run stayed alive-looking
         # for the full two hours.
         preflight.refuse_inside_a_run(self._config, self.name, exclusive=self.exclusive)
 
-        # Before the re-exec and before any resource, for the same reason both
-        # of those are here: the child takes the machine lock, so a parent
-        # holding it would wait out its own timeout. The copy is built by this
-        # process and reclaimed by it after the child returns, which is what
-        # gives the export somewhere to run even when the run failed.
-        if (self.private_checkout or reuse) and prefix.source_checkout(self._config) is None:
+        commit = self.source_commit()
+        if (self.private_checkout or reuse) and not prefix.active(self._config, commit):
             raise SystemExit(
-                prefix.run_from_private_copy(self._runner, self._config, sys.argv[1:], reuse=reuse)
+                prefix.run_from_private_copy(
+                    self._runner,
+                    self._config,
+                    sys.argv[1:],
+                    reuse=reuse,
+                    commit=commit,
+                )
             )
 
-        # Before any resource, and outside the lock: a re-exec inside the held
+        # Outside the lock: a re-exec inside the held
         # resources deadlocks, because the child asks for the lock its own
         # parent is holding and waits out the full timeout.
         replacement = self.reexec()
@@ -248,7 +249,7 @@ class GateCommand(Recorded, ABC):
             raise SystemExit(self._runner.run(replacement, check=False))
 
         with (
-            self._recording() as log,
+            self._recording(source_commit=None if commit is None else str(commit)) as log,
             observing(self._config, log, plan, publishes=self.publishes) as watch,
         ):
             # Every invocation from here is recorded, and none may start a

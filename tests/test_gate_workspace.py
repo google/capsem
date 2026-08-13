@@ -74,7 +74,8 @@ def test_the_environment_points_every_command_at_this_home(tmp_path: Path) -> No
     environment = Workspace(config).environment()
 
     assert environment["CAPSEM_HOME"].endswith(config.workspace.home)
-    assert environment["CAPSEM_RUN_DIR"].startswith(environment["CAPSEM_HOME"])
+    assert environment["CAPSEM_RUN_DIR"].startswith("/tmp/capsem-r-")
+    assert not environment["CAPSEM_RUN_DIR"].startswith(environment["CAPSEM_HOME"])
     assert "CAPSEM_BENCHMARK_OUTPUT_ROOT" in environment
     assert "COVERAGE_FILE" in environment
 
@@ -197,9 +198,7 @@ def test_the_home_is_reclaimable_and_the_lock_is_not_inside_it() -> None:
     would be unlinked while held, and the next run would lock a fresh inode."""
     config = gate_config.load(PROJECT_ROOT)
 
-    assert any(
-        config.workspace.home.startswith(entry) for entry in config.disk.reclaimable
-    ), "the workspace must be reclaimable by `gc`"
-    assert not Path(config.locks.gate.path).is_relative_to(
-        Path(config.workspace.home)
+    assert any(config.workspace.home.startswith(entry) for entry in config.disk.reclaimable), (
+        "the workspace must be reclaimable by `gc`"
     )
+    assert not Path(config.locks.gate.path).is_relative_to(Path(config.workspace.home))

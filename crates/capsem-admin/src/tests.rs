@@ -1,6 +1,12 @@
 use super::*;
 use std::fs;
 
+fn source_commit() -> SourceCommit {
+    "0123456789abcdef0123456789abcdef01234567"
+        .parse()
+        .expect("source commit")
+}
+
 #[test]
 fn graph_channel_page_validates_each_mixed_profile_revision() {
     let manifest = serde_json::json!({
@@ -72,8 +78,7 @@ fn validates_checked_in_code_profile_through_security_rule_set() {
     let config_root = repo_root.join("config");
     let profile_path = config_root.join("profiles/code/profile.toml");
 
-    let report =
-        validate_profile(&profile_path, Some(&config_root)).expect("profile validates");
+    let report = validate_profile(&profile_path, Some(&config_root)).expect("profile validates");
 
     assert!(report.ok);
     assert_eq!(report.profile_id, "code");
@@ -163,8 +168,8 @@ fn checked_in_config_root_passes_admin_lint() {
         .and_then(Path::parent)
         .expect("repo root");
 
-    let report = check_config_root(&repo_root.join("config"), Some("arm64"))
-        .expect("config root checks");
+    let report =
+        check_config_root(&repo_root.join("config"), Some("arm64")).expect("config root checks");
 
     assert!(report.ok);
     assert!(report
@@ -200,8 +205,8 @@ fn config_root_lint_rejects_profile_id_mismatch() {
     )
     .expect("profile");
 
-    let error = check_config_root(&config_root, Some("arm64"))
-        .expect_err("catalog id mismatch rejected");
+    let error =
+        check_config_root(&config_root, Some("arm64")).expect_err("catalog id mismatch rejected");
 
     assert!(format!("{error:#}").contains("id mismatch"), "{error:#}");
 }
@@ -276,8 +281,7 @@ fn compiles_checked_in_enforcement_file() {
         .expect("repo root");
     let path = repo_root.join("config/profiles/code/enforcement.toml");
 
-    let report =
-        compile_rule_file("enforcement", &path, RuleFileSourceArg::User).expect("compile");
+    let report = compile_rule_file("enforcement", &path, RuleFileSourceArg::User).expect("compile");
 
     assert_eq!(report.kind, "enforcement");
     let rule_ids = report
@@ -340,8 +344,7 @@ fn compiles_checked_in_detection_file() {
         .expect("repo root");
     let path = repo_root.join("config/profiles/code/detection.yaml");
 
-    let report =
-        compile_rule_file("detection", &path, RuleFileSourceArg::User).expect("compile");
+    let report = compile_rule_file("detection", &path, RuleFileSourceArg::User).expect("compile");
 
     assert_eq!(report.kind, "detection");
     assert_eq!(report.compiled_rules, 1);
@@ -787,12 +790,11 @@ fn profile_check_rejects_profile_root_manifest_escape_paths() {
     profile.rule_files.sigma = None;
     profile.assets.arch.retain(|arch, _| arch == "arm64");
     profile.files = Default::default();
-    profile.files.root_manifest =
-        Some(capsem_core::net::policy_config::ProfileFileDescriptor {
-            path: "profiles/code/root.manifest.json".to_string(),
-            hash: None,
-            size: None,
-        });
+    profile.files.root_manifest = Some(capsem_core::net::policy_config::ProfileFileDescriptor {
+        path: "profiles/code/root.manifest.json".to_string(),
+        hash: None,
+        size: None,
+    });
     let profile_path = profile_dir.join("profile.toml");
     fs::write(&profile_path, toml::to_string(&profile).unwrap()).expect("profile");
 
@@ -819,8 +821,7 @@ fn profile_check_rejects_unpinned_profile_root_payload_files() {
     fs::create_dir_all(profile_root.join("root/.codex")).expect("profile root");
     fs::create_dir_all(profile_root.join("root/.antigravity")).expect("agy root");
     let codex_payload = b"[mcp_servers.capsem]\ncommand = \"/run/capsem-mcp-server\"\n";
-    fs::write(profile_root.join("root/.codex/config.toml"), codex_payload)
-        .expect("codex config");
+    fs::write(profile_root.join("root/.codex/config.toml"), codex_payload).expect("codex config");
     fs::write(
         profile_root.join("root/.antigravity/antigravity-oauth-token"),
         b"secret",
@@ -847,12 +848,11 @@ fn profile_check_rejects_unpinned_profile_root_payload_files() {
     profile.rule_files.sigma = None;
     profile.assets.arch.retain(|arch, _| arch == "arm64");
     profile.files = Default::default();
-    profile.files.root_manifest =
-        Some(capsem_core::net::policy_config::ProfileFileDescriptor {
-            path: "profiles/code/root.manifest.json".to_string(),
-            hash: None,
-            size: None,
-        });
+    profile.files.root_manifest = Some(capsem_core::net::policy_config::ProfileFileDescriptor {
+        path: "profiles/code/root.manifest.json".to_string(),
+        hash: None,
+        size: None,
+    });
     let profile_path = profile_dir.join("profile.toml");
     fs::write(&profile_path, toml::to_string(&profile).unwrap()).expect("profile");
 
@@ -900,8 +900,7 @@ fn profile_check_rejects_symlinked_profile_root_payloads() {
     let manifest_path = profile_dir.join("root.manifest.json");
     fs::write(&manifest_path, root_manifest).expect("root manifest");
 
-    let error =
-        check_profile_root_manifest(&manifest_path).expect_err("payload symlink rejected");
+    let error = check_profile_root_manifest(&manifest_path).expect_err("payload symlink rejected");
 
     assert!(
         format!("{error:#}").contains("not a regular file"),
@@ -950,12 +949,11 @@ fn profile_check_rejects_local_model_provider_profile_root_payloads() {
     profile.rule_files.sigma = None;
     profile.assets.arch.retain(|arch, _| arch == "arm64");
     profile.files = Default::default();
-    profile.files.root_manifest =
-        Some(capsem_core::net::policy_config::ProfileFileDescriptor {
-            path: "profiles/code/root.manifest.json".to_string(),
-            hash: None,
-            size: None,
-        });
+    profile.files.root_manifest = Some(capsem_core::net::policy_config::ProfileFileDescriptor {
+        path: "profiles/code/root.manifest.json".to_string(),
+        hash: None,
+        size: None,
+    });
     let profile_path = profile_dir.join("profile.toml");
     fs::write(&profile_path, toml::to_string(&profile).unwrap()).expect("profile");
 
@@ -1051,8 +1049,8 @@ fn image_verify_rejects_profile_manifest_pin_drift() {
 
 #[test]
 fn image_build_requires_profile_argument() {
-    let error = Cli::try_parse_from(["capsem-admin", "image", "build"])
-        .expect_err("profile is required");
+    let error =
+        Cli::try_parse_from(["capsem-admin", "image", "build"]).expect_err("profile is required");
 
     assert!(error.to_string().contains("--profile"), "{error}");
 }
@@ -1402,8 +1400,7 @@ fn image_workspace_materializes_self_contained_profile_config() {
         .is_file());
     assert!(args.output.join("guest/artifacts/tips.txt").is_file());
     let build_plan: serde_json::Value =
-        serde_json::from_slice(&fs::read(args.output.join("build-plan.json")).unwrap())
-            .unwrap();
+        serde_json::from_slice(&fs::read(args.output.join("build-plan.json")).unwrap()).unwrap();
     assert!(build_plan["commands"]
         .as_array()
         .unwrap()
@@ -2352,9 +2349,8 @@ fn assets_channel_headers_split_mutable_and_immutable_paths() {
     assert!(!headers.contains("/profiles/stable/*\n  Cache-Control: no-cache"));
     assert!(headers
         .contains("/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable"));
-    assert!(headers.contains(
-        "/profiles/releases/*\n  Cache-Control: public, max-age=31536000, immutable"
-    ));
+    assert!(headers
+        .contains("/profiles/releases/*\n  Cache-Control: public, max-age=31536000, immutable"));
     assert!(!headers.contains("/assets/*\n  Cache-Control: no-cache"));
     assert!(!headers.contains("/profiles/*\n  Cache-Control: no-cache"));
 }
@@ -2479,12 +2475,9 @@ fn binary_files_from_deb_rejects_missing_control_architecture() {
 }
 
 #[test]
-fn assets_channel_record_binary_updates_manifest_without_changing_assets() {
+fn assets_channel_record_binary_rejects_legacy_manifest_without_package_provenance() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
-    let original: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest"))
-            .expect("json");
     let artifacts_dir = temp.path().join("release-artifacts");
     fs::create_dir_all(&artifacts_dir).expect("artifacts dir");
     let pkg_path = artifacts_dir.join("Capsem-1.4.1234567890.pkg");
@@ -2503,46 +2496,17 @@ fn assets_channel_record_binary_updates_manifest_without_changing_assets() {
     );
     fs::write(&sbom_path, br#"{"spdxVersion":"SPDX-2.3"}"#).expect("sbom");
 
-    let report = record_binary_release_metadata(
+    let error = record_binary_release_metadata(
         &manifest_path,
         "1.4.1234567890",
+        &source_commit(),
         None,
         &[pkg_path.clone(), deb_path.clone(), sbom_path.clone()],
         "2030-02-03",
     )
-    .expect("record binary release");
+    .expect_err("legacy manifests cannot record per-package source provenance");
 
-    assert_eq!(
-        report.schema,
-        "capsem.admin.assets_channel_record_binary.v1"
-    );
-    assert_eq!(report.version, "1.4.1234567890");
-    assert_eq!(report.min_assets, "2030.0101.1");
-    assert_eq!(report.files.len(), 3);
-    let updated: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest"))
-            .expect("json");
-    assert_eq!(updated["assets"], original["assets"]);
-    assert_eq!(updated["binaries"]["current"], "1.4.1234567890");
-    let release = &updated["binaries"]["releases"]["1.4.1234567890"];
-    assert_eq!(release["date"], "2030-02-03");
-    assert_eq!(release["deprecated"], false);
-    assert_eq!(release["min_assets"], "2030.0101.1");
-    assert_eq!(release["version"], "1.4.1234567890");
-    assert_eq!(release["files"].as_array().expect("files").len(), 3);
-    assert_eq!(release["files"][0]["name"], "Capsem-1.4.1234567890.pkg");
-    assert_eq!(
-        release["files"][0]["sha256"],
-        format!(
-            "{:x}",
-            Sha256::digest(fs::read(&pkg_path).expect("pkg bytes"))
-        )
-    );
-    assert_eq!(
-        release["files"][1]["binaries"][0]["installed_path"].as_str(),
-        Some("/usr/bin/capsem-app")
-    );
-    assert_eq!(release["files"][2]["name"], "capsem-sbom.spdx.json");
+    assert!(format!("{error:#}").contains("requires a release graph manifest"));
 }
 
 #[test]
@@ -2550,8 +2514,7 @@ fn assets_channel_record_binary_updates_graph_manifest_without_changing_profiles
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_release_graph_manifest(temp.path());
     let original: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest"))
-            .expect("json");
+        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest")).expect("json");
     let artifacts_dir = temp.path().join("release-artifacts");
     fs::create_dir_all(&artifacts_dir).expect("artifacts dir");
     let pkg_path = artifacts_dir.join("Capsem-1.4.1234567890.pkg");
@@ -2573,6 +2536,7 @@ fn assets_channel_record_binary_updates_graph_manifest_without_changing_profiles
     let report = record_binary_release_metadata(
         &manifest_path,
         "1.4.1234567890",
+        &source_commit(),
         None,
         &[pkg_path.clone(), deb_path.clone(), sbom_path.clone()],
         "2030-02-03",
@@ -2582,14 +2546,25 @@ fn assets_channel_record_binary_updates_graph_manifest_without_changing_profiles
     assert_eq!(report.version, "1.4.1234567890");
     assert_eq!(report.min_assets, "2030.0101.1");
     let updated: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest"))
-            .expect("json");
+        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest")).expect("json");
     assert_eq!(updated["profiles"], original["profiles"]);
     assert!(updated.get("assets").is_none());
     assert!(updated.get("binaries").is_none());
     assert_eq!(updated["packages"].as_array().expect("packages").len(), 2);
     assert_eq!(updated["packages"][0]["name"], "Capsem-1.4.1234567890.pkg");
     assert_eq!(updated["packages"][0]["version"], "1.4.1234567890");
+    assert_eq!(
+        updated["packages"][0]["source_commit"],
+        source_commit().as_str()
+    );
+    assert_eq!(
+        updated["packages"][1]["source_commit"],
+        source_commit().as_str()
+    );
+    assert!(updated.get("source_commit").is_none());
+    assert!(updated["packages"][0]["binaries"][0]
+        .get("source_commit")
+        .is_none());
     assert_eq!(updated["packages"][0]["status"], "current");
     assert_eq!(updated["packages"][0]["platform"], "macos");
     assert_eq!(updated["packages"][0]["architecture"], "arm64");
@@ -2624,14 +2599,49 @@ fn assets_channel_record_binary_updates_graph_manifest_without_changing_profiles
 }
 
 #[test]
+fn release_graph_health_uses_profile_obom_as_vm_attestation_predicate() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = write_test_release_graph_manifest(temp.path());
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest")).expect("json");
+    let predicate_url = "/profiles/releases/stable/co-work/2030.0101.1/arm64/obom.cdx.json";
+    manifest["profiles"]["co-work"]["architectures"][0]["evidence"] = serde_json::json!([
+        {
+            "kind": "obom",
+            "url": predicate_url,
+            "bytes": 811,
+            "digest": {
+                "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+                "blake3": "9999999999999999999999999999999999999999999999999999999999999999",
+            },
+            "status": "current",
+        }
+    ]);
+    let dist = temp.path().join("dist");
+
+    build_assets_channel_from_graph(manifest, "stable", "1.0.2", &dist, "2030-02-03T04:05:06Z")
+        .expect("build graph distribution");
+
+    let health: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dist.join("health.json")).expect("health"))
+            .expect("health json");
+    let attestation = health["evidence"]["attestations"]
+        .as_array()
+        .expect("attestations")
+        .iter()
+        .find(|item| item["name"] == "github_attestations_vm_assets")
+        .expect("VM asset attestation");
+    assert_eq!(attestation["predicate_url"], predicate_url);
+    assert_eq!(health["evidence"]["vm_oboms"][0]["url"], predicate_url);
+}
+
+#[test]
 fn staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_profile() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_release_graph_manifest(temp.path());
     let mut staged: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest"))
-            .expect("json");
-    staged["profiles"]["co-work"]["version"] =
-        serde_json::Value::String("2030.0203.1".to_string());
+        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest")).expect("json");
+    staged["profiles"]["co-work"]["version"] = serde_json::Value::String("2030.0203.1".to_string());
     staged["profiles"]["co-work"]["revision"] =
         serde_json::Value::String("2030.0203.1".to_string());
     staged["profiles"]["co-work"]["min_capsem_version"] =
@@ -2687,6 +2697,7 @@ fn staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_prof
     let error = record_binary_release_metadata(
         &manifest_path,
         "2.0.0",
+        &source_commit(),
         None,
         &[too_new_pkg, too_new_deb, too_new_sbom],
         "2030-02-03",
@@ -2722,6 +2733,7 @@ fn staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_prof
     record_binary_release_metadata(
         &manifest_path,
         "1.4.1234567890",
+        &source_commit(),
         None,
         &[compatible_pkg, compatible_deb, compatible_sbom],
         "2030-02-03",
@@ -2735,11 +2747,10 @@ fn staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_prof
         activated["profiles"]["co-work"], staged_profile,
         "binary activation must reuse the exact staged profile instead of rebuilding it"
     );
-    assert!(graph_profile_matches_current_binary(
-        &activated["profiles"]["co-work"],
-        &activated
-    )
-    .expect("activated compatibility"));
+    assert!(
+        graph_profile_matches_current_binary(&activated["profiles"]["co-work"], &activated)
+            .expect("activated compatibility")
+    );
     build_assets_channel_from_graph(
         activated,
         "stable",
@@ -2762,6 +2773,7 @@ fn assets_channel_record_binary_rejects_sbom_without_host_package() {
     let error = record_binary_release_metadata(
         &manifest_path,
         "1.4.1234567890",
+        &source_commit(),
         None,
         &[sbom_path],
         "2030-02-03",
@@ -2789,6 +2801,7 @@ fn assets_channel_record_binary_rejects_non_package_host_artifact() {
     let error = record_binary_release_metadata(
         &manifest_path,
         "1.4.1234567890",
+        &source_commit(),
         None,
         &[readme_path, sbom_path],
         "2030-02-03",
@@ -2816,6 +2829,7 @@ fn assets_channel_record_binary_rejects_empty_artifact() {
     let error = record_binary_release_metadata(
         &manifest_path,
         "1.4.1234567890",
+        &source_commit(),
         None,
         &[pkg_path, sbom_path],
         "2030-02-03",
@@ -2846,6 +2860,7 @@ fn assets_channel_record_binary_rejects_package_version_mismatch() {
     let error = record_binary_release_metadata(
         &manifest_path,
         "1.4.1234567890",
+        &source_commit(),
         None,
         &[pkg_path, sbom_path],
         "2030-02-03",
@@ -2853,8 +2868,7 @@ fn assets_channel_record_binary_rejects_package_version_mismatch() {
     .expect_err("mismatched package version rejected");
 
     assert!(
-        format!("{error:#}")
-            .contains("binary release package artifact name must match version"),
+        format!("{error:#}").contains("binary release package artifact name must match version"),
         "{error:#}"
     );
 }
@@ -2877,6 +2891,7 @@ fn assets_channel_record_binary_rejects_noncanonical_sbom_artifact() {
     let error = record_binary_release_metadata(
         &manifest_path,
         "1.4.1234567890",
+        &source_commit(),
         None,
         &[pkg_path, sbom_path],
         "2030-02-03",
@@ -2959,12 +2974,7 @@ fn write_minimal_deb_with_file(
     write_minimal_deb_with_control(path, file_path, contents, control.as_bytes());
 }
 
-fn write_minimal_deb_with_control(
-    path: &Path,
-    file_path: &str,
-    contents: &[u8],
-    control: &[u8],
-) {
+fn write_minimal_deb_with_control(path: &Path, file_path: &str, contents: &[u8], control: &[u8]) {
     use flate2::{write::GzEncoder, Compression};
     use tar::{Builder, Header};
 
@@ -3031,8 +3041,7 @@ fn assets_channel_build_externalizes_shared_blobs_but_owns_profile_blobs() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let out_dir = temp.path().join("target/release-channel");
-    let asset_base =
-        "https://github.com/google/capsem/releases/download/assets-v{asset_version}";
+    let asset_base = "https://github.com/google/capsem/releases/download/assets-v{asset_version}";
 
     let report = build_assets_channel(
         &file_url(&manifest_path),
@@ -3056,7 +3065,8 @@ fn assets_channel_build_externalizes_shared_blobs_but_owns_profile_blobs() {
     let health: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(out_dir.join("health.json")).unwrap())
             .expect("health parses");
-    let rootfs_url = "https://github.com/google/capsem/releases/download/assets-v2030.0101.1/arm64-rootfs.erofs";
+    let rootfs_url =
+        "https://github.com/google/capsem/releases/download/assets-v2030.0101.1/arm64-rootfs.erofs";
     assert_eq!(health["urls"]["asset_base"].as_str(), Some(asset_base));
     let health_files = health["assets"]["files"].as_array().expect("asset files");
     assert!(health_files
@@ -3098,8 +3108,7 @@ fn assets_channel_check_rejects_bad_health_schema() {
     fs::write(&health_path, serde_json::to_string_pretty(&health).unwrap())
         .expect("write bad health");
 
-    let error =
-        check_assets_channel(&out_dir, "stable").expect_err("bad health schema rejected");
+    let error = check_assets_channel(&out_dir, "stable").expect_err("bad health schema rejected");
 
     assert!(
         format!("{error:#}").contains("health.json schema mismatch"),
@@ -3480,8 +3489,7 @@ fn assets_channel_check_rejects_missing_current_asset_blob() {
     fs::remove_file(out_dir.join("assets/releases/2030.0101.1/arm64-rootfs.erofs"))
         .expect("remove published rootfs");
 
-    let error =
-        check_assets_channel(&out_dir, "stable").expect_err("missing asset blob rejected");
+    let error = check_assets_channel(&out_dir, "stable").expect_err("missing asset blob rejected");
 
     assert!(
         format!("{error:#}").contains("arm64-rootfs.erofs"),
@@ -3549,6 +3557,7 @@ fn profile_release_commands_publish_report_is_lane_scoped() {
     );
 
     let args = ReleaseArgs {
+        source_commit: source_commit(),
         manifest_path: Some(nightly_manifest.clone()),
         candidate_manifest: None,
         publication_base: None,
@@ -3617,6 +3626,8 @@ fn profile_release_commands_require_enum_status_values() {
         "1.5.0-nightly.20300101",
         "--profile",
         "co-work",
+        "--source-commit",
+        "0123456789abcdef0123456789abcdef01234567",
         "--profile-version",
         "2026.7.2-2",
         "--status",
@@ -3631,9 +3642,8 @@ fn profile_release_commands_require_enum_status_values() {
 fn profile_release_paths_are_channel_qualified() {
     let stable = profile_release_url("stable", "code", "2026.06.08.7", "arm64", "rootfs.erofs")
         .expect("stable profile URL");
-    let nightly =
-        profile_release_url("nightly", "code", "2026.06.08.7", "arm64", "rootfs.erofs")
-            .expect("nightly profile URL");
+    let nightly = profile_release_url("nightly", "code", "2026.06.08.7", "arm64", "rootfs.erofs")
+        .expect("nightly profile URL");
 
     assert_eq!(
         stable,
@@ -3655,12 +3665,18 @@ fn release_command_has_one_operator_shape() {
         "nightly",
         "--profile",
         "code",
+        "--source-commit",
+        "0123456789abcdef0123456789abcdef01234567",
         "--dry-run",
     ]);
     match cli.command {
         Commands::Release(args) => {
             assert_eq!(args.channel, "nightly");
             assert_eq!(args.profile, "code");
+            assert_eq!(
+                args.source_commit.as_str(),
+                "0123456789abcdef0123456789abcdef01234567"
+            );
             assert!(args.manifest_path.is_none());
             assert!(args.dry_run);
         }
@@ -3708,13 +3724,28 @@ impl ProfileWorkflowRunner for RecordingProfileWorkflowRunner {
 
 #[test]
 fn profile_release_dispatch_waits_for_its_exact_workflow_run() {
+    let commit = source_commit();
+    let source_ref = format!("capsem-source-{commit}");
     let mut runner = RecordingProfileWorkflowRunner {
         listings: [
             "[]".to_string(),
             serde_json::json!([{
                 "databaseId": 42,
                 "displayTitle": "Release profile nightly/code dispatch-7",
+                "headSha": commit,
+                "headBranch": source_ref,
+                "status": "in_progress",
+                "conclusion": "",
             }])
+            .to_string(),
+            serde_json::json!({
+                "databaseId": 42,
+                "displayTitle": "Release profile nightly/code dispatch-7",
+                "headSha": commit,
+                "headBranch": source_ref,
+                "status": "completed",
+                "conclusion": "success",
+            })
             .to_string(),
         ]
         .into(),
@@ -3726,6 +3757,7 @@ fn profile_release_dispatch_waits_for_its_exact_workflow_run() {
         "release-assets.yaml",
         "nightly",
         "code",
+        &commit,
         "dispatch-7",
     )
     .expect("dispatch is found and watched");
@@ -3739,7 +3771,7 @@ fn profile_release_dispatch_waits_for_its_exact_workflow_run() {
             "run",
             "release-assets.yaml",
             "--ref",
-            "main",
+            &source_ref,
             "-f",
             "channel=nightly",
             "-f",
@@ -3748,27 +3780,45 @@ fn profile_release_dispatch_waits_for_its_exact_workflow_run() {
             "dry_run=false",
             "-f",
             "dispatch_id=dispatch-7",
+            "-f",
+            &format!("source_commit={commit}"),
         ]
     );
-    assert_eq!(
-        runner.calls.last().expect("watch call"),
-        &["run", "watch", "42", "--exit-status"]
-    );
+    assert_eq!(&runner.calls[3], &["run", "watch", "42", "--exit-status"]);
 }
 
 #[test]
 fn profile_release_dispatch_ignores_an_unrelated_pending_run() {
+    let commit = source_commit();
+    let source_ref = format!("capsem-source-{commit}");
     let mut runner = RecordingProfileWorkflowRunner {
         listings: [
             serde_json::json!([{
                 "databaseId": 9,
                 "displayTitle": "Release profile nightly/co-work somebody-else",
+                "headSha": commit,
+                "headBranch": source_ref,
+                "status": "in_progress",
+                "conclusion": "",
             }])
             .to_string(),
             serde_json::json!([{
                 "databaseId": 10,
                 "displayTitle": "Release profile nightly/code ours",
+                "headSha": commit,
+                "headBranch": source_ref,
+                "status": "in_progress",
+                "conclusion": "",
             }])
+            .to_string(),
+            serde_json::json!({
+                "databaseId": 10,
+                "displayTitle": "Release profile nightly/code ours",
+                "headSha": commit,
+                "headBranch": source_ref,
+                "status": "completed",
+                "conclusion": "success",
+            })
             .to_string(),
         ]
         .into(),
@@ -3780,6 +3830,7 @@ fn profile_release_dispatch_ignores_an_unrelated_pending_run() {
         "release-assets.yaml",
         "nightly",
         "code",
+        &commit,
         "ours",
     )
     .expect("the correlated run is selected");
@@ -3790,10 +3841,15 @@ fn profile_release_dispatch_ignores_an_unrelated_pending_run() {
 
 #[test]
 fn profile_release_dispatch_propagates_the_exact_run_failure() {
+    let commit = source_commit();
     let mut runner = RecordingProfileWorkflowRunner {
         listings: [serde_json::json!([{
             "databaseId": 11,
             "displayTitle": "Release profile nightly/code ours",
+            "headSha": commit,
+            "headBranch": format!("capsem-source-{commit}"),
+            "status": "in_progress",
+            "conclusion": "",
         }])
         .to_string()]
         .into(),
@@ -3806,6 +3862,7 @@ fn profile_release_dispatch_propagates_the_exact_run_failure() {
         "release-assets.yaml",
         "nightly",
         "code",
+        &commit,
         "ours",
     )
     .expect_err("the public command must fail with its exact workflow run");
@@ -3820,8 +3877,7 @@ fn profile_release_merges_only_selected_profile_and_reports_compatibility() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/capsem-release/fixtures/release-graph-stable-nightly.json");
     let graph: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(fixture).expect("fixture"))
-            .expect("fixture json");
+        serde_json::from_str(&fs::read_to_string(fixture).expect("fixture")).expect("fixture json");
     let base = graph["manifests"]["nightly"]["1.0.2"].clone();
     let mut candidate = base.clone();
     candidate["profiles"]["code"]["revision"] =
@@ -3843,6 +3899,7 @@ fn profile_release_merges_only_selected_profile_and_reports_compatibility() {
     )
     .expect("write candidate");
     let args = ReleaseArgs {
+        source_commit: source_commit(),
         channel: "nightly".to_string(),
         profile: "code".to_string(),
         config_root: PathBuf::from("config"),
@@ -3861,15 +3918,37 @@ fn profile_release_merges_only_selected_profile_and_reports_compatibility() {
         json: true,
     };
 
+    candidate["profiles"]["code"]["source_commit"] = serde_json::Value::String("f".repeat(40));
+    fs::write(
+        args.candidate_manifest.as_ref().expect("candidate path"),
+        serde_json::to_vec_pretty(&candidate).expect("candidate json"),
+    )
+    .expect("write mismatched candidate");
+    let error = apply_profile_release_status(&args).expect_err("wrong source commit rejected");
+    assert!(format!("{error:#}").contains("was built from"), "{error:#}");
+    candidate["profiles"]["code"]
+        .as_object_mut()
+        .expect("profile object")
+        .remove("source_commit");
+    fs::write(
+        args.candidate_manifest.as_ref().expect("candidate path"),
+        serde_json::to_vec_pretty(&candidate).expect("candidate json"),
+    )
+    .expect("write candidate");
+
     let report = apply_profile_release_status(&args).expect("merge selected profile");
     let merged: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(base_path).expect("merged"))
-            .expect("merged json");
+        serde_json::from_str(&fs::read_to_string(base_path).expect("merged")).expect("merged json");
 
     assert!(!report.compatible_with_current_binary);
     assert_eq!(report.changed_profiles, vec!["code"]);
     assert_eq!(merged["packages"], base["packages"]);
     assert_eq!(merged["profiles"]["co-work"], base["profiles"]["co-work"]);
+    assert_eq!(
+        merged["profiles"]["code"]["source_commit"],
+        source_commit().as_str()
+    );
+    assert!(merged.get("source_commit").is_none());
     assert_eq!(
         merged["profiles"]["code"]["revision"].as_str(),
         Some("2026.07.24.1")
@@ -4040,8 +4119,7 @@ fn serve_manifest_once(body: String) -> String {
 }
 
 fn minimal_manifest_json(hash: Option<&str>, include_refresh_policy: bool) -> String {
-    let hash =
-        hash.unwrap_or("1111111111111111111111111111111111111111111111111111111111111111");
+    let hash = hash.unwrap_or("1111111111111111111111111111111111111111111111111111111111111111");
     format!(
         r#"{{
   "format": 2,
@@ -4372,8 +4450,7 @@ fn profiles_at_different_semver_revisions_collapse_to_a_hash_identifier() {
         profile_config_file("co-work", "0.3.2"),
     ];
 
-    let revision =
-        profile_release_revision(&profiles, ProfileRevisionPolicyArg::Strict).unwrap();
+    let revision = profile_release_revision(&profiles, ProfileRevisionPolicyArg::Strict).unwrap();
 
     assert!(
         revision.starts_with("profiles-"),
@@ -4389,9 +4466,7 @@ fn profile_revision_validation_still_rejects_unsafe_paths() {
     assert!(validate_profile_revision_path("0.6.0/../..").is_err());
 
     let profiles = vec![profile_config_file("code", "../etc/passwd")];
-    assert!(
-        profile_release_revision(&profiles, ProfileRevisionPolicyArg::SelectedInput).is_err()
-    );
+    assert!(profile_release_revision(&profiles, ProfileRevisionPolicyArg::SelectedInput).is_err());
 }
 
 /// A minimal profile carrying just an id and a revision.

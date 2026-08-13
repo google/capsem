@@ -9,12 +9,9 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROFILE_BASE = "https://releases.acme.test/acme/"
+SOURCE_COMMIT = "1" * 40
 FIXTURE_GRAPH = (
-    PROJECT_ROOT
-    / "tests"
-    / "capsem-release"
-    / "fixtures"
-    / "release-graph-stable-nightly.json"
+    PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-graph-stable-nightly.json"
 )
 
 
@@ -66,8 +63,8 @@ def _rewrite_profile_references(value: object) -> None:
 
 
 def test_corporate_manifest_contract_supports_latest_and_exact_pin(tmp_path: Path) -> None:
-    official_path, official, profile_path, profile_source, stable = (
-        _write_authoring_inputs(tmp_path)
+    official_path, official, profile_path, profile_source, stable = _write_authoring_inputs(
+        tmp_path
     )
     official_before = official_path.read_bytes()
     profile_before = profile_path.read_bytes()
@@ -88,6 +85,8 @@ def test_corporate_manifest_contract_supports_latest_and_exact_pin(tmp_path: Pat
         PROFILE_BASE,
         "--binary",
         "latest",
+        "--source-commit",
+        SOURCE_COMMIT,
         "--output-root",
         str(output_root),
         "--json",
@@ -96,9 +95,7 @@ def test_corporate_manifest_contract_supports_latest_and_exact_pin(tmp_path: Pat
     assert latest.returncode == 0, latest.stderr
     latest_report = json.loads(latest.stdout)
     latest_manifest = json.loads(
-        (output_root / "acme" / "engineering" / "manifest.json").read_text(
-            encoding="utf-8"
-        )
+        (output_root / "acme" / "engineering" / "manifest.json").read_text(encoding="utf-8")
     )
     assert latest_report["schema"] == "capsem.admin.corporate_manifest.v1"
     assert latest_report["binary_policy"] == "latest"
@@ -106,7 +103,12 @@ def test_corporate_manifest_contract_supports_latest_and_exact_pin(tmp_path: Pat
     assert {package["version"] for package in latest_manifest["packages"]} == {
         "1.5.0-nightly.20260702"
     }
-    assert latest_manifest["profiles"] == profile_source["profiles"]
+    expected_profiles = deepcopy(profile_source["profiles"])
+    for profile in expected_profiles.values():
+        profile["source_commit"] = SOURCE_COMMIT
+    assert latest_manifest["profiles"] == expected_profiles
+    assert "source_commit" not in latest_manifest
+    assert all("source_commit" not in package for package in latest_manifest["packages"])
 
     pinned_profile_source = deepcopy(profile_source)
     pinned_profile_source["packages"] = deepcopy(stable["packages"])
@@ -127,6 +129,8 @@ def test_corporate_manifest_contract_supports_latest_and_exact_pin(tmp_path: Pat
         PROFILE_BASE,
         "--binary",
         "1.4.0",
+        "--source-commit",
+        SOURCE_COMMIT,
         "--output-root",
         str(output_root),
         "--json",
@@ -135,9 +139,7 @@ def test_corporate_manifest_contract_supports_latest_and_exact_pin(tmp_path: Pat
     assert pinned.returncode == 0, pinned.stderr
     pinned_report = json.loads(pinned.stdout)
     pinned_manifest = json.loads(
-        (output_root / "acme" / "production" / "manifest.json").read_text(
-            encoding="utf-8"
-        )
+        (output_root / "acme" / "production" / "manifest.json").read_text(encoding="utf-8")
     )
     assert pinned_report["binary_policy"] == "1.4.0"
     assert pinned_report["resolved_binary_version"] == "1.4.0"
@@ -148,9 +150,7 @@ def test_corporate_manifest_contract_supports_latest_and_exact_pin(tmp_path: Pat
 
 
 def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> None:
-    official_path, _, profile_path, profile_source, _ = _write_authoring_inputs(
-        tmp_path
-    )
+    official_path, _, profile_path, profile_source, _ = _write_authoring_inputs(tmp_path)
     output_root = tmp_path / "corporate"
 
     tampered = deepcopy(profile_source)
@@ -172,6 +172,8 @@ def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> N
         PROFILE_BASE,
         "--binary",
         "latest",
+        "--source-commit",
+        SOURCE_COMMIT,
         "--output-root",
         str(output_root),
     )
@@ -195,6 +197,8 @@ def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> N
             PROFILE_BASE,
             "--binary",
             "latest",
+            "--source-commit",
+            SOURCE_COMMIT,
             "--output-root",
             str(output_root),
         )
@@ -216,6 +220,8 @@ def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> N
         PROFILE_BASE,
         "--binary",
         "9.9.9",
+        "--source-commit",
+        SOURCE_COMMIT,
         "--output-root",
         str(output_root),
     )
@@ -223,9 +229,9 @@ def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> N
     assert "official manifest does not publish Capsem 9.9.9" in unsupported_pin.stderr
 
     foreign_profile = deepcopy(profile_source)
-    foreign_profile["profiles"]["code"]["architectures"][0]["config"][0][
-        "url"
-    ] = "https://release.capsem.org/profiles/code.toml"
+    foreign_profile["profiles"]["code"]["architectures"][0]["config"][0]["url"] = (
+        "https://release.capsem.org/profiles/code.toml"
+    )
     foreign_profile_path = tmp_path / "foreign-profile.json"
     foreign_profile_path.write_text(json.dumps(foreign_profile), encoding="utf-8")
     foreign_profile_write = _run_admin(
@@ -243,6 +249,8 @@ def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> N
         PROFILE_BASE,
         "--binary",
         "latest",
+        "--source-commit",
+        SOURCE_COMMIT,
         "--output-root",
         str(output_root),
     )
@@ -269,6 +277,8 @@ def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> N
         PROFILE_BASE,
         "--binary",
         "latest",
+        "--source-commit",
+        SOURCE_COMMIT,
         "--output-root",
         str(output_root),
     )

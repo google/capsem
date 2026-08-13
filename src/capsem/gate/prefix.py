@@ -33,8 +33,10 @@ from pathlib import Path
 
 from . import snapshot
 from .config import GateConfig
-from .errors import GateError
+from .errors import GateError, PrefixBusy
 from .filesystem import copy_tree, merge_tree, remove
+from .prefixlease import lease, parent_dir
+from .sourcecommit import SourceCommit, require_detached_checkout
 
 #: `cp` flags that ask APFS for copy-on-write. Clonefile is what makes this
 #: cheap enough to do unconditionally -- 2074 files and `.git` measured 2.2s
@@ -50,18 +52,18 @@ _CLONE = ("-c",)
 _BATCH = 200
 
 
-def parent_dir(config: GateConfig) -> Path:
-    """Where prefixes live, with `~` resolved."""
-    return Path(config.prefix.parent).expanduser()
-
-
 def example(config: GateConfig) -> Path:
     """A representative prefix path, for arithmetic that must not boot a VM.
 
-    The identity is random per run, so its *length* is the only part a budget
-    can be checked against ahead of time.
+    A release uses the full source commit. Candidate identities are shorter,
+    so forty hex characters is the one representative path worth budgeting.
     """
-    return parent_dir(config) / ("0" * config.prefix.name_length)
+    return parent_dir(config) / ("0" * 40)
+
+
+def for_source_commit(config: GateConfig, commit: SourceCommit) -> Path:
+    """The deterministic release prefix: the complete source identity."""
+    return parent_dir(config) / str(commit)
 
 
 def socket_root(config: GateConfig) -> Path:
@@ -94,9 +96,15 @@ def sweep(config: GateConfig) -> list[Path]:
         return []
     kept = sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime)
     stale = kept[: max(len(kept) - config.prefix.keep, 0)]
+    reclaimed: list[Path] = []
     for path in stale:
-        reclaim(config, path)
-    return stale
+        try:
+            with lease(config, path):
+                reclaim(config, path)
+                reclaimed.append(path)
+        except PrefixBusy:
+            pass
+    return reclaimed
 
 
 def allocate(config: GateConfig, identity: str) -> Path:
@@ -150,8 +158,31 @@ def source_checkout(config: GateConfig) -> Path | None:
     return Path(value) if value else None
 
 
+def active(config: GateConfig, commit: SourceCommit | None) -> bool:
+    """Whether this process proves it is in the selected private prefix."""
+    if commit is None:
+        return source_checkout(config) is not None
+    expected = for_source_commit(config, commit)
+    if config.root.absolute() != expected.absolute():
+        return False
+    marker = os.environ.get(config.environment.source_commit)
+    try:
+        marked = SourceCommit(marker or "")
+    except ValueError as error:
+        raise GateError("exact source prefix has no valid source-commit marker") from error
+    if marked != commit:
+        raise GateError(f"exact source prefix marker {marked} does not match {commit}")
+    require_detached_checkout(config.root, commit)
+    return True
+
+
 def run_from_private_copy(
-    runner, config: GateConfig, arguments: list[str], *, reuse: Path | None = None
+    runner,
+    config: GateConfig,
+    arguments: list[str],
+    *,
+    reuse: Path | None = None,
+    commit: SourceCommit | None = None,
 ) -> int:
     """Copy the checkout, run the same command inside the copy, bring back what
     it produced, and give the copy back.
@@ -166,22 +197,46 @@ def run_from_private_copy(
     A run that failed is precisely when its run log is worth having, and
     without this the evidence dies with the copy that produced it.
     """
+    expected = for_source_commit(config, commit) if commit is not None else None
+    if reuse is not None and expected is not None and reuse.resolve() != expected.resolve():
+        raise GateError(f"release source {commit} may only use its exact prefix {expected}")
+    identity = secrets.token_hex(config.prefix.name_length)
+    path = reuse or expected or allocate(config, identity)
+    if path.is_symlink():
+        raise GateError(f"exact source prefix {path} must not be a symlink")
+    with lease(config, path):
+        return _run_locked(runner, config, arguments, path=path, reuse=reuse, commit=commit)
+
+
+def _run_locked(runner, config, arguments, *, path, reuse, commit) -> int:
     if reuse is None:
         for stale in sweep(config):
             runner.note(f"reclaimed stale prefix {stale}")
-    path = reuse or allocate(config, secrets.token_hex(config.prefix.name_length))
-    if reuse is None:
-        snapshot.populate(config.root, path, config)
-    else:
+    retained_commit = commit is not None and path.exists()
+    if retained_commit:
+        if path.stat().st_uid != os.getuid():
+            raise GateError(f"exact source prefix {path} is not owned by the current user")
+        reclaim(config, path)
+        snapshot.populate_commit(config.root, path, config, commit)
+    elif reuse is not None:
         # Refreshed, not rebuilt. The source has to become what the checkout
         # says now -- that is the point of resuming after a fix -- while
         # `target/` and everything else the last run built stays put, which is
         # what makes the next attempt cheap.
         snapshot.refresh(config.root, path, config)
+    elif commit is not None:
+        snapshot.populate_commit(config.root, path, config, commit)
+    else:
+        snapshot.populate(config.root, path, config)
+    child_env = (
+        {config.environment.source_commit: str(commit)}
+        if commit is not None
+        else {config.environment.source_checkout: str(config.root)}
+    )
     status = runner.run(
         ["uv", "run", "capsem-gate", *arguments],
         cwd=path,
-        env={config.environment.source_checkout: str(config.root)},
+        env=child_env,
         check=False,
     )
     export(path, config.root, config)

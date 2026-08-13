@@ -7,10 +7,11 @@ common contract. **Read it before any release work or any change touching
 logged data** -- it carries the two hard contracts: serialized orthogonal
 binary/profile releases with complete reusable test modules, and the logger DB
 boundary (only `capsem-logger` executes ledger queries). The only release
-commands are `just release-binaries <channel>` and
-`just release-profile <channel> <profile>`.
-Each command runs complete `just test` first and then verifies/publishes the
-exact clean tested `main` HEAD before any release mutation or dispatch.
+commands are `just release-binaries <channel> <source-commit>` and
+`just release-profile <channel> <profile> <source-commit>`.
+Each command runs complete `just test` from the detached full-SHA prefix, then
+dispatches through the immutable `capsem-source-<commit>` ref. The commit must
+already be on `main`; moving the outer checkout during qualification is safe.
 For release inputs, the manifest is the bible: absent means nonexistent.
 Mutable manifests are fetched fresh; immutable caches are keyed only by
 manifest-recorded artifact digests, never by channel, and reverified on use.

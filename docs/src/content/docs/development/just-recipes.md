@@ -132,8 +132,8 @@ the tested composition.
 
 | Recipe | What it does |
 |--------|-------------|
-| `just release-binaries <channel>` | Build packages only, pull every selected-channel profile by digest, run the complete pairing proof, and publish binary-owned manifest fields |
-| `just release-profile <channel> <profile>` | Call `capsem-admin release`, build exactly one channel/profile, pull the channel package by digest, and publish only that profile |
+| `just release-binaries <channel> <source-commit>` | Qualify one committed source, build packages only, and publish binary-owned manifest fields |
+| `just release-profile <channel> <profile> <source-commit>` | Qualify one committed source, build one channel/profile, and publish only that profile |
 
 Both commands share one `capsem-release-<channel>` lock from source-manifest
 read through deployment. If a profile needs newer code, release the profile

@@ -13,9 +13,9 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 |----------|---------|-------------|
 | `ci.yaml` | Pull requests and pushes to `main` | Quality gate: the shared fast/static module, Rust unit/integration, frontend, Python contracts, install checks, explicit runner substitutions, and a post-merge main signal |
 | `security-audit.yaml` | Weekly schedule or manual dispatch | Blocking RustSec and dependency advisories across every JavaScript web workspace |
-| `release-nightly.yaml` | Daily schedule or manual dispatch | Check out current `main`, run the selected `just release-profile nightly <profile>` commands serially, then run `just release-binaries nightly` as a separate lane |
-| `release.yaml` | Correlated dispatch from `release-binaries` with `{tag, channel, publish, dispatch_id}` | Build and install-test exact native packages; publish and advance only a new immutable identity, or finish as a rebuild-only proof when that identity already exists |
-| `release-assets.yaml` | Correlated dispatch from `capsem-admin release` | Build exactly one channel/profile's images, config, and evidence against the existing channel package; the public command watches that exact run through success |
+| `release-nightly.yaml` | Daily schedule or manual dispatch | Freeze `${{ github.sha }}`, pass it to each profile command serially, then pass the same SHA to the binary lane |
+| `release.yaml` | Correlated dispatch from `release-binaries` with `{tag, channel, publish, dispatch_id, source_commit}` | Build and install-test exact native packages from the selected immutable commit; publish and advance only a new immutable identity, or finish as a rebuild-only proof when that identity already exists |
+| `release-assets.yaml` | Correlated dispatch from `capsem-admin release` with `source_commit` | Build exactly one channel/profile's images, config, and evidence from that commit against the existing channel package; the public command watches that exact run through success |
 | `release-channel-staging.yaml` | Manual | Build a deterministic staging asset channel fixture, deploy it to a Cloudflare Pages preview branch, and validate the same release-channel contract without invoking `build-assets`, `build-app-macos`, or `build-app-linux` |
 | `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove profile image metadata is unchanged without creating a GitHub release or deploying release.capsem.org |
 | `docs.yaml` | Push to main | Deploy docs.capsem.org on each main merge, then smoke the live docs site |
@@ -133,8 +133,8 @@ Production has two entrypoints:
 
 | Command | Builds | Resolves unchanged | Manifest write |
 |---|---|---|---|
-| `just release-binaries <channel>` | Packages, per-binary inventory, host SBOM, existing attestations | Every profile in that channel by digest | Binary-owned fields only |
-| `just release-profile <channel> <profile>` | One channel/profile config, images, inventory, OBOM, evidence | The channel package by digest | Selected profile only |
+| `just release-binaries <channel> <source-commit>` | Packages, per-binary inventory, host SBOM, existing attestations | Every profile in that channel by digest | Binary-owned fields only |
+| `just release-profile <channel> <profile> <source-commit>` | One channel/profile config, images, inventory, OBOM, evidence | The channel package by digest | Selected profile only |
 
 Both workflows use `capsem-release-${{ inputs.channel }}` with cancellation
 disabled. The lock is acquired before reading the source manifest and held
@@ -154,8 +154,9 @@ bytes, runs the complete pairing proof, and activates the channel. Neither
 artifact family is rebuilt twice.
 
 Nightly rebuild runs once daily through `release-nightly.yaml`. The scheduler
-calls the public profile command for `code` and `co-work` with a serial matrix,
-then calls the separate public binary command even if one profile lane failed.
+freezes its event `${{ github.sha }}`, calls the public profile command for
+`code` and `co-work` with that SHA in a serial matrix, then calls the separate
+public binary command with the same SHA even if one profile lane failed.
 It contains no release implementation and never dispatches `release.yaml` or
 `release-assets.yaml` directly. Its `capsem-nightly-release-scheduler` lock
 prevents overlapping orchestrators; each downstream run independently holds

@@ -145,22 +145,17 @@ def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
     )
 
 
-def test_the_prefix_stays_inside_the_kernel_socket_budget() -> None:
-    """The prefix itself stays inside the binding kernel socket budget.
-
-    Comparing it with the checkout made the result depend on the developer's
-    username and where they cloned the repository, neither of which changes
-    ``sun_path``. Mutation: lengthen `[prefix] parent` beyond the real budget
-    and this goes red before anything has to boot a VM to find out.
-    """
+def test_the_prefix_example_reserves_the_full_release_commit() -> None:
+    """The longest identity is one full commit, not a random abbreviation."""
     from capsem.gate import prefix
 
     config = _config()
-    allowance = SUN_LEN - GATEWAY_SUFFIX - 2
-    assert len(str(prefix.example(config))) <= allowance, (
-        f"the prefix spends {len(str(prefix.example(config)))} bytes of the "
-        f"{allowance}-byte root budget available before a gateway socket suffix"
-    )
+    assert prefix.example(config).name == "0" * 40
+
+    from capsem.gate.workspace import Workspace
+
+    socket = Workspace(config).run_dir / config.service.socket
+    assert len(os.fsencode(socket)) + 1 <= SUN_LEN
 
 
 # -- what it carries ---------------------------------------------------------

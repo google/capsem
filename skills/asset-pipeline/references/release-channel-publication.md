@@ -62,7 +62,7 @@ client.
 Profile publication is owned by:
 
 ```bash
-just release-profile <channel> <profile>
+just release-profile <channel> <profile> <source-commit>
 ```
 
 That command calls `capsem-admin release`. The shared
@@ -79,7 +79,7 @@ aliasing or overwriting bytes.
 
 When `min_capsem_version` is newer than the public package, the immutable
 profile publication is staged but not deployed. The following
-`just release-binaries <channel>` resolves those exact staged digests, builds
+`just release-binaries <channel> <source-commit>` resolves those exact staged digests, builds
 packages only, runs the complete functional/native/glow-up proof, and activates
 the completed pairing. The profile bytes are not rebuilt.
 

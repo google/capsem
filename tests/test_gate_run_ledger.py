@@ -18,7 +18,7 @@ from capsem.gate import runledger
 from capsem.gate.rundigest import advice, analyse
 from capsem.gate.runledger import LedgerRow, StepRow
 from capsem.gate.runlog import RunLog
-from capsem.gate.runlogschema import PlanShape, StepEnd
+from capsem.gate.runlogschema import PlanShape, RunStart, StepEnd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -121,6 +121,26 @@ def _row(
             for label, (spent, state) in steps.items()
         },
     )
+
+
+def test_release_source_commit_is_evidence_not_a_timing_partition() -> None:
+    shape = PlanShape(steps=("build",), edges=())
+
+    def start(commit: str) -> RunStart:
+        return RunStart(
+            command="release-binaries",
+            argv=("capsem-gate", "release-binaries", "nightly", commit),
+            head=commit,
+            source_commit=commit,
+            platform="Linux",
+            machine="x86_64",
+            cores=16,
+            free_gb=100.0,
+            gate_source="src",
+            pycache="cache",
+        )
+
+    assert runledger.identity(start("1" * 40), shape) == runledger.identity(start("2" * 40), shape)
 
 
 # -- the ledger -------------------------------------------------------------

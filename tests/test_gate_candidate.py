@@ -260,6 +260,34 @@ def test_failure_evidence_is_captured_and_labelled_with_the_head(
     assert HEAD[:12] in captured[0]
 
 
+def test_release_failure_evidence_keeps_attempt_and_source_identities(
+    tmp_path: Path,
+) -> None:
+    from capsem.gate.gateresources import FailureEvidence
+
+    root = _checkout(tmp_path)
+    config = gate_config.for_root(root)
+    selected = "1" * 40
+    recorded = config.path(config.candidate.source_state_file)
+    recorded.parent.mkdir(parents=True, exist_ok=True)
+    recorded.write_text(
+        json.dumps({"source_kind": "commit", "source_commit": selected, "head": selected})
+    )
+
+    class ReleaseRun(Running):
+        @property
+        def run_id(self) -> str:
+            return "20260813-010203-abcdef-release-binaries"
+
+    runner = ReleaseRun(root)
+    with pytest.raises(GateError), held(FailureEvidence(config, runner)):
+        raise GateError("boom")
+
+    (captured,) = runner.matching(r"capture-failure")
+    assert "--run-id 20260813-010203-abcdef-release-binaries" in captured
+    assert f"--source-commit {selected}" in captured
+
+
 def test_a_passing_run_captures_no_failure_evidence(tmp_path: Path) -> None:
     from capsem.gate.gateresources import FailureEvidence
 

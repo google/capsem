@@ -18,6 +18,7 @@ from .debproof import DebProof
 from .execution import step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
+from .sourcecommit import source_commit_for_checkout
 
 
 def _content(config, value: str) -> ProfileContent:
@@ -62,6 +63,7 @@ class ProveDebCommand(
                         content=_content(ctx.config, args.content_root),
                         manifest_url=args.manifest_url,
                         channel=args.channel,
+                        source_commit=source_commit_for_checkout(ctx.config.root),
                     ).run(),
                     justification=CallJustification(
                         kind=OpaqueKind.DOMAIN_TRANSACTION,

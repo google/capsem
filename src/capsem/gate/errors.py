@@ -11,3 +11,7 @@ from __future__ import annotations
 
 class GateError(Exception):
     """A condition the operator can fix, reported without a traceback."""
+
+
+class PrefixBusy(GateError):
+    """Another process owns the deterministic source prefix."""

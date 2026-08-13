@@ -308,6 +308,7 @@ class RecordingJournal:
     """
 
     def __init__(self) -> None:
+        self.run_id = "recording"
         self.notes: list[str] = []
         self.artifacts: list[tuple[Path, str, int]] = []
         self.steps: list[str] = []
@@ -432,9 +433,14 @@ def _built(root: Path, name: str, args: tuple[tuple[str, object], ...], qualific
     from capsem.gate import cli  # noqa: F401 - importing registers every command
     from capsem.gate.command import GateCommand
 
+    values = dict(args)
+    if name in {"release-binaries", "release-profile"}:
+        from capsem.gate.sourcecommit import SourceCommit
+
+        values.setdefault("source_commit", SourceCommit("0" * 40))
     return GateCommand.registry[name](
         RecordingRunner(root),
-        argparse.Namespace(dry_run=False, graph=False, timing=False, **dict(args)),
+        argparse.Namespace(dry_run=False, graph=False, timing=False, **values),
         qualification=qualification,
     )
 

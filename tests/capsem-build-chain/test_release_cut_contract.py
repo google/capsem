@@ -49,11 +49,18 @@ def _planned(command: str, **args) -> str:
 
     from capsem.gate import cli  # noqa: F401 - registers every command
     from capsem.gate.command import GateCommand
+    from capsem.gate.sourcecommit import SourceCommit
 
     return (
         GateCommand.registry[command](
             RecordingRunner(PROJECT_ROOT),
-            argparse.Namespace(dry_run=False, graph=False, timing=False, **args),
+            argparse.Namespace(
+                dry_run=False,
+                graph=False,
+                timing=False,
+                source_commit=SourceCommit("0" * 40),
+                **args,
+            ),
         )
         ._describe()
         .describe()
@@ -73,9 +80,7 @@ def test_version_stamp_propagates_cargo_toml_and_refreshes_both_frozen_locks() -
 
     justfile = _read_text_exact_case("justfile")
     config = gate_config.load(PROJECT_ROOT)
-    stamp = (
-        PROJECT_ROOT / "src" / "capsem" / "gate" / "versions.py"
-    ).read_text(encoding="utf-8")
+    stamp = (PROJECT_ROOT / "src" / "capsem" / "gate" / "versions.py").read_text(encoding="utf-8")
 
     assert "release_minor" not in justfile
 
@@ -106,9 +111,9 @@ def test_version_stamp_refuses_a_version_that_is_already_tagged() -> None:
     """
     from capsem.gate import config as gate_config
 
-    versions = (
-        PROJECT_ROOT / "src" / "capsem" / "gate" / "versions.py"
-    ).read_text(encoding="utf-8")
+    versions = (PROJECT_ROOT / "src" / "capsem" / "gate" / "versions.py").read_text(
+        encoding="utf-8"
+    )
     config = gate_config.load(PROJECT_ROOT)
 
     # The tag prefix is config rather than a literal in the check, and the
@@ -127,11 +132,7 @@ def test_checked_in_python_lock_matches_project_version() -> None:
         if line.startswith("version = ")
     )
     lock_lines = (PROJECT_ROOT / "uv.lock").read_text().splitlines()
-    package_index = next(
-        i
-        for i, line in enumerate(lock_lines)
-        if line == 'name = "capsem"'
-    )
+    package_index = next(i for i, line in enumerate(lock_lines) if line == 'name = "capsem"')
     locked_version = lock_lines[package_index + 1].split('"', 2)[1]
 
     assert locked_version == project_version
@@ -173,8 +174,8 @@ def test_release_commands_are_not_a_parallel_just_surface() -> None:
     for retired in retired_commands:
         assert f"\n{retired}:" not in justfile
         assert f"\n{retired} " not in justfile
-    assert "\nrelease-binaries channel:" in justfile
-    assert "\nrelease-profile channel profile:" in justfile
+    assert "\nrelease-binaries channel source_commit:" in justfile
+    assert "\nrelease-profile channel profile source_commit:" in justfile
 
 
 def test_binary_release_recipe_uses_one_adversarial_script() -> None:
@@ -188,9 +189,12 @@ def test_binary_release_recipe_uses_one_adversarial_script() -> None:
     assert "scripts/release-binaries.py" in binary_plan
     assert "_build-kernel" not in binary_plan
     assert "_build-rootfs" not in binary_plan
-    assert "\nrelease-binaries channel:" in justfile
-    assert "MUTATED_PATHS" in script
-    assert "release preparation write set is invalid" in script
-    assert '"push", "--atomic", "origin", "main", tag' in script
+    assert "\nrelease-binaries channel source_commit:" in justfile
+    assert "MUTATED_PATHS" not in script
+    assert '"push", "origin", "main"' not in script
+    assert '"reset"' not in script
+    assert '"commit"' not in script
+    assert "SOURCE_REF_TEMPLATE.format(source_commit=source_commit)" in script
     assert '"workflow",\n            "run",\n            "release.yaml"' in script
+    assert 'f"source_commit={source_commit}"' in script
     assert "release-assets.yaml" not in script
