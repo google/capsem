@@ -162,7 +162,7 @@ def test_checked_in_rust_lock_matches_every_capsem_workspace_package() -> None:
     assert capsem_versions == {project_version}
 
 
-def test_release_commands_are_not_a_parallel_just_surface() -> None:
+def test_release_commands_require_source_commit_without_a_parallel_just_surface() -> None:
     justfile = _read_text_exact_case("justfile")
 
     retired_commands = (
