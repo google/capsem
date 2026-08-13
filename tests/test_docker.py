@@ -371,7 +371,16 @@ class TestRenderRootfs:
         assert "npm ci" in rendered_profile_arm64
 
     def test_npm_prefix(self, rendered_profile_arm64):
-        assert "/opt/ai-clis" in rendered_profile_arm64
+        assert "npm config set prefix /opt/ai-clis --global" in rendered_profile_arm64
+
+    def test_npm_global_bin_remains_a_real_directory(self, rendered_profile_arm64):
+        assert "mkdir -p /opt/ai-clis/bin" in rendered_profile_arm64
+        assert "ln -s /opt/ai-clis/node_modules/.bin /opt/ai-clis/bin" not in (
+            rendered_profile_arm64
+        )
+        assert (
+            'ln -s "../node_modules/.bin/$(basename "$cli")" "/opt/ai-clis/bin/$(basename "$cli")"'
+        ) in rendered_profile_arm64
 
     def test_guest_binaries(self, rendered_arm64):
         for binary in GUEST_BINARIES:
@@ -412,7 +421,7 @@ class TestRenderRootfs:
     def test_uv_installed(self, rendered_arm64):
         assert "uv-aarch64-unknown-linux-gnu.tar.gz" in rendered_arm64
         assert 'uv_version="$(uv --version)"' in rendered_arm64
-        assert "test \"$1\" = uv" in rendered_arm64
+        assert 'test "$1" = uv' in rendered_arm64
         assert "test \"$2\" = '0.12.3'" in rendered_arm64
         assert 'test "$(uv --version)"' not in rendered_arm64
 
@@ -692,8 +701,7 @@ def test_rootfs_dependency_materializer_restores_https_runtime_apt_authority(rea
     snapshot = rendered.index("rm -f /etc/apt/sources.list.d/*")
     update = rendered.index("apt-get -o")
     restore = rendered.index(
-        "install -m 644 /tmp/runtime-debian.sources "
-        "/etc/apt/sources.list.d/debian.sources"
+        "install -m 644 /tmp/runtime-debian.sources /etc/apt/sources.list.d/debian.sources"
     )
     assert preserve < snapshot < update < restore
     assert "sed -i 's|URIs: http://|URIs: https://|g' /tmp/runtime-debian.sources" in rendered

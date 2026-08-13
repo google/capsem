@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Exported guest root filesystems now persist npm's global prefix and keep its
+  command directory extensible. Locked profile tools are bridged into a real
+  `/opt/ai-clis/bin` directory instead of replacing it with a symlink, so a
+  later offline or local `npm install -g` produces a runnable command. A fast
+  Citadel guard protects both filesystem requirements before asset builds.
+
 - Test processes spawned by an immutable-commit release no longer leak the
   parent gate's source marker into synthetic checkout tests; release identity
   remains fail-closed in production while each test must opt into it explicitly.
