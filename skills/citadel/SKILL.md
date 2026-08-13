@@ -43,6 +43,7 @@ the suite has one collector and its failures have one owner.
 | `test_run_digest_echo.py` | the cross-run digest reaches whoever works next |
 | `test_tree_copy_boundary.py` | only `filesystem` copies a tree, and never through a link |
 | `test_rust_check_coverage.py` | clippy, nextest and doctests between them cover all Rust |
+| `test_agent_contract_is_one_file.py` | every agent is held to the same contract |
 
 ## Adding a guard
 

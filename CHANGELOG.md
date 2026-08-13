@@ -21,6 +21,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `CLAUDE.md` and `GEMINI.md` are symlinks to `AGENTS.md`, which is now the one
+  agent contract. They were three files whose section lists had drifted almost
+  disjoint: Claude was never told about the bounded-diagnostics wrapper, the
+  serialized release contract or the logger DB boundary, and Codex was never
+  told the code style, the invariants, or that Rust tests live in a sibling
+  `tests.rs`. Nobody chose that -- no reader ever saw two of the files at once.
+  `tests/citadel/test_agent_contract_is_one_file.py` refuses a copy, in the
+  working tree and in the Git index, since a blob-mode file arrives as a
+  divergent copy in every fresh clone.
+
+  Two rules were softened to match practice while merging. The changelog rule
+  now applies to user-visible changes rather than every commit, which 39 of the
+  last 100 did not do; and the conventional-subject list names the ten types
+  actually in use rather than four. A rule nobody follows teaches that the
+  neighbouring rules are advisory, and the neighbours here are the DB boundary
+  and the release contract.
+
 - The docs-site smoke check moved out of `docs.yaml` into
   `scripts/smoke-docs-site.sh`. Twenty-three executable lines of YAML holding a
   retry loop and a thirteen-term conjunction, reachable by no linter and
