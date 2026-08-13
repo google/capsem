@@ -307,6 +307,10 @@ class TestParseNpmLs:
         with pytest.raises(ValueError, match="Invalid"):
             parse_npm_ls("not json")
 
+    def test_concatenated_documents_are_rejected(self):
+        with pytest.raises(ValueError, match="Extra data"):
+            parse_npm_ls(f"{NPM_JSON}\n{NPM_EMPTY}")
+
     def test_sorted_by_name(self):
         pkgs = parse_npm_ls(NPM_JSON)
         names = [p.name for p in pkgs]

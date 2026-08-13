@@ -991,7 +991,7 @@ def extract_software_inventory(
         runtime,
         image_tag,
         platform,
-        "npm ls --json --global --depth=0 --prefix /opt/ai-clis 2>/dev/null || npm ls --json --global --depth=0",
+        "npm ls --json --depth=0 --prefix /opt/ai-clis",
         probe="npm inventory",
     )
     manifest = collect_bom(

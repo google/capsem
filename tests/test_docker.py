@@ -46,6 +46,7 @@ from capsem.builder.docker import (
     experimental_erofs_build_config,
     export_container_fs,
     extract_kernel_assets,
+    extract_software_inventory,
     extract_tool_versions,
     generate_build_context,
     generate_checksums,
@@ -130,6 +131,35 @@ def test_run_cmd_surfaces_captured_subprocess_stderr(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "stdout evidence" in captured.err
     assert "Unable to find image 'missing-image' locally" in captured.err
+
+
+def test_software_inventory_uses_one_profile_local_npm_document(tmp_path):
+    npm_document = json.dumps({"dependencies": {"fixture": {"version": "1.2.3"}}})
+    with patch(
+        "capsem.builder.docker._container_output",
+        side_effect=["", "[]", npm_document],
+    ) as container_output:
+        extract_software_inventory(
+            "docker",
+            "capsem-rootfs-arm64",
+            "linux/arm64",
+            "arm64",
+            tmp_path,
+        )
+
+    npm_command = container_output.call_args_list[2].args[3]
+    assert npm_command == "npm ls --json --depth=0 --prefix /opt/ai-clis"
+    assert "||" not in npm_command
+    assert "--global" not in npm_command
+    inventory = json.loads((tmp_path / "software-inventory.json").read_text())
+    assert inventory["packages"] == [
+        {
+            "architecture": "all",
+            "name": "fixture",
+            "source": "npm",
+            "version": "1.2.3",
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------

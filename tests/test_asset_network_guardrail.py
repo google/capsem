@@ -353,7 +353,7 @@ def test_asset_python_has_no_unclassified_mutable_tool_commands() -> None:
     # These are read-only inventory commands. Ratchet their executable tool
     # vocabulary directly instead of scanning prose: a docstring such as
     # "installed packages" must not look like an install command.
-    assert inventory["extract_software_inventory"] == Counter({"npm": 3, "pip": 1})
+    assert inventory["extract_software_inventory"] == Counter({"npm": 2, "pip": 1})
     assert inventory["prepare_build_context"] == Counter({"npm": 1})
 
 
