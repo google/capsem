@@ -25,14 +25,14 @@ library would supply the sort we already have and nothing else we use.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from graphlib import CycleError, TopologicalSorter
 
 from . import planchecks, planreport, planrunner
 from .config import GateConfig
 from .context import Context
 from .errors import GateError
-from .execution import Step
+from .execution import Requires, Step
+from .phase import Phase
 from .planrunner import FAILED, OK, SKIPPED, Outcome
 from .timing import longest_chain
 
@@ -48,11 +48,32 @@ class Plan:
         self._after: dict[str, set[str]] = {}
         self._by_label: dict[str, Step] = {}
         self._outcomes: dict[str, Outcome] = {}
+        # Recorded when a phase namespaces a step, rather than recovered by
+        # splitting the label. The dotted name is a presentation of the stage,
+        # not the stage itself, and parsing a presentation back into a property
+        # is what made a rename able to change what a contract checked.
+        self._stages: dict[str, str] = {}
+        # Why each edge exists. Kept beside `_after` rather than inside it so
+        # the predecessor map stays the exact shape `graphlib` and
+        # `longest_chain` want, and so an edge kind can be added without every
+        # graph walk learning about it.
+        self._requires: dict[tuple[str, str], Requires] = {}
 
     # -- building ----------------------------------------------------------
 
-    def add(self, step: Step, *, after: tuple[Step, ...] = ()) -> Step:
-        """Register a step, and return it so it can be named as a dependency."""
+    def add(
+        self,
+        step: Step,
+        *,
+        after: tuple[Step, ...] = (),
+        requires: Requires = Requires.UNDECLARED,
+    ) -> Step:
+        """Register a step, and return it so it can be named as a dependency.
+
+        `requires` says why every edge in `after` exists. One kind per call
+        because a step's dependencies are almost always the same kind, and the
+        rare mixed case can add the odd one out with `edge()`.
+        """
         if step.label in self._by_label:
             raise GateError(
                 f"the {self.name} plan already has a step called {step.label!r}; "
@@ -62,7 +83,7 @@ class Plan:
         self._by_label[step.label] = step
         self._after[step.label] = set()
         for earlier in after:
-            self.edge(before=earlier, after=step)
+            self.edge(before=earlier, after=step, requires=requires)
         return step
 
     def phase(self, prefix: str) -> Phase:
@@ -76,7 +97,13 @@ class Plan:
         """
         return Phase(self, prefix)
 
-    def shared(self, step: Step, *, after: tuple[Step, ...] = ()) -> Step:
+    def shared(
+        self,
+        step: Step,
+        *,
+        after: tuple[Step, ...] = (),
+        requires: Requires = Requires.UNDECLARED,
+    ) -> Step:
         """Register groundwork that several fragments each need, once.
 
         Composed into one plan, `install-image` and `cross-compile` both want
@@ -107,14 +134,21 @@ class Plan:
                 f"{existing.resume.value}/{step.resume.value}"
             )
         for earlier in after:
-            self.edge(before=earlier, after=existing)
+            self.edge(before=earlier, after=existing, requires=requires)
         return existing
 
-    def edge(self, *, before: Step, after: Step) -> None:
-        """Order two registered steps.
+    def edge(
+        self, *, before: Step, after: Step, requires: Requires = Requires.UNDECLARED
+    ) -> None:
+        """Order two registered steps, and say why.
 
         Both must already be registered: an edge naming a step this plan does
         not have would be silently dropped, and the order silently wrong.
+
+        `requires` is what tells hermeticity which edges carry contamination
+        and redundancy which ones are safe to remove. An `ARTIFACT` edge hands
+        over bytes; an `ORDER` edge only sequences, and a redundant one of
+        those is lost parallelism.
         """
         for step in (before, after):
             if self._by_label.get(step.label) is not step:
@@ -123,6 +157,12 @@ class Plan:
                     "add it before making it a dependency"
                 )
         self._after[after.label].add(before.label)
+        # First declaration wins: a `shared` step gains edges from several
+        # callers, and the one that knows it hands over bytes should not be
+        # overwritten by a later caller that only needs the ordering.
+        pair = (before.label, after.label)
+        if self._requires.get(pair, Requires.UNDECLARED) is Requires.UNDECLARED:
+            self._requires[pair] = requires
 
     # -- inspecting --------------------------------------------------------
 
@@ -212,6 +252,10 @@ class Plan:
     def outcomes(self) -> dict[str, Outcome]:
         return dict(self._outcomes)
 
+    def record_stage(self, label: str, stage: str) -> None:
+        """Note which phase namespaced a step. Called by `Phase.add`."""
+        self._stages[label] = stage
+
     # -- running -----------------------------------------------------------
 
     def run(self, context: Context) -> None:
@@ -241,27 +285,10 @@ class Plan:
         """The labels that must finish before `label` may start."""
         return self._after[label]
 
+    def requires_of(self, before: str, after: str) -> Requires:
+        """Why this edge exists, or `UNDECLARED` while the migration runs."""
+        return self._requires.get((before, after), Requires.UNDECLARED)
 
-class Phase:
-    """One fragment's steps, added to a shared plan under one namespace.
-
-    Composed into a single plan, `test-static` and `test-functional` both want
-    a step called `sign`, and both legitimately -- the binaries are signed after
-    the coverage build and again before the VM suites. Namespacing makes them
-    `static.sign` and `functional.sign`, which is also what the run log and the
-    timing report then say, so a slow step names the phase it belongs to.
-    """
-
-    def __init__(self, plan: Plan, prefix: str) -> None:
-        self._plan = plan
-        self._prefix = prefix
-
-    def add(self, step: Step, *, after: tuple[Step, ...] = ()) -> Step:
-        return self._plan.add(replace(step, label=self.label(step.label)), after=after)
-
-    def shared(self, step: Step, *, after: tuple[Step, ...] = ()) -> Step:
-        """Groundwork several phases need, kept out of any one namespace."""
-        return self._plan.shared(step, after=after)
-
-    def label(self, name: str) -> str:
-        return f"{self._prefix}.{name}"
+    def stage_of(self, label: str) -> str:
+        """The phase that namespaced this step, or empty for an unphased one."""
+        return self._stages.get(label, "")

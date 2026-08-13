@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Edges declare why they exist. `Requires.ARTIFACT` hands over bytes, `ORDER`
+  only sequences, `EVIDENCE` needs a recorded result -- carried on
+  `Plan.add(requires=...)` and exposed through `Plan.requires_of`. The
+  distinction is not decoration: hermeticity contaminates along `ARTIFACT`
+  edges and not along `ORDER` ones, and a redundant `ORDER` edge is lost
+  parallelism where a redundant `ARTIFACT` edge usually just restates a real
+  need.
+
+- `workgraph.py` holds the gate's work as a typed DAG, with the contention
+  relation kept separate because it is symmetric and non-transitive. Its first
+  run over the real candidate plan found five redundant edges -- nothing in the
+  tree computed a transitive reduction before -- and `from_plan` reproduces
+  `Plan.edges` exactly.
+
 - Steps declare what they are. `Kind`, `Needs`, `Arch`, `Speed` and
   `concurrency` on `execution.Step` make the plan a graph that can be reasoned
   about instead of a set of labels that has to be grepped -- a lint is a lint

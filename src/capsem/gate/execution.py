@@ -124,6 +124,25 @@ class Speed(StrEnum):
     UNDECLARED = "undeclared"
 
 
+class Requires(StrEnum):
+    """Why an edge exists, which decides whether it may be removed.
+
+    A redundant `ARTIFACT` edge is usually harmless -- the consumer really does
+    need those bytes and the extra edge only restates it. A redundant `ORDER`
+    edge is lost parallelism: two steps sequenced that the graph already
+    sequenced, and the machine idles for it.
+    """
+
+    ARTIFACT = "artifact"
+    ORDER = "order"
+    EVIDENCE = "evidence"
+    UNDECLARED = "undeclared"
+    """Until `Plan.add` carries the kind. Inferring it from whether the
+    predecessor `produces` anything would be a guess wearing a type, and the
+    guess would be wrong exactly where it matters -- an `ORDER` edge added
+    defensively next to a real `ARTIFACT` one."""
+
+
 @dataclass(frozen=True)
 class Step:
     """One named unit of gate work."""
