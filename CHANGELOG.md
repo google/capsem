@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Run-history ledger and digest updates now use the gate's atomic filesystem
+  primitive instead of writing paths directly. Retained hardlinks keep their
+  original bytes, a replaced symlink cannot redirect evidence into another
+  run, and the Citadel once again rejects either module reaching around the
+  primitive boundary.
+
 - The `duplicate-content` filesystem rule no longer reports Tauri's generated
   schemas, which are byte-identical on Linux and neither ours to produce nor to
   deduplicate. Every fast-lane run reported one filesystem fault, and a fault

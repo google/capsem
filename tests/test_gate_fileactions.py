@@ -36,6 +36,7 @@ from capsem.gate.fileactions import (
     Symlink,
     digest_of,
 )
+from capsem.gate.filesystem import write_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,6 +54,37 @@ def context(journal: RecordingJournal) -> Context:
 # ---------------------------------------------------------------------------
 # Atomic replacement
 # ---------------------------------------------------------------------------
+
+
+def test_runtime_text_writes_replace_instead_of_mutating_shared_inodes(tmp_path: Path) -> None:
+    """Late-bound gate evidence must not rewrite another retained artifact.
+
+    Run-ledger and digest contents only exist while the run is closing, so
+    they use the function-form filesystem primitive rather than a plan
+    action.  It still has to carry the same atomic-replacement property as the
+    visible action: a hardlink must keep the old bytes and a symlink must be
+    replaced, never followed into an unrelated run.
+    """
+    target = tmp_path / "DIGEST.md"
+    target.write_text("old\n", encoding="utf-8")
+    retained = tmp_path / "retained.md"
+    os.link(target, retained)
+
+    write_text(target, "new\n")
+
+    assert target.read_text(encoding="utf-8") == "new\n"
+    assert retained.read_text(encoding="utf-8") == "old\n"
+
+    victim = tmp_path / "victim.md"
+    victim.write_text("do not touch\n", encoding="utf-8")
+    target.unlink()
+    target.symlink_to(victim)
+
+    write_text(target, "replacement\n")
+
+    assert not target.is_symlink()
+    assert target.read_text(encoding="utf-8") == "replacement\n"
+    assert victim.read_text(encoding="utf-8") == "do not touch\n"
 
 
 def test_atomic_replace_leaves_other_hardlinks_holding_the_old_bytes(

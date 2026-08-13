@@ -19,6 +19,7 @@ from .actions import Action
 from .config import GateConfig
 from .context import Context
 from .digestschema import DigestConfig
+from .filesystem import write_text
 from .rundigest import Analysis, advice, analyse
 from .runledger import LedgerRow, rows, sync
 from .runlogschema import FAILED, OK, SKIPPED
@@ -106,8 +107,7 @@ def build(config: GateConfig) -> str:
 def write(config: GateConfig) -> Path:
     """Regenerate the digest in place. Returns where it went."""
     target = config.path(config.runlog.digest.path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(build(config), encoding="utf-8")
+    write_text(target, build(config))
     return target
 
 

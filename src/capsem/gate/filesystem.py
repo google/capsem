@@ -20,6 +20,7 @@ import hashlib
 import os
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 
 import blake3
@@ -54,15 +55,30 @@ def digest_of(path: Path, *, algorithm: str) -> str:
 
 
 def write_text(path: Path, text: str) -> None:
-    """Write a file the gate produced, creating its directory.
+    """Atomically replace a text file the gate produced.
 
     A helper rather than an `Action`, for the same reason `digest_of` is one:
     the value is only known while a step is running. The revision under test is
     *captured*, not declared, so an action would have to be constructed with
     something that does not exist yet.
+
+    The new bytes are written beside the target and moved into place.  That is
+    not optional polish: retained run evidence may be hardlinked, and a target
+    name may have been replaced with a symlink.  Truncating either in place
+    rewrites bytes owned by a different run.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    scratch = path.with_name(f".{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+    descriptor = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(text)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(scratch, path)
+    except BaseException:
+        scratch.unlink(missing_ok=True)
+        raise
 
 
 def make_dir(path: Path) -> None:

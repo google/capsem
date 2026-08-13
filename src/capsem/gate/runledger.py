@@ -27,6 +27,7 @@ from typing import TypeVar
 from .config import GateConfig
 from .configschema import Strict
 from .digestschema import LedgerConfig
+from .filesystem import write_text
 from .harnessschema import RunLogConfig
 from .runhistory import history_locked, read, runs
 from .runlogschema import OK, PlanShape, RunEnd, RunStart
@@ -219,13 +220,12 @@ def append(config: GateConfig, directory: Path, settings: RunLogConfig) -> Ledge
     with history_locked(config):
         if _already_recorded(target, row.run_id, settings.ledger.row_schema):
             return None
-        target.parent.mkdir(parents=True, exist_ok=True)
         existing = target.read_text(encoding="utf-8").splitlines() if target.is_file() else []
         kept = [line for line in existing if line.strip() and _raw_run_id(line) != row.run_id][
             -(settings.ledger.keep_rows - 1) :
         ]
         kept.append(row.model_dump_json())
-        target.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        write_text(target, "\n".join(kept) + "\n")
     return row
 
 

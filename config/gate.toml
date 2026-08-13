@@ -748,11 +748,6 @@ direct_machine_access = [
     "pidfiles.py",
     "locks.py",
     "runlog.py",
-    # The ledger and digest are the durable, bounded post-run projections of
-    # that same run directory. They cannot report their own writes through the
-    # action journal after the journal has closed.
-    "runledger.py",
-    "digestreport.py",
     "summary.py",
     "runhistory.py",
     "disk.py",
