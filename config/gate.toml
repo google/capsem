@@ -1625,6 +1625,7 @@ source_contract = [
     "tests/test_gate_asset_recovery.py",
     "tests/test_guest_rust_builder_hermetic.py",
     "tests/test_gate_boundary.py",
+    "tests/test_gate_typecheck.py",
     "tests/test_gate_candidate.py",
     "tests/test_gate_cli.py",
     "tests/test_gate_command.py",
