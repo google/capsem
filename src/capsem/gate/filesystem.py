@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -75,10 +76,22 @@ def make_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def copy_tree(source: Path, target: Path) -> None:
-    """Copy a directory, replacing whatever was at the target."""
+def copy_tree(source: Path, target: Path, *, symlinks: bool = False) -> None:
+    """Copy a directory, replacing whatever was at the target.
+
+    The write-through defect that `merge_tree` documents cannot happen here --
+    the target is removed first, so there is no destination symlink left to
+    write through. What is still a choice is the *source*: `symlinks=True`
+    keeps a link as a link, which is what an exported asset tree wants, because
+    dereferencing `assets/current` materializes a multi-gigabyte architecture
+    for no new bytes.
+
+    The default dereferences, which is `shutil`'s and was every caller's
+    behaviour before this argument existed. It is kept only so adding the
+    argument changed nothing; prefer `symlinks=True` in new callers.
+    """
     remove(target)
-    shutil.copytree(source, target, copy_function=_interruptible_copy)
+    shutil.copytree(source, target, symlinks=symlinks, copy_function=_interruptible_copy)
 
 
 def merge_tree(source: Path, target: Path) -> None:
@@ -87,8 +100,41 @@ def merge_tree(source: Path, target: Path) -> None:
     Distinct from `copy_tree`, which replaces. Merging is what an asset lane
     does when several architectures land in one tree, and doing it by replacing
     would delete the sibling that arrived first.
+
+    Hand-rolled rather than `shutil.copytree(dirs_exist_ok=True)`, which
+    destroyed run logs. That call *dereferences* a symlink in the source and
+    writes the contents under that name in the destination -- and when the
+    destination entry of that name is itself a symlink, the write goes through
+    it into whatever it points at.
+
+    Both halves were live in the prefix export. `target/gate-runs/latest`
+    points at the newest run, on the host and inside the private tree alike, so
+    exporting a run read the private tree's `latest` as a directory of files
+    and wrote them through the host's `latest` into an unrelated older run,
+    replacing every file in it. `copytree` copies with `copy2`, so the
+    clobbered run kept the source's timestamps too: a well-formed log
+    describing a run that never happened in it, which `source.verify` and the
+    timing ratchet then read as evidence.
+
+    `symlinks=True` is not the fix on its own. It stops the dereference and
+    then raises `FileExistsError` because the destination link already exists,
+    which would fail every export. A destination symlink is *replaced*.
     """
-    shutil.copytree(source, target, dirs_exist_ok=True, copy_function=_interruptible_copy)
+    target.mkdir(parents=True, exist_ok=True)
+    for entry in sorted(source.iterdir()):
+        destination = target / entry.name
+        # Unlinked before anything is written under this name. The whole defect
+        # is that writing "into" a symlink writes somewhere else entirely.
+        if destination.is_symlink():
+            destination.unlink()
+        if entry.is_symlink():
+            os.symlink(os.readlink(entry), destination)
+        elif entry.is_dir():
+            merge_tree(entry, destination)
+        else:
+            # The same per-file hook `copytree` was given, so a merge of a
+            # multi-gigabyte asset tree still answers Ctrl-C between files.
+            _interruptible_copy(str(entry), str(destination))
 
 
 def _interruptible_copy(source: str, target: str) -> object:

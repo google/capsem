@@ -34,7 +34,7 @@ from pathlib import Path
 from . import snapshot
 from .config import GateConfig
 from .errors import GateError
-from .filesystem import remove
+from .filesystem import copy_tree, merge_tree, remove
 
 #: `cp` flags that ask APFS for copy-on-write. Clonefile is what makes this
 #: cheap enough to do unconditionally -- 2074 files and `.git` measured 2.2s
@@ -131,9 +131,9 @@ def export(prefix: Path, destination: Path, config: GateConfig) -> None:
                 # inside the exported tree such as assets/current. The latter
                 # is a relative link in the tree and materializing it copies a
                 # multi-gigabyte architecture for no new bytes.
-                shutil.copytree(origin, target, symlinks=True)
+                copy_tree(origin, target, symlinks=True)
             else:
-                shutil.copytree(origin, target, dirs_exist_ok=True)
+                merge_tree(origin, target)
         else:
             shutil.copy2(origin, target)
 

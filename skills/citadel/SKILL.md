@@ -41,6 +41,7 @@ the suite has one collector and its failures have one owner.
 | `test_package_architecture_boundary.py` | package and machine architecture never cross |
 | `test_guard_scheduling.py` | the Citadel itself runs before the expensive work |
 | `test_run_digest_echo.py` | the cross-run digest reaches whoever works next |
+| `test_tree_copy_boundary.py` | only `filesystem` copies a tree, and never through a link |
 
 ## Adding a guard
 
