@@ -179,6 +179,8 @@ class RunLogConfig(Strict):
     latest_link: str
     #: Trees each run watches for filesystem faults, relative to the checkout.
     observed_roots: tuple[str, ...]
+    #: Trees where identical bytes are a third party's doing, not ours.
+    duplicate_content_exempt: tuple[str, ...]
     #: How Linux names the path behind a file descriptor, so a `dir_fd`-relative
     #: call can be anchored instead of resolved against the working directory.
     fd_path_template: str

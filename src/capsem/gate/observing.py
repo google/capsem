@@ -17,8 +17,9 @@ from contextlib import contextmanager
 
 from .config import GateConfig
 from .faultlog import FaultLog
+from .faultrules import SOURCE_TREE
 from .faults import Fault
-from .observation import SOURCE_TREE, Watch
+from .observation import Watch
 from .plan import Plan
 
 
@@ -80,7 +81,13 @@ def observing(
         step.label: frozenset(resource.name for resource in step.contends) for step in plan.steps
     }
     roots = [config.path(name) for name in settings.observed_roots]
-    watch = Watch(roots, source_root=config.root, declared=declared, on_fault=report)
+    watch = Watch(
+        roots,
+        source_root=config.root,
+        declared=declared,
+        on_fault=report,
+        duplicate_content_exempt=config.runlog.duplicate_content_exempt,
+    )
     try:
         with watch, Instrument(watch, fd_path_template=settings.fd_path_template):
             yield watch

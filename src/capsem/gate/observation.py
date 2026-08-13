@@ -28,8 +28,16 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING
 
+from . import faultrules
 from .errors import GateError
-from .faults import Attribution, Event, Fault, facts_of, is_source, source_inodes
+from .faults import (
+    Attribution,
+    Event,
+    Fault,
+    facts_of,
+    is_source,
+    source_inodes,
+)
 from .interception import CURRENT_STEP
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
@@ -40,7 +48,6 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
 #: because `observing` compares against it: a literal in both places is two
 #: spellings of one rule, and the release would stop refusing the day either
 #: drifted.
-SOURCE_TREE = "source-tree"
 
 # Linux inotify/watchdog emits this when a descriptor opened only for reading
 # is closed.  It is explicitly evidence that no write happened, not a
@@ -59,12 +66,14 @@ class Watch:
         source_root: Path,
         declared: Mapping[str, frozenset[str]] | None = None,
         on_fault: Callable[[Fault], None] | None = None,
+        duplicate_content_exempt: Iterable[str] = (),
     ) -> None:
         self._roots = [root for root in roots if root.exists()]
         self._source_root = source_root.resolve()
         self._source_inodes = source_inodes(self._source_root)
         self._declared = dict(declared or {})
         self._on_fault = on_fault
+        self._duplicate_exempt = tuple(duplicate_content_exempt)
         self.faults: list[Fault] = []
         self.events: list[Event] = []
 
@@ -188,7 +197,7 @@ class Watch:
                 history.append(before)
         self._judge(event)
 
-    def _fault(self, event: Event, reason: str, detail: str) -> None:
+    def fault(self, event: Event, reason: str, detail: str) -> None:
         key = (event.path, reason)
         if key in self._reported:
             return
@@ -199,59 +208,8 @@ class Watch:
             self._on_fault(fault)
 
     def _judge(self, event: Event) -> None:
-        source = self.is_source(event.path)
-
-        if source and event.kind != "deleted":
-            self._fault(
-                event, SOURCE_TREE, f"{event.kind} during the run; the gate qualifies this tree"
-            )
-
-        if not source and event.inode is not None and event.links and event.links > 1:
-            origin = self._source_inodes.get(event.inode)
-            if origin is not None:
-                self._fault(
-                    event,
-                    "hardlinked-source",
-                    f"shares inode {event.inode} (nlink={event.links}) with checked-in "
-                    f"{origin.relative_to(self._source_root)}, so a chmod here rewrites "
-                    "tracked source and no content digest will notice",
-                )
-
-        if event.mode is not None:
-            history = self._modes.setdefault(event.path, [])
-            # Returning to any mode already seen -- not merely the one before
-            # last -- is the flip-flop: 0644 -> 0000 -> 0644 is identical at
-            # both ends and unreadable in the middle.
-            if history and event.mode != history[-1] and event.mode in history[:-1]:
-                self._fault(
-                    event,
-                    "mode-flip-flop",
-                    f"{history[-1]:04o} -> {event.mode:04o}, back to a mode it already had; "
-                    "a concurrent reader sees the middle state and fails intermittently",
-                )
-            if not history or history[-1] != event.mode:
-                history.append(event.mode)
-            if source and event.mode & (stat.S_IWGRP | stat.S_IWOTH):
-                self._fault(
-                    event, "over-permission", f"mode {event.mode:04o} is writable beyond its owner"
-                )
-
-        if event.digest is not None:
-            first = self._digests.setdefault(event.digest, event.path)
-            if first != event.path and event.inode is not None:
-                self._fault(event, "duplicate-content", f"identical bytes already at {first}")
-
-        if event.attribution == "exact" and len(event.steps) >= 2 and not source:
-            shared = set.intersection(
-                *(set(self._declared.get(step, frozenset())) for step in event.steps)
-            )
-            if not shared:
-                self._fault(
-                    event,
-                    "undeclared-contention",
-                    "two steps the scheduler ran together both touched this, and neither "
-                    "declares sharing it",
-                )
+        """Apply every rule to one event; the rules live in `faultrules`."""
+        faultrules.judge(self, event)
 
     def is_source(self, path: Path) -> bool:
         return is_source(path, self._source_root)
@@ -290,7 +248,7 @@ class Watch:
         for path in {event.path for event in self.events if not self.is_source(event.path)}:
             try:
                 if path.is_file() and path.stat().st_size == 0:
-                    self._fault(
+                    self.fault(
                         Event(at=time.time(), kind="final", path=path, steps=()),
                         "empty-artifact",
                         "zero bytes at the end of the run",

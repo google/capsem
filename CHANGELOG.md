@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `duplicate-content` filesystem rule no longer reports Tauri's generated
+  schemas, which are byte-identical on Linux and neither ours to produce nor to
+  deduplicate. Every fast-lane run reported one filesystem fault, and a fault
+  count that is never zero is a fault count nobody reads. Exempted by an exact,
+  config-owned list of trees rather than a blanket pass for generated files --
+  the rule earns its place in build output too, where it caught a package lane
+  copying a hardlinked alias tree into distinct inodes. The exemption matches
+  path components, so `crates/capsem-app/gen` cannot also silence
+  `crates/capsem-app/generated-elsewhere`.
+
+- `filesystem.copy_tree` never dereferences a symlink. It took a `symlinks=`
+  argument defaulting to false that the only informed caller overrode, to stop
+  `assets/current` being materialized into a multi-gigabyte copy. A default
+  every knowledgeable caller has to correct is a trap for the next one, so
+  there is no argument now.
+
 - The gate runs from a linked worktree. Its private copy now clones the
   repository with `git clone --local --no-checkout` instead of carrying `.git`
   as a path, which only worked when `.git` was a directory: in a worktree it is
@@ -36,6 +52,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   six accessors that depend on it.
 
 ### Changed
+
+- The CI branch-protection gate and the rootfs dependency setup left the two
+  places they were unreadable from. `ci.yaml:pr-gate` -- the single required
+  status deciding whether a PR can merge -- became
+  `scripts/require-ci-jobs.sh`, and `test_workflow_enforcement.py` now follows
+  a dispatch into `scripts/` so it still analyses the shell that decides. Two
+  holes surfaced while proving that: a dispatch line mentions no job result, so
+  `bash gate.sh || true` was not recognised as deciding the gate; and a result
+  compared only against `skipped` on the web-only branch satisfied "every
+  declared result is tested" while its failure blocked nothing. Both are now
+  guarded, and the oversized-body inventory is down from 18 to 14.
 
 - `[[lint_surfaces]]` gained `checked_by`, so the inventory covers checks that
   cannot run early instead of only lints that can. The Rust surface previously

@@ -27,6 +27,8 @@ import shutil
 import time
 from pathlib import Path
 
+import pytest
+
 from capsem.gate import config as gate_config
 from capsem.gate.faultlog import FaultLog
 from capsem.gate.faults import Event, Facts, Fault
@@ -677,3 +679,53 @@ def test_a_symlink_is_recorded_where_it_was_created(tmp_path: Path) -> None:
         "the link target was resolved against the checkout root and recorded "
         "as a write to a path nothing touched"
     )
+
+
+def _duplicate_faults(root: Path, relative: str, exempt: tuple[str, ...]) -> list:
+    """Two files with identical bytes under `relative`, and what was reported."""
+    watch = Watch([], source_root=root, duplicate_content_exempt=exempt)
+    for index, name in enumerate(("one.json", "two.json")):
+        watch._judge(
+            Event(
+                at=1.0,
+                kind="modified",
+                path=root / relative / name,
+                steps=("fast.web.frontend",),
+                facts=Facts(inode=index + 1, digest="deadbeef"),
+            )
+        )
+    return [fault for fault in watch.faults if fault.reason == "duplicate-content"]
+
+
+def test_an_exempt_tree_does_not_report_expected_duplicates(tmp_path: Path) -> None:
+    """Identical bytes a third party wrote are not this run's fault.
+
+    Tauri emits `desktop-schema.json` and `linux-schema.json` byte-identical on
+    Linux. We neither produce nor can deduplicate them, so every fast-lane run
+    reported one filesystem fault -- and a fault count that is never zero is a
+    fault count nobody reads, which costs more than the rule catches there.
+    """
+    assert not _duplicate_faults(
+        tmp_path, "crates/capsem-app/gen/schemas", ("crates/capsem-app/gen",)
+    )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        # Shares a string prefix with the exempt tree, which is why the match is
+        # component-wise and not `startswith`.
+        "crates/capsem-app/generated-elsewhere",
+        "crates/capsem-core/src",
+    ],
+)
+def test_the_exemption_does_not_blunt_the_rule_elsewhere(relative: str, tmp_path: Path) -> None:
+    """An exemption that leaks is worse than no exemption: it reads as coverage."""
+    assert _duplicate_faults(tmp_path, relative, ("crates/capsem-app/gen",)), (
+        f"duplicate content under {relative} went unreported; the exemption leaked"
+    )
+
+
+def test_the_rule_still_fires_with_no_exemptions_configured(tmp_path: Path) -> None:
+    """The default is unchanged: an empty list exempts nothing."""
+    assert _duplicate_faults(tmp_path, "crates/capsem-app/gen/schemas", ())

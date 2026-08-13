@@ -567,29 +567,4 @@ jobs:
           SITE_BUILD_RESULT: ${{ needs.site-build.result }}
           RELEASE_SITE_BUILD_RESULT: ${{ needs.release-site-build.result }}
           WEB_ONLY: ${{ needs.docs-build.outputs.web_only }}
-        run: |
-          echo "web-only:     $WEB_ONLY"
-          echo "fast-gate:    $FAST_GATE_RESULT"
-          echo "test-linux:   $TEST_LINUX_RESULT"
-          echo "test:         $TEST_MACOS_RESULT"
-          echo "test-install: $TEST_INSTALL_RESULT"
-          echo "docs-build:   $DOCS_BUILD_RESULT"
-          echo "site-build:   $SITE_BUILD_RESULT"
-          echo "release-site-build: $RELEASE_SITE_BUILD_RESULT"
-
-          test "$DOCS_BUILD_RESULT" = success
-          test "$SITE_BUILD_RESULT" = success
-
-          if [ "$WEB_ONLY" = true ]; then
-            test "$FAST_GATE_RESULT" = skipped
-            test "$TEST_LINUX_RESULT" = skipped
-            test "$TEST_MACOS_RESULT" = skipped
-            test "$TEST_INSTALL_RESULT" = skipped
-            test "$RELEASE_SITE_BUILD_RESULT" = skipped
-          else
-            test "$FAST_GATE_RESULT" = success
-            test "$TEST_LINUX_RESULT" = success
-            test "$TEST_MACOS_RESULT" = success
-            test "$TEST_INSTALL_RESULT" = success
-            test "$RELEASE_SITE_BUILD_RESULT" = success
-          fi
+        run: bash scripts/require-ci-jobs.sh

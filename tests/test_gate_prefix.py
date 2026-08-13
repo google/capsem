@@ -951,3 +951,30 @@ def test_merging_keeps_what_the_target_already_had(tmp_path: Path) -> None:
 
     merge_tree(source, target)
     assert sorted(p.name for p in target.iterdir()) == ["already-here", "arriving"]
+
+
+def test_copying_a_tree_keeps_a_symlink_a_symlink(tmp_path: Path) -> None:
+    """`copy_tree` must not dereference, for the same reason `merge_tree` must not.
+
+    The write-through defect cannot occur here -- the target is removed first,
+    so nothing is left to write through. Dereferencing the *source* is the
+    separate hazard: `assets/current` is a relative selector into a
+    multi-gigabyte architecture, and materializing it copies the whole tree for
+    no new bytes.
+
+    This used to be a `symlinks=` argument defaulting to False that the only
+    informed caller overrode, which is a trap set for the next caller.
+    """
+    from capsem.gate.filesystem import copy_tree
+
+    source = tmp_path / "src"
+    (source / "arch").mkdir(parents=True)
+    (source / "arch" / "big.bin").write_bytes(b"payload")
+    (source / "current").symlink_to("arch")
+
+    target = tmp_path / "dst"
+    copy_tree(source, target)
+
+    assert (target / "current").is_symlink(), "copy_tree dereferenced the selector"
+    assert os.readlink(target / "current") == "arch"
+    assert (target / "arch" / "big.bin").read_bytes() == b"payload"
