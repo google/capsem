@@ -1892,7 +1892,7 @@ keep = 1
 # gitignored (`.gitignore:47`) and holds the Tauri signing keys -- a prefix
 # built from the digest set alone loses them, and the package lane finds out
 # during a release rather than here.
-carried = [".git", "private"]
+carried = ["private"]
 
 # What must come back out before the prefix is reclaimed. A release publishes
 # from these, and without the export they die with the copy that made them.

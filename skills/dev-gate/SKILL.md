@@ -232,6 +232,30 @@ uv run capsem-gate gc --dry-run           # what disk the gate holds, per tree
 `runs` and `gc` do not record themselves: `runs last` used to open a run and
 repoint `latest` at the question.
 
+## The private copy is cloned, not copied
+
+Commands with `private_checkout` work from a copy under `~/.cg/<hash>`. The
+working tree is copied; the *repository* is cloned with `git clone --local
+--no-checkout`, then `read-tree HEAD` fills the index.
+
+Cloned rather than copied because `.git` is a directory in a normal checkout
+and a *file* in a linked worktree, holding an absolute `gitdir:` path back to
+the original. Carrying that file left the copy attached to live metadata, so a
+commit in the original moved the supposedly private HEAD -- and the answer used
+to be a flat refusal, which made the gate unrunnable from a worktree. Worktrees
+are how an agent gets an isolated tree, so the isolation machinery was refusing
+to run for exactly the people it exists for.
+
+The clone costs ~200ms against a 108 MB `.git` and is *faster* than the `cp -R`
+it replaced: `--local` hardlinks the object store. There is no `alternates`
+file, so a `gc` in the original cannot prune bytes out from under a running
+gate, and the copy owns its HEAD and refs -- which is the property the refusal
+was protecting.
+
+If you add something that needs git inside the prefix, it needs the index:
+`git ls-files` and `git check-ignore` read it, and `faults`, `auditfs` and
+`sourcestate` all depend on them.
+
 ## History outlives the run directories
 
 `keep_runs` is twenty, so every longitudinal question -- is this getting
