@@ -425,7 +425,7 @@ def test_declared_asset_materializers_match_the_exact_mutator_inventory() -> Non
             {
                 "npm": 8,
                 "uv": 7,
-                "apt": 4,
+                "apt": 9,
                 "apt-get": 3,
                 "curl": 2,
                 "pip": 1,

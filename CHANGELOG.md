@@ -79,6 +79,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sealed rootfs dependency materialization now preserves the exact base image's
+  runtime Debian source, rewrites it to HTTPS, and restores it after snapshot
+  package acquisition so the booted guest retains a usable apt authority.
+
 - The private image-build backend's typed dependency-helper contract now runs
   in the fast source module. Test fixtures can no longer return a legacy raw
   image-ID string and postpone that interface failure until hosted macOS CI.

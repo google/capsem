@@ -646,6 +646,27 @@ def test_asset_dependency_materializers_replace_mutable_apt_sources(
     assert rendered.index("rm -f /etc/apt/sources.list.d/*") < rendered.index("apt-get -o")
 
 
+def test_rootfs_dependency_materializer_restores_https_runtime_apt_authority(real_config):
+    rendered = render_dockerfile(
+        "Dockerfile.rootfs-dependencies.j2",
+        real_config,
+        "arm64",
+    )
+
+    preserve = rendered.index(
+        "cp /etc/apt/sources.list.d/debian.sources /tmp/runtime-debian.sources"
+    )
+    snapshot = rendered.index("rm -f /etc/apt/sources.list.d/*")
+    update = rendered.index("apt-get -o")
+    restore = rendered.index(
+        "install -m 644 /tmp/runtime-debian.sources "
+        "/etc/apt/sources.list.d/debian.sources"
+    )
+    assert preserve < snapshot < update < restore
+    assert "sed -i 's|URIs: http://|URIs: https://|g' /tmp/runtime-debian.sources" in rendered
+    assert "grep -F 'URIs: https://deb.debian.org'" in rendered
+
+
 @pytest.mark.parametrize("template", ["rootfs", "kernel"])
 def test_asset_dependency_materializers_bootstrap_https_trust_before_apt(
     real_config,

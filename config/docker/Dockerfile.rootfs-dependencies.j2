@@ -12,6 +12,8 @@ LABEL org.capsem.asset-dependencies.input-key="${INPUT_IDENTITY}"
 COPY --from=truststore /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 RUN set -eux; \
+    test -f /etc/apt/sources.list.d/debian.sources; \
+    cp /etc/apt/sources.list.d/debian.sources /tmp/runtime-debian.sources; \
     rm -f /etc/apt/sources.list.d/*; \
     printf 'deb [check-valid-until=no] %s/%s bookworm main\n' \
         "{{ debian_snapshot_base }}" "{{ debian_snapshot_id }}" \
@@ -29,7 +31,11 @@ RUN set -eux; \
         ') }} && \
     ln -sf vim.tiny /usr/bin/vim && \
     rm -f /usr/sbin/iptables-legacy /usr/sbin/iptables-legacy-restore /usr/sbin/iptables-legacy-save \
-          /usr/sbin/ip6tables-legacy /usr/sbin/ip6tables-legacy-restore /usr/sbin/ip6tables-legacy-save
+          /usr/sbin/ip6tables-legacy /usr/sbin/ip6tables-legacy-restore /usr/sbin/ip6tables-legacy-save; \
+    sed -i 's|URIs: http://|URIs: https://|g' /tmp/runtime-debian.sources; \
+    install -m 644 /tmp/runtime-debian.sources /etc/apt/sources.list.d/debian.sources; \
+    rm -f /tmp/runtime-debian.sources /etc/apt/sources.list; \
+    grep -F 'URIs: https://deb.debian.org' /etc/apt/sources.list.d/debian.sources
 
 RUN set -eux; \
     curl -fsSL '{{ dependency_artifacts.node.url }}' -o /tmp/node.tar.xz; \
