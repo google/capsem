@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   background service tick can no longer make one route fail and its immediately
   repeated wrapper pass. Sustained CPU and latency growth is compared with the
   same config-owned 20% evidence factor as the other product benchmarks, with
-  no separately invented duration or accounting slack.
+  no separately invented duration or accounting slack. CPU deltas are
+  decimal-normalized before comparison so an exact accounting-tick boundary
+  remains equal to its budget while the next tick still fails.
 
 - Fork and lifecycle performance gates now ratchet against the latest
   checked-in benchmark evidence with a config-owned relative limit instead of

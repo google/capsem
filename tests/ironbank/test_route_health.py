@@ -18,6 +18,7 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -266,12 +267,17 @@ def _assert_evaluation_decision(client: Any, *, profile: str, action: str) -> No
     assert all(isinstance(plugin["duration_us"], int) for plugin in plugin_executions)
 
 
-def _cpu_seconds(proc: psutil.Process) -> float:
+def _cpu_seconds(proc: psutil.Process) -> Decimal:
     try:
         times = proc.cpu_times()
     except psutil.Error as error:  # pragma: no cover - test infra failure path
         raise AssertionError(f"unable to read CPU times for pid {proc.pid}: {error}") from error
-    return float(times.user + times.system)
+    return Decimal(str(times.user)) + Decimal(str(times.system))
+
+
+def _cpu_delta_seconds(*, after: Decimal, before: Decimal) -> float:
+    """Subtract decimal OS-accounting values without binary-float boundary drift."""
+    return float(after - before)
 
 
 def _measure_route(
@@ -296,11 +302,11 @@ def _measure_route(
     return RouteTiming(
         label=label,
         samples_ms=timings,
-        service_cpu_s=service_after - service_before,
+        service_cpu_s=_cpu_delta_seconds(after=service_after, before=service_before),
         gateway_cpu_s=(
             None
             if gateway_before is None or gateway_after is None
-            else gateway_after - gateway_before
+            else _cpu_delta_seconds(after=gateway_after, before=gateway_before)
         ),
     )
 
@@ -356,11 +362,11 @@ def _measure_once(
     return payload, RouteTiming(
         label=label,
         samples_ms=[elapsed_ms],
-        service_cpu_s=service_after - service_before,
+        service_cpu_s=_cpu_delta_seconds(after=service_after, before=service_before),
         gateway_cpu_s=(
             None
             if gateway_before is None or gateway_after is None
-            else gateway_after - gateway_before
+            else _cpu_delta_seconds(after=gateway_after, before=gateway_before)
         ),
     )
 
@@ -393,9 +399,9 @@ def _assert_timing_budget(
         assert timing.max_ms <= max_ms, (
             f"{timing.label} max={timing.max_ms:.1f}ms > {max_ms}ms; samples={timing.samples_ms}"
         )
-    # psutil reports process CPU from OS accounting ticks. On Linux that is
-    # commonly 10ms, so tiny debug-build budgets need one tick of slack to
-    # avoid failing on 0.10000000000000009 or a single scheduler tick.
+    # psutil reports process CPU from OS accounting ticks. Tiny non-hot-route
+    # budgets allow one tick for normal scheduling variation; hot-route
+    # regression checks deliberately pass zero slack.
     assert timing.service_cpu_s <= cpu_s + cpu_slack_s, (
         f"{timing.label} service CPU={timing.service_cpu_s:.3f}s > {cpu_s:.3f}s"
     )
