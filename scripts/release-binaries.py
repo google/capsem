@@ -161,28 +161,6 @@ def _validate_version_cohort(version: str) -> None:
         raise RuntimeError(f"release version cohort is inconsistent for {version}: {mismatches}")
 
 
-def _section(content: str, heading: str) -> str | None:
-    match = re.search(rf"^## \[{re.escape(heading)}\](?: - [^\n]+)?\s*$", content, re.MULTILINE)
-    if match is None:
-        return None
-    following = re.search(r"^## \[", content[match.end() :], re.MULTILINE)
-    end = len(content) if following is None else match.end() + following.start()
-    return content[match.end() : end].strip()
-
-
-def _require_prepared_release(version: str) -> None:
-    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    latest = (ROOT / "LATEST_RELEASE.md").read_text(encoding="utf-8")
-    prefix = f"version: {version}\n---\n"
-    if not latest.startswith(prefix):
-        raise RuntimeError(f"LATEST_RELEASE.md is not prepared for {version}")
-    released = _section(changelog, version)
-    if released is None or released != latest.removeprefix(prefix).strip():
-        raise RuntimeError(f"CHANGELOG.md and LATEST_RELEASE.md disagree for {version}")
-    if _section(changelog, "Unreleased"):
-        raise RuntimeError("publishable release source still has pending Unreleased notes")
-
-
 def _remote_version_target(runner: Runner, tag: str) -> str | None:
     raw = _capture(
         runner,
@@ -211,7 +189,6 @@ def _ensure_version_tag(runner: Runner, *, tag: str, channel: str, source_commit
     """Return whether this invocation may publish the selected binary identity."""
     target = _remote_version_target(runner, tag)
     if target is None:
-        _require_prepared_release(tag.removeprefix("v"))
         runner.run(
             (
                 "git",
@@ -433,11 +410,6 @@ def precheck_release_binaries(channel: str, source_commit: str, runner: Runner) 
     _validate_start(runner, channel, source_commit)
     version = _project_version()
     _validate_version_cohort(version)
-    # A remote version tag may be a nightly rebuild of a newer source. The
-    # no-write dispatcher decides that after qualification. Query the remote:
-    # a stale or missing local tag must never decide whether source is ready.
-    if _remote_version_target(runner, f"v{version}") is None:
-        _require_prepared_release(version)
 
 
 def release_binaries(channel: str, source_commit: str, runner: Runner) -> tuple[str, str]:

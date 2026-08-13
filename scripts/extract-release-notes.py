@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Promote Unreleased notes and render LATEST_RELEASE.md for a binary release."""
+"""Optionally render pending binary notes without changing release state."""
 
 import argparse
 import re
 import sys
-from datetime import date
 from pathlib import Path
 
 
@@ -22,22 +21,12 @@ def validate_unreleased(changelog: str) -> str:
     return body
 
 
-def promote_release(changelog: str, version: str, release_date: str) -> tuple[str, str]:
-    heading = re.search(r"^## \[Unreleased\]\s*$", changelog, re.MULTILINE)
-    if re.search(rf"^## \[{re.escape(version)}\]", changelog, re.MULTILINE):
-        raise ValueError(f"CHANGELOG.md already contains release {version}")
+def render_release_notes(changelog: str, version: str) -> str:
+    """Bind pending notes to a version; the remote tag performs the release."""
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise ValueError("version must be numeric SemVer")
     body = validate_unreleased(changelog)
-    assert heading is not None
-    following = re.search(r"^## \[", changelog[heading.end() :], re.MULTILINE)
-    assert following is not None
-    body_end = heading.end() + following.start()
-    replacement = (
-        f"## [Unreleased]\n\n"
-        f"## [{version}] - {release_date}\n\n"
-        f"{body}\n\n"
-    )
-    updated = changelog[: heading.start()] + replacement + changelog[body_end:].lstrip()
-    return updated, body
+    return f"version: {version}\n---\n{body}\n"
 
 
 def main() -> int:
@@ -48,7 +37,6 @@ def main() -> int:
         action="store_true",
         help="validate that [Unreleased] contains publishable notes without writing",
     )
-    parser.add_argument("--date", default=date.today().isoformat())
     parser.add_argument("--changelog", type=Path, default=Path("CHANGELOG.md"))
     parser.add_argument("--output", type=Path, default=Path("LATEST_RELEASE.md"))
     args = parser.parse_args()
@@ -63,14 +51,11 @@ def main() -> int:
             print("CHANGELOG.md [Unreleased] release notes are ready")
             return 0
         assert args.version is not None
-        updated, body = promote_release(changelog, args.version, args.date)
+        rendered = render_release_notes(changelog, args.version)
     except (OSError, ValueError) as error:
         print(error, file=sys.stderr)
         return 1
-    args.changelog.write_text(updated, encoding="utf-8")
-    args.output.write_text(
-        f"version: {args.version}\n---\n{body}\n", encoding="utf-8"
-    )
+    args.output.write_text(rendered, encoding="utf-8")
     print(f"{args.output} updated for v{args.version}")
     return 0
 

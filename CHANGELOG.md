@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Binary qualification no longer depends on changelog or `LATEST_RELEASE.md`
+  bookkeeping. The remote immutable tag is the sole release transition, and
+  the GitHub release title and notes record the full qualified source commit;
+  changelog organization may happen afterward.
+
 - Linux bootstrap now treats a working Docker CLI and Buildx as an existing
   container-runtime stack. Installing an unrelated missing prerequisite on a
   GitHub runner no longer also requests Ubuntu's `docker.io`, which conflicts

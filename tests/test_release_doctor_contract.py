@@ -1640,8 +1640,9 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "release-artifacts/*.deb" in create_release
     assert "release-artifacts/capsem-sbom.spdx.json" in create_release
     assert "scripts/publish-immutable-release-assets.sh" in create_release
-    assert 'CAPSEM_RELEASE_CREATE_TITLE="Capsem $RELEASE_TAG"' in create_release
+    assert 'CAPSEM_RELEASE_CREATE_TITLE="Capsem $RELEASE_TAG ($SOURCE_COMMIT)"' in create_release
     assert 'CAPSEM_RELEASE_CREATE_NOTES_FILE="$notes"' in create_release
+    assert 'CAPSEM_RELEASE_CREATE_TARGET="$SOURCE_COMMIT"' in create_release
     assert "gh release create" not in create_release
     assert "gh release upload" not in create_release
     immutable_publisher = (

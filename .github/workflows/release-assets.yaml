@@ -706,7 +706,7 @@ jobs:
           if [[ "$DRY_RUN" == "true" ]]; then
             echo "Dry run: would publish immutable VM profile release $TAG"
           else
-            CAPSEM_RELEASE_CREATE_TITLE="Capsem $CHANNEL/${{ inputs.profile }} $PROFILE_REVISION" \
+            CAPSEM_RELEASE_CREATE_TITLE="Capsem $CHANNEL/${{ inputs.profile }} $PROFILE_REVISION ($SOURCE_COMMIT)" \
             CAPSEM_RELEASE_CREATE_NOTES_FILE="$NOTES_FILE" \
             CAPSEM_RELEASE_CREATE_TARGET="$SOURCE_COMMIT" \
               scripts/publish-immutable-release-assets.sh \
