@@ -99,6 +99,7 @@ def test_bootstrap_waits_for_container_dns_after_colima_restart() -> None:
 def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -> None:
     bootstrap = _read("bootstrap.sh")
     linux = _read("scripts/bootstrap-linux.sh")
+    docker_selector = _read("scripts/select-docker-packages.sh")
 
     assert '. "$SCRIPT_DIR/scripts/bootstrap-linux.sh"' in bootstrap
     assert 'bootstrap_linux "$SCRIPT_DIR" "$ASSUME_YES"' in bootstrap
@@ -107,8 +108,11 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
 
     # Host infrastructure stays here; native workspace packages come from the
     # same validated config rail as CI and the host-builder image.
-    for package in ["cpio", "docker.io", "docker-buildx", "acl"]:
+    for package in ["cpio", "acl"]:
         assert package in linux
+    for package in ["docker.io", "docker-buildx"]:
+        assert package in docker_selector
+    assert "scripts/select-docker-packages.sh" in linux
     assert 'provision-linux-workspace.py" --packages apt' in linux
     assert 'provision-linux-workspace.py" --packages dnf' in linux
     assert 'provision-linux-workspace.py" --verify' in linux
@@ -237,10 +241,10 @@ def test_linux_bootstrap_installs_only_the_missing_docker_components(tmp_path: P
     )
     docker = binaries / "docker"
     _executable(docker, "exit 1")
-    command = '. "$1"; capsem_linux_apt_docker_packages'
+    selector = PROJECT_ROOT / "scripts/select-docker-packages.sh"
 
     absent = subprocess.run(
-        ["sh", "-c", command, "sh", str(PROJECT_ROOT / "scripts/bootstrap-linux.sh")],
+        [str(selector)],
         env={"PATH": f"{binaries}:/usr/bin:/bin"},
         text=True,
         capture_output=True,
@@ -253,7 +257,7 @@ def test_linux_bootstrap_installs_only_the_missing_docker_components(tmp_path: P
         'case "$*" in "--version") exit 0;; "buildx version") exit 1;; *) exit 1;; esac',
     )
     missing_buildx = subprocess.run(
-        ["sh", "-c", command, "sh", str(PROJECT_ROOT / "scripts/bootstrap-linux.sh")],
+        [str(selector)],
         env={"PATH": f"{binaries}:/usr/bin:/bin"},
         text=True,
         capture_output=True,

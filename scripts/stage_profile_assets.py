@@ -113,6 +113,17 @@ def require_profile_file_closure(
         raise ValueError(f"release profile {profile_id} lacks manifest-owned files: {missing}")
 
 
+def finalize_profile(
+    path: Path,
+    arch: str,
+    profile_id: str,
+    staged_paths: set[Path],
+) -> None:
+    """Validate one manifest-owned profile cohort, then select its architecture."""
+    require_profile_file_closure(path, profile_id, staged_paths)
+    scope_profile_to_arch(path, arch, profile_id)
+
+
 def configured_evidence_artifacts(shared_config_root: Path) -> dict[str, str]:
     """Map manifest evidence kinds to config-owned runtime filenames."""
     gate_config = shared_config_root / "gate.toml"

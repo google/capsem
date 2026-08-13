@@ -24,9 +24,8 @@ from release_inputs import (
 from stage_profile_assets import (
     active_profile_architectures,
     configured_evidence_artifacts,
+    finalize_profile,
     local_file,
-    require_profile_file_closure,
-    scope_profile_to_arch,
     stage_profile_architecture_assets,
 )
 
@@ -210,12 +209,7 @@ def stage_profiles(
         expected_profile = Path("profiles") / profile_id / "profile.toml"
         if expected_profile not in staged_config_paths:
             raise ValueError(f"release profile {profile_id}/{arch} lacks {expected_profile}")
-        require_profile_file_closure(
-            config_root / expected_profile,
-            profile_id,
-            staged_config_paths,
-        )
-        scope_profile_to_arch(config_root / expected_profile, arch, profile_id)
+        finalize_profile(config_root / expected_profile, arch, profile_id, staged_config_paths)
         stage_legacy_root(shared_config_root, config_root, profile_id, staged_config_paths)
 
         stage_profile_architecture_assets(

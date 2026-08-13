@@ -68,38 +68,6 @@ capsem_linux_bootstrap_user() {
     fi
 }
 
-capsem_linux_apt_buildx_package() {
-    # Ubuntu and Debian archive Docker packages call this docker-buildx. The
-    # Docker-CE repository calls it docker-buildx-plugin, so retain that as a
-    # discovered fallback instead of prescribing the wrong package everywhere.
-    if apt-cache show docker-buildx >/dev/null 2>&1; then
-        printf "docker-buildx\n"
-    elif apt-cache show docker-buildx-plugin >/dev/null 2>&1; then
-        printf "docker-buildx-plugin\n"
-    else
-        printf "  [FAIL] neither docker-buildx nor docker-buildx-plugin is available from apt\n" >&2
-        return 1
-    fi
-}
-
-capsem_linux_apt_docker_packages() {
-    # GitHub's Ubuntu images already carry Docker CE and its `containerd.io`
-    # package. Installing Ubuntu's `docker.io` merely because an unrelated
-    # prerequisite is missing asks apt to replace that working stack, and the
-    # two containerd packages conflict. A working CLI plus Buildx is the
-    # runtime prerequisite; keep it and install no Docker package at all.
-    if command -v docker >/dev/null 2>&1 && docker --version >/dev/null 2>&1; then
-        if docker buildx version >/dev/null 2>&1; then
-            return 0
-        fi
-        capsem_linux_apt_buildx_package
-        return 0
-    fi
-
-    printf "docker.io\n"
-    capsem_linux_apt_buildx_package
-}
-
 capsem_linux_cross_arch() {
     CAPSEM_CROSS_MACHINE=${1:-$(uname -m)}
     case "$CAPSEM_CROSS_MACHINE" in
@@ -140,7 +108,7 @@ capsem_linux_install_apt_packages() {
     CAPSEM_APT_BINFMT_PACKAGE=$(capsem_linux_apt_binfmt_package)
     CAPSEM_APT_WORKSPACE_PACKAGES=$(python3 \
         "$CAPSEM_APT_PROJECT_ROOT/scripts/provision-linux-workspace.py" --packages apt)
-    CAPSEM_APT_DOCKER_PACKAGES=$(capsem_linux_apt_docker_packages)
+    CAPSEM_APT_DOCKER_PACKAGES=$("$CAPSEM_APT_PROJECT_ROOT/scripts/select-docker-packages.sh")
     CAPSEM_APT_BASE_PACKAGES="
         acl
         ca-certificates
