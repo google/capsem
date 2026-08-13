@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux bootstrap now treats a working Docker CLI and Buildx as an existing
+  container-runtime stack. Installing an unrelated missing prerequisite on a
+  GitHub runner no longer also requests Ubuntu's `docker.io`, which conflicts
+  with the runner's Docker CE `containerd.io`; a cold host still installs the
+  full Docker stack, and a host missing only Buildx installs only that piece.
+
 - Release profile staging now treats every file named by `profile.toml` as one
   manifest-owned closure. Python requirements and their exact lock must be
   declared and transported together; a legacy half-pair or a graph that omits

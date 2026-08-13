@@ -82,6 +82,24 @@ capsem_linux_apt_buildx_package() {
     fi
 }
 
+capsem_linux_apt_docker_packages() {
+    # GitHub's Ubuntu images already carry Docker CE and its `containerd.io`
+    # package. Installing Ubuntu's `docker.io` merely because an unrelated
+    # prerequisite is missing asks apt to replace that working stack, and the
+    # two containerd packages conflict. A working CLI plus Buildx is the
+    # runtime prerequisite; keep it and install no Docker package at all.
+    if command -v docker >/dev/null 2>&1 && docker --version >/dev/null 2>&1; then
+        if docker buildx version >/dev/null 2>&1; then
+            return 0
+        fi
+        capsem_linux_apt_buildx_package
+        return 0
+    fi
+
+    printf "docker.io\n"
+    capsem_linux_apt_buildx_package
+}
+
 capsem_linux_cross_arch() {
     CAPSEM_CROSS_MACHINE=${1:-$(uname -m)}
     case "$CAPSEM_CROSS_MACHINE" in
@@ -122,11 +140,11 @@ capsem_linux_install_apt_packages() {
     CAPSEM_APT_BINFMT_PACKAGE=$(capsem_linux_apt_binfmt_package)
     CAPSEM_APT_WORKSPACE_PACKAGES=$(python3 \
         "$CAPSEM_APT_PROJECT_ROOT/scripts/provision-linux-workspace.py" --packages apt)
+    CAPSEM_APT_DOCKER_PACKAGES=$(capsem_linux_apt_docker_packages)
     CAPSEM_APT_BASE_PACKAGES="
         acl
         ca-certificates
         cpio
-        docker.io
         python3
         python3-venv
         sqlite3
@@ -136,6 +154,7 @@ capsem_linux_install_apt_packages() {
         zstd
         $CAPSEM_APT_WORKSPACE_PACKAGES
         $CAPSEM_APT_BINFMT_PACKAGE
+        $CAPSEM_APT_DOCKER_PACKAGES
     "
 
     CAPSEM_APT_NEEDS_INSTALL=0
@@ -146,9 +165,6 @@ capsem_linux_install_apt_packages() {
             break
         fi
     done
-    if ! docker buildx version >/dev/null 2>&1; then
-        CAPSEM_APT_NEEDS_INSTALL=1
-    fi
     if [ "$CAPSEM_APT_NEEDS_INSTALL" -eq 0 ]; then
         python3 "$CAPSEM_APT_PROJECT_ROOT/scripts/provision-linux-workspace.py" --verify
         printf "  [ok]   Linux system packages\n"
@@ -161,11 +177,9 @@ capsem_linux_install_apt_packages() {
     fi
 
     capsem_linux_as_root env DEBIAN_FRONTEND=noninteractive apt-get update
-    CAPSEM_APT_BUILDX_PACKAGE=$(capsem_linux_apt_buildx_package)
     capsem_linux_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y \
         --no-install-recommends \
-        $CAPSEM_APT_BASE_PACKAGES \
-        "$CAPSEM_APT_BUILDX_PACKAGE"
+        $CAPSEM_APT_BASE_PACKAGES
     python3 "$CAPSEM_APT_PROJECT_ROOT/scripts/provision-linux-workspace.py" --verify
     printf "  [ok]   Linux system packages installed\n"
 }

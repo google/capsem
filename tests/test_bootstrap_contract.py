@@ -30,6 +30,11 @@ def _read(path: str) -> str:
     return (PROJECT_ROOT / path).read_text()
 
 
+def _executable(path: Path, body: str) -> None:
+    path.write_text(f"#!/bin/sh\nset -eu\n{body}\n", encoding="utf-8")
+    path.chmod(0o755)
+
+
 def test_bootstrap_always_checks_project_skills_and_site_shape() -> None:
     bootstrap = _read("bootstrap.sh")
 
@@ -171,6 +176,90 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     # of racing systemd and failing a valid installation.
     assert "CAPSEM_DOCKER_WAIT" in linux
     assert "CAPSEM_DOCKER_ACCESS_WAIT" in linux
+
+
+def test_linux_bootstrap_does_not_replace_a_working_hosted_docker_stack(
+    tmp_path: Path,
+) -> None:
+    """GitHub images ship Docker CE's containerd.io, which conflicts with docker.io.
+
+    Missing ordinary prerequisites must still trigger apt, but a working
+    Docker CLI + Buildx is already the container-runtime authority and must
+    not be replaced by a conflicting distribution stack.
+    """
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    log = tmp_path / "apt.log"
+    _executable(
+        binaries / "docker",
+        'case "$*" in "--version"|"buildx version") exit 0;; *) exit 1;; esac',
+    )
+    _executable(
+        binaries / "apt-cache",
+        'case "$*" in "show qemu-user-static") echo "Package: qemu-user-static";; *) exit 1;; esac',
+    )
+    _executable(binaries / "dpkg-query", "exit 1")
+    _executable(
+        binaries / "python3",
+        'case "$*" in *"--packages apt"*) echo bubblewrap;; *"--verify"*) :;; *) exit 2;; esac',
+    )
+    _executable(binaries / "apt-get", f'printf "%s\\n" "$*" >> "{log}"')
+
+    completed = subprocess.run(
+        [
+            "sh",
+            "-c",
+            '. "$1"; capsem_linux_as_root() { "$@"; }; capsem_linux_install_apt_packages "$2" 1',
+            "sh",
+            str(PROJECT_ROOT / "scripts/bootstrap-linux.sh"),
+            str(PROJECT_ROOT),
+        ],
+        env={"PATH": f"{binaries}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    issued = log.read_text(encoding="utf-8")
+    assert "update" in issued
+    assert "bubblewrap" in issued
+    assert "docker.io" not in issued
+    assert "containerd" not in issued
+    assert "Linux system packages installed" in completed.stdout
+
+
+def test_linux_bootstrap_installs_only_the_missing_docker_components(tmp_path: Path) -> None:
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    _executable(
+        binaries / "apt-cache",
+        'case "$*" in "show docker-buildx") echo "Package: docker-buildx";; *) exit 1;; esac',
+    )
+    docker = binaries / "docker"
+    _executable(docker, "exit 1")
+    command = '. "$1"; capsem_linux_apt_docker_packages'
+
+    absent = subprocess.run(
+        ["sh", "-c", command, "sh", str(PROJECT_ROOT / "scripts/bootstrap-linux.sh")],
+        env={"PATH": f"{binaries}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert absent.stdout.splitlines() == ["docker.io", "docker-buildx"]
+
+    _executable(
+        docker,
+        'case "$*" in "--version") exit 0;; "buildx version") exit 1;; *) exit 1;; esac',
+    )
+    missing_buildx = subprocess.run(
+        ["sh", "-c", command, "sh", str(PROJECT_ROOT / "scripts/bootstrap-linux.sh")],
+        env={"PATH": f"{binaries}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert missing_buildx.stdout.splitlines() == ["docker-buildx"]
 
 
 def test_linux_bootstrap_owns_distro_binfmt_setup_before_the_gate() -> None:
