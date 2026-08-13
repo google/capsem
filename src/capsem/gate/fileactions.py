@@ -117,7 +117,10 @@ class Copy(Action, name="copy"):
             raise GateError(f"nothing to copy: {self._source} does not exist")
         self._target.parent.mkdir(parents=True, exist_ok=True)
         if self._source.is_dir():
-            shutil.copytree(self._source, self._target, dirs_exist_ok=True)
+            # The shared merge, which never follows a symlink on either side.
+            # `shutil.copytree(dirs_exist_ok=True)` writes *through* a
+            # destination symlink into whatever it points at.
+            merge_tree(self._source, self._target)
         else:
             shutil.copy2(self._source, self._target)
 

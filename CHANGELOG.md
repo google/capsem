@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Exporting a run out of its private checkout no longer destroys an unrelated
+  run's log. `target/gate-runs/latest` is a symlink to the newest run, on the
+  host and inside the prefix alike, and
+  `shutil.copytree(..., dirs_exist_ok=True)` dereferenced the source link and
+  then wrote the contents *through* the destination link, replacing every file
+  in whatever older run it pointed at. Because `copytree` copies with `copy2`,
+  the clobbered run kept the source's timestamps as well -- a well-formed log
+  describing a run that never happened in it, which `source.verify` and the
+  timing ratchet both read as evidence. It had already happened twice.
+
+  `filesystem.merge_tree` now replaces a destination symlink instead of writing
+  through it, refuses a source-root symlink, and recreates nested source
+  symlinks as symlinks, keeping the
+  interruptible per-file copy. `prefix.export` and `fileactions.CopyTree` share
+  it; the latter carried the identical latent defect.
+  `tests/citadel/test_tree_copy_boundary.py` keeps `shutil.copytree` inside the
+  one module that owns the decision.
+
 ### Added
 
 - Gate history now outlives its run directories. `target/gate-runs/ledger.jsonl`

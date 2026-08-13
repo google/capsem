@@ -797,3 +797,50 @@ def test_a_linked_worktree_is_refused_rather_than_half_isolated(tmp_path: Path) 
 
     with pytest.raises(GateError, match="linked worktree"):
         snapshot.populate(worktree, tmp_path / "prefix", _config())
+
+
+def test_exporting_a_run_cannot_write_through_a_symlink(tmp_path: Path) -> None:
+    """An export must never follow a symlink, on either side.
+
+    This destroyed run logs. `target/gate-runs/latest` points at the newest
+    run, in the private tree and on the host alike, and
+    `shutil.copytree(..., dirs_exist_ok=True)` dereferences the source link and
+    then writes the contents through the destination link -- into an unrelated
+    older run, replacing every file in it with `copy2`, timestamps and all. The
+    result is a well-formed log describing a run that never happened in it, and
+    `source.verify` and the timing ratchet both read these logs as evidence.
+
+    Driven through `export` rather than the helper it delegates to. Aimed at
+    the helper this passed with the defective call restored, because the
+    defect was never in the copying -- it was in which copy `export` chose.
+
+    Asserted on the outcome rather than on arguments, too: `symlinks=True`
+    alone stops the dereference and then raises because the destination link
+    exists, so a contract about the flag would have accepted a fix that fails
+    every export.
+    """
+    from capsem.gate import prefix
+
+    config = _config()
+    runs = config.runlog.root
+
+    private = tmp_path / "prefix"
+    (private / runs / "run-new").mkdir(parents=True)
+    (private / runs / "run-new" / "run.jsonl").write_text("the run that just finished\n")
+    (private / runs / "latest").symlink_to("run-new")
+
+    host = tmp_path / "host"
+    (host / runs / "run-old").mkdir(parents=True)
+    (host / runs / "run-old" / "run.jsonl").write_text("an older, unrelated run\n")
+    (host / runs / "latest").symlink_to("run-old")
+
+    prefix.export(private, host, config)
+
+    assert (host / runs / "run-old" / "run.jsonl").read_text() == "an older, unrelated run\n", (
+        "the export wrote through the destination `latest` symlink and "
+        "destroyed the unrelated run it pointed at"
+    )
+    assert (host / runs / "run-new" / "run.jsonl").read_text() == "the run that just finished\n"
+    # Replaced as a link, not materialized into a directory of copied files.
+    assert (host / runs / "latest").is_symlink()
+    assert os.readlink(host / runs / "latest") == "run-new"

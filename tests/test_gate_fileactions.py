@@ -47,9 +47,7 @@ def journal() -> RecordingJournal:
 
 @pytest.fixture
 def context(journal: RecordingJournal) -> Context:
-    return Context(
-        RecordingRunner(PROJECT_ROOT), gate_config.load(PROJECT_ROOT), journal=journal
-    )
+    return Context(RecordingRunner(PROJECT_ROOT), gate_config.load(PROJECT_ROOT), journal=journal)
 
 
 # ---------------------------------------------------------------------------
@@ -72,17 +70,13 @@ def test_atomic_replace_leaves_other_hardlinks_holding_the_old_bytes(
     shared.parent.mkdir()
     os.link(target, shared)
 
-    AtomicReplace(target, lambda scratch: scratch.write_bytes(b"rebuilt")).perform(
-        context
-    )
+    AtomicReplace(target, lambda scratch: scratch.write_bytes(b"rebuilt")).perform(context)
 
     assert target.read_bytes() == b"rebuilt"
     assert shared.read_bytes() == b"original", "the shared inode must be untouched"
 
 
-def test_a_failed_build_leaves_the_target_and_no_scratch(
-    context: Context, tmp_path: Path
-) -> None:
+def test_a_failed_build_leaves_the_target_and_no_scratch(context: Context, tmp_path: Path) -> None:
     """A half-written asset that looks whole is worse than a missing one."""
     target = tmp_path / "initrd.img"
     target.write_bytes(b"original")
@@ -130,9 +124,7 @@ def test_hash_records_the_artifact_in_the_journal(
     assert size == len(b"kernel")
 
 
-def test_hashing_a_missing_artifact_says_which_one(
-    context: Context, tmp_path: Path
-) -> None:
+def test_hashing_a_missing_artifact_says_which_one(context: Context, tmp_path: Path) -> None:
     with pytest.raises(GateError, match=r"rootfs\.erofs"):
         Hash(tmp_path / "rootfs.erofs").perform(context)
 
@@ -197,9 +189,7 @@ def test_symlink_checks_where_it_landed_rather_than_assuming(
         Symlink(tmp_path / "current", "arm64").perform(context)
 
 
-def test_symlink_refuses_to_replace_a_real_directory(
-    context: Context, tmp_path: Path
-) -> None:
+def test_symlink_refuses_to_replace_a_real_directory(context: Context, tmp_path: Path) -> None:
     """Removing a populated tree because a link was expected there is not a
     recoverable mistake."""
     occupied = tmp_path / "current"
@@ -217,9 +207,7 @@ def test_symlink_refuses_to_replace_a_real_directory(
 # ---------------------------------------------------------------------------
 
 
-def test_make_dir_creates_parents_and_tolerates_existing(
-    context: Context, tmp_path: Path
-) -> None:
+def test_make_dir_creates_parents_and_tolerates_existing(context: Context, tmp_path: Path) -> None:
     target = tmp_path / "a" / "b" / "c"
 
     MakeDir(target).perform(context)
@@ -261,6 +249,41 @@ def test_copy_handles_a_file_and_a_tree(context: Context, tmp_path: Path) -> Non
     assert (tmp_path / "merged" / "manifest.json").read_text() == "{}"
 
 
+def test_copying_a_tree_replaces_a_destination_root_symlink(
+    context: Context, tmp_path: Path
+) -> None:
+    """The shared merge boundary must not write through its root argument."""
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "new.log").write_text("new\n")
+    unrelated = tmp_path / "unrelated"
+    unrelated.mkdir()
+    (unrelated / "old.log").write_text("old\n")
+    target = tmp_path / "target"
+    target.symlink_to(unrelated, target_is_directory=True)
+
+    Copy(source, target).perform(context)
+
+    assert not target.is_symlink()
+    assert (target / "new.log").read_text() == "new\n"
+    assert (unrelated / "old.log").read_text() == "old\n"
+    assert not (unrelated / "new.log").exists()
+
+
+def test_copying_a_tree_refuses_a_source_root_symlink(context: Context, tmp_path: Path) -> None:
+    """A caller cannot bypass the no-follow rule at the helper boundary."""
+    real_source = tmp_path / "real-source"
+    real_source.mkdir()
+    (real_source / "evidence.log").write_text("evidence\n")
+    source = tmp_path / "source"
+    source.symlink_to(real_source, target_is_directory=True)
+
+    with pytest.raises(GateError, match="source tree is a symlink"):
+        Copy(source, tmp_path / "target").perform(context)
+
+    assert not (tmp_path / "target").exists()
+
+
 def test_copying_something_absent_says_which(context: Context, tmp_path: Path) -> None:
     with pytest.raises(GateError, match="vmlinuz"):
         Copy(tmp_path / "vmlinuz", tmp_path / "elsewhere").perform(context)
@@ -291,9 +314,7 @@ def test_require_non_empty_also_catches_the_absent_artifact(
         RequireNonEmpty(tmp_path / "rootfs.erofs").perform(context)
 
 
-def test_require_non_empty_accepts_a_real_artifact(
-    context: Context, tmp_path: Path
-) -> None:
+def test_require_non_empty_accepts_a_real_artifact(context: Context, tmp_path: Path) -> None:
     artifact = tmp_path / "rootfs.erofs"
     artifact.write_bytes(b"filesystem")
 
