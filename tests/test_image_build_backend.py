@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from capsem.builder import image_build_backend
+from capsem.builder.assetdependencies import AssetDependencyImage
 
 
 def test_private_backend_loads_guest_config_and_delegates_to_build_image(
@@ -80,14 +81,17 @@ def test_private_backend_materializes_dependencies_and_prints_exact_image(
         lambda path: loaded_config,
     )
 
-    def fake_materialize(config, arch, *, template, repo_root):
+    def fake_materialize(config, arch, *, template, repo_root) -> AssetDependencyImage:
         calls.update(
             config=config,
             arch=arch,
             template=template,
             repo_root=repo_root,
         )
-        return "sha256:materialized"
+        return AssetDependencyImage(
+            reference="capsem-kernel-dependencies-arm64:fixture",
+            image_id="sha256:materialized",
+        )
 
     monkeypatch.setattr(
         image_build_backend,
@@ -134,14 +138,17 @@ def test_private_backend_requires_dependencies_through_detected_runtime(
     )
     monkeypatch.setattr(image_build_backend, "detect_runtime", lambda: "docker")
 
-    def fake_require(runtime, config, arch, template):
+    def fake_require(runtime, config, arch, template) -> AssetDependencyImage:
         calls.update(
             runtime=runtime,
             config=config,
             arch=arch,
             template=template,
         )
-        return "sha256:required"
+        return AssetDependencyImage(
+            reference="capsem-rootfs-dependencies-x86_64:fixture",
+            image_id="sha256:required",
+        )
 
     monkeypatch.setattr(
         image_build_backend,

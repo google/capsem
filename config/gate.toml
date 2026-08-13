@@ -1460,6 +1460,7 @@ source_contract = [
     "tests/test_gate_hostimage_composition.py",
     "tests/test_linux_workspace_prerequisites.py",
     "tests/test_host_builder_materializer.py",
+    "tests/test_image_build_backend.py",
     "tests/test_gate_install_container.py",
     "tests/test_gate_no_nested_commands.py",
     "tests/test_gate_install_ordering.py",

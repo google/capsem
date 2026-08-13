@@ -74,6 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The private image-build backend's typed dependency-helper contract now runs
+  in the fast source module. Test fixtures can no longer return a legacy raw
+  image-ID string and postpone that interface failure until hosted macOS CI.
 - Rootfs publication now fails closed while removing setuid and setgid bits.
   The sealed build propagates traversal and `chmod` failures, independently
   verifies that no privileged file remains, and the in-guest acceptance scan
