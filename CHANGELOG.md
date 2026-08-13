@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `runs schedule` also reports contention on binding steps. Slack is computed
+  over edges alone, so it says how short a run could be on an unlimited
+  machine; leaving contention out makes it actively misleading. Acting on its
+  first finding freed `web.release-site` to start early, take the `astro_build`
+  claim, and delay `web.frontend`, which is on the critical path -- the run's
+  own resource-wait report caught it. Contention is now reported from measured
+  `resource_ms`, above `slow_action_seconds` so a forty-millisecond queue is
+  not dressed up as a finding.
+
 - `capsem-gate runs schedule <command>` reports what a graph's shape costs: the
   binding set (nodes with no slack, whose duration is the run's duration) and
   the `FAST` steps owning a large share of the critical path. On `test-fast`

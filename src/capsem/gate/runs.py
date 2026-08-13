@@ -153,7 +153,11 @@ def _schedule(context: Context, command: str) -> None:
     settings = context.config.runlog.digest
     graph = workgraph.from_plan(_plan_for(context, command))
     found = scheduling.analyse(
-        graph, rows(context.config), window=settings.compare_runs, lane_share=settings.lane_share
+        graph,
+        rows(context.config),
+        window=settings.compare_runs,
+        lane_share=settings.lane_share,
+        queue_floor_ms=context.config.runlog.slow_action_seconds * 1000,
     )
     if not found.measurable:
         context.runner.note(
@@ -177,6 +181,14 @@ def _schedule(context: Context, command: str) -> None:
         context.runner.note(
             f"  {entry.node:<44} {clock(found.costs.get(entry.node, 0.0)):>9}"
         )
+    if found.queues:
+        context.runner.note(
+            "\nbinding steps that waited on a claim -- schedulable, not slow"
+        )
+        for queue in found.queues:
+            context.runner.note(
+                f"  {queue.node:<44} {clock(queue.resource_ms):>9}  behind {queue.holder}"
+            )
     if found.breaches:
         context.runner.note("\nfast steps owning much of that path")
         for breach in found.breaches:

@@ -156,9 +156,20 @@ def web_surfaces(config: GateConfig) -> list[Step]:
     isolates two concurrent builds; they delete each other's staging.
 
     The four surfaces do have distinct roots today, so serializing them is
-    insurance rather than a fix. It is insurance worth buying: a build is well
-    under a second, and the alternative is a rule that holds only as long as
-    nobody adds a second consumer of one root.
+    insurance rather than a fix, and the alternative is a rule that holds only
+    as long as nobody adds a second consumer of one root.
+
+    The premium is no longer what this comment used to claim. "A build is well
+    under a second" was true when it was written; `release-site` now takes
+    about two minutes, and `runs schedule` reports `web.frontend` -- the only
+    surface on the critical path, because it gates clippy -- waiting a minute
+    behind the others for the claim.
+
+    Reordering does not recover it: the exclusive has to carry every surface
+    whichever goes first, so the sum is the same. The levers are making the
+    release-site build faster, or dropping the insurance and parallelising,
+    which needs evidence about Astro's staging that nobody has gathered. Both
+    are real work; neither is a scheduling change.
     """
     surfaces = config.websurfaces
     return [

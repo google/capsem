@@ -60,7 +60,7 @@ def _row(steps: dict[str, float]) -> LedgerRow:
 
 def test_nothing_measured_says_so_rather_than_finding_nothing() -> None:
     """The cold start. `measurable` is the flag a caller must check."""
-    found = scheduling.analyse(_chain(), [], window=10, lane_share=0.25)
+    found = scheduling.analyse(_chain(), [], window=10, lane_share=0.25, queue_floor_ms=30_000)
     assert not found.measurable
     assert found.slack == [] and found.breaches == []
     assert found.unmeasured == ["a", "b", "c", "d"], (
@@ -72,7 +72,11 @@ def test_an_unmeasured_step_is_named_rather_than_assumed_free() -> None:
     """Assuming zero makes a new expensive step invisible to the analysis
     written to find it -- the same bug as counting a skipped step as fast."""
     found = scheduling.analyse(
-        _chain(), [_row({"a": 10.0, "b": 100.0, "d": 10.0})], window=10, lane_share=0.25
+        _chain(),
+        [_row({"a": 10.0, "b": 100.0, "d": 10.0})],
+        window=10,
+        lane_share=0.25,
+        queue_floor_ms=30_000,
     )
     assert found.unmeasured == ["c"]
     assert "c" not in found.costs
@@ -81,7 +85,7 @@ def test_an_unmeasured_step_is_named_rather_than_assumed_free() -> None:
 def test_the_binding_set_is_the_longest_path_not_the_slowest_step() -> None:
     """`c` is slower than `b` but parallel to it, so it is not binding."""
     history = [_row({"a": 10.0, "b": 100.0, "c": 40.0, "d": 10.0})]
-    found = scheduling.analyse(_chain(), history, window=10, lane_share=0.9)
+    found = scheduling.analyse(_chain(), history, window=10, lane_share=0.9, queue_floor_ms=30_000)
     binding = {entry.node for entry in found.slack if entry.binding}
     assert binding == {"a", "b", "d"}, f"expected the a->b->d chain, got {binding}"
     slack_of_c = next(entry for entry in found.slack if entry.node == "c")
@@ -96,7 +100,7 @@ def test_lane_share_is_measured_against_the_critical_path() -> None:
     actually waits for.
     """
     history = [_row({"a": 10.0, "b": 100.0, "c": 40.0, "d": 10.0})]
-    found = scheduling.analyse(_chain(), history, window=10, lane_share=0.5)
+    found = scheduling.analyse(_chain(), history, window=10, lane_share=0.5, queue_floor_ms=30_000)
     named = {breach.node: breach for breach in found.breaches}
     assert set(named) == {"b"}, f"only b owns half the 120ms path, got {set(named)}"
     assert abs(named["b"].share - 100.0 / 120.0) < 1e-9

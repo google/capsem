@@ -57,12 +57,31 @@ class LaneBreach:
         return self.median_ms / self.span_ms if self.span_ms else 0.0
 
 
+@dataclass(frozen=True)
+class Queue:
+    """A node on the critical path that waits for a resource somebody else holds.
+
+    Slack is computed over edges alone, so it says how short the run could be
+    if the machine were unlimited. Contention is the other half, and leaving it
+    out makes the analysis actively misleading: removing an edge can free a
+    node to start early, take an exclusive, and delay a node that is on the
+    critical path. That is not a hypothetical -- it is what happened the first
+    time this analysis was acted on, and the run's own resource-wait report
+    caught it.
+    """
+
+    node: str
+    holder: str
+    resource_ms: float
+
+
 @dataclass
 class Schedule:
     costs: dict[str, float] = field(default_factory=dict)
     unmeasured: list[str] = field(default_factory=list)
     slack: list[Slack] = field(default_factory=list)
     breaches: list[LaneBreach] = field(default_factory=list)
+    queues: list[Queue] = field(default_factory=list)
 
     @property
     def measurable(self) -> bool:
@@ -99,7 +118,12 @@ def costs_of(graph: WorkGraph, history: list[LedgerRow], window: int) -> Schedul
 
 
 def analyse(
-    graph: WorkGraph, history: list[LedgerRow], *, window: int, lane_share: float
+    graph: WorkGraph,
+    history: list[LedgerRow],
+    *,
+    window: int,
+    lane_share: float,
+    queue_floor_ms: float,
 ) -> Schedule:
     """Slack over the graph, and lanes whose declaration does not hold."""
     schedule = costs_of(graph, history, window)
@@ -107,6 +131,7 @@ def analyse(
         return schedule
     _slack(graph, schedule)
     _lanes(graph, schedule, lane_share)
+    _queues(graph, schedule, history, window, queue_floor_ms)
     return schedule
 
 
@@ -182,3 +207,47 @@ def _topological(graph: WorkGraph) -> list[str]:
     from graphlib import TopologicalSorter
 
     return list(TopologicalSorter(graph.predecessors()).static_order())
+
+
+def _queues(
+    graph: WorkGraph,
+    schedule: Schedule,
+    history: list[LedgerRow],
+    window: int,
+    floor_ms: float,
+) -> None:
+    """Binding nodes that spent real time waiting on a contended claim.
+
+    A binding node is one whose duration is the run's duration, so time it
+    spends queueing is time the whole run spends queueing -- and unlike its
+    execution, that time can often be removed by scheduling rather than by
+    making anything faster.
+
+    Measured, not modelled. `resource_ms` is what the runner recorded, so this
+    reports contention that actually happened rather than contention the graph
+    permits. Who it waited for comes from the conflict relation, which is why
+    that relation is carried separately instead of folded into the edges.
+    """
+    binding = {entry.node for entry in schedule.slack if entry.binding}
+    found: list[Queue] = []
+    for node in sorted(binding):
+        waits = [
+            row.steps[node].resource_ms
+            for row in containing(history, node, window)
+            if node in row.steps and row.steps[node].resource_ms > 0
+        ]
+        if not waits or median(waits) < floor_ms:
+            # `slow_action_seconds` is already the project's threshold for
+            # "worth naming in a timing report". A forty-millisecond queue is
+            # not a finding, and listing it teaches people to skim the section
+            # that has the real one in it.
+            continue
+        rivals = graph.conflicting(node)
+        found.append(
+            Queue(
+                node=node,
+                holder=", ".join(sorted(rivals)) if rivals else "an undeclared claim",
+                resource_ms=median(waits),
+            )
+        )
+    schedule.queues = sorted(found, key=lambda entry: -entry.resource_ms)
