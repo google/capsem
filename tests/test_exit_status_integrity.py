@@ -223,7 +223,6 @@ def test_dockerfile_fail_open_instructions_are_an_exact_reviewed_inventory() -> 
                 found[relative].append(_docker_fail_open_kind(instruction))
 
     assert dict(found) == {
-        "config/docker/Dockerfile.rootfs.j2": ["setid-cleanup"],
         "docker/Dockerfile.install-builder": ["missing-user-cleanup"],
         "docker/Dockerfile.linux-rust-base": [
             "ordinary-cache-prewarm",
