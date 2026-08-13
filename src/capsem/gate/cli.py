@@ -41,6 +41,7 @@ from . import (
     smoke,
     storage,
     testmodules,
+    toolchaincommands,
     versions,
     vmmodules,
 )
@@ -67,6 +68,7 @@ COMMAND_MODULES = (
     module_contracts,
     vmmodules,
     imagebuild,
+    toolchaincommands,
     hostimage,
     hostpackage,
     service,
