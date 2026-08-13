@@ -36,6 +36,84 @@ class ResumePolicy(StrEnum):
     ALWAYS_RUN = "always-run"
 
 
+#: A step that takes the whole machine. Not a core count: plan construction is
+#: inert and may not read the host, so the resolution happens in the analysis
+#: that knows how many cores the run had.
+SATURATES = 0
+
+
+class Kind(StrEnum):
+    """What a step *is*, so the graph can be reasoned about rather than read.
+
+    Declared rather than inferred from the label. Everything that tried to
+    infer it -- a contract grepping for `fast.` in a name, a doc mapping stage
+    titles to label prefixes -- was reading a naming convention and calling it
+    a property, which is why renaming a step could silently change what was
+    being checked.
+    """
+
+    LINT = "lint"
+    STATIC_TEST = "static-test"
+    COMPILE = "compile"
+    UNIT_TEST = "unit-test"
+    CAPSEM = "capsem"
+    E2E = "e2e"
+    PACKAGE = "package"
+    PUBLISH = "publish"
+    UNDECLARED = "undeclared"
+    """Migration only. `[boundary.step_attributes]` inventories what is left."""
+
+
+class Needs(StrEnum):
+    """A capability a step requires. A step declares a *set* of these.
+
+    A set rather than one classification, because the questions asked of it are
+    independent: hermeticity is about `NETWORK`, contention is about `DOCKER`
+    and `VM`, and a step can want both or neither.
+
+    `NETWORK` earns its place twice. It decides hermeticity, and it means the
+    step's duration is not a measurement of our own work -- so speed
+    conformance has to widen its tolerance instead of reporting a slow mirror
+    as a regression.
+    """
+
+    NETWORK = "network"
+    DISK = "disk"
+    DOCKER = "docker"
+    VM = "vm"
+    KVM = "kvm"
+    SIGNING = "signing"
+
+
+class Arch(StrEnum):
+    """Which architecture a step's work belongs to.
+
+    `ANY` is for work that is architecture-neutral; `HOST` is for work that is
+    specifically about the machine running the gate. They are different claims
+    and conflating them is what lets a host-only step be scheduled into a
+    cross-architecture lane.
+    """
+
+    HOST = "host"
+    X86_64 = "x86_64"
+    ARM64 = "arm64"
+    ANY = "any"
+
+
+class Speed(StrEnum):
+    """The lane a step belongs to, categorically.
+
+    Not a duration. `[runlog.timing_regression]` says no guessed number of
+    seconds belongs in config, and that holds here: this is a claim about which
+    lane the step may sit in, checked against measurement using the one
+    threshold that already exists, `slow_action_seconds`.
+    """
+
+    FAST = "fast"
+    SLOW = "slow"
+    UNDECLARED = "undeclared"
+
+
 @dataclass(frozen=True)
 class Step:
     """One named unit of gate work."""
@@ -46,6 +124,34 @@ class Step:
     produces: tuple[Path, ...] = field(default_factory=tuple)
     carry_checks: tuple[Action, ...] = ()
     resume: ResumePolicy = ResumePolicy.REUSE
+
+    # -- what this step is, for the graph ---------------------------------
+    #
+    # Defaulted only while the 131 existing call sites are migrated;
+    # `[boundary.step_attributes]` holds the exact remaining count and a
+    # citadel guard refuses to let it grow. They become required arguments
+    # when it reaches zero.
+    kind: Kind = Kind.UNDECLARED
+    needs: frozenset[Needs] = frozenset()
+    arch: Arch = Arch.ANY
+    speed: Speed = Speed.UNDECLARED
+    concurrency: int = 1
+    """Workers this step actually uses, or `SATURATES` for all of them.
+
+    Separate from `contends`, which says what may not overlap and nothing
+    about how much machine is consumed. Without it the width of an antichain
+    is a step count rather than a load, and a lane of eight single-threaded
+    steps looks identical to eight that each want every core.
+
+    A core count cannot be written here: plan construction is inert and must
+    not read the machine, so `SATURATES` is resolved against `cores` by
+    whoever is doing the arithmetic.
+    """
+
+    @property
+    def declared(self) -> bool:
+        """Whether this step has been through the attribute migration."""
+        return self.kind is not Kind.UNDECLARED and self.speed is not Speed.UNDECLARED
 
     def render(self) -> list[str]:
         """One line per action, for the dry run."""
@@ -85,6 +191,11 @@ def step(
     produces: tuple[Path, ...] = (),
     carry_checks: tuple[Action, ...] = (),
     resume: ResumePolicy = ResumePolicy.REUSE,
+    kind: Kind = Kind.UNDECLARED,
+    needs: frozenset[Needs] = frozenset(),
+    arch: Arch = Arch.ANY,
+    speed: Speed = Speed.UNDECLARED,
+    concurrency: int = 1,
 ) -> Step:
     """Build a step from actions given positionally, which reads better.
 
@@ -100,4 +211,9 @@ def step(
         produces=produces,
         carry_checks=carry_checks,
         resume=resume,
+        kind=kind,
+        needs=needs,
+        arch=arch,
+        speed=speed,
+        concurrency=concurrency,
     )

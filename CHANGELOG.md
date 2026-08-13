@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Steps declare what they are. `Kind`, `Needs`, `Arch`, `Speed` and
+  `concurrency` on `execution.Step` make the plan a graph that can be reasoned
+  about instead of a set of labels that has to be grepped -- a lint is a lint
+  because it says so, not because a contract matched `fast.` against its name.
+  Hermeticity is derived from `Needs`, never declared, so a step cannot claim a
+  property its inputs contradict.
+
+  `[boundary.step_attributes]` is a migration ledger with a destination rather
+  than an exemption list: 100 call sites remain, the count may only fall, and
+  when it reaches zero the defaults come off `Step` and the arguments become
+  required. `tests/citadel/test_step_attributes.py` refuses both a module
+  gaining undeclared steps and a ledger entry drifting above the tree.
+
 ### Fixed
 
 - `clippy::cast_lossless` is denied, with its 116 sites converted. It is the

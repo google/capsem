@@ -2056,6 +2056,58 @@ coverage_file = "target/coverage/.coverage"
 evidence_dir = "target/test-artifacts"
 
 # ---------------------------------------------------------------------------
+# The step attribute migration
+# ---------------------------------------------------------------------------
+
+[boundary.step_attributes]
+# Every `step(...)` declares what it is: `kind`, `needs`, `arch`, `speed` and
+# `concurrency`. Those attributes are what makes the plan a graph that can be
+# reasoned about instead of a set of labels that has to be grepped -- a lint is
+# a lint because it says so, not because someone matched `fast.` against its
+# name.
+#
+# They are defaulted rather than required only while the existing call sites
+# are migrated. This is a migration ledger with a destination, not an
+# exemption list: the count may only fall, and when it reaches zero the
+# defaults come off `Step` and the arguments become required, which is the
+# point at which a new step cannot be added without saying what it is.
+max_undeclared = 0
+
+[boundary.step_attributes.undeclared_by_module]
+"assetdependencies.py" = 1
+"assetplan.py" = 4
+"candidateplan.py" = 7
+"crosscompile.py" = 1
+"debproofcommand.py" = 1
+"devloop.py" = 3
+"doctor.py" = 1
+"gc.py" = 3
+"guestcommands.py" = 2
+"hostimage.py" = 2
+"hostpackage.py" = 9
+"imagebuild.py" = 9
+"imagedoctor.py" = 1
+"initrd.py" = 8
+"install.py" = 1
+"installimage.py" = 4
+"linuxrust.py" = 3
+"module_artifacts.py" = 2
+"module_functional.py" = 1
+"module_glowup.py" = 3
+"pytestsuite.py" = 2
+"release.py" = 8
+"runs.py" = 1
+"rustchecks.py" = 2
+"service.py" = 3
+"smoke.py" = 2
+"sourcechecks.py" = 2
+"storage.py" = 2
+"testmodules.py" = 4
+"toolchain.py" = 4
+"versions.py" = 2
+"vmproofs.py" = 2
+
+# ---------------------------------------------------------------------------
 # The execution log
 # ---------------------------------------------------------------------------
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 from . import toolchain
 from .actions import Run, Script
 from .config import GateConfig
-from .execution import Step, step
+from .execution import SATURATES, Kind, Needs, Speed, Step, step
 
 
 def all_of(config: GateConfig) -> list[Step]:
@@ -29,26 +29,68 @@ def all_of(config: GateConfig) -> list[Step]:
         # Locked language dependencies can be materialized before the sandbox;
         # current RustSec, npm bulk, and OSV answers cannot.  Keep only these
         # explicit actions on the authenticated scoped-egress runner.
-        step("audit.cargo", Script(audits.cargo, outside_sandbox=True)),
-        step("audit.pnpm", Script(audits.pnpm, outside_sandbox=True)),
+        step(
+            "audit.cargo",
+            Script(audits.cargo, outside_sandbox=True),
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.NETWORK}),
+            speed=Speed.FAST,
+        ),
+        step(
+            "audit.pnpm",
+            Script(audits.pnpm, outside_sandbox=True),
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.NETWORK}),
+            speed=Speed.FAST,
+        ),
         step(
             "audit.python-lock",
             Run(["bash", audits.python_lock], outside_sandbox=True),
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.NETWORK}),
+            speed=Speed.FAST,
         ),
-        step("audit.public-surface", Script(audits.public_surface)),
+        step(
+            "audit.public-surface",
+            Script(audits.public_surface),
+            kind=Kind.STATIC_TEST,
+            speed=Speed.FAST,
+        ),
         step(
             "audit.skills",
             Run(["uv", "run", "capsem-builder", "validate-skills", audits.skills_dir]),
+            kind=Kind.STATIC_TEST,
+            speed=Speed.FAST,
         ),
-        step("audit.release-selections", Run(["bash", audits.hardcoded_selections])),
+        step(
+            "audit.release-selections",
+            Run(["bash", audits.hardcoded_selections]),
+            kind=Kind.STATIC_TEST,
+            speed=Speed.FAST,
+        ),
         # Python has Ruff and strict Ty, Rust has Clippy with warnings denied,
         # the web surfaces fail on warnings -- and every line of shell had
         # nothing at all. Four `# shellcheck disable=` directives were already
         # in the tree, written for a linter no lane ran. All three surfaces are
         # checked and each fails closed.
-        step("audit.shell", Run(_surface(audits, "shell", ",".join(audits.shell_ignore)))),
-        step("audit.docker", Run(_surface(audits, "dockerfile", ",".join(audits.docker_ignore)))),
-        step("audit.markdown", Run(_surface(audits, "markdown", ""))),
+        step(
+            "audit.shell",
+            Run(_surface(audits, "shell", ",".join(audits.shell_ignore))),
+            kind=Kind.LINT,
+            speed=Speed.FAST,
+        ),
+        step(
+            "audit.docker",
+            Run(_surface(audits, "dockerfile", ",".join(audits.docker_ignore))),
+            kind=Kind.LINT,
+            speed=Speed.FAST,
+        ),
+        step(
+            "audit.markdown",
+            Run(_surface(audits, "markdown", "")),
+            kind=Kind.LINT,
+            speed=Speed.FAST,
+        ),
     ]
 
 
@@ -60,7 +102,12 @@ def _surface(audits, name: str, exclude: str) -> list[str]:
 
 def source_syntax(config: GateConfig) -> Step:
     """Parse every source file before anything spends time on it."""
-    return step("audit.source-syntax", Script(config.audits.source_syntax))
+    return step(
+        "audit.source-syntax",
+        Script(config.audits.source_syntax),
+        kind=Kind.LINT,
+        speed=Speed.FAST,
+    )
 
 
 def generated_settings(config: GateConfig) -> Step:
@@ -94,6 +141,11 @@ def generated_settings(config: GateConfig) -> Step:
                 str(config.path(config.devloop.generated_settings_scratch)),
             ]
         ),
+        # Measured at 1m15s. `SLOW` is a claim about cost, not about which
+        # phase it currently sits in -- the mismatch is the finding, not a
+        # reason to relabel the step.
+        kind=Kind.COMPILE,
+        speed=Speed.SLOW,
     )
 
 
@@ -117,6 +169,11 @@ def web_surfaces(config: GateConfig) -> list[Step]:
             f"web.{target}",
             Run(["bash", surfaces.script, target]),
             contends=(config.exclusive("astro_build"),),
+            # Astro builds. `release-site` measured 2m17s and owns most of the
+            # fast phase's critical path; the others are far shorter, but they
+            # serialize on one exclusive so the lane pays the sum.
+            kind=Kind.COMPILE,
+            speed=Speed.SLOW,
         )
         for target in surfaces.targets
     ]
@@ -132,6 +189,8 @@ def frontend_bundle(config: GateConfig) -> Step:
             config.exclusive("astro_build"),
             config.exclusive("node_modules"),
         ),
+        kind=Kind.COMPILE,
+        speed=Speed.SLOW,
     )
 
 
@@ -149,6 +208,10 @@ def clippy(config: GateConfig) -> Step:
             ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
             env=toolchain.ort_environment(config, toolchain.OrtConsumer.FAST),
         ),
+        # Measured at 1m27s: it compiles the whole workspace.
+        kind=Kind.COMPILE,
+        speed=Speed.SLOW,
+        concurrency=SATURATES,
     )
 
 

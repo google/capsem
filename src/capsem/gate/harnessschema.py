@@ -60,6 +60,17 @@ class ShellBodyConfig(Strict):
     oversized_line_counts: dict[str, int]
 
 
+class StepAttributeConfig(Strict):
+    """The step-attribute migration ledger.
+
+    `max_undeclared` is the destination, not the current state: it is zero, and
+    `undeclared_by_module` is the exact remaining debt that may only shrink.
+    """
+
+    max_undeclared: NonNegativeInt
+    undeclared_by_module: dict[str, int]
+
+
 class BoundaryConfig(Strict):
     max_recipe_lines: int
     max_module_lines: int
@@ -72,6 +83,7 @@ class BoundaryConfig(Strict):
     #: Dockerfiles rather than in files of their own, so there is no root or
     #: suffix to declare.
     shell_bodies: ShellBodyConfig
+    step_attributes: StepAttributeConfig
     shell_control_flow: tuple[str, ...]
     recipes_with_inline_control_flow: tuple[str, ...]
     direct_machine_access: tuple[str, ...]
