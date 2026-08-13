@@ -22,7 +22,7 @@ from .command import GateCommand
 from .config import GateConfig
 from .context import Context
 from .errors import GateError
-from .execution import Step, step
+from .execution import Kind, Needs, Speed, Step, step
 from .fileactions import AtomicReplace, Copy, MakeDir, Remove
 from .imagebases import MaterializeRustBuilders, Prefetch
 from .plan import Plan
@@ -188,6 +188,9 @@ def repack_step(config: GateConfig, targets: Mapping[str, tuple[Path, ...]]) -> 
         *actions,
         contends=(config.exclusive("docker_daemon"),),
         produces=tuple(produced),
+        kind=Kind.PACKAGE,
+        needs=frozenset({Needs.DOCKER, Needs.DISK}),
+        speed=Speed.SLOW,
     )
 
 
@@ -212,11 +215,18 @@ def finalize(
                     workspace_version(config.root),
                 ]
             ),
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
         ),
         after=after,
     )
     return phase.add(
-        step("hash-aliases", Script(config.initrd.hash_assets, str(assets))),
+        step("hash-aliases", Script(config.initrd.hash_assets, str(assets)),
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
+        ),
         after=(manifest,),
     )
 
@@ -248,6 +258,9 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
                     "guest-base",
                     Prefetch((arch,), rust_names=(arch,)),
                     contends=(config.exclusive("docker_daemon"),),
+                    kind=Kind.PACKAGE,
+                    needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                    speed=Speed.SLOW,
                 ),
                 after=after,
             )
@@ -256,6 +269,9 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
                     "guest-execution",
                     crossexec.Require((arch,)),
                     contends=(config.exclusive("docker_daemon"),),
+                    kind=Kind.PACKAGE,
+                    needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                    speed=Speed.SLOW,
                 ),
                 after=(base,),
             )
@@ -265,6 +281,9 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
                         "guest-builder",
                         MaterializeRustBuilders((arch,)),
                         contends=(config.exclusive("docker_daemon"),),
+                        kind=Kind.PACKAGE,
+                        needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                        speed=Speed.SLOW,
                     ),
                     after=(execution,),
                 ),
@@ -275,6 +294,9 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
                     "guest-agents",
                     Run([*settings.build, "--arch", config.host_arch().name]),
                     contends=(config.exclusive("docker_daemon"),),
+                    kind=Kind.PACKAGE,
+                    needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                    speed=Speed.SLOW,
                 ),
                 after=previous,
             ),
@@ -287,6 +309,9 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
             # The initrd the VM boots. The one artifact whose contents decide
             # whether a guest runs the code this gate just built.
             produces=(_initrd_path(config),),
+            kind=Kind.PACKAGE,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.SLOW,
         ),
         after=previous,
     )

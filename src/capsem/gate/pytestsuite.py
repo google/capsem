@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 
 from .actions import Run
 from .config import GateConfig
-from .execution import Step, step
+from .execution import Kind, Speed, Step, step
 from .harnessschema import Exclusive
 
 
@@ -139,6 +139,8 @@ def collection(config: GateConfig) -> Step:
                 *settings.collection_flags,
             ]
         ),
+        kind=Kind.STATIC_TEST,
+        speed=Speed.FAST,
     )
 
 

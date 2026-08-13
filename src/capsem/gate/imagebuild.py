@@ -11,7 +11,7 @@ from .assetcondition import missing as missing
 from .command import GateCommand
 from .config import GateConfig
 from .errors import GateError
-from .execution import Step, step
+from .execution import Kind, Needs, Speed, Step, step
 from .fileactions import Remove
 from .imagedoctor import doctor
 from .plan import Plan
@@ -71,6 +71,9 @@ def build(
         label,
         Run(build_argv(config, profile=profile, arch=arch, template=template, output=output)),
         contends=(config.exclusive("docker_daemon"),),
+        kind=Kind.PACKAGE,
+        needs=frozenset({Needs.DOCKER, Needs.DISK}),
+        speed=Speed.SLOW,
     )
 
 
@@ -105,6 +108,9 @@ class BuildAssetsCommand(
                 "base-images",
                 imagebases.Prefetch(names, rust_names=rust_builders, asset_tools=needs_asset_tools),
                 contends=(config.exclusive("docker_daemon"),),
+                kind=Kind.PACKAGE,
+                needs=frozenset({Needs.DOCKER, Needs.NETWORK}),
+                speed=Speed.SLOW,
             )
         )
         checked = plan.add(doctor(config), after=(bases,))
@@ -113,6 +119,9 @@ class BuildAssetsCommand(
                 "guest-execution",
                 crossexec.Require(names),
                 contends=(config.exclusive("docker_daemon"),),
+                kind=Kind.PACKAGE,
+                needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                speed=Speed.SLOW,
             ),
             after=(checked,),
         )
@@ -123,6 +132,9 @@ class BuildAssetsCommand(
                     imagebases.MaterializeRustBuilders(rust_builders),
                     contends=(config.exclusive("docker_daemon"),),
                     carry_checks=(imagebases.RequireRustBuilders(rust_builders),),
+                    kind=Kind.PACKAGE,
+                    needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                    speed=Speed.SLOW,
                 ),
                 after=(ready,),
             )
@@ -133,6 +145,9 @@ class BuildAssetsCommand(
                     imagebases.MaterializeAssetTools(),
                     contends=(config.exclusive("docker_daemon"),),
                     carry_checks=(imagebases.RequireAssetTools(),),
+                    kind=Kind.PACKAGE,
+                    needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                    speed=Speed.SLOW,
                 ),
                 after=(ready,),
             )
@@ -196,6 +211,9 @@ def check_assets(
                 "base-images",
                 imagebases.Prefetch(names, rust_names=rust_builders, asset_tools=True),
                 contends=(config.exclusive("docker_daemon"),),
+                kind=Kind.PACKAGE,
+                needs=frozenset({Needs.DOCKER, Needs.NETWORK}),
+                speed=Speed.SLOW,
             ),
         ),
         after=after,
@@ -208,6 +226,9 @@ def check_assets(
                 "guest-execution",
                 crossexec.Require(names),
                 contends=(config.exclusive("docker_daemon"),),
+                kind=Kind.PACKAGE,
+                needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                speed=Speed.SLOW,
             ),
         ),
         after=(checked,),
@@ -221,6 +242,9 @@ def check_assets(
                     imagebases.MaterializeRustBuilders(rust_builders),
                     contends=(config.exclusive("docker_daemon"),),
                     carry_checks=(imagebases.RequireRustBuilders(rust_builders),),
+                    kind=Kind.PACKAGE,
+                    needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                    speed=Speed.SLOW,
                 ),
             ),
             after=(ready,),
@@ -233,6 +257,9 @@ def check_assets(
                 imagebases.MaterializeAssetTools(),
                 contends=(config.exclusive("docker_daemon"),),
                 carry_checks=(imagebases.RequireAssetTools(),),
+                kind=Kind.PACKAGE,
+                needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                speed=Speed.SLOW,
             ),
         ),
         after=(ready,),
