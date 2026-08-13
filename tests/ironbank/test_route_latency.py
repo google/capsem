@@ -1,27 +1,7 @@
-from __future__ import annotations
+"""Compatibility pointer for the route-health performance probes.
 
-import pytest
-
-from tests.ironbank.test_route_health import (
-    test_concurrent_route_reads_while_writes_are_active as _concurrent_read_write_gate,
-)
-from tests.ironbank.test_route_health import (
-    test_hot_control_routes_have_latency_and_cpu_budgets as _hot_route_latency_gate,
-)
-from tests.ironbank.test_route_health import (
-    test_seeded_session_ledger_routes_have_latency_and_cpu_budgets as _seeded_session_latency_gate,
-)
-
-pytestmark = [pytest.mark.integration, pytest.mark.serial]
-
-
-def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
-    _hot_route_latency_gate()
-
-
-def test_concurrent_route_reads_while_writes_are_active() -> None:
-    _concurrent_read_write_gate()
-
-
-def test_seeded_session_ledger_routes_have_latency_and_cpu_budgets() -> None:
-    _seeded_session_latency_gate()
+The release timing rail owns ``test_route_health.py`` directly. This module
+deliberately defines no tests: wrappers around those tests made pytest execute
+the same stateful measurement twice and allowed one CPU-accounting tick to
+produce contradictory verdicts in a single qualification.
+"""

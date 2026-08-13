@@ -18,10 +18,12 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import psutil
 import pytest
+from helpers.benchmark_ratchet import maximum_factor
 from helpers.constants import (
     CODE_PROFILE_ID,
     DEFAULT_CPUS,
@@ -43,7 +45,13 @@ from tests.ironbank.test_stats_detail_contract import (
 )
 
 SEEDED_VM_ID = "33333333-3333-4333-8333-333333333333"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CPU_ACCOUNTING_SLACK_S = 0.011
+HOT_ROUTE_REFERENCE_SAMPLES = 64
+HOT_ROUTE_WINDOW_SAMPLES = 128
+HOT_ROUTE_WINDOWS = 3
+HOT_ROUTE_MEASUREMENT_SAMPLES = HOT_ROUTE_WINDOW_SAMPLES * HOT_ROUTE_WINDOWS
+HOT_ROUTE_REGRESSION_FACTOR = maximum_factor(PROJECT_ROOT)
 
 pytestmark = pytest.mark.integration
 
@@ -297,6 +305,40 @@ def _measure_route(
     )
 
 
+def _median_route_windows(windows: list[RouteTiming]) -> RouteTiming:
+    assert len(windows) == HOT_ROUTE_WINDOWS
+    assert len({window.label for window in windows}) == 1
+    gateway_cpu = [window.gateway_cpu_s for window in windows if window.gateway_cpu_s is not None]
+    assert len(gateway_cpu) in (0, HOT_ROUTE_WINDOWS)
+    return RouteTiming(
+        label=windows[0].label,
+        samples_ms=[sample for window in windows for sample in window.samples_ms],
+        service_cpu_s=statistics.median(window.service_cpu_s for window in windows),
+        gateway_cpu_s=(None if not gateway_cpu else statistics.median(gateway_cpu)),
+    )
+
+
+def _measure_hot_route(
+    label: str,
+    call: Callable[[], Any],
+    *,
+    service_proc: psutil.Process,
+    gateway_proc: psutil.Process | None = None,
+) -> RouteTiming:
+    return _median_route_windows(
+        [
+            _measure_route(
+                label,
+                call,
+                service_proc=service_proc,
+                gateway_proc=gateway_proc,
+                samples=HOT_ROUTE_WINDOW_SAMPLES,
+            )
+            for _ in range(HOT_ROUTE_WINDOWS)
+        ]
+    )
+
+
 def _measure_once(
     label: str,
     call: Callable[[], Any],
@@ -330,6 +372,7 @@ def _assert_timing_budget(
     max_ms: float | None,
     cpu_s: float,
     p99_ms: float | None = None,
+    cpu_slack_s: float = CPU_ACCOUNTING_SLACK_S,
 ) -> None:
     print(
         "ROUTE_HEALTH "
@@ -353,11 +396,11 @@ def _assert_timing_budget(
     # psutil reports process CPU from OS accounting ticks. On Linux that is
     # commonly 10ms, so tiny debug-build budgets need one tick of slack to
     # avoid failing on 0.10000000000000009 or a single scheduler tick.
-    assert timing.service_cpu_s <= cpu_s + CPU_ACCOUNTING_SLACK_S, (
+    assert timing.service_cpu_s <= cpu_s + cpu_slack_s, (
         f"{timing.label} service CPU={timing.service_cpu_s:.3f}s > {cpu_s:.3f}s"
     )
     if timing.gateway_cpu_s is not None:
-        assert timing.gateway_cpu_s <= cpu_s + CPU_ACCOUNTING_SLACK_S, (
+        assert timing.gateway_cpu_s <= cpu_s + cpu_slack_s, (
             f"{timing.label} gateway CPU={timing.gateway_cpu_s:.3f}s > {cpu_s:.3f}s"
         )
 
@@ -561,13 +604,18 @@ def _assert_hot_route_budget(
     path: str,
     gateway: bool = False,
 ) -> None:
+    assert len(timing.samples_ms) == HOT_ROUTE_MEASUREMENT_SAMPLES
     p95_ms, p99_ms, cpu_s = _hot_route_budget(path, gateway=gateway)
+    p95_ms *= HOT_ROUTE_REGRESSION_FACTOR
+    p99_ms *= HOT_ROUTE_REGRESSION_FACTOR
+    cpu_s *= HOT_ROUTE_WINDOW_SAMPLES / HOT_ROUTE_REFERENCE_SAMPLES * HOT_ROUTE_REGRESSION_FACTOR
     _assert_timing_budget(
         timing,
         p95_ms=p95_ms,
         p99_ms=p99_ms,
         max_ms=None,
         cpu_s=cpu_s,
+        cpu_slack_s=0.0,
     )
 
 
@@ -1011,7 +1059,7 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
         gateway_proc = psutil.Process(gateway.proc.pid)
 
         for contract in _hot_route_contracts(CODE_PROFILE_ID):
-            timing = _measure_route(
+            timing = _measure_hot_route(
                 f"service {contract.path}",
                 lambda c=contract: _assert_contract(fast_service_client, c),
                 service_proc=service_proc,
@@ -1040,7 +1088,7 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
             *_hot_route_contracts(CODE_PROFILE_ID)[4:],
         ]
         for contract in hot_gateway_routes:
-            timing = _measure_route(
+            timing = _measure_hot_route(
                 f"gateway {contract.path}",
                 lambda c=contract: _assert_contract(fast_gateway_client, c),
                 service_proc=service_proc,
@@ -1090,7 +1138,7 @@ def test_seeded_session_ledger_routes_have_latency_and_cpu_budgets() -> None:
         ):
             is_gateway = gateway_for_cpu is not None
             for route_contract in _seeded_session_route_contracts(SEEDED_VM_ID):
-                timing = _measure_route(
+                timing = _measure_hot_route(
                     f"{client_label} {route_contract.path}",
                     lambda c=route_contract, route_client=client: _assert_contract(
                         route_client,

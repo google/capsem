@@ -1761,7 +1761,6 @@ host_snapshot_serial = [
 serial_paths = [
     "tests/capsem-serial/",
     "tests/ironbank/test_route_health.py",
-    "tests/ironbank/test_route_latency.py",
 ]
 benchmark_baseline = "tests/capsem-serial/test_capsem_bench_baseline.py"
 benchmark_deselect = "not test_capsem_bench_baseline"

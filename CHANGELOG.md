@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Route-health timing now owns each black-box probe once and takes the median
+  CPU cost across three independent, double-sized request windows. A transient
+  background service tick can no longer make one route fail and its immediately
+  repeated wrapper pass. Sustained CPU and latency growth is compared with the
+  same config-owned 20% evidence factor as the other product benchmarks, with
+  no separately invented duration or accounting slack.
+
 - Fork and lifecycle performance gates now ratchet against the latest
   checked-in benchmark evidence with a config-owned relative limit instead of
   independently authored millisecond and MiB ceilings. The ratchet exposed and
