@@ -130,10 +130,14 @@ def merge_tree(source: Path, target: Path) -> None:
     target.mkdir(parents=True, exist_ok=True)
     for entry in sorted(source.iterdir()):
         destination = target / entry.name
-        # Unlinked before anything is written under this name. The whole defect
-        # is that writing "into" a symlink writes somewhere else entirely.
-        if destination.is_symlink():
-            destination.unlink()
+        # Source wins the name, so whatever holds it is cleared first. Two
+        # reasons, and clearing only for the first left the second raising: a
+        # destination symlink must never be written *through*, and `os.symlink`
+        # refuses any existing name -- a plain file or a real directory
+        # included, which used to merge and would otherwise become a hard
+        # failure on a path that worked before.
+        if destination.is_symlink() or (entry.is_symlink() and destination.exists()):
+            remove(destination)
         if entry.is_symlink():
             os.symlink(os.readlink(entry), destination)
         elif entry.is_dir():

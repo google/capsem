@@ -844,3 +844,73 @@ def test_exporting_a_run_cannot_write_through_a_symlink(tmp_path: Path) -> None:
     # Replaced as a link, not materialized into a directory of copied files.
     assert (host / runs / "latest").is_symlink()
     assert os.readlink(host / runs / "latest") == "run-new"
+
+
+def _merge_case(root: Path, name: str) -> tuple[Path, Path]:
+    source, target = root / "src", root / "dst"
+    source.mkdir(parents=True)
+    if name == "target-is-symlink":
+        # The root is the level the first fix missed: clearing links only
+        # during the descent left the entry point writing through one.
+        (source / "f.txt").write_text("new")
+        victim = root / "real"
+        victim.mkdir()
+        (victim / "f.txt").write_text("victim")
+        target.symlink_to("real")
+    elif name == "link-over-real-dir":
+        (source / "e").symlink_to("elsewhere")
+        target.mkdir()
+        (target / "e").mkdir()
+    elif name == "link-over-real-file":
+        (source / "e").symlink_to("elsewhere")
+        target.mkdir()
+        (target / "e").write_text("displaced")
+    elif name == "dir-over-link":
+        (source / "d").mkdir()
+        (source / "d" / "f").write_text("new")
+        target.mkdir()
+        victim = target / "real"
+        victim.mkdir()
+        (victim / "f").write_text("victim")
+        (target / "d").symlink_to("real")
+    return source, target
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["target-is-symlink", "link-over-real-dir", "link-over-real-file", "dir-over-link"],
+)
+def test_merging_a_tree_never_writes_through_a_link(case: str, tmp_path: Path) -> None:
+    """Every place a symlink can sit, on either side, at any depth.
+
+    Written as a matrix because the first fix passed the case it was written
+    for and failed three others: the root was never cleared, so
+    `merge_tree(origin, target)` with a symlinked `target` reproduced the exact
+    defect; and `os.symlink` refuses *any* existing name, so a source link
+    landing on a real file or directory raised instead of merging.
+    """
+    from capsem.gate.filesystem import merge_tree
+
+    source, target = _merge_case(tmp_path, case)
+    merge_tree(source, target)
+
+    # Nothing reachable only through a link may have been rewritten.
+    survivors = [p for p in tmp_path.rglob("*") if p.is_file() and p.read_text() == "victim"]
+    if case in {"target-is-symlink", "dir-over-link"}:
+        assert survivors, f"{case}: the merge wrote through a link and destroyed the target"
+    if case in {"link-over-real-dir", "link-over-real-file"}:
+        assert (target / "e").is_symlink(), f"{case}: the source link did not survive as a link"
+
+
+def test_merging_keeps_what_the_target_already_had(tmp_path: Path) -> None:
+    """Merging is not replacing -- the sibling that arrived first stays."""
+    from capsem.gate.filesystem import merge_tree
+
+    source, target = tmp_path / "src", tmp_path / "dst"
+    source.mkdir()
+    target.mkdir()
+    (source / "arriving").write_text("second")
+    (target / "already-here").write_text("first")
+
+    merge_tree(source, target)
+    assert sorted(p.name for p in target.iterdir()) == ["already-here", "arriving"]
