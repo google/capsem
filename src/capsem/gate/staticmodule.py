@@ -112,6 +112,12 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
                 config.path(initrd.staging) / config.host_arch().name / name
                 for name in initrd.binaries
             ),
+            # `capsem-builder agent` cross-compiles through
+            # `builder.docker.cross_compile_agent`, so it drives the daemon.
+            # It claimed nothing until the graph invariants noticed: the
+            # scheduler was free to run it beside `install.materialize`, which
+            # holds the daemon exclusively, and the two would have raced.
+            contends=(config.exclusive("docker_daemon"),),
             kind=Kind.COMPILE,
             needs=frozenset({Needs.DOCKER, Needs.DISK}),
             speed=Speed.SLOW,

@@ -7,7 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `static.guest-agents` claims the Docker daemon. `capsem-builder agent`
+  cross-compiles through `builder.docker.cross_compile_agent`, so it drives the
+  daemon, and it declared no contention -- leaving the scheduler free to run it
+  beside `install.materialize`, which holds the daemon exclusively. Found by
+  the new graph invariant that a step needing a capability must claim it, not
+  by anything failing.
+
 ### Added
+
+- `tests/citadel/test_work_graph_invariants.py` asserts the plan's properties
+  against the graph rather than against text: no orphans, every node declared,
+  a step that escapes the sandbox declares `NETWORK`, a capability implies a
+  claim, publishing is terminal, and no edge crosses two concrete
+  architectures. These hold under any rename, reformat or move of code between
+  modules, because none of those change the graph.
 
 - Edges declare why they exist. `Requires.ARTIFACT` hands over bytes, `ORDER`
   only sequences, `EVIDENCE` needs a recorded result -- carried on

@@ -84,7 +84,7 @@ def ort(config: GateConfig, consumer: OrtConsumer) -> Step:
         ),
         produces=(output / "libonnxruntime.a",),
         kind=Kind.COMPILE,
-        # Fetches a pinned distribution by URL on the egress runner.
+        # `outside_sandbox`: it really does fetch a pinned distribution.
         needs=frozenset({Needs.NETWORK, Needs.DISK}),
         speed=Speed.FAST,
     )
@@ -96,9 +96,7 @@ def sync(config: GateConfig) -> Step:
         "toolchain.python",
         Run(config.toolchain.sync),
         kind=Kind.COMPILE,
-        # `uv sync` resolves against a lockfile but still fetches wheels it
-        # does not have cached.
-        needs=frozenset({Needs.NETWORK, Needs.DISK}),
+        needs=frozenset({Needs.DISK}),
         speed=Speed.FAST,
     )
 
@@ -125,7 +123,7 @@ def node(config: GateConfig) -> Step:
         # overlapping a build, is a torn tree either way.
         contends=(config.exclusive("node_modules"),),
         kind=Kind.COMPILE,
-        needs=frozenset({Needs.NETWORK, Needs.DISK}),
+        needs=frozenset({Needs.DISK}),
         speed=Speed.FAST,
     )
 
@@ -140,7 +138,7 @@ def rust(config: GateConfig) -> Step:
         "toolchain.rust",
         _EnsureRust(),
         kind=Kind.COMPILE,
-        needs=frozenset({Needs.NETWORK, Needs.DISK}),
+        needs=frozenset({Needs.DISK}),
         speed=Speed.FAST,
     )
 
