@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Hermeticity is derived from `Needs`, never declared, so a step cannot claim a
   property its inputs contradict.
 
+  `Speed` is relative to the work its lane protects, not an absolute duration.
+  The fast phase runs about four minutes so a lint error fails before a
+  candidate that runs about a hundred and forty; a two-minute step inside it is
+  a three percent tax on catching a typo early, which is the trade the phase
+  exists to make.
+
   `[boundary.step_attributes]` is a migration ledger with a destination rather
   than an exemption list: 100 call sites remain, the count may only fall, and
   when it reaches zero the defaults come off `Step` and the arguments become

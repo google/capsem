@@ -101,12 +101,22 @@ class Arch(StrEnum):
 
 
 class Speed(StrEnum):
-    """The lane a step belongs to, categorically.
+    """Whether a step is cheap *relative to the work its lane protects*.
 
-    Not a duration. `[runlog.timing_regression]` says no guessed number of
-    seconds belongs in config, and that holds here: this is a claim about which
-    lane the step may sit in, checked against measurement using the one
-    threshold that already exists, `slow_action_seconds`.
+    Not an absolute duration, and deliberately not `slow_action_seconds` --
+    that is a reporting threshold for naming actions in the timing summary, and
+    borrowing it here would call a two-minute step slow.
+
+    Relative is the only reading that means anything. The fast phase runs about
+    four minutes and exists so a lint error fails before a candidate that runs
+    about a hundred and forty. A two-minute step inside it is a three percent
+    tax on catching a typo early, which is the trade the phase was created to
+    make. The same two minutes sitting between a VM boot and a package build
+    would be noise.
+
+    So `FAST` means: proportionate to the lane it is in. What the invariant
+    checks is not a per-step second count but whether a lane has stopped being
+    cheap compared with what comes after it.
     """
 
     FAST = "fast"

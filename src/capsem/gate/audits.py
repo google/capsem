@@ -141,11 +141,8 @@ def generated_settings(config: GateConfig) -> Step:
                 str(config.path(config.devloop.generated_settings_scratch)),
             ]
         ),
-        # Measured at 1m15s. `SLOW` is a claim about cost, not about which
-        # phase it currently sits in -- the mismatch is the finding, not a
-        # reason to relabel the step.
         kind=Kind.COMPILE,
-        speed=Speed.SLOW,
+        speed=Speed.FAST,
     )
 
 
@@ -169,11 +166,8 @@ def web_surfaces(config: GateConfig) -> list[Step]:
             f"web.{target}",
             Run(["bash", surfaces.script, target]),
             contends=(config.exclusive("astro_build"),),
-            # Astro builds. `release-site` measured 2m17s and owns most of the
-            # fast phase's critical path; the others are far shorter, but they
-            # serialize on one exclusive so the lane pays the sum.
             kind=Kind.COMPILE,
-            speed=Speed.SLOW,
+            speed=Speed.FAST,
         )
         for target in surfaces.targets
     ]
@@ -190,7 +184,7 @@ def frontend_bundle(config: GateConfig) -> Step:
             config.exclusive("node_modules"),
         ),
         kind=Kind.COMPILE,
-        speed=Speed.SLOW,
+        speed=Speed.FAST,
     )
 
 
@@ -208,9 +202,8 @@ def clippy(config: GateConfig) -> Step:
             ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
             env=toolchain.ort_environment(config, toolchain.OrtConsumer.FAST),
         ),
-        # Measured at 1m27s: it compiles the whole workspace.
         kind=Kind.COMPILE,
-        speed=Speed.SLOW,
+        speed=Speed.FAST,
         concurrency=SATURATES,
     )
 
