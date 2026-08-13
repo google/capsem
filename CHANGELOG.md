@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Release profile staging now treats every file named by `profile.toml` as one
+  manifest-owned closure. Python requirements and their exact lock must be
+  declared and transported together; a legacy half-pair or a graph that omits
+  either byte fails before package and install work instead of reaching a
+  late materialization error or resolving an unlocked dependency.
+
 - The fast CI gate now runs on every pull request, including documentation-only
   changes, so Ruff, Ty, dependency audits, and source contracts cannot be
   skipped by path classification. The remaining heavy-job shortcut is owned
