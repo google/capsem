@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The fast CI gate now runs on every pull request, including documentation-only
+  changes, so Ruff, Ty, dependency audits, and source contracts cannot be
+  skipped by path classification. The remaining heavy-job shortcut is owned
+  by one tested, NUL-delimited classifier that fails closed for empty,
+  executable, installer, workflow, test, and unknown paths; branch protection
+  always requires the fast gate to succeed.
+
 - Run-history ledger and digest updates now use the gate's atomic filesystem
   primitive instead of writing paths directly. Retained hardlinks keep their
   original bytes, a replaced symlink cannot redirect evidence into another

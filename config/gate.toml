@@ -1614,6 +1614,7 @@ source_contract = [
     "tests/test_exec_lock.py",
     "tests/test_exit_status_integrity.py",
     "tests/test_fast_gate_ci_contract.py",
+    "tests/test_ci_scope_classifier.py",
     "tests/test_gate_actions.py",
     "tests/test_gate_assetlanes.py",
     "tests/test_gate_assets.py",

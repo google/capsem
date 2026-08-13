@@ -6407,28 +6407,32 @@ def test_release_recipes_require_fresh_remote_main_before_running_the_gate() -> 
         )
 
 
-def test_web_only_prs_do_not_depend_on_product_or_release_jobs() -> None:
+def test_web_only_prs_still_run_the_fast_gate_and_skip_only_product_jobs() -> None:
     docs_job = _workflow_job_block("docs-build")
+    fast_gate = _workflow_job("fast-gate")
     gate = workflow_reachable_text(
         PROJECT_ROOT, PROJECT_ROOT / ".github" / "workflows" / "ci.yaml", job="pr-gate"
     )
 
     assert "fetch-depth: 0" in docs_job
-    assert 'git diff --name-only "$BASE_SHA"...HEAD' in docs_job
+    assert 'git diff --name-only -z "$BASE_SHA"...HEAD' in docs_job
+    assert "scripts/classify-ci-scope.py" in docs_job
     assert "web_only: ${{ steps.scope.outputs.web_only }}" in docs_job
-    assert "site/*|docs/*" in docs_job
     assert 'if [ "$EVENT_NAME" != pull_request ]; then' in docs_job
     assert 'echo "web_only=false"' in docs_job
 
-    for job_name in ("fast-gate", "test-linux", "test", "test-install", "release-site-build"):
+    assert "if" not in fast_gate
+    assert "needs" not in fast_gate
+
+    for job_name in ("test-linux", "test", "test-install", "release-site-build"):
         job = _workflow_job_block(job_name)
         assert "needs: docs-build" in job
         assert "needs.docs-build.outputs.web_only != 'true'" in job
 
     assert "WEB_ONLY: ${{ needs.docs-build.outputs.web_only }}" in gate
+    assert 'test "$FAST_GATE_RESULT" = success' in gate
     assert 'if [ "$WEB_ONLY" = true ]; then' in gate
     for result in (
-        "FAST_GATE_RESULT",
         "TEST_LINUX_RESULT",
         "TEST_MACOS_RESULT",
         "TEST_INSTALL_RESULT",

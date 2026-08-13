@@ -15,8 +15,6 @@ permissions:
 
 jobs:
   fast-gate:
-    needs: docs-build
-    if: ${{ needs.docs-build.outputs.web_only != 'true' }}
     uses: ./.github/workflows/fast-gate.yaml
 
   # ---------------------------------------------------------------------------
@@ -457,17 +455,8 @@ jobs:
             exit 0
           fi
 
-          web_only=true
-          while IFS= read -r path; do
-            case "$path" in
-              README.md|later/*|site/*|docs/*|.github/workflows/site.yaml|.github/workflows/docs.yaml|.github/workflows/ci.yaml|scripts/check-docs-holding-build.py|tests/test_docs_holding_contract.py|tests/test_release_doctor_contract.py)
-                ;;
-              *)
-                web_only=false
-                break
-                ;;
-            esac
-          done < <(git diff --name-only "$BASE_SHA"...HEAD)
+          web_only=$(git diff --name-only -z "$BASE_SHA"...HEAD | \
+            python3 scripts/classify-ci-scope.py)
           echo "web_only=$web_only" >> "$GITHUB_OUTPUT"
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
