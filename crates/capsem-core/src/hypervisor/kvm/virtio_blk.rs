@@ -671,7 +671,7 @@ impl VirtioBlockDevice {
             Some(libc::EOPNOTSUPP | libc::ENOSYS | libc::EINVAL) => {
                 file.seek(SeekFrom::Start(offset))?;
                 let mut remaining = len;
-                let zeros = [0_u8; 64 * 1024];
+                let zeros = vec![0_u8; 64 * 1024];
                 while remaining > 0 {
                     let n = zeros.len().min(remaining as usize);
                     file.write_all(&zeros[..n])?;

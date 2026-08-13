@@ -341,7 +341,7 @@ impl VmConfigBuilder {
 
         let mut file = std::fs::File::open(path)?;
         let mut hasher = blake3::Hasher::new();
-        let mut buffer = [0; 65536];
+        let mut buffer = vec![0; 65536];
         loop {
             let n = file.read(&mut buffer)?;
             if n == 0 {

@@ -957,7 +957,7 @@ pub fn hash_file(path: &Path) -> Result<String> {
     let mut hasher = blake3::Hasher::new();
     let mut file =
         std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
-    let mut buf = [0u8; 256 * 1024];
+    let mut buf = vec![0u8; 256 * 1024];
     loop {
         use std::io::Read;
         let n = file.read(&mut buf)?;

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Nine I/O buffers moved off the stack, and `clippy::large_stack_arrays` is
+  denied. Three were a megabyte each -- half the 2 MB a spawned thread gets by
+  default, in a single frame -- and two of those are on the self-update path,
+  which runs on a user's machine rather than in CI. Sizes are unchanged, so the
+  I/O behaves identically; each buffer was already allocated once outside its
+  loop, so this is one heap allocation per file against reading the whole file.
+  Audited before the lint was enabled, so it arrives with no `allow`s.
+
 - The `duplicate-content` filesystem rule no longer reports Tauri's generated
   schemas, which are byte-identical on Linux and neither ours to produce nor to
   deduplicate. Every fast-lane run reported one filesystem fault, and a fault

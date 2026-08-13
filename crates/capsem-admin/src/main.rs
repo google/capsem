@@ -6065,7 +6065,7 @@ fn file_digest(path: &Path) -> Result<(u64, serde_json::Value)> {
     let mut sha256 = Sha256::new();
     let mut blake3 = blake3::Hasher::new();
     let mut bytes = 0_u64;
-    let mut buffer = [0_u8; 1024 * 1024];
+    let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
         let read = source
             .read(&mut buffer)
@@ -9241,7 +9241,7 @@ fn manifest_report(
 fn hash_file(path: &Path) -> Result<String> {
     let mut file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut hasher = blake3::Hasher::new();
-    let mut buffer = [0_u8; 128 * 1024];
+    let mut buffer = vec![0_u8; 128 * 1024];
     loop {
         let read = file
             .read(&mut buffer)
