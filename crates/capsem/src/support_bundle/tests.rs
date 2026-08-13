@@ -505,7 +505,11 @@ fn a_file_under_the_limit_is_returned_whole() {
 fn an_oversized_file_returns_the_tail_starting_at_a_record_boundary() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("big.log");
-    let body: String = (0..500).map(|i| format!("line {i:04}\n")).collect();
+    let mut body = String::new();
+    for i in 0..500 {
+        use std::fmt::Write as _;
+        writeln!(body, "line {i:04}").unwrap();
+    }
     fs::write(&path, &body).unwrap();
 
     let tail = super::read_tail(&path, 200).unwrap();

@@ -139,7 +139,7 @@ def export(prefix: Path, destination: Path, config: GateConfig) -> None:
                 # inside the exported tree such as assets/current. The latter
                 # is a relative link in the tree and materializing it copies a
                 # multi-gigabyte architecture for no new bytes.
-                copy_tree(origin, target, symlinks=True)
+                copy_tree(origin, target)
             else:
                 merge_tree(origin, target)
         else:

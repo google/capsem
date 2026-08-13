@@ -24,7 +24,12 @@ RUN set -eux; \
     printf 'deb [check-valid-until=no] %s/%s bookworm-security main\n' \
         "{{ debian_security_snapshot_base }}" "{{ debian_snapshot_id }}" \
         >> /etc/apt/sources.list; \
-    apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update; \
+    apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update
+
+# Split from the source swap above only to keep each body under
+# `[boundary.shell_bodies].max_lines`. The command sequence is unchanged, and
+# `/tmp/runtime-debian.sources` written above survives into this layer.
+RUN set -eux; \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
         {{ apt_packages | join(' \\

@@ -10,7 +10,7 @@ import hashlib
 import stat
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
 #: Directories under the checkout a run may write. Everything else is input:
@@ -57,6 +57,29 @@ def ignored_here(root: Path, directory: Path) -> bool:
             == 0
         )
     return cache[key]
+
+
+def duplication_expected(path: Path, root: Path, exempt: tuple[str, ...]) -> bool:
+    """Whether identical bytes under this path are a third party's doing.
+
+    Beside `is_source` because it answers the same kind of question about a
+    path. An exact list of trees, never a blanket exemption for generated
+    files -- the duplicate-content rule earns its place in build output too,
+    where it caught a lane copying a hardlinked alias tree into distinct
+    inodes. `[runlog] duplicate_content_exempt` carries the list and the why.
+    """
+    if not exempt:
+        return False
+    try:
+        relative = path.resolve().relative_to(root)
+    except (ValueError, OSError):
+        return False
+    # Component-wise, so `crates/capsem-app/gen` cannot also match
+    # `crates/capsem-app/generated-elsewhere`.
+    return any(
+        relative.parts[: len(PurePosixPath(entry).parts)] == PurePosixPath(entry).parts
+        for entry in exempt
+    )
 
 
 def is_source(path: Path, root: Path) -> bool:

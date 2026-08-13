@@ -23,6 +23,7 @@ apart gets deleted the first time it blocks something reasonable.
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from pathlib import Path
 
@@ -78,6 +79,8 @@ GATE_JOB = "pr-gate"
 
 #: The shell builtin an enforcement comparison is spelled with.
 ENFORCEMENT_COMMAND = "test"
+#: The result a dependency must be required to have reached, on some path.
+SUCCESS_RESULT = "success"
 #: What a `neutralize` mutation appends. `masks_failure` recognizes the whole
 #: family; this is simply the one the fixture writes.
 FAIL_OPEN_SUFFIX = " || true"
@@ -131,6 +134,30 @@ def _result_env(step: dict) -> dict[str, frozenset[str]]:
     return found
 
 
+#: A step that dispatches to a checked-in script instead of carrying its body.
+SCRIPT_DISPATCH = re.compile(r"\b(?:bash|sh)\s+(scripts/[A-Za-z0-9_./-]+\.sh)")
+
+
+def _step_shell(step: dict) -> str:
+    """A step's shell, following a dispatch into `scripts/`.
+
+    The gate body moved out of the workflow so ShellCheck could read it, and
+    reading only `run:` would then see one harmless line and pronounce the
+    branch-protection gate sound. Every check below has to follow the same hop
+    a reader would.
+
+    Concatenated rather than substituted: the guard cares whether a neutralised
+    comparison exists anywhere on the path from the step to the exit status,
+    and both halves are on that path.
+    """
+    body = str(step.get(Key.RUN, ""))
+    for relative in SCRIPT_DISPATCH.findall(body):
+        script = PROJECT_ROOT / relative
+        if script.is_file():
+            body = f"{body}\n{script.read_text(encoding='utf-8')}"
+    return body
+
+
 def _gate_steps() -> list[tuple[str, str, dict, dict, dict[str, frozenset[str]]]]:
     """Every (workflow, job name, job, step, result-env) in the repository.
 
@@ -156,7 +183,16 @@ def _decides_the_gate(command: tuple[str, ...], results: dict[str, frozenset[str
     check -- is not this contract's business, so the command must both be a
     `test` and mention one of the environment names carrying a dependency's
     result.
+
+    A dispatch into `scripts/` decides it too, and by exactly as much. Once the
+    body moved out of the workflow the whole gate hangs off that one line's
+    exit status, so `bash scripts/require-ci-jobs.sh || true` is the same
+    evasion as `test "$X" = success || true` and mentions no result name at
+    all. Recognising only the comparison let the mutation battery pass a
+    workflow whose gate had been switched off.
     """
+    if SCRIPT_DISPATCH.search(" ".join(command)):
+        return True
     if command[:1] != (ENFORCEMENT_COMMAND,):
         return False
     return any(name in token for token in command for name in results)
@@ -199,7 +235,7 @@ def test_no_enforcement_line_is_neutralized() -> None:
     """
     offenders = []
     for workflow, job_name, _job, step, results in _gate_steps():
-        for command in canonical_shell_commands(str(step.get(Key.RUN, ""))):
+        for command in canonical_shell_commands(_step_shell(step)):
             if disables_fail_fast(command):
                 offenders.append(f"{workflow}:{job_name}: {' '.join(command)}")
                 continue
@@ -232,7 +268,7 @@ def test_every_result_a_gate_step_reads_is_a_declared_dependency() -> None:
 def test_every_declared_result_is_actually_tested() -> None:
     """Naming a dependency's result and never comparing it gates nothing."""
     for workflow, job_name, _job, step, results in _gate_steps():
-        commands = canonical_shell_commands(str(step.get(Key.RUN, "")))
+        commands = canonical_shell_commands(_step_shell(step))
         tested = {
             name
             for command in commands
@@ -244,6 +280,36 @@ def test_every_declared_result_is_actually_tested() -> None:
         assert not missing, (
             WORKFLOW_ENFORCEMENT_RATIONALE
             + f"\n{workflow}:{job_name} reads but never tests: {missing}"
+        )
+
+
+def test_every_result_is_required_to_have_succeeded_somewhere() -> None:
+    """Tested is not the same as required to have passed.
+
+    The gate has two branches -- a web-only PR must *skip* the expensive jobs,
+    any other PR must see them succeed -- and the previous check was satisfied
+    by a result appearing in either one. Deleting
+    `test "$TEST_INSTALL_RESULT" = success` from the full branch therefore
+    changed nothing it could see: the name still appeared, compared against
+    `skipped` on the path that does not apply, and install failures stopped
+    blocking merges silently.
+
+    Every dependency result must be compared against success somewhere, which
+    is the branch that gates the ordinary PR.
+    """
+    for workflow, job_name, _job, step, results in _gate_steps():
+        commands = canonical_shell_commands(_step_shell(step))
+        required = {
+            name
+            for command in commands
+            if command[:1] == (ENFORCEMENT_COMMAND,) and SUCCESS_RESULT in command
+            for name in results
+            if any(name in token for token in command)
+        }
+        missing = sorted(set(results) - required)
+        assert not missing, (
+            WORKFLOW_ENFORCEMENT_RATIONALE
+            + f"\n{workflow}:{job_name} never requires these to have succeeded: {missing}"
         )
 
 
@@ -331,10 +397,17 @@ def _apply(document: dict, mutation: Mutation) -> dict:
         case Mutation.NEUTRALIZE:
             job[Key.STEPS][index] = {
                 **step,
+                # Whichever line decides the gate: the comparison when the
+                # body is inline, the dispatch when the body has moved into a
+                # script. `bash scripts/gate.sh || true` is the same evasion in
+                # the new shape, and is what somebody would actually write.
                 Key.RUN: "\n".join(
                     line + FAIL_OPEN_SUFFIX
-                    if line.strip().startswith(f"{ENFORCEMENT_COMMAND} ")
-                    and any(name in line for name in results)
+                    if (
+                        line.strip().startswith(f"{ENFORCEMENT_COMMAND} ")
+                        and any(name in line for name in results)
+                    )
+                    or SCRIPT_DISPATCH.search(line)
                     else line
                     for line in str(step[Key.RUN]).splitlines()
                 )

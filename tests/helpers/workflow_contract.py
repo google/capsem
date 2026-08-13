@@ -23,6 +23,20 @@ _NEEDS_RESULT = re.compile(r"\bneeds\.([A-Za-z0-9_-]+)\.result\b")
 _DIRECT_SCRIPT = re.compile(r"^scripts/[A-Za-z0-9_./-]+\.(?:sh|py)$")
 
 
+def direct_script_paths(command: tuple[str, ...]) -> tuple[str, ...]:
+    """Tracked repository scripts a simple workflow command dispatches.
+
+    Kept beside the shell tokenizer because both the reachable-source reader
+    and the checkout guard need the same answer. A second token scan in the
+    guard would eventually disagree about ``./scripts`` or supported suffixes.
+    """
+    return tuple(
+        candidate
+        for token in command
+        if _DIRECT_SCRIPT.fullmatch(candidate := token.removeprefix("./"))
+    )
+
+
 def workflow_reachable_text(
     root: Path,
     workflow: Path,
@@ -67,10 +81,7 @@ def workflow_reachable_text(
             if not isinstance(step.get("run"), str):
                 continue
             for command in canonical_shell_commands(step["run"]):
-                for token in command:
-                    candidate = token.removeprefix("./")
-                    if not _DIRECT_SCRIPT.fullmatch(candidate):
-                        continue
+                for candidate in direct_script_paths(command):
                     assert candidate in tracked, (
                         f"{workflow.name}:{job_name} dispatches untracked {candidate}"
                     )

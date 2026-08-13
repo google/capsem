@@ -9,6 +9,132 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `duplicate-content` filesystem rule no longer reports Tauri's generated
+  schemas, which are byte-identical on Linux and neither ours to produce nor to
+  deduplicate. Every fast-lane run reported one filesystem fault, and a fault
+  count that is never zero is a fault count nobody reads. Exempted by an exact,
+  config-owned list of trees rather than a blanket pass for generated files --
+  the rule earns its place in build output too, where it caught a package lane
+  copying a hardlinked alias tree into distinct inodes. The exemption matches
+  path components, so `crates/capsem-app/gen` cannot also silence
+  `crates/capsem-app/generated-elsewhere`.
+
+- `filesystem.copy_tree` never dereferences a symlink. It took a `symlinks=`
+  argument defaulting to false that the only informed caller overrode, to stop
+  `assets/current` being materialized into a multi-gigabyte copy. A default
+  every knowledgeable caller has to correct is a trap for the next one, so
+  there is no argument now.
+
+- The gate runs from a linked worktree. Its private copy now clones the
+  repository with `git clone --local --no-checkout` instead of carrying `.git`
+  as a path, which only worked when `.git` was a directory: in a worktree it is
+  a file holding an absolute `gitdir:` pointer, so the copy stayed attached to
+  the original's HEAD and the case was refused outright. That made the
+  isolation machinery unusable from a worktree, which is how an agent gets an
+  isolated tree in the first place -- an agent could not verify its own work
+  without running in the shared checkout.
+
+  The clone costs about 200ms against a 108 MB `.git` and is faster than the
+  `cp -R` it replaces, because `--local` hardlinks the object store. No
+  `alternates` file, so a `gc` in the original cannot prune bytes out from
+  under a running gate, and the copy owns its HEAD and refs -- the property the
+  refusal was protecting. Normal checkouts and worktrees now take one path with
+  no special case, and `.git` left `[prefix].carried` entirely.
+
+- The KVM CPUID ioctl buffers derive their allocation alignment from the types
+  they are reinterpreted as, instead of a hardcoded `8`. The constant was
+  correct only by coincidence -- `KvmCpuidEntry2` is all `u32` -- and a field
+  with a wider alignment would have left every entry the kernel writes back
+  undefined to read, with nothing failing, because allocators generally return
+  more alignment than asked for. A compile-time assertion now holds the header
+  offset that keeps the entry array aligned, and the `kvm_run` mmap base is
+  asserted page-aligned where it is created rather than assumed at each of the
+  six accessors that depend on it.
+
+### Changed
+
+- The CI branch-protection gate and the rootfs dependency setup left the two
+  places they were unreadable from. `ci.yaml:pr-gate` -- the single required
+  status deciding whether a PR can merge -- became
+  `scripts/require-ci-jobs.sh`, and `test_workflow_enforcement.py` now follows
+  a dispatch into `scripts/` so it still analyses the shell that decides. Two
+  holes surfaced while proving that: a dispatch line mentions no job result, so
+  `bash gate.sh || true` was not recognised as deciding the gate; and a result
+  compared only against `skipped` on the web-only branch satisfied "every
+  declared result is tested" while its failure blocked nothing. Both are now
+  guarded, and the oversized-body inventory is down from 18 to 14.
+
+- `[[lint_surfaces]]` gained `checked_by`, so the inventory covers checks that
+  cannot run early instead of only lints that can. The Rust surface previously
+  recorded `fast.clippy` alone -- it mapped which files were *linted* and said
+  nothing about which were *tested*, while the two runners were proven by a
+  separate hardcoded list in a guard. One map now, read by both guards.
+
+- `CLAUDE.md` and `GEMINI.md` are symlinks to `AGENTS.md`, which is now the one
+  agent contract. They were three files whose section lists had drifted almost
+  disjoint: Claude was never told about the bounded-diagnostics wrapper, the
+  serialized release contract or the logger DB boundary, and Codex was never
+  told the code style, the invariants, or that Rust tests live in a sibling
+  `tests.rs`. Nobody chose that -- no reader ever saw two of the files at once.
+  `tests/citadel/test_agent_contract_is_one_file.py` refuses a copy, in the
+  working tree and in the Git index, since a blob-mode file arrives as a
+  divergent copy in every fresh clone.
+
+  Two rules were softened to match practice while merging. The changelog rule
+  now applies to user-visible changes rather than every commit, which 39 of the
+  last 100 did not do; and the conventional-subject list names the ten types
+  actually in use rather than four. A rule nobody follows teaches that the
+  neighbouring rules are advisory, and the neighbours here are the DB boundary
+  and the release contract.
+
+- The docs-site smoke check moved out of `docs.yaml` into
+  `scripts/smoke-docs-site.sh`. Twenty-three executable lines of YAML holding a
+  retry loop and a thirteen-term conjunction, reachable by no linter and
+  callable by nothing; ShellCheck now reads it like any other script. The
+  conjunction is split into two named checks, because after a deploy the useful
+  question is which condition failed rather than that one of thirteen did.
+
+- `clippy::cast_ptr_alignment` is denied workspace-wide, after auditing its
+  eleven sites rather than before. All eleven are in the KVM ioctl path and
+  reduce to two patterns, both now resting on a checked invariant instead of an
+  assumption; each carries the finding at the call site. Enabling it earlier
+  would have meant eleven un-reviewed `allow`s, and an un-reviewed allow reads
+  as reviewed -- strictly worse than the lint being off.
+
+- Eight `clippy::pedantic` lints are denied workspace-wide, chosen from a
+  measurement rather than a group: the full group is 7,448 warnings across 74
+  lints here, over 2,600 of them doc and must-use style, and adopting it
+  wholesale would be a rewrite mandate. The eight describe ways this code can be
+  *wrong* rather than untidy, and enabling them found three real defects --
+  `Writer::write_checked` documented as yielding for backpressure when its body
+  is wholly synchronous and cannot, a `BTreeMap<_, ()>` used as a set in the
+  profile contract, and an unchecked `Duration` subtraction that panics on a
+  backwards clock.
+
+  `unused_async`, `cast_ptr_alignment` and `large_stack_arrays` were each
+  enabled, measured and backed out with the reason recorded in `Cargo.toml`.
+  The pointer and stack ones are the most valuable of the three, which is
+  exactly why they are not being cleared with twenty un-reviewed `allow`s: every
+  alignment site is a KVM ioctl buffer whose guarantee needs auditing, and an
+  un-reviewed allow reads as reviewed.
+
+- Rust tests run under Nextest, and doctests now run at all. The `ci` profile in
+  `.config/nextest.toml` -- `slow-timeout` of 120s, three retries -- was written
+  and never selected, so a hung test hung the whole gate until the
+  7200-second lock timeout; runs have died past the two-hour mark. Measured at
+  99s against 115s for the plain runner on a warm workspace, with line coverage
+  65.11% against 65.13%; the 23-line difference is process-per-test isolation
+  rather than a selector mismatch, and both clear the 63% floor by two points.
+
+  `cargo test --doc` lands in the same change because it has to: `rustinventory`
+  models doctests as a separate target set precisely because "Nextest never owns
+  doctests", so swapping the runner alone would have silently stopped running
+  them -- a faster gate proving less, with nothing reporting the difference.
+  `tests/citadel/test_rust_check_coverage.py` now holds the three-way division
+  between clippy, Nextest and `--doc` so a future gap has to be deliberate.
+
+### Fixed
+
 - Exporting a run out of its private checkout no longer destroys an unrelated
   run's log. `target/gate-runs/latest` is a symlink to the newest run, on the
   host and inside the prefix alike, and

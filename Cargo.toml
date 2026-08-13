@@ -90,6 +90,43 @@ doc_overindented_list_items = "allow"
 dbg_macro = "deny"
 todo = "deny"
 
+# Chosen from a measurement, not from a group. `clippy::pedantic` is 7,448
+# warnings across 74 lints here, and over 2,600 of those are doc and must-use
+# style; adopting it wholesale would be a rewrite mandate that the first person
+# it blocked would delete. These are the pedantic lints describing a way this
+# codebase can be *wrong* rather than untidy, each with small enough fallout to
+# fix in the change that enabled it. The tier below -- `cast_possible_truncation`
+# and its three siblings, 1,382 sites between them -- is the same argument at a
+# scale that needs its own pass.
+#
+# `unused_async` was tried and backed out. It is a real hazard class here, but
+# the first site it flags is `Writer::write_checked`, and de-async-ing that
+# cascades straight up into `Db::write` -- the logger's public boundary, which
+# AGENTS.md says nothing may bypass -- and then into every awaiting caller in
+# service, process and core. The lint is fighting a deliberately uniform async
+# facade rather than finding a bug. It did find one thing worth keeping: two
+# docstrings promising backpressure that no synchronous body could deliver.
+#
+# `cast_ptr_alignment` was held back until its eleven sites had been audited,
+# because enabling it any earlier would have meant eleven un-reviewed `allow`s
+# -- worse than the lint being off, since an un-reviewed allow reads as
+# reviewed. All eleven are in the KVM ioctl path and fall into two patterns: a
+# CPUID buffer whose `Layout` alignment is now derived from the types it is
+# cast to rather than hardcoded, and the `kvm_run` mmap, which POSIX returns
+# page-aligned and whose base is now asserted at creation. Both carry the
+# finding at the call site.
+#
+# `large_stack_arrays` (9 sites) is still held back on the same terms.
+unchecked_time_subtraction = "deny"   # panics on a backwards clock
+cast_ptr_alignment = "deny"           # undefined behaviour, not a style note
+ptr_cast_constness = "deny"
+checked_conversions = "deny"
+stable_sort_primitive = "deny"
+zero_sized_map_values = "deny"
+format_collect = "deny"
+option_option = "deny"
+range_plus_one = "deny"
+
 [workspace.dependencies]
 anyhow = "1"
 thiserror = "2"

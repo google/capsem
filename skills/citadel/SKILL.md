@@ -42,6 +42,9 @@ the suite has one collector and its failures have one owner.
 | `test_guard_scheduling.py` | the Citadel itself runs before the expensive work |
 | `test_run_digest_echo.py` | the cross-run digest reaches whoever works next |
 | `test_tree_copy_boundary.py` | only `filesystem` copies a tree, and never through a link |
+| `test_rust_check_coverage.py` | clippy, nextest and doctests between them cover all Rust |
+| `test_agent_contract_is_one_file.py` | every agent is held to the same contract |
+| `test_workflow_script_checkout.py` | a workflow checks out its source before running a checked-in script |
 
 ## Adding a guard
 
@@ -66,9 +69,21 @@ asserts nothing until it has been seen failing.
 
 ## Adding a surface
 
-`[[lint_surfaces]]` declares a kind of first-party file and the fast-phase
-steps that must check it. `test_lint_coverage.py` proves the surface has files,
-that its steps exist in the plan, and that they run early.
+`[[lint_surfaces]]` is the map: one entry per kind of first-party file, naming
+every step that must check it. It is the answer to "what checks what", so read
+it before grepping for a checker.
+
+Two fields, because two different promises. `enforced_by` must exist *and*
+answer in the fast phase -- that is for checks needing no build, where running
+late means reporting after the expensive work they should have preceded.
+`checked_by` must exist in any phase, for checks that legitimately cannot be
+early: the Rust test runners need a compiled workspace, so they sit beside the
+coverage run rather than beside Ruff. Late is acceptable; missing is not, and
+before `checked_by` existed the inventory recorded which surfaces were *linted*
+while saying nothing about which were *tested*.
+
+`test_lint_coverage.py` proves the surface has files, that every named step
+exists in the plan, and that the `enforced_by` ones run early.
 
 Shell went unchecked across 6,821 lines while four `# shellcheck disable=`
 directives sat in the tree, written for a linter no lane ran. Markdown was

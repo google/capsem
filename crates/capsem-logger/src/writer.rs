@@ -390,16 +390,24 @@ impl DbWriter {
         self.tx.lock().unwrap().clone()
     }
 
-    /// Non-blocking send from async context. Yields if channel full (backpressure).
+    /// Non-blocking send. Reports a full or closed queue rather than waiting:
+    /// the "yields if channel full (backpressure)" this used to claim was
+    /// never possible, since nothing below it awaits.
     pub async fn write(&self, op: WriteOp) {
         if let Err(error) = self.write_checked(op).await {
             warn!(error = %error, "db writer dropped write op");
         }
     }
 
-    /// Non-blocking send from async context. Yields if channel full
-    /// (backpressure) and reports closed/missing writer channels instead of
-    /// silently dropping the operation.
+    /// Non-blocking send that reports closed or missing writer channels
+    /// instead of silently dropping the operation.
+    ///
+    /// The docstring used to promise it "yields if channel full
+    /// (backpressure)". It cannot: the body is entirely synchronous, so there
+    /// is no await point at which to yield, and a full queue is reported
+    /// rather than waited on. `blocking_write` is the call that waits for
+    /// capacity. The signature stays `async` because `Db::write` above it is
+    /// the logger's public boundary and every caller awaits it.
     pub async fn write_checked(&self, op: WriteOp) -> Result<(), String> {
         let span = tracing::debug_span!(
             target: "capsem.db",

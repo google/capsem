@@ -45,7 +45,7 @@ def _copy_inputs(source: Path, target: Path, config: GateConfig) -> None:
             continue
         destination.parent.mkdir(parents=True, exist_ok=True)
         if origin.is_dir():
-            copy_tree(origin, destination, symlinks=True)
+            copy_tree(origin, destination)
         else:
             shutil.copy2(origin, destination, follow_symlinks=False)
 

@@ -202,7 +202,7 @@ fn kvm_vsock_port_block_stays_in_valid_port_range() {
         VSOCK_PORT_BLOCK_BASE_OFFSET + (VSOCK_PORT_BLOCK_COUNT - 1) * VSOCK_PORT_BLOCK_SIZE;
     let physical = physical_vsock_port(5007, max_offset).unwrap();
 
-    assert!(physical <= u16::MAX as u32);
+    assert!(u16::try_from(physical).is_ok());
 }
 
 #[test]

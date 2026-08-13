@@ -15,7 +15,7 @@ holds the signing keys; `.git` is not a file at all. Both are declared in
 `[prefix] carried`, because the failure mode is a package lane that loses its
 key during a release rather than here.
 
-And a linked worktree cannot be copied at all -- see `_require_own_repository`.
+The repository itself is cloned rather than copied -- see `_materialize_repository`.
 
 Copying takes time, so the copy is checked rather than assumed: `digest`
 measures both trees the way `source.record` does, and a copy that does not
@@ -155,28 +155,55 @@ def _require_faithful(source: Path, target: Path, config: GateConfig) -> None:
         )
 
 
-def _require_own_repository(source: Path) -> None:
-    """Refuse a linked worktree, whose `.git` is a pointer rather than a repo.
+def _materialize_repository(source: Path, target: Path) -> None:
+    """Give the copy a repository of its own, rather than a copy of one.
 
-    In a normal clone `.git` is a directory and copying it yields a private
-    repository. In a linked worktree it is a *file* holding an absolute
-    `gitdir:` path into the original checkout -- so the copy stays attached to
-    the live metadata, and a commit over there changes the supposedly private
-    prefix's `HEAD`. Isolation degrades back to detecting the change at
-    `source.verify`, after the gate has already run, which is the failure this
-    module exists to end.
+    `.git` used to be carried like any other path. In a normal clone that
+    works, because `.git` is a directory. In a linked worktree it is a *file*
+    holding an absolute `gitdir:` path back into the original checkout, so the
+    copy stayed attached to live metadata and a commit over there moved the
+    supposedly private prefix's `HEAD`. That was refused outright, which made
+    the gate unrunnable from a worktree -- and worktrees are how an agent gets
+    an isolated tree in the first place, so the isolation machinery was
+    refusing to run for exactly the people it was built for.
 
-    Refused rather than repaired. Making the copy self-contained means
-    reproducing the common object store, and a loud refusal naming the main
-    checkout is worth more than a private tree that quietly is not one.
+    Cloning answers both cases with one mechanism and no special case.
+    `--local` hardlinks the object store, so this costs about 200ms and
+    essentially no disk against a 108 MB `.git`, and it is *faster* than the
+    `cp -R` it replaces. There is no `alternates` file: the objects are
+    hardlinks, so the original may be garbage-collected without pulling bytes
+    out from under a running gate. And the clone has its own `HEAD` and refs,
+    which is the property the refusal was protecting -- a commit in the source
+    cannot move it.
+
+    `--no-checkout` because the working tree arrives separately and writing it
+    twice would be the expensive half. That leaves the index empty, so
+    `read-tree` fills it from `HEAD`: `git ls-files` and `git check-ignore`
+    read the index, and `faults`, `auditfs` and `sourcestate` all depend on
+    them inside the prefix.
+
+    A source with no repository at all is left alone. Receiving source as a
+    tarball is a real way to get it, and `head_revision` already answers empty
+    for that rather than failing.
     """
-    marker = source / ".git"
-    if marker.is_file():
-        raise GateError(
-            f"{source} is a linked worktree: its .git is a pointer into another "
-            "repository, so a private copy of it would still follow that "
-            "repository's HEAD. Run the gate from the main checkout."
-        )
+    if not (source / ".git").exists():
+        return
+
+    # Cloned beside the prefix and moved in, because `git clone` refuses a
+    # non-empty directory and the working tree is already there. Same
+    # filesystem, so the move is a rename.
+    scratch = target.parent / f"{target.name}.gitclone"
+    remove(scratch)
+    remove(target / ".git")
+    subprocess.run(
+        ["git", "clone", "--quiet", "--local", "--no-checkout", str(source), str(scratch)],
+        check=True,
+    )
+    (scratch / ".git").rename(target / ".git")
+    remove(scratch)
+    # Without this the index is empty, every tracked file reads as untracked,
+    # and `git ls-files` names nothing.
+    subprocess.run(["git", "-C", str(target), "read-tree", "HEAD"], check=True)
 
 
 def _copy_carried(source: Path, target: Path, config: GateConfig) -> None:
@@ -214,10 +241,10 @@ def populate(source: Path, target: Path, config: GateConfig) -> None:
     see. Nothing else -- `target/` is 164 GB logical and is what makes the
     difference between a 2.2s copy and an 84s one.
     """
-    _require_own_repository(source)
     target.mkdir(parents=True, exist_ok=True)
     _copy_files(source, target, _subject(source))
     _copy_carried(source, target, config)
+    _materialize_repository(source, target)
     _require_faithful(source, target, config)
 
 
@@ -242,10 +269,13 @@ def refresh(source: Path, target: Path, config: GateConfig) -> None:
     paths are refreshed too, because `.git` moves whenever the operator commits
     between attempts.
     """
-    _require_own_repository(source)
     wanted = _subject(source)
     _copy_files(source, target, wanted)
     _copy_carried(source, target, config)
+    # Re-cloned rather than updated: HEAD moves whenever the operator commits
+    # between attempts, and 200ms of hardlinks is cheaper than reasoning about
+    # which refs a resumed prefix is now behind on.
+    _materialize_repository(source, target)
 
     # Only what a previous copy of the *subject* put here and the source no
     # longer names, asked with the command that defines the subject -- so an

@@ -895,9 +895,11 @@ fn parse_boot_timing_rejects_huge_duration() {
 fn parse_boot_timing_caps_at_32_entries() {
     let dir = std::env::temp_dir();
     let path = dir.join("capsem-test-boot-timing-cap");
-    let lines: String = (0..50)
-        .map(|i| format!("{{\"name\":\"stage{i}\",\"duration_ms\":{i}}}\n"))
-        .collect();
+    let mut lines = String::new();
+    for i in 0..50 {
+        use std::fmt::Write as _;
+        writeln!(lines, "{{\"name\":\"stage{i}\",\"duration_ms\":{i}}}").unwrap();
+    }
     std::fs::write(&path, &lines).unwrap();
     let result = parse_boot_timing(path.to_str().unwrap());
     assert_eq!(result.len(), 32);

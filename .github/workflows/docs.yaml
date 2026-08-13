@@ -43,28 +43,4 @@ jobs:
         env:
           SITE_URL: https://docs.capsem.org
           OLD_ROUTE_URL: https://docs.capsem.org/getting-started/
-        run: |
-          for attempt in 1 2 3 4 5 6; do
-            echo "Checking $SITE_URL (attempt $attempt)..."
-            if curl -fsSLI "$SITE_URL/" -o /tmp/docs-headers.txt \
-              && grep -qi '^content-type: text/html' /tmp/docs-headers.txt \
-              && curl -fsSL "$SITE_URL/" -o /tmp/docs-index.html \
-              && grep -qi '<main[ >]' /tmp/docs-index.html \
-              && grep -q 'Capsem 0.6 documentation' /tmp/docs-index.html \
-              && grep -q 'pre-release qualification' /tmp/docs-index.html \
-              && curl -fsSL -D /tmp/docs-old-headers.txt "$OLD_ROUTE_URL" -o /tmp/docs-old-route.html \
-              && grep -qi '^cache-control:.*no-store' /tmp/docs-old-headers.txt \
-              && grep -q 'Documentation route unavailable' /tmp/docs-old-route.html \
-              && grep -q 'pre-release qualification' /tmp/docs-old-route.html \
-              && ! grep -qi 'Getting Started' /tmp/docs-old-route.html \
-              && ! grep -qi 'install.sh' /tmp/docs-old-route.html \
-              && ! grep -qi 'starlight' /tmp/docs-old-route.html
-            then
-              echo "docs.capsem.org smoke passed."
-              exit 0
-            fi
-            sleep 10
-          done
-
-          echo "docs.capsem.org smoke failed after deploy." >&2
-          exit 1
+        run: bash scripts/smoke-docs-site.sh

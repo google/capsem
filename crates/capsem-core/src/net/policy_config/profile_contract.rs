@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -2041,7 +2041,7 @@ fn overlay_release_manifest_assets(
                         "installed manifest profile {profile_id} architecture {arch} is missing images"
                     )
                 })?;
-            let mut overlaid = BTreeMap::new();
+            let mut overlaid = BTreeSet::new();
             for image in images {
                 if image.get("status").and_then(serde_json::Value::as_str) == Some("revoked") {
                     continue;
@@ -2105,10 +2105,10 @@ fn overlay_release_manifest_assets(
                 };
                 descriptor.hash = Some(format!("blake3:{blake3}"));
                 descriptor.size = Some(size);
-                overlaid.insert(kind, ());
+                overlaid.insert(kind);
             }
             for required in ["kernel", "initrd", "rootfs"] {
-                if !overlaid.contains_key(required) {
+                if !overlaid.contains(required) {
                     return Err(format!(
                         "installed manifest profile {profile_id} architecture {arch} is missing {required} image"
                     ));

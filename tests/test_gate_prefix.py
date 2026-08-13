@@ -771,27 +771,64 @@ def test_reclaim_does_not_report_success_on_a_tree_it_left_behind(
         prefix.reclaim(config, stubborn)
 
 
-def test_a_linked_worktree_is_refused_rather_than_half_isolated(tmp_path: Path) -> None:
-    """`.git` is a file in a worktree, and copying it copies a pointer.
+def test_a_linked_worktree_gets_a_repository_of_its_own(tmp_path: Path) -> None:
+    """A worktree is copyable, and the copy does not follow the original.
 
-    The copy then follows the *original* repository: a commit over there moves
-    the supposedly private prefix's `HEAD`, and the isolation silently becomes
-    the detection it was built to replace. This repository really uses linked
-    worktrees, under `.claude/worktrees/`, so the case is reachable.
+    This used to be refused. `.git` in a linked worktree is a *file* holding an
+    absolute `gitdir:` path, so carrying it like any other path left the prefix
+    attached to live metadata -- a commit in the original moved the supposedly
+    private HEAD. The refusal was correct about the hazard and wrong about the
+    remedy: it made the gate unrunnable from a worktree, and worktrees are how
+    an agent gets an isolated tree, so the isolation machinery refused to run
+    for precisely the people it was built for.
 
-    Refused rather than repaired -- making the copy self-contained means
-    reproducing the common object store, and a loud message naming the main
-    checkout beats a private tree that quietly is not one.
+    Driven through a real `git worktree`, not a hand-written `.git` file. The
+    previous version of this test wrote a pointer at a path that did not exist,
+    which every git command rejected for the wrong reason.
     """
     from capsem.gate import snapshot
-    from capsem.gate.errors import GateError
 
-    worktree = tmp_path / "linked"
-    worktree.mkdir()
-    (worktree / ".git").write_text(f"gitdir: {tmp_path}/main/.git/worktrees/linked\n")
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _git(origin, "init", "-q", "-b", "main")
+    _git(origin, "config", "user.email", "t@example.com")
+    _git(origin, "config", "user.name", "t")
+    (origin / "tracked.txt").write_text("one\n")
+    _git(origin, "add", "tracked.txt")
+    _git(origin, "commit", "-qm", "first")
 
-    with pytest.raises(GateError, match="linked worktree"):
-        snapshot.populate(worktree, tmp_path / "prefix", _config())
+    linked = tmp_path / "linked"
+    _git(origin, "worktree", "add", "-q", "--detach", str(linked))
+    assert (linked / ".git").is_file(), "the fixture is not a linked worktree"
+    before = _git(linked, "rev-parse", "HEAD")
+
+    prefix = tmp_path / "prefix"
+    snapshot.populate(linked, prefix, _config())
+
+    assert (prefix / ".git").is_dir(), "the prefix did not get a repository of its own"
+    assert _git(prefix, "rev-parse", "HEAD") == before
+    assert _git(prefix, "ls-files") == "tracked.txt", "the index was not populated from HEAD"
+
+    # Self-contained: hardlinked objects, no `alternates` pointing back. A
+    # borrowed object store would let a `gc` in the original prune bytes out
+    # from under a running gate.
+    assert not (prefix / ".git" / "objects" / "info" / "alternates").exists()
+
+    # The property the old refusal was protecting: the original moves on, and
+    # the copy does not notice.
+    (origin / "tracked.txt").write_text("two\n")
+    _git(origin, "commit", "-qam", "second")
+    assert _git(prefix, "rev-parse", "HEAD") == before, (
+        "a commit in the original moved the prefix's HEAD; the copy is not private"
+    )
+
+
+def _git(cwd: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()
 
 
 def test_exporting_a_run_cannot_write_through_a_symlink(tmp_path: Path) -> None:
@@ -839,3 +876,100 @@ def test_exporting_a_run_cannot_write_through_a_symlink(tmp_path: Path) -> None:
     # Replaced as a link, not materialized into a directory of copied files.
     assert (host / runs / "latest").is_symlink()
     assert os.readlink(host / runs / "latest") == "run-new"
+
+
+def _merge_case(root: Path, name: str) -> tuple[Path, Path]:
+    source, target = root / "src", root / "dst"
+    source.mkdir(parents=True)
+    if name == "target-is-symlink":
+        # The root is the level the first fix missed: clearing links only
+        # during the descent left the entry point writing through one.
+        (source / "f.txt").write_text("new")
+        victim = root / "real"
+        victim.mkdir()
+        (victim / "f.txt").write_text("victim")
+        target.symlink_to("real")
+    elif name == "link-over-real-dir":
+        (source / "e").symlink_to("elsewhere")
+        target.mkdir()
+        (target / "e").mkdir()
+    elif name == "link-over-real-file":
+        (source / "e").symlink_to("elsewhere")
+        target.mkdir()
+        (target / "e").write_text("displaced")
+    elif name == "dir-over-link":
+        (source / "d").mkdir()
+        (source / "d" / "f").write_text("new")
+        target.mkdir()
+        victim = target / "real"
+        victim.mkdir()
+        (victim / "f").write_text("victim")
+        (target / "d").symlink_to("real")
+    return source, target
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["target-is-symlink", "link-over-real-dir", "link-over-real-file", "dir-over-link"],
+)
+def test_merging_a_tree_never_writes_through_a_link(case: str, tmp_path: Path) -> None:
+    """Every place a symlink can sit, on either side, at any depth.
+
+    Written as a matrix because the first fix passed the case it was written
+    for and failed three others: the root was never cleared, so
+    `merge_tree(origin, target)` with a symlinked `target` reproduced the exact
+    defect; and `os.symlink` refuses *any* existing name, so a source link
+    landing on a real file or directory raised instead of merging.
+    """
+    from capsem.gate.filesystem import merge_tree
+
+    source, target = _merge_case(tmp_path, case)
+    merge_tree(source, target)
+
+    # Nothing reachable only through a link may have been rewritten.
+    survivors = [p for p in tmp_path.rglob("*") if p.is_file() and p.read_text() == "victim"]
+    if case in {"target-is-symlink", "dir-over-link"}:
+        assert survivors, f"{case}: the merge wrote through a link and destroyed the target"
+    if case in {"link-over-real-dir", "link-over-real-file"}:
+        assert (target / "e").is_symlink(), f"{case}: the source link did not survive as a link"
+
+
+def test_merging_keeps_what_the_target_already_had(tmp_path: Path) -> None:
+    """Merging is not replacing -- the sibling that arrived first stays."""
+    from capsem.gate.filesystem import merge_tree
+
+    source, target = tmp_path / "src", tmp_path / "dst"
+    source.mkdir()
+    target.mkdir()
+    (source / "arriving").write_text("second")
+    (target / "already-here").write_text("first")
+
+    merge_tree(source, target)
+    assert sorted(p.name for p in target.iterdir()) == ["already-here", "arriving"]
+
+
+def test_copying_a_tree_keeps_a_symlink_a_symlink(tmp_path: Path) -> None:
+    """`copy_tree` must not dereference, for the same reason `merge_tree` must not.
+
+    The write-through defect cannot occur here -- the target is removed first,
+    so nothing is left to write through. Dereferencing the *source* is the
+    separate hazard: `assets/current` is a relative selector into a
+    multi-gigabyte architecture, and materializing it copies the whole tree for
+    no new bytes.
+
+    This used to be a `symlinks=` argument defaulting to False that the only
+    informed caller overrode, which is a trap set for the next caller.
+    """
+    from capsem.gate.filesystem import copy_tree
+
+    source = tmp_path / "src"
+    (source / "arch").mkdir(parents=True)
+    (source / "arch" / "big.bin").write_bytes(b"payload")
+    (source / "current").symlink_to("arch")
+
+    target = tmp_path / "dst"
+    copy_tree(source, target)
+
+    assert (target / "current").is_symlink(), "copy_tree dereferenced the selector"
+    assert os.readlink(target / "current") == "arch"
+    assert (target / "arch" / "big.bin").read_bytes() == b"payload"

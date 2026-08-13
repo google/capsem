@@ -24,6 +24,9 @@ class ModulesConfig(Strict):
     contract_glob: str
     rust_coverage: tuple[str, ...]
     rust_coverage_floor: str
+    rust_test_profile_variable: str
+    rust_test_profile: str
+    rust_doctests: tuple[str, ...]
     guest_binary_tests: tuple[str, ...]
     release_input_dir: str
     release_profile: str

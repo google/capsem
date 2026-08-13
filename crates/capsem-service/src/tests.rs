@@ -10732,6 +10732,7 @@ struct SettingsEnvGuard {
 struct EnvVarGuard {
     key: &'static str,
     previous: Option<std::ffi::OsString>,
+    #[allow(clippy::option_option, reason = "outer is captured-ness, inner is the value")]
     previous_test_profile_dir_override: Option<Option<PathBuf>>,
 }
 

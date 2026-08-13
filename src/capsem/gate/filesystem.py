@@ -76,22 +76,22 @@ def make_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def copy_tree(source: Path, target: Path, *, symlinks: bool = False) -> None:
+def copy_tree(source: Path, target: Path) -> None:
     """Copy a directory, replacing whatever was at the target.
 
-    The write-through defect that `merge_tree` documents cannot happen here --
-    the target is removed first, so there is no destination symlink left to
-    write through. What is still a choice is the *source*: `symlinks=True`
-    keeps a link as a link, which is what an exported asset tree wants, because
-    dereferencing `assets/current` materializes a multi-gigabyte architecture
-    for no new bytes.
+    Never follows a symlink, the same rule `merge_tree` documents at length.
+    The write-through defect cannot happen here -- the target is removed first,
+    so there is no destination link left to write through -- but *dereferencing
+    the source* is its own hazard: it silently turns a link into a full copy.
+    `assets/current` is a relative selector into a multi-gigabyte architecture,
+    and materializing it copies the whole thing for no new bytes.
 
-    The default dereferences, which is `shutil`'s and was every caller's
-    behaviour before this argument existed. It is kept only so adding the
-    argument changed nothing; prefer `symlinks=True` in new callers.
+    This was a `symlinks=` argument defaulting to `False`, which every informed
+    caller overrode. A default that the only knowledgeable caller has to
+    correct is a trap set for the next one, so there is no argument now.
     """
     remove(target)
-    shutil.copytree(source, target, symlinks=symlinks, copy_function=_interruptible_copy)
+    shutil.copytree(source, target, symlinks=True, copy_function=_interruptible_copy)
 
 
 def merge_tree(source: Path, target: Path) -> None:
@@ -130,10 +130,14 @@ def merge_tree(source: Path, target: Path) -> None:
     target.mkdir(parents=True, exist_ok=True)
     for entry in sorted(source.iterdir()):
         destination = target / entry.name
-        # Unlinked before anything is written under this name. The whole defect
-        # is that writing "into" a symlink writes somewhere else entirely.
-        if destination.is_symlink():
-            destination.unlink()
+        # Source wins the name, so whatever holds it is cleared first. Two
+        # reasons, and clearing only for the first left the second raising: a
+        # destination symlink must never be written *through*, and `os.symlink`
+        # refuses any existing name -- a plain file or a real directory
+        # included, which used to merge and would otherwise become a hard
+        # failure on a path that worked before.
+        if destination.is_symlink() or (entry.is_symlink() and destination.exists()):
+            remove(destination)
         if entry.is_symlink():
             os.symlink(os.readlink(entry), destination)
         elif entry.is_dir():
