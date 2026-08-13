@@ -19,7 +19,8 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
-from capsem.gate.testmodules import FastModule, StaticModule
+from capsem.gate.staticmodule import StaticModule
+from capsem.gate.testmodules import FastModule
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 

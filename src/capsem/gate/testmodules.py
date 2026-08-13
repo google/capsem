@@ -142,13 +142,24 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # from an earlier build and on a clean one the frontend check stopped at
     # `Cannot find module './mock-settings.generated'`.
     settings = phase.add(audits.generated_settings(config), after=(python, rust))
+    # Only the surface that imports the generated mock waits for it.
+    #
+    # All four used to, and `runs schedule` put the cost on the board: the fast
+    # lane's critical path was toolchain -> generated-settings -> release-site,
+    # 3m24s, of which the middle 1m11s was a dependency `release-site` does not
+    # have. `frontend/src/lib/mock-settings.ts` is the only file in any surface
+    # that imports `mock-settings.generated`; docs, site and release-site never
+    # touch it. The edge was uniform because it was written once for a list,
+    # not because four surfaces needed it.
+    consumer = config.websurfaces.blocks_clippy
     surfaces = [
-        phase.add(surface, after=(syntax, node, settings))
+        phase.add(
+            surface,
+            after=(syntax, node, settings) if surface.label.endswith(consumer) else (syntax, node),
+        )
         for surface in audits.web_surfaces(config)
     ]
     # One surface is Clippy's prerequisite; the rest are leaves of their own.
-    # `settings` needs no entry -- every surface waits on it, so it is already
-    # an ancestor of anything that waits on a surface.
     blocking = audits.blocking_surface(config, surfaces)
     clippy = phase.add(audits.clippy(config), after=(blocking, rust, ort))
     return (

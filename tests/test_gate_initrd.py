@@ -14,7 +14,8 @@ from helpers.gate import RecordingJournal, RecordingRunner
 from capsem.gate import config as gate_config
 from capsem.gate.context import Context
 from capsem.gate.errors import GateError
-from capsem.gate.initrd import _Repack, repack_step
+from capsem.gate.initrd import repack_step
+from capsem.gate.initrdactions import _Repack
 from capsem.gate.proc import Runner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
