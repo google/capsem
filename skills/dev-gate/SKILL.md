@@ -145,6 +145,11 @@ are `threading.Lock`s: they order steps inside one plan and coordinate nothing
 between two `capsem-gate` processes. `just _sign` in one terminal could replace
 the codesigned binaries a qualification in another was executing.
 
+The machine `flock` and holder record are config-owned user-home paths, never
+checkout-relative paths. Every linked worktree, clone, and detached full-SHA
+prefix shares the service home, Docker/Colima daemon, ports, and signing state;
+giving each tree a lock inode is equivalent to having no machine lock.
+
 ## Step or resource?
 
 The question is *when it must happen*.

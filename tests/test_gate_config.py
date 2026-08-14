@@ -290,10 +290,22 @@ def test_the_lockfile_lives_outside_every_tree_the_gate_wipes(
     lock = Path(config.locks.gate.path)
     holder = Path(config.locks.gate.holder_record)
 
+    assert config.locks.gate.path.startswith("~/")
+    assert config.locks.gate.holder_record.startswith("~/")
+
     wiped = [Path(entry) for entry in config.disk.reclaimable]
     for tree in wiped:
         assert tree not in lock.parents, f"{lock} sits inside reclaimable {tree}"
         assert tree not in holder.parents, f"{holder} sits inside reclaimable {tree}"
+
+
+@pytest.mark.parametrize("field", ("path", "holder_record"))
+def test_a_checkout_relative_machine_lock_is_refused(field: str) -> None:
+    policy = CONFIG.locks.gate.model_dump()
+    policy[field] = "target/not-a-machine-lock"
+
+    with pytest.raises(ValidationError, match="user-home-relative"):
+        type(CONFIG.locks.gate).model_validate(policy)
 
 
 def test_the_lock_waits_long_enough_to_outlast_a_gate_run(

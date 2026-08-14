@@ -57,17 +57,18 @@ class ExclusiveLock(Resource, name="gate-lock"):
 
     @classmethod
     def for_gate(cls, config: GateConfig, *, purpose: str) -> ExclusiveLock:
-        """The one gate lock, resolved against the checkout.
+        """The one gate lock, resolved against the user rather than a tree.
 
-        Named once, so two callers cannot take different lockfiles and both
-        believe they are alone.
+        Worktrees and detached qualification prefixes share the machine state
+        this protects. Resolving against either checkout gives each a distinct
+        inode and makes the lock a convincing no-op.
         """
         settings = config.locks.gate
         return cls(
             settings.model_copy(
                 update={
-                    "path": str(config.path(settings.path)),
-                    "holder_record": str(config.path(settings.holder_record)),
+                    "path": str(Path(settings.path).expanduser()),
+                    "holder_record": str(Path(settings.holder_record).expanduser()),
                 }
             ),
             purpose=purpose,

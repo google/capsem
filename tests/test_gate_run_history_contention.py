@@ -89,7 +89,7 @@ def test_the_history_lock_is_not_the_machine_lock(tmp_path: Path) -> None:
 
     settings = gate_config.load(_checkout(tmp_path, keep_runs=5))
 
-    assert runhistory.history_lock_path(settings) != Path(settings.locks.gate.path), (
+    assert runhistory.history_lock_path(settings) != Path(settings.locks.gate.path).expanduser(), (
         "sharing the gate lock would make opening a run log wait for the run "
         "that is already holding it"
     )

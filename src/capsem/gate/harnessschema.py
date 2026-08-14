@@ -145,6 +145,13 @@ class LockConfig(Strict):
     poll_interval_seconds: float
     run_marker: str
 
+    @field_validator("path", "holder_record")
+    @classmethod
+    def _must_be_user_scoped(cls, value: str) -> str:
+        if value.startswith("~/") or PurePosixPath(value).is_absolute():
+            return value
+        raise ValueError("machine lock paths must be absolute or user-home-relative")
+
 
 class LocksConfig(Strict):
     gate: LockConfig

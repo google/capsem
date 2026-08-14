@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The gate's machine lock and holder record are now user-scoped, so linked
+  worktrees, independent clones, and detached qualification prefixes cannot
+  run destructive gates concurrently against shared host state.
+
 - Exact-commit qualification is now durable, reusable evidence instead of work
   repeated by every release request. Complete candidate journals short-circuit
   with their original run ID, path, and digest; failed journals may resume only

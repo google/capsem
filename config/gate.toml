@@ -913,15 +913,15 @@ reason = "pnpm install rewrites a workspace's node_modules in place, and every w
 # ---------------------------------------------------------------------------
 
 [locks.gate]
-# Deliberately outside every tree the gate wipes. The run takes this lock and
-# *then* removes CAPSEM_HOME, so a lockfile living inside it would be deleted
-# while held -- and the next run would take a lock on a fresh inode and start
-# beside the first.
-path = "target/capsem-test-execution.lock"
+# User-scoped, never checkout-scoped: linked worktrees, detached qualification
+# prefixes, and independent clones all mutate the same service home, Docker
+# daemon, ports, and signing state. A target-relative path gives each tree a
+# different inode and lets those gates destroy one another.
+path = "~/.capsem-gate/capsem-test-execution.lock"
 # flock, not a pidfile: the kernel releases it when the holder dies, so there is
 # no stale-lock heuristic to get wrong. The holder writes who it is here so
 # contention can name it.
-holder_record = "target/capsem-test-execution.holder"
+holder_record = "~/.capsem-gate/capsem-test-execution.holder"
 # Report the holder rather than blocking mutely. Someone who left `just test`
 # running in another terminal deserves to be told that, not to watch a cursor.
 report_after_seconds = 2

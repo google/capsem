@@ -201,4 +201,8 @@ def test_the_home_is_reclaimable_and_the_lock_is_not_inside_it() -> None:
     assert any(config.workspace.home.startswith(entry) for entry in config.disk.reclaimable), (
         "the workspace must be reclaimable by `gc`"
     )
-    assert not Path(config.locks.gate.path).is_relative_to(Path(config.workspace.home))
+    assert (
+        not Path(config.locks.gate.path)
+        .expanduser()
+        .is_relative_to(config.path(config.workspace.home))
+    )

@@ -381,7 +381,36 @@ def test_the_gate_lock_is_built_from_the_checked_in_policy() -> None:
     """One lockfile, named once, so two callers cannot take different ones."""
     lock = ExclusiveLock.for_gate(CONFIG, purpose="just test")
 
-    assert lock.path == CONFIG.path(CONFIG.locks.gate.path)
+    assert lock.path == Path(CONFIG.locks.gate.path).expanduser()
+
+
+def test_worktrees_contend_on_one_user_scoped_machine_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkout-relative lock lets two worktrees wipe one shared machine."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    policy = CONFIG.locks.gate.model_copy(
+        update={
+            "report_after_seconds": 0.01,
+            "wait_timeout_seconds": 0.05,
+            "poll_interval_seconds": 0.01,
+        }
+    )
+    locks = CONFIG.locks.model_copy(update={"gate": policy})
+    first_config = CONFIG.model_copy(update={"root": tmp_path / "worktree-a", "locks": locks})
+    second_config = CONFIG.model_copy(update={"root": tmp_path / "worktree-b", "locks": locks})
+    first = ExclusiveLock.for_gate(first_config, purpose="worktree-a")
+    second = ExclusiveLock.for_gate(second_config, purpose="worktree-b")
+
+    assert first.path == second.path
+    assert first.path.is_relative_to(home)
+    first.acquire()
+    try:
+        with pytest.raises(GateError, match="worktree-a"):
+            second.acquire()
+    finally:
+        first.release()
 
 
 def test_contention_is_never_resolved_by_signalling_the_holder() -> None:
@@ -392,9 +421,7 @@ def test_contention_is_never_resolved_by_signalling_the_holder() -> None:
     Checked as code rather than as text, so the prose above may say "killed".
     """
     tree = ast.parse(
-        (PROJECT_ROOT / "src" / "capsem" / "gate" / "locks.py").read_text(
-            encoding="utf-8"
-        )
+        (PROJECT_ROOT / "src" / "capsem" / "gate" / "locks.py").read_text(encoding="utf-8")
     )
     calls = {
         node.func.attr
