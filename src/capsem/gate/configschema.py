@@ -99,6 +99,10 @@ class ReleaseSiteEnvironment(Strict):
     graph: str
     channel_dist: str
 
+    def runtime(self, *, url: object) -> dict[str, str]:
+        """The exact package base used while authoring a release graph."""
+        return {self.url: str(url)}
+
 
 class InstallProofEnvironment(Strict):
     """What the in-container proof is told about what it just installed."""

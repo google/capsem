@@ -318,39 +318,35 @@ def main() -> int:
         stage_manifest_artifacts(stable_manifest, args.assets_dir, dist, base_url)
         # Project nightly from the staged single-architecture stable manifest.
         clone_manifest_for_channel(stable_manifest, nightly_manifest, "nightly")
-        stable_channel_manifest = author_native_candidate(
-            stable_manifest,
+        author_candidate = functools.partial(
+            author_native_candidate,
             runner=run,
             admin=admin,
             assets_dir=args.assets_dir,
             profiles_dir=args.config_root / "profiles",
-            channel="stable",
-            version=stable_version,
             source_commit=source_commit,
-            artifacts=(stable_deb, stable_sbom),
-            release_url=stable_download_base,
             asset_source_base=f"{base_url}/assets/releases/{{asset_version}}",
             dist=dist,
             manifest_version=config.install.manifest_version,
             profile_revision_policy=args.profile_revision_policy,
         )
+        stable_channel_manifest = author_candidate(
+            stable_manifest,
+            channel="stable",
+            version=stable_version,
+            artifacts=(stable_deb, stable_sbom),
+            release_environment=config.environment.release_site.runtime(url=stable_download_base),
+            graph_manifest=dist / "assets" / "stable" / config.install.manifest_name,
+        )
         stable_channel_sha_before_nightly = file_sha256(stable_channel_manifest)
         stable_channel_packages_before_nightly = current_package_versions(stable_channel_manifest)
-        author_native_candidate(
+        author_candidate(
             nightly_manifest,
-            runner=run,
-            admin=admin,
-            assets_dir=args.assets_dir,
-            profiles_dir=args.config_root / "profiles",
             channel="nightly",
             version=nightly_version,
-            source_commit=source_commit,
             artifacts=(nightly_deb, nightly_sbom),
-            release_url=nightly_download_base,
-            asset_source_base=f"{base_url}/assets/releases/{{asset_version}}",
-            dist=dist,
-            manifest_version=config.install.manifest_version,
-            profile_revision_policy=args.profile_revision_policy,
+            release_environment=config.environment.release_site.runtime(url=nightly_download_base),
+            graph_manifest=dist / "assets" / "nightly" / config.install.manifest_name,
         )
         if file_sha256(stable_channel_manifest) != stable_channel_sha_before_nightly:
             raise SystemExit("nightly channel build mutated stable manifest")

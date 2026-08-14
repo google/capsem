@@ -934,7 +934,10 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
     assert 'parser.add_argument("--source-commit", required=True, type=SourceCommit)' in script
     assert "source_commit = args.source_commit" in script
     assert "source_commit_for_checkout" not in script
-    assert "author_native_candidate(" in script
+    assert any(
+        isinstance(node, ast.Name) and node.id == "author_native_candidate"
+        for node in ast.walk(tree)
+    )
     assert '"assets"' in authoring and '"channel"' in authoring and '"build"' in authoring
     assert len(clone_functions) == 1
     assert not any(isinstance(node, ast.Dict) for node in ast.walk(clone_functions[0])), (
@@ -946,7 +949,8 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
     assert 'args.assets_dir / "manifest.json",' in script
     assert 'stable_manifest,\n            "stable",' in script
     assert 'clone_manifest_for_channel(stable_manifest, nightly_manifest, "nightly")' in script
-    assert "CAPSEM_RELEASE_URL" in authoring
+    assert "CAPSEM_RELEASE_URL" not in authoring
+    assert "release_environment" in authoring
     assert "CAPSEM_RELEASE_CHANNELS_URL=" in script
     assert "update --yes --channel nightly" in script
     assert "update --yes --channel stable" in script
@@ -1727,8 +1731,8 @@ def test_local_release_glowup_channel_build_uses_local_release_urls() -> None:
     script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
     authoring = (PROJECT_ROOT / "src/capsem/gate/releaseauthoring.py").read_text()
 
-    assert "CAPSEM_RELEASE_URL" in authoring
-    assert "release_url" in authoring
+    assert "CAPSEM_RELEASE_URL" not in authoring
+    assert "release_environment" in authoring
     assert "--asset-source-base" in authoring
     assert 'f"{base_url}/assets/releases/{{asset_version}}"' in script
     assert "stage_manifest_artifacts(" in script
@@ -2607,7 +2611,10 @@ def test_every_native_glowup_uses_graph_first_binary_authoring() -> None:
 
     assert "author_binary_graph(" in gate
     for source in (linux, macos):
-        assert "author_native_candidate(" in source
+        assert any(
+            isinstance(node, ast.Name) and node.id == "author_native_candidate"
+            for node in ast.walk(ast.parse(source))
+        )
 
 
 def test_dev_service_does_not_replace_installed_assets_with_worktree_symlink() -> None:

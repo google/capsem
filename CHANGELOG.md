@@ -54,7 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commit, then regenerates the channel catalogs from that stamped graph. The
   gate, Linux glow-up, and macOS glow-up share that graph-first primitive, so
   provenance remains fail-closed while every native install proof receives the
-  authoritative graph it is designed to hydrate from.
+  authoritative graph it is designed to hydrate from. Its environment key and
+  graph path are supplied by typed gate configuration rather than re-authored
+  inside the primitive.
 
 - Profile staging permits an unlocked dependency list only in historical
   profile documents that predate source-commit provenance, warning loudly on

@@ -82,9 +82,12 @@ def test_native_candidate_records_only_the_graph_and_rebuilds_catalogs(tmp_path:
         version="9.9.9",
         source_commit=SOURCE_COMMIT,
         artifacts=(tmp_path / "Capsem.deb", tmp_path / "capsem-sbom.spdx.json"),
-        release_url="https://release.invalid/stable",
+        release_environment=CONFIG.environment.release_site.runtime(
+            url="https://release.invalid/stable"
+        ),
         asset_source_base="https://release.invalid/assets/{asset_version}",
         dist=dist,
+        graph_manifest=graph,
         manifest_version="1.0.0",
         profile_revision_policy=ProfileRevisionPolicy.SELECTED_INPUT,
     )
@@ -101,7 +104,8 @@ def test_native_candidate_records_only_the_graph_and_rebuilds_catalogs(tmp_path:
     assert record[record.index("--source-commit") + 1] == str(SOURCE_COMMIT)
     assert second_build[second_build.index("--manifest") + 1] == graph.resolve().as_uri()
     assert all(
-        env == {"CAPSEM_RELEASE_URL": "https://release.invalid/stable"} for _, env in commands
+        env == {CONFIG.environment.release_site.url: "https://release.invalid/stable"}
+        for _, env in commands
     )
 
 

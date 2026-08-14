@@ -45,9 +45,10 @@ def author_native_candidate(
     version: str,
     source_commit: SourceCommit,
     artifacts: tuple[Path, ...],
-    release_url: str,
+    release_environment: dict[str, str],
     asset_source_base: str,
     dist: Path,
+    graph_manifest: Path,
     manifest_version: str,
     profile_revision_policy: ProfileRevisionPolicy | None = None,
 ) -> Path:
@@ -76,8 +77,8 @@ def author_native_candidate(
         ]
         if profile_revision_policy is not None:
             command.extend(("--profile-revision-policy", profile_revision_policy.value))
-        runner(command, env={"CAPSEM_RELEASE_URL": release_url})
-        return dist / "assets" / channel / "manifest.json"
+        runner(command, env=release_environment)
+        return graph_manifest
 
     def record(manifest: Path) -> None:
         command = [
@@ -94,6 +95,6 @@ def author_native_candidate(
         ]
         for artifact in artifacts:
             command.extend(("--artifact", str(artifact)))
-        runner(command, env={"CAPSEM_RELEASE_URL": release_url})
+        runner(command, env=release_environment)
 
     return author_binary_graph(source, build=build, record=record)

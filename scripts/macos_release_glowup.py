@@ -91,7 +91,6 @@ def prepare_candidate_manifest(
     source_commit: SourceCommit,
 ) -> tuple[Path, Path, Path]:
     """Generate the candidate graph from the exact package release pipeline."""
-
     work_dir = ROOT / "target" / "macos-release-glowup"
     if work_dir.exists():
         shutil.rmtree(work_dir)
@@ -119,9 +118,10 @@ def prepare_candidate_manifest(
         version=version,
         source_commit=source_commit,
         artifacts=(package, canonical_sbom),
-        release_url=release_base,
+        release_environment=config.environment.release_site.runtime(url=release_base),
         asset_source_base=f"{GUEST_ASSET_ROOT}/{{asset_version}}",
         dist=dist,
+        graph_manifest=dist / "assets" / channel / config.install.manifest_name,
         manifest_version=config.install.manifest_version,
     )
     localize_candidate_profile_urls(manifest_path)
