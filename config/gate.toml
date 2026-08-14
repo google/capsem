@@ -697,6 +697,27 @@ justification = "Existing repository-wide debt baseline; additions are forbidden
 # module over its ceiling is the 2000-line justfile growing back in Python.
 max_recipe_lines = 5
 max_module_lines = 300
+
+# Steps that drive cargo without claiming `workspace_binaries`.
+#
+# Empty, and it should stay that way. The one entry it ever held was
+# `fast.clippy`, on the theory that a step-level exclusive is coarser than the
+# lock cargo takes on its own target directory, and would park the fast lane's
+# longest job behind two short ones.
+#
+# Measured back to back, same machine, same warm cache: 3m47s without the
+# claim, 3m49s with it. Two seconds, against run-to-run variance of minutes.
+#
+# The theory was wrong in an instructive way. Cargo was already serialising
+# those steps. Clippy's 2m20s of "execution" without the claim was 1m27s of
+# work plus about fifty seconds blocked on that lock, charged to execution
+# because nothing had declared it. Declaring the claim does not add the wait --
+# it moves it out of a number nobody can attribute and into the queueing
+# report, where `runs schedule` names it.
+#
+# So an entry here needs a measurement, not an argument. The argument that
+# sounded right cost four minutes to check and was wrong.
+unclaimed_cargo = []
 # Script scope and its exact historical-debt ratchet are declared below the
 # rest of this table, immediately before the execution section.
 
@@ -2090,29 +2111,6 @@ evidence_dir = "target/test-artifacts"
 # step that arrives without saying what it is, which is the state the migration
 # was for.
 max_undeclared = 0
-
-[[boundary.unclaimed_cargo]]
-subject = "fast.clippy"
-reason = "the step-level exclusive is coarser than the lock cargo takes -- it would hold across the whole step, parking the fast lane's longest job behind two short ones. The fix is a separate CARGO_TARGET_DIR for those two, not this claim."
-# Steps that drive cargo without claiming `workspace_binaries`, and therefore
-# serialise against every other build through cargo's own target-directory
-# lock rather than through the scheduler.
-#
-# This is a ledger, not an exemption: an entry that stops reaching cargo fails
-# as loudly as a new one that starts. The claim is the truth about the
-# resource, and the only reason to withhold it is that a step-level exclusive
-# is coarser than the lock cargo actually takes -- it holds for the whole step,
-# including the parts that are not compiling.
-#
-# `fast.clippy` is the case that costs. It is the longest step in the fast lane
-# and the two other cargo users there are short; making it wait for both, in
-# full, trades a visible queue for a slower lane. The measurement that would
-# settle it was not run, so the honest state is recorded rather than a
-# preference dressed as a conclusion.
-#
-# The way to empty this list is not to add the claim. It is to give the short
-# cargo users their own `CARGO_TARGET_DIR`, so the contention stops existing
-# and every step can declare truthfully and still overlap.
 
 
 

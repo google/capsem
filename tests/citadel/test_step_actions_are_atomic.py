@@ -197,9 +197,15 @@ def hidden_builds(command: str, reached: set[str] | None = None) -> list[str]:
                     "which asserts it builds nothing"
                 )
             claimed = any(claim.name == WORKSPACE_CLAIM for claim in step.contends)
-            reached.add(label)
-            if not claimed and label not in UNCLAIMED:
-                offenders.append(f"{where} reaches cargo without claiming {WORKSPACE_CLAIM}")
+            # Only a step that would otherwise *fail* needs an entry. Recording
+            # every cargo step here made an entry stale-proof the moment its
+            # step started claiming: the exception would sit in the ledger
+            # excusing nothing, which is the failure this guard exists to
+            # catch, one level up from where it catches it.
+            if not claimed:
+                reached.add(label)
+                if label not in UNCLAIMED:
+                    offenders.append(f"{where} reaches cargo without claiming {WORKSPACE_CLAIM}")
     return offenders
 
 

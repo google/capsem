@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `fast.clippy` claims `workspace_binaries`, and the measurement that settles
+  it is recorded rather than the argument that preceded it. The claim was
+  withheld on the theory that a step-level exclusive is coarser than the lock
+  cargo takes on its own target directory. Measured back to back on one
+  machine: 3m47s without, 3m49s with. Cargo was already serialising those
+  steps -- clippy's 2m20s of "execution" without the claim was 1m27s of work
+  plus about fifty seconds blocked on that lock, charged to execution because
+  nothing had declared it. Declaring it moves the wait into the queueing
+  report instead of adding it.
+
 - Clippy no longer waits on work it does not read. `web.frontend` was a
   type-check, a unit-test run and a build in one step, and clippy -- which
   needs only `frontend/dist` -- waited on all three, and through them on
