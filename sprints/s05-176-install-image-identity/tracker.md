@@ -8,7 +8,7 @@
 - [x] Commit and push the frozen-image fix SHA.
 - [x] Diagnose the first exact fix-SHA qualification failure in the fast gate.
 - [x] Repair the plan observer and stale install contracts without weakening receipts.
-- [ ] Commit and push the contract repair SHA.
+- [x] Commit and push the contract repair SHA.
 - [ ] Qualify that SHA and prove glow-up/install.
 
 ## Evidence
@@ -40,3 +40,4 @@
   seeds its own frozen-source product, real image receipt checks stay strict,
   and timing policy is split into its own schema. Focused 6/6 and owning
   install/source/observation/boundary/timing suites 395 passed, 2 skipped.
+- Contract repair committed and pushed as `aa5faf9e`.
