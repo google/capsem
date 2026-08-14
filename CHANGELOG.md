@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The session hook reports trunk CI before anything else. The digest described
+  local gate runs only, so it printed a healthy picture while `main` had failed
+  sixteen consecutive times on one root cause -- an agent could read it, see
+  nothing wrong, and start unrelated work. It is asked here rather than in the
+  gate because the gate runs inside the kernel network boundary and could never
+  reach GitHub. Red demands a statement: fix it, or say out loud that you are
+  leaving it red. Unknown reads as unknown. A three-second timeout keeps a
+  session-start hook from being one somebody deletes.
+
+### Added
+
 - `tests/citadel/test_required_jobs_are_derived.py`: the set of CI jobs that
   must pass is derived from the workflow, not restated. Four places had to
   agree -- `jobs:`, `pr-gate.needs:`, `pr-gate.env:`, and the required list in

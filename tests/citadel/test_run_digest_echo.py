@@ -247,3 +247,119 @@ def test_the_registered_hook_is_not_itself_caught() -> None:
     """The rule must not reject the thing it is protecting."""
     commands = hook_commands(json.loads(SETTINGS.read_text(encoding="utf-8")))
     assert commands and not any(invokes_the_gate(command) for command in commands)
+
+
+def _load_hook():
+    """Import the hook as a module, fresh each time.
+
+    Fresh because the tests below replace `trunk_runs` to drive the rendering
+    without a network; a shared module would leak that stub into the next test.
+    """
+    spec = importlib.util.spec_from_file_location("gate_digest_hook", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# -- trunk CI reaches the session too ----------------------------------------
+
+CI_BLINDNESS_RATIONALE = """\
+The digest described local gate runs and nothing else, and that gap had a cost.
+
+Trunk sat red for fourteen consecutive CI runs on a single root cause -- a
+published profile that no longer satisfied a rule the source had grown -- while
+this hook printed a healthy-looking local picture. Every instrument was
+correct. None of them was looking at the thing that was broken.
+
+So the hook asks GitHub, and it asks *here* rather than in the gate, because
+the gate cannot: candidate and the release lanes run inside the kernel network
+boundary, so a digest written during a run could never reach it. The section
+would have gone missing exactly when a run was happening.
+
+Three properties are load-bearing and each is asserted below. It degrades to
+"unknown" rather than to silence, because a missing section reads as green. It
+is bounded by a timeout, because a session-start hook that hangs is one
+somebody deletes. And when trunk is red it demands a statement -- fix it, or
+say out loud that you are leaving it red -- because a failure rate nobody is
+required to acknowledge is one everybody learns to route around.
+
+See scripts/print-gate-digest.py.
+"""
+
+
+def test_the_hook_reports_trunk_ci() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "gh" in source and "run" in source and "list" in source, (
+        CI_BLINDNESS_RATIONALE + "\nthe hook no longer asks GitHub anything"
+    )
+    assert "timeout=" in source, (
+        CI_BLINDNESS_RATIONALE + "\nthe GitHub query lost its timeout"
+    )
+
+
+def test_a_red_trunk_demands_a_statement() -> None:
+    """Red must ask for a decision, not merely report a colour."""
+    hook = _load_hook()
+    red = [{"conclusion": "failure", "displayTitle": "x", "url": "u"}] * 3
+    hook.trunk_runs = lambda: red  # type: ignore[assignment]
+    section = hook.ci_section()
+
+    assert "RED" in section and "3 consecutive" in section, section
+    for demand in ("fix it", "unrelated"):
+        assert demand in section.lower(), (
+            CI_BLINDNESS_RATIONALE + f"\nred no longer asks the reader to {demand!r}"
+        )
+
+
+def test_a_cancelled_run_neither_counts_nor_clears_the_streak() -> None:
+    """A cancellation says nothing about the code.
+
+    Counting one inflates the streak; letting one break it makes a wall of red
+    read as an isolated blip. Seven of the last twenty-five trunk runs were
+    cancellations, so this is the ordinary case rather than an edge one.
+    """
+    hook = _load_hook()
+    runs = [
+        {"conclusion": "failure"},
+        {"conclusion": "cancelled"},
+        {"conclusion": "failure"},
+        {"conclusion": "success"},
+        {"conclusion": "failure"},
+    ]
+    assert len(hook.consecutive_failures(runs)) == 2
+
+
+def test_an_unfinished_run_does_not_read_as_green() -> None:
+    """The newest run on a busy trunk is usually still going.
+
+    `gh` reports its conclusion as empty, and an earlier version treated
+    anything that was not `failure` as the end of the streak -- so sixteen
+    consecutive failures reported themselves as "Green on main" the first time
+    this was pointed at a live repository. An unfinished run is not a verdict;
+    it is the absence of one.
+    """
+    hook = _load_hook()
+    runs = [{"conclusion": None}, {"conclusion": "failure"}, {"conclusion": "failure"}]
+    hook.trunk_runs = lambda: runs  # type: ignore[assignment]
+    section = hook.ci_section()
+
+    assert "RED" in section, CI_BLINDNESS_RATIONALE + "\nan in-flight run hid a red trunk"
+    assert "2 consecutive" in section, "the unfinished run must not be counted either"
+    assert "1 still running" in section
+
+
+def test_green_trunk_says_so_briefly() -> None:
+    hook = _load_hook()
+    hook.trunk_runs = lambda: [{"conclusion": "success"}]  # type: ignore[assignment]
+    section = hook.ci_section()
+    assert "Green" in section and "RED" not in section
+    assert len(section.splitlines()) < 6, "a healthy trunk must not cost screen space"
+
+
+def test_an_unknown_answer_never_reads_as_green() -> None:
+    hook = _load_hook()
+    hook.trunk_runs = lambda: None  # type: ignore[assignment]
+    section = hook.ci_section()
+    assert "Unknown" in section
+    assert "Green" not in section, CI_BLINDNESS_RATIONALE + "\nunknown rendered as green"
