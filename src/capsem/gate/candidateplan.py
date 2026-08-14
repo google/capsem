@@ -181,14 +181,29 @@ def _prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
         step(
             "clean-stale",
             Script(settings.clean_stale_script),
-            Run(["bash", settings.generated_settings_script, str(config.root)]),
             kind=Kind.STATIC_TEST,
             needs=frozenset({Needs.DISK}),
             speed=Speed.FAST,
         ),
         after=(bounded,),
     )
-    return _runtime(plan, config, after=(cleaned,))
+    # Its own step, and not because deleting stale files and checking the
+    # generated settings are unrelated -- though they are. The check runs
+    # `generate-settings.sh`, which runs `cargo run -p capsem-core`, so a step
+    # named for a cleanup was building Rust and claiming nothing while it did.
+    # One step is one measurement, and this one was measuring two things.
+    checked = phase.add(
+        step(
+            "verify-generated-settings",
+            Run(["bash", settings.generated_settings_script, str(config.root)]),
+            contends=(config.exclusive("workspace_binaries"),),
+            kind=Kind.COMPILE,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
+        ),
+        after=(cleaned,),
+    )
+    return _runtime(plan, config, after=(checked,))
 
 
 def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
@@ -205,8 +220,13 @@ def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
     assets = imagebuild.check_assets(plan, config, after=after)
     packed = initrd.pack(plan, config, after=assets)
     materialised = phase.add(
+        # `COMPILE`, and claiming the workspace, because the script runs
+        # `cargo run -p capsem-admin` once per profile. It reads as
+        # configuration work from the label alone, which is exactly the
+        # mismatch `tests/citadel/test_step_actions_are_atomic.py` refuses.
         step("materialize-config", Run(["bash", settings.materialize_script]),
-            kind=Kind.STATIC_TEST,
+            contends=(config.exclusive("workspace_binaries"),),
+            kind=Kind.COMPILE,
             needs=frozenset({Needs.DISK}),
             speed=Speed.FAST,
         ),

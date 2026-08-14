@@ -127,6 +127,11 @@ def generated_settings(config: GateConfig) -> Step:
     Before the surfaces and after the Rust toolchain, because the script needs
     `cargo run -p capsem-core --bin mcp_export`. That cost is not new work in
     this lane: clippy builds the same workspace a few steps later.
+
+    Which is also why it claims `workspace_binaries`. It shares that target
+    directory with `web.release-channel`, the two can overlap, and cargo's own
+    lock would serialise them anyway -- as execution time, inside a step, where
+    no instrument the gate has can see it. Declared, the wait is measured.
     """
     return step(
         "audit.generated-settings",
@@ -141,6 +146,7 @@ def generated_settings(config: GateConfig) -> Step:
                 str(config.path(config.devloop.generated_settings_scratch)),
             ]
         ),
+        contends=(config.exclusive("workspace_binaries"),),
         kind=Kind.COMPILE,
         speed=Speed.FAST,
     )
@@ -149,35 +155,33 @@ def generated_settings(config: GateConfig) -> Step:
 def web_surfaces(config: GateConfig) -> list[Step]:
     """One step per surface, so a failure says which one.
 
-    Each claims `astro_build`, so they run one at a time. Astro stages
-    prerendering in a path derived from the project root rather than from the
-    invocation -- `<outDir>/.prerender/` when the output is inside the root,
-    `<root>/.astro/` when it is not -- so neither `--outDir` nor `--cacheDir`
-    isolates two concurrent builds; they delete each other's staging.
+    The surfaces that bundle claim `astro_build`, so those run one at a time.
+    Astro stages prerendering in a path derived from the project root rather
+    than from the invocation -- `<outDir>/.prerender/` when the output is
+    inside the root, `<root>/.astro/` when it is not -- so neither `--outDir`
+    nor `--cacheDir` isolates two concurrent builds; they delete each other's
+    staging.
 
-    The four surfaces do have distinct roots today, so serializing them is
+    The bundling surfaces do have distinct roots today, so serializing them is
     insurance rather than a fix, and the alternative is a rule that holds only
     as long as nobody adds a second consumer of one root.
 
-    The premium is no longer what this comment used to claim. "A build is well
-    under a second" was true when it was written; `release-site` now takes
-    about two minutes, and `runs schedule` reports `web.frontend` -- the only
-    surface on the critical path, because it gates clippy -- waiting a minute
-    behind the others for the claim.
-
-    Reordering does not recover it: the exclusive has to carry every surface
-    whichever goes first, so the sum is the same. The levers are making the
-    release-site build faster, or dropping the insurance and parallelising,
-    which needs evidence about Astro's staging that nobody has gathered. Both
-    are real work; neither is a scheduling change.
+    Which surfaces those are is read from `building` rather than assumed of all
+    of them, and that is the correction this comment used to need. It claimed a
+    build was well under a second; `release-site` then spent two minutes in
+    `cargo`, holding the Astro exclusive across a Rust build while
+    `web.frontend-build` -- the surface on the critical path, because it gates
+    clippy -- waited behind it. The Rust half is now `web.release-channel`, and
+    what remains here type-checks and runs vitest without bundling anything, so
+    it no longer takes the claim at all.
     """
     surfaces = config.websurfaces
     return [
         step(
             f"web.{target}",
             Run(["bash", surfaces.script, target]),
-            contends=(config.exclusive("astro_build"),),
-            kind=Kind.COMPILE,
+            contends=(config.exclusive("astro_build"),) if target in surfaces.building else (),
+            kind=Kind.COMPILE if target in surfaces.building else Kind.STATIC_TEST,
             speed=Speed.FAST,
         )
         for target in surfaces.targets
@@ -216,6 +220,35 @@ def clippy(config: GateConfig) -> Step:
         kind=Kind.COMPILE,
         speed=Speed.FAST,
         concurrency=SATURATES,
+    )
+
+
+def release_channel(config: GateConfig) -> Step:
+    """Build a release channel twice and prove the two agree.
+
+    Lived inside `web.release-site` until the graph was asked what that step
+    cost. It is not a web surface: `pnpm check` and the vitest run take about a
+    second between them, and the remaining two minutes are
+    `cargo run -p capsem-admin` building a binary the fast phase does not
+    otherwise build. The name said "web", the timing report showed one opaque
+    line, and one action can hide a compiler.
+
+    Split out so it stops holding `astro_build` -- the claim exists to keep two
+    Astro builds from deleting each other's staging, and this held it across a
+    Rust build while `web.frontend`, the surface that gates clippy, waited a
+    minute for it.
+
+    It takes `workspace_binaries` instead, which is the claim it should have
+    had all along: `audit.generated-settings` drives cargo against the same
+    target directory and the two are unordered.
+    """
+    return step(
+        "web.release-channel",
+        Run(["bash", config.websurfaces.script, "release-channel"]),
+        contends=(config.exclusive("workspace_binaries"),),
+        kind=Kind.E2E,
+        needs=frozenset({Needs.DISK}),
+        speed=Speed.SLOW,
     )
 
 

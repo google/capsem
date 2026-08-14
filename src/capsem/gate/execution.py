@@ -20,7 +20,7 @@ can answer "which bytes did this build" after the tree is gone.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum, StrEnum, auto
 from pathlib import Path
 
 from .actions import Action
@@ -85,19 +85,26 @@ class Needs(StrEnum):
     SIGNING = "signing"
 
 
-class Arch(StrEnum):
+class Arch(Enum):
     """Which architecture a step's work belongs to.
 
     `ANY` is for work that is architecture-neutral; `HOST` is for work that is
-    specifically about the machine running the gate. They are different claims
+    specifically about the machine running the gate. They are different claims,
     and conflating them is what lets a host-only step be scheduled into a
     cross-architecture lane.
+
+    Alone among the vocabularies here, the members carry no value. `config.arch`
+    already owns the spellings, and writing them again as enum values made a
+    second list of architectures -- the precise shape of the bug that
+    `[architectures]` was centralised to end. The literal-data guard said so,
+    and it was right. Compare members, never strings;
+    `tests/test_gate_has_no_literal_data.py` holds the member names to config.
     """
 
-    HOST = "host"
-    X86_64 = "x86_64"
-    ARM64 = "arm64"
-    ANY = "any"
+    HOST = auto()
+    X86_64 = auto()
+    ARM64 = auto()
+    ANY = auto()
 
 
 class Speed(StrEnum):

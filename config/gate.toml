@@ -902,7 +902,7 @@ reason = "two benchmark files launching VMs at once measure each other, not Caps
 reason = "production has one service and one service-scoped snapshot lock; an xdist worker per service does not reproduce that"
 
 [execution.exclusives.workspace_binaries]
-reason = "cargo build --workspace atomically replaces the binaries a running VM test is using"
+reason = "cargo build --workspace atomically replaces the binaries a running VM test is using, and two cargo invocations block on the target directory's own lock -- a wait that lands in execution time and never reaches the queueing report"
 
 [execution.exclusives.docker_daemon]
 reason = "the storage rails reserve and release a single daemon's disk budget"
@@ -1544,7 +1544,9 @@ enforced_by = ["fast.audit.markdown"]
 [[lint_surfaces]]
 name = "web"
 pattern = "*.svelte"
-enforced_by = ["fast.web.frontend"]
+# The verify half: `svelte-check` is what actually lints these, and it moved
+# out of the build when the two were split so clippy would stop waiting on it.
+enforced_by = ["fast.web.frontend-verify"]
 
 [[lint_surfaces]]
 name = "skills"
@@ -1571,12 +1573,28 @@ enforced_by = ["fast.audit.skills", "fast.citadel"]
 [websurfaces]
 script = "scripts/check-web-surface.sh"
 # Each is a separate target of the same script, so a failure names the surface.
-targets = ["frontend", "docs", "site", "release-site"]
-# The frontend must finish before clippy: capsem-app embeds frontend/dist at
-# compile time via `tauri::generate_context!`, so clippy reads a directory the
-# frontend build produces. Expressed as an edge, where the shell expressed it
-# as a conditional that skipped clippy entirely when the frontend failed.
-blocks_clippy = "frontend"
+#
+# `frontend` was one target running a type-check, a unit-test run and a build.
+# One step is one node, so the graph had no way to say that only the last of
+# the three produces anything, and clippy -- which waits on the frontend --
+# waited on all of it.
+targets = ["frontend-build", "frontend-verify", "docs", "site", "release-site"]
+# The frontend build must finish before clippy: capsem-app embeds frontend/dist
+# at compile time via `tauri::generate_context!`, so clippy reads a directory
+# that build produces. Expressed as an edge, where the shell expressed it as a
+# conditional that skipped clippy entirely when the frontend failed.
+blocks_clippy = "frontend-build"
+# The one surface that reads `mock-settings.generated`, and so the only one
+# that waits for `audit.generated-settings`. Three files import it and every
+# one of them is under `frontend/src/**/__tests__/`, which makes it a test
+# dependency; it reached clippy only because the tests shared a step with the
+# build.
+needs_generated_settings = "frontend-verify"
+# The surfaces that run a bundler, and therefore the ones that take
+# `astro_build`. The claim exists because Astro stages prerendering in a path
+# derived from the project root; a surface that only type-checks or runs vitest
+# stages nothing, and holding it there serialises work that could overlap.
+building = ["frontend-build", "docs", "site"]
 
 [suites]
 # Tests that inspect release/CI/Just composition or adversarially test the
@@ -1658,6 +1676,7 @@ source_contract = [
     "tests/test_gate_cancellation.py",
     "tests/test_gate_qualification.py",
     "tests/test_gate_scheduling.py",
+    "tests/test_gate_scheduling_analysis.py",
     "tests/test_gate_secrets.py",
     "tests/test_gate_source_checks.py",
     "tests/test_gate_source_identity.py",

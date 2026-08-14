@@ -113,8 +113,14 @@ def test_the_public_fast_gate_is_the_shared_module_itself() -> None:
         "scripts/audit-pnpm-bulk.py",
         "scripts/audit-python-lock.sh",
         "cargo clippy --workspace --all-targets -- -D warnings",
-        "check-web-surface.sh frontend",
+        # Both halves of what was one `frontend` target, named in full. The
+        # bare prefix would have gone on passing against `frontend-build`
+        # alone, which is the failure mode this whole surface exists to avoid:
+        # an assertion that holds while the thing it names has gone.
+        "check-web-surface.sh frontend-build",
+        "check-web-surface.sh frontend-verify",
         "check-web-surface.sh release-site",
+        "check-web-surface.sh release-channel",
     ):
         assert required in planned, f"the fast plan does not run {required}"
 

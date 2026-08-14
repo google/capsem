@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 from helpers.gate import gate_plan
 
-from capsem.gate.execution import Kind, Needs
+from capsem.gate.execution import Arch, Kind, Needs
 from capsem.gate.workgraph import WorkGraph, from_plan
 
 #: The commands whose graphs every invariant below must hold for. `candidate`
@@ -144,11 +144,12 @@ def test_an_architecture_edge_does_not_cross(graph: WorkGraph) -> None:
     hand. Stated on the graph it covers every edge, including ones added
     later.
     """
+    concrete = {Arch.X86_64, Arch.ARM64}
     crossing = [
-        f"{before} ({graph.nodes[before].arch}) -> {after} ({graph.nodes[after].arch})"
+        f"{before} ({graph.nodes[before].arch.name}) -> {after} ({graph.nodes[after].arch.name})"
         for before, after in graph.edges
-        if graph.nodes[before].arch.value in {"x86_64", "arm64"}
-        and graph.nodes[after].arch.value in {"x86_64", "arm64"}
+        if graph.nodes[before].arch in concrete
+        and graph.nodes[after].arch in concrete
         and graph.nodes[before].arch is not graph.nodes[after].arch
     ]
     assert not crossing, GRAPH_RATIONALE + "\n" + "\n".join(crossing)

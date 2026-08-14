@@ -202,11 +202,13 @@ jobs:
         run: |
           cargo llvm-cov nextest --no-cfg-coverage --profile ci --codecov --output-path codecov-integration.json -p capsem-core --test '*'
 
-      # Frontend tests with coverage + JUnit output
-      - name: Frontend type-check, test, and build
+      # Frontend tests with coverage + JUnit output. The bundle this used to
+      # build as a third stage comes from the `frontend-build` job above, and
+      # nothing in this job reads it.
+      - name: Frontend type-check and test
         env:
           CAPSEM_FRONTEND_JUNIT: ../frontend-junit.xml
-        run: bash scripts/check-web-surface.sh frontend
+        run: bash scripts/check-web-surface.sh frontend-verify
 
       # Python schema tests with coverage
       - name: Python lint and type check
@@ -537,8 +539,11 @@ jobs:
       - name: Install release site dependencies
         run: cd release-site && pnpm install --frozen-lockfile
 
-      - name: Release site type-check, coverage, and generated channel build
+      - name: Release site type-check and coverage
         run: bash scripts/check-web-surface.sh release-site
+
+      - name: Release channel build parity
+        run: bash scripts/check-web-surface.sh release-channel
 
       - name: Upload release site coverage
         if: ${{ !cancelled() }}

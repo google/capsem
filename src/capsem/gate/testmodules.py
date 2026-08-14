@@ -151,7 +151,12 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # that imports `mock-settings.generated`; docs, site and release-site never
     # touch it. The edge was uniform because it was written once for a list,
     # not because four surfaces needed it.
-    consumer = config.websurfaces.blocks_clippy
+    #
+    # The consumer is the *verify* half, not the surface clippy waits on. Those
+    # were one step, so this edge reached clippy transitively and put an
+    # `mcp_export` build in front of it for a mock that only `__tests__` files
+    # import.
+    consumer = config.websurfaces.needs_generated_settings
     surfaces = [
         phase.add(
             surface,
@@ -159,6 +164,9 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
         )
         for surface in audits.web_surfaces(config)
     ]
+    # The release-channel parity proof used to be the `release-site` surface's
+    # tail. It claims no Astro build, so it no longer stalls the queue.
+    channel = phase.add(audits.release_channel(config), after=(syntax, node))
     # One surface is Clippy's prerequisite; the rest are leaves of their own.
     blocking = audits.blocking_surface(config, surfaces)
     clippy = phase.add(audits.clippy(config), after=(blocking, rust, ort))
@@ -169,5 +177,6 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
         guarded,
         digest,
         *(surface for surface in surfaces if surface is not blocking),
+        channel,
         clippy,
     )

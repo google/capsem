@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Clippy no longer waits on work it does not read. `web.frontend` was a
+  type-check, a unit-test run and a build in one step, and clippy -- which
+  needs only `frontend/dist` -- waited on all three, and through them on
+  `audit.generated-settings`, because the generated mock those tests import
+  made the whole step depend on an `mcp_export` build. Split into
+  `web.frontend-build` and `web.frontend-verify`, with the generated-settings
+  edge on the verify half. By the numbers of the run that confirmed it, clippy
+  starts about two minutes forty-five earlier.
+- Five gate steps drove `cargo` while claiming nothing. Two of them could
+  overlap, and cargo locks its target directory, so they serialised through a
+  lock the gate had never declared -- charging the wait to execution time,
+  where the queueing report cannot see it. They now claim
+  `workspace_binaries`; every holder of that exclusive was already ordered
+  against them, so this declares the contention rather than adding any.
+- `prepare.clean-stale` deleted stale files *and* verified the generated
+  settings, the second of which builds Rust. Split, so one step is one
+  measurement and the build is attributable.
+- `web.release-site` declared `COMPILE` and held the Astro exclusive after its
+  build moved to `web.release-channel`; the declaration was written once for a
+  list of four surfaces and outlived the thing it described. Kind and claim now
+  come per target from `[websurfaces] building`.
+- `Arch` carried its own copy of the architecture spellings while
+  `[architectures]` already owned them -- a second list of exactly the kind
+  centralising that table was meant to end. Its members now hold no value, and
+  a new contract holds their names to the config.
+- `tests/test_gate_scheduling_analysis.py` was never registered in
+  `[suites] source_contract`, so nothing scheduled it.
+
+### Added
+
+- `tests/citadel/test_step_actions_are_atomic.py`: a step that reaches a
+  compiler must claim the workspace and may not declare a kind that asserts it
+  builds nothing. `web.release-site` spent one minute fifty-nine in
+  `cargo run -p capsem-admin` behind a name that said "web", and every
+  instrument reported it correctly -- one opaque line, for a step that was not
+  the unit anyone thought it was. The guard follows a script's hand-offs and
+  reads argv-form invocations, because the original cargo call was in neither
+  the step nor the shell script it named, and it carries a test proving it
+  still catches that founding case.
+
 - `static.guest-agents` claims the Docker daemon. `capsem-builder agent`
   cross-compiles through `builder.docker.cross_compile_agent`, so it drives the
   daemon, and it declared no contention -- leaving the scheduler free to run it

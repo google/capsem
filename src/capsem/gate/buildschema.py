@@ -179,6 +179,11 @@ class WebSurfacesConfig(Strict):
     script: str
     targets: tuple[str, ...]
     blocks_clippy: str
+    needs_generated_settings: str
+    building: tuple[str, ...]
+    """Which surfaces run a bundler, and so which declare `COMPILE` and take
+    the Astro claim. Read per target rather than assumed of all of them: one
+    declaration written for a list of four outlived the build it described."""
 
 
 class PytestConfig(Strict):

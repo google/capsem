@@ -69,8 +69,15 @@ def test_clippy_waits_for_the_frontend_build() -> None:
     The shell expressed this as a conditional that skipped clippy entirely
     when the frontend failed -- which lost the clippy result on exactly the
     runs where the most had changed.
+
+    The build, and only the build. While a type-check, vitest and the build
+    were one step, clippy waited on all three -- and, through the generated
+    mock that only the tests import, on an `mcp_export` build as well.
     """
-    assert _wave_of(FastModule, "fast.clippy") > _wave_of(FastModule, "fast.web.frontend")
+    assert _wave_of(FastModule, "fast.clippy") > _wave_of(FastModule, "fast.web.frontend-build")
+    assert _wave_of(FastModule, "fast.web.frontend-verify") >= _wave_of(FastModule, "fast.clippy"), (
+        "clippy waiting on the verify half is the cost the split removed"
+    )
 
 
 def test_static_owns_the_frontend_bundle_before_rust_coverage() -> None:
@@ -133,8 +140,18 @@ def test_static_materializes_only_dependency_helpers_outside_the_sandbox() -> No
 
 
 def test_the_dependency_is_taken_from_config_not_from_position() -> None:
-    """Reordering the surface list must not move the edge onto another one."""
-    assert CONFIG.websurfaces.blocks_clippy == "frontend"
+    """Reordering the surface list must not move the edge onto another one.
+
+    Two edges now, onto two different surfaces, which is the point: clippy
+    waits for the bundle and the generated mock is waited for by the tests
+    that import it. Held apart in config so neither can drift onto the other.
+    """
+    assert CONFIG.websurfaces.blocks_clippy == "frontend-build"
+    assert CONFIG.websurfaces.needs_generated_settings == "frontend-verify"
+    assert CONFIG.websurfaces.blocks_clippy != CONFIG.websurfaces.needs_generated_settings, (
+        "one surface carrying both edges is the arrangement that put an "
+        "mcp_export build in front of clippy"
+    )
 
 
 def test_nothing_runs_before_the_source_parses() -> None:
@@ -159,7 +176,8 @@ def test_the_environment_is_installed_before_anything_uses_it() -> None:
     node = _wave_of(FastModule, "fast.toolchain.node")
 
     assert _wave_of(FastModule, "fast.audit.source-syntax") > python
-    assert _wave_of(FastModule, "fast.web.frontend") > node
+    assert _wave_of(FastModule, "fast.web.frontend-build") > node
+    assert _wave_of(FastModule, "fast.web.frontend-verify") > node
 
 
 def test_the_audits_are_independent_of_each_other() -> None:
