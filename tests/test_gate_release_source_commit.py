@@ -207,8 +207,12 @@ def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
         == 1
     )
     assert populated == [(tmp_path / str(commit), commit)]
-    assert environments == [{config.environment.source_commit: str(commit)}]
-    assert config.environment.source_checkout not in environments[0]
+    assert environments == [
+        {
+            config.environment.source_checkout: str(config.root),
+            config.environment.source_commit: str(commit),
+        }
+    ]
 
 
 def test_exact_commit_prefix_has_a_nonblocking_cross_process_lease(tmp_path: Path) -> None:

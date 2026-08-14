@@ -66,12 +66,7 @@ def _release_plan(command: str, *arguments: str):
 
 
 def _publishing(plan) -> str:
-    """What the steps after the gate would run.
-
-    "This lane does not rebuild the other's artifacts" is a claim about the
-    publishing tail, not about the plan -- which contains the complete gate and
-    therefore builds both families before publishing either.
-    """
+    """What the steps after immutable source publication would run."""
     labels = list(plan.labels)
     after = labels[labels.index("source.publish-ref") :]
     return "\n".join(line for label in after for line in plan.step_named(label).render())
@@ -113,8 +108,6 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
     profile = _publishing(profile_plan)
 
     # Each lane owns one artifact family, and neither rebuilds the other's.
-    # Read from the *publishing* steps rather than the whole plan: both plans
-    # now contain the complete gate, which legitimately builds everything.
     assert "scripts/release-binaries.py" in binary
     assert "capsem-admin" not in binary
 
@@ -142,27 +135,18 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
 def test_nothing_is_published_before_the_complete_gate_passes(
     command: str, arguments: tuple[str, ...], publication: str
 ) -> None:
-    """The order that is the entire reason these are commands.
-
-    Nothing may stamp a version, mutate a tracked file, push, tag, or dispatch
-    a workflow before the complete local gate has passed against the exact
-    HEAD being published. As graph edges that ordering cannot be lost by
-    moving a line.
-    """
+    """Nothing publishes before exact qualification is revalidated."""
     order = _release_order(command, *arguments)
 
-    # There is no single `gate` step: the release plan *contains* the complete
-    # gate rather than launching `just test`, so what has to sit between the
-    # precheck and the confirmation is every phase of it. A step named `gate`
-    # could have run a reduced proof; these cannot.
-    phases = [
-        next(i for i, label in enumerate(order) if label.startswith(prefix))
-        for prefix in ("fast.", "static.", "artifacts.", "functional.", "glowup.")
-    ]
-    assert order.index("source.remote-main") < min(phases)
+    assert order[0] == "qualification.accept"
+    assert order.index("qualification.accept") < order.index("source.remote-main")
     if command == "release-binaries":
-        assert order.index("precheck") < min(phases)
-    assert max(phases) < order.index("source.publish-ref")
+        assert order.index("source.remote-main") < order.index("precheck")
+        assert order.index("precheck") < order.index("source.publish-ref")
+    assert not any(
+        label.startswith(("fast.", "static.", "artifacts.", "functional.", "glowup."))
+        for label in order
+    )
     assert order.index("source.publish-ref") < order.index(publication)
 
 
@@ -181,49 +165,29 @@ def test_nothing_is_published_before_the_complete_gate_passes(
         ),
     ),
 )
-def test_public_release_command_executes_read_only_preflight_then_full_test_before_mutation(
+def test_public_release_command_accepts_journal_then_runs_preflight_before_mutation(
     tmp_path: Path,
     recipe: str,
     arguments: tuple[str, ...],
     release_trace: str,
 ) -> None:
-    """Read-only preflight, then the complete gate, then mutation.
-
-    The preflight steps are driven for real against a recording runner -- they
-    are cheap and their argv is the claim. The gate itself is read from the
-    graph rather than executed: it is the whole 69-step gate now, and running
-    it here would mean building an initrd against a runner that records.
-    """
-    from helpers.gate import RecordingRunner
-
-    runner = RecordingRunner(ROOT)
+    """The graph orders journal acceptance, preflight, then publication."""
     plan = _release_plan(recipe, *arguments)
     order = list(plan.labels)
 
-    # The read-only preconditions, actually issued. A dirty tree or the wrong
-    # branch invalidates everything after, and learning that costs seconds
-    # rather than a complete gate.
-    first_gate = order.index("source.record")
-    for label in order[:first_gate]:
-        plan.step_named(label).run(_context(runner))
-
-    issued = runner.rendered
-    assert "publish-release-source.py" in issued[0]
-    assert "--check" in issued[0]
+    rendered = plan.describe()
+    assert "require complete qualification journal" in rendered
+    assert "publish-release-source.py" in rendered
+    assert "--check" in rendered
     if recipe == "release-binaries":
-        assert any("release-binaries.py --precheck nightly" in line for line in issued)
-        assert any("fetch-channel-source-manifest.py" in line for line in issued)
+        assert "release-binaries.py --precheck nightly" in rendered
+        assert "fetch-channel-source-manifest.py" in rendered
 
-    # Then the gate, then the confirmation, then the mutation. Every phase of
-    # the gate, not a step named after it.
-    phases = [
-        next(i for i, label in enumerate(order) if label.startswith(prefix))
-        for prefix in ("fast.", "static.", "artifacts.", "functional.", "glowup.")
-    ]
-    assert order.index("source.remote-main") < min(phases)
+    assert order[0] == "qualification.accept"
     if recipe == "release-binaries":
-        assert order.index("precheck") < min(phases)
-    assert max(phases) < order.index("source.publish-ref") < order.index("release")
+        assert order.index("source.remote-main") < order.index("precheck")
+    assert order.index("qualification.accept") < order.index("source.publish-ref")
+    assert order.index("source.publish-ref") < order.index("release")
 
     # And the publishing step is the one the trace names.
     import re
@@ -240,56 +204,34 @@ def test_public_release_command_executes_read_only_preflight_then_full_test_befo
         ("release-profile", ("nightly", "code")),
     ),
 )
-def test_failed_full_test_prevents_every_release_side_effect(
+def test_missing_qualification_prevents_every_release_side_effect(
     tmp_path: Path,
     recipe: str,
     arguments: tuple[str, ...],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A failing gate stops everything downstream of it.
-
-    The plan makes this structural: publication follows `source.publish-ref`,
-    which follows the gate, and a step whose dependency failed is never
-    submitted. Inspecting recipe text could never have proved this.
-    """
+    """A missing exact journal fails the first edge and skips publication."""
     from helpers.gate import RecordingRunner
 
     from capsem.gate.errors import GateError
-    from capsem.gatelaunch import MARKER
 
-    # What a real run has: `capsem-gate` re-execs under a private bytecode
-    # cache and exports this, and the gate's first step refuses without it.
-    # The failure under test is further down, so it has to get past that.
-    monkeypatch.setenv(MARKER, str(tmp_path / "pycache"))
-
-    # The gate is composed into the release plan now, so "make the gate fail"
-    # means failing a step inside it rather than failing a `just test`
-    # subprocess. Clippy is as good as any: it is early, it is in every
-    # release plan, and everything that publishes is downstream of it.
-    runner = RecordingRunner(ROOT, failures=["cargo clippy"])
+    del tmp_path, monkeypatch
+    runner = RecordingRunner(ROOT)
     plan = _release_plan(recipe, *arguments)
 
     with pytest.raises(GateError):
         plan.run(_context(runner))
 
     issued = "\n".join(runner.rendered)
-    assert "cargo clippy" in issued, "the gate must actually have been attempted"
     for mutation in (
         "scripts/release-binaries.py nightly 0000000000000000000000000000000000000000",
         "capsem-admin -- release",
     ):
         assert mutation not in issued, f"{mutation} ran after a failing gate"
-    source_actions = [line for line in runner.rendered if "publish-release-source.py" in line]
-    assert len(source_actions) == 1
-    assert "--check" in source_actions[0], (
-        "the read-only fresh-origin preflight must run, but source-ref publication must not"
-    )
+    assert "publish-release-source.py" not in issued
 
     outcomes = plan.outcomes
-    assert outcomes["fast.clippy"].status == "failed"
-    # Everything downstream is skipped rather than failed: it did not fail, it
-    # never ran, and a report conflating the two hides how far the real
-    # failure reached.
+    assert outcomes["qualification.accept"].status == "failed"
     assert outcomes["source.publish-ref"].status == "skipped"
     assert outcomes["release"].status == "skipped"
 

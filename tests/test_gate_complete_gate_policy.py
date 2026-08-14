@@ -1,13 +1,8 @@
-"""Everything that contains the complete gate shares its lifecycle policy.
+"""Qualification producers and consumers both require kernel enforcement.
 
-Keep-awake was `CandidateCommand`'s, because the gate was candidate's. Both
-release commands used to reach it by launching `just test`; deleting that child
-command was right, but it left them owning the same forty-minute qualification
-with none of the wrapper. On macOS an unattended release could sleep in the
-middle of it -- during qualification, or during publication.
-
-The guard that existed said "only candidate re-execs", which described the
-implementation rather than the policy, so it passed while the hole opened.
+Only candidate executes the complete graph and owns its keep-awake lifecycle.
+Release is a short consumer, but still handles evidence that may authorize
+publication, so permissive diagnostic sandbox modes are equally forbidden.
 """
 
 from __future__ import annotations
@@ -35,6 +30,8 @@ SOURCE_COMMIT = SourceCommit("0" * 40)
 #: Every command whose plan contains the complete qualification gate.
 COMPLETE_GATE = {
     "candidate": {},
+}
+QUALIFIED_RELEASES = {
     "release-binaries": {"channel": "nightly", "source_commit": SOURCE_COMMIT},
     "release-profile": {
         "channel": "nightly",
@@ -42,6 +39,7 @@ COMPLETE_GATE = {
         "source_commit": SOURCE_COMMIT,
     },
 }
+ENFORCED = {**COMPLETE_GATE, **QUALIFIED_RELEASES}
 
 PRIVATE_MODULES = (
     "test-fast",
@@ -55,11 +53,23 @@ PRIVATE_MODULES = (
 
 @pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
 def test_every_complete_gate_keeps_the_enforcing_policy(name: str) -> None:
-    """Candidate and both macOS/Linux release wrappers share one declaration."""
+    """Only the command that executes every step claims complete qualification."""
     command = GateCommand.registry[name]
 
     assert issubclass(command, candidate.CompleteGate)
     assert command.complete_qualification is True
+    assert command.sandboxed is sandbox.ENFORCE
+
+
+@pytest.mark.parametrize("name", sorted(QUALIFIED_RELEASES))
+def test_every_qualified_release_requires_evidence_and_enforcement(name: str) -> None:
+    from capsem.gate.qualificationevidence import QualificationPolicy
+
+    command = GateCommand.registry[name]
+
+    assert not issubclass(command, candidate.CompleteGate)
+    assert command.complete_qualification is False
+    assert command.qualification_policy is QualificationPolicy.REQUIRE
     assert command.sandboxed is sandbox.ENFORCE
 
 
@@ -88,7 +98,7 @@ def _command(name: str, **args):
 
 
 @pytest.mark.parametrize("mode", [sandbox.OFF, sandbox.REPORT])
-@pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
+@pytest.mark.parametrize("name", sorted(ENFORCED))
 def test_complete_qualification_refuses_unenforced_sandbox_before_planning(
     name: str,
     mode: sandbox.SandboxMode,
@@ -96,7 +106,7 @@ def test_complete_qualification_refuses_unenforced_sandbox_before_planning(
 ) -> None:
     """Permissive measurement can never leave evidence named qualification."""
     reached: list[str] = []
-    command = _command(name, sandbox=mode, **COMPLETE_GATE[name])
+    command = _command(name, sandbox=mode, **ENFORCED[name])
 
     def unexpected(label: str):
         def reached_boundary(*_args, **_kwargs):
@@ -133,10 +143,19 @@ def test_timing_ratcheting_precedes_every_publication_boundary(name: str) -> Non
 
     assert isinstance(actions[0], RequireSourceUnchanged)
     assert isinstance(actions[-1], EnforceTimingRegression)
-    if name.startswith("release-"):
-        assert ratchet < ordered.index("source.publish-ref") < ordered.index("release")
-    else:
-        assert ratchet == len(ordered) - 1
+    assert ratchet == len(ordered) - 1
+
+
+@pytest.mark.parametrize("name", sorted(QUALIFIED_RELEASES))
+def test_release_consumes_evidence_instead_of_composing_the_gate(name: str) -> None:
+    plan = _command(name, **QUALIFIED_RELEASES[name])._describe()
+    ordered = list(plan.labels)
+
+    assert ordered[0] == "qualification.accept"
+    assert "source.record" not in ordered
+    assert TimingBoundary.QUALIFICATION.value not in ordered
+    assert ordered.index("qualification.accept") < ordered.index("source.publish-ref")
+    assert ordered.index("source.publish-ref") < ordered.index("release")
 
 
 @pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
@@ -171,7 +190,7 @@ def test_a_public_release_refuses_continuation_before_dispatch_state_exists(
         dry_run=True,
         prefix=None,
         resume_from="precheck",
-        **COMPLETE_GATE[name],
+        **QUALIFIED_RELEASES[name],
     )
 
     with pytest.raises(GateError, match="--from cannot be used while qualifying a release"):
@@ -342,7 +361,7 @@ def test_linux_release_qualification_gets_the_kernel_wrapper(name, monkeypatch) 
     monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: False)
     monkeypatch.setattr("capsem.gate.sandbox.prepare_egress", lambda *_args: None)
 
-    replacement = _command(name, **COMPLETE_GATE[name]).reexec()
+    replacement = _command(name, **QUALIFIED_RELEASES[name]).reexec()
 
     assert replacement is not None
     assert replacement[0] == CONFIG.sandbox.linux_command

@@ -55,19 +55,26 @@ just release-binaries <channel> <source-commit>
 just release-profile <channel> <profile> <source-commit>
 ```
 
-They are the sole human and automation entrypoints. Each command contains the
-complete `just test` candidate plan in one Python `capsem-gate` process, machine
-lock, workspace, and journal; it never launches `just test`, Just, or another
-gate. Do not add preparation, combined-release, reduced-gate, or skip commands,
-nor dispatch `release.yaml` or `release-assets.yaml` directly.
+They consume a prior `just test <source-commit>` qualification; they never
+repeat the candidate or accept prose, skills, or operator receipts as proof.
+Do not add combined/reduced/skip commands or dispatch the workflows directly.
 
-The full lowercase commit is prepared and committed on `main` before the
-command. Qualification runs from an independent detached repository at the
-full-SHA prefix; moving the outer checkout cannot change it. Cheap read-only
-validation may fail earlier, but no source/version tag, manifest authoring,
-workflow dispatch, or activation may precede the complete green candidate.
-Afterward both commands create or verify `capsem-source-<commit>` and dispatch
-from it. They never edit tracked source or push `main`.
+The full lowercase commit is committed on `main` before qualification.
+`just test <commit>` runs in a detached full-SHA directory. Success archives
+the event journal under that commit; repeats return success with the original
+run ID, absolute path, and digest. Release revalidates it at its first edge,
+then dispatches through `capsem-source-<commit>` without editing or pushing main.
+
+This separation is deliberate. Qualification is a reusable fact about source
+bytes, not a side effect of asking to publish them. Advancing `main` cannot
+invalidate an already-running detached proof, and publishing later cannot
+force an identical two-hour rerun. The structured event journal is the only
+authority: the skill explains the contract but can never satisfy it.
+
+A failed run archives its journal and retains the full-SHA prefix. A repeat may
+use only its deepest proven frontier; the child records carried steps and a
+content-addressed parent. Manual continuation must match the derived prefix,
+frontier, and carried set. Reuse-only success cannot extend the chain.
 
 The complete candidate remains inside the host-kernel network boundary.
 Bubblewrap on Linux and Seatbelt on macOS provide loopback only; the one-time
@@ -81,15 +88,9 @@ Candidate and both release commands accept only the enforcing sandbox mode;
 `off` and `report` are diagnostic modes for incomplete modules and can never
 produce complete qualification evidence.
 
-Local `just test` rebuilds every package and checked-in profile and runs the
-same six private modules used by both release lanes:
-
-- `_test-fast`
-- `_test-static`
-- `_test-artifacts`
-- `_test-functional`
-- `_test-glowup`
-- `_test-release-contracts`
+Local `just test` rebuilds every package/profile and runs the six release
+modules: `_test-fast`, `_test-static`, `_test-artifacts`, `_test-functional`,
+`_test-glowup`, and `_test-release-contracts`.
 
 Release CI saves construction time, never test quality. The binary lane builds
 packages and digest-resolves profiles; the profile lane builds exactly one
@@ -134,12 +135,12 @@ byte-for-byte. `assets/manifest-metadata.json` is its only metadata sidecar;
 runtime may derive an in-memory boot view. CLI and UI consume the same
 `GET /system/status` contract and must not synthesize publication state.
 
-A red gate stops publication. Fix forward without moving tags or history, and
-do not blindly rerun deterministic failures. Diagnostic continuation may reach
-a late failure after a non-release candidate, but carried predecessors are not
-new qualification. Both release commands reject continuation flags; never use
-continued output to stamp, tag, push, dispatch, activate, or qualify. Rerun the
-public release command from the beginning after the fix.
+A red gate stops publication. Fix forward without moving tags or history. For
+an exact commit, invoke `just test <commit>` again: the gate either returns its
+complete journal or derives the only supported partial continuation. Carried
+steps become qualification only through the recursively verified journal
+chain. Working-tree diagnostic continuation remains non-qualification. Both
+release commands reject continuation flags and require a complete journal.
 
 ## Version and commit essentials
 

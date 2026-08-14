@@ -43,6 +43,7 @@ from .runhistory import (
     tree_size,
 )
 from .runlogschema import RunEnd, RunStart
+from .sourcecommit import SourceCommit
 from .sourcestate import gate_source
 from .summary import write_summary
 
@@ -63,6 +64,7 @@ class RunLog(EventJournal):
         self.command = command
         self._steps = self.directory / settings.step_log_dir
         self._started = time.monotonic()
+        self._qualification_commit: SourceCommit | None = None
 
     # -- opening and closing -----------------------------------------------
 
@@ -130,6 +132,10 @@ class RunLog(EventJournal):
         turns a release which had already published into a logging failure.
         """
         try:
+            if self._qualification_commit is not None:
+                from .qualificationevidence import archive_attempt
+
+                archive_attempt(self._config, self._qualification_commit, self.directory)
             self.emit(
                 RunEnd(
                     status=status,
@@ -142,6 +148,10 @@ class RunLog(EventJournal):
             self._record_history()
         finally:
             self._active = release_active(self._active)
+
+    def qualification_attempt(self, commit: SourceCommit) -> None:
+        """Retain this exact-source journal independently of run rotation."""
+        self._qualification_commit = commit
 
     def _record_history(self) -> None:
         """Add this run to the ledger and rewrite the digest.

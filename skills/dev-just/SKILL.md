@@ -26,9 +26,9 @@ allowlist update in the same change.
 | `just doctor [fix]` | Validate host tools, Docker/Colima, Tart cache/boot/SSH, signing, and assets. |
 | `just fast-test` | The fast gate itself -- the same `_test-fast` module `test` and both release lanes run, so it cannot drift from them. |
 | `just vm-smoke` | Short VM round-trip: boot, exercise, tear down. Runtime liveness, never release qualification. |
-| `just test` | Complete local all-artifact construction and test proof. |
-| `just release-binaries <channel> <source-commit>` | Qualify one detached committed source, then release only packages for one channel against pulled profiles. |
-| `just release-profile <channel> <profile> <source-commit>` | Qualify one detached committed source, then call `capsem-admin release` for one profile against the pulled package. |
+| `just test [source-commit]` | Complete local proof; an exact commit reuses or structurally resumes its archived journal. |
+| `just release-binaries <channel> <source-commit>` | Require exact qualification, then release only packages for one channel against pulled profiles. |
+| `just release-profile <channel> <profile> <source-commit>` | Require exact qualification, then call `capsem-admin release` for one profile against the pulled package. |
 
 `just --summary` must print exactly the names in `[just].approved` and nothing
 else. The count is not repeated here on purpose: this line used to say "those
@@ -64,9 +64,9 @@ locking, teardown, and contract tests see it.
 A plan action must never invoke `just` or another `capsem-gate` command. Compose
 the other command's fragment instead. The machine lock is not reentrant, so a
 nested gate waits for the lock held by its own parent. Likewise, do not split a
-release into fetch/gate/publish processes joined by a receipt: each public
-release command contains the complete candidate plan in one process, one lock,
-one workspace, and one plan.
+release with an operator-authored receipt. The complete candidate owns one
+process, lock, workspace, plan, and runner journal; release revalidates that
+content-addressed journal before its short publication plan.
 
 Read `/dev-gate` before changing Python orchestration and `/release-process`
 before changing either release plan.
@@ -99,21 +99,22 @@ exchange for no decision made.
   look like optional developer feedback and the VM loop look like a
   release-adjacent proof. A recipe that runs two different jobs cannot be
   named honestly, so it does not get to exist.
-- Neither is ever sufficient for release. Both release commands must call
-  complete `test` -- not `fast-test`, not `vm-smoke`.
+- Neither is ever sufficient for release. A release requires a complete
+  archived `just test <source-commit>` journal -- never `fast-test` or
+  `vm-smoke`.
 - No generic or combined release recipe. The two approved release commands
-  each run `just test` before delegating to one checked-in implementation, and
-  the two workflows share the per-channel lock.
+  revalidate exact qualification before delegating to one checked-in
+  implementation, and the two workflows share the per-channel lock.
 - No dependency-update, fixture-update, audit-only, coverage-only, benchmark,
   cleanup, session-SQL, or package-install convenience recipes. Call the owning
   script/tool directly.
 - No separate UI aliases. Use `just dev <surface>` or `just build`.
 - No public build primitives for kernel, rootfs, Docker images, architectures,
   or package rails.
-- No public diagnostic-continuation recipe. It is an internal developer mode
-  of `capsem-gate candidate`, is never qualification, and must be refused by
-  both release commands. See `/dev-debugging` for the transitional CLI and
-  authority boundary.
+- No public continuation recipe. Exact-commit `just test` derives a partial
+  frontier only from its archived event graph and retained full-SHA prefix;
+  working-tree diagnostic continuation is not qualification. Both release
+  commands refuse continuation flags.
 
 Private underscore recipes may exist only as dependencies of the approved
 commands or as narrow CI primitives. Specialized skills and workflows may

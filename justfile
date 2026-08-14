@@ -143,11 +143,11 @@ _gate-assets: _bootstrap _install-tools _generate-settings _sign
 _bootstrap:
     sh {{quote(justfile_directory() / "bootstrap.sh")}} -y
 
-# Bind the complete gate to the exact source state present at invocation. A
-# developer may test deliberate uncommitted work; the gate must return every
-# tracked and untracked non-ignored source byte unchanged.
-test:
-    @uv run capsem-gate candidate
+# With no argument, bind the complete gate to the working-tree bytes and return
+# them unchanged. With a full commit already on main, reuse its complete
+# journal, resume its structurally proven retained prefix, or qualify it once.
+test source_commit="":
+    @uv run capsem-gate candidate {{quote(source_commit)}}
 
 # After the source-only fast gate passes, local composition constructs every
 # artifact family before running the remaining modules used by release CI.

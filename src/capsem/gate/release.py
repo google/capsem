@@ -10,15 +10,19 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from . import candidateplan, imagebuild
+from . import imagebuild, sandbox
 from .actions import Run, Script
-from .candidate import CompleteGate
 from .command import GateCommand
 from .config import GateConfig
+from .egress import Egress
 from .errors import GateError
 from .execution import step
 from .fileactions import MakeDir
+from .lifecycle import Resource
 from .plan import Plan
+from .proc import Runner
+from .qualificationevidence import AcceptQualification, QualificationPolicy
+from .sandboxreport import SandboxReport
 from .sourcecommit import SourceCommit
 
 
@@ -41,31 +45,32 @@ def _require_profile(config: GateConfig, profile: str) -> None:
         raise GateError(f"unknown profile {profile!r}; expected one of {', '.join(known)}")
 
 
-def _gate(plan: Plan, config: GateConfig, *, qualification, after):
-    """The complete local proof, composed rather than launched.
+class _QualifiedRelease:
+    """A short dispatcher that consumes, but never repeats, qualification."""
 
-    `Run(["just", "test"])` from here started a second gate, and both release
-    commands are exclusive -- so the child waited out its timeout for the lock
-    its own parent held, and no release could ever have run. Composed, the
-    release plan *contains* the gate, so "nothing publishes before the
-    complete proof passes" is an edge rather than a promise.
-    """
-    return candidateplan.compose(plan, config, qualification=qualification, after=after)
+    _config: GateConfig
+    _sandbox_mode: sandbox.SandboxMode
+    sandboxed = sandbox.ENFORCE
+    qualification_policy = QualificationPolicy.REQUIRE
+    private_checkout = True
+    outside_egress = True
+
+    def resources(self, runner: Runner) -> tuple[Resource, ...]:
+        return (
+            SandboxReport(self._config, runner, mode=self._sandbox_mode),
+            Egress(self._config, enabled=self._sandbox_mode is not sandbox.OFF),
+        )
 
 
 class ReleaseBinariesCommand(
-    CompleteGate,
+    _QualifiedRelease,
     GateCommand,
     name="release-binaries",
-    help="run the complete gate, then release packages for one channel",
+    help="release exact previously-qualified packages for one channel",
 ):
-    """The gate runs inside this command, so it holds what the gate holds and
-    keeps the host awake for the same reason candidate does."""
-
     exclusive = True
     publishes = True
     uses_qualification = True
-    outside_egress = True
 
     @classmethod
     def add_arguments(cls, parser) -> None:
@@ -84,6 +89,7 @@ class ReleaseBinariesCommand(
 
         _require_channel(config, channel)
 
+        accepted = plan.add(step("qualification.accept", AcceptQualification(self.source_commit())))
         checked = plan.add(
             step(
                 "source.remote-main",
@@ -96,7 +102,8 @@ class ReleaseBinariesCommand(
                     root=checkout,
                     outside_sandbox=True,
                 ),
-            )
+            ),
+            after=(accepted,),
         )
         prepared = plan.add(
             step(
@@ -130,7 +137,6 @@ class ReleaseBinariesCommand(
             ),
             after=(prepared,),
         )
-        gate = _gate(plan, config, qualification=self.qualification, after=(fetched,))
         published = plan.add(
             step(
                 "source.publish-ref",
@@ -143,7 +149,7 @@ class ReleaseBinariesCommand(
                     outside_sandbox=True,
                 ),
             ),
-            after=(gate,),
+            after=(fetched,),
         )
         plan.add(
             step(
@@ -162,15 +168,14 @@ class ReleaseBinariesCommand(
 
 
 class ReleaseProfileCommand(
-    CompleteGate,
+    _QualifiedRelease,
     GateCommand,
     name="release-profile",
-    help="run the complete gate, then release one channel profile",
+    help="release one exact previously-qualified channel profile",
 ):
     exclusive = True
     publishes = True
     uses_qualification = True
-    outside_egress = True
 
     @classmethod
     def add_arguments(cls, parser) -> None:
@@ -195,6 +200,7 @@ class ReleaseProfileCommand(
         _require_channel(config, self._args.channel)
         _require_profile(config, self._args.profile)
 
+        accepted = plan.add(step("qualification.accept", AcceptQualification(self.source_commit())))
         checked = plan.add(
             step(
                 "source.remote-main",
@@ -208,9 +214,9 @@ class ReleaseProfileCommand(
                     outside_sandbox=True,
                 ),
                 MakeDir(config.path(settings.preflight_dir)),
-            )
+            ),
+            after=(accepted,),
         )
-        gate = _gate(plan, config, qualification=self.qualification, after=(checked,))
         published = plan.add(
             step(
                 "source.publish-ref",
@@ -223,7 +229,7 @@ class ReleaseProfileCommand(
                     outside_sandbox=True,
                 ),
             ),
-            after=(gate,),
+            after=(checked,),
         )
         plan.add(
             step(

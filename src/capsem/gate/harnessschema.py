@@ -191,6 +191,7 @@ class RunLogConfig(Strict):
     error_log_keep: int
     history_lock: str
     active_marker: str
+    source_archive_dir: str
     keep_runs: PositiveInt
     keep_bytes: PositiveInt
     artifact_digest: str
@@ -202,6 +203,19 @@ class RunLogConfig(Strict):
     #: its own line boundary and thresholds are what people come to tune.
     ledger: LedgerConfig
     digest: DigestConfig
+
+    @field_validator("source_archive_dir")
+    @classmethod
+    def _archive_is_one_relative_directory(cls, value: str) -> str:
+        if PurePosixPath(value).name != value or value in {".", ".."}:
+            raise ValueError("source_archive_dir must be one relative directory name")
+        return value
+
+    @model_validator(mode="after")
+    def _archive_does_not_alias_run_metadata(self) -> RunLogConfig:
+        if self.source_archive_dir in {self.latest_link, self.history_lock}:
+            raise ValueError("source_archive_dir must not alias run-history metadata")
+        return self
 
 
 class DiskConfig(Strict):

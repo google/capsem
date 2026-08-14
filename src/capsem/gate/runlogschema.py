@@ -12,6 +12,7 @@ payloads.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints
@@ -31,6 +32,18 @@ OK, FAILED, SKIPPED, CARRIED = "ok", "failed", "skipped", "carried"
 
 class Payload(Strict):
     """One event's own fields."""
+
+
+class QualificationRun(Strict):
+    """One immutable pointer to an exact-source attempt journal."""
+
+    run_id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")]
+    run_log: Annotated[str, StringConstraints(min_length=1)]
+    digest: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+
+    @property
+    def path(self) -> Path:
+        return Path(self.run_log)
 
 
 class RunStart(Payload):
@@ -77,6 +90,33 @@ class PlanShape(Payload):
     steps: tuple[str, ...]
     edges: tuple[tuple[str, str], ...]
     """`(before, after)` pairs, in the order the plan declared them."""
+
+
+class QualificationResume(Payload):
+    """The prior journal that proves this run's carried steps."""
+
+    event: Literal["qualification.resume"] = "qualification.resume"
+    source_commit: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")]
+    parent: QualificationRun
+    carried_steps: tuple[str, ...]
+
+
+class QualificationComplete(Payload):
+    """A complete exact-source proof, optionally composed from one parent."""
+
+    event: Literal["qualification.complete"] = "qualification.complete"
+    source_commit: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")]
+    source_digest: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+    plan_digest: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+    parent: QualificationRun | None = None
+
+
+class QualificationReuse(Payload):
+    """A normal successful invocation satisfied by a prior complete journal."""
+
+    event: Literal["qualification.reuse"] = "qualification.reuse"
+    source_commit: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")]
+    qualification: QualificationRun
 
 
 class StepStart(Payload):

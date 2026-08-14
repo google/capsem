@@ -46,11 +46,10 @@ def test_the_fast_gate_is_public_and_is_not_a_release_shortcut() -> None:
         "the old bundled recipe is back; it named neither of the two jobs it ran"
     )
 
-    # Each release command runs the complete gate before it publishes, and
-    # never the reduced developer feedback. The evidence moved from `just test`
-    # appearing in the recipe to the gate's own phases appearing in the plan:
-    # a recipe line proved a command was named, where this proves the work is
-    # actually there and sits ahead of every publishing step.
+    # Qualification is produced only by the complete candidate. A release
+    # consumes its exact-commit journal instead of repeating either the full
+    # gate or reduced developer feedback, and revalidates that evidence at the
+    # first graph edge before any publication work.
     import argparse
 
     from helpers.gate import RecordingRunner
@@ -75,13 +74,14 @@ def test_the_fast_gate_is_public_and_is_not_a_release_shortcut() -> None:
         )._describe()
         order = list(plan.labels)
 
-        phases = [
-            next(i for i, label in enumerate(order) if label.startswith(prefix))
-            for prefix in ("fast.", "static.", "artifacts.", "functional.", "glowup.")
-        ]
-        assert max(phases) < order.index("release"), (
-            f"{name} publishes before the complete gate has passed"
-        )
+        assert order[0] == "qualification.accept"
+        assert order.index("qualification.accept") < order.index("source.publish-ref")
+        assert order.index("qualification.accept") < order.index("release")
+        assert not [
+            label
+            for label in order
+            if label.startswith(("fast.", "static.", "artifacts.", "functional.", "glowup."))
+        ], f"{name} repeats work already proven by the exact qualification journal"
         # By step label, not by substring: `smoke` appears in the name of a
         # test file the contracts step collects, and matching that would make
         # this pass or fail on an unrelated rename.

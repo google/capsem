@@ -5,10 +5,11 @@ work to reach a new failure one step further on. The private checkout made that
 worse, not better: a fresh copy per run starts with no `target/`, so every
 replay is cold.
 
-`--prefix <tree> --from <step>` reuses the tree the last run built in and
-carries everything the graph puts before that step. These hold the two things
-that make it safe to have at all: it is refused on the release path, and a
-carried step is never recorded as one this process ran.
+Working-tree `--prefix <tree> --from <step>` is diagnostic continuation and
+never qualification. Exact-commit `just test` instead selects its retained
+full-SHA prefix and deepest frontier from archived event evidence; a resumed
+journal names its content-addressed parent. Both modes record carried steps as
+`carried`, and release commands still reject continuation flags outright.
 """
 
 from __future__ import annotations
@@ -203,10 +204,9 @@ def test_carrying_nothing_is_the_default() -> None:
 def test_a_release_run_cannot_carry_anything() -> None:
     """The invariant this whole feature lives or dies on.
 
-    `AGENTS.md` and `release-process` forbid a reduced gate, a skip flag and an
-    environment bypass on the release path. A resumed run is all three unless
-    it is refused there, and the refusal is the reason this is allowed to exist
-    at all.
+    Release consumes only a completed exact-source journal. It cannot choose a
+    frontier itself; partial lineage is resolved by `just test <commit>` and
+    becomes complete evidence only after recursive carried-step validation.
     """
     from capsem.gate import resume
     from capsem.gate.errors import GateError

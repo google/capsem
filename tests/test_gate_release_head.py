@@ -24,13 +24,16 @@ def _plan(name: str, **args):
         ("release-profile", {"channel": "nightly", "profile": "code"}),
     ],
 )
-def test_release_plan_verifies_remote_main_then_publishes_source_ref(name: str, args: dict) -> None:
+def test_release_plan_accepts_qualification_then_publishes_source_ref(
+    name: str, args: dict
+) -> None:
     plan = _plan(name, **args)
     labels = set(plan.labels)
 
     assert {"source.remote-main", "source.publish-ref", "release"} <= labels
     assert plan.after_of("source.publish-ref")
-    assert "source.verify" in resume.ancestors(plan, "source.publish-ref")
+    assert "qualification.accept" in resume.ancestors(plan, "source.publish-ref")
+    assert "source.remote-main" in resume.ancestors(plan, "source.publish-ref")
     assert "source.publish-ref" in resume.ancestors(plan, "release")
 
     rendered = plan.describe()

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Exact-commit qualification is now durable, reusable evidence instead of work
+  repeated by every release request. Complete candidate journals short-circuit
+  with their original run ID, path, and digest; failed journals may resume only
+  graph-proven ancestors from the retained full-SHA prefix. Release commands
+  revalidate that content-addressed chain before dispatch and never infer proof
+  from a skill, marker, guessed continuation, or mutable checkout state.
+
 - Exact-package install qualification now converts the selected legacy asset
   projection into a release graph before recording the package and its source
   commit, then regenerates the channel catalogs from that stamped graph. The

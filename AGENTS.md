@@ -18,8 +18,8 @@ just doctor fix    # Install prerequisites and materialize missing VM assets
 just shell         # Build + boot VM (~10s)
 just fast-test     # The fast gate itself -- same module the release lanes run
 just vm-smoke      # Short VM round-trip; runtime liveness, not qualification
-just test          # ALL tests: unit + integration + cross-compile + Docker e2e. No shortcuts.
 source_commit=$(git rev-parse HEAD)
+just test "$source_commit" # Qualify this committed source once; exact repeats reuse its journal.
 just release-binaries nightly "$source_commit"
 just release-profile nightly code "$source_commit"
 ```
@@ -198,14 +198,15 @@ just release-binaries <channel> <source-commit>
 just release-profile <channel> <profile> <source-commit>
 ```
 
-- Each release command itself runs complete `just test` first. There is no
-  separate qualification command. The operator supplies one full lowercase
-  commit already prepared, committed, and reachable from fresh `origin/main`.
-  Qualification runs from a detached private repository named by that exact
-  commit, so the outer checkout and `main` may advance without changing the
-  subject. After success the command creates or verifies the immutable
-  `capsem-source-<commit>` transport ref and dispatches from it. Release work
-  never edits tracked source or pushes `main`.
+- `just test <source-commit>` qualifies one full lowercase commit already
+  prepared, committed, and reachable from local `main`. It runs from a
+  detached private repository named by that exact commit, so the outer
+  checkout and `main` may advance without changing the subject. A repeat
+  returns the archived complete journal immediately, or resumes only the
+  graph ancestry proven by a content-addressed partial journal and retained
+  exact prefix. Each release command revalidates that journal at its first
+  edge, then creates or verifies `capsem-source-<commit>` and dispatches. It
+  never repeats the local gate, edits tracked source, or pushes `main`.
 - Local `just test` remains the complete all-artifact proof. It rebuilds
   packages and every configured profile, then runs audits, lint, frontend,
   Rust/Python coverage, all VM suites, Winterfell/MCP lifecycle, IronBank,
@@ -306,8 +307,8 @@ rule.
 
 `just test` is **one process, one machine lock, one workspace, one plan**.
 Its dry run reports the current totals; conditional asset staging makes a
-checked-in count depend on machine state. Both release commands contain that
-same plan rather than launching it.
+checked-in count depend on machine state. Release consumes its exact-commit
+journal rather than launching or composing that plan a second time.
 
 Six rules, each with a guard:
 

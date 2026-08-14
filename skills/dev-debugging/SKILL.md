@@ -73,9 +73,8 @@ outputs with current source and therefore answers only whether the new segment
 can proceed. It does not prove the complete current tree.
 
 Never use diagnostic continuation with `release-binaries` or
-`release-profile`, and never let it authorize stamping, pushing, dispatch,
-publication, or activation. After the fix, run a clean `just test` or the
-public release command, which contains that same complete Python plan.
+`release-profile`, and never let it authorize publication. After the fix, run
+`just test <commit>`; a release may consume only that complete exact journal.
 
 ## Step 1: Reproduce with a test
 
@@ -155,11 +154,10 @@ action live under `target/gate-runs/`; `capsem-gate runs last --failed` is the
 supported reader. `target/build.log` is supporting build evidence, not the
 gate's execution ledger.
 
-Do not retry a release by calling `scripts/release-binaries.py`,
-`capsem-admin release`, or a GitHub workflow directly. The public release
-command is one Python plan containing prechecks, the complete gate, source
-reconfirmation, and publication. A direct terminal script or workflow skips
-the edges that make a release safe.
+Do not retry a release through its script, `capsem-admin release`, or a GitHub
+workflow. The public command first accepts the exact qualification journal,
+then runs prechecks, source publication, and dispatch as one graph. A direct
+script or workflow skips the edges that make release safe.
 
 **Telemetry pipeline issues**: The canonical session ledgers (net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, security_rule_events) each have their own boundary. If a table is empty or has wrong data:
 - Check if the guest daemon started (boot logs)

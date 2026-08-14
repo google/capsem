@@ -1,21 +1,15 @@
-"""A release qualifies and dispatches solely from one detached commit prefix.
+"""A release consumes qualification and dispatches from one detached prefix.
 
 Phase 7 gave `candidate` a private tree and stopped there, so both release
 commands still spent the hour-long gate against the checkout a developer was
 editing. That is the failure class the copy exists to remove, and a release is
 where it costs the most.
 
-The first design for closing it split the release into three sibling processes
-bound by a receipt. That is refused here, and the refusal is the point of this
-file: `AGENTS.md` requires one process, one machine lock, one workspace and one
-plan, requires each release command to *contain* the complete proof rather than
-launch it, and forbids a parallel release ledger or result file. A receipt
-binding three processes is that ledger.
-
 The selected commit is already on main and is materialized as an independent
-detached repository. The complete proof and both immutable-ref/dispatch steps
-use that one tree. The outer working tree may advance without changing the
-subject; tracked source is never authored during release.
+detached repository. A complete candidate journal is the only qualification
+authority. Release revalidates that immutable journal at its first graph edge,
+then publishes and dispatches from the same exact source. It must not repeat
+the multi-hour proof or accept an operator-authored receipt in its place.
 """
 
 from __future__ import annotations
@@ -48,28 +42,12 @@ PUBLICATION = ("source.remote-main", "source.publish-ref", "release")
 NETWORKED = {
     "release-binaries": (
         "channel-source",
-        "fast.audit.cargo",
-        "fast.audit.pnpm",
-        "fast.audit.python-lock",
-        "fast.toolchain.ort",
-        "host-image",
-        "install.materialize",
         "precheck",
-        "static.guest-builder",
-        "static.toolchain.ort",
         "source.remote-main",
         "source.publish-ref",
         "release",
     ),
     "release-profile": (
-        "fast.audit.cargo",
-        "fast.audit.pnpm",
-        "fast.audit.python-lock",
-        "fast.toolchain.ort",
-        "host-image",
-        "install.materialize",
-        "static.guest-builder",
-        "static.toolchain.ort",
         "source.remote-main",
         "source.publish-ref",
         "release",
@@ -94,20 +72,15 @@ def checkout(tmp_path, monkeypatch) -> Path:
     return source
 
 
-def test_a_command_containing_the_whole_gate_runs_it_from_a_copy() -> None:
-    """Declared on the mixin, not on `candidate`.
-
-    `CompleteGate` is precisely the set of commands that spend the complete
-    forty-minute proof, which is precisely the set long enough for someone to
-    edit the tree underneath. Declaring it per command left the two that
-    publish -- the ones whose mistakes are public and irreversible -- as the
-    only ones without it.
-    """
+def test_complete_candidate_and_release_dispatch_use_private_copies() -> None:
+    """Qualification and publication both avoid the mutable outer checkout."""
     assert CompleteGate.private_checkout is True
+    assert GateCommand.registry["candidate"].private_checkout is True
 
-    for name in ("candidate", *(name for name, _ in RELEASES)):
+    for name, args in RELEASES:
+        _plan(name, **args)  # register the command through the real CLI helper
         assert GateCommand.registry[name].private_checkout is True, (
-            f"{name} contains the complete gate and would run it against the live checkout"
+            f"{name} would dispatch from the mutable outer checkout"
         )
 
 
@@ -124,13 +97,8 @@ def test_publication_never_reaches_the_mutable_outer_checkout(name, args, checko
 
 
 @pytest.mark.parametrize(("name", "args"), RELEASES)
-def test_the_gate_itself_stays_in_the_copy(name, args, checkout) -> None:
-    """The other half of the same claim, and the one that is easy to lose.
-
-    Aiming a step at the checkout is one keyword, so the risk is not that
-    publication misses it -- it is that the gate quietly acquires it and the
-    isolation becomes decorative while every test above still passes.
-    """
+def test_qualification_acceptance_stays_in_the_copy(name, args, checkout) -> None:
+    """Journal acceptance and dispatch both resolve from the detached source."""
     plan = _plan(name, **args)
 
     escaped = [
@@ -146,14 +114,8 @@ def test_the_gate_itself_stays_in_the_copy(name, args, checkout) -> None:
 
 
 @pytest.mark.parametrize(("name", "args"), RELEASES)
-def test_the_release_is_still_one_plan_in_one_process(name, args, checkout) -> None:
-    """`AGENTS.md` is the authority here, not this file's convenience.
-
-    The rejected design made the gate a separate `capsem-gate` process between
-    a fetch process and a publish process. Composed instead, "nothing publishes
-    before the complete proof passes" stays an edge in one graph -- and the
-    machine lock, which is not reentrant, is still taken exactly once.
-    """
+def test_release_revalidates_evidence_without_rerunning_the_gate(name, args, checkout) -> None:
+    """The release plan consumes the prior proof and invokes no nested gate."""
     plan = _plan(name, **args)
     # Whole words: `--bin capsem-gateway` is a binary this gate builds, and a
     # substring match reads it as a nested gate invocation.
@@ -161,32 +123,24 @@ def test_the_release_is_still_one_plan_in_one_process(name, args, checkout) -> N
 
     for launcher in ("capsem-gate", "just"):
         assert launcher not in words, (
-            f"a release step launches {launcher!r}; the gate is composed into "
-            "this plan, and a second process would wait out its own parent's "
-            "machine lock"
+            f"a release step launches {launcher!r}; qualification is a journal "
+            "input, not another gate process"
         )
 
-    # The complete proof, present as phases rather than as a step named for it.
+    assert plan.labels[0] == "qualification.accept"
     for phase in ("fast.", "static.", "artifacts.", "functional.", "glowup."):
-        assert any(step.label.startswith(phase) for step in plan.steps), (
-            f"the {phase} phase is missing, so this plan is not the complete gate"
+        assert not any(step.label.startswith(phase) for step in plan.steps), (
+            f"the release repeats the {phase} phase already proven by its journal"
         )
 
 
-def test_no_receipt_authority_was_invented() -> None:
-    """The parallel ledger `AGENTS.md` forbids, refused by name.
-
-    Splitting the release across processes needs something to bind them, and a
-    receipt recording the fetched manifest, source commit, source digest and
-    gate result is exactly the "release result file" the release contract
-    rules out. The detached prefix, structured run log, and family-owned
-    manifest fields carry their own identities without creating that authority.
-    """
+def test_no_operator_authored_release_receipt_was_invented() -> None:
+    """The runner-owned event journal is evidence; config has no second receipt."""
     settings = CONFIG.release.model_dump()
 
     assert "receipt" not in settings, (
-        "a release receipt is a parallel release ledger; the manifest is the "
-        "bible and the immutable source prefix is the fail-stop"
+        "an operator-authored release receipt would bypass the runner-owned "
+        "content-addressed qualification journal"
     )
 
 

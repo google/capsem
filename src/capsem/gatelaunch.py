@@ -8,11 +8,10 @@ no longer contained; an isolated cache made them vanish without a source
 change.
 
 That is not merely bad local feedback. `just test` and both release commands
-begin with `uv run capsem-gate`, and the source guard records the HEAD and the
-digest of the bytes on disk -- not the bytes the interpreter is executing. A
-stale module can therefore construct and run a plan that does not correspond to
-the tree the release is about to publish, and every check will agree that it
-does.
+begin with `uv run capsem-gate`. Qualification records the commit and source
+digest, while release accepts that journal before dispatch. A stale module
+could otherwise construct a plan or accept evidence that does not correspond
+to the source being qualified or published.
 
 So the entry point is this file rather than `capsem.gate.cli`: it re-execs with
 a per-invocation `pycache_prefix` before anything from `capsem.gate` is

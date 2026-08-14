@@ -21,6 +21,11 @@ class SourceCommit(str):
         return str.__new__(cls, value)
 
 
+def optional_source_commit(value: str) -> SourceCommit | None:
+    """Map only Just's quoted empty default to working-tree qualification."""
+    return None if value == "" else SourceCommit(value)
+
+
 def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],

@@ -45,7 +45,13 @@ def runs(config: GateConfig) -> list[Path]:
     if not root.is_dir():
         return []
     return sorted(
-        (entry for entry in root.iterdir() if entry.is_dir() and not entry.is_symlink()),
+        (
+            entry
+            for entry in root.iterdir()
+            if entry.is_dir()
+            and not entry.is_symlink()
+            and entry.name != config.runlog.source_archive_dir
+        ),
         key=lambda entry: entry.name,
         reverse=True,
     )

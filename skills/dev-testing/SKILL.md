@@ -35,10 +35,10 @@ let five through; the rule is now a whitelist for that reason.
 | `just fast-test` | The fast gate itself; identical module to `test` and the release lanes | Yes |
 | `just vm-smoke` | Repack, sign, boot, doctor, MCP, and service integration in a real VM | Yes |
 
-`just test` is the single release source of truth. `just fast-test` is useful
-developer feedback, but it never qualifies or releases anything. During TDD
-run the smallest native pytest, cargo, pnpm, or script command directly;
-release commands must execute full `just test`.
+`just test <commit>` is the reusable release source of truth. `just fast-test`
+is useful developer feedback, but it never qualifies or releases anything.
+During TDD run the smallest native pytest, cargo, pnpm, or script command;
+release commands must consume the complete exact-commit journal.
 
 The full gate is a construction boundary, not the edit loop. During TDD,
 reproduce the failure with the smallest focused test, run that test red/green,

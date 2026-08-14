@@ -167,7 +167,7 @@ def require_complete_qualification(name: str, chosen: SandboxMode, complete: boo
     """Refuse permissive modes before a complete gate can describe or act."""
     if complete and chosen is not ENFORCE:
         raise GateError(
-            f"{name} is a complete qualification command and requires --sandbox enforce; "
+            f"{name} handles complete qualification evidence and requires --sandbox enforce; "
             f"--sandbox {chosen.value} is diagnostic-only"
         )
 

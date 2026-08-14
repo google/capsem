@@ -488,12 +488,24 @@ including:
 The exact internal steps may evolve, but the public meaning of `just test`
 remains “construct and verify the whole system.”
 
-Each release command selects one canonical full lowercase commit that is
-already prepared, committed, and reachable from fresh `origin/main`. It MUST
+`just test <source-commit>` selects one canonical full lowercase commit that is
+already prepared, committed, and reachable from local `main`. It MUST
 materialize and qualify an independent detached repository at a prefix named
-by that full commit. The mutable outer checkout and branch are not release
-inputs and MAY advance during qualification. A release command MUST NOT edit
-tracked source, create a preparation commit, or push `main` after the proof.
+by that full commit. The mutable outer checkout and branch are not
+qualification inputs and MAY advance while it runs. Each release command MUST
+require and revalidate that complete exact-commit journal before any source
+publication or dispatch. It MUST NOT repeat the local candidate, edit tracked
+source, create a preparation commit, or push `main` after the proof.
+
+The runner MUST archive each exact-source attempt journal independently of
+ordinary run rotation. A repeated `just test <source-commit>` MUST return
+ordinary success immediately when a complete journal still validates, naming
+the original run ID, path, and content digest. A failed attempt MAY resume only
+from its retained full-SHA prefix and the deepest frontier whose graph-derived
+ancestors are covered by that exact journal. The new attempt MUST record a
+content-addressed parent and every carried step. Recursive coverage of every
+declared step is required before the chain becomes complete. A reuse-only run,
+manual marker, skill, or guessed continuation MUST NOT become evidence.
 
 Before starting Docker/Colima, bootstrap, package, profile, asset, or VM work,
 `just test` MUST run one checked-in private `_test-fast` module. That same
@@ -1571,9 +1583,12 @@ An implementation conforming to this specification MUST demonstrate:
 - [ ] Existing nightly identities are rebuilt and tested without overwriting
       immutable publications.
 - [ ] Stable binary and profile publication is manual.
-- [ ] Both release commands require one canonical full commit already on
-      fresh `origin/main`, qualify its detached full-SHA prefix, and remain
-      valid while the outer checkout advances.
+- [ ] `just test <source-commit>` requires one canonical full commit already
+      on local `main`, qualifies its detached full-SHA prefix once, reuses or
+      structurally resumes its journal, and remains valid while the outer
+      checkout advances.
+- [ ] Both release commands revalidate the complete archived journal before
+      publishing or dispatching and never repeat the local candidate.
 - [ ] Binary release accepts exactly one channel and one source commit.
 - [ ] Profile release accepts exactly one channel, profile, and source commit and derives its
       immutable publication identity.

@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from typing import ClassVar
 
 from . import config as gate_config
-from . import prefix, preflight, resume, sandbox
+from . import prefix, preflight, qualificationflow, resume, sandbox
 from .context import Context
 from .errors import GateError
 from .funnel import GuardedRunner
@@ -33,6 +33,7 @@ from .proc import Runner
 from .qualification import Qualification
 from .qualification import from_environment as qualification_for
 from .qualification import is_release as qualification_is_release
+from .qualificationevidence import QualificationPolicy
 from .recording import Recorded
 from .scopeenv import command_environment
 from .sourcecommit import SourceCommit
@@ -40,12 +41,7 @@ from .sourcecommit import SourceCommit
 
 class GateCommand(Recorded, ABC):
     publishes: ClassVar[bool] = False
-    """Whether this command can make something other people see.
-
-    Only releases set it. It turns a source-tree fault from an `errors.log`
-    report into a refusal; otherwise publication could ship an artifact whose
-    provenance names a tree that did not hold still.
-    """
+    """Whether this command can make something other people see."""
 
     name: ClassVar[str]
     help: ClassVar[str]
@@ -66,15 +62,11 @@ class GateCommand(Recorded, ABC):
     qualification is checked at the first line of `execute`.
     """
     complete_qualification: ClassVar[bool] = False
+    qualification_policy: ClassVar[QualificationPolicy] = QualificationPolicy.NONE
     outside_egress: ClassVar[bool] = False
 
     private_checkout: ClassVar[bool] = False
-    """Whether this runs from a private copy of the checkout instead of it.
-
-    Declared per command rather than inferred: the copy starts with no
-    `target/`, so a short command would pay a cold build to avoid a race it was
-    never going to lose. See `capsem.gate.prefix` for the release failures.
-    """
+    """Whether this runs from a private copy of the checkout instead of it."""
 
     uses_qualification: ClassVar[bool] = False
     """Whether this command's plan depends on which artifacts a release chose.
@@ -193,17 +185,14 @@ class GateCommand(Recorded, ABC):
         The order is the contract. Each line is here because the alternative
         arrangement was tried and broke something.
         """
-        sandbox.require_complete_qualification(
-            self.name, self._sandbox_mode, self.complete_qualification
+        enforced = (
+            self.complete_qualification or self.qualification_policy is QualificationPolicy.REQUIRE
         )
-        # A plan describes; it does not act. Its runner refuses everything, so
-        # `--dry-run` cannot touch the machine on the
-        # way to telling you it would not.
+        sandbox.require_complete_qualification(self.name, self._sandbox_mode, enforced)
+        # A plan describes; its runner refuses work, so inspection cannot act.
         plan = self._describe()
         plan.validate(self._config)
 
-        # Before the inspection returns, so `--dry-run --from <step>` checks a
-        # step name cheaply. See `resume` for what refuses it on a release.
         carried, reuse = resume.resolve(
             plan,
             self._config,
@@ -211,9 +200,6 @@ class GateCommand(Recorded, ABC):
             qualifying=self.publishes or qualification_is_release(self._qualification),
         )
 
-        # Inspection before re-exec. The other way round, `candidate --dry-run`
-        # re-execed into a real `just test`: an inert question starting a
-        # forty-minute destructive gate.
         if self._args.graph:
             print(plan.mermaid())
             return
@@ -221,29 +207,39 @@ class GateCommand(Recorded, ABC):
             print(plan.describe(carried=carried))
             return
 
-        if carried:
-            self._runner.note(f"carrying {len(carried)} steps before {self._args.resume_from}")
-
-        # A direct `cli.main(["storage", ...])` nested gate simply blocked on
-        # the lock its own grandparent held, and the run stayed alive-looking
-        # for the full two hours.
         preflight.refuse_inside_a_run(self._config, self.name, exclusive=self.exclusive)
 
         commit = self.source_commit()
+        decision = qualificationflow.decide(
+            self._config,
+            policy=self.qualification_policy,
+            commit=commit,
+            plan=plan,
+            args=self._args,
+            carried=carried,
+            reuse_path=reuse,
+        )
+        if decision.shortcut and self.qualification_policy is QualificationPolicy.REUSE_OR_RUN:
+            assert commit is not None
+            assert decision.complete is not None
+            self._record_qualification_reuse(commit, decision.complete)
+            return
+        carried, reuse = decision.carried, decision.reuse
+        if message := qualificationflow.progress(
+            decision, commit, getattr(self._args, "resume_from", None)
+        ):
+            self._runner.note(message)
         if (self.private_checkout or reuse) and not prefix.active(self._config, commit):
             raise SystemExit(
                 prefix.run_from_private_copy(
                     self._runner,
                     self._config,
-                    sys.argv[1:],
+                    [*sys.argv[1:], *decision.child_arguments],
                     reuse=reuse,
                     commit=commit,
                 )
             )
 
-        # Outside the lock: a re-exec inside the held
-        # resources deadlocks, because the child asks for the lock its own
-        # parent is holding and waits out the full timeout.
         replacement = self.reexec()
         if replacement is not None:
             raise SystemExit(self._runner.run(replacement, check=False))
@@ -252,6 +248,7 @@ class GateCommand(Recorded, ABC):
             self._recording(source_commit=None if commit is None else str(commit)) as log,
             observing(self._config, log, plan, publishes=self.publishes) as watch,
         ):
+            qualificationflow.begin(log, decision, commit, self.qualification_policy)
             # Every invocation from here is recorded, and none may start a
             # second gate. Neither is a call site's responsibility.
             runner = GuardedRunner(
@@ -287,6 +284,9 @@ class GateCommand(Recorded, ABC):
                         watch=watch,
                         carried=carried,
                     )
+                )
+                qualificationflow.finish(
+                    log, self._config, commit, self.qualification_policy, plan, decision
                 )
 
     def _describe(self) -> Plan:

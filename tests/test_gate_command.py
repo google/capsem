@@ -354,12 +354,10 @@ def test_only_the_commands_that_must_replace_themselves_do() -> None:
     """A re-exec discards the run log and the lock, so it is not a thing to
     reach for casually.
 
-    Stated as the policy rather than as one name: this asserted
-    `== ["candidate"]`, which described the implementation, and stayed green
-    while both release commands quietly lost the keep-awake wrapper they need
-    for the same reason candidate does. `CompleteGate` owns it now, so the
-    claim is about what a command *contains*.
-    `test_gate_complete_gate_policy` proves each one keeps the host awake.
+    `CompleteGate` owns the expensive keep-awake replacement. Release plans
+    are now short consumers of the candidate journal; their ordinary sandbox
+    re-exec remains in the shared command funnel and does not make them
+    complete gates.
     """
     from capsem.gate.candidate import CompleteGate
 
@@ -374,4 +372,4 @@ def test_only_the_commands_that_must_replace_themselves_do() -> None:
     )
 
     assert replacing == [], "re-exec belongs to CompleteGate, not to a command"
-    assert complete == ["candidate", "release-binaries", "release-profile"]
+    assert complete == ["candidate"]

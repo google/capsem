@@ -30,7 +30,13 @@ from capsem.gate.proc import Runner
 from capsem.gate.recording import Recorded
 from capsem.gate.runhistory import read, rotate, runs
 from capsem.gate.runlog import RunLog
-from capsem.gate.runlogschema import PAYLOADS
+from capsem.gate.runlogschema import (
+    PAYLOADS,
+    QualificationComplete,
+    QualificationResume,
+    QualificationReuse,
+    QualificationRun,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
@@ -87,6 +93,23 @@ def test_every_emitted_line_validates_against_a_model(tmp_path: Path) -> None:
     """
     config = _checkout(tmp_path)
     with RunLog.open(config, "test", argv=("just", "test")) as log:
+        prior = QualificationRun(run_id="prior", run_log="/tmp/prior.jsonl", digest="a" * 64)
+        log.emit(
+            QualificationResume(
+                source_commit="1" * 40,
+                parent=prior,
+                carried_steps=("prepare",),
+            )
+        )
+        log.emit(
+            QualificationComplete(
+                source_commit="1" * 40,
+                source_digest="b" * 64,
+                plan_digest="c" * 64,
+                parent=prior,
+            )
+        )
+        log.emit(QualificationReuse(source_commit="1" * 40, qualification=prior))
         log.shape(("build",), (("build", "test"),))
         with log.step(step("build", Run(["cargo", "build"]))):
             log.note("something worth reading back")

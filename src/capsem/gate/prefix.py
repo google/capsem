@@ -213,7 +213,11 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit) -> int:
         for stale in sweep(config):
             runner.note(f"reclaimed stale prefix {stale}")
     retained_commit = commit is not None and path.exists()
-    if retained_commit:
+    if reuse is not None and commit is not None:
+        if path.stat().st_uid != os.getuid():
+            raise GateError(f"exact source prefix {path} is not owned by the current user")
+        require_detached_checkout(path, commit)
+    elif retained_commit:
         if path.stat().st_uid != os.getuid():
             raise GateError(f"exact source prefix {path} is not owned by the current user")
         reclaim(config, path)
@@ -228,11 +232,9 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit) -> int:
         snapshot.populate_commit(config.root, path, config, commit)
     else:
         snapshot.populate(config.root, path, config)
-    child_env = (
-        {config.environment.source_commit: str(commit)}
-        if commit is not None
-        else {config.environment.source_checkout: str(config.root)}
-    )
+    child_env = {config.environment.source_checkout: str(config.root)}
+    if commit is not None:
+        child_env[config.environment.source_commit] = str(commit)
     status = runner.run(
         ["uv", "run", "capsem-gate", *arguments],
         cwd=path,
@@ -240,7 +242,7 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit) -> int:
         check=False,
     )
     export(path, config.root, config)
-    if status == 0 and reuse is None:
+    if status == 0 and (reuse is None or commit is not None):
         reclaim(config, path)
     else:
         # Kept on purpose. A failure needs its build output for the first

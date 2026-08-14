@@ -23,8 +23,11 @@ from typing import ClassVar
 
 from .config import GateConfig
 from .context import NullJournal
+from .qualificationevidence import QualificationEvidence
 from .runhistory import read
 from .runlog import RunLog
+from .runlogschema import QualificationReuse
+from .sourcecommit import SourceCommit
 from .timing import measure, report
 
 
@@ -109,6 +112,33 @@ class Recorded:
                 settings=self._config.runlog,
                 run_id=log.run_id,
             )
+        )
+
+    def _record_qualification_reuse(
+        self, commit: SourceCommit, evidence: QualificationEvidence
+    ) -> None:
+        """Return ordinary success while retaining exactly why no work ran."""
+        from .execution import step
+
+        with self._recording(source_commit=str(commit)) as log:
+            if not isinstance(log, RunLog):
+                raise TypeError("qualification reuse requires a recorded command")
+            label = "qualification.reuse"
+            log.shape((label,), ())
+            log.emit(
+                QualificationReuse(
+                    source_commit=str(commit),
+                    qualification=evidence.reference,
+                )
+            )
+            with log.step(step(label)):
+                log.note(
+                    f"source {commit} already qualified by {evidence.reference.run_id}; "
+                    f"{evidence.reference.run_log} ({evidence.reference.digest})"
+                )
+        print(
+            f"{commit} is already qualified by {evidence.reference.run_id}: "
+            f"{evidence.reference.run_log} ({evidence.reference.digest})"
         )
 
     def _argv(self) -> tuple[str, ...]:

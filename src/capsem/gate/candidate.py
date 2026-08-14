@@ -39,6 +39,8 @@ from .errors import GateError
 from .gateresources import Resource, gate_resources
 from .plan import Plan
 from .proc import Runner
+from .qualificationevidence import QualificationPolicy
+from .sourcecommit import SourceCommit, optional_source_commit
 
 
 def keep_awake(runner: Runner) -> list[str] | None:
@@ -71,12 +73,9 @@ class CompleteGate:
     """What a command that *contains* the whole gate owes the machine.
 
     A mixin, not a base command: a base would have to register a runnable
-    name, and there is nothing here to run. It exists because keep-awake used
-    to belong to `candidate` when the gate belonged to `candidate` -- the
-    release commands reached it by launching `just test`. Deleting that child
-    was right; it left them owning the same forty-minute qualification with
-    none of the wrapper, so an unattended macOS release could sleep through
-    its own publication.
+    name, and there is nothing here to run. Only `candidate` owns complete
+    qualification; release commands consume its exact-commit journal instead
+    of inheriting this lifecycle and spending the same proof again.
     """
 
     _config: gate_config.GateConfig
@@ -98,19 +97,16 @@ class CompleteGate:
     """The complete gate reads a copy of the checkout, never the checkout.
 
     Here rather than on `candidate`, because this mixin *is* the set of
-    commands that spend the forty-minute proof -- which is the same set long
-    enough for someone to edit the tree while it runs. Declared on one and not
-    the others, the two commands whose mistakes are public and irreversible
-    were the only ones without it.
+    commands that spend the multi-hour proof -- which is the same set long
+    enough for someone to edit the tree while it runs.
 
     It is not free: a private copy starts with no `target/`, and `test-fast`
     measures 89s from a prefix against 28s in a warm checkout. That ratio is
     the price of a qualification whose subject cannot move while it runs, and
     only a command that already costs an hour should pay it.
 
-    Publication is unaffected. `release.py` aims every step that pushes, tags,
-    stamps or dispatches at the checkout the copy was made from, so what a
-    release authors lands in the repository a human still has.
+    Publication has its own short detached prefix and first revalidates this
+    command's archived event journal through `qualification.accept`.
     """
 
     def resources(self, runner: Runner) -> tuple[Resource, ...]:
@@ -176,12 +172,12 @@ class CandidateCommand(
     exclusive = True
     uses_qualification = True
     outside_egress = True
+    qualification_policy = QualificationPolicy.REUSE_OR_RUN
     """Phase 8b: the complete local gate refuses the network.
 
-    `candidate` only. A release still runs the wider profile, because its
-    fetch and publish halves genuinely need outbound access -- and this is the
-    command whose whole claim is that nothing was downloaded mid-run, which is
-    worth nothing while it is merely believed.
+    `candidate` only. Release has a small networked dispatch plan, but consumes
+    the enforcing candidate journal rather than rerunning qualification with a
+    wider profile.
 
     Complete qualification accepts only enforcement. Run an individual module
     in report mode to measure a rule without creating qualification evidence.
@@ -192,7 +188,14 @@ class CandidateCommand(
     # invoking their commands -- so declaring `private_checkout` on the modules
     # protects `capsem-gate test-fast` typed by hand and does nothing for the
     # hour-long qualification, which is the one that has died four times. It
-    # arrives here from `CompleteGate`, alongside the two release commands.
+    # arrives here from `CompleteGate`.
+
+    @classmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("source_commit", nargs="?", type=optional_source_commit)
+
+    def source_commit(self) -> SourceCommit | None:
+        return getattr(self._args, "source_commit", None)
 
     def plan(self) -> Plan:
         plan = Plan(self.name)

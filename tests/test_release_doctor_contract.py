@@ -250,7 +250,14 @@ def _recipe_block(name: str) -> str:
 
 def _recipe_body(name: str) -> str:
     lines = (PROJECT_ROOT / "justfile").read_text().splitlines()
-    start = next(i for i, line in enumerate(lines) if line == name or line.startswith(f"{name} "))
+    stem = name.removesuffix(":")
+    start = next(
+        i
+        for i, line in enumerate(lines)
+        if line == name
+        or line.startswith(f"{name} ")
+        or (line.startswith(f"{stem} ") and line.endswith(":"))
+    )
     end = len(lines)
     for i in range(start + 1, len(lines)):
         line = lines[i]

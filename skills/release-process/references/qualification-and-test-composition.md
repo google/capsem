@@ -12,22 +12,25 @@ dispatches its arguments once to the matching `uv run capsem-gate` subcommand.
 
 Python under `src/capsem/gate/` owns the release graph:
 
-- `release.py` declares commands/publication edges; `candidateplan.py` composes
-  the complete test fragments.
+- `candidateplan.py` composes the complete test fragments; `release.py`
+  declares the short journal-acceptance/publication graph.
+- `qualificationevidence.py` validates exact complete and partial journal
+  chains; `qualificationflow.py` is their one command-lifecycle seam.
 - `qualification.py` parses one legal local/binary/profile state.
 - `command.py` validates, inspects, locks, holds, records, and executes.
 - Actions perform work, resources own lifecycle/evidence, and
   `config/gate.toml` owns values.
 
-The release command does **not** launch `just test`, Just, or another
-`capsem-gate`. It composes the exact candidate plan under one process, lock,
-workspace, and run log. A nested gate deadlocks on its parent's lock; a split
-design needs the parallel receipt authority the manifest contract forbids.
+The release command does **not** launch or compose `just test`, Just, or another
+`capsem-gate`. `just test <commit>` owns the exact candidate plan under one
+process, lock, workspace, and run log. Release consumes only that runner-owned
+content-addressed journal. A nested gate deadlocks on its parent's lock; a
+hand-authored receipt is an unverified parallel authority.
 
 Read `/dev-gate` before changing this Python composition and `/dev-just` before changing its
 public dispatch. Do not move orchestration into recipes, workflow YAML, or a release script.
 
-## One command owns the complete release
+## Exact qualification is reusable release input
 
 Capsem has exactly two release-facing Just commands:
 
@@ -36,24 +39,23 @@ just release-binaries <channel> <source-commit>
 just release-profile <channel> <profile> <source-commit>
 ```
 
-These are the sole release entrypoints for humans and checked-in automation.
-Do not ask an operator to run a preparation command or a separate `just test`
-first. Each Python release plan contains the complete plan used by `just test`
-and has this non-negotiable order:
+These are the sole publication entrypoints for humans and checked-in
+automation. Before them, qualify the already-committed source once with
+`just test <source-commit>`. Each Python release plan has this non-negotiable
+order:
 
 ```text
 just release-binaries <channel> <source-commit>
-  1. require the detached source commit on fresh origin/main and fetch the
+  1. revalidate the complete exact-commit qualification journal
+  2. require the detached source commit on fresh origin/main and fetch the
      serialized channel source manifest read-only; fail immediately if the
      manifest has no staged channel/profile authority
-  2. compose and execute the complete `just test` candidate plan in-process
-  3. only after success: run the binary release script and dispatch binary CI
+  3. only after acceptance: run the binary release script and dispatch CI
 
 just release-profile <channel> <profile> <source-commit>
-  1. require the detached source commit on fresh origin/main, then compose and
-     execute the complete `just test` candidate plan in-process
-  2. only after success: invoke capsem-admin release for that channel/profile
-  3. correlate and watch that exact profile workflow through terminal success
+  1. revalidate the complete exact-commit qualification journal
+  2. require the detached source commit on fresh origin/main and publish its ref
+  3. invoke capsem-admin and watch that exact profile workflow to success
 ```
 
 The complete gate runs from an independent detached repository whose directory
@@ -61,6 +63,21 @@ name is the full commit. Only declared ignored signing input is copied in; Git
 metadata and tracked source come from that commit. The outer checkout is not
 the subject and may move while qualification runs. The source guard verifies
 the frozen tree and records the commit in the run-start event.
+
+Before its terminal event, every exact-source attempt hard-links its event
+journal into the config-owned per-commit archive. Ordinary run rotation may
+delete bulky step logs but cannot delete this qualification spine. A complete
+event is emitted only after the whole candidate plan returns and the source
+receipt binds the same commit and digest. A second `just test <commit>` either
+records a normal lightweight success pointing to that archived run, or selects
+the deepest graph-derived resume frontier supported by a retained full-SHA
+prefix and an archived partial attempt. Resumed attempts name the exact parent
+run and digest; recursive coverage of all carried ancestors is required.
+
+Never infer qualification from a skill, exit-code memory, `latest`, a marker
+file, or a title-matching CI run. Never type a guessed `--from`: explicit
+continuation is accepted only when it equals the journal-derived prefix,
+frontier, and carried set. Reuse-only journals cannot recursively qualify.
 
 The complete executor is also kernel-isolated for the entire candidate graph:
 Bubblewrap provides a loopback-only namespace on Linux and Seatbelt provides
@@ -160,8 +177,8 @@ artifact validation and boot, every VM suite, Winterfell, MCP lifecycle,
 IronBank, injection, integration, benchmarks, full `capsem-doctor`, native
 package installation, and glow-up transitions. None is advisory.
 
-Release automation uses the same public command and therefore receives the
-same complete `just test` gate before dispatch. The dispatched release
+Release automation uses the same public command and therefore requires the
+same complete exact-commit journal before dispatch. The dispatched release
 workflows then save construction time, never test quality:
 
 - the binary lane builds packages only and resolves every selected-channel
@@ -203,7 +220,7 @@ The local gate records `HEAD` and a digest of all tracked and untracked
 non-ignored source bytes. It supports ordinary uncommitted development and
 fails if the source state changes while tests run.
 
-Before dispatching a real release, run the actual public release command, not
-`just test` followed by a hand-written dispatch. Its embedded `just test` is
-the local proof and its remaining steps are the only supported bridge into CI.
-Do not dispatch CI until that embedded local proof completes successfully.
+Before dispatching a real release, run `just test <source-commit>` and then the
+actual public release command, never a hand-written workflow dispatch. The
+first produces or reuses the local proof; the second revalidates its archived
+journal and is the only supported bridge into CI.

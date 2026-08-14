@@ -1594,6 +1594,8 @@ source_contract = [
     "tests/test_gate_resume.py",
     "tests/test_gate_release_isolation.py",
     "tests/test_gate_release_source_commit.py",
+    "tests/test_gate_qualification_evidence.py",
+    "tests/test_gate_qualification_flow.py",
     "tests/test_gate_sandbox.py",
     "tests/test_gate_sandbox_report.py",
     "tests/test_gate_git_worktree_mount.py",
@@ -2106,6 +2108,10 @@ history_lock = ".history.lock"
 # Held for the length of a run, so retention can tell a run still being
 # written from a crashed one somebody wants to read.
 active_marker = ".active"
+# Exact-source attempt journals are hard-linked here before their terminal
+# event is written. Ordinary run rotation may remove the large step logs, but
+# it cannot erase the small journal that proves (or resumes) a source commit.
+source_archive_dir = "source-runs"
 # Rotation by count and by bytes. A forty-minute gate writes a lot, and the
 # machine running it is also the machine building VM images.
 keep_runs = 20
