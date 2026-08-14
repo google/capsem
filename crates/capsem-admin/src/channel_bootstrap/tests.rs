@@ -94,3 +94,40 @@ fn missing_channel_bootstrap_source_allows_explicit_empty_membership() {
     crate::validate_assets_channel_graph_manifest(&bootstrapped, "nightly")
         .expect("a channel may explicitly contain zero profiles before its first profile release");
 }
+
+#[test]
+fn exact_retired_channel_bootstrap_removes_both_dead_families() {
+    let retired = donor("stable");
+    let before = retired.clone();
+
+    let bootstrapped = bootstrap_retired_first_party_channel_source("stable", &retired)
+        .expect("retire exact stable source");
+
+    assert_eq!(bootstrapped["channel"], "stable");
+    assert_eq!(bootstrapped["version"], retired["version"]);
+    assert_eq!(bootstrapped["status"], "current");
+    assert_eq!(bootstrapped["packages"], json!([]));
+    assert_eq!(bootstrapped["profiles"], json!({}));
+    assert_eq!(retired, before, "retirement must not mutate its input");
+}
+
+#[test]
+fn retired_channel_bootstrap_rejects_relabeling_or_non_first_party_sources() {
+    let stable = donor("stable");
+    assert!(bootstrap_retired_first_party_channel_source("nightly", &stable).is_err());
+
+    let mut corp = donor("stable");
+    corp["channel"] = json!("corp");
+    assert!(bootstrap_retired_first_party_channel_source("corp", &corp).is_err());
+}
+
+#[test]
+fn retired_graph_digest_is_a_canonical_lowercase_sha256() {
+    assert!("a".repeat(64).parse::<RetiredGraphSha256>().is_ok());
+    for malformed in ["A".repeat(64), "a".repeat(63), "main".to_string()] {
+        assert!(
+            malformed.parse::<RetiredGraphSha256>().is_err(),
+            "{malformed} must not cross the digest boundary"
+        );
+    }
+}

@@ -5,6 +5,7 @@ import importlib.util
 import json
 import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -46,6 +47,7 @@ SOURCE_SPEC = importlib.util.spec_from_file_location(
     "fetch_channel_source_manifest",
     ROOT / "scripts" / "fetch-channel-source-manifest.py",
 )
+SOURCE_SCRIPT = ROOT / "scripts" / "fetch-channel-source-manifest.py"
 assert SOURCE_SPEC is not None and SOURCE_SPEC.loader is not None
 SOURCE = importlib.util.module_from_spec(SOURCE_SPEC)
 SOURCE_SPEC.loader.exec_module(SOURCE)
@@ -63,6 +65,21 @@ def _digest(payload: bytes) -> dict[str, str]:
         "sha256": hashlib.sha256(payload).hexdigest(),
         "blake3": blake3.blake3(payload).hexdigest(),
     }
+
+
+def test_channel_source_script_bootstraps_checkout_src_in_isolated_python(
+    tmp_path: Path,
+) -> None:
+    completed = subprocess.run(
+        [sys.executable, "-I", str(SOURCE_SCRIPT), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "--source-commit" in completed.stdout
 
 
 def test_latest_channel_source_manifest_is_selected_without_parallel_state() -> None:
@@ -293,9 +310,10 @@ def test_missing_first_party_channel_bootstraps_through_capsem_admin(
         return subprocess.CompletedProcess(command, 0)
 
     payload = SOURCE.bootstrap_source_manifest(
-        channel="nightly",
+        channel=SOURCE.FirstPartyChannel.NIGHTLY,
         profile="code",
-        donor_payload=donor,
+        source_commit=SOURCE.SourceCommit("a" * 40),
+        input_payload=donor,
         output=output,
         runner=run,
     )
@@ -306,15 +324,110 @@ def test_missing_first_party_channel_bootstraps_through_capsem_admin(
     assert command[:6] == ["cargo", "run", "-p", "capsem-admin", "--", "release"]
     assert command[command.index("--channel") + 1] == "nightly"
     assert command[command.index("--profile") + 1] == "code"
+    assert command[command.index("--source-commit") + 1] == "a" * 40
+
+
+def test_exact_retired_public_graph_uses_the_same_channel_admin_author(
+    tmp_path: Path,
+) -> None:
+    retired = json.dumps(
+        {
+            "version": "1.0.143",
+            "channel": "stable",
+            "status": "current",
+            "packages": [{"name": "dead.deb"}],
+            "profiles": {"code": {"revision": "legacy"}},
+        }
+    ).encode()
+    digest = hashlib.sha256(retired).hexdigest()
+    output = tmp_path / "stable.json"
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        calls.append(command)
+        input_path = Path(command[command.index("--bootstrap-retired-manifest") + 1])
+        assert input_path.read_bytes() == retired
+        output_path = Path(command[command.index("--bootstrap-output") + 1])
+        output_path.write_text(
+            json.dumps(
+                {
+                    "version": "1.0.143",
+                    "channel": "stable",
+                    "status": "current",
+                    "packages": [],
+                    "profiles": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0)
+
+    payload = SOURCE.bootstrap_source_manifest(
+        channel=SOURCE.FirstPartyChannel.STABLE,
+        profile="code",
+        source_commit=SOURCE.SourceCommit("b" * 40),
+        input_payload=retired,
+        output=output,
+        retired_graph=SOURCE.retirement.RetiredPublicGraph(
+            channel=SOURCE.FirstPartyChannel.STABLE,
+            sha256=digest,
+        ),
+        runner=run,
+    )
+
+    assert SOURCE.validate_source_manifest(payload, "stable")["packages"] == []
+    command = calls[0]
+    assert command[command.index("--bootstrap-retired-sha256") + 1] == digest
+    assert "--bootstrap-from-manifest" not in command
+
+
+def test_retired_fallback_requires_config_catalog_and_payload_digest() -> None:
+    payload = b'{"channel":"stable","packages":[],"profiles":{}}'
+    digest = hashlib.sha256(payload).hexdigest()
+    catalog = json.dumps(
+        {
+            "channels": {
+                "stable": {
+                    "manifests": [
+                        {
+                            "status": "current",
+                            "url": "/assets/stable/manifest.json",
+                            "digest": {"sha256": digest},
+                        }
+                    ]
+                }
+            }
+        }
+    ).encode()
+
+    retired = SOURCE.retirement.retired_public_fallback(
+        channel=SOURCE.FirstPartyChannel.STABLE,
+        fallback_url="https://release.example/assets/stable/manifest.json",
+        payload=payload,
+        retired_public_graphs={
+            SOURCE.FirstPartyChannel.STABLE: SOURCE.retirement.RetiredPublicGraph(
+                channel=SOURCE.FirstPartyChannel.STABLE,
+                sha256=digest,
+            )
+        },
+        read_url=lambda _url: catalog,
+    )
+
+    assert retired is not None
+    assert retired.channel is SOURCE.FirstPartyChannel.STABLE
+    assert retired.sha256 == digest
 
 
 def test_missing_channel_bootstrap_requires_absence_from_public_catalog() -> None:
     catalog = json.dumps({"channels": {"stable": {}}}).encode()
 
-    assert SOURCE.public_channel_is_absent(catalog, "nightly")
-    assert not SOURCE.public_channel_is_absent(catalog, "stable")
+    assert SOURCE.retirement.public_channel_is_absent(catalog, SOURCE.FirstPartyChannel.NIGHTLY)
+    assert not SOURCE.retirement.public_channel_is_absent(catalog, SOURCE.FirstPartyChannel.STABLE)
     with pytest.raises(ValueError, match="channels object"):
-        SOURCE.public_channel_is_absent(b'{"channels":[]}', "nightly")
+        SOURCE.retirement.public_channel_is_absent(
+            b'{"channels":[]}', SOURCE.FirstPartyChannel.NIGHTLY
+        )
 
 
 def test_bootstrap_baseline_allows_only_explicit_empty_profile_membership(

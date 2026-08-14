@@ -50,6 +50,7 @@ def test_projection_accepts_the_profileless_source_a_bootstrap_emits() -> None:
         source,
         channel="nightly",
         bootstrap=True,
+        retired=False,
     )
 
     assert before == {**source, "packages": []}
@@ -69,6 +70,7 @@ def test_projection_empties_both_families_because_the_channel_did_not_exist() ->
         source,
         channel="nightly",
         bootstrap=True,
+        retired=False,
     )
 
     assert before == {**source, "profiles": {}, "packages": []}
@@ -79,7 +81,7 @@ def test_projection_empties_both_families_because_the_channel_did_not_exist() ->
 @pytest.mark.parametrize(
     ("channel", "bootstrap", "mutation", "message"),
     [
-        ("nightly", False, None, "absent public channel"),
+        ("nightly", False, None, "bootstrap authority"),
         ("stable", True, None, "declares channel"),
         ("nightly", True, ("profiles", []), "profiles must be an object"),
         ("nightly", True, ("packages", []), "package cohort"),
@@ -100,4 +102,43 @@ def test_projection_fails_closed_outside_first_channel_activation(
             source,
             channel=channel,
             bootstrap=bootstrap,
+            retired=False,
+        )
+
+
+def test_retired_channel_projects_an_empty_same_channel_source() -> None:
+    source = {
+        "version": "1.0.143",
+        "channel": "stable",
+        "status": "current",
+        "packages": [],
+        "profiles": {"code": {"revision": "0.6.0"}},
+    }
+
+    projected = PROJECTOR.project_first_channel_before(
+        source,
+        channel="stable",
+        bootstrap=True,
+        retired=True,
+    )
+
+    assert projected["packages"] == []
+    assert projected["profiles"] == {}
+
+
+def test_an_empty_donor_is_rejected_without_exact_retirement() -> None:
+    source = {
+        "version": "1.0.143",
+        "channel": "nightly",
+        "status": "current",
+        "packages": [],
+        "profiles": {},
+    }
+
+    with pytest.raises(ValueError, match="official package cohort"):
+        PROJECTOR.project_first_channel_before(
+            source,
+            channel="nightly",
+            bootstrap=True,
+            retired=False,
         )

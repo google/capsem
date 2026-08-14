@@ -115,6 +115,7 @@ jobs:
           python3 scripts/fetch-channel-source-manifest.py \
             --channel "${{ inputs.channel }}" \
             --profile "${{ inputs.profile }}" \
+            --source-commit "${{ inputs.source_commit }}" \
             --bootstrap-missing-first-party \
             --output target/channel-source/manifest.json
 
@@ -125,6 +126,7 @@ jobs:
             --source-manifest target/channel-source/manifest.json \
             --channel "${{ inputs.channel }}" \
             --bootstrap "${{ steps.public-before.outputs.bootstrap }}" \
+            --retired "${{ steps.public-before.outputs.retired }}" \
             --output target/channel-source/public-before.json
 
       - name: Select public-before authority for exact pairing

@@ -116,6 +116,10 @@ their config, images, software inventory, OBOM/evidence. `capsem-admin` is the
 sole first-party and corporate manifest/profile
 author; corporations never build or mutate Capsem-owned binaries or channels.
 
+A legacy public graph is never inferred dead from a 404. Use only the exact,
+config-owned retirement rail in `references/release-graph.md`, then publish the
+replacement profile before the binary lane activates a new package cohort.
+
 If a profile needs newer code, publish its immutable bytes once as staged
 source state, then run the binary command. That lane resolves the staged
 profile by digest, proves the complete pairing, and activates only after full
@@ -150,9 +154,7 @@ the release event, and the GitHub release name records the full qualified
 source commit. Binary and profile versions are orthogonal strict semver.
 `min_capsem_version` and `max_capsem_version` bound the binary, not a profile's
 own revision.
-`parse_profile_revision` rejects non-semver revisions and
-`ensure_revision_advances` rejects non-advancing publication. A mixed profile
-set uses the non-version identity `profiles-<hash>`.
+`parse_profile_revision` rejects non-semver revisions; `ensure_revision_advances`
+rejects non-advancing publication. Mixed sets use `profiles-<hash>`.
 
-Stage files explicitly, use a conventional commit subject, and never stage
-private release material, certificates, keys, tokens, or local credentials.
+Stage explicitly with conventional commits; never stage release secrets.

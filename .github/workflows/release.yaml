@@ -100,6 +100,7 @@ jobs:
         run: |
           python3 scripts/fetch-channel-source-manifest.py \
             --channel "$RELEASE_CHANNEL" \
+            --source-commit "${{ inputs.source_commit }}" \
             --require-profile-membership \
             --output target/channel-source/manifest.json
 
@@ -110,6 +111,7 @@ jobs:
             --source-manifest target/channel-source/manifest.json \
             --channel "$RELEASE_CHANNEL" \
             --bootstrap "${{ steps.public-before.outputs.bootstrap }}" \
+            --retired "${{ steps.public-before.outputs.retired }}" \
             --output target/channel-source/public-before.json
 
       - name: Select public-before authority for exact pairing
@@ -127,6 +129,7 @@ jobs:
         uses: ./.github/actions/fetch-release-inputs
         with:
           manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}
+          allow-empty-packages: ${{ steps.public-before.outputs.bootstrap }}
           kind: packages
           output: target/binary-public-before/packages
 

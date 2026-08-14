@@ -249,16 +249,25 @@ struct ReleaseArgs {
         conflicts_with = "manifest_path"
     )]
     bootstrap_from_manifest: Option<PathBuf>,
-    /// Selected-channel source manifest created by the serialized workflow.
+    /// Exact retired first-party graph used only for its digest-authorized replacement.
     #[arg(
         long,
         hide = true,
-        requires = "bootstrap_from_manifest",
-        conflicts_with = "manifest_path"
+        requires_all = ["bootstrap_output", "bootstrap_retired_sha256"],
+        conflicts_with_all = ["bootstrap_from_manifest", "manifest_path"]
     )]
+    bootstrap_retired_manifest: Option<PathBuf>,
+    /// Config-owned SHA-256 of the retired public graph bytes.
+    #[arg(long, hide = true, requires = "bootstrap_retired_manifest")]
+    bootstrap_retired_sha256: Option<channel_bootstrap::RetiredGraphSha256>,
+    /// Selected-channel source manifest created by the serialized workflow.
+    #[arg(long, hide = true, conflicts_with = "manifest_path")]
     bootstrap_output: Option<PathBuf>,
     /// Validate and print the workflow dispatch without executing it.
-    #[arg(long, conflicts_with = "bootstrap_from_manifest")]
+    #[arg(
+        long,
+        conflicts_with_all = ["bootstrap_from_manifest", "bootstrap_retired_manifest"]
+    )]
     dry_run: bool,
     /// Emit a machine-readable release report.
     #[arg(long)]
@@ -1290,22 +1299,39 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
         config_root: args.config_root.clone(),
         json: args.json,
     })?;
-    if let (Some(donor_path), Some(output_path)) = (
+    let bootstrap = match (
         args.bootstrap_from_manifest.as_deref(),
+        args.bootstrap_retired_manifest.as_deref(),
+        args.bootstrap_retired_sha256.as_ref(),
         args.bootstrap_output.as_deref(),
     ) {
-        let donor: serde_json::Value = serde_json::from_slice(
-            &fs::read(donor_path)
-                .with_context(|| format!("read bootstrap donor {}", donor_path.display()))?,
-        )
-        .with_context(|| format!("parse bootstrap donor {}", donor_path.display()))?;
-        let donor_channel = donor
+        (Some(input), None, None, Some(output)) => Some((input, output, None)),
+        (None, Some(input), Some(sha256), Some(output)) => Some((input, output, Some(sha256))),
+        (None, None, None, None) => None,
+        _ => {
+            return Err(anyhow!(
+                "release bootstrap arguments form an incomplete or mixed mode"
+            ))
+        }
+    };
+    if let Some((input_path, output_path, retired_sha256)) = bootstrap {
+        let input_bytes = fs::read(input_path)
+            .with_context(|| format!("read bootstrap input {}", input_path.display()))?;
+        if let Some(expected) = retired_sha256 {
+            verify_retired_graph_sha256(&input_bytes, expected)?;
+        }
+        let input: serde_json::Value = serde_json::from_slice(&input_bytes)
+            .with_context(|| format!("parse bootstrap input {}", input_path.display()))?;
+        let input_channel = input
             .get("channel")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| anyhow!("bootstrap donor is missing its channel"))?;
-        validate_assets_channel_graph_manifest(&donor, donor_channel)?;
-        let bootstrapped =
-            channel_bootstrap::bootstrap_first_party_channel_source(&args.channel, &donor)?;
+            .ok_or_else(|| anyhow!("bootstrap input is missing its channel"))?;
+        validate_assets_channel_graph_manifest(&input, input_channel)?;
+        let bootstrapped = if retired_sha256.is_some() {
+            channel_bootstrap::bootstrap_retired_first_party_channel_source(&args.channel, &input)?
+        } else {
+            channel_bootstrap::bootstrap_first_party_channel_source(&args.channel, &input)?
+        };
         validate_assets_channel_graph_manifest(&bootstrapped, &args.channel)?;
         if let Some(parent) = output_path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
@@ -1322,7 +1348,18 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
             "profile": selection.profile,
             "profile_revision": selection.profile_revision,
             "publication_identity": selection.publication_identity,
-            "donor_channel": donor_channel,
+            "input_channel": input_channel,
+            "donor_channel": if retired_sha256.is_none() {
+                Some(input_channel)
+            } else {
+                None
+            },
+            "retired_channel": if retired_sha256.is_some() {
+                Some(input_channel)
+            } else {
+                None
+            },
+            "retired": retired_sha256.is_some(),
             "package_count": bootstrapped["packages"].as_array().map_or(0, Vec::len),
             "output": output_path.display().to_string(),
         });
@@ -1330,10 +1367,10 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else {
             println!(
-                "bootstrapped {}/{} source manifest from verified {} packages",
+                "bootstrapped {}/{} source manifest from verified {} input",
                 report["channel"].as_str().unwrap_or("channel"),
                 report["profile"].as_str().unwrap_or("profile"),
-                donor_channel
+                input_channel
             );
         }
         return Ok(());
@@ -1405,6 +1442,20 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
                 .map(|run_id| format!(" run {run_id}"))
                 .unwrap_or_default()
         );
+    }
+    Ok(())
+}
+
+fn verify_retired_graph_sha256(
+    bytes: &[u8],
+    expected: &channel_bootstrap::RetiredGraphSha256,
+) -> Result<()> {
+    let actual = format!("{:x}", Sha256::digest(bytes));
+    if actual != expected.as_str() {
+        return Err(anyhow!(
+            "retired graph sha256 mismatch: expected {}, got {actual}",
+            expected
+        ));
     }
     Ok(())
 }

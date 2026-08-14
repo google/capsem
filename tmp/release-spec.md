@@ -418,6 +418,15 @@ The selected profile is then authored through the normal `capsem-admin release`
 path. Bootstrap is not a third public release command, a generic authoring
 shortcut, or permission to relabel a release graph from another channel.
 
+One migration-only variant replaces a known broken pre-0.6 first-party graph.
+`config/gate.toml` MUST name its channel and exact current-manifest SHA-256.
+The selector MUST require the catalog digest and freshly fetched payload digest
+to equal that configured value before `capsem-admin` may author an inactive
+same-channel source with empty package and profile membership. A 404, a
+different digest, an absent catalog digest, another channel, or a Python-made
+empty graph is never retirement authority. The row becomes inert as soon as a
+new graph is current and can then be removed in an ordinary committed change.
+
 The explicit empty-membership bootstrap manifest is serialized authoring state.
 It MUST NOT be deployed, installed, described as a working pairing, or given
 synthetic Doctor or Winterfell evidence. For the channel's first profile, there
@@ -1513,6 +1522,9 @@ If this is the channel's first profile, the empty bootstrap source remains
 non-public and the candidate passes complete fresh-install, Doctor, Winterfell,
 rejection, and preservation proof. Otherwise the installed glow-up also proves
 the exact public-before profile to candidate-profile transition.
+The same rule applies when the first 0.6 profile replaces the one explicitly
+digest-retired pre-0.6 graph: retirement authorizes only the empty before-state,
+never publication or a reduced pairing proof.
 
 ### Scenario F: Profile requires a new binary
 

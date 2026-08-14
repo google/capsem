@@ -8,16 +8,25 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, url2pathname, urlopen
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from capsem import release_retirement as retirement
+from capsem.gate.sourcecommit import SourceCommit
+from capsem.release_source_bootstrap import (
+    bootstrap_source_manifest,
+    validate_binary_source_manifest,
+    validate_source_manifest,
+)
+
+FirstPartyChannel = retirement.FirstPartyChannel
+
 USER_AGENT = "capsem-release-source/1"
-ROOT = Path(__file__).resolve().parents[1]
 
 
 class ChannelSourceUnavailable(RuntimeError):
@@ -41,20 +50,14 @@ def select_latest_source_asset(
     for release in releases:
         if release.get("draft") or release.get("prerelease"):
             continue
-        release_timestamp = release.get("published_at") or release.get(
-            "created_at"
-        )
+        release_timestamp = release.get("published_at") or release.get("created_at")
         if not isinstance(release_timestamp, str):
             continue
         for asset in release.get("assets", []):
             if isinstance(asset, dict) and asset.get("name") == expected:
-                asset_timestamp = asset.get("updated_at") or asset.get(
-                    "created_at"
-                )
+                asset_timestamp = asset.get("updated_at") or asset.get("created_at")
                 timestamp = (
-                    asset_timestamp
-                    if isinstance(asset_timestamp, str)
-                    else release_timestamp
+                    asset_timestamp if isinstance(asset_timestamp, str) else release_timestamp
                 )
                 asset_id = asset.get("id")
                 candidates.append(
@@ -90,8 +93,7 @@ def _github_releases(repository: str, token: str) -> list[dict[str, Any]]:
     page = 1
     while True:
         payload = _read_url(
-            f"https://api.github.com/repos/{repository}/releases"
-            f"?per_page=100&page={page}",
+            f"https://api.github.com/repos/{repository}/releases?per_page=100&page={page}",
             token=token,
         )
         rows = json.loads(payload)
@@ -101,96 +103,6 @@ def _github_releases(repository: str, token: str) -> list[dict[str, Any]]:
         if len(rows) < 100:
             return releases
         page += 1
-
-
-def validate_source_manifest(payload: bytes, channel: str) -> dict[str, Any]:
-    manifest = json.loads(payload)
-    if not isinstance(manifest, dict):
-        raise ValueError("source manifest must be a JSON object")
-    if manifest.get("channel") != channel:
-        raise ValueError(
-            f"source manifest declares channel {manifest.get('channel')!r}, "
-            f"expected {channel!r}"
-        )
-    if not isinstance(manifest.get("profiles"), dict):
-        raise ValueError("source manifest profiles must be an object")
-    if not isinstance(manifest.get("packages"), list):
-        raise ValueError("source manifest packages must be an array")
-    return manifest
-
-
-def validate_binary_source_manifest(
-    payload: bytes, channel: str
-) -> dict[str, Any]:
-    manifest = validate_source_manifest(payload, channel)
-    if not manifest["profiles"]:
-        raise ValueError(
-            f"source manifest for {channel} has no staged profiles; "
-            "run release-profile first"
-        )
-    return manifest
-
-
-def public_channel_is_absent(payload: bytes, channel: str) -> bool:
-    catalog = json.loads(payload)
-    if not isinstance(catalog, dict) or not isinstance(catalog.get("channels"), dict):
-        raise ValueError("public channel catalog must contain a channels object")
-    return channel not in catalog["channels"]
-
-
-def bootstrap_source_manifest(
-    *,
-    channel: str,
-    profile: str,
-    donor_payload: bytes,
-    output: Path,
-    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-) -> bytes:
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        dir=output.parent,
-        prefix=f".{channel}-bootstrap-donor-",
-        suffix=".json",
-        delete=False,
-    ) as handle:
-        handle.write(donor_payload)
-        donor_path = Path(handle.name)
-    try:
-        runner(
-            [
-                "cargo",
-                "run",
-                "-p",
-                "capsem-admin",
-                "--",
-                "release",
-                "--channel",
-                channel,
-                "--profile",
-                profile,
-                "--bootstrap-from-manifest",
-                str(donor_path),
-                "--bootstrap-output",
-                str(output),
-                "--json",
-            ],
-            cwd=ROOT,
-            check=True,
-            text=True,
-        )
-        payload = output.read_bytes()
-        validate_source_manifest(payload, channel)
-        return payload
-    finally:
-        donor_path.unlink(missing_ok=True)
-
-
-def _other_first_party_channel(channel: str) -> str:
-    if channel == "stable":
-        return "nightly"
-    if channel == "nightly":
-        return "stable"
-    raise ValueError("first-party bootstrap requires stable or nightly")
 
 
 def resolve_source_manifest(
@@ -253,6 +165,7 @@ def main() -> int:
         action="store_true",
         help="Reject a binary release source that has no staged profiles.",
     )
+    parser.add_argument("--source-commit", type=SourceCommit)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     fallback_url = args.fallback_url or (
@@ -263,6 +176,8 @@ def main() -> int:
         print("GITHUB_TOKEN is required to resolve source manifests", file=sys.stderr)
         return 1
     try:
+        retired_graph: retirement.RetiredPublicGraph | None = None
+        selected_channel = FirstPartyChannel.parse(args.channel)
         try:
             payload, source = resolve_source_manifest(
                 channel=args.channel,
@@ -270,6 +185,14 @@ def main() -> int:
                 token=token,
                 fallback_url=fallback_url,
             )
+            if source == fallback_url:
+                retired_graph = retirement.retired_public_fallback(
+                    channel=selected_channel,
+                    fallback_url=fallback_url,
+                    payload=payload,
+                    retired_public_graphs=retirement.load_retired_public_graphs(),
+                    read_url=_read_url,
+                )
         except ChannelSourceUnavailable as error:
             if not args.bootstrap_missing_first_party:
                 raise
@@ -277,19 +200,15 @@ def main() -> int:
                 raise ValueError(
                     "--profile is required with --bootstrap-missing-first-party"
                 ) from error
-            parsed_fallback = urlparse(fallback_url)
-            if parsed_fallback.scheme not in {"http", "https"} or not parsed_fallback.netloc:
-                raise ValueError(
-                    "first-party bootstrap requires an HTTP release-site fallback"
-                ) from error
-            catalog_url = (
-                f"{parsed_fallback.scheme}://{parsed_fallback.netloc}/channels.json"
-            )
-            if not public_channel_is_absent(_read_url(catalog_url), args.channel):
+            catalog_url = retirement.release_site_catalog_url(fallback_url)
+            if not retirement.public_channel_is_absent(_read_url(catalog_url), selected_channel):
                 raise ValueError(
                     f"public channel {args.channel} exists but its source manifest is invalid"
                 ) from error
-            donor_channel = _other_first_party_channel(args.channel)
+            if args.source_commit is None:
+                raise ValueError("--source-commit is required for channel bootstrap") from error
+            parsed_fallback = urlparse(fallback_url)
+            donor_channel = retirement.other_first_party_channel(selected_channel).value
             donor_payload, donor_source = resolve_source_manifest(
                 channel=donor_channel,
                 repository=args.repository,
@@ -300,12 +219,29 @@ def main() -> int:
                 ),
             )
             payload = bootstrap_source_manifest(
-                channel=args.channel,
+                channel=selected_channel,
                 profile=args.profile,
-                donor_payload=donor_payload,
+                source_commit=args.source_commit,
+                input_payload=donor_payload,
                 output=args.output,
             )
             source = f"capsem-admin bootstrap from {donor_source}"
+        if retired_graph is not None:
+            if not args.bootstrap_missing_first_party or not args.profile:
+                raise ValueError(
+                    f"public {args.channel} graph is retired; run release-profile first"
+                )
+            if args.source_commit is None:
+                raise ValueError("--source-commit is required for retired graph bootstrap")
+            payload = bootstrap_source_manifest(
+                channel=selected_channel,
+                profile=args.profile,
+                source_commit=args.source_commit,
+                input_payload=payload,
+                output=args.output,
+                retired_graph=retired_graph,
+            )
+            source = f"capsem-admin retirement of {source}"
         if args.require_profile_membership:
             validate_binary_source_manifest(payload, args.channel)
         args.output.parent.mkdir(parents=True, exist_ok=True)

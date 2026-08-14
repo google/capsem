@@ -74,6 +74,21 @@ The generated distribution lives under
 `https://release.capsem.org/assets/stable/manifest.json`, and
 `https://release.capsem.org/assets/nightly/manifest.json`.
 
+## Retiring an exact broken legacy graph
+
+Never infer retirement from a missing artifact, HTTP status, or operator
+judgment. The one migration rail is a config-owned first-party channel plus
+the exact SHA-256 of its current public manifest. The catalog digest and the
+freshly fetched payload digest must both match before `capsem-admin` may author
+an empty, inactive, same-channel source. Any channel or byte drift is ordinary
+public state and fails through the normal gate.
+
+Retirement only removes the unusable source cohort from the next authoring
+operation; it is not a substitute package or a second ledger. Run the profile
+lane first so it serializes the replacement profile. The binary lane must
+refuse the retired empty source until that profile exists, then supply and
+activate the new package cohort through the ordinary complete proof.
+
 ## Shared serialization
 
 Both production entry workflows hold:

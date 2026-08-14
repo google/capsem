@@ -670,7 +670,7 @@ invalid-method-override = 2
 invalid-return-type = 6
 no-matching-overload = 9
 not-iterable = 2
-not-subscriptable = 176
+not-subscriptable = 175
 possibly-missing-submodule = 2
 unknown-argument = 4
 unresolved-attribute = 91
@@ -869,7 +869,6 @@ max_lines = 1000
 "scripts/docker-storage-policy.py" = 1539
 "scripts/doctor-common.sh" = 446
 "scripts/doctor_session_test.py" = 570
-"scripts/fetch-channel-source-manifest.py" = 329
 "scripts/fetch-release-artifacts.py" = 353
 "scripts/integration_test.py" = 1191
 "scripts/local-release-glowup.py" = 2046
@@ -1127,6 +1126,13 @@ channel_source = "target/release-preflight/channel-source.json"
 default_repository = "google/capsem"
 repository_variable = "GITHUB_REPOSITORY"
 token_variable = "GITHUB_TOKEN"
+
+# The pre-0.6 stable graph points at a deleted GitHub release. This exact
+# catalog-authorized payload alone may be projected as empty during the 0.6
+# profile-first replacement; a changed graph remains ordinary public state.
+[[release.retired_public_graphs]]
+channel = "stable"
+sha256 = "e8ddf88034a3e73beb605811d5efe5e03c04e79d1ba4b656ff6ca837ef54640e"
 
 [devloop]
 setup_sentinel = ".dev-setup"

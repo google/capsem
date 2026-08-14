@@ -3571,6 +3571,8 @@ fn profile_release_commands_publish_report_is_lane_scoped() {
             .to_path_buf(),
         status: ProfileReleaseStatusArg::Current,
         bootstrap_from_manifest: None,
+        bootstrap_retired_manifest: None,
+        bootstrap_retired_sha256: None,
         bootstrap_output: None,
         dry_run: false,
         json: true,
@@ -3636,6 +3638,22 @@ fn profile_release_commands_require_enum_status_values() {
     .expect_err("removed is not a release status");
 
     assert!(error.to_string().contains("invalid value"), "{error}");
+}
+
+#[test]
+fn retired_graph_authoring_verifies_the_exact_input_bytes() {
+    let bytes = b"known retired graph";
+    let expected = format!("{:x}", Sha256::digest(bytes))
+        .parse::<channel_bootstrap::RetiredGraphSha256>()
+        .expect("canonical digest");
+
+    verify_retired_graph_sha256(bytes, &expected).expect("exact payload accepted");
+    let error = verify_retired_graph_sha256(b"substituted graph", &expected)
+        .expect_err("substitution rejected");
+    assert!(
+        format!("{error:#}").contains("sha256 mismatch"),
+        "{error:#}"
+    );
 }
 
 #[test]
@@ -3913,6 +3931,8 @@ fn profile_release_merges_only_selected_profile_and_reports_compatibility() {
         profile_version: Some("2026.07.24.1".to_string()),
         status: ProfileReleaseStatusArg::Current,
         bootstrap_from_manifest: None,
+        bootstrap_retired_manifest: None,
+        bootstrap_retired_sha256: None,
         bootstrap_output: None,
         dry_run: false,
         json: true,

@@ -455,6 +455,7 @@ def test_binary_pairing_uses_exact_public_before_and_candidate_after_cohorts() -
 
     assert "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}" in resolve
     assert "allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}" in resolve
+    assert "allow-empty-packages: ${{ steps.public-before.outputs.bootstrap }}" in resolve
     assert "kind: packages" in resolve
     assert "kind: profiles" in resolve
     assert "architecture: x86_64" in resolve
@@ -488,9 +489,11 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
     assert "Select exact public-before manifest" in workflow
     assert "Fetch latest selected channel source manifest" in workflow
     assert "--bootstrap-missing-first-party" in workflow
+    assert '--source-commit "${{ inputs.source_commit }}"' in workflow
     assert '--profile "${{ inputs.profile }}"' in workflow
     assert "Project inactive first-channel public-before state" in workflow
     assert "scripts/project-first-channel-before.py" in workflow
+    assert '--retired "${{ steps.public-before.outputs.retired }}"' in workflow
     assert "Select public-before authority for exact pairing" in workflow
     assert "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}" in workflow
     assert "Fetch exact deployed public-before package" in workflow
@@ -663,6 +666,8 @@ def test_binary_bootstrap_uses_donor_only_as_public_before() -> None:
     assert "--bootstrap-missing-first-party" in resolver
     assert "steps.public-before.outputs.manifest-url" in resolver
     assert "steps.public-before.outputs.bootstrap" in resolver
+    assert "steps.public-before.outputs.retired" in resolver
+    assert '--source-commit "${{ inputs.source_commit }}"' in resolver
     assert "scripts/project-first-channel-before.py" in resolver
     assert "Fetch latest selected channel source manifest" in resolver
     source_fetch = resolver.split(

@@ -55,6 +55,58 @@ def test_the_checked_in_configuration_is_valid(config: gate_config.GateConfig) -
     assert config.root == PROJECT_ROOT
 
 
+def test_retired_public_graph_authority_is_typed_and_unique(
+    config: gate_config.GateConfig,
+) -> None:
+    [retired] = config.release.retired_public_graphs
+    assert retired.channel.value == "stable"
+    assert retired.sha256 == ("e8ddf88034a3e73beb605811d5efe5e03c04e79d1ba4b656ff6ca837ef54640e")
+
+
+@pytest.mark.parametrize(
+    ("channel", "sha256"),
+    [("corp", "a" * 64), ("stable", "A" * 64), ("stable", "a" * 63)],
+)
+def test_retired_public_graph_authority_rejects_open_or_malformed_values(
+    tmp_path: Path,
+    channel: str,
+    sha256: str,
+) -> None:
+    root = _checkout(tmp_path)
+    source = root / "config" / "gate.toml"
+    original = source.read_text(encoding="utf-8")
+    source.write_text(
+        original.replace(
+            '[[release.retired_public_graphs]]\nchannel = "stable"',
+            f'[[release.retired_public_graphs]]\nchannel = "{channel}"',
+            1,
+        ).replace(
+            "e8ddf88034a3e73beb605811d5efe5e03c04e79d1ba4b656ff6ca837ef54640e",
+            sha256,
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(GateError, match="retired_public_graphs"):
+        gate_config.load(root)
+
+
+def test_retired_public_graph_authority_rejects_duplicate_channels(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    source = root / "config" / "gate.toml"
+    source.write_text(
+        source.read_text(encoding="utf-8")
+        + '\n[[release.retired_public_graphs]]\nchannel = "stable"\nsha256 = "'
+        + "a" * 64
+        + '"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(GateError, match="channels must be unique"):
+        gate_config.load(root)
+
+
 def test_an_unknown_key_is_refused_rather_than_ignored(tmp_path: Path) -> None:
     """A typo that silently does nothing is worse than one that fails."""
     source = tmp_path / "config"

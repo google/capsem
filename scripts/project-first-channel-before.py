@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Project the exact inactive state before a first channel profile activation."""
+"""Project an exact empty public-before state under bootstrap authority."""
 
 from __future__ import annotations
 
@@ -16,41 +16,42 @@ def project_first_channel_before(
     *,
     channel: str,
     bootstrap: bool,
+    retired: bool,
 ) -> dict[str, Any]:
-    """Return a test-only pre-profile projection of a serialized channel source."""
+    """Return the test-only public-before projection of a serialized source."""
     if bootstrap is not True:
-        raise ValueError("first-channel projection requires an absent public channel")
+        raise ValueError("first-channel projection requires bootstrap authority")
     if source.get("channel") != channel:
         raise ValueError(
-            f"serialized source declares channel {source.get('channel')!r}, "
-            f"expected {channel!r}"
+            f"serialized source declares channel {source.get('channel')!r}, expected {channel!r}"
         )
     if source.get("status") != "current":
         raise ValueError("serialized source must be the current channel source")
     packages = source.get("packages")
-    if not isinstance(packages, list) or not packages:
-        raise ValueError("serialized source must contain an official package cohort")
-    if any(
-        not isinstance(package, dict) or package.get("status") != "current"
-        for package in packages
-    ):
-        raise ValueError("serialized source package cohort must be entirely current")
-    # Deliberately not "profiles must be non-empty". The only input this can
-    # ever receive is the bootstrapped source for an absent channel, and
-    # `bootstrap_first_party_channel_source` emits `profiles: {}` because a new
-    # channel has none yet. Requiring them made the cold start unreachable: the
-    # projection rejected the sole manifest the workflow could hand it, and
-    # then would have set profiles to empty anyway. Only the shape is checked.
+    if not isinstance(packages, list):
+        raise ValueError("serialized source packages must be an array")
+    if retired:
+        if packages:
+            raise ValueError("retired serialized source must have empty package membership")
+    else:
+        if not packages:
+            raise ValueError("serialized source must contain an official package cohort")
+        if any(
+            not isinstance(package, dict) or package.get("status") != "current"
+            for package in packages
+        ):
+            raise ValueError("serialized source package cohort must be entirely current")
+    # A fresh bootstrap is profileless, while a retried lane may resolve a
+    # previously staged profile source. Both project to the same public-before
+    # state, so only the source shape is checked here.
     profiles = source.get("profiles")
     if not isinstance(profiles, dict):
         raise ValueError("serialized source profiles must be an object")
 
-    # The channel did not exist, so its before-state is empty of both families.
-    # The packages above are inherited from the donor and are validated for
-    # shape, not for existence -- once a donor is retired its URLs are dead, and
-    # carrying them here would make the pairing gate fetch artifacts that no
-    # longer resolve. The following binary release publishes this channel's own
-    # packages and activates it.
+    # A missing channel or the one digest-authorized retired graph has no usable
+    # public-before family. Donor packages are validated as official authoring
+    # input, then excluded from this channel-scoped projection. The ordinary
+    # binary lane later supplies and activates this channel's package cohort.
     projected = copy.deepcopy(source)
     projected["profiles"] = {}
     projected["packages"] = []
@@ -62,6 +63,7 @@ def main() -> int:
     parser.add_argument("--source-manifest", type=Path, required=True)
     parser.add_argument("--channel", required=True)
     parser.add_argument("--bootstrap", required=True, choices=("true", "false"))
+    parser.add_argument("--retired", required=True, choices=("true", "false"))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -72,6 +74,7 @@ def main() -> int:
             source,
             channel=args.channel,
             bootstrap=args.bootstrap == "true",
+            retired=args.retired == "true",
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(

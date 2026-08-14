@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 from pydantic import PositiveInt, StringConstraints, field_validator, model_validator
 
 from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
+from capsem.releasechannel import FirstPartyChannel
 
 from .configschema import Strict
 
@@ -261,6 +262,11 @@ class InitrdConfig(Strict):
     hash_assets: str
 
 
+class RetiredPublicGraphConfig(Strict):
+    channel: FirstPartyChannel
+    sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+
+
 class ReleaseConfig(Strict):
     line: Annotated[str, StringConstraints(pattern=r"^\d+\.\d+$")]
     source: str
@@ -276,6 +282,7 @@ class ReleaseConfig(Strict):
     default_repository: str
     repository_variable: str
     token_variable: str
+    retired_public_graphs: tuple[RetiredPublicGraphConfig, ...]
 
     @field_validator("source_ref_template")
     @classmethod
@@ -283,6 +290,16 @@ class ReleaseConfig(Strict):
         if template != "capsem-source-{source_commit}":
             raise ValueError("release source_ref_template must be capsem-source-{source_commit}")
         return template
+
+    @field_validator("retired_public_graphs")
+    @classmethod
+    def _retired_channels_are_unique(
+        cls, rows: tuple[RetiredPublicGraphConfig, ...]
+    ) -> tuple[RetiredPublicGraphConfig, ...]:
+        channels = [row.channel for row in rows]
+        if len(channels) != len(set(channels)):
+            raise ValueError("release retired_public_graphs channels must be unique")
+        return rows
 
 
 class DevLoopConfig(Strict):

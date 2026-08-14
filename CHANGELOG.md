@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The first 0.6 profile release can retire the one known pre-0.6 stable graph
+  whose package URLs point at a deleted GitHub release. Retirement is bound to
+  the configured channel plus the exact catalog and payload SHA-256, authored
+  only by `capsem-admin`, and projected as an empty inactive before-state;
+  arbitrary 404s, changed graphs, other channels, or forged empty sources still
+  fail closed. First-channel authoring now also carries the qualified source
+  commit through the hidden bootstrap rail.
+
 - Linux Rust qualification now Clippy-checks `capsem-core` for the configured
   non-native GNU architecture before its native workspace pass. Bootstrap,
   Doctor, CI, and the sealed host builder consume one four-target inventory,
