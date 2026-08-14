@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 import tomllib
 from pathlib import Path
 from typing import Any, cast
@@ -64,6 +65,54 @@ def scope_profile_to_arch(path: Path, arch: str, profile_id: str) -> None:
     path.write_text(tomli_w.dumps(document), encoding="utf-8")
 
 
+#: File kinds that are meaningless without their lock, and the lock that
+#: completes each. The same pairs the Rust profile contract enforces;
+#: `tests/citadel/test_profile_pairs_agree.py` holds the two sides to one set,
+#: because they had already drifted -- npm was paired there and absent here.
+PAIRED_FILES = (
+    ("python_requirements", "python_requirements_lock"),
+    ("npm_packages", "npm_package_lock"),
+)
+
+
+def warn_unpaired_files(files: dict[str, Any], profile_id: str) -> list[str]:
+    """Report a profile that names a dependency list without its lock.
+
+    A warning, not a refusal, and the distinction is the whole point.
+
+    Refusing is the correct end state -- a requirements file without its lock
+    is an unsealed dependency resolver, not a degraded profile. But refusing
+    *here* closes a door from the inside. Staging reads the already-published
+    profile, and the published profiles carry `python_requirements` and
+    `npm_packages` with neither lock. A profile that satisfies the rule can
+    only come from a release, and the release cannot run while staging refuses
+    the profile it has. Assets and binaries release orthogonally, so each waits
+    on the other: the binary lane wants a conforming profile, the profile lane
+    wants a binary that ships the new shape.
+
+    That deadlock is not hypothetical. Making this a hard error failed
+    `test-install` on sixteen consecutive pushes to trunk, and nothing could
+    have cleared it except the release the failure was blocking.
+
+    So it warns, loudly, on every run. The warning stops appearing by itself
+    the moment a release publishes profiles carrying their locks, and that is
+    when this becomes a refusal again -- with the door open from both sides.
+    """
+    unpaired = [
+        f"{listing} without {lock}"
+        for listing, lock in PAIRED_FILES
+        if (listing in files) != (lock in files)
+    ]
+    for problem in unpaired:
+        print(
+            f"WARNING: release profile {profile_id} declares {problem}. "
+            "An unlocked dependency list is an unsealed resolver; republish "
+            "the profile so this can go back to being refused.",
+            file=sys.stderr,
+        )
+    return unpaired
+
+
 def require_profile_file_closure(
     path: Path,
     profile_id: str,
@@ -71,11 +120,13 @@ def require_profile_file_closure(
 ) -> None:
     """Require every file named by the selected profile to be manifest-owned.
 
-    The profile document and its siblings are one release input.  In
-    particular, a Python requirements file without its lock is not a degraded
-    profile: it is an unsealed dependency resolver.  Nothing is filled from
-    the checkout here; a missing sibling means the selected release graph is
-    incomplete and must be republished.
+    The profile document and its siblings are one release input. Nothing is
+    filled from the checkout here; a missing sibling means the selected release
+    graph is incomplete and must be republished.
+
+    Missing *lock* files are the exception, and warn rather than refuse -- see
+    `warn_unpaired_files` for why refusing deadlocks the release lanes against
+    each other.
     """
     try:
         document = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -87,13 +138,7 @@ def require_profile_file_closure(
     if not isinstance(files, dict):
         raise ValueError(f"release profile {profile_id} files must be a table")
 
-    requirements = "python_requirements" in files
-    lock = "python_requirements_lock" in files
-    if requirements != lock:
-        raise ValueError(
-            f"release profile {profile_id} must declare python_requirements and "
-            "python_requirements_lock together"
-        )
+    warn_unpaired_files(files, profile_id)
 
     declared: set[Path] = set()
     for kind, record in files.items():

@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Profile staging warns about an unlocked dependency list instead of refusing
+  it. Refusing is the correct end state -- a requirements file without its lock
+  is an unsealed resolver -- but refusing *there* locks the door from the
+  inside: staging reads the already-published profile, the published profiles
+  carry `python_requirements` and `npm_packages` with neither lock, and only a
+  release can produce one, which is the release the refusal blocks. Assets and
+  binaries release orthogonally, so each lane waits on the other. That deadlock
+  failed `test-install` on sixteen consecutive pushes to trunk. The warning is
+  loud, fires every run, and stops by itself once a release publishes profiles
+  carrying their locks -- which is when this becomes a refusal again.
+- The staging check and the Rust profile contract now name the same pairs.
+  They had drifted: Rust paired npm packages with their lock and staging did
+  not, so a profile could carry packages without a lock and be refused later,
+  or never, depending which side saw it first.
+
 - `fast.clippy` claims `workspace_binaries`, and the measurement that settles
   it is recorded rather than the argument that preceded it. The claim was
   withheld on the theory that a step-level exclusive is coarser than the lock
