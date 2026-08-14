@@ -43,7 +43,7 @@ def test_ty_refuses_raw_strings_including_source_commit(tmp_path: Path) -> None:
 
     evidence = checked.stdout + checked.stderr
     assert checked.returncode != 0, evidence
-    assert evidence.count("invalid-argument-type") == 8, evidence
+    assert evidence.count("invalid-argument-type") == 9, evidence
     assert 'Expected `Effect`, found `Literal["process"]`' in evidence
     assert 'Expected `InstallImageStep`, found `Literal["install.capacity"]`' in evidence
     assert 'Expected `SandboxMode`, found `Literal["off"]`' in evidence
@@ -51,5 +51,9 @@ def test_ty_refuses_raw_strings_including_source_commit(tmp_path: Path) -> None:
     assert 'Expected `ContainerNetwork`, found `Literal["none"]`' in evidence
     assert (
         'Expected `SourceCommit`, found `Literal["0000000000000000000000000000000000000000"]`'
+        in evidence
+    )
+    assert (
+        'Expected `SourceSnapshot`, found `Literal["0000000000000000000000000000000000000000000000000000000000000000"]`'
         in evidence
     )

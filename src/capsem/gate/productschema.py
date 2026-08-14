@@ -97,6 +97,7 @@ class InstallBuilderConfig(Strict):
     dockerfile: str
     tag_template: str
     source_tag_template: str
+    source_identity_file: str
     identity_inputs: tuple[str, ...]
     identity_globs: tuple[str, ...]
     materialize_build_network: Literal[BuildNetwork.DEFAULT]

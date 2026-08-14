@@ -24,6 +24,12 @@
   skipped, with only duplicated workspace-version authority and the 300-line
   gate-module ceiling red. No artifact or VM work ran; its full-SHA prefix and
   journal remain as failure evidence.
+- Exact-SHA qualification `ba9e862659612d8133addca3408b37381604ab76`
+  passed fast/source, dual-architecture assets and boots, 4,385 Rust tests,
+  5,624 broad Python tests, every functional cohort, and both Debian package
+  builds. It stopped only at install image smoke after concurrent Rust coverage
+  transiently gave build and smoke different source-derived tags. S05-176 owns
+  the frozen-source/receipt fix; the retained prefix and run journal remain.
 
 ## Coverage ledger
 

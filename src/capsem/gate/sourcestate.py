@@ -23,9 +23,12 @@ import os
 from pathlib import Path
 
 from .actions import Action
+from .config import GateConfig
 from .context import Context
 from .errors import GateError
+from .execution import Kind, Needs, ResumePolicy, Speed, Step, step
 from .fileactions import write_text
+from .sourcecapture import CaptureSourceSnapshot
 from .sourcecommit import SourceCommit, require_detached_checkout
 
 
@@ -220,3 +223,20 @@ class RequireSourceUnchanged(Action, name="require-source-unchanged"):
             )
 
         context.journal.note(f"verified source state {after['digest']}")
+
+
+def record_step(config: GateConfig) -> Step:
+    """The one source identity boundary shared by every composed consumer."""
+    return step(
+        "source.record",
+        RequireIsolatedBytecode(),
+        RecordSourceState(),
+        CaptureSourceSnapshot(),
+        # The state file records the snapshot digest. `produces` are hashed
+        # files; the directory itself is re-hashed by every consumer.
+        produces=(config.path(config.candidate.source_state_file),),
+        resume=ResumePolicy.ALWAYS_RUN,
+        kind=Kind.STATIC_TEST,
+        needs=frozenset({Needs.DISK}),
+        speed=Speed.FAST,
+    )

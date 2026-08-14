@@ -30,15 +30,11 @@ from . import (
 )
 from .actions import Call, Run, Script
 from .config import GateConfig
-from .execution import Kind, Needs, ResumePolicy, Speed, Step, step
+from .execution import Kind, Needs, Speed, Step, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .qualification import Qualification
-from .sourcestate import (
-    RecordSourceState,
-    RequireIsolatedBytecode,
-    RequireSourceUnchanged,
-)
+from .sourcestate import RequireSourceUnchanged, record_step
 from .storage import Storage
 from .timingratchet import EnforceTimingRegression, TimingBoundary
 
@@ -57,23 +53,7 @@ def compose(
     reduced one, and now it runs it in the same process rather than launching
     `just test` and hoping.
     """
-    recorded = plan.add(
-        step(
-            "source.record",
-            # Two claims, in the order they matter: this process is not running
-            # last version's bytecode, and here is the tree it is running.
-            RequireIsolatedBytecode(),
-            RecordSourceState(),
-            # What the release guard reads back to prove the tested tree is the
-            # pushed tree.
-            produces=(config.path(config.candidate.source_state_file),),
-            resume=ResumePolicy.ALWAYS_RUN,
-            kind=Kind.STATIC_TEST,
-            needs=frozenset({Needs.DISK}),
-            speed=Speed.FAST,
-        ),
-        after=after,
-    )
+    recorded = plan.shared(record_step(config), after=after)
 
     # Cheap before expensive. These two were the other way round, and they are
     # serial either way -- so the order cost nothing in total time and
@@ -126,10 +106,15 @@ def compose_modules(
     )
     glowup = vmmodules.glowup(plan, config, qualification=qualification, after=(functional,))
 
-    return plan.add(step("recipes", Run(config.candidate.recipe_suite),
-        kind=Kind.STATIC_TEST,
-        speed=Speed.FAST,
-    ), after=(glowup,))
+    return plan.add(
+        step(
+            "recipes",
+            Run(config.candidate.recipe_suite),
+            kind=Kind.STATIC_TEST,
+            speed=Speed.FAST,
+        ),
+        after=(glowup,),
+    )
 
 
 def _prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
@@ -224,7 +209,9 @@ def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
         # `cargo run -p capsem-admin` once per profile. It reads as
         # configuration work from the label alone, which is exactly the
         # mismatch `tests/citadel/test_step_actions_are_atomic.py` refuses.
-        step("materialize-config", Run(["bash", settings.materialize_script]),
+        step(
+            "materialize-config",
+            Run(["bash", settings.materialize_script]),
             contends=(config.exclusive("workspace_binaries"),),
             kind=Kind.COMPILE,
             needs=frozenset({Needs.DISK}),

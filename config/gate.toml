@@ -201,6 +201,7 @@ package_runtime_packages = [
 dockerfile = "docker/Dockerfile.install-builder"
 tag_template = "capsem-install-builder:{digest}"
 source_tag_template = "capsem-install-test:{digest}"
+source_identity_file = "target/install-image-identity.json"
 identity_inputs = [
     "Cargo.toml",
     "Cargo.lock",
@@ -597,6 +598,10 @@ orphan_script = "scripts/check-orphan-processes.py"
 # Where the recorded state waits between the step that measures it and the one
 # that re-asserts it.
 source_state_file = "target/gate-source-state.json"
+# Source-derived Docker builds consume this immutable copy. Tests may mutate
+# checkout metadata transiently; one recorded context prevents two phases from
+# assigning different identities to the same eventual source state.
+source_snapshot_dir = "target/gate-source-snapshot"
 
 # The Colima binary, restored to whatever the developer had. This used to be a
 # shell trap around the expensive half of the gate, so it was correct only for
@@ -1697,6 +1702,7 @@ source_contract = [
     "tests/test_host_builder_materializer.py",
     "tests/test_image_build_backend.py",
     "tests/test_gate_install_container.py",
+    "tests/test_gate_install_image_identity.py",
     "tests/test_gate_no_nested_commands.py",
     "tests/test_gate_install_ordering.py",
     "tests/test_gate_lifecycle.py",

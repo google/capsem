@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Install qualification images now build from the immutable source snapshot
+  captured by `source.record`, then persist a strict helper/source/tag/image
+  receipt. Smoke and same-commit resume revalidate that receipt instead of
+  hashing the concurrently tested workspace again, so transient Rust coverage
+  metadata churn cannot assign two tags to one eventual source state.
+
 - The first 0.6 profile release can retire the one known pre-0.6 stable graph
   whose package URLs point at a deleted GitHub release. Retirement is bound to
   the configured channel plus the exact catalog and payload SHA-256, authored

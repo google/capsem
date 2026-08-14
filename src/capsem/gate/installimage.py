@@ -3,15 +3,27 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
+from typing import Annotated
+
+from pydantic import Field, StringConstraints, ValidationError
 
 from . import config as gate_config
-from . import installbuilder, snapshot
+from . import installbuilder, sourcecapture
+from .actions import Action
 from .config import GateConfig
+from .configschema import Strict
+from .context import Context
 from .docker import Docker
 from .errors import GateError
-from .imageidentity import exact_image_id, exact_image_reference, require_input_key
+from .filesystem import remove, write_text
+from .imageidentity import (
+    exact_image_id,
+    exact_image_reference,
+    require_exact_image,
+    require_input_key,
+)
 from .invocation import ConsoleMode
 from .proc import Runner
 from .storage import Storage
@@ -33,24 +45,34 @@ def _step_label(value: InstallImageStep) -> str:
     return value.value
 
 
-@dataclass(frozen=True)
-class InstallImageIdentity:
-    input_key: str
-    image_id: str
-    image_reference: str
+CanonicalDigest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+ExactImageId = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
+
+
+class InstallImageIdentity(Strict):
+    """The complete exact-image receipt persisted between build and use."""
+
+    input_key: str = Field(min_length=1)
+    image_id: ExactImageId
+    image_reference: str = Field(min_length=1)
+    helper_input_key: str = Field(min_length=1)
+    helper_image_id: ExactImageId
+    source_digest: CanonicalDigest
 
 
 def source_image_tag(
     config: GateConfig,
     *,
     helper_id: str,
-    source_digest: str | None = None,
+    source: sourcecapture.SourceSnapshot,
 ) -> str:
     """Key the derived image by exact helper, source bytes, host, and policy."""
+    if not isinstance(source, sourcecapture.SourceSnapshot):
+        raise TypeError("source must be a SourceSnapshot")
     digest = hashlib.blake2b(digest_size=16)
     for value in (
         helper_id,
-        source_digest or snapshot.digest(config.root, config),
+        source.digest,
         config.host_arch().name,
         config.host_arch().docker_platform,
         config.install.builder.source_build_network,
@@ -95,21 +117,43 @@ def _source_repository(config: GateConfig) -> str:
     return config.install.builder.source_tag_template.split(":", 1)[0]
 
 
+def _receipt_path(config: GateConfig) -> Path:
+    relative = Path(config.install.builder.source_identity_file)
+    if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+        raise GateError("install source_identity_file must stay beneath the checkout")
+    return config.path(str(relative))
+
+
+def _write_receipt(config: GateConfig, identity: InstallImageIdentity) -> None:
+    write_text(_receipt_path(config), identity.model_dump_json())
+
+
+def _read_receipt(config: GateConfig) -> InstallImageIdentity:
+    path = _receipt_path(config)
+    try:
+        return InstallImageIdentity.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError) as error:
+        raise GateError(f"install image receipt {path} is missing or invalid") from error
+
+
 def build_source_image(
     runner: Runner,
     config: GateConfig,
     *,
     identity: installbuilder.InstallBuilderIdentity,
+    source: sourcecapture.SourceSnapshot,
 ) -> InstallImageIdentity:
-    """Build current source on the exact helper with BuildKit networking denied."""
+    """Build the recorded source on the exact helper with networking denied."""
+    sourcecapture.require_snapshot(config, source)
+    remove(_receipt_path(config))
     docker = Docker(runner)
     helper = installbuilder.require_local_image(runner, config, expected=identity)
     platform = config.host_arch().docker_platform
-    tag = source_image_tag(config, helper_id=identity.image_id)
+    tag = source_image_tag(config, helper_id=identity.image_id, source=source)
     docker.build(
         tag=tag,
-        dockerfile=str(config.path(config.install.dockerfile)),
-        context=str(config.root),
+        dockerfile=str(source.root / config.install.dockerfile),
+        context=str(source.root),
         args=[
             f"BASE={helper}",
             f"INPUT_IDENTITY={tag}",
@@ -119,6 +163,7 @@ def build_source_image(
         network=config.install.builder.source_build_network,
         console=ConsoleMode.LOG_ONLY,
     )
+    sourcecapture.require_snapshot(config, source)
     installbuilder.require_local_image(runner, config, expected=identity)
     require_input_key(
         docker,
@@ -139,29 +184,49 @@ def build_source_image(
         expected_id=image_id,
         subject="install qualification image",
     )
-    found = InstallImageIdentity(tag, image_id, reference)
+    found = InstallImageIdentity(
+        input_key=tag,
+        image_id=image_id,
+        image_reference=reference,
+        helper_input_key=identity.input_key,
+        helper_image_id=identity.image_id,
+        source_digest=source.digest,
+    )
     runner.note(
         f"Install image: input key {tag}; exact image {image_id}; build reference {reference}"
     )
     Storage(runner).reclaim(_source_repository(config), keep=tag)
+    _write_receipt(config, found)
     return found
 
 
 def prepare(runner: Runner) -> InstallImageIdentity:
     """Materialize dependencies once, build sealed source once, and smoke once."""
     config = gate_config.for_root(runner.root)
+    source = sourcecapture.require_recorded(config)
     helper = installbuilder.materialize(runner, config)
-    image = build_source_image(runner, config, identity=helper)
+    image = build_source_image(runner, config, identity=helper, source=source)
     _smoke(runner, config, image=image.input_key)
     return image
 
 
 def require_local_image(runner: Runner, config: GateConfig) -> str:
     """Return the runnable input-key tag only after binding it to the exact ID."""
+    receipt = _read_receipt(config)
+    source = sourcecapture.require_recorded(config)
+    if receipt.source_digest != source.digest:
+        raise GateError(
+            "install image receipt names source digest "
+            f"{receipt.source_digest}, but source.record captured {source.digest}"
+        )
     docker = Docker(runner)
     helper = installbuilder.require_current(runner, config)
     platform = config.host_arch().docker_platform
-    tag = source_image_tag(config, helper_id=helper.image_id)
+    if receipt.helper_input_key != helper.input_key or receipt.helper_image_id != helper.image_id:
+        raise GateError("install image receipt no longer matches the exact dependency helper")
+    tag = source_image_tag(config, helper_id=helper.image_id, source=source)
+    if receipt.input_key != tag:
+        raise GateError(f"install image receipt selects {receipt.input_key}, expected {tag}")
     if not docker.image_exists(tag, platform=platform):
         raise GateError(f"install qualification image {tag} is missing")
     require_input_key(
@@ -176,5 +241,27 @@ def require_local_image(runner: Runner, config: GateConfig) -> str:
         platform=platform,
         subject="install qualification image",
     )
+    if image_id != receipt.image_id:
+        raise GateError(
+            f"install qualification image {tag} moved: "
+            f"expected {receipt.image_id}, found {image_id}"
+        )
+    require_exact_image(
+        docker,
+        receipt.image_reference,
+        platform=platform,
+        expected_id=receipt.image_id,
+        subject="install qualification image build reference",
+    )
     runner.note(f"Using install qualification image {tag}, exact child {image_id}")
     return tag
+
+
+class RequireInstallImage(Action, name="require-install-image"):
+    """Resume check for the persisted exact source-image product."""
+
+    def render(self) -> str:
+        return "require the exact receipted install qualification image"
+
+    def perform(self, context: Context) -> None:
+        require_local_image(context.runner, context.config)

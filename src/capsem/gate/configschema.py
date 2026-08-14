@@ -175,6 +175,7 @@ class CandidateConfig(Strict):
     source_digest_script: str
     orphan_script: str
     source_state_file: str
+    source_snapshot_dir: str
     colima: str
     bootstrap_script: str
     clean_stale_script: str

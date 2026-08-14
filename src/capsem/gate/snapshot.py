@@ -237,18 +237,18 @@ def _copy_carried(source: Path, target: Path, config: GateConfig) -> None:
         subprocess.run(["cp", *flags, str(origin), str(destination)], check=True)
 
 
-def populate(source: Path, target: Path, config: GateConfig) -> None:
-    """Copy the subject of the run into `target`.
-
-    The working tree the digest counts, plus the paths `git ls-files` cannot
-    see. Nothing else -- `target/` is 164 GB logical and is what makes the
-    difference between a 2.2s copy and an 84s one.
-    """
+def populate_subject(source: Path, target: Path, config: GateConfig) -> None:
+    """Copy only the Git-visible, source-digested subject into `target`."""
     target.mkdir(parents=True, exist_ok=True)
     _copy_files(source, target, _subject(source))
-    _copy_carried(source, target, config)
     _materialize_repository(source, target)
     _require_faithful(source, target, config)
+
+
+def populate(source: Path, target: Path, config: GateConfig) -> None:
+    """Copy the run subject plus separately declared ignored inputs."""
+    populate_subject(source, target, config)
+    _copy_carried(source, target, config)
 
 
 def populate_commit(source: Path, target: Path, config: GateConfig, commit: SourceCommit) -> None:

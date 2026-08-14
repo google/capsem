@@ -15,6 +15,7 @@ from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
 from .installimage import (
     InstallImageStep,
+    RequireInstallImage,
     _smoke,
     _step_label,
     build_source_image,
@@ -23,11 +24,17 @@ from .installimage import (
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .outside import Outside
 from .plan import Plan
+from .sourcecapture import require_recorded
+from .sourcestate import record_step
 from .storage import Storage
 
 
 def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
     """Expose the sole egress edge and both sealed phases in the gate graph."""
+    # An existing candidate source boundary already precedes `after`; adding
+    # those later steps back onto it would create a cycle. Standalone plans
+    # still get the same root step here.
+    recorded = plan.shared(record_step(config))
     built = hostimage.fragment(plan, config, after=after)
 
     capacity = plan.shared(
@@ -86,7 +93,13 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
 
     def build(context) -> None:
         helper = installbuilder.require_current(context.runner, context.config)
-        identity = build_source_image(context.runner, context.config, identity=helper)
+        source = require_recorded(context.config)
+        identity = build_source_image(
+            context.runner,
+            context.config,
+            identity=helper,
+            source=source,
+        )
         context.journal.note(
             f"install image: input key {identity.input_key}; exact image {identity.image_id}; "
             f"build reference {identity.image_reference}"
@@ -108,8 +121,10 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
             kind=Kind.E2E,
             needs=frozenset({Needs.DOCKER, Needs.DISK}),
             speed=Speed.SLOW,
+            produces=(config.path(config.install.builder.source_identity_file),),
+            carry_checks=(RequireInstallImage(),),
         ),
-        after=(materialized,),
+        after=(materialized, recorded),
     )
 
     def smoke(context) -> None:

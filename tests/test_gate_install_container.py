@@ -28,6 +28,27 @@ CONFIG = gate_config.load(PROJECT_ROOT)
 ROSETTA_BINFMT = CONFIG.install.rosetta_binfmt
 
 
+@pytest.fixture(autouse=True)
+def _qualified_install_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Container behavior tests consume, rather than author, image identity."""
+    from capsem.gate import installimage, sourcecapture
+
+    monkeypatch.setattr(
+        "capsem.gate.installimage.require_local_image",
+        lambda _runner, _config: CONFIG.install.image,
+    )
+    monkeypatch.setattr(installimage, "_receipt_path", lambda _config: tmp_path / "image.json")
+    monkeypatch.setattr(sourcecapture, "require_snapshot", lambda _config, _source: None)
+    monkeypatch.setattr(
+        sourcecapture,
+        "require_recorded",
+        lambda _config: sourcecapture.SourceSnapshot(
+            CONFIG.root,
+            sourcecapture.SourceDigest("0" * 64),
+        ),
+    )
+
+
 def _container(**kwargs) -> tuple[InstallContainer, RecordingRunner]:
     runner = RecordingRunner(
         PROJECT_ROOT, replies={"systemctl is-system-running": "running"}, **kwargs
@@ -378,7 +399,7 @@ def test_install_dependency_materialization_is_the_only_network_open_phase() -> 
 def test_install_helper_materializes_locked_inputs_before_the_sealed_image(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from capsem.gate import installbuilder, installimage
+    from capsem.gate import installbuilder, installimage, snapshot, sourcecapture
 
     monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
     runner = RecordingRunner(
@@ -387,7 +408,11 @@ def test_install_helper_materializes_locked_inputs_before_the_sealed_image(
     )
 
     identity = installbuilder.materialize(runner, CONFIG)
-    installimage.build_source_image(runner, CONFIG, identity=identity)
+    source = sourcecapture.SourceSnapshot(
+        CONFIG.root,
+        sourcecapture.SourceDigest(snapshot.digest(CONFIG.root, CONFIG)),
+    )
+    installimage.build_source_image(runner, CONFIG, identity=identity, source=source)
 
     helper = next(
         command
@@ -474,7 +499,7 @@ def test_install_source_image_and_smoke_are_sealed_without_retry() -> None:
 
 def test_generated_asset_selector_identity_is_stable(tmp_path: Path) -> None:
     """The exact image built before assets assemble is the one install uses."""
-    from capsem.gate import installimage
+    from capsem.gate import installimage, snapshot, sourcecapture
 
     subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
     (tmp_path / ".gitignore").write_bytes((PROJECT_ROOT / ".gitignore").read_bytes())
@@ -490,12 +515,27 @@ def test_generated_asset_selector_identity_is_stable(tmp_path: Path) -> None:
     )
     config = CONFIG.model_copy(update={"root": tmp_path})
 
-    before = installimage.source_image_tag(config, helper_id="sha256:helper")
+    source = sourcecapture.SourceSnapshot(
+        tmp_path,
+        sourcecapture.SourceDigest(snapshot.digest(tmp_path, config)),
+    )
+    before = installimage.source_image_tag(
+        config,
+        helper_id="sha256:helper",
+        source=source,
+    )
     selected = tmp_path / "target" / "ironbank-assets" / "code" / "assets"
     selected.mkdir(parents=True)
     (tmp_path / "assets").symlink_to("target/ironbank-assets/code/assets")
 
-    assert installimage.source_image_tag(config, helper_id="sha256:helper") == before
+    assert (
+        installimage.source_image_tag(
+            config,
+            helper_id="sha256:helper",
+            source=source,
+        )
+        == before
+    )
 
 
 def test_the_install_image_is_built_after_the_builder_it_derives_from() -> None:
