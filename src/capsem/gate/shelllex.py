@@ -22,8 +22,11 @@ guessed would be wrong in the direction that matters.
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass
 from enum import Enum, auto
+
+from .shellsniff import ForeignSourceWarning, sniff
 
 #: A redirection, with its optional file descriptor and its optional `&fd`
 #: target, as one token. Recognised here rather than in the parser because
@@ -52,7 +55,6 @@ OPERATORS = (
 
 _QUOTES = {"'", '"'}
 _PAIRED = {"$(": ")", "${": "}", "`": "`"}
-
 
 class Kind(Enum):
     """What a token is, structurally."""
@@ -205,15 +207,20 @@ class Lexer:
         self._at += len(opening)
         depth = 1
         while self._at < len(self._source) and depth:
-            if opening != "`" and self._source.startswith(opening, self._at):
+            char = self._peek()
+            # Count the bare bracket, not just the sigil form. `$((1 + 2))` is
+            # `$(` around `(1 + 2)`, and matching only `$(` against `)` closed
+            # the word on the inner bracket and left a stray `)` behind -- one
+            # that reads to the parser as the end of a `case` arm.
+            if char == opening[-1] and opening != "`":
                 depth += 1
-                self._at += len(opening)
+                self._at += 1
                 continue
-            if self._peek() == closing:
+            if char == closing:
                 depth -= 1
                 self._at += 1
                 continue
-            if self._peek() == "\n":
+            if char == "\n":
                 self._line += 1
             self._at += 1
         return self._source[start : self._at]
@@ -248,5 +255,23 @@ class Lexer:
                     break
 
 
-def tokenize(source: str) -> list[Token]:
+def tokenize(source: str, *, origin: str = "", foreign: str = "warn") -> list[Token]:
+    """Tokens for one shell body.
+
+    `foreign` decides what happens when the text is obviously not shell:
+    `"warn"` says so and lexes anyway, `"allow"` is silent, `"refuse"` raises.
+    The default warns because the alternative is what actually happened -- raw
+    Jinja templates parsed as shell, reporting a correctly chained `make && ls`
+    as two unguarded statements, in a guard written to find exactly that.
+    """
+    if foreign != "allow" and (language := sniff(source)) is not None:
+        where = f" ({origin})" if origin else ""
+        message = (
+            f"lexing something that looks like {language}{where}. If this is a "
+            "container of shell rather than shell, extract the body first -- "
+            "shellsurfaces renders templates and pulls RUN and run: bodies out."
+        )
+        if foreign == "refuse":
+            raise ValueError(message)
+        warnings.warn(message, ForeignSourceWarning, stacklevel=2)
     return Lexer(source).tokens()

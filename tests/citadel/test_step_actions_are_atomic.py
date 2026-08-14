@@ -13,11 +13,20 @@ from pathlib import Path
 import pytest
 from helpers.gate import gate_plan
 
+from capsem.gate import config as gate_config
 from capsem.gate.execution import Kind
 from capsem.gate.shellnodes import Command, arm_named, commands
 from capsem.gate.shellparse import parse
 
 ROOT = Path(__file__).resolve().parents[2]
+
+#: Steps that reach cargo and deliberately do not claim the workspace, with the
+#: reason recorded in `config/gate.toml`. A ledger, not an exemption list: an
+#: entry that stops reaching cargo fails as loudly as a new one that starts, so
+#: it cannot quietly become the place unclaimed builds go to be forgiven.
+UNCLAIMED = frozenset(
+    entry.subject for entry in gate_config.load(ROOT).boundary.unclaimed_cargo
+)
 
 #: The commands whose steps must hold. `candidate` is the whole gate; the fast
 #: lane is where a hidden build costs the most, because speed is its promise.
@@ -162,8 +171,9 @@ def script_of(argv: tuple[str, ...]) -> tuple[Path, str | None] | None:
     return None
 
 
-def hidden_builds(command: str) -> list[str]:
+def hidden_builds(command: str, reached: set[str] | None = None) -> list[str]:
     offenders = []
+    reached = reached if reached is not None else set()
     plan = gate_plan(command)
     for label in plan.labels:
         step = plan.step_named(label)
@@ -186,7 +196,9 @@ def hidden_builds(command: str) -> list[str]:
                     f"{where} reaches cargo but declares kind={step.kind.value}, "
                     "which asserts it builds nothing"
                 )
-            if not any(claim.name == WORKSPACE_CLAIM for claim in step.contends):
+            claimed = any(claim.name == WORKSPACE_CLAIM for claim in step.contends)
+            reached.add(label)
+            if not claimed and label not in UNCLAIMED:
                 offenders.append(f"{where} reaches cargo without claiming {WORKSPACE_CLAIM}")
     return offenders
 
@@ -195,6 +207,24 @@ def hidden_builds(command: str) -> list[str]:
 def test_a_step_that_compiles_rust_declares_it(command: str) -> None:
     offenders = hidden_builds(command)
     assert not offenders, ATOMICITY_RATIONALE + "\n" + "\n".join(offenders)
+
+
+def test_the_unclaimed_ledger_has_no_stale_entries() -> None:
+    """An entry that stopped reaching cargo must be removed, not left behind.
+
+    This is the half that makes it a ledger rather than an exemption list. A
+    list that only ever grows invites exactly the failure this guard exists
+    for: a declaration that outlived the thing it described. `web.release-site`
+    kept `COMPILE` and the Astro claim for weeks after its build had moved
+    elsewhere, and nothing anywhere said so.
+    """
+    reached: set[str] = set()
+    for command in COMMANDS:
+        hidden_builds(command, reached)
+    stale = sorted(UNCLAIMED - reached)
+    assert not stale, (
+        f"these no longer reach cargo; remove them from [boundary.unclaimed_cargo]: {stale}"
+    )
 
 
 def test_the_guard_can_tell_a_command_from_a_mention() -> None:

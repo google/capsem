@@ -217,7 +217,6 @@ def clippy(config: GateConfig) -> Step:
             ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
             env=toolchain.ort_environment(config, toolchain.OrtConsumer.FAST),
         ),
-        contends=(config.exclusive("workspace_binaries"),),
         kind=Kind.COMPILE,
         speed=Speed.FAST,
         concurrency=SATURATES,

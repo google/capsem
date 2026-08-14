@@ -28,6 +28,7 @@ from pydantic import (
 
 from .configschema import Strict
 from .digestschema import DigestConfig, LedgerConfig
+from .exclusions import Exclusion, HashedExclusion
 from .sandboxschema import SandboxConfig as SandboxConfig
 from .sourcecontractschema import ScriptSizeConfig
 
@@ -84,6 +85,17 @@ class BoundaryConfig(Strict):
     #: suffix to declare.
     shell_bodies: ShellBodyConfig
     step_attributes: StepAttributeConfig
+    #: Steps that drive cargo without claiming the workspace, each saying
+    #: why. Not a bare list of names: one comment over an unbounded list
+    #: stops being a reason at the second entry.
+    unclaimed_cargo: tuple[Exclusion, ...]
+    #: `command || true`: a verdict deliberately thrown away, pinned to the
+    #: hash of the parsed command so the ledger tracks the decision, not the
+    #: formatting.
+    discarded_verdicts: tuple[HashedExclusion, ...]
+    #: Dockerfile `RUN` bodies that sequence several statements on purpose
+    #: without `set -e`, each stating why the earlier failures are tolerable.
+    sequenced_runs: tuple[Exclusion, ...]
     shell_control_flow: tuple[str, ...]
     recipes_with_inline_control_flow: tuple[str, ...]
     direct_machine_access: tuple[str, ...]

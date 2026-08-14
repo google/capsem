@@ -39,6 +39,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- One shape for every guard exclusion (`capsem.gate.exclusions`): exact,
+  hashed over the *parsed* form, with a reason the schema checks the length of,
+  and reconciled in both directions so an entry that no longer applies fails
+  as loudly as a new finding. Two wrong shapes were tried first and are
+  recorded because both look reasonable -- a per-file count, which fails on a
+  harmless addition and passes on a dangerous change to something already
+  listed; and a list of tolerant program names, which misclassified four of
+  the five findings it produced.
+- `tests/citadel/test_discarded_verdicts_are_declared.py`: every
+  `command || true` across scripts, Dockerfile `RUN` and workflow `run:` is
+  ledgered with its reason. None is a bug today; the shape is ledgered because
+  `test "$X" = success || true` once satisfied a release contract while branch
+  protection was off, and an exit status thrown away leaves no trace anywhere.
+- `tests/citadel/test_docker_run_fails_closed.py`: a `RUN` sequencing several
+  statements must `set -e`. Docker runs the body through `/bin/sh -c`, so the
+  instruction's status is the *last* command's. Not the rule GitHub Actions
+  needs -- `run:` executes under `bash -e {0}` -- and assuming it was would
+  have filed thirty-eight false reports.
+- `shellsniff`: the shell tools warn when handed a container of shell rather
+  than shell. A raw `.j2` template lexes without error and yields confident
+  nonsense, which is how the Docker guard's first version reported a correctly
+  chained `make && ls` as two unguarded statements.
+
 - A shell lexer and parser (`shelllex`, `shellnodes`, `shellparse`), because
   every question this repository asks of shell was being asked with a pattern.
   Each worked on the case it was written for and failed quietly on the next:

@@ -9,9 +9,11 @@ a conjunction that discards a verdict.
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
-from capsem.gate.shelllex import Kind, tokenize
+from capsem.gate.shelllex import ForeignSourceWarning, Kind, sniff, tokenize
 from capsem.gate.shellnodes import (
     AndOr,
     Command,
@@ -264,6 +266,112 @@ def test_keywords_are_not_reported_as_programs() -> None:
     assert found == ["[", "cargo", "echo"]
 
 
+# -- the corners that bite ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("echo $((1 + 2))", ["echo", "$((1 + 2))"]),
+        ("echo ${x:-$(pwd)}", ["echo", "${x:-$(pwd)}"]),
+        ('echo "$(cargo metadata)"', ["echo", "$(cargo metadata)"]),
+        ("echo 'a)b'", ["echo", "a)b"]),
+        ('echo "a;b"', ["echo", "a;b"]),
+        ("echo \"it's\"", ["echo", "it's"]),
+        ("echo a=b", ["echo", "a=b"]),
+    ],
+)
+def test_expansions_and_quotes_stay_one_word(source: str, expected: list[str]) -> None:
+    """A delimiter that closes early leaves a stray one behind.
+
+    `echo 'a)b'` is the case that matters for `case`: read unquoted, that `)`
+    ends the arm and everything after it belongs to the next one.
+    """
+    assert [token.value for token in tokenize(source) if token.is_word] == expected
+
+
+def test_a_command_substitution_is_not_descended_into() -> None:
+    """Opaque by design: what it evaluates to is a runtime question.
+
+    It is reported as part of its word, so a caller can see `$(cargo build)`
+    and decide. It is not silently counted as an invocation, which would make
+    the answer depend on a guess.
+    """
+    assert programs("X=$(cargo build) echo done") == ["echo"]
+    assert argvs("echo $(cargo build)") == [("echo", "$(cargo build)")]
+
+
+def test_a_case_inside_a_case_keeps_its_arms_apart() -> None:
+    source = """\
+case "$1" in
+  outer)
+    case "$2" in
+      inner) cargo build ;;
+      other) pnpm run build ;;
+    esac
+    ;;
+  sibling)
+    echo sibling
+    ;;
+esac
+"""
+    tree = parse(source)
+    assert [c.program for c in commands(arm_named(tree, "inner") or [])] == ["cargo"]
+    assert [c.program for c in commands(arm_named(tree, "other") or [])] == ["pnpm"]
+    assert [c.program for c in commands(arm_named(tree, "sibling") or [])] == ["echo"]
+
+
+def test_a_word_that_looks_like_a_keyword_is_not_one() -> None:
+    """`esac`, `fi` and `done` as arguments must not close anything."""
+    assert argvs("echo esac fi done") == [("echo", "esac", "fi", "done")]
+    assert programs("grep -q 'case x in' file") == ["grep"]
+
+
+def test_a_conjunction_chain_keeps_every_link() -> None:
+    assert programs("a && b && c") == ["a", "b", "c"]
+    assert programs("a || b || c") == ["a", "b", "c"]
+    assert programs("a && b || c && d") == ["a", "b", "c", "d"]
+
+
+def test_a_conjunction_split_across_lines_is_one_chain() -> None:
+    """`&&` at end of line continues without a backslash."""
+    source = "cargo build &&\n  cargo test"
+    assert programs(source) == ["cargo", "cargo"]
+    assert [node for node in walk(parse(source)) if isinstance(node, AndOr)]
+
+
+def test_suppression_is_not_confused_by_nesting() -> None:
+    """`|| true` inside a function or an arm still discards a verdict, and a
+    `true` that is not on the right of `||` discards nothing."""
+    assert [c.program for c in suppressed(parse("f() { risky || true; }"))] == ["risky"]
+    assert [c.program for c in suppressed(parse("case $1 in a) risky || true ;; esac"))] == [
+        "risky"
+    ]
+    assert suppressed(parse("true && risky")) == []
+    assert suppressed(parse("risky; true")) == []
+
+
+def test_a_pipeline_on_the_left_of_a_suppression_is_reported_whole() -> None:
+    assert [c.program for c in suppressed(parse("check | grep -q ok || true"))] == [
+        "check",
+        "grep",
+    ]
+
+
+def test_redirection_targets_are_not_mistaken_for_commands() -> None:
+    assert programs("cargo build > cargo") == ["cargo"]
+    assert programs("echo x 2> /dev/null") == ["echo"]
+    assert argvs("echo x >&2") == [("echo", "x")]
+
+
+def test_a_semicolon_inside_a_string_does_not_split() -> None:
+    assert argvs('echo "a; cargo build"') == [("echo", "a; cargo build")]
+
+
+def test_a_backslash_in_single_quotes_is_literal() -> None:
+    assert [t.value for t in tokenize(r"echo 'a\b'") if t.is_word] == ["echo", r"a\b"]
+
+
 # -- robustness --------------------------------------------------------------
 
 
@@ -292,3 +400,46 @@ def test_every_tracked_script_parses() -> None:
         found = commands(tree)
         assert found, f"{name} parsed to no commands at all"
         assert all(isinstance(item, Command) for item in found)
+
+
+# -- being handed the wrong thing --------------------------------------------
+
+
+def test_a_container_of_shell_is_not_shell() -> None:
+    """The mistake this catches was made twice in the hour it was written.
+
+    A raw `.j2` template and a whole Dockerfile both lex without error and
+    produce confident nonsense -- which is worse than an exception, because the
+    guard reading the result reports a clean tree.
+    """
+    assert sniff("FROM ubuntu:24.04\nRUN apt-get update\n") == "dockerfile"
+    assert sniff("{% if arch %}\nmake\n{% endif %}\n") == "jinja"
+    assert sniff("jobs:\n  build:\n    runs-on: ubuntu\n") == "yaml"
+
+
+def test_the_sniffer_does_not_guess() -> None:
+    """A false positive here is worse than no sniffer.
+
+    `docker inspect --format '{{range .Mounts}}'` is a Go template inside
+    perfectly good shell, and this repository runs exactly that. `{{` can
+    therefore never be the Jinja signal; `{%` can.
+    """
+    assert sniff("docker inspect --format '{{range .Mounts}}{{println .Source}}{{end}}' $id") is None
+    assert sniff("set -eux\napt-get update && apt-get install -y curl\n") is None
+    assert sniff("echo 'FROM the top'") is None, "FROM must be at line start to count"
+    assert sniff("python3 - <<'PY'\nimport json\nPY\n") is None, (
+        "eight tracked scripts embed a Python heredoc; that is shell"
+    )
+
+
+def test_the_warning_names_the_language_and_the_origin() -> None:
+    with pytest.warns(ForeignSourceWarning, match="jinja"):
+        parse("{% if arch %}\nmake\n{% endif %}\n", origin="Dockerfile.kernel.j2")
+
+
+def test_a_caller_that_knows_better_can_say_so() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert parse("FROM ubuntu\nRUN x\n", foreign="allow") is not None
+    with pytest.raises(ValueError, match="dockerfile"):
+        parse("FROM ubuntu\nRUN x\n", foreign="refuse")

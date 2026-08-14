@@ -208,6 +208,10 @@ class Parser:
         return Command(tuple(argv), tuple(assignments), line)
 
 
-def parse(source: str) -> list[Node]:
-    """Parse one shell body. Never raises on malformed input."""
-    return Parser(tokenize(source)).parse()
+def parse(source: str, *, origin: str = "", foreign: str = "warn") -> list[Node]:
+    """Parse one shell body. Never raises on malformed *shell*.
+
+    It will complain about text that is not shell at all -- see `tokenize` --
+    because a tree built from a Jinja template is not empty, it is wrong.
+    """
+    return Parser(tokenize(source, origin=origin, foreign=foreign)).parse()
