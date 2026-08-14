@@ -32,7 +32,6 @@ from .buildschema import (
     InitrdConfig,
     LogsConfig,
     ModulesConfig,
-    ReleaseConfig,
     SbomConfig,
     ServiceConfig,
     SigningConfig,
@@ -69,6 +68,7 @@ from .productschema import (
     InstallConfig,
     PackageConfig,
 )
+from .releaseschema import ReleaseConfig
 from .toolchainschema import ToolchainConfig
 
 CONFIG_RELATIVE = Path("config") / "gate.toml"

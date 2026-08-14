@@ -112,7 +112,7 @@ def test_retired_channel_projects_an_empty_same_channel_source() -> None:
         "channel": "stable",
         "status": "current",
         "packages": [],
-        "profiles": {"code": {"revision": "0.6.0"}},
+        "profiles": {"code": {"revision": "99.99.99"}},
     }
 
     projected = PROJECTOR.project_first_channel_before(
