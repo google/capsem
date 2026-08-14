@@ -168,7 +168,8 @@ jobs:
       - run: bash scripts/prepare-install-test-assets.sh
       - run: bash scripts/materialize-config.sh
       - run: cd frontend && pnpm install --frozen-lockfile
-      - run: bash scripts/check-web-surface.sh frontend-build
+      - name: Build frontend bundle
+        run: bash scripts/check-web-surface.sh frontend-build
       - name: Install release site dependencies
         run: cd release-site && pnpm install --frozen-lockfile
 

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Every Astro build on the host now takes one repository-derived file lock.
+  The gate's in-process `astro_build` claim could not coordinate pytest, a
+  second gate, or a direct script invocation, while the test helper's old
+  `$TMPDIR` lock split callers across different lock files. All entry points
+  now serialize the shared Astro staging directory through the same lock. The
+  shared lock primitive uses util-linux `flock` when available and Python's
+  standard-library `fcntl` fallback on macOS, so neither bootstrap nor Doctor
+  requires a Homebrew-only command.
+
 - The gate's machine lock and holder record are now user-scoped, so linked
   worktrees, independent clones, and detached qualification prefixes cannot
   run destructive gates concurrently against shared host state.
@@ -26,14 +35,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provenance guard remains fail-closed while local Debian and macOS install
   proofs receive the authoritative graph they are designed to hydrate from.
 
-- Route-health timing now owns each black-box probe once and takes the median
-  CPU cost across three independent, double-sized request windows. A transient
-  background service tick can no longer make one route fail and its immediately
-  repeated wrapper pass. Sustained CPU and latency growth is compared with the
-  same config-owned 20% evidence factor as the other product benchmarks, with
-  no separately invented duration or accounting slack. CPU deltas are
-  decimal-normalized before comparison so an exact accounting-tick boundary
-  remains equal to its budget while the next tick still fails.
+- Profile staging permits an unlocked dependency list only in historical
+  profile documents that predate source-commit provenance, warning loudly on
+  every use. Source-stamped profiles fail closed, so the compatibility bridge
+  expires automatically as each legacy profile is republished instead of
+  becoming a permanent warning-only escape hatch.
+
+- The staging check and the Rust profile contract now name the same pairs.
+  They had drifted: Rust paired npm packages with their lock and staging did
+  not, so a profile could carry packages without a lock and be refused later,
+  or never, depending which side saw it first.
+
+- Agent session startup now reports bounded GitHub trunk health before the
+  local gate digest. Cancelled and unfinished jobs cannot clear a completed
+  failure streak, and missing or indeterminate GitHub evidence renders as
+  unknown rather than green.
 
 - Fork and lifecycle performance gates now ratchet against the latest
   checked-in benchmark evidence with a config-owned relative limit instead of
@@ -77,9 +93,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Release profile staging now treats every file named by `profile.toml` as one
   manifest-owned closure. Python requirements and their exact lock must be
-  declared and transported together; a legacy half-pair or a graph that omits
-  either byte fails before package and install work instead of reaching a
-  late materialization error or resolving an unlocked dependency.
+  declared and transported together; a source-stamped half-pair or a graph
+  that omits declared bytes fails before package and install work instead of
+  reaching a late materialization error or resolving an unlocked dependency.
 
 - The fast CI gate now runs on every pull request, including documentation-only
   changes, so Ruff, Ty, dependency audits, and source contracts cannot be
@@ -265,7 +281,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   I/O behaves identically; each buffer was already allocated once outside its
   loop, so this is one heap allocation per file against reading the whole file.
   Audited before the lint was enabled, so it arrives with no `allow`s.
-
 - The `duplicate-content` filesystem rule no longer reports Tauri's generated
   schemas, which are byte-identical on Linux and neither ours to produce nor to
   deduplicate. Every fast-lane run reported one filesystem fault, and a fault

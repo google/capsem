@@ -175,23 +175,6 @@ fi
 printf "  Rust workspace deps (cargo fetch --locked)...\n"
 cargo fetch --locked
 
-# flock: multi-agent coordination lock for heavy just recipes.
-# Linux ships it in util-linux; macOS needs brew install flock.
-if ! command -v flock >/dev/null 2>&1; then
-    case "$(uname -s)" in
-        Darwin)
-            if command -v brew >/dev/null 2>&1; then
-                if confirm "flock (multi-agent recipe lock, via brew)"; then
-                    brew install flock
-                fi
-            else
-                printf "  [SKIP] flock (Homebrew not installed -- install brew, then: brew install flock)\n"
-            fi ;;
-        Linux)
-            printf "  [SKIP] flock (missing -- install util-linux via your package manager)\n" ;;
-    esac
-fi
-
 # The production host-SBOM generator reads the exact Debian packages emitted
 # by the Linux release rail. Ubuntu dpkg currently writes data.tar.zst, while
 # macOS bsdtar delegates that member to the external zstd executable. Install

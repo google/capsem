@@ -228,7 +228,7 @@ def test_the_install_rails_reserve_headroom_before_and_during_the_proof() -> Non
     They are the reason ENOSPC surfaces here, with a disk recommendation,
     rather than hours later inside a fixture on an otherwise-green run.
     """
-    install_image = (ROOT / "src" / "capsem" / "gate" / "installimage.py").read_text()
+    install_image = (ROOT / "src" / "capsem" / "gate" / "installplan.py").read_text()
     install = (ROOT / "src" / "capsem" / "gate" / "install.py").read_text()
 
     assert 'ensure_space("install-preflight")' in install_image

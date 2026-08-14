@@ -22,7 +22,8 @@ class LockConfig(Strict):
     @field_validator("path", "holder_record")
     @classmethod
     def _must_be_user_scoped(cls, value: str) -> str:
-        if value.startswith("~/") or PurePosixPath(value).is_absolute():
+        parts = PurePosixPath(value).parts
+        if (len(parts) > 1 and parts[0] == "~") or PurePosixPath(value).is_absolute():
             return value
         raise ValueError("machine lock paths must be absolute or user-home-relative")
 

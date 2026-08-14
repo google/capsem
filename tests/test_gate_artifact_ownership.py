@@ -101,9 +101,9 @@ def test_the_ownership_check_is_no_longer_running_over_nothing() -> None:
     )
 
 
-@pytest.mark.parametrize("command", ["candidate", "release-binaries", "release-profile"])
-def test_both_release_lanes_inherit_the_same_producers(command: str) -> None:
-    """Declared at the fragment, so composing it carries the claim along."""
+@pytest.mark.parametrize("command", ["release-binaries", "release-profile"])
+def test_release_lanes_consume_evidence_without_rebuilding_producers(command: str) -> None:
+    """Publication accepts the complete run instead of rerunning its graph."""
     from capsem.gate.sourcecommit import SourceCommit
 
     source_commit = SourceCommit("0" * 40)
@@ -129,7 +129,9 @@ def test_both_release_lanes_inherit_the_same_producers(command: str) -> None:
         argparse.Namespace(dry_run=False, graph=False, timing=False, **args),
     )._describe()
 
-    assert set(_producers(plan)) >= EXPECTED
+    assert not _producers(plan)
+    assert "qualification.accept" in plan.labels
+    assert "source.record" not in plan.labels
 
 
 # ---------------------------------------------------------------------------

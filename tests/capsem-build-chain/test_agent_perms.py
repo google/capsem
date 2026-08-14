@@ -66,13 +66,12 @@ def test_pack_initrd_reasserts_cached_guest_binary_permissions():
     from capsem.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    packer = (
-        PROJECT_ROOT / "src" / "capsem" / "gate" / "initrd.py"
-    ).read_text(encoding="utf-8")
+    packer = (PROJECT_ROOT / "src" / "capsem" / "gate" / "initrdactions.py").read_text(
+        encoding="utf-8"
+    )
 
     assert config.initrd.binary_mode == 0o555, (
-        "guest binaries must be read-only: the guest cannot be allowed to "
-        "modify its own binaries"
+        "guest binaries must be read-only: the guest cannot be allowed to modify its own binaries"
     )
     assert "chmod(settings.binary_mode)" in packer, (
         "the repack no longer reasserts the mode on staged binaries"

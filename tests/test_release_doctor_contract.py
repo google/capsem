@@ -21,6 +21,9 @@ import variables
 import yaml
 from helpers.workflow_contract import assert_unmasked_step, workflow_reachable_text
 
+from capsem.gate.shellnodes import arm_named
+from capsem.gate.shellparse import parse as parse_shell
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Every job `pr-gate` must aggregate before a pull request can merge. Declared
@@ -406,7 +409,7 @@ def test_host_sbom_zstd_dependency_has_local_and_binary_lane_parity() -> None:
 
     assert 'confirm "zstd (Debian package/SBOM archive support, via brew)"' in bootstrap
     assert "brew install zstd" in bootstrap
-    assert "for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum flock zstd" in doctor
+    assert "for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum zstd" in doctor
     assert "zstd)" in macos_doctor
     assert 'echo "brew install zstd"' in macos_doctor
     assert "zstd)" in linux_doctor
@@ -698,7 +701,8 @@ def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
         ("test-linux", "Unit tests (KVM backend) with coverage"),
         ("test", "Unit tests with coverage"),
         ("test", "Integration tests with coverage"),
-        ("test", "Frontend type-check, test, and build"),
+        ("test", "Build frontend bundle"),
+        ("test", "Frontend type-check and test"),
         ("test", "Python schema tests with coverage"),
         ("test", "Python integration tests (non-VM suites)"),
         ("test", "Verify all integration test imports"),
@@ -1961,12 +1965,15 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
     from capsem.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installimage.py").read_text()
+    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installplan.py").read_text()
+    identity_source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installimage.py").read_text()
 
     # The plan now names each boundary separately, so its log can distinguish
     # the sole egress phase from the sealed source build and smoke proof.
-    for member in ("CAPACITY", "MATERIALIZE", "BUILD", "SMOKE"):
-        assert f"_step_label(InstallImageStep.{member})" in source
+    from capsem.gate.installimage import InstallImageStep
+
+    for lifecycle in InstallImageStep:
+        assert f"_step_label(InstallImageStep.{lifecycle.name})" in source
     assert "release(" not in source, (
         "the preflight reclaims nothing: the rail belongs to the parity lane, "
         "whose own step hands it back"
@@ -2001,9 +2008,9 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
 
     # An image that merely exists is not current: every later phase revalidates
     # its input-key label and exact platform child before use.
-    assert "require_input_key(" in source
-    assert "exact_image_id(" in source
-    assert "Building missing capsem-host-builder base image" not in source
+    assert "require_input_key(" in identity_source
+    assert "exact_image_id(" in identity_source
+    assert "Building missing capsem-host-builder base image" not in identity_source
 
 
 def test_release_skill_requires_ci_and_local_mac_installer_outcome_proof() -> None:
@@ -3138,6 +3145,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
 
 def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     script = _source_text("scripts/check-web-surface.sh")
+    shell = parse_shell(script)
     just = (PROJECT_ROOT / "justfile").read_text()
     ci = _workflow_text("ci.yaml")
     docs = _workflow_text("docs.yaml")
@@ -3148,20 +3156,20 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     channel_staging = _workflow_text("release-channel-staging.yaml")
 
     for surface in (
-        "frontend",
+        "frontend-verify",
         "frontend-build",
         "docs",
         "site",
         "release-site",
         "release-site-build",
     ):
-        assert f"{surface})" in script
+        assert arm_named(shell, surface) is not None
 
     fast = _dispatched_text("test:")
-    for surface in ("frontend", "docs", "site", "release-site"):
+    for surface in ("frontend-verify", "docs", "site", "release-site"):
         assert f"check-web-surface.sh {surface}" in fast
 
-    assert "bash scripts/check-web-surface.sh frontend" in ci
+    assert "bash scripts/check-web-surface.sh frontend-verify" in ci
     assert "bash scripts/check-web-surface.sh docs" in ci
     assert "bash scripts/check-web-surface.sh site" in ci
     assert "bash scripts/check-web-surface.sh release-site" in ci
@@ -5164,11 +5172,13 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
     # `nextest` moved out of the argv with the mount that bound its state; the
     # script the container runs is still the checked-in one, asserted below.
     assert "test-linux-rust.sh" in linux_rust_gate
-    # Native on Linux, Docker on macOS -- the branch is `host.on_linux()` in
-    # `hostimage.py` rather than a `uname` test in a recipe.
-    hostimage = _source_text("src/capsem/gate/hostimage.py")
-    assert "host.on_linux()" in hostimage
-    assert "host.on_macos()" in hostimage
+    # Both hosts use the same sealed Docker lane. That makes local Linux and
+    # Colima exercise one input-keyed dependency image instead of two subtly
+    # different native/container implementations.
+    linuxrust = _source_text("src/capsem/gate/linuxrust.py")
+    assert "Docker(context.runner)" in linuxrust
+    assert "host.on_linux()" not in linuxrust
+    assert "host.on_macos()" not in linuxrust
     assert "run: just _gate-linux-rust" in linux_ci
     assert "cargo llvm-cov nextest" not in linux_ci
     assert "cargo llvm-cov nextest" in runner
@@ -6419,18 +6429,17 @@ def test_parallel_asset_primitive_does_not_run_docker_gc() -> None:
     assert "_docker-gc" not in lanes
 
 
-def test_release_recipes_require_fresh_remote_main_before_running_the_gate() -> None:
-    """The selected detached commit must already be on fresh origin/main."""
+def test_release_recipes_forward_the_explicit_source_commit_to_the_gate() -> None:
+    """Just dispatches; the gate owns evidence and remote-main validation."""
+    justfile = _source_text("justfile")
     for recipe in ("release-binaries", "release-profile"):
-        block = _recipe_block(recipe)
+        declaration = next(line for line in justfile.splitlines() if line.startswith(f"{recipe} "))
+        body = _recipe_body(recipe)
 
-        assert "publish-release-source.py" in block
-        assert "--check" in block, (
-            f"{recipe} must verify origin/main membership before the complete proof"
-        )
-        assert block.index("--check") < block.index("fast."), (
-            f"{recipe} runs the gate before checking the immutable remote source"
-        )
+        assert "source_commit" in declaration
+        assert f"capsem-gate {recipe}" in body
+        assert "{{quote(source_commit)}}" in body
+        assert "publish-release-source.py" not in body
 
 
 def test_web_only_prs_still_run_the_fast_gate_and_skip_only_product_jobs() -> None:

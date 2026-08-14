@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
 import blake3
 
+from . import auditfs, prefix, resume
 from . import config as gate_config
-from . import prefix, resume
 from .actions import Action
 from .config import GateConfig
 from .context import Context
@@ -68,17 +67,18 @@ def archive_attempt(config: GateConfig, commit: SourceCommit, directory: Path) -
     if target.is_symlink() or source.is_symlink():
         raise GateError("exact-source attempt journals must not be symlinks")
     archive = target.parent.parent
-    if archive.is_symlink():
+    if archive.is_symlink() or target.parent.is_symlink():
         raise GateError("exact-source journal archive directories must not be symlinks")
-    archive.mkdir(parents=True, exist_ok=True)
-    target.parent.mkdir(exist_ok=True)
-    if target.parent.is_symlink():
-        raise GateError("exact-source commit archive must not be a symlink")
     if target.exists():
         if not target.samefile(source):
             raise GateError(f"qualification journal archive already exists at {target}")
         return target
-    os.link(source, target)
+    # The archive has to see the terminal events appended to the live journal,
+    # so this must be a hardlink rather than a snapshot. Route it through the
+    # one audited hardlink boundary; the source is generated output.
+    auditfs.stage(source, target)
+    if not target.samefile(source):
+        raise GateError(f"qualification journal archive at {target} is not a hardlink")
     return target
 
 

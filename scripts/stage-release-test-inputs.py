@@ -168,12 +168,11 @@ def stage_profiles(
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-
     arch = host_arch
     arch_dir = assets_dir / arch
     arch_dir.mkdir(parents=True, exist_ok=True)
     evidence_artifacts = configured_evidence_artifacts(shared_config_root)
-    for profile_index, (profile_id, architecture) in enumerate(
+    for profile_index, (profile_id, legacy, architecture) in enumerate(
         active_profile_architectures(manifest, arch)
     ):
         configs = architecture.get("config")
@@ -209,9 +208,10 @@ def stage_profiles(
         expected_profile = Path("profiles") / profile_id / "profile.toml"
         if expected_profile not in staged_config_paths:
             raise ValueError(f"release profile {profile_id}/{arch} lacks {expected_profile}")
-        finalize_profile(config_root / expected_profile, arch, profile_id, staged_config_paths)
+        finalize_profile(
+            config_root / expected_profile, arch, profile_id, staged_config_paths, legacy=legacy
+        )
         stage_legacy_root(shared_config_root, config_root, profile_id, staged_config_paths)
-
         stage_profile_architecture_assets(
             architecture,
             profile_id=profile_id,

@@ -45,12 +45,6 @@ tool_hint() {
                 dnf) echo "sudo dnf install cpio" ;;
                 *)   echo "install cpio" ;;
             esac ;;
-        flock)
-            case "$pkg" in
-                apt) echo "sudo apt install util-linux" ;;
-                dnf) echo "sudo dnf install util-linux" ;;
-                *)   echo "install util-linux (provides flock)" ;;
-            esac ;;
         docker)
             case "$pkg" in
                 apt) echo "sudo apt install docker.io" ;;

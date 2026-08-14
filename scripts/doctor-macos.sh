@@ -24,7 +24,6 @@ tool_hint() {
         sqlite3)       echo "brew install sqlite" ;;
         git)           echo "brew install git" ;;
         b3sum)         echo "cargo install b3sum --locked" ;;
-        flock)         echo "brew install flock (multi-agent lock on ~/.capsem/run/execution.lock)" ;;
         zstd)          echo "brew install zstd" ;;
         cpio)          echo "brew install cpio" ;;
         tart)          echo "brew trust --formula cirruslabs/cli/softnet && brew install cirruslabs/cli/tart" ;;

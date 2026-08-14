@@ -676,8 +676,13 @@ def test_only_named_dependency_inputs_cross_the_fast_gate_network_boundary(
         if any("[outside kernel sandbox]" in line for line in candidate.render())
     }
 
-    expected = ONLINE_FAST if name != "test-static" else set()
-    if name != "test-fast":
+    if name.startswith("release-"):
+        expected = {"source.remote-main", "source.publish-ref", "release"}
+        if name == "release-binaries":
+            expected.add("channel-source")
+    else:
+        expected = ONLINE_FAST if name != "test-static" else set()
+    if name not in {"test-fast", "release-binaries", "release-profile"}:
         expected |= {
             "host-image",
             "install.materialize",

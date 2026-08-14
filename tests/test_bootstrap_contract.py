@@ -761,9 +761,18 @@ def test_linux_doctor_uses_ubuntu_buildx_name_and_enforces_node_major() -> None:
     assert "required Node.js major" in doctor_common
     assert "config/docker/image/build.toml" in doctor_common
     assert (
-        "for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum flock zstd cpio"
-        in doctor_common
+        "for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum zstd cpio" in doctor_common
     )
+
+
+def test_bootstrap_and_doctor_do_not_require_an_external_flock_binary() -> None:
+    bootstrap = _read("bootstrap.sh")
+    doctor_common = _read("scripts/doctor-common.sh")
+    doctor_macos = _read("scripts/doctor-macos.sh")
+
+    assert "brew install flock" not in bootstrap
+    assert "brew install flock" not in doctor_macos
+    assert " b3sum flock zstd" not in doctor_common
 
 
 def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:

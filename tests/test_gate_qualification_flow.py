@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,7 @@ COMMIT = SourceCommit("3" * 40)
 
 @pytest.fixture
 def config(tmp_path: Path):
+    subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
     (tmp_path / "config").mkdir()
     shutil.copy(PROJECT_ROOT / "config/gate.toml", tmp_path / "config/gate.toml")
     return gate_config.load(tmp_path)

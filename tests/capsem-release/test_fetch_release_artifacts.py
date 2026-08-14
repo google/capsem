@@ -1227,8 +1227,8 @@ def test_profile_staging_refuses_a_declared_python_lock_missing_from_release_inp
         STAGE.stage_profiles(inputs, tmp_path / "assets", tmp_path / "config", ROOT / "config")
 
 
-def test_profile_staging_refuses_legacy_unlocked_python_requirements(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_profile_staging_warns_about_legacy_unlocked_python_requirements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     manifest, _ = _write_manifest(tmp_path)
     _add_python_dependency_pair(
@@ -1241,8 +1241,67 @@ def test_profile_staging_refuses_legacy_unlocked_python_requirements(
     FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
     monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
 
-    with pytest.raises(ValueError, match=r"must declare python_requirements.*together"):
-        STAGE.stage_profiles(inputs, tmp_path / "assets", tmp_path / "config", ROOT / "config")
+    # Warns, and stages anyway. Refusing here deadlocks the release lanes
+    # against each other: staging reads the already-published profile, the
+    # published profiles carry no lock, and only a release can produce one --
+    # which is the release this refusal was blocking. Sixteen consecutive
+    # trunk failures made that concrete. See `require_paired_files`.
+    staged = STAGE.stage_profiles(inputs, tmp_path / "assets", tmp_path / "config", ROOT / "config")
+    assert staged, "a legacy unlocked profile must still stage"
+
+    warned = capsys.readouterr().err
+    assert "python_requirements without python_requirements_lock" in warned
+    assert "unsealed resolver" in warned
+
+
+def test_profile_staging_refuses_unlocked_requirements_from_a_current_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The legacy bridge must close automatically for newly authored profiles."""
+    manifest, _ = _write_manifest(tmp_path)
+    _add_python_dependency_pair(
+        manifest,
+        tmp_path,
+        declare_lock=False,
+        publish_lock=False,
+    )
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    document["profiles"]["code"]["source_commit"] = "a" * 40
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    inputs = tmp_path / "profile-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+
+    with pytest.raises(ValueError, match="python_requirements without python_requirements_lock"):
+        STAGE.stage_profiles(
+            inputs,
+            tmp_path / "assets",
+            tmp_path / "config",
+            ROOT / "config",
+        )
+
+
+@pytest.mark.parametrize("source_commit", [None, "A" * 40, "a" * 39, "main"])
+def test_profile_staging_rejects_a_malformed_source_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_commit: object,
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    document["profiles"]["code"]["source_commit"] = source_commit
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    inputs = tmp_path / "profile-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+
+    with pytest.raises(ValueError, match="malformed source_commit"):
+        STAGE.stage_profiles(
+            inputs,
+            tmp_path / "assets",
+            tmp_path / "config",
+            ROOT / "config",
+        )
 
 
 def test_profile_staging_carries_the_exact_python_requirements_and_lock_together(
