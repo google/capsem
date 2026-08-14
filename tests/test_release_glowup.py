@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import json
@@ -908,30 +909,31 @@ def test_release_pairing_cli_is_all_or_nothing() -> None:
         module.validate_exact_release_pairing(partial)
 
 
-def test_local_channel_import_uses_the_typed_selected_revision_policy(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_local_channel_import_uses_the_typed_selected_revision_policy() -> None:
     """Public legacy revisions are imported, never accepted for new authoring."""
-    module = _load_local_glowup()
-    commands: list[list[str]] = []
-    monkeypatch.setattr(module, "run", lambda command, **_kwargs: commands.append(command))
-
-    module.build_channel(
-        tmp_path / "capsem-admin",
-        tmp_path / "manifest.json",
-        tmp_path / "assets",
-        tmp_path / "profiles",
-        "stable",
-        tmp_path / "dist",
-        "http://127.0.0.1:31415",
-        profile_revision_policy=module.ProfileRevisionPolicy.SELECTED_INPUT,
-    )
-
-    assert commands and commands[0][-2:] == [
-        "--profile-revision-policy",
-        "selected-input",
+    tree = ast.parse(LOCAL_GLOWUP_PATH.read_text(encoding="utf-8"))
+    authoring_partials = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "functools"
+        and node.func.attr == "partial"
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "author_native_candidate"
     ]
+
+    assert len(authoring_partials) == 1
+    policy = next(
+        keyword.value
+        for keyword in authoring_partials[0].keywords
+        if keyword.arg == "profile_revision_policy"
+    )
+    assert isinstance(policy, ast.Attribute)
+    assert isinstance(policy.value, ast.Name)
+    assert (policy.value.id, policy.attr) == ("args", "profile_revision_policy")
 
 
 def test_local_glowup_exports_bounded_started_evidence_before_failure(

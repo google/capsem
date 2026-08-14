@@ -100,9 +100,11 @@ def test_native_candidate_records_only_the_graph_and_rebuilds_catalogs(tmp_path:
     ]
     first_build, record, second_build = (command for command, _env in commands)
     assert first_build[first_build.index("--manifest") + 1] == source.resolve().as_uri()
+    assert first_build[first_build.index("--profile-revision-policy") + 1] == "selected-input"
     assert record[record.index("--manifest-path") + 1] == str(graph)
     assert record[record.index("--source-commit") + 1] == str(SOURCE_COMMIT)
     assert second_build[second_build.index("--manifest") + 1] == graph.resolve().as_uri()
+    assert second_build[second_build.index("--profile-revision-policy") + 1] == "selected-input"
     assert all(
         env == {CONFIG.environment.release_site.url: "https://release.invalid/stable"}
         for _, env in commands
