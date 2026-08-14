@@ -61,7 +61,9 @@ class DebProof:
         self.root = self._config.root
         self.package = self._resolve(package)
         self.manifest_url = manifest_url
-        self.channel = self._resolve_channel(channel)
+        if channel not in self._config.package.channels:
+            raise GateError(f"unsupported exact package proof channel: {channel}")
+        self.channel = channel
         self._sleep = sleep
 
     def _resolve(self, package: Path) -> Path:
@@ -82,23 +84,15 @@ class DebProof:
             raise GateError(f"exact Debian package is missing: {resolved}")
         return resolved
 
-    def _resolve_channel(self, channel: str) -> str:
-        if channel not in self._config.package.channels:
-            raise GateError(f"unsupported exact package proof channel: {channel}")
-        return channel
-
-    def _require_virtualisation(self) -> VmDeviceRuntime:
-        return virtualisation_runtime(
-            self._install,
-            purpose="the exact Debian package proof needs KVM and vhost-vsock",
-        )
-
     def run(self) -> None:
         self._content.require_complete(
             self._config,
             arches=(self._config.host_arch(),),
         )
-        runtime = self._require_virtualisation()
+        runtime: VmDeviceRuntime = virtualisation_runtime(
+            self._install,
+            purpose="the exact Debian package proof needs KVM and vhost-vsock",
+        )
         container_deb = f"{self._install.mount}/{self.package.relative_to(self.root)}"
         expected = self._runner.capture(["dpkg-deb", "-f", str(self.package), "Version"])
         if not expected:
