@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import tomllib
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -441,6 +442,59 @@ def test_bootstrap_rust_toolchain_parser_requires_the_checked_in_pin() -> None:
     assert completed.stdout.strip() == "1.97.1"
 
 
+def test_bootstrap_rust_targets_parser_reads_the_complete_config_inventory() -> None:
+    configured = tomllib.loads(_read("config/gate.toml"))["toolchain"]["rust_targets"]
+    completed = subprocess.run(
+        [
+            "sh",
+            "-c",
+            ". scripts/bootstrap-rust.sh; capsem_rust_targets config/gate.toml",
+        ],
+        cwd=PROJECT_ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert completed.stdout.splitlines() == configured
+    assert {
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl",
+        "x86_64-unknown-linux-musl",
+    } == set(configured)
+
+
+def test_bootstrap_rust_targets_parser_rejects_empty_duplicate_and_unsafe_values(
+    tmp_path: Path,
+) -> None:
+    cases = {
+        "empty.toml": "[toolchain]\nrust_targets = []\n",
+        "duplicate.toml": (
+            '[toolchain]\nrust_targets = ["aarch64-unknown-linux-gnu", '
+            '"aarch64-unknown-linux-gnu"]\n'
+        ),
+        "unsafe.toml": '[toolchain]\nrust_targets = ["$(touch nope)"]\n',
+    }
+    for filename, content in cases.items():
+        config = tmp_path / filename
+        config.write_text(content, encoding="utf-8")
+        completed = subprocess.run(
+            [
+                "sh",
+                "-c",
+                f". scripts/bootstrap-rust.sh; capsem_rust_targets {config}",
+            ],
+            cwd=PROJECT_ROOT,
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+
+        assert completed.returncode != 0
+        assert str(config) in completed.stderr
+
+
 def test_bootstrap_installs_and_proves_the_exact_checked_in_rust_toolchain() -> None:
     bootstrap = _read("bootstrap.sh")
     rust = _read("scripts/bootstrap-rust.sh")
@@ -467,7 +521,8 @@ def test_bootstrap_installs_and_proves_the_exact_checked_in_rust_toolchain() -> 
     assert 'rustup run "$CAPSEM_RUST_TOOLCHAIN" rustc --version' in doctor
     assert 'target list --toolchain "$CAPSEM_RUST_TOOLCHAIN" --installed' in doctor
     assert 'component list --toolchain "$CAPSEM_RUST_TOOLCHAIN" --installed' in doctor
-    assert "rustup target add --toolchain $CAPSEM_RUST_TOOLCHAIN" in doctor
+    assert 'capsem_rust_targets "$PROJECT_ROOT/config/gate.toml"' in doctor
+    assert "capsem_install_rust_targets" in doctor
     assert "rustup component add --toolchain $CAPSEM_RUST_TOOLCHAIN" in doctor
 
 

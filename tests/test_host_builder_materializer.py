@@ -99,6 +99,13 @@ def test_host_builder_uses_exact_stages_snapshot_and_tool_versions() -> None:
     assert 'npm install -g "pnpm@${PNPM_VERSION}"' in source
     assert 'sources-multiarch.sh "$APT_SNAPSHOT_BASE" "$APT_SNAPSHOT_ID"' in source
     assert 'org.capsem.host-builder.input-key="${INPUT_IDENTITY}"' in source
+    assert "ARG RUST_TARGETS" in source
+    assert 'rustup target add --toolchain "$RUST_TOOLCHAIN" $RUST_TARGETS' in source
+    target_install = source.split("rustup target add", maxsplit=1)[1].split(
+        "rustup component add", maxsplit=1
+    )[0]
+    for target in CONFIG.toolchain.rust_targets:
+        assert target not in target_install
     assert "|| true" not in source
     for argument, tool in settings.cargo_tool_args.items():
         package, version = hostimage.cargo_tool(config=CONFIG, argument=argument)
@@ -189,6 +196,7 @@ def test_warm_identity_skips_build_and_cold_identity_builds_exactly_once() -> No
     assert f"RUST_IMAGE={CONFIG.hostimage.rust_image}" in builds[0]
     assert f"UV_IMAGE={CONFIG.hostimage.uv_image}" in builds[0]
     assert f"RUST_TOOLCHAIN={pinned_toolchain(PROJECT_ROOT)}" in builds[0]
+    assert "RUST_TARGETS=" + " ".join(CONFIG.toolchain.rust_targets) in builds[0]
     assert len(cold.matching(r"docker run --rm --network none")) == 6
 
 
@@ -251,3 +259,24 @@ def test_every_workflow_uses_the_exact_config_owned_pnpm_version() -> None:
     assert setups
     for path, step in setups:
         assert step.get("with", {}).get("version") == CONFIG.hostimage.pnpm_version, path
+
+
+def test_every_complete_rust_toolchain_setup_uses_the_config_owned_targets() -> None:
+    expected = set(CONFIG.toolchain.rust_targets)
+    setups: list[tuple[Path, str]] = []
+    for path in sorted((PROJECT_ROOT / ".github/workflows").glob("*.yaml")):
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for step in _workflow_steps(document):
+            if not str(step.get("uses", "")).startswith("dtolnay/rust-toolchain@"):
+                continue
+            targets = str(step.get("with", {}).get("targets", ""))
+            selected = {target.strip() for target in targets.split(",") if target.strip()}
+            if {
+                "aarch64-unknown-linux-musl",
+                "x86_64-unknown-linux-musl",
+            } <= selected:
+                setups.append((path, targets))
+
+    assert setups
+    for path, targets in setups:
+        assert {target.strip() for target in targets.split(",")} == expected, path

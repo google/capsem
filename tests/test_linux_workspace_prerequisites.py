@@ -25,7 +25,8 @@ def _provisioner():
 
 
 def test_linux_workspace_prerequisites_are_one_validated_config_value() -> None:
-    linux = gate_config.load(PROJECT_ROOT).toolchain.linux
+    config = gate_config.load(PROJECT_ROOT)
+    linux = config.toolchain.linux
 
     assert linux.apt_packages == tuple(dict.fromkeys(linux.apt_packages))
     assert linux.cross_dev_packages == tuple(dict.fromkeys(linux.cross_dev_packages))
@@ -54,6 +55,60 @@ def test_linux_workspace_prerequisites_are_one_validated_config_value() -> None:
         "openssl",
         "librsvg-2.0",
     } <= set(linux.pkg_config_modules)
+    assert {arch.rust_target for arch in config.architectures.values()} <= set(
+        config.toolchain.rust_targets
+    )
+
+
+def test_cross_rust_target_requires_the_existing_architecture_enum() -> None:
+    provisioner = _provisioner()
+
+    assert (
+        provisioner.cross_rust_target(PROJECT_ROOT / "config/gate.toml", provisioner.Arch.X86_64)
+        == "aarch64-unknown-linux-gnu"
+    )
+    assert (
+        provisioner.cross_rust_target(PROJECT_ROOT / "config/gate.toml", provisioner.Arch.ARM64)
+        == "x86_64-unknown-linux-gnu"
+    )
+    assert provisioner.cross_rust_target.__annotations__["architecture"] == "Arch"
+
+
+@pytest.mark.parametrize(
+    ("machine", "expected"),
+    [("x86_64", "X86_64"), ("amd64", "X86_64"), ("aarch64", "ARM64"), ("arm64", "ARM64")],
+)
+def test_external_machine_spelling_is_parsed_once(machine: str, expected: str) -> None:
+    provisioner = _provisioner()
+
+    assert (
+        provisioner.host_architecture(PROJECT_ROOT / "config/gate.toml", machine).name == expected
+    )
+
+
+def test_cross_rust_target_refuses_unknown_or_ambiguous_architecture_config(tmp_path: Path) -> None:
+    provisioner = _provisioner()
+    unknown = tmp_path / "unknown.toml"
+    unknown.write_text(
+        '[architectures.arm64]\nrust_target = "aarch64-unknown-linux-gnu"\n'
+        'aliases = ["arm64", "aarch64"]\n',
+        encoding="utf-8",
+    )
+    ambiguous = tmp_path / "ambiguous.toml"
+    ambiguous.write_text(
+        '[architectures.arm64]\nrust_target = "aarch64-unknown-linux-gnu"\n'
+        'aliases = ["arm64", "aarch64"]\n'
+        '[architectures.x86_64]\nrust_target = "x86_64-unknown-linux-gnu"\n'
+        'aliases = ["x86_64", "amd64"]\n'
+        '[architectures.third]\nrust_target = "third-unknown-linux-gnu"\n'
+        'aliases = ["third"]\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(provisioner.ProvisionError, match="architecture config and the Arch enum"):
+        provisioner.host_architecture(unknown, "x86_64")
+    with pytest.raises(provisioner.ProvisionError, match="has no Arch enum member"):
+        provisioner.host_architecture(ambiguous, "x86_64")
 
 
 def test_cross_dev_packages_must_come_from_the_native_apt_inventory() -> None:

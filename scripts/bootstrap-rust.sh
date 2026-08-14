@@ -42,6 +42,80 @@ capsem_gate_cargo_tools() {
     printf '%s\n' "$CAPSEM_GATE_CARGO_VERSION_ROWS" | cut -f1
 }
 
+capsem_rust_targets() {
+    CAPSEM_GATE_CONFIG=$1
+    awk -F= '
+        function record_targets(line,    count, parts, position, target) {
+            sub(/[[:space:]]*#.*/, "", line)
+            gsub(/^[[:space:]]*\[/, "", line)
+            gsub(/\][[:space:]]*$/, "", line)
+            count = split(line, parts, /,[[:space:]]*/)
+            for (position = 1; position <= count; position++) {
+                target = parts[position]
+                gsub(/^[[:space:]]*"|"[[:space:]]*$/, "", target)
+                if (target == "") {
+                    continue
+                }
+                if (target !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/ || seen[target]) {
+                    printf "unsafe or duplicate Rust target in %s: %s\n", FILENAME, target > "/dev/stderr"
+                    invalid = 1
+                } else {
+                    seen[target] = 1
+                    targets[++target_count] = target
+                }
+            }
+        }
+        /^[[:space:]]*\[toolchain\][[:space:]]*$/ {
+            in_toolchain = 1
+            next
+        }
+        collecting {
+            record_targets($0)
+            if ($0 ~ /\][[:space:]]*([#].*)?$/) {
+                collecting = 0
+            }
+            next
+        }
+        /^[[:space:]]*\[/ && $0 !~ /^[[:space:]]*rust_targets[[:space:]]*=/ {
+            in_toolchain = 0
+        }
+        in_toolchain && $1 ~ /^[[:space:]]*rust_targets[[:space:]]*$/ {
+            value = $2
+            if (value !~ /^[[:space:]]*\[/) {
+                printf "Rust target inventory is not an array in %s\n", FILENAME > "/dev/stderr"
+                invalid = 1
+            }
+            declarations++
+            record_targets(value)
+            collecting = value !~ /\][[:space:]]*([#].*)?$/
+            next
+        }
+        END {
+            if (invalid || collecting || declarations != 1 || target_count == 0) {
+                if (!invalid) {
+                    printf "expected one non-empty toolchain.rust_targets in %s\n", FILENAME > "/dev/stderr"
+                }
+                exit 2
+            }
+            for (position = 1; position <= target_count; position++) {
+                print targets[position]
+            }
+        }
+    ' "$CAPSEM_GATE_CONFIG"
+}
+
+capsem_install_rust_targets() {
+    CAPSEM_RUST_TOOLCHAIN=$1
+    CAPSEM_GATE_CONFIG=$2
+    CAPSEM_RUST_TARGET_LIST=$(capsem_rust_targets "$CAPSEM_GATE_CONFIG") || return
+    for CAPSEM_RUST_TARGET in $CAPSEM_RUST_TARGET_LIST; do
+        if ! rustup target list --toolchain "$CAPSEM_RUST_TOOLCHAIN" --installed \
+            | grep -qx "$CAPSEM_RUST_TARGET"; then
+            rustup target add --toolchain "$CAPSEM_RUST_TOOLCHAIN" "$CAPSEM_RUST_TARGET"
+        fi
+    done
+}
+
 capsem_gate_cargo_tool_versions() {
     CAPSEM_GATE_CONFIG=$1
     awk -F= '
@@ -114,6 +188,7 @@ capsem_gate_cargo_tool_versions() {
 
 capsem_ensure_rust_toolchain() {
     CAPSEM_RUST_TOOLCHAIN=$1
+    CAPSEM_GATE_CONFIG=$2
     if ! rustup run "$CAPSEM_RUST_TOOLCHAIN" rustc --version >/dev/null 2>&1; then
         rustup toolchain install "$CAPSEM_RUST_TOOLCHAIN" --profile minimal
     fi
@@ -127,6 +202,8 @@ capsem_ensure_rust_toolchain() {
             return 1 ;;
     esac
     printf "  [ok]   Rust %s (checked-in toolchain)\n" "$CAPSEM_RUST_TOOLCHAIN"
+
+    capsem_install_rust_targets "$CAPSEM_RUST_TOOLCHAIN" "$CAPSEM_GATE_CONFIG"
 }
 
 _capsem_rustup_bin_dir() {

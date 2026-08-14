@@ -27,7 +27,7 @@ fn gic_does_not_overlap_virtio() {
     assert!(
         gic_end <= VIRTIO_MMIO_BASE
             || GIC_DIST_BASE
-                >= VIRTIO_MMIO_BASE + VIRTIO_MMIO_SIZE * VIRTIO_MMIO_MAX_DEVICES as u64,
+                >= VIRTIO_MMIO_BASE + VIRTIO_MMIO_SIZE * u64::from(VIRTIO_MMIO_MAX_DEVICES),
         "GIC and virtio MMIO regions overlap"
     );
 }

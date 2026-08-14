@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux Rust qualification now Clippy-checks `capsem-core` for the configured
+  non-native GNU architecture before its native workspace pass. Bootstrap,
+  Doctor, CI, and the sealed host builder consume one four-target inventory,
+  so ARM-only or x86-only lint failures cannot first appear on the other
+  hosted runner.
+
 - Every Astro build on the host now takes one repository-derived file lock.
   The gate's in-process `astro_build` claim could not coordinate pytest, a
   second gate, or a direct script invocation, while the test helper's old

@@ -78,6 +78,7 @@ def input_key(config: GateConfig) -> str:
         settings.rust_image,
         settings.uv_image,
         pinned_toolchain(config.root),
+        *config.toolchain.rust_targets,
         *config.toolchain.linux.apt_packages,
         *config.toolchain.linux.pkg_config_modules,
         *config.toolchain.linux.required_commands,
@@ -167,6 +168,7 @@ class _Build(Action, name="host-image-materialize"):
                 f"RUST_IMAGE={settings.rust_image}",
                 f"UV_IMAGE={settings.uv_image}",
                 f"RUST_TOOLCHAIN={pinned_toolchain(context.config.root)}",
+                "RUST_TARGETS=" + " ".join(context.config.toolchain.rust_targets),
                 f"INPUT_IDENTITY={identity}",
                 "WORKSPACE_APT_PACKAGES=" + " ".join(context.config.toolchain.linux.apt_packages),
             ]

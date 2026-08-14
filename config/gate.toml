@@ -969,8 +969,14 @@ node_workspaces = ["frontend", "docs", "site", "release-site"]
 node_install = ["pnpm", "install", "--frozen-lockfile"]
 node_env = { CI = "true" }
 
-# Rust targets the guest binaries cross-compile to.
-rust_targets = ["aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]
+# Every non-native Rust target the gate compiles. The GNU pair exercises both
+# KVM architecture branches under Clippy; the musl pair builds guest binaries.
+rust_targets = [
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-musl",
+    "x86_64-unknown-linux-musl",
+]
 # rust-lld comes from here.
 rust_components = ["llvm-tools"]
 

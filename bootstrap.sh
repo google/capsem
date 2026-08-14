@@ -150,7 +150,7 @@ done
 # An unrelated standalone `cargo` is not proof that this checkout can build.
 # Install and execute the exact compiler named by rust-toolchain.toml before
 # dependency materialization or the private-copy gate can begin.
-capsem_ensure_rust_toolchain "$CAPSEM_RUST_TOOLCHAIN"
+capsem_ensure_rust_toolchain "$CAPSEM_RUST_TOOLCHAIN" "$SCRIPT_DIR/config/gate.toml"
 if [ "$(uname -s)" = "Linux" ]; then
     capsem_expose_rustup_tools
 fi

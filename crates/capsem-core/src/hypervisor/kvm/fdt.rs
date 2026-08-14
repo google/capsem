@@ -86,7 +86,7 @@ pub(super) fn build_fdt(config: &FdtConfig) -> Result<Vec<u8>> {
     fdt.end_node(psci)?;
 
     // /intc (GICv3) -- phandle 1
-    let gic_redist_size = config.cpu_count as u64 * memory::GIC_REDIST_PER_CPU;
+    let gic_redist_size = u64::from(config.cpu_count) * memory::GIC_REDIST_PER_CPU;
     let intc = fdt.begin_node(&format!("intc@{:x}", memory::GIC_DIST_BASE))?;
     fdt.property_string("compatible", "arm,gic-v3")?;
     fdt.property_u32("#interrupt-cells", 3)?;

@@ -115,3 +115,9 @@ class ToolchainConfig(Strict):
     ort: OrtToolchainConfig
     linux: LinuxWorkspaceConfig
     crates: tuple[CrateTool, ...]
+
+    @model_validator(mode="after")
+    def target_inventory_is_nonempty_and_unique(self) -> ToolchainConfig:
+        if not self.rust_targets or len(self.rust_targets) != len(set(self.rust_targets)):
+            raise ValueError("toolchain.rust_targets must be non-empty and unique")
+        return self

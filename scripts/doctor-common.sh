@@ -106,7 +106,7 @@ _doctor_install_gate_tools() {
 }
 
 # Order matters: tools before builds, builds before assets
-_reg rustup-targets   "rustup target add --toolchain $CAPSEM_RUST_TOOLCHAIN aarch64-unknown-linux-musl x86_64-unknown-linux-musl" \
+_reg rustup-targets   "capsem_install_rust_targets $CAPSEM_RUST_TOOLCHAIN $PROJECT_ROOT/config/gate.toml" \
                       "Install Rust cross-compile targets"
 _reg llvm-tools       "rustup component add --toolchain $CAPSEM_RUST_TOOLCHAIN llvm-tools" \
                       "Install llvm-tools (provides rust-lld)"
@@ -238,7 +238,7 @@ if _doctor_rust_version=$(rustup run "$CAPSEM_RUST_TOOLCHAIN" rustc --version 2>
 else
     fail "Rust $CAPSEM_RUST_TOOLCHAIN missing or unusable -- run ./bootstrap.sh"
 fi
-for target in aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
+for target in $(capsem_rust_targets "$PROJECT_ROOT/config/gate.toml"); do
     if rustup target list --toolchain "$CAPSEM_RUST_TOOLCHAIN" --installed \
         2>/dev/null | grep -q "$target"; then
         pass "target: $target"

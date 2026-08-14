@@ -34,6 +34,7 @@ ARG APT_SNAPSHOT_BASE
 ARG APT_SNAPSHOT_ID
 ARG PNPM_VERSION
 ARG RUST_TOOLCHAIN
+ARG RUST_TARGETS
 ARG TAURI_CLI_VERSION
 ARG CARGO_NEXTEST_VERSION
 ARG CARGO_LLVM_COV_VERSION
@@ -91,11 +92,8 @@ COPY --from=rust-toolchain /usr/local/rustup/ /usr/local/rustup/
 COPY --from=rust-toolchain /usr/local/cargo/ /usr/local/cargo/
 RUN rustc_version="$(rustc --version)" \
     && case "$rustc_version" in "rustc ${RUST_TOOLCHAIN} "*) ;; *) exit 1 ;; esac \
-    && rustup target add --toolchain "$RUST_TOOLCHAIN" \
-        aarch64-unknown-linux-gnu \
-        x86_64-unknown-linux-gnu \
-        aarch64-unknown-linux-musl \
-        x86_64-unknown-linux-musl \
+    && test -n "$RUST_TARGETS" \
+    && rustup target add --toolchain "$RUST_TOOLCHAIN" $RUST_TARGETS \
     && rustup component add --toolchain "$RUST_TOOLCHAIN" llvm-tools
 
 # No `cargo fetch` here, deliberately. Baking the dependency graph needs the
