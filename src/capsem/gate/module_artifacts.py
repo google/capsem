@@ -91,6 +91,10 @@ def artifacts(
             label="build-chain",
             paths=settings.build_chain_artifact_tests,
             stop_at_first_failure=False,
+            # `test_cargo_build.py` builds the workspace. Wearing a pytest
+            # label makes that no less true, and the target directory is the
+            # same one every other build locks.
+            contends=(config.exclusive("workspace_binaries"),),
         ).as_step(config),
         after=(built,),
     )

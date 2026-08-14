@@ -74,7 +74,10 @@ def finalize(
                     workspace_version(config.root),
                 ]
             ),
-            kind=Kind.STATIC_TEST,
+            # `config.initrd.manifest` is `cargo run -p capsem-admin`, so this
+            # builds despite reading as a regeneration step.
+            contends=(config.exclusive("workspace_binaries"),),
+            kind=Kind.COMPILE,
             needs=frozenset({Needs.DISK}),
             speed=Speed.FAST,
         ),

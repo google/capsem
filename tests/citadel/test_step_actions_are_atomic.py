@@ -2,18 +2,20 @@
 
 The Citadel is where Capsem records architectural mistakes that must not be
 repeated. This one records a measurement failure rather than a correctness one,
-which is why it took two months to notice.
+which is why it survived two months of green runs.
 """
 
 from __future__ import annotations
 
-import re
+import ast
 from pathlib import Path
 
 import pytest
 from helpers.gate import gate_plan
 
 from capsem.gate.execution import Kind
+from capsem.gate.shellnodes import Command, arm_named, commands
+from capsem.gate.shellparse import parse
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -22,8 +24,17 @@ ROOT = Path(__file__).resolve().parents[2]
 COMMANDS = ("candidate", "test-fast", "test-static")
 
 #: The claim a step takes when it drives cargo. Cargo locks its target
-#: directory, so two invocations serialise whether or not anybody declared it.
+#: directory, so two invocations serialise whether or not anyone declared it.
 WORKSPACE_CLAIM = "workspace_binaries"
+
+#: Cargo subcommands that build. `fmt` and `--version` do not, and a step that
+#: only formats has no business holding the target directory.
+BUILDS = frozenset({"build", "run", "test", "clippy", "check", "nextest", "llvm-cov", "install"})
+
+#: Kinds that assert no build happens. A step reaching a compiler may hold any
+#: other kind -- an end-to-end proof that builds what it proves is honestly
+#: `E2E` -- but not one of these.
+BUILDS_NOTHING = frozenset({Kind.LINT, Kind.STATIC_TEST})
 
 ATOMICITY_RATIONALE = """\
 A step is the unit the gate measures, schedules, declares and reports. When one
@@ -35,112 +46,105 @@ step's claims for a duration nobody can attribute.
 `web.release-site` ran for one minute fifty-nine. Astro's type-check took no
 measurable time and vitest took one second; the rest was
 `cargo run -p capsem-admin` building a binary the fast lane does not otherwise
-build. Four separate instruments looked straight at it. The label said "web".
-The timing summary showed a single opaque line. `slow_action_seconds` flagged
-it every run, so it read as furniture. And nothing declared what the step was,
-so there was nothing for the number to contradict.
+build. Four instruments looked straight at it. The label said "web". The timing
+summary showed a single opaque line. `slow_action_seconds` flagged it every
+run, so it read as furniture. And nothing declared what the step was, so there
+was nothing for the number to contradict.
 
 What makes it a Citadel entry rather than a bug is that no instrument was
-broken. Each reported exactly what it measured. The step was simply not the
-unit anybody thought it was, and a measurement of the wrong unit is not wrong
--- it is unfalsifiable.
+broken. Each reported exactly what it measured. The step simply was not the
+unit anyone thought it was.
 
-So the declaration is checked against the script the action actually runs, and
-what is checked is the *claim*. `web.release-site` did declare `COMPILE` -- by
+What is checked is the *claim*. `web.release-site` did declare `COMPILE` -- by
 accident, from a comprehension that declared it for four surfaces at once -- so
 a rule about `kind` would have passed it. What it could not do honestly was
 hold `astro_build` alone while driving cargo against the workspace target
-directory. Cargo locks that directory, so the step was serialising against
-every other build on the machine through a lock nothing had declared, and the
-wait was charged to its own execution time.
+directory, serialising against every other build on the machine through a lock
+nothing had declared.
 
-A step that reaches a compiler therefore claims the workspace, and may not
-declare a `kind` that asserts it builds nothing.
+Read with a parser, not a pattern. Three earlier versions of this guard each
+reported a clean tree: one searched only the shell and the cargo call was in a
+Python script the shell invoked; one checked `kind`, which was already right by
+accident; one matched `cargo` textually and could not tell a command from a
+filename, a comment, or the left side of an assignment.
 
-See src/capsem/gate/audits.py and skills/dev-gate/SKILL.md.
+See src/capsem/gate/shellparse.py and skills/dev-gate/SKILL.md.
 """
 
-#: Kinds that assert no build happens. A step reaching a compiler may hold any
-#: other kind -- an end-to-end proof that builds what it proves is honestly
-#: `E2E` -- but not one of these.
-BUILDS_NOTHING = frozenset({Kind.LINT, Kind.STATIC_TEST})
 
-#: `cargo` as a shell command, not as a substring of a path or a comment.
-CARGO = re.compile(r"(?:^|[\s(|&;])cargo\s+(?P<sub>[a-z-]+)")
+def cargo_builds(argv: tuple[str, ...]) -> bool:
+    """Whether this argv is a cargo invocation that builds something.
 
-#: `cargo` as the head of an argv list in Python: `["cargo", "run", ...]`,
-#: usually spread over as many lines. This is not a refinement -- it is the
-#: form the original bug was in. `check-web-surface.sh release-site` held no
-#: `cargo` at all; it ran a Python script that built the argv, and a guard
-#: reading only the shell would have called that step clean.
-CARGO_ARGV = re.compile(r"""["']cargo["']\s*,\s*["'](?P<sub>[a-z-]+)["']""", re.S)
-
-#: A script one script hands off to. Followed so the guard sees through a
-#: dispatcher into the program that does the work.
-HANDOFF = re.compile(r"(?P<path>scripts/[\w.-]+\.(?:sh|py))")
-
-#: Cargo subcommands that build something. `cargo fmt` and `cargo --version`
-#: do not, and a step that only formats has no business claiming the target
-#: directory.
-BUILDS = frozenset({"build", "run", "test", "clippy", "check", "nextest", "llvm-cov", "install"})
-
-
-def script_arm(body: str, arm: str | None) -> str:
-    """The one `case` branch a step selects, or the whole file.
-
-    A dispatcher script is many steps' worth of work in one file; charging a
-    step for a compiler in a branch it never takes would make this guard
-    unactionable, which is how guards get deleted.
+    For a plain argv -- a step's own command, or a Python list literal -- where
+    there is no shell to strip assignments and wrappers.
     """
-    if not arm:
-        return body
-    match = re.search(rf"^\s*{re.escape(arm)}\)\n(.*?)^\s*;;", body, re.S | re.M)
-    return match.group(1) if match else body
+    return len(argv) > 1 and argv[0] == "cargo" and argv[1] in BUILDS
 
 
-def uncommented(body: str) -> str:
-    return "\n".join(
-        line for line in body.splitlines() if not line.strip().startswith("#")
-    )
+def command_builds(command: Command) -> bool:
+    """The same question of a parsed command, which knows more.
 
-
-def compiles(body: str) -> bool:
-    """Whether this text runs a cargo subcommand that builds something."""
-    text = uncommented(body)
-    return any(
-        hit.group("sub") in BUILDS
-        for pattern in (CARGO, CARGO_ARGV)
-        for hit in pattern.finditer(text)
-    )
-
-
-def reaches_compiler(body: str, seen: frozenset[Path] = frozenset()) -> bool:
-    """`compiles`, following the scripts this text hands off to.
-
-    A step's action names a dispatcher; the dispatcher names a program; the
-    program builds. Stopping at the first file is what made the original
-    two-minute Rust build look like a web check, so the guard walks the chain.
-    `seen` keeps a script that invokes itself from recursing.
+    `CARGO_TARGET_DIR=/tmp env cargo build` has `cargo` at neither argv[0] nor
+    argv[1]; the parser already resolves the assignment prefix and the wrapper,
+    so asking it beats re-deriving that here and getting it wrong.
     """
-    if compiles(body):
-        return True
-    for hit in HANDOFF.finditer(uncommented(body)):
-        path = ROOT / hit.group("path")
-        if path in seen or not path.is_file():
+    return command.program == "cargo" and command.subcommand() in BUILDS
+
+
+def python_argvs(source: str) -> list[tuple[str, ...]]:
+    """Every list-of-strings literal in a Python file, as argv.
+
+    The form the original bug was in: `check-web-surface.sh release-site` named
+    no compiler at all, and the `["cargo", "run", ...]` that cost two minutes
+    was built inside the Python script it called. Read with `ast` for the same
+    reason the shell is read with a parser -- a string in a list literal is not
+    the same thing as the word `cargo` appearing in a file.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.List | ast.Tuple):
             continue
-        if reaches_compiler(path.read_text(), seen | {path}):
-            return True
+        words = [
+            item.value
+            for item in node.elts
+            if isinstance(item, ast.Constant) and isinstance(item.value, str)
+        ]
+        if words:
+            found.append(tuple(words))
+    return found
+
+
+def reaches_compiler(path: Path, arm: str | None, seen: frozenset[Path]) -> bool:
+    """Whether running `path` (optionally one arm of it) builds Rust.
+
+    Follows hand-offs: a step names a dispatcher, the dispatcher names a
+    program, the program builds. Stopping at the first file is what let a
+    two-minute Rust build read as a web check.
+    """
+    source = path.read_text(encoding="utf-8")
+    if path.suffix == ".py":
+        argvs = python_argvs(source)
+        return any(cargo_builds(argv) for argv in argvs)
+
+    tree = parse(source)
+    body = tree if arm is None else arm_named(tree, arm)
+    if body is None:
+        return False
+    found: list[Command] = commands(body)
+    if any(command_builds(command) for command in found):
+        return True
+    for command in found:
+        for word in command.argv:
+            nested = ROOT / word
+            if nested in seen or nested.suffix not in {".sh", ".py"} or not nested.is_file():
+                continue
+            if reaches_compiler(nested, None, seen | {nested}):
+                return True
     return False
-
-
-def script_of(argv: tuple[str, ...]) -> tuple[Path, str | None] | None:
-    """The script an action shells into, and the sub-command it passes."""
-    for index, token in enumerate(argv):
-        candidate = ROOT / token
-        if token.endswith(".sh") and candidate.is_file():
-            arm = argv[index + 1] if index + 1 < len(argv) else None
-            return candidate, arm
-    return None
 
 
 def argv_of(action) -> tuple[str, ...]:
@@ -150,21 +154,33 @@ def argv_of(action) -> tuple[str, ...]:
     return tuple(str(item) for item in argv)
 
 
+def script_of(argv: tuple[str, ...]) -> tuple[Path, str | None] | None:
+    for index, token in enumerate(argv):
+        candidate = ROOT / token
+        if token.endswith((".sh", ".py")) and candidate.is_file():
+            return candidate, (argv[index + 1] if index + 1 < len(argv) else None)
+    return None
+
+
 def hidden_builds(command: str) -> list[str]:
-    plan = gate_plan(command)
     offenders = []
+    plan = gate_plan(command)
     for label in plan.labels:
         step = plan.step_named(label)
         for action in step.actions:
-            found = script_of(argv_of(action))
-            if found is None:
+            argv = argv_of(action)
+            if not argv:
                 continue
-            path, arm = found
-            if not reaches_compiler(script_arm(path.read_text(), arm), frozenset({path})):
+            where = f"{label}: {' '.join(argv[:3])}"
+            if cargo_builds(argv):
+                pass  # cargo on the command line, as `fast.clippy` runs it
+            elif (found := script_of(argv)) is not None:
+                path, arm = found
+                if not reaches_compiler(path, arm, frozenset({path})):
+                    continue
+                where = f"{label}: {path.name}" + (f" {arm}" if arm else "")
+            else:
                 continue
-            where = f"{label}: {path.name}"
-            if arm:
-                where += f" {arm}"
             if step.kind in BUILDS_NOTHING:
                 offenders.append(
                     f"{where} reaches cargo but declares kind={step.kind.value}, "
@@ -181,53 +197,63 @@ def test_a_step_that_compiles_rust_declares_it(command: str) -> None:
     assert not offenders, ATOMICITY_RATIONALE + "\n" + "\n".join(offenders)
 
 
-def test_the_guard_can_see_a_compiler() -> None:
-    """Break it here, so a refactor that blinds it fails rather than passes.
+def test_the_guard_can_tell_a_command_from_a_mention() -> None:
+    """The distinctions a pattern could not make, asserted directly.
 
-    Every part of the detection is exercised against text: the branch split,
-    the comment skip, and the build/non-build subcommand division. A guard
-    whose extractor silently returns nothing reports a clean tree, and this
-    one's extractor is the whole guard.
+    Each of these once produced a wrong answer: a variable named `cargo`, a
+    build named in a comment, a filename containing the word, and a
+    subcommand that compiles nothing.
     """
-    dispatcher = "a)\n    cargo build -p x\n    ;;\nb)\n    echo hello\n    ;;\n"
-    assert compiles(script_arm(dispatcher, "a"))
-    assert not compiles(script_arm(dispatcher, "b")), "a branch the step never takes"
-    assert compiles(script_arm(dispatcher, None)), "no arm named: charge the whole file"
-    assert not compiles("# cargo build -p x"), "a mention in a comment is not a build"
-    assert not compiles("cargo fmt --check"), "formatting builds nothing"
-    assert compiles("(cd $ROOT && cargo run -p capsem-admin)"), "a subshell still compiles"
-    assert not compiles('cargo = ROOT / "Cargo.toml"'), "a variable named cargo builds nothing"
-    assert compiles('command = [\n    "cargo",\n    "run",\n]'), "argv form counts"
+    assert cargo_builds(("cargo", "build", "-p", "x"))
+    assert not cargo_builds(("cargo", "fmt", "--check")), "formatting builds nothing"
+    assert not cargo_builds(("pytest", "tests/test_cargo_build.py")), "a filename is not a build"
+
+    def builds(source: str) -> bool:
+        return any(command_builds(item) for item in commands(parse(source)))
+
+    assert builds("cargo build -p x")
+    assert builds("(cd $ROOT && cargo run -p capsem-admin)"), "a subshell still compiles"
+    assert builds("CARGO_TARGET=/tmp env cargo build"), "prefixes and wrappers are stepped over"
+    assert not builds("# cargo build -p x"), "a comment is not a build"
+    assert not builds('cargo="$(command -v cargo)"'), "an assignment is not a build"
+    assert not builds('echo "cargo build"'), "a quoted argument is not a build"
 
 
 def test_the_guard_catches_the_bug_it_was_written_for() -> None:
     """The exact arrangement of `web.release-site`, end to end.
 
-    Worth its own test because the first two versions of this guard missed it,
-    each for a different reason, and both would have read as clean.
-
-    The first read only the shell. `check-web-surface.sh release-site`
-    contained no `cargo` -- it ran a Python script that built the argv list --
-    so the two minutes stayed invisible.
-
-    The second checked that a compiling step declares `kind=COMPILE`, and
-    `web.release-site` already did: the comprehension that built four surfaces
-    declared it for all of them, and it happened to be right here for the wrong
-    reason. The detectable lie was never the kind. It was holding `astro_build`
-    -- a lock on Astro's staging directory -- while the real contention was the
-    cargo target directory nobody had claimed.
-
-    A guard that misses its own founding case is decoration.
+    Worth its own test because three earlier versions of this guard missed it,
+    each for a different reason and each reading as clean. A guard that misses
+    its own founding case is decoration.
     """
     channel = ROOT / "scripts" / "build-complete-release-channel.py"
     assert channel.is_file(), "the script the original bug hid behind has moved"
-    assert compiles(channel.read_text()), "cargo in argv form is no longer detected"
+    assert any(cargo_builds(argv) for argv in python_argvs(channel.read_text())), (
+        "cargo built as a Python argv list is no longer detected"
+    )
 
-    arm = f"require_astro\nuv run python {channel.relative_to(ROOT)} --out-dir x\n"
-    assert not compiles(arm), "the shell arm itself never named cargo -- that was the problem"
-    assert reaches_compiler(arm), "the guard must follow the hand-off to find it"
+    surface = ROOT / "scripts" / "check-web-surface.sh"
+    arm = arm_named(parse(surface.read_text()), "release-channel")
+    assert arm is not None, "the arm that carries the parity proof is gone"
+    assert not any(command_builds(item) for item in commands(arm)), (
+        "the shell arm itself never named cargo -- that was the whole problem"
+    )
+    assert reaches_compiler(surface, "release-channel", frozenset({surface})), (
+        "the guard must follow the hand-off into Python to find it"
+    )
 
     assert Kind.COMPILE not in BUILDS_NOTHING, (
         "the original step declared COMPILE and was still wrong; if the kind "
         "rule ever becomes the whole guard, it stops catching this"
     )
+
+
+def test_an_arm_the_step_does_not_select_is_not_charged_to_it() -> None:
+    """A dispatcher holds many steps' work; a step answers for its own arm.
+
+    Charging `web.release-site` for the cargo in the `release-channel` arm
+    would make the guard unactionable, and an unactionable guard gets deleted.
+    """
+    surface = ROOT / "scripts" / "check-web-surface.sh"
+    assert not reaches_compiler(surface, "release-site", frozenset({surface}))
+    assert not reaches_compiler(surface, "docs", frozenset({surface}))

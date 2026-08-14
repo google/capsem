@@ -39,7 +39,9 @@ def dependency_step(
     return step(
         label,
         *materialize_actions(config, selected_profiles, selected_arches, selected),
-        contends=(config.exclusive("docker_daemon"),),
+        # Both claims: it pulls base images through the daemon and interleaves
+        # `cargo run -p capsem-admin image workspace` between the pulls.
+        contends=(config.exclusive("docker_daemon"), config.exclusive("workspace_binaries")),
         carry_checks=require_actions(config, selected_profiles, selected_arches, selected),
         kind=Kind.PACKAGE,
         needs=frozenset({Needs.DOCKER, Needs.DISK}),

@@ -39,6 +39,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A shell lexer and parser (`shelllex`, `shellnodes`, `shellparse`), because
+  every question this repository asks of shell was being asked with a pattern.
+  Each worked on the case it was written for and failed quietly on the next:
+  `cargo` in a filename, in a comment, on the left of an assignment or inside a
+  quoted argument is not `cargo` in command position, and the distinction is
+  grammatical rather than textual. The tree also models `&&` and `||`, so
+  `test "$X" = success || true` -- a check whose verdict is discarded, the
+  shape that once satisfied a release contract while branch protection was off
+  -- is a question anyone can now ask with `suppressed()`.
+
+  Its own suite found four bugs in it before any consumer did: a heredoc body
+  read as shell, `2>&1` parsed as two arguments, `function name` reporting
+  every function as named "function", and `;;` skipped as an ordinary
+  separator, which ran every arm of a `case` together into the first.
+
 - `tests/citadel/test_step_actions_are_atomic.py`: a step that reaches a
   compiler must claim the workspace and may not declare a kind that asserts it
   builds nothing. `web.release-site` spent one minute fifty-nine in
