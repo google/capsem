@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `tests/citadel/test_required_jobs_are_derived.py`: the set of CI jobs that
+  must pass is derived from the workflow, not restated. Four places had to
+  agree -- `jobs:`, `pr-gate.needs:`, `pr-gate.env:`, and the required list in
+  `require-ci-jobs.sh` -- and nothing compared them. A job added to the first
+  and forgotten in any of the others runs, can fail, and cannot block a merge:
+  branch protection stays green because the one required status was never told
+  to look. The set is every job except the aggregator, which cannot require
+  itself, so it is computed rather than maintained.
+
 ### Fixed
 
 - The gate's machine lock and holder record are now user-scoped, so linked
