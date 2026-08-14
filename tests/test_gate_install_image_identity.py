@@ -18,6 +18,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
 
 
+def test_the_observer_knows_the_exact_source_replica_root() -> None:
+    assert CONFIG.runlog.source_replica_roots == (CONFIG.candidate.source_snapshot_dir,)
+
+
 def _source(tmp_path: Path):
     """A tiny real Git subject using the gate's authoritative digest script."""
     subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)

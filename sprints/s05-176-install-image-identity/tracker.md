@@ -21,3 +21,9 @@
 - GREEN: 79 install/resume/composition tests; 222 source/config/candidate tests;
   545 artifact/boundary/type/plan/release contracts with 2 platform skips.
 - Ruff is green, and strict all-platform Ty was rerun after formatting.
+- First exact `ab61e39c` attempt stopped intentionally during fast Citadel
+  after the observer reported the new snapshot's expected duplicate symlink
+  bytes. RED observer contracts then established a separate exact source-
+  replica vocabulary. GREEN: 43 full observation/propagation/identity tests
+  and 72 config/source/Citadel checks; sibling duplicates and source hardlinks
+  remain faults. A new committed SHA is required for qualification.

@@ -2166,6 +2166,10 @@ observed_roots = ["config", "crates", "scripts", "guest", "src", "target/web-par
 # reported one filesystem fault, and a fault count that is never zero is a
 # fault count nobody reads.
 duplicate_content_exempt = ["crates/capsem-app/gen"]
+# `source.record` intentionally copies every Git-visible byte into this exact
+# tree. Duplicate and empty bytes there are properties of checked-in input,
+# while hardlinks, mode churn, and concurrent writers remain faults.
+source_replica_roots = ["target/gate-source-snapshot"]
 # How Linux answers "what path is this descriptor". `shutil.rmtree` deletes
 # through a directory descriptor, so the observer receives a bare entry name
 # and has to anchor it -- without this it resolved against the working

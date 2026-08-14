@@ -24,7 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   captured by `source.record`, then persist a strict helper/source/tag/image
   receipt. Smoke and same-commit resume revalidate that receipt instead of
   hashing the concurrently tested workspace again, so transient Rust coverage
-  metadata churn cannot assign two tags to one eventual source state.
+  metadata churn cannot assign two tags to one eventual source state. The
+  filesystem observer recognizes only that exact config-owned tree as copied
+  source content while retaining its hardlink, mode, and contention checks.
 
 - The first 0.6 profile release can retire the one known pre-0.6 stable graph
   whose package URLs point at a deleted GitHub release. Retirement is bound to

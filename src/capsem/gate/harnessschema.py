@@ -190,6 +190,8 @@ class RunLogConfig(Strict):
     observed_roots: tuple[str, ...]
     #: Trees where identical bytes are a third party's doing, not ours.
     duplicate_content_exempt: tuple[str, ...]
+    #: Exact frozen source replicas: copied inputs, not authored artifacts.
+    source_replica_roots: tuple[str, ...]
     #: How Linux names the path behind a file descriptor, so a `dir_fd`-relative
     #: call can be anchored instead of resolved against the working directory.
     fd_path_template: str

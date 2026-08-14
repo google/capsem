@@ -67,6 +67,7 @@ class Watch:
         declared: Mapping[str, frozenset[str]] | None = None,
         on_fault: Callable[[Fault], None] | None = None,
         duplicate_content_exempt: Iterable[str] = (),
+        source_replica_roots: Iterable[str] = (),
     ) -> None:
         self._roots = [root for root in roots if root.exists()]
         self._source_root = source_root.resolve()
@@ -74,6 +75,7 @@ class Watch:
         self._declared = dict(declared or {})
         self._on_fault = on_fault
         self._duplicate_exempt = tuple(duplicate_content_exempt)
+        self._source_replicas = tuple(source_replica_roots)
         self.faults: list[Fault] = []
         self.events: list[Event] = []
 
@@ -247,6 +249,8 @@ class Watch:
         """
         for path in {event.path for event in self.events if not self.is_source(event.path)}:
             try:
+                if faultrules.is_source_replica(self, path):
+                    continue
                 if path.is_file() and path.stat().st_size == 0:
                     self.fault(
                         Event(at=time.time(), kind="final", path=path, steps=()),

@@ -87,6 +87,7 @@ def observing(
         declared=declared,
         on_fault=report,
         duplicate_content_exempt=config.runlog.duplicate_content_exempt,
+        source_replica_roots=config.runlog.source_replica_roots,
     )
     try:
         with watch, Instrument(watch, fd_path_template=settings.fd_path_template):

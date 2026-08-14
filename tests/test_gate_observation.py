@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -724,6 +725,75 @@ def test_the_exemption_does_not_blunt_the_rule_elsewhere(relative: str, tmp_path
     assert _duplicate_faults(tmp_path, relative, ("crates/capsem-app/gen",)), (
         f"duplicate content under {relative} went unreported; the exemption leaked"
     )
+
+
+def test_a_declared_source_replica_is_not_judged_as_duplicate_or_empty_output(
+    tmp_path: Path,
+) -> None:
+    """A frozen input copy is source evidence, not independently authored output."""
+    replica = tmp_path / "target" / "gate-source-snapshot"
+    replica.mkdir(parents=True)
+    first = replica / "first"
+    second = replica / "second"
+    empty = replica / "empty"
+    first.write_text("same", encoding="utf-8")
+    second.write_text("same", encoding="utf-8")
+    empty.write_bytes(b"")
+    watch = Watch(
+        [],
+        source_root=tmp_path,
+        source_replica_roots=("target/gate-source-snapshot",),
+    )
+
+    for path in (first, second, empty):
+        watch.observed("created", path)
+    reasons = {fault.reason for fault in watch.sweep()}
+
+    assert "duplicate-content" not in reasons
+    assert "empty-artifact" not in reasons
+
+
+def test_a_source_replica_exemption_does_not_cover_sibling_output(tmp_path: Path) -> None:
+    replica = tmp_path / "target" / "gate-source-snapshot"
+    sibling = tmp_path / "target" / "other"
+    replica.mkdir(parents=True)
+    sibling.mkdir(parents=True)
+    first = sibling / "first"
+    second = sibling / "second"
+    first.write_text("same", encoding="utf-8")
+    second.write_text("same", encoding="utf-8")
+    watch = Watch(
+        [],
+        source_root=tmp_path,
+        source_replica_roots=("target/gate-source-snapshot",),
+    )
+
+    watch.observed("created", first)
+    watch.observed("created", second)
+
+    assert "duplicate-content" in {fault.reason for fault in watch.faults}
+
+
+def test_a_source_replica_still_refuses_hardlinks_into_checked_in_source(
+    tmp_path: Path,
+) -> None:
+    subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
+    source = tmp_path / "source.txt"
+    source.write_text("source", encoding="utf-8")
+    subprocess.run(("git", "add", "source.txt"), cwd=tmp_path, check=True)
+    replica = tmp_path / "target" / "gate-source-snapshot"
+    replica.mkdir(parents=True)
+    linked = replica / "linked.txt"
+    os.link(source, linked)
+    watch = Watch(
+        [],
+        source_root=tmp_path,
+        source_replica_roots=("target/gate-source-snapshot",),
+    )
+
+    watch.observed("created", linked)
+
+    assert "hardlinked-source" in {fault.reason for fault in watch.faults}
 
 
 def test_the_rule_still_fires_with_no_exemptions_configured(tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ of where a fault goes and what a run does about it.
 from __future__ import annotations
 
 import stat
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .faults import duplication_expected
@@ -63,7 +64,11 @@ def judge(watch: Watch, event: Event) -> None:
                 event, "over-permission", f"mode {event.mode:04o} is writable beyond its owner"
             )
 
-    exempt = duplication_expected(event.path, watch._source_root, watch._duplicate_exempt)
+    exempt = duplication_expected(
+        event.path,
+        watch._source_root,
+        (*watch._duplicate_exempt, *watch._source_replicas),
+    )
     if event.digest is not None and not exempt:
         first = watch._digests.setdefault(event.digest, event.path)
         if first != event.path and event.inode is not None:
@@ -80,3 +85,8 @@ def judge(watch: Watch, event: Event) -> None:
                 "two steps the scheduler ran together both touched this, and neither "
                 "declares sharing it",
             )
+
+
+def is_source_replica(watch: Watch, path: Path) -> bool:
+    """Whether content under `path` is the declared frozen source copy."""
+    return duplication_expected(path, watch._source_root, watch._source_replicas)
