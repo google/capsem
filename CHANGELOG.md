@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Release-contract plan inspection now uses the shared disposable checkout and
+  seeds frozen-source prerequisites only inside that copy. Inspectors can reach
+  source-derived image actions without overwriting a live qualification's
+  source receipt, while real gates still require isolated bytecode and exact
+  image receipts. Timing policy also has its own schema module, preserving the
+  300-line gate-module ceiling instead of ratcheting it upward.
+
 - Install qualification images now build from the immutable source snapshot
   captured by `source.record`, then persist a strict helper/source/tag/image
   receipt. Smoke and same-commit resume revalidate that receipt instead of

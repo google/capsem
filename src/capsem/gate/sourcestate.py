@@ -150,6 +150,8 @@ class RequireIsolatedBytecode(Action, name="require-isolated-bytecode"):
     def perform(self, context: Context) -> None:
         from capsem.gatelaunch import MARKER, PYCACHE
 
+        if context.observing:
+            return
         prefix = os.environ.get(MARKER)
         if not prefix:
             raise GateError(

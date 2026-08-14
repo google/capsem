@@ -12,6 +12,7 @@ precede B" into an assertion.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -512,7 +513,29 @@ def _inspection_checkout(source: Path) -> Iterator[Path]:
         # its clonefile choice must use the real interpreter platform.
         with patch.object(host, "on_macos", return_value=sys.platform == "darwin"):
             snapshot.populate(source, checkout, gate_config.load(source))
+        _seed_observed_source(checkout)
         yield checkout
+
+
+def _seed_observed_source(checkout: Path) -> None:
+    """Materialize source prerequisites only inside the expendable reader.
+
+    ``observing=True`` must keep source.record from touching the live gate's
+    receipt, but later opaque callbacks legitimately require the frozen source
+    product. Seed that product in the isolated checkout so observation can
+    reach those callbacks without weakening either production requirement.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate import snapshot, sourcecapture
+    from capsem.gate.filesystem import write_text
+
+    config = gate_config.load(checkout)
+    digest = sourcecapture.SourceDigest(snapshot.digest(checkout, config))
+    write_text(
+        config.path(config.candidate.source_state_file),
+        json.dumps({"digest": digest}),
+    )
+    sourcecapture.capture(config, expected=digest)
 
 
 def _gate_issued_from(root: Path, name: str, args: tuple[tuple[str, object], ...]) -> str:

@@ -31,6 +31,7 @@ from .digestschema import DigestConfig, LedgerConfig
 from .exclusions import Exclusion, HashedExclusion
 from .sandboxschema import SandboxConfig as SandboxConfig
 from .sourcecontractschema import ScriptSizeConfig
+from .timingschema import TimingRegressionConfig as TimingRegressionConfig
 
 #: A first-party tree to check. Relative, normalized, and inside the checkout:
 #: an absolute or escaping root would check somebody else's code and report it
@@ -157,20 +158,6 @@ class ExecutionConfig(Strict):
             if not exclusive.name:
                 object.__setattr__(exclusive, "name", key)
         return self
-
-
-class TimingRegressionConfig(Strict):
-    """Evidence-derived slowdown guard; no authored duration belongs here."""
-
-    maximum_factor: PositiveFloat
-    slowest_steps: PositiveInt
-
-    @field_validator("maximum_factor")
-    @classmethod
-    def _must_allow_some_variance(cls, factor: float) -> float:
-        if factor <= 1.0:
-            raise ValueError("maximum_factor must be greater than one")
-        return factor
 
 
 class RunLogConfig(Strict):

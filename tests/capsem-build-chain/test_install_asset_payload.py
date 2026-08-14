@@ -1,7 +1,6 @@
 """Install package asset-payload contract tests."""
 
 import ast
-import contextlib
 import errno
 import functools
 import hashlib
@@ -165,31 +164,13 @@ def _planned_cached(command: str, args: tuple) -> str:
     is about the docker arguments underneath. Running it records those without
     executing anything.
     """
-    import argparse
+    from helpers.gate import gate_issued
 
-    from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate import config as gate_config
-    from capsem.gate.command import GateCommand
-    from capsem.gate.context import Context
-
-    runner = RecordingRunner(PROJECT_ROOT)
-    try:
-        plan = GateCommand.registry[command](
-            runner,
-            argparse.Namespace(dry_run=False, graph=False, timing=False, **dict(args)),
-        )._describe()
-        rendered = plan.describe()
-        # A step that needs a machine fails here; what it issued before failing
-        # is still the evidence these contracts are about.
-        with contextlib.suppress(Exception):
-            plan.run(Context(runner, gate_config.load(PROJECT_ROOT)))
-        return _redact(
-            rendered + "\n" + "\n".join(runner.rendered) + "\n" + "\n".join(runner.notes)
-        )
-    except Exception as exc:
-        return f"<plan for {command} unavailable: {exc}>"
+    # The shared reader runs opaque callbacks only in an expendable checkout
+    # and marks every action observational. Keeping a private copy of that
+    # protocol here let this contract overwrite the source receipt owned by a
+    # real gate running the suite.
+    return _redact(gate_issued(command, args))
 
 
 def _just_recipe_block(name: str) -> str:
@@ -825,15 +806,19 @@ def test_install_test_does_not_rebuild_frontend_and_owns_release_site_scratch() 
     assert "/src/release-site/dist" in owned
 
 
-def test_install_test_removes_stale_container_before_controller_preflight() -> None:
+def test_install_test_removes_stale_container_before_controller_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A predecessor is cleared before anything starts, not after it collides."""
     from helpers.gate import RecordingRunner
 
     from capsem.gate import config as gate_config
+    from capsem.gate import installimage
     from capsem.gate.installcontainer import InstallContainer
 
     config = gate_config.load(PROJECT_ROOT)
     container = config.install.container
+    monkeypatch.setattr(installimage, "require_local_image", lambda *_args: config.install.image)
     runner = RecordingRunner(PROJECT_ROOT, replies={"systemctl is-system-running": "running"})
     InstallContainer(runner, sleep=lambda _seconds: None).start(options=[])
     issued = "\n".join(runner.rendered)

@@ -38,7 +38,11 @@ from capsem.gate.command import GateCommand
 from capsem.gate.context import Context
 from capsem.gate.errors import GateError
 from capsem.gate.lifecycle import held
-from capsem.gate.sourcestate import RecordSourceState, RequireSourceUnchanged
+from capsem.gate.sourcestate import (
+    RecordSourceState,
+    RequireIsolatedBytecode,
+    RequireSourceUnchanged,
+)
 
 # The Colima lifecycle has its own home in
 # tests/capsem-cleanup-script/test_colima_lifecycle.py, where it is driven
@@ -363,7 +367,7 @@ def test_a_macos_host_without_caffeinate_is_told_why_it_matters(
 # ---------------------------------------------------------------------------
 
 
-def test_an_observed_plan_touches_nothing(tmp_path: Path) -> None:
+def test_an_observed_plan_touches_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`tests/helpers/gate.py` runs the real candidate plan against a
     recording runner to read back the argv it would issue. That stubs
     subprocesses -- it does not stub filesystem actions, so `source.record`
@@ -383,10 +387,16 @@ def test_an_observed_plan_touches_nothing(tmp_path: Path) -> None:
     config = gate_config.for_root(root)
     recorded = config.path(config.candidate.source_state_file)
 
-    RecordSourceState().perform(
-        Context(Running(root), config, journal=RecordingJournal(), observing=True)
-    )
+    observed = Context(Running(root), config, journal=RecordingJournal(), observing=True)
+    RecordSourceState().perform(observed)
     assert not recorded.exists(), "an observed plan wrote to the checkout"
+
+    # An inspector is not executing the gate, so requiring its launcher marker
+    # would stop observation at source.record and hide every later command.
+    from capsem.gatelaunch import MARKER
+
+    monkeypatch.delenv(MARKER, raising=False)
+    RequireIsolatedBytecode().perform(observed)
 
     # And a run that is really running records exactly as before.
     RecordSourceState().perform(_context(root))

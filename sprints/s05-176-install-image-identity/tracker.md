@@ -5,7 +5,10 @@
 - [x] Capture RED regression tests.
 - [x] Implement frozen source capture and strict image receipt.
 - [x] Run focused, Ruff, Ty, source-contract, and resume checks.
-- [ ] Commit and push the exact fix SHA.
+- [x] Commit and push the frozen-image fix SHA.
+- [x] Diagnose the first exact fix-SHA qualification failure in the fast gate.
+- [x] Repair the plan observer and stale install contracts without weakening receipts.
+- [ ] Commit and push the contract repair SHA.
 - [ ] Qualify that SHA and prove glow-up/install.
 
 ## Evidence
@@ -27,3 +30,13 @@
   replica vocabulary. GREEN: 43 full observation/propagation/identity tests
   and 72 config/source/Citadel checks; sibling duplicates and source hardlinks
   remain faults. A new committed SHA is required for qualification.
+- Exact `68ade9d4` qualification stopped after 12m11s in `contracts.release`:
+  4,570 passed, 38 skipped, and every expensive asset/package/VM/glow-up step
+  was skipped. The remaining five failures were all fast source contracts: a
+  duplicate plan reader mutated the live source receipt and then cached a
+  transcript truncated at the new frozen-source prerequisite, one ordering
+  test omitted the exact-image prerequisite, and `harnessschema.py` reached
+  301 lines. RED reproduced all five. The canonical isolated observer now
+  seeds its own frozen-source product, real image receipt checks stay strict,
+  and timing policy is split into its own schema. Focused 6/6 and owning
+  install/source/observation/boundary/timing suites 395 passed, 2 skipped.
