@@ -769,11 +769,6 @@ direct_machine_access = [
     "pidfiles.py",
     "locks.py",
     "runlog.py",
-    # The ledger and digest are the durable, bounded post-run projections of
-    # that same run directory. They cannot report their own writes through the
-    # action journal after the journal has closed.
-    "runledger.py",
-    "digestreport.py",
     "summary.py",
     "runhistory.py",
     "disk.py",
@@ -858,11 +853,11 @@ suffixes = [".rs"]
 max_lines = 1000
 
 [boundary.rust.oversized_line_counts]
-"crates/capsem-service/src/main.rs" = 13851
+"crates/capsem-service/src/main.rs" = 13802
 "crates/capsem-service/src/tests.rs" = 11948
 
 [boundary.scripts.oversized_line_counts]
-"scripts/bootstrap-linux.sh" = 599
+"scripts/bootstrap-linux.sh" = 581
 "scripts/build-pkg.sh" = 352
 "scripts/check-hardcoded-release-selections.py" = 301
 "scripts/check-public-binary-release.py" = 1097
@@ -882,7 +877,7 @@ max_lines = 1000
 "scripts/preflight.sh" = 338
 "scripts/protocol_fixture_recorder.py" = 500
 "scripts/prove-installed-shell.py" = 318
-"scripts/release-binaries.py" = 493
+"scripts/release-binaries.py" = 465
 "scripts/release_collect_evidence.py" = 462
 "scripts/release_glowup.py" = 823
 "scripts/release_inputs.py" = 337
@@ -1658,12 +1653,14 @@ source_contract = [
     "tests/test_exec_lock.py",
     "tests/test_exit_status_integrity.py",
     "tests/test_fast_gate_ci_contract.py",
+    "tests/test_ci_scope_classifier.py",
     "tests/test_gate_actions.py",
     "tests/test_gate_assetlanes.py",
     "tests/test_gate_assets.py",
     "tests/test_gate_asset_recovery.py",
     "tests/test_guest_rust_builder_hermetic.py",
     "tests/test_gate_boundary.py",
+    "tests/test_gate_typecheck.py",
     "tests/test_gate_candidate.py",
     "tests/test_gate_cli.py",
     "tests/test_gate_command.py",
@@ -1804,7 +1801,6 @@ host_snapshot_serial = [
 serial_paths = [
     "tests/capsem-serial/",
     "tests/ironbank/test_route_health.py",
-    "tests/ironbank/test_route_latency.py",
 ]
 benchmark_baseline = "tests/capsem-serial/test_capsem_bench_baseline.py"
 benchmark_deselect = "not test_capsem_bench_baseline"
@@ -2192,6 +2188,12 @@ failure_tail_lines = 40
 # guessed number of seconds.
 maximum_factor = 1.5
 slowest_steps = 10
+
+[benchmark_regression]
+# Product benchmarks use the latest checked-in result as evidence. A release
+# fails when any measured duration or allocated-byte metric grows by more than
+# this ratio; there is deliberately no independently authored seconds/MB cap.
+maximum_factor = 1.2
 
 [runlog.ledger]
 # What survives rotation. `keep_runs` above is twenty and a day of gating

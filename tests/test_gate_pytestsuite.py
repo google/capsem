@@ -50,6 +50,15 @@ def test_benchmarks_claim_the_vz_launch_budget() -> None:
         assert not suite.parallel
 
 
+def test_timing_rail_owns_the_route_health_probe_once() -> None:
+    """A focused wrapper must not make one noisy measurement count twice."""
+    route_owners = tuple(path for path in CONFIG.suites.pytest.serial_paths if "route_" in path)
+
+    assert route_owners == ("tests/ironbank/test_route_health.py",)
+    wrapper = PROJECT_ROOT / "tests/ironbank/test_route_latency.py"
+    assert "def test_" not in wrapper.read_text(encoding="utf-8")
+
+
 def test_the_broad_suite_claims_the_binaries_it_runs_against() -> None:
     """`cargo build --workspace` atomically replaces the codesigned binaries a
     concurrent VM test is using, so anything that rebuilds must not overlap."""

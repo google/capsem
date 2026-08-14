@@ -147,8 +147,6 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
         "pidfiles.py",
         "locks.py",
         "runlog.py",
-        "runledger.py",
-        "digestreport.py",
         # The same run directory, written after the run it describes.
         "summary.py",
         "runhistory.py",

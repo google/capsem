@@ -59,12 +59,12 @@ def test_a_worktree_needs_no_special_handling_now() -> None:
     which is exactly why it needed a second mount at an absolute host path.
     Nothing reads a repository inside a container, so the distinction between
     an ordinary checkout and a linked worktree stops existing at this boundary
-    -- and `snapshot._require_own_repository` refuses to build a prefix from a
-    linked worktree anyway, which is a louder and earlier answer.
+    -- and `snapshot._materialize_repository` replaces either form with an
+    independent repository owned by the prefix.
     """
     from capsem.gate import snapshot
 
-    assert hasattr(snapshot, "_require_own_repository")
+    assert hasattr(snapshot, "_materialize_repository")
     assert not (PROJECT_ROOT / "src" / "capsem" / "gate" / "gitmetadata.py").exists(), (
         "gitmetadata is back; if a lane needs Git identity again it should be "
         "passed in, not mounted"
@@ -79,9 +79,11 @@ def test_no_lane_mounts_git_metadata() -> None:
     killed a release run.
     """
     gate = PROJECT_ROOT / "src" / "capsem" / "gate"
+    # Snapshot may inspect the common object store only to choose hardlink or
+    # byte-copy cloning; it never hands that path to Docker or a build lane.
     offenders = [
         path.name
         for path in gate.glob("*.py")
-        if "git-common-dir" in path.read_text(encoding="utf-8")
+        if path.name != "snapshot.py" and "git-common-dir" in path.read_text(encoding="utf-8")
     ]
     assert not offenders, f"these resolve a Git directory to mount it: {offenders}"

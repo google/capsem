@@ -1,7 +1,11 @@
+from decimal import Decimal
+
 from tests.ironbank.test_route_health import (
+    HOT_ROUTE_MEASUREMENT_SAMPLES,
     RouteTiming,
     _assert_hot_route_budget,
     _assert_timing_budget,
+    _cpu_delta_seconds,
     _hot_route_budget,
 )
 
@@ -55,10 +59,55 @@ def test_route_health_budget_rejects_cpu_regression() -> None:
     raise AssertionError("service CPU regression was not rejected")
 
 
+def test_cpu_accounting_delta_accepts_an_exact_budget_boundary() -> None:
+    """Binary float subtraction must not turn an exact tick budget red."""
+    raw_delta = 1.12 - 1.0
+    assert raw_delta > 0.12
+
+    timing = RouteTiming(
+        label="service /profiles/list",
+        samples_ms=[1.0] * HOT_ROUTE_MEASUREMENT_SAMPLES,
+        service_cpu_s=_cpu_delta_seconds(after=Decimal("1.12"), before=Decimal("1.0")),
+        gateway_cpu_s=None,
+    )
+
+    _assert_timing_budget(
+        timing,
+        p95_ms=2.0,
+        p99_ms=5.0,
+        max_ms=None,
+        cpu_s=0.12,
+        cpu_slack_s=0.0,
+    )
+
+
+def test_cpu_accounting_delta_rejects_the_next_accounted_tick() -> None:
+    timing = RouteTiming(
+        label="service /profiles/list",
+        samples_ms=[1.0] * HOT_ROUTE_MEASUREMENT_SAMPLES,
+        service_cpu_s=_cpu_delta_seconds(after=Decimal("1.13"), before=Decimal("1.0")),
+        gateway_cpu_s=None,
+    )
+
+    try:
+        _assert_timing_budget(
+            timing,
+            p95_ms=2.0,
+            p99_ms=5.0,
+            max_ms=None,
+            cpu_s=0.12,
+            cpu_slack_s=0.0,
+        )
+    except AssertionError:
+        return
+
+    raise AssertionError("the next CPU accounting tick was not rejected")
+
+
 def test_hot_route_budget_ignores_one_host_scheduler_outlier() -> None:
     timing = RouteTiming(
         label="service /profiles/code/mcp/servers/local/tools/list",
-        samples_ms=[0.2] * 63 + [9.6],
+        samples_ms=[0.2] * (HOT_ROUTE_MEASUREMENT_SAMPLES - 1) + [9.6],
         service_cpu_s=0.01,
         gateway_cpu_s=None,
     )
@@ -66,10 +115,11 @@ def test_hot_route_budget_ignores_one_host_scheduler_outlier() -> None:
     _assert_hot_route_budget(timing, path="/profiles/code/mcp/servers/local/tools/list")
 
 
-def test_hot_route_budget_rejects_two_tail_regressions() -> None:
+def test_hot_route_budget_rejects_a_sustained_tail_regression() -> None:
+    outliers = 5
     timing = RouteTiming(
         label="service /profiles/code/mcp/servers/local/tools/list",
-        samples_ms=[0.2] * 62 + [9.5, 9.6],
+        samples_ms=[0.2] * (HOT_ROUTE_MEASUREMENT_SAMPLES - outliers) + [9.6] * outliers,
         service_cpu_s=0.01,
         gateway_cpu_s=None,
     )

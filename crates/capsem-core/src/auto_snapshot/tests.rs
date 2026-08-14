@@ -767,6 +767,43 @@ fn sparse_copy_drops_allocated_zero_extents() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn sparse_extent_copy_does_not_expand_one_block_into_one_megabyte() {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::os::unix::fs::MetadataExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("scattered-blocks.img");
+    let dst = tmp.path().join("copy.img");
+    let logical_size = 8 * 1024 * 1024;
+
+    let mut src_file = std::fs::File::create(&src).unwrap();
+    src_file.set_len(logical_size).unwrap();
+    let mut allocated_extent = vec![0_u8; 1024 * 1024];
+    allocated_extent[17..23].copy_from_slice(b"capsem");
+    for offset in [1024 * 1024_u64, 5 * 1024 * 1024_u64] {
+        src_file.seek(SeekFrom::Start(offset)).unwrap();
+        src_file.write_all(&allocated_extent).unwrap();
+    }
+    drop(src_file);
+
+    copy_file_sparse(&src, &dst).unwrap();
+
+    let allocated = std::fs::metadata(&dst).unwrap().blocks() * 512;
+    assert!(
+        allocated <= 128 * 1024,
+        "two tiny ext4 blocks must not become megabytes in a fork image: {allocated} bytes"
+    );
+    let mut copied = std::fs::File::open(&dst).unwrap();
+    for offset in [1024 * 1024_u64 + 17, 5 * 1024 * 1024_u64 + 17] {
+        copied.seek(SeekFrom::Start(offset)).unwrap();
+        let mut marker = [0_u8; 6];
+        copied.read_exact(&mut marker).unwrap();
+        assert_eq!(&marker, b"capsem");
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn reflink_try_reflink_returns_false_on_unsupported_fs() {
     // tmpfs doesn't support FICLONE -- verify graceful fallback.
     let tmp = tempfile::tempdir().unwrap();

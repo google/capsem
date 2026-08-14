@@ -423,7 +423,7 @@ def test_declared_asset_materializers_match_the_exact_mutator_inventory() -> Non
         ),
         "config/docker/Dockerfile.rootfs-dependencies.j2": Counter(
             {
-                "npm": 8,
+                "npm": 10,
                 "uv": 8,
                 "apt": 9,
                 "apt-get": 3,

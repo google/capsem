@@ -594,7 +594,9 @@ def test_ci_python_schema_pytest_paths_exist() -> None:
 def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     trigger = workflow.split("permissions:", maxsplit=1)[0]
-    gate = _workflow_job_block("pr-gate")
+    gate = workflow_reachable_text(
+        PROJECT_ROOT, PROJECT_ROOT / ".github" / "workflows" / "ci.yaml", job="pr-gate"
+    )
     release_site_job = _workflow_job_block("release-site-build")
 
     assert "pull_request:" in workflow
@@ -626,7 +628,9 @@ def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
     workflow = _workflow_text("ci.yaml")
     docs_job = _workflow_job_block("docs-build")
     site_job = _workflow_job_block("site-build")
-    gate = _workflow_job_block("pr-gate")
+    gate = workflow_reachable_text(
+        PROJECT_ROOT, PROJECT_ROOT / ".github" / "workflows" / "ci.yaml", job="pr-gate"
+    )
     docs_deploy = _workflow_text("docs.yaml")
     site_deploy = _workflow_text("site.yaml")
     docs_ci = _source_text("docs/src/content/docs/development/ci.md")
@@ -1520,7 +1524,8 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         site_url,
         failure,
     ) in expectations:
-        workflow = _workflow_text(workflow_name)
+        workflow_path = PROJECT_ROOT / ".github" / "workflows" / workflow_name
+        workflow = workflow_reachable_text(PROJECT_ROOT, workflow_path)
         trigger = workflow.split("\njobs:", maxsplit=1)[0]
         push_trigger = trigger.split("  push:", maxsplit=1)[1]
         ci_block = _workflow_job_block(ci_job)
@@ -1635,8 +1640,9 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "release-artifacts/*.deb" in create_release
     assert "release-artifacts/capsem-sbom.spdx.json" in create_release
     assert "scripts/publish-immutable-release-assets.sh" in create_release
-    assert 'CAPSEM_RELEASE_CREATE_TITLE="Capsem $RELEASE_TAG"' in create_release
+    assert 'CAPSEM_RELEASE_CREATE_TITLE="Capsem $RELEASE_TAG ($SOURCE_COMMIT)"' in create_release
     assert 'CAPSEM_RELEASE_CREATE_NOTES_FILE="$notes"' in create_release
+    assert 'CAPSEM_RELEASE_CREATE_TARGET="$SOURCE_COMMIT"' in create_release
     assert "gh release create" not in create_release
     assert "gh release upload" not in create_release
     immutable_publisher = (
@@ -5683,14 +5689,6 @@ def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:
     assert "--cov=src/capsem" in coverage_step
 
 
-def test_focused_route_latency_wrapper_stays_serial() -> None:
-    wrapper = PROJECT_ROOT / "tests" / "ironbank" / "test_route_latency.py"
-    source = wrapper.read_text(encoding="utf-8")
-
-    assert "pytest.mark.serial" in source
-    assert "pytestmark" in source
-
-
 def test_generate_settings_creates_catalog_directory_before_redirect() -> None:
     script = (PROJECT_ROOT / "scripts" / "generate-settings.sh").read_text()
 
@@ -6402,26 +6400,32 @@ def test_release_recipes_require_fresh_remote_main_before_running_the_gate() -> 
         )
 
 
-def test_web_only_prs_do_not_depend_on_product_or_release_jobs() -> None:
+def test_web_only_prs_still_run_the_fast_gate_and_skip_only_product_jobs() -> None:
     docs_job = _workflow_job_block("docs-build")
-    gate = _workflow_job_block("pr-gate")
+    fast_gate = _workflow_job("fast-gate")
+    gate = workflow_reachable_text(
+        PROJECT_ROOT, PROJECT_ROOT / ".github" / "workflows" / "ci.yaml", job="pr-gate"
+    )
 
     assert "fetch-depth: 0" in docs_job
-    assert 'git diff --name-only "$BASE_SHA"...HEAD' in docs_job
+    assert 'git diff --name-only -z "$BASE_SHA"...HEAD' in docs_job
+    assert "scripts/classify-ci-scope.py" in docs_job
     assert "web_only: ${{ steps.scope.outputs.web_only }}" in docs_job
-    assert "site/*|docs/*" in docs_job
     assert 'if [ "$EVENT_NAME" != pull_request ]; then' in docs_job
     assert 'echo "web_only=false"' in docs_job
 
-    for job_name in ("fast-gate", "test-linux", "test", "test-install", "release-site-build"):
+    assert "if" not in fast_gate
+    assert "needs" not in fast_gate
+
+    for job_name in ("test-linux", "test", "test-install", "release-site-build"):
         job = _workflow_job_block(job_name)
         assert "needs: docs-build" in job
         assert "needs.docs-build.outputs.web_only != 'true'" in job
 
     assert "WEB_ONLY: ${{ needs.docs-build.outputs.web_only }}" in gate
+    assert 'test "$FAST_GATE_RESULT" = success' in gate
     assert 'if [ "$WEB_ONLY" = true ]; then' in gate
     for result in (
-        "FAST_GATE_RESULT",
         "TEST_LINUX_RESULT",
         "TEST_MACOS_RESULT",
         "TEST_INSTALL_RESULT",

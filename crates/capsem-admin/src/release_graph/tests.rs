@@ -335,7 +335,7 @@ fn package_inventory_rows_are_separate_from_binary_rows() {
 }
 
 #[test]
-fn source_commit_is_optional_for_legacy_graphs_but_strict_when_present() {
+fn release_graph_source_commit_is_optional_for_legacy_graphs_but_strict_when_present() {
     let package = PackageInventoryRow {
         name: "Capsem-1.4.0.pkg".to_string(),
         version: "1.4.0".to_string(),
@@ -381,7 +381,7 @@ fn source_commit_is_optional_for_legacy_graphs_but_strict_when_present() {
 }
 
 #[test]
-fn source_commit_belongs_only_to_package_and_profile_families() {
+fn release_graph_source_commit_belongs_only_to_package_and_profile_families() {
     let package = PackageInventoryRow {
         name: "Capsem-1.4.0.pkg".to_string(),
         version: "1.4.0".to_string(),

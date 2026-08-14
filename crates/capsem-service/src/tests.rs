@@ -1472,7 +1472,7 @@ fn enforcement_evaluate_body(request: &EnforcementEvaluateRequest) -> Bytes {
     Bytes::from(serde_json::to_vec(request).unwrap())
 }
 
-fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
+pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
     let run_dir = assets_dir.join("run");
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
     let manifest = capsem_core::asset_manager::load_manifest_for_assets(&assets_dir).map(Arc::new);

@@ -40,11 +40,11 @@ echo "site-build:         $SITE_BUILD_RESULT"
 echo "release-site-build: $RELEASE_SITE_BUILD_RESULT"
 
 # Both site builds run on every PR, web-only or not.
+test "$FAST_GATE_RESULT" = success
 test "$DOCS_BUILD_RESULT" = success
 test "$SITE_BUILD_RESULT" = success
 
 if [ "$WEB_ONLY" = true ]; then
-    test "$FAST_GATE_RESULT" = skipped
     test "$TEST_LINUX_RESULT" = skipped
     test "$TEST_MACOS_RESULT" = skipped
     test "$TEST_INSTALL_RESULT" = skipped

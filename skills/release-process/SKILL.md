@@ -143,10 +143,12 @@ public release command from the beginning after the fix.
 
 ## Version and commit essentials
 
-Keep user-visible binary release notes under `## [Unreleased]`; validate them
-before the complete local gate and recheck before version mutation. Binary and
-profile versions are orthogonal strict semver. `min_capsem_version` and
-`max_capsem_version` bound the binary, not a profile's own revision.
+Keep user-visible binary release notes under `## [Unreleased]`. They are
+bookkeeping, not a qualification prerequisite: the immutable version tag is
+the release event, and the GitHub release name records the full qualified
+source commit. Binary and profile versions are orthogonal strict semver.
+`min_capsem_version` and `max_capsem_version` bound the binary, not a profile's
+own revision.
 `parse_profile_revision` rejects non-semver revisions and
 `ensure_revision_advances` rejects non-advancing publication. A mixed profile
 set uses the non-version identity `profiles-<hash>`.

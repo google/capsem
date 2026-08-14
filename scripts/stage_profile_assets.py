@@ -9,7 +9,7 @@ from typing import Any, cast
 from urllib.parse import unquote, urlparse
 
 import tomli_w
-from release_inputs import safe_component
+from release_inputs import safe_component, safe_relative
 
 
 def hash_filename(logical_name: str, digest: str) -> str:
@@ -62,6 +62,66 @@ def scope_profile_to_arch(path: Path, arch: str, profile_id: str) -> None:
         return
     document["assets"]["arch"] = {arch: architectures[arch]}
     path.write_text(tomli_w.dumps(document), encoding="utf-8")
+
+
+def require_profile_file_closure(
+    path: Path,
+    profile_id: str,
+    staged_paths: set[Path],
+) -> None:
+    """Require every file named by the selected profile to be manifest-owned.
+
+    The profile document and its siblings are one release input.  In
+    particular, a Python requirements file without its lock is not a degraded
+    profile: it is an unsealed dependency resolver.  Nothing is filled from
+    the checkout here; a missing sibling means the selected release graph is
+    incomplete and must be republished.
+    """
+    try:
+        document = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise ValueError(f"release profile {profile_id} is unreadable: {error}") from error
+    files = document.get("files")
+    if files is None:
+        return
+    if not isinstance(files, dict):
+        raise ValueError(f"release profile {profile_id} files must be a table")
+
+    requirements = "python_requirements" in files
+    lock = "python_requirements_lock" in files
+    if requirements != lock:
+        raise ValueError(
+            f"release profile {profile_id} must declare python_requirements and "
+            "python_requirements_lock together"
+        )
+
+    declared: set[Path] = set()
+    for kind, record in files.items():
+        if not isinstance(kind, str) or not isinstance(record, dict):
+            raise ValueError(f"release profile {profile_id} has malformed file {kind!r}")
+        relative = safe_relative(record.get("path"), f"release profile {profile_id} {kind} path")
+        if len(relative.parts) < 3 or relative.parts[:2] != ("profiles", profile_id):
+            raise ValueError(
+                f"release profile {profile_id} {kind} path escapes its profile: {relative}"
+            )
+        if relative in declared:
+            raise ValueError(f"release profile {profile_id} repeats file path {relative}")
+        declared.add(relative)
+
+    missing = sorted(str(relative) for relative in declared - staged_paths)
+    if missing:
+        raise ValueError(f"release profile {profile_id} lacks manifest-owned files: {missing}")
+
+
+def finalize_profile(
+    path: Path,
+    arch: str,
+    profile_id: str,
+    staged_paths: set[Path],
+) -> None:
+    """Validate one manifest-owned profile cohort, then select its architecture."""
+    require_profile_file_closure(path, profile_id, staged_paths)
+    scope_profile_to_arch(path, arch, profile_id)
 
 
 def configured_evidence_artifacts(shared_config_root: Path) -> dict[str, str]:

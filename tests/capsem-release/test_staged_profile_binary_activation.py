@@ -297,7 +297,10 @@ def test_profile_publication_retry_verifies_owned_bytes_and_uploads_only_missing
     )[0]
 
     assert "scripts/publish-immutable-release-assets.sh" in immutable
-    assert "CAPSEM_RELEASE_CREATE_TITLE=" in immutable
+    assert (
+        'CAPSEM_RELEASE_CREATE_TITLE="Capsem $CHANNEL/${{ inputs.profile }} '
+        '$PROFILE_REVISION ($SOURCE_COMMIT)"' in immutable
+    )
     assert "CAPSEM_RELEASE_CREATE_NOTES_FILE=" in immutable
     assert 'CAPSEM_RELEASE_CREATE_TARGET="$SOURCE_COMMIT"' in immutable
     assert "gh release create" not in immutable

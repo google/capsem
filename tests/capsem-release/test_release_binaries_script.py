@@ -45,7 +45,8 @@ def _prepared_tree(root: Path) -> None:
     )
     body = "### Fixed\n\n- Qualify one committed immutable source."
     (root / "CHANGELOG.md").write_text(
-        f"# Changelog\n\n## [Unreleased]\n\n## [{VERSION}] - 2030-02-03\n\n{body}\n",
+        f"# Changelog\n\n## [Unreleased]\n\n{body}\n\n"
+        f"## [{VERSION}] - 2020-01-01\n\n- Historical development snapshot.\n",
         encoding="utf-8",
     )
     (root / "LATEST_RELEASE.md").write_text(f"version: {VERSION}\n---\n{body}\n", encoding="utf-8")
@@ -168,6 +169,17 @@ def test_prepared_commit_creates_only_refs_then_dispatches_exact_source(
     assert dispatch[dispatch.index("--ref") + 1] == f"capsem-source-{SOURCE}"
     assert f"source_commit={SOURCE}" in dispatch
     assert runner.calls[-1][:4] == ("gh", "run", "view", "42")
+
+
+def test_binary_precheck_does_not_require_release_notes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _prepared_tree(tmp_path)
+    (tmp_path / "CHANGELOG.md").unlink()
+    (tmp_path / "LATEST_RELEASE.md").unlink()
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+
+    RELEASE.precheck_release_binaries("stable", SOURCE, FakeRunner())
 
 
 def test_existing_version_from_another_source_is_nightly_proof_only(
@@ -297,7 +309,7 @@ def test_daily_nightly_schedule_freezes_one_scheduler_commit() -> None:
     assert "fail-fast: false" in workflow
 
 
-def test_release_notes_promote_unreleased_once() -> None:
+def test_release_notes_prepare_without_claiming_the_tag_exists() -> None:
     changelog = """# Changelog
 
 ## [Unreleased]
@@ -306,18 +318,16 @@ def test_release_notes_promote_unreleased_once() -> None:
 
 - Kept the release lanes orthogonal.
 
-## [1.4.0] - 2026-07-01
+## [1.5.0] - 2026-07-01
 
-- Previous release.
+- Historical development snapshot with the same version.
 """
 
-    updated, body = NOTES.promote_release(changelog, "1.5.0", "2026-07-24")
+    rendered = NOTES.render_release_notes(changelog, "1.5.0")
 
-    assert updated.count("## [Unreleased]") == 1
-    assert "## [1.5.0] - 2026-07-24" in updated
-    assert body == "### Fixed\n\n- Kept the release lanes orthogonal."
-    with pytest.raises(ValueError, match="already contains release"):
-        NOTES.promote_release(updated, "1.5.0", "2026-07-24")
+    assert rendered == ("version: 1.5.0\n---\n### Fixed\n\n- Kept the release lanes orthogonal.\n")
+    assert "## [Unreleased]" in changelog
+    assert "Historical development snapshot" in changelog
 
 
 @pytest.mark.parametrize(
@@ -332,4 +342,4 @@ def test_release_notes_promote_unreleased_once() -> None:
 )
 def test_release_notes_fail_closed(changelog: str, message: str) -> None:
     with pytest.raises(ValueError, match=message):
-        NOTES.promote_release(changelog, "1.5.0", "2026-07-24")
+        NOTES.render_release_notes(changelog, "1.5.0")

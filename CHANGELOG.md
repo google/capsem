@@ -181,6 +181,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   I/O behaves identically; each buffer was already allocated once outside its
   loop, so this is one heap allocation per file against reading the whole file.
   Audited before the lint was enabled, so it arrives with no `allow`s.
+- Exact-package install qualification now converts the selected legacy asset
+  projection into a release graph before recording the package and its source
+  commit, then regenerates the channel catalogs from that stamped graph. The
+  provenance guard remains fail-closed while local Debian and macOS install
+  proofs receive the authoritative graph they are designed to hydrate from.
+
+- Route-health timing now owns each black-box probe once and takes the median
+  CPU cost across three independent, double-sized request windows. A transient
+  background service tick can no longer make one route fail and its immediately
+  repeated wrapper pass. Sustained CPU and latency growth is compared with the
+  same config-owned 20% evidence factor as the other product benchmarks, with
+  no separately invented duration or accounting slack. CPU deltas are
+  decimal-normalized before comparison so an exact accounting-tick boundary
+  remains equal to its budget while the next tick still fails.
+
+- Fork and lifecycle performance gates now ratchet against the latest
+  checked-in benchmark evidence with a config-owned relative limit instead of
+  independently authored millisecond and MiB ceilings. The ratchet exposed and
+  fixed generic exponential polling that doubled VM delete latency; destructive
+  delete now claims the instance once and tears down disposable state directly,
+  while retained stop still drains filesystem and WAL owners.
+
+- Hot profile-status reads now share one immutable response cache and compare
+  exact manifest-byte identities before rebuilding it. This removes repeated
+  manifest parsing, validation, and allocation from UI polling without allowing
+  same-size edits to reuse stale status. Linux sparse-copy fallback also scans
+  allocated extents at filesystem-block granularity so isolated nonzero blocks
+  cannot expand into MiB-sized fork artifacts.
+
+- Exported guest root filesystems now persist npm's global prefix and keep its
+  command directory extensible. Locked profile tools are bridged into a real
+  `/opt/ai-clis/bin` directory instead of replacing it with a symlink, so a
+  later offline or local `npm install -g` produces a runnable command. A fast
+  Citadel guard protects both filesystem requirements before asset builds.
+
+- Test processes spawned by an immutable-commit release no longer leak the
+  parent gate's source marker into synthetic checkout tests; release identity
+  remains fail-closed in production while each test must opt into it explicitly.
+
+- Python lint tooling now pins the last verified cross-platform `hadolint-py`
+  cohort. The newer macOS wheel matched its published digest but contained a
+  corrupt deflate stream; a fast Citadel guard now makes future tool-cohort
+  changes explicit instead of discovering them during hosted Mac setup.
+
+- Binary qualification no longer depends on changelog or `LATEST_RELEASE.md`
+  bookkeeping. The remote immutable tag is the sole release transition, and
+  the GitHub release title and notes record the full qualified source commit;
+  changelog organization may happen afterward.
+
+- Linux bootstrap now treats a working Docker CLI and Buildx as an existing
+  container-runtime stack. Installing an unrelated missing prerequisite on a
+  GitHub runner no longer also requests Ubuntu's `docker.io`, which conflicts
+  with the runner's Docker CE `containerd.io`; a cold host still installs the
+  full Docker stack, and a host missing only Buildx installs only that piece.
+
+- Release profile staging now treats every file named by `profile.toml` as one
+  manifest-owned closure. Python requirements and their exact lock must be
+  declared and transported together; a legacy half-pair or a graph that omits
+  either byte fails before package and install work instead of reaching a
+  late materialization error or resolving an unlocked dependency.
+
+- The fast CI gate now runs on every pull request, including documentation-only
+  changes, so Ruff, Ty, dependency audits, and source contracts cannot be
+  skipped by path classification. The remaining heavy-job shortcut is owned
+  by one tested, NUL-delimited classifier that fails closed for empty,
+  executable, installer, workflow, test, and unknown paths; branch protection
+  always requires the fast gate to succeed.
+
+- Run-history ledger and digest updates now use the gate's atomic filesystem
+  primitive instead of writing paths directly. Retained hardlinks keep their
+  original bytes, a replaced symlink cannot redirect evidence into another
+  run, and the Citadel once again rejects either module reaching around the
+  primitive boundary.
 
 - The `duplicate-content` filesystem rule no longer reports Tauri's generated
   schemas, which are byte-identical on Linux and neither ours to produce nor to
@@ -199,16 +272,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   there is no argument now.
 
 - The gate runs from a linked worktree. Its private copy now clones the
-  repository with `git clone --local --no-checkout` instead of carrying `.git`
-  as a path, which only worked when `.git` was a directory: in a worktree it is
-  a file holding an absolute `gitdir:` pointer, so the copy stayed attached to
-  the original's HEAD and the case was refused outright. That made the
-  isolation machinery unusable from a worktree, which is how an agent gets an
-  isolated tree in the first place -- an agent could not verify its own work
-  without running in the shared checkout.
+  repository instead of carrying `.git` as a path, which only worked when
+  `.git` was a directory: in a worktree it is a file holding an absolute
+  `gitdir:` pointer, so the copy stayed attached to the original's HEAD and the
+  case was refused outright. That made the isolation machinery unusable from a
+  worktree, which is how an agent gets an isolated tree in the first place --
+  an agent could not verify its own work without running in the shared
+  checkout.
 
-  The clone costs about 200ms against a 108 MB `.git` and is faster than the
-  `cp -R` it replaces, because `--local` hardlinks the object store. No
+  On one filesystem the clone costs about 200ms against a 108 MB `.git` because
+  `--local` hardlinks the object store. Cross-filesystem inspection checkouts
+  use `--no-local` and copy the objects without network access instead of
+  failing with `Invalid cross-device link`. Neither mode creates an
   `alternates` file, so a `gc` in the original cannot prune bytes out from
   under a running gate, and the copy owns its HEAD and refs -- the property the
   refusal was protecting. Normal checkouts and worktrees now take one path with

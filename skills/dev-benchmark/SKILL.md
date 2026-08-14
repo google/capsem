@@ -33,144 +33,9 @@ scenario can be compared as `host_direct` and `guest_capsem`.
 - Rust hot benchmark binary: `crates/capsem-bench`
 - Legacy guest modules: `guest/artifacts/capsem_bench/`
 
-### Benchmark categories
-
-| Category | Command | What it measures |
-|----------|---------|-----------------|
-| disk | `capsem-bench disk` | Sequential/random I/O on scratch disk (write/read throughput, IOPS) |
-| rootfs | `capsem-bench rootfs` | Read-only rootfs performance: largest-file sequential read, random 4K reads, large-binary sequential reads, small JS/package reads, and metadata stat-walk throughput |
-| storage | `capsem-bench storage` | Diagnostic split across rootfs reads and writable paths such as `/root`, `/tmp`, `/var/tmp`, `/var/log`, and `/run` |
-| startup | `capsem-bench startup` | Cold-start latency for python3, node, claude, gemini, codex |
-| protocol/http | `capsem-bench-rs protocol` | HTTP, model/SSE, credential, MCP/tools, and DNS protocol scenarios against `capsem-mock-server` |
-| snapshot | `capsem-bench snapshot` | Snapshot create/list/changes/revert/delete via MCP (ms per op at 10/100/500 files) |
-| all | `capsem-bench all` | Default production suite including storage split diagnostics; with `CAPSEM_MOCK_SERVER_BASE_URL`, calls `capsem-bench-rs protocol` and merges the Rust network sections |
-
-### Abstraction delta
-
-Every hot protocol benchmark needs paired lanes:
-
-- `host_direct`: host Rust `capsem-bench-rs` directly against `capsem-mock-server`
-- `guest_capsem`: guest Rust `capsem-bench-rs` through the real Capsem network path
-
-The delta artifact must report the cost of Capsem's abstraction for each
-scenario: RPS ratio, throughput ratio, p50/p95/p99 latency delta, and error
-delta. If a benchmark cannot produce both lanes, it is diagnostic only and not
-a release performance gate.
-
-Intentional host-side benchmark runs record artifacts under
-`benchmarks/lifecycle/`, `benchmarks/fork/`, and `benchmarks/route-latency/`.
-The route-latency artifact measures `/stats` reads while public profile
-mutation routes are writing through the DB boundary. Treat it as the control
-plane contention baseline for UI/TUI responsiveness.
-
-Historical host-native benchmark runs may also exist under
-`benchmarks/host-native/` with local disk I/O, CLI startup, synthetic small-file
-reads, metadata-stat throughput, filesystem context, UTC timestamp, host
-hardware/OS metadata, and git state. Use this when comparing VM performance
-against the hardware that produced the run. The default host I/O directory is
-`target/host-native-benchmark`, not `/tmp`, so Linux tmpfs does not become the
-accidental baseline. Override with `CAPSEM_HOST_NATIVE_BENCH_DIR` for a specific
-disk.
-
-Benchmark history is not managed by a Just convenience command. Run the owning
-pytest or Criterion command, review the produced JSON, and commit an intentional
-baseline update without overwriting prior evidence.
-
-`capsem-bench all` includes the `storage` section. Keep that in the canonical
-path so Linux and macOS artifacts both capture rootfs/workspace/tmpfs
-attribution data; only the long-running load diagnostics stay opt-in.
-
-### Cross-platform comparison
-
-Use `python3 scripts/benchmark_report.py <artifacts...>` to validate committed
-artifacts and optionally render graphs. Compare Linux `x86_64` against macOS
-`arm64` only after both platform lanes rerun the same owning benchmark.
-
-### Snapshot benchmarks
-
-Tests the full MCP snapshot pipeline end-to-end (guest CLI -> MCP server -> vsock -> host gateway -> filesystem). Measures at 3 workspace sizes (10, 100, 500 files):
-
-- **create**: Populate workspace, create named snapshot via MCP
-- **list**: List all snapshots with change diffs
-- **changes**: List changed files since checkpoint
-- **revert**: Revert a single file from snapshot
-- **delete**: Delete the snapshot
-
-Key metrics: per-operation latency in ms. Regressions in `create` usually mean the clone or hash stage got slower. Use `RUST_LOG=capsem=debug` to see per-stage breakdown (clone_ws_ms, clone_sys_ms, hash_ms).
-
-### JSON output format
-
-```json
-{
-  "version": "0.3.0",
-  "timestamp": 1711561234.5,
-  "hostname": "capsem",
-  "disk": { "seq_write_mbps": 450, ... },
-  "rootfs": { ... },
-  "startup": { "python3": { "min_ms": 45, "mean_ms": 48, "max_ms": 52 }, ... },
-  "http": { "rps": 120, "p50_ms": 42, ... },
-  "throughput": { "throughput_mbps": 85, ... },
-  "snapshot": {
-    "10_files": { "create_ms": 120, "list_ms": 50, ... },
-    "100_files": { "create_ms": 250, ... },
-    "500_files": { "create_ms": 800, ... }
-  }
-}
-```
-
-### Environment variables
-
-- `CAPSEM_BENCH_DIR`: Test directory for disk benchmarks (default: `/root`)
-- `CAPSEM_BENCH_SIZE_MB`: Write test size in MB (default: 256)
-- `CAPSEM_STORAGE_BENCH_PATHS`: Colon-separated writable paths for storage split diagnostics (default: `/root:/tmp:/var/tmp:/var/log:/run`)
-- `CAPSEM_STORAGE_BENCH_SIZE_MB`: Write test size in MB for each storage split writable path (default: 64)
-- `CAPSEM_STORAGE_IO_PROFILE_SIZE_MB`: File size in MB for detailed sequential/random storage IOPS profiling (default: 64)
-- `CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS`: Random read/write operation count for storage IOPS profiling (default: 2000)
-
-## Investigating slowness
-
-### Snapshot performance
-
-1. Run snapshot benchmark: `just exec "capsem-bench snapshot"`
-2. Check per-stage timing: `RUST_LOG=capsem=debug just exec "capsem-bench snapshot"` -- look for `snapshot_into_slot timing` log lines showing `clone_ws_ms`, `clone_sys_ms`, `hash_ms`
-3. Check session data: `python3 scripts/check_session.py` -- MCP tool usage section shows avg duration per snapshot operation
-4. Query detailed durations: `sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT tool_name, duration_ms FROM tool_calls WHERE origin = 'mcp' AND tool_name LIKE 'snapshot%' ORDER BY duration_ms DESC LIMIT 20"`
-
-Common causes:
-- **clone_ws_ms high**: Large workspace, or APFS clonefile falling back to byte copy
-- **hash_ms high**: Many files in workspace (walkdir overhead), or slow filesystem
-- **compact slow**: Merging many snapshots with overlapping files
-
-### Disk I/O regression
-
-1. Run: `just exec "capsem-bench disk"`
-2. Compare sequential write/read throughput against baseline
-3. Check if VirtioFS mode changed (block mode has different I/O characteristics)
-
-### Storage split regression
-
-1. Run: `just exec "capsem-bench storage"`
-2. Compare `/root` against `/tmp`, `/var/tmp`, `/var/log`, and `/run` to separate VirtioFS workspace costs from tmpfs, overlay, and rootfs read costs
-3. Check `storage.kernel` for `/proc/cmdline`, virtio block queue settings, FUSE connection backpressure knobs, and known host-side KVM queue sizes
-4. Check `storage.rootfs.backing.erofs_mounts` for the booted EROFS rootfs before comparing Linux/macOS rootfs reads; SquashFS fields are historical diagnostics only, not the 1.3 release gate
-5. Compare the detailed I/O profile: sequential 4K/64K/1M IOPS/MB/s, random 4K read IOPS, and random 4K sync-write IOPS with p95 latency
-6. Use the reported mount table to confirm which filesystem backs each path before assigning blame to KVM, VirtioFS, overlayfs, or the host filesystem
-
-### Rootfs read regression
-
-1. Run: `just exec "capsem-bench rootfs"`
-2. Compare `rootfs.seq_read` for the historical largest-file sequential read gate
-3. Compare `rootfs.large_binary_seq_read` to isolate large CLI binary reads
-4. Compare `rootfs.small_js_read` for loader-style reads across many small JS/JSON/package files
-5. Compare `rootfs.metadata_stat` for thousands of `lstat` calls across the rootfs tree
-6. Keep `rootfs.rand_read_4k` as the broad mixed-file random-read signal
-
-### Adding a new benchmark
-
-1. Create a new module in `guest/artifacts/capsem_bench/` (e.g., `mytest.py`) with a `mytest_bench()` function that returns a dict and prints a Rich table
-2. Add the mode name to `VALID_MODES` in `__main__.py`
-3. Wire it into `main()` with the `if mode in ("name", "all"):` pattern (lazy import)
-4. Update this skill and the benchmarking doc page
+Read [references/guest-benchmarks.md](references/guest-benchmarks.md) before
+changing or diagnosing guest categories, storage/rootfs attribution, snapshots,
+protocol abstraction deltas, cross-platform comparisons, or environment knobs.
 
 ## Host-side lifecycle benchmark
 
@@ -199,7 +64,9 @@ uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs
 
 ### Regression gates
 
-Every operation must complete in under 1.2 seconds. The test runs 3 cycles and asserts each individual operation stays under the gate.
+The test runs three cycles and refuses any operation mean more than the
+config-owned relative factor above the latest checked-in lifecycle evidence.
+No duration is independently authored in the test.
 
 ## Host-side route latency benchmark
 
@@ -241,19 +108,23 @@ uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py::test_fork_benchma
 
 ### Operations measured
 
-| Metric | What it measures | Gate |
-|--------|-----------------|------|
-| fork | `POST /fork/{id}` — APFS clonefile of rootfs overlay + workspace | < 500ms |
-| image_size | Actual disk usage of forked image (blocks, not logical size) | < 12MB |
-| boot_provision | `POST /provision` with `image` param — clone image into new session | < 1200ms |
-| boot_ready | First exec succeeds on the image-booted VM | < 1200ms |
-| pkg_survived | Packages installed via apt survive fork (rootfs overlay) | must pass |
-| ws_survived | Files written to /root/ survive fork (VirtioFS workspace) | must pass |
+| Metric | What it measures |
+|--------|------------------|
+| fork | `POST /fork/{id}` — clone rootfs overlay + workspace |
+| image_size | Actual allocated blocks of the forked image |
+| boot_provision | `POST /provision` with the forked image |
+| boot_ready | First exec succeeds on the image-booted VM |
+| pkg_survived | Installed package survives fork (must pass) |
+| ws_survived | `/root` file survives fork (must pass) |
+
+The four numeric metrics use the same config-owned relative factor and latest
+checked-in fork evidence as their guard. Do not add a second milliseconds or
+MiB ceiling; update baseline evidence only after reviewing an intentional run.
 
 ### Output
 
 - Per-run breakdown with timing + survival status
-- Summary table with min/mean/max + gate thresholds
+- Summary table with min/mean/max; failures name current, baseline, and ratio
 - JSON saved to `benchmarks/fork/data_{version}.json` (committed to git for historical tracking)
 
 ### When to run

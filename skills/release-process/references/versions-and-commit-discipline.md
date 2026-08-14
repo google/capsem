@@ -11,13 +11,14 @@ rails. Their builds remain mandatory source gates.
 
 Keep user-visible changes under `## [Unreleased]` in `CHANGELOG.md`. Historical
 entries describe past behavior and are not normative release instructions.
-Before binary qualification, prepare one ordinary reviewed commit that moves
-the notes into the selected version section, makes `LATEST_RELEASE.md` match
-that section, and leaves `Unreleased` empty. The version cohort must already
-agree in that commit. `just release-binaries` validates this before `just test`
-when the immutable version tag is new; it never stamps, commits, resets, or
-pushes `main`. Profile releases are independent and do not require binary
-changelog text.
+The version cohort must agree in the selected commit. Release-note organization
+is bookkeeping, not qualification authority: user-visible changes remain under
+`Unreleased`, and `LATEST_RELEASE.md` may be rendered from them whenever useful.
+Do not add a versioned release heading merely to let the gate start. The remote
+immutable version tag is the sole release transition, and the GitHub release
+title records the exact source commit.
+`just release-binaries` never stamps, commits, resets, or pushes `main`.
+Profile releases are independent and do not require binary changelog text.
 
 Every release command takes the full lowercase source commit explicitly. It
 must already be reachable from local and fresh remote `main`. The full-SHA

@@ -1155,6 +1155,112 @@ def test_stages_every_verified_profile_image_and_exact_config(
         assert staged.read_bytes() == payload
 
 
+def _add_python_dependency_pair(
+    manifest: Path,
+    tmp_path: Path,
+    *,
+    declare_lock: bool = True,
+    publish_lock: bool,
+) -> tuple[bytes, bytes]:
+    requirements = b"requests==2.32.5\n"
+    lock = b"requests==2.32.5 --hash=sha256:" + (b"a" * 64) + b"\n"
+    profile = b"""[profile]
+id = "code"
+
+[files.python_requirements]
+path = "profiles/code/python-requirements.txt"
+"""
+    if declare_lock:
+        profile += b"""
+[files.python_requirements_lock]
+path = "profiles/code/python-requirements.lock"
+"""
+    for name, payload in (
+        ("profile.toml", profile),
+        ("python-requirements.txt", requirements),
+        ("python-requirements.lock", lock),
+    ):
+        (tmp_path / name).write_bytes(payload)
+
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    config = document["profiles"]["code"]["architectures"][0]["config"]
+    config[0] = _record(
+        "profile.toml",
+        profile,
+        kind="profile",
+        path="profiles/code/profile.toml",
+        status="current",
+    )
+    config.append(
+        _record(
+            "python-requirements.txt",
+            requirements,
+            kind="python_requirements",
+            path="profiles/code/python-requirements.txt",
+            status="current",
+        )
+    )
+    if publish_lock:
+        config.append(
+            _record(
+                "python-requirements.lock",
+                lock,
+                kind="python_requirements_lock",
+                path="profiles/code/python-requirements.lock",
+                status="current",
+            )
+        )
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    return requirements, lock
+
+
+def test_profile_staging_refuses_a_declared_python_lock_missing_from_release_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    _add_python_dependency_pair(manifest, tmp_path, publish_lock=False)
+    inputs = tmp_path / "profile-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+
+    with pytest.raises(ValueError, match=r"code.*python-requirements\.lock"):
+        STAGE.stage_profiles(inputs, tmp_path / "assets", tmp_path / "config", ROOT / "config")
+
+
+def test_profile_staging_refuses_legacy_unlocked_python_requirements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    _add_python_dependency_pair(
+        manifest,
+        tmp_path,
+        declare_lock=False,
+        publish_lock=False,
+    )
+    inputs = tmp_path / "profile-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+
+    with pytest.raises(ValueError, match=r"must declare python_requirements.*together"):
+        STAGE.stage_profiles(inputs, tmp_path / "assets", tmp_path / "config", ROOT / "config")
+
+
+def test_profile_staging_carries_the_exact_python_requirements_and_lock_together(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    requirements, lock = _add_python_dependency_pair(manifest, tmp_path, publish_lock=True)
+    inputs = tmp_path / "profile-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+    config = tmp_path / "config"
+
+    STAGE.stage_profiles(inputs, tmp_path / "assets", config, ROOT / "config")
+
+    assert (config / "profiles/code/python-requirements.txt").read_bytes() == requirements
+    assert (config / "profiles/code/python-requirements.lock").read_bytes() == lock
+
+
 def test_profile_staging_refuses_missing_configured_evidence_before_package_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

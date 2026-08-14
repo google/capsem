@@ -43,10 +43,9 @@ and has this non-negotiable order:
 
 ```text
 just release-binaries <channel> <source-commit>
-  1. require the detached source commit on fresh origin/main, validate the
-     already-committed release notes, and fetch the serialized channel source
-     manifest read-only; fail immediately if the manifest has no staged
-     channel/profile authority
+  1. require the detached source commit on fresh origin/main and fetch the
+     serialized channel source manifest read-only; fail immediately if the
+     manifest has no staged channel/profile authority
   2. compose and execute the complete `just test` candidate plan in-process
   3. only after success: run the binary release script and dispatch binary CI
 
@@ -86,11 +85,14 @@ checks, JavaScript checks/builds, and blocking Rust/Python/JavaScript
 vulnerability audits. It is still not release qualification and must never
 replace `just test` in either release command.
 
-The selected version cohort, changelog section, and `LATEST_RELEASE.md` must be
-prepared in the supplied commit before qualification. `just test` is the first
-consequential command. Cheap read-only checks may precede it so missing notes, a missing serialized channel source, wrong-case
-paths, invalid workflow syntax, and similar deterministic failures stop before
-hours of local work. The binary preflight must fetch the mutable manifest/source
+The selected version cohort must be prepared in the supplied commit before
+qualification. Release-note/changelog organization is not a preflight: the
+version tag—not a prewritten changelog heading—is the release event, and the
+GitHub release records the exact source commit. `just test` is the first
+consequential command. Cheap read-only checks may precede it so a missing
+serialized channel source, wrong-case paths, invalid workflow syntax, and
+similar deterministic failures stop before hours of local work. The binary
+preflight must fetch the mutable manifest/source
 fresh and may not bootstrap profile state. If the staged channel/profile source
 does not exist, the operator must use `release-profile` first. If `just test`
 fails, the release command must stop before creating source/version tags,

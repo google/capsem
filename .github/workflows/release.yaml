@@ -1113,14 +1113,17 @@ jobs:
           cp release-artifacts/*.deb "$owned/"
           cp release-artifacts/capsem-sbom.spdx.json "$owned/"
           cat > "$notes" <<EOF
-          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+          Qualified source: `$SOURCE_COMMIT`.
+
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/$SOURCE_COMMIT/CHANGELOG.md) for details.
 
           ### VM Assets
 
           VM assets are released independently at ${ASSET_MANIFEST_URL}.
           EOF
-          CAPSEM_RELEASE_CREATE_TITLE="Capsem $RELEASE_TAG" \
+          CAPSEM_RELEASE_CREATE_TITLE="Capsem $RELEASE_TAG ($SOURCE_COMMIT)" \
           CAPSEM_RELEASE_CREATE_NOTES_FILE="$notes" \
+          CAPSEM_RELEASE_CREATE_TARGET="$SOURCE_COMMIT" \
             scripts/publish-immutable-release-assets.sh \
               "$RELEASE_TAG" "$owned"
 
