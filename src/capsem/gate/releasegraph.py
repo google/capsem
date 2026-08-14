@@ -16,8 +16,9 @@ retired, reporting it as a product failure.
 available before its own package is installed. The order is then fixed and
 worth stating, because every step depends on the one before it:
 
-    extract admin -> stage assets -> record binary -> build graph
-                  -> write handoff -> dpkg -i -> clear handoff
+    extract admin -> stage assets -> render graph -> record binary
+                  -> rerender catalogs -> write handoff -> dpkg -i
+                  -> clear handoff
 
 The handoff is the fragile link. Written after `dpkg -i` it is never read;
 pointed at a file that does not exist it is refused; pointed at
@@ -74,15 +75,26 @@ class ReleaseGraph:
     ) -> None:
         """Build, check, and hand off one graph around the exact package."""
         admin = self.extract_admin(package)
+        manifest = self.build_channel(
+            admin,
+            manifest=assets_manifest,
+            assets_dir=assets_dir,
+            profiles_dir=profiles_dir,
+            channel=channel,
+            profile_revision_policy=profile_revision_policy,
+            manifest_version=manifest_version,
+            out_dir=out_dir,
+        )
         self.record_binary(
             admin,
             package=package,
             version=version,
-            assets_manifest=assets_manifest,
+            assets_manifest=manifest,
             candidate_base=candidate_base,
         )
         manifest = self.build_channel(
             admin,
+            manifest=manifest,
             assets_dir=assets_dir,
             profiles_dir=profiles_dir,
             channel=channel,
@@ -161,6 +173,7 @@ class ReleaseGraph:
         self,
         admin: str,
         *,
+        manifest: str,
         assets_dir: str,
         profiles_dir: str,
         channel: str,
@@ -178,8 +191,7 @@ class ReleaseGraph:
                     "channel",
                     "build",
                     "--manifest",
-                    f'"{self._config.file_url_scheme}{self._mount}/{assets_dir}'
-                    f'/{self._config.manifest_name}"',
+                    f'"{self._config.file_url_scheme}{self._mount}/{manifest}"',
                     "--assets-dir",
                     f'"{assets_dir}"',
                     "--profiles-dir",

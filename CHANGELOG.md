@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Exact-package install qualification now converts the selected legacy asset
+  projection into a release graph before recording the package and its source
+  commit, then regenerates the channel catalogs from that stamped graph. The
+  provenance guard remains fail-closed while local Debian and macOS install
+  proofs receive the authoritative graph they are designed to hydrate from.
+
 - Route-health timing now owns each black-box probe once and takes the median
   CPU cost across three independent, double-sized request windows. A transient
   background service tick can no longer make one route fail and its immediately

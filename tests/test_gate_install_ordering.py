@@ -224,15 +224,30 @@ def test_package_dependency_authority_is_verified_before_install(
 def test_the_graph_exists_before_anything_points_at_it(
     gate: tuple[InstallGate, RecordingRunner],
 ) -> None:
-    """A handoff naming a file nobody wrote is a handoff nobody can use."""
+    """Legacy assets become a graph before provenance mutates that graph.
+
+    `record-binary` cannot stamp `source_commit` into the legacy runtime
+    projection.  After stamping, the graph must be rendered again so its
+    catalogs describe the exact package row rather than the pre-stamp graph.
+    """
     built, runner = gate
     built.run()
 
-    runner.assert_order(
-        r"assets channel build",
-        r"assets channel check",
-        r"install-manifest-request\.sh write",
-    )
+    builds = runner.matching(r"assets channel build")
+    assert len(builds) == 2
+    record = runner.matching(r"assets channel record-binary")
+    assert len(record) == 1
+    positions = [
+        runner.rendered.index(builds[0]),
+        runner.rendered.index(record[0]),
+        runner.rendered.index(builds[1]),
+        runner.index_of(r"assets channel check"),
+        runner.index_of(r"install-manifest-request\.sh write"),
+    ]
+    assert positions == sorted(positions)
+    assert f"--manifest-path {AUTHORITATIVE}" in record[0]
+    assert f"/{LAYOUT.assets}/{INSTALL.manifest_name}" in builds[0]
+    assert f"/{AUTHORITATIVE}" in builds[1]
     assert runner.ran(r"--profile-revision-policy selected-input")
 
 
@@ -249,7 +264,7 @@ def test_the_admin_that_authors_the_graph_is_extracted_not_installed(
 
     runner.assert_order(
         r"dpkg-deb --extract",
-        r"assets channel record-binary",
+        r"assets channel build",
         r"dpkg -i",
     )
     # The installed path, not merely the substring: PREINSTALL_ADMIN ends in

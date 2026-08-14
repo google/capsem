@@ -188,18 +188,24 @@ def test_exact_package_graph_is_checked_and_handed_off_before_dpkg(
 
     transcript = "\n".join(runner.rendered)
     extract = transcript.index("dpkg-deb --extract")
+    builds = runner.matching(r"assets channel build")
+    assert len(builds) == 2
+    first_build = transcript.index(builds[0])
     record = transcript.index("record-binary")
-    build = transcript.index("assets channel build")
+    second_build = transcript.index(builds[1])
     check = transcript.index("assets channel check")
     handoff = transcript.index("install-manifest-request.sh write")
     install = transcript.index("dpkg -i")
-    assert extract < record < build < check < handoff < install
+    assert extract < first_build < record < second_build < check < handoff < install
+    authoritative = f"{CONFIG.install.layout.channel}/{CONFIG.install.graph_manifest}"
+    record_command = runner.matching(r"assets channel record-binary")[0]
+    assert f"--manifest-path {authoritative}" in record_command
     assert f"--source-commit {SOURCE_COMMIT}" in transcript
     assert "--profile-revision-policy selected-input" in transcript
     assert "--network none" in runner.matching(r"docker run -d")[0]
 
 
-def test_read_only_content_is_staged_before_record_binary_mutates_the_manifest(
+def test_read_only_content_is_staged_before_record_binary_mutates_the_generated_graph(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     proof, runner = _proof(tmp_path, monkeypatch)
@@ -210,9 +216,8 @@ def test_read_only_content_is_staged_before_record_binary_mutates_the_manifest(
     assert f":{CONFIG.install.proof_assets_mount}:ro" in started
     assert f":{CONFIG.install.proof_config_mount}:ro" in started
     record = runner.matching(r"assets channel record-binary")[0]
-    assert (
-        f"--manifest-path {CONFIG.install.layout.assets}/{CONFIG.install.manifest_name}" in record
-    )
+    authoritative = f"{CONFIG.install.layout.channel}/{CONFIG.install.graph_manifest}"
+    assert f"--manifest-path {authoritative}" in record
     assert (
         f"--manifest-path {CONFIG.install.proof_assets_mount}/{CONFIG.install.manifest_name}"
         not in record
