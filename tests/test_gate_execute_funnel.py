@@ -19,6 +19,7 @@ forgetting is not available.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -115,9 +116,19 @@ class _Exclusive(_Probe, name="funnel-exclusive-probe", help="a probe that takes
 def _checkout(root: Path) -> Path:
     """A throwaway checkout, so a real lock is taken somewhere harmless."""
     (root / "config").mkdir(parents=True, exist_ok=True)
-    (root / "config" / "gate.toml").write_text(
-        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
-    )
+    source = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    replacements = {
+        'path = "~/.capsem-gate/capsem-test-execution.lock"': (
+            f"path = {json.dumps(str(root / 'gate.lock'))}"
+        ),
+        'holder_record = "~/.capsem-gate/capsem-test-execution.holder"': (
+            f"holder_record = {json.dumps(str(root / 'gate.holder'))}"
+        ),
+    }
+    for production, isolated in replacements.items():
+        assert source.count(production) == 1
+        source = source.replace(production, isolated)
+    (root / "config" / "gate.toml").write_text(source, encoding="utf-8")
     (root / "justfile").write_text("# a checkout needs one\n")
     return root
 
@@ -132,6 +143,15 @@ def _probe(runner, *, cls: type[_Probe] = _Probe, **attributes) -> _Probe:
 # ---------------------------------------------------------------------------
 # Recursion, which the runner refuses rather than a test noticing
 # ---------------------------------------------------------------------------
+
+
+def test_the_real_lock_fixture_is_isolated_from_the_machine(tmp_path: Path) -> None:
+    """A synthetic exclusive command must never contend with a running gate."""
+    root = _checkout(tmp_path)
+    lock = gate_config.load(root).locks.gate
+
+    assert Path(lock.path).parent == root
+    assert Path(lock.holder_record).parent == root
 
 
 def test_a_plan_action_may_not_invoke_just(journal) -> None:
