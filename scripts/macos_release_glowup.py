@@ -26,6 +26,7 @@ from macos_candidate_content import (
 
 from capsem.gate import config as gate_config
 from capsem.gate.content import ProfileContent
+from capsem.gate.releaseauthoring import author_native_candidate
 from capsem.gate.sourcecommit import SourceCommit, source_commit_for_checkout
 
 try:
@@ -58,8 +59,11 @@ GUEST_ASSET_ROOT = "file:///Volumes/My%20Shared%20Files/capsem-assets"
 
 
 def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
+    merged = os.environ.copy()
+    if env:
+        merged.update(env)
     print("+", shlex.join(command), flush=True)
-    subprocess.run(command, cwd=ROOT, env=env, check=True)
+    subprocess.run(command, cwd=ROOT, env=merged, check=True)
 
 
 def project_version() -> str:
@@ -103,50 +107,23 @@ def prepare_candidate_manifest(
     )
     admin = ROOT / "target" / "release" / "capsem-admin"
     release_base = f"{GUEST_RELEASE_ROOT}/releases/download/{channel}"
-
-    run(
-        [
-            str(admin),
-            "assets",
-            "channel",
-            "record-binary",
-            "--manifest-path",
-            str(source_manifest),
-            "--version",
-            version,
-            "--source-commit", str(source_commit),
-            "--artifact",
-            str(package),
-            "--artifact",
-            str(canonical_sbom),
-        ],
-        env={**os.environ, "CAPSEM_RELEASE_URL": release_base},
-    )
     dist = work_dir / "dist"
-    run(
-        [
-            str(admin),
-            "assets",
-            "channel",
-            "build",
-            "--manifest",
-            source_manifest.resolve().as_uri(),
-            "--assets-dir",
-            str(content.assets),
-            "--profiles-dir",
-            str(content.profiles(config)),
-            "--channel",
-            channel,
-            "--manifest-version",
-            "1.0.0",
-            "--asset-source-base",
-            f"{GUEST_ASSET_ROOT}/{{asset_version}}",
-            "--out-dir",
-            str(dist),
-        ],
-        env={**os.environ, "CAPSEM_RELEASE_URL": release_base},
+
+    manifest_path = author_native_candidate(
+        source_manifest,
+        runner=run,
+        admin=admin,
+        assets_dir=content.assets,
+        profiles_dir=content.profiles(config),
+        channel=channel,
+        version=version,
+        source_commit=source_commit,
+        artifacts=(package, canonical_sbom),
+        release_url=release_base,
+        asset_source_base=f"{GUEST_ASSET_ROOT}/{{asset_version}}",
+        dist=dist,
+        manifest_version=config.install.manifest_version,
     )
-    manifest_path = dist / "assets" / channel / "manifest.json"
     localize_candidate_profile_urls(manifest_path)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     artifact = ArtifactIdentity.from_path(
@@ -358,7 +335,8 @@ def main() -> int:
         version=args.version,
         channel=args.channel,
         content=content,
-        config=config, source_commit=source_commit_for_checkout(ROOT),
+        config=config,
+        source_commit=source_commit_for_checkout(ROOT),
     )
     tampered_manifest = prepare_tampered_manifest(
         manifest_path,

@@ -919,6 +919,7 @@ def test_install_test_consumes_exact_publishable_package_without_rebuild() -> No
 
 def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> None:
     script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    authoring = (PROJECT_ROOT / "src/capsem/gate/releaseauthoring.py").read_text()
     tree = ast.parse(script)
     clone_functions = [
         node
@@ -928,12 +929,13 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
 
     assert "scripts/repack-deb.sh" in script
     assert "scripts/generate-host-binary-sbom.py" in script
-    assert "record-binary" in script
-    assert '"--source-commit"' in script
+    assert "record-binary" in authoring
+    assert '"--source-commit"' in authoring
     assert 'parser.add_argument("--source-commit", required=True, type=SourceCommit)' in script
     assert "source_commit = args.source_commit" in script
     assert "source_commit_for_checkout" not in script
-    assert "assets" in script and "channel" in script and "build" in script
+    assert "author_native_candidate(" in script
+    assert '"assets"' in authoring and '"channel"' in authoring and '"build"' in authoring
     assert len(clone_functions) == 1
     assert not any(isinstance(node, ast.Dict) for node in ast.walk(clone_functions[0])), (
         "channel projection must derive from selected manifest bytes, not a literal fake graph"
@@ -944,7 +946,7 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
     assert 'args.assets_dir / "manifest.json",' in script
     assert 'stable_manifest,\n            "stable",' in script
     assert 'clone_manifest_for_channel(stable_manifest, nightly_manifest, "nightly")' in script
-    assert "CAPSEM_RELEASE_URL" in script
+    assert "CAPSEM_RELEASE_URL" in authoring
     assert "CAPSEM_RELEASE_CHANNELS_URL=" in script
     assert "update --yes --channel nightly" in script
     assert "update --yes --channel stable" in script
@@ -1723,32 +1725,23 @@ def test_binary_release_sbom_jobs_install_zstd_for_deb_payloads() -> None:
 
 def test_local_release_glowup_channel_build_uses_local_release_urls() -> None:
     script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
-    build_channel = script.split("def build_channel(", maxsplit=1)[1].split(
-        "\ndef copy_artifact_tree", maxsplit=1
-    )[0]
+    authoring = (PROJECT_ROOT / "src/capsem/gate/releaseauthoring.py").read_text()
 
-    assert "CAPSEM_RELEASE_URL" in build_channel
-    assert 'f"{base_url}/releases/download/{channel}"' in build_channel
-    assert "--asset-source-base" in build_channel
-    assert 'f"{base_url}/assets/releases/{{asset_version}}"' in build_channel
+    assert "CAPSEM_RELEASE_URL" in authoring
+    assert "release_url" in authoring
+    assert "--asset-source-base" in authoring
+    assert 'f"{base_url}/assets/releases/{{asset_version}}"' in script
     assert "stage_manifest_artifacts(" in script
 
 
 def test_local_release_glowup_uses_preserved_admin_binary_without_rebuild() -> None:
     script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
-    record_binary = script.split("def record_binary(", maxsplit=1)[1].split(
-        "\ndef build_channel", maxsplit=1
-    )[0]
-    build_channel = script.split("def build_channel(", maxsplit=1)[1].split(
-        "\ndef copy_artifact_tree", maxsplit=1
-    )[0]
+    authoring = (PROJECT_ROOT / "src/capsem/gate/releaseauthoring.py").read_text()
 
     assert 'admin = args.bin_dir / "capsem-admin"' in script
     assert "os.access(admin, os.X_OK)" in script
-    assert "str(admin)" in record_binary
-    assert "str(admin)" in build_channel
-    assert '"cargo"' not in record_binary
-    assert '"cargo"' not in build_channel
+    assert "str(admin)" in authoring
+    assert '"cargo"' not in authoring
 
 
 def test_local_release_glowup_repack_uses_selected_asset_fixture(
@@ -2596,13 +2589,25 @@ def test_local_release_glowup_forbids_metadata_only_binary_cohorts() -> None:
 def test_native_glowup_owns_exact_manifest_and_installed_shell_evidence() -> None:
     macos = (PROJECT_ROOT / "scripts" / "macos_release_glowup.py").read_text()
     linux = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    authoring = (PROJECT_ROOT / "src/capsem/gate/releaseauthoring.py").read_text()
 
     assert "assert_manifest_artifact" in macos
     assert "assert_manifest_artifact" in linux
     assert "prove-macos-package-boot.sh" in macos
     assert "verify-installed-release.py" in linux
-    assert '"--source-commit"' in macos
+    assert '"--source-commit"' in authoring
     assert "source_commit_for_checkout(ROOT)" in macos
+
+
+def test_every_native_glowup_uses_graph_first_binary_authoring() -> None:
+    """Linux and macOS must not stamp provenance into a legacy projection."""
+    gate = (PROJECT_ROOT / "src/capsem/gate/releasegraph.py").read_text()
+    linux = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    macos = (PROJECT_ROOT / "scripts" / "macos_release_glowup.py").read_text()
+
+    assert "author_binary_graph(" in gate
+    for source in (linux, macos):
+        assert "author_native_candidate(" in source
 
 
 def test_dev_service_does_not_replace_installed_assets_with_worktree_symlink() -> None:

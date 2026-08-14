@@ -28,6 +28,7 @@ from capsem.gate.errors import GateError
 from capsem.gate.install import InstallGate
 from capsem.gate.installproof import InstallProof
 from capsem.gate.productschema import ProfileRevisionPolicy
+from capsem.gate.releaseauthoring import author_binary_graph, author_native_candidate
 from capsem.gate.releasegraph import ReleaseGraph
 from capsem.gate.sourcecommit import SourceCommit
 
@@ -38,6 +39,70 @@ LAYOUT = INSTALL.layout
 SERVE_READY_FILE = INSTALL.serve_ready_file
 PREINSTALL_ADMIN = INSTALL.preinstall_admin
 SOURCE_COMMIT = SourceCommit("0" * 40)
+
+
+def test_every_binary_authoring_path_builds_a_graph_before_recording_provenance() -> None:
+    """Legacy runtime manifests cannot carry per-package source identity."""
+    legacy = Path("legacy-manifest.json")
+    graph = Path("dist/assets/stable/manifest.json")
+    events: list[tuple[str, Path]] = []
+
+    def build(source: Path) -> Path:
+        events.append(("build", source))
+        return graph
+
+    def record(candidate: Path) -> None:
+        events.append(("record", candidate))
+
+    assert author_binary_graph(legacy, build=build, record=record) == graph
+    assert events == [
+        ("build", legacy),
+        ("record", graph),
+        ("build", graph),
+    ]
+
+
+def test_native_candidate_records_only_the_graph_and_rebuilds_catalogs(tmp_path: Path) -> None:
+    """Every native adapter gets the graph-first ordering from one primitive."""
+    commands: list[tuple[list[str], dict[str, str] | None]] = []
+
+    def runner(command: list[str], *, env: dict[str, str] | None = None) -> None:
+        commands.append((command, env))
+
+    source = tmp_path / "legacy-manifest.json"
+    dist = tmp_path / "dist"
+    graph = dist / "assets" / "stable" / "manifest.json"
+    result = author_native_candidate(
+        source,
+        runner=runner,
+        admin=tmp_path / "capsem-admin",
+        assets_dir=tmp_path / "assets",
+        profiles_dir=tmp_path / "config" / "profiles",
+        channel="stable",
+        version="9.9.9",
+        source_commit=SOURCE_COMMIT,
+        artifacts=(tmp_path / "Capsem.deb", tmp_path / "capsem-sbom.spdx.json"),
+        release_url="https://release.invalid/stable",
+        asset_source_base="https://release.invalid/assets/{asset_version}",
+        dist=dist,
+        manifest_version="1.0.0",
+        profile_revision_policy=ProfileRevisionPolicy.SELECTED_INPUT,
+    )
+
+    assert result == graph
+    assert [command[3] for command, _env in commands] == [
+        "build",
+        "record-binary",
+        "build",
+    ]
+    first_build, record, second_build = (command for command, _env in commands)
+    assert first_build[first_build.index("--manifest") + 1] == source.resolve().as_uri()
+    assert record[record.index("--manifest-path") + 1] == str(graph)
+    assert record[record.index("--source-commit") + 1] == str(SOURCE_COMMIT)
+    assert second_build[second_build.index("--manifest") + 1] == graph.resolve().as_uri()
+    assert all(
+        env == {"CAPSEM_RELEASE_URL": "https://release.invalid/stable"} for _, env in commands
+    )
 
 
 def test_selected_profile_revision_policy_is_a_typed_install_authority() -> None:

@@ -52,8 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Exact-package install qualification now converts the selected legacy asset
   projection into a release graph before recording the package and its source
   commit, then regenerates the channel catalogs from that stamped graph. The
-  provenance guard remains fail-closed while local Debian and macOS install
-  proofs receive the authoritative graph they are designed to hydrate from.
+  gate, Linux glow-up, and macOS glow-up share that graph-first primitive, so
+  provenance remains fail-closed while every native install proof receives the
+  authoritative graph it is designed to hydrate from.
 
 - Profile staging permits an unlocked dependency list only in historical
   profile documents that predate source-commit provenance, warning loudly on

@@ -26,7 +26,9 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import unquote, urljoin, urlparse
 
+from capsem.gate import config as gate_config
 from capsem.gate.productschema import ProfileRevisionPolicy
+from capsem.gate.releaseauthoring import author_native_candidate
 from capsem.gate.sourcecommit import SourceCommit
 
 try:
@@ -220,6 +222,7 @@ def main() -> int:
         default=os.environ.get("CAPSEM_RELEASE_PUBLICATION_BASE"),
     )
     args = parser.parse_args()
+    config = gate_config.load(PROJECT_ROOT)
     args.evidence_dir.mkdir(parents=True, exist_ok=True)
     (args.evidence_dir / "started.json").write_text(
         json.dumps({"schema": "capsem.glowup.run.v1", "package": args.input_deb.name}) + "\n",
@@ -315,39 +318,38 @@ def main() -> int:
         stage_manifest_artifacts(stable_manifest, args.assets_dir, dist, base_url)
         # Project nightly from the staged single-architecture stable manifest.
         clone_manifest_for_channel(stable_manifest, nightly_manifest, "nightly")
-        record_binary(
-            admin, stable_manifest, stable_version, stable_deb, stable_sbom, stable_download_base, source_commit
-        )
-        record_binary(
-            admin,
-            nightly_manifest,
-            nightly_version,
-            nightly_deb,
-            nightly_sbom,
-            nightly_download_base,
-            source_commit,
-        )
-        build_channel(
-            admin,
+        stable_channel_manifest = author_native_candidate(
             stable_manifest,
-            args.assets_dir,
-            args.config_root / "profiles",
-            "stable",
-            dist,
-            base_url,
+            runner=run,
+            admin=admin,
+            assets_dir=args.assets_dir,
+            profiles_dir=args.config_root / "profiles",
+            channel="stable",
+            version=stable_version,
+            source_commit=source_commit,
+            artifacts=(stable_deb, stable_sbom),
+            release_url=stable_download_base,
+            asset_source_base=f"{base_url}/assets/releases/{{asset_version}}",
+            dist=dist,
+            manifest_version=config.install.manifest_version,
             profile_revision_policy=args.profile_revision_policy,
         )
-        stable_channel_manifest = dist / "assets" / "stable" / "manifest.json"
         stable_channel_sha_before_nightly = file_sha256(stable_channel_manifest)
         stable_channel_packages_before_nightly = current_package_versions(stable_channel_manifest)
-        build_channel(
-            admin,
+        author_native_candidate(
             nightly_manifest,
-            args.assets_dir,
-            args.config_root / "profiles",
-            "nightly",
-            dist,
-            base_url,
+            runner=run,
+            admin=admin,
+            assets_dir=args.assets_dir,
+            profiles_dir=args.config_root / "profiles",
+            channel="nightly",
+            version=nightly_version,
+            source_commit=source_commit,
+            artifacts=(nightly_deb, nightly_sbom),
+            release_url=nightly_download_base,
+            asset_source_base=f"{base_url}/assets/releases/{{asset_version}}",
+            dist=dist,
+            manifest_version=config.install.manifest_version,
             profile_revision_policy=args.profile_revision_policy,
         )
         if file_sha256(stable_channel_manifest) != stable_channel_sha_before_nightly:
@@ -986,12 +988,12 @@ def stage_adversarial_exact_candidates(
     )
 
 
-def run(cmd: list[str], *, cwd: Path = PROJECT_ROOT, env: dict[str, str] | None = None) -> None:
+def run(command: list[str], *, cwd: Path = PROJECT_ROOT, env: dict[str, str] | None = None) -> None:
     merged = os.environ.copy()
     if env:
         merged.update(env)
-    print("+ " + " ".join(cmd), flush=True)
-    subprocess.run(cmd, cwd=cwd, env=merged, check=True)
+    print("+ " + " ".join(command), flush=True)
+    subprocess.run(command, cwd=cwd, env=merged, check=True)
 
 
 def deb_version(path: Path) -> str:
@@ -1067,74 +1069,6 @@ def stage_package_ready_artifact(input_deb: Path, output_deb: Path) -> None:
 def generate_sbom(output: Path, deb: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     run([sys.executable, "scripts/generate-host-binary-sbom.py", "--output", str(output), str(deb)])
-
-
-def record_binary(
-    admin: Path,
-    manifest: Path,
-    version: str,
-    deb: Path,
-    sbom: Path,
-    release_download_base: str,
-    source_commit: SourceCommit,
-) -> None:
-    run(
-        [
-            str(admin),
-            "assets",
-            "channel",
-            "record-binary",
-            "--manifest-path",
-            str(manifest),
-            "--version",
-            version,
-            "--source-commit",
-            str(source_commit),
-            "--artifact",
-            str(deb),
-            "--artifact",
-            str(sbom),
-        ],
-        env={"CAPSEM_RELEASE_URL": release_download_base},
-    )
-
-
-def build_channel(
-    admin: Path,
-    manifest: Path,
-    assets_dir: Path,
-    profiles_dir: Path,
-    channel: str,
-    dist: Path,
-    base_url: str,
-    *,
-    profile_revision_policy: ProfileRevisionPolicy,
-) -> None:
-    run(
-        [
-            str(admin),
-            "assets",
-            "channel",
-            "build",
-            "--manifest",
-            manifest.resolve().as_uri(),
-            "--assets-dir",
-            str(assets_dir),
-            "--profiles-dir",
-            str(profiles_dir),
-            "--channel",
-            channel,
-            "--manifest-version",
-            "1.0.0",
-            "--asset-source-base",
-            f"{base_url}/assets/releases/{{asset_version}}",
-            "--out-dir",
-            str(dist),
-            "--profile-revision-policy",
-            profile_revision_policy.value,
-        ],
-        env={"CAPSEM_RELEASE_URL": f"{base_url}/releases/download/{channel}"},
-    )
 
 
 def copy_artifact_tree(source: Path, target: Path) -> None:
@@ -1225,7 +1159,10 @@ def _stage_graph_manifest_artifacts(
 
     staged: list[tuple[dict[str, object], Path, Path, bytes]] = []
     for profile_id, profile in sorted(profiles.items()):
-        if not isinstance(profile, dict) or cast(dict[str, object], profile).get("status") == "revoked":
+        if (
+            not isinstance(profile, dict)
+            or cast(dict[str, object], profile).get("status") == "revoked"
+        ):
             continue
         architectures = cast(dict[str, object], profile).get("architectures")
         if not isinstance(architectures, list) or not architectures:
@@ -1245,7 +1182,10 @@ def _stage_graph_manifest_artifacts(
                         f"local glow-up release profile {profile_id}/{arch} has malformed {section}"
                     )
                 for index, row in enumerate(rows):
-                    if not isinstance(row, dict) or cast(dict[str, object], row).get("status") == "revoked":
+                    if (
+                        not isinstance(row, dict)
+                        or cast(dict[str, object], row).get("status") == "revoked"
+                    ):
                         continue
                     url = cast(dict[str, object], row).get("url")
                     if not isinstance(url, str):

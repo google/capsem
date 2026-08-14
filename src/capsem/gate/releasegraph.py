@@ -33,6 +33,7 @@ from . import config as gate_config
 from .docker import Docker
 from .errors import GateError
 from .productschema import ProfileRevisionPolicy
+from .releaseauthoring import author_binary_graph
 from .sourcecommit import SourceCommit
 
 
@@ -75,33 +76,29 @@ class ReleaseGraph:
     ) -> None:
         """Build, check, and hand off one graph around the exact package."""
         admin = self.extract_admin(package)
-        manifest = self.build_channel(
-            admin,
-            manifest=assets_manifest,
-            assets_dir=assets_dir,
-            profiles_dir=profiles_dir,
-            channel=channel,
-            profile_revision_policy=profile_revision_policy,
-            manifest_version=manifest_version,
-            out_dir=out_dir,
-        )
-        self.record_binary(
-            admin,
-            package=package,
-            version=version,
-            assets_manifest=manifest,
-            candidate_base=candidate_base,
-        )
-        manifest = self.build_channel(
-            admin,
-            manifest=manifest,
-            assets_dir=assets_dir,
-            profiles_dir=profiles_dir,
-            channel=channel,
-            profile_revision_policy=profile_revision_policy,
-            manifest_version=manifest_version,
-            out_dir=out_dir,
-        )
+
+        def build(manifest: str) -> str:
+            return self.build_channel(
+                admin,
+                manifest=manifest,
+                assets_dir=assets_dir,
+                profiles_dir=profiles_dir,
+                channel=channel,
+                profile_revision_policy=profile_revision_policy,
+                manifest_version=manifest_version,
+                out_dir=out_dir,
+            )
+
+        def record(manifest: str) -> None:
+            self.record_binary(
+                admin,
+                package=package,
+                version=version,
+                assets_manifest=manifest,
+                candidate_base=candidate_base,
+            )
+
+        manifest = author_binary_graph(assets_manifest, build=build, record=record)
         self.build_site(dist=out_dir)
         self.check_channel(admin, channel=channel, dist=out_dir, manifest=manifest)
         self.hand_off(manifest)
