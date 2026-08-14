@@ -35,12 +35,34 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 COMMIT = SourceCommit("3" * 40)
 
 
-@pytest.fixture
-def config(tmp_path: Path):
+def _isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
     (tmp_path / "config").mkdir()
     shutil.copy(PROJECT_ROOT / "config/gate.toml", tmp_path / "config/gate.toml")
-    return gate_config.load(tmp_path)
+    loaded = gate_config.load(tmp_path)
+    # The complete gate runs this suite from its detached prefix and exports
+    # the outer checkout as the production evidence authority.  This fixture
+    # owns a synthetic authority, so inheriting that marker would make the
+    # focused and complete cohorts inspect different journals.
+    monkeypatch.delenv(loaded.environment.source_checkout, raising=False)
+    monkeypatch.delenv(loaded.environment.source_commit, raising=False)
+    return loaded
+
+
+@pytest.fixture
+def config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    return _isolated_config(tmp_path, monkeypatch)
+
+
+def test_synthetic_authority_ignores_outer_exact_prefix_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CAPSEM_GATE_SOURCE_CHECKOUT", str(PROJECT_ROOT))
+    monkeypatch.setenv("CAPSEM_GATE_SOURCE_COMMIT", str(COMMIT))
+
+    loaded = _isolated_config(tmp_path, monkeypatch)
+
+    assert qualificationevidence.authority(loaded).root == tmp_path
 
 
 def _plan() -> Plan:
