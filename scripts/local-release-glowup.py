@@ -27,7 +27,7 @@ from typing import cast
 from urllib.parse import unquote, urljoin, urlparse
 
 from capsem.gate.productschema import ProfileRevisionPolicy
-from capsem.gate.sourcecommit import SourceCommit, source_commit_for_checkout
+from capsem.gate.sourcecommit import SourceCommit
 
 try:
     from release_glowup import (
@@ -146,6 +146,7 @@ def _environment_path(name: str) -> Path | None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-deb", required=True, type=Path)
+    parser.add_argument("--source-commit", required=True, type=SourceCommit)
     parser.add_argument("--bin-dir", required=True, type=Path)
     parser.add_argument("--assets-dir", required=True, type=Path)
     parser.add_argument("--config-root", required=True, type=Path)
@@ -235,11 +236,10 @@ def main() -> int:
         path.mkdir(parents=True)
     report_disk_capacity(args.work_dir, "local release glow-up start")
 
-    stable_version = deb_version(args.input_deb)
-    nightly_version = stable_version
+    stable_version = nightly_version = deb_version(args.input_deb)
     arch = deb_arch(args.input_deb)
     admin = args.bin_dir / "capsem-admin"
-    source_commit = source_commit_for_checkout(PROJECT_ROOT)
+    source_commit = args.source_commit
     if not admin.is_file() or not os.access(admin, os.X_OK):
         raise SystemExit(f"local release glow-up requires executable {admin}")
 

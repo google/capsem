@@ -930,7 +930,9 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
     assert "scripts/generate-host-binary-sbom.py" in script
     assert "record-binary" in script
     assert '"--source-commit"' in script
-    assert "source_commit_for_checkout(PROJECT_ROOT)" in script
+    assert 'parser.add_argument("--source-commit", required=True, type=SourceCommit)' in script
+    assert "source_commit = args.source_commit" in script
+    assert "source_commit_for_checkout" not in script
     assert "assets" in script and "channel" in script and "build" in script
     assert len(clone_functions) == 1
     assert not any(isinstance(node, ast.Dict) for node in ast.walk(clone_functions[0])), (

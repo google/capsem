@@ -948,6 +948,8 @@ def test_local_glowup_exports_bounded_started_evidence_before_failure(
             str(LOCAL_GLOWUP_PATH),
             "--input-deb",
             str(package),
+            "--source-commit",
+            "0" * 40,
             "--bin-dir",
             str(tmp_path / "bin"),
             "--assets-dir",

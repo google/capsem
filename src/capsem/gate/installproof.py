@@ -19,6 +19,7 @@ from .content import ProfileContent
 from .docker import Docker
 from .errors import GateError
 from .proc import Runner
+from .sourcecommit import SourceCommit
 
 
 class InstallProof:
@@ -29,6 +30,7 @@ class InstallProof:
         runner: Runner,
         config: gate_config.GateConfig,
         *,
+        source_commit: SourceCommit,
         container: str | None = None,
         sleep=time.sleep,
     ) -> None:
@@ -42,6 +44,7 @@ class InstallProof:
         self._layout = self._settings.layout
         self._mount = self._settings.mount
         self._environment = config.environment.install_proof
+        self._source_commit = source_commit
         self._sleep = sleep
 
     # -- staging -----------------------------------------------------------
@@ -221,6 +224,7 @@ class InstallProof:
             f'--config-root "{self._layout.config}" '
             f"--work-dir {self._layout.glowup} --package-ready "
             f"--evidence-dir {self._layout.glowup_evidence} "
+            f"--source-commit {self._source_commit} "
             f"--profile-revision-policy {self._settings.profile_revision_policy.value}"
         )
         self._docker.shell(

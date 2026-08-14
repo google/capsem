@@ -543,7 +543,12 @@ def test_a_local_server_that_never_reports_ready_fails(
     """Continuing here would author the graph against an unserved root, and the
     handoff would name a URL nothing answers."""
     runner = RecordingRunner(tmp_path, failures=[f"test -f {SERVE_READY_FILE}"])
-    proof = InstallProof(runner, CONFIG, sleep=lambda _seconds: None)
+    proof = InstallProof(
+        runner,
+        CONFIG,
+        source_commit=SOURCE_COMMIT,
+        sleep=lambda _seconds: None,
+    )
 
     with pytest.raises(GateError, match="never reported itself ready"):
         proof.stage_content(ProfileContent.standalone(CONFIG))
@@ -585,9 +590,12 @@ def test_a_host_that_boots_a_guest_runs_the_complete_glowup(tmp_path: Path) -> N
     """`--skip-install` is what a host without a guest falls back to. Sending
     it where the guest works would silently drop half the proof."""
     runner = RecordingRunner(tmp_path)
-    InstallProof(runner, CONFIG).prove_glowup("/src/x.deb", boots_a_guest=True)
+    InstallProof(runner, CONFIG, source_commit=SOURCE_COMMIT).prove_glowup(
+        "/src/x.deb", boots_a_guest=True
+    )
 
     assert runner.ran(r"local-release-glowup\.py")
+    assert runner.ran(rf"--source-commit {SOURCE_COMMIT}")
     assert runner.ran(r"--profile-revision-policy selected-input")
     assert not runner.ran(r"--skip-install")
 
@@ -608,9 +616,12 @@ def test_glowup_writes_bounded_evidence_through_one_host_mount(
 
 def test_a_host_without_a_guest_skips_only_the_install_half(tmp_path: Path) -> None:
     runner = RecordingRunner(tmp_path)
-    InstallProof(runner, CONFIG).prove_glowup("/src/x.deb", boots_a_guest=False)
+    InstallProof(runner, CONFIG, source_commit=SOURCE_COMMIT).prove_glowup(
+        "/src/x.deb", boots_a_guest=False
+    )
 
     assert runner.ran(r"local-release-glowup\.py .*--skip-install")
+    assert runner.ran(rf"--source-commit {SOURCE_COMMIT}")
 
 
 def test_an_install_that_hydrated_from_elsewhere_is_refused(

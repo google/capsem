@@ -58,7 +58,11 @@ class InstallGate:
         self._storage = Storage(runner)
         self._content = content
         self._container = InstallContainer(runner, content=content)
-        self._proof = InstallProof(runner, self._config)
+        self._proof = InstallProof(
+            runner,
+            self._config,
+            source_commit=source_commit,
+        )
         self._graph = ReleaseGraph(Docker(runner), self._config, source_commit=source_commit)
         self._macos_report = macos_glowup_report or None
         self.root = runner.root

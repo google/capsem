@@ -45,7 +45,11 @@ class DebProof:
         self._proof = self._config.package.proof
         self._install = self._config.install
         self._staging = InstallProof(
-            runner, self._config, container=self._proof.container, sleep=sleep
+            runner,
+            self._config,
+            source_commit=source_commit,
+            container=self._proof.container,
+            sleep=sleep,
         )
         self._graph = ReleaseGraph(
             self._docker,
