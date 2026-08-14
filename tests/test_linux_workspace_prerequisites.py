@@ -9,6 +9,8 @@ import pytest
 from pydantic import ValidationError
 
 from capsem.gate import config as gate_config
+from capsem.gate import hostimage
+from capsem.gate.configschema import Arch as ArchConfig
 from capsem.gate.toolchainschema import LinuxWorkspaceConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +60,14 @@ def test_linux_workspace_prerequisites_are_one_validated_config_value() -> None:
     assert {arch.rust_target for arch in config.architectures.values()} <= set(
         config.toolchain.rust_targets
     )
+    assert {
+        package for arch in config.architectures.values() for package in arch.apt_cross_compilers
+    } == {
+        "gcc-aarch64-linux-gnu",
+        "g++-aarch64-linux-gnu",
+        "gcc-x86-64-linux-gnu",
+        "g++-x86-64-linux-gnu",
+    }
 
 
 def test_cross_rust_target_requires_the_existing_architecture_enum() -> None:
@@ -72,6 +82,46 @@ def test_cross_rust_target_requires_the_existing_architecture_enum() -> None:
         == "x86_64-unknown-linux-gnu"
     )
     assert provisioner.cross_rust_target.__annotations__["architecture"] == "Arch"
+
+
+def test_cross_compiler_packages_require_the_existing_architecture_enum() -> None:
+    provisioner = _provisioner()
+    config_path = PROJECT_ROOT / "config/gate.toml"
+
+    assert provisioner.cross_compiler_packages(config_path, provisioner.Arch.X86_64) == (
+        "gcc-aarch64-linux-gnu",
+        "g++-aarch64-linux-gnu",
+    )
+    assert provisioner.cross_compiler_packages(config_path, provisioner.Arch.ARM64) == (
+        "gcc-x86-64-linux-gnu",
+        "g++-x86-64-linux-gnu",
+    )
+    assert provisioner.cross_compiler_command(config_path, provisioner.Arch.ARM64) == (
+        "x86_64-linux-gnu-gcc"
+    )
+    assert provisioner.cross_compiler_packages.__annotations__["architecture"] == "Arch"
+    with pytest.raises(TypeError, match="architecture must be Arch"):
+        provisioner.cross_compiler_packages(config_path, "arm64")
+
+
+def test_cross_compiler_packages_are_safe_config_tokens() -> None:
+    document = gate_config.load(PROJECT_ROOT).arch("arm64").model_dump()
+    document["apt_cross_compilers"] = ["gcc-aarch64-linux-gnu;touch"]
+
+    with pytest.raises(ValidationError, match="apt_cross_compilers"):
+        ArchConfig.model_validate(document)
+
+
+def test_cross_compiler_authority_changes_the_host_builder_identity() -> None:
+    config = gate_config.load(PROJECT_ROOT)
+    architectures = dict(config.architectures)
+    architectures["arm64"] = architectures["arm64"].model_copy(
+        update={"apt_cross_compilers": ("gcc-aarch64-linux-gnu-new",)}
+    )
+
+    changed = config.model_copy(update={"architectures": architectures})
+
+    assert hostimage.input_key(changed) != hostimage.input_key(config)
 
 
 @pytest.mark.parametrize(
@@ -91,16 +141,24 @@ def test_cross_rust_target_refuses_unknown_or_ambiguous_architecture_config(tmp_
     unknown = tmp_path / "unknown.toml"
     unknown.write_text(
         '[architectures.arm64]\nrust_target = "aarch64-unknown-linux-gnu"\n'
+        'gnu = "aarch64-linux-gnu"\n'
+        'apt_cross_compilers = ["gcc-aarch64-linux-gnu"]\n'
         'aliases = ["arm64", "aarch64"]\n',
         encoding="utf-8",
     )
     ambiguous = tmp_path / "ambiguous.toml"
     ambiguous.write_text(
         '[architectures.arm64]\nrust_target = "aarch64-unknown-linux-gnu"\n'
+        'gnu = "aarch64-linux-gnu"\n'
+        'apt_cross_compilers = ["gcc-aarch64-linux-gnu"]\n'
         'aliases = ["arm64", "aarch64"]\n'
         '[architectures.x86_64]\nrust_target = "x86_64-unknown-linux-gnu"\n'
+        'gnu = "x86_64-linux-gnu"\n'
+        'apt_cross_compilers = ["gcc-x86-64-linux-gnu"]\n'
         'aliases = ["x86_64", "amd64"]\n'
         '[architectures.third]\nrust_target = "third-unknown-linux-gnu"\n'
+        'gnu = "third-linux-gnu"\n'
+        'apt_cross_compilers = ["gcc-third-linux-gnu"]\n'
         'aliases = ["third"]\n',
         encoding="utf-8",
     )
@@ -141,19 +199,33 @@ def test_provisioner_installs_configured_packages_then_proves_pkg_config(
 
     monkeypatch.setattr(provisioner.subprocess, "run", record)
     monkeypatch.setattr(provisioner.os, "geteuid", lambda: 0)
-    monkeypatch.setattr(provisioner.shutil, "which", lambda command: f"/usr/bin/{command}")
+    probed: list[str] = []
+
+    def present(command: str) -> str:
+        probed.append(command)
+        return f"/usr/bin/{command}"
+
+    monkeypatch.setattr(provisioner.shutil, "which", present)
     config = gate_config.load(PROJECT_ROOT).toolchain.linux
 
     provisioner.install_and_verify(
-        PROJECT_ROOT / "config/gate.toml", provisioner.PackageManager(manager)
+        PROJECT_ROOT / "config/gate.toml",
+        provisioner.PackageManager(manager),
+        architecture=provisioner.Arch.ARM64,
     )
 
-    packages = config.apt_packages if manager == "apt" else config.dnf_packages
+    packages = config.dnf_packages
     if manager == "apt":
+        packages = (
+            *config.apt_packages,
+            "gcc-x86-64-linux-gnu",
+            "g++-x86-64-linux-gnu",
+        )
         assert calls[:2] == [
             ("apt-get", "update"),
             ("apt-get", "install", "-y", "--no-install-recommends", *packages),
         ]
+        assert "x86_64-linux-gnu-gcc" in probed
     else:
         assert calls[0] == ("dnf", "install", "-y", *packages)
     assert calls[-1] == ("pkg-config", "--exists", *config.pkg_config_modules)
@@ -170,5 +242,14 @@ def test_ci_and_host_builder_consume_the_same_prerequisite_authority() -> None:
     assert invocation in fast
     assert "WORKSPACE_APT_PACKAGES" in host_builder
     assert "WORKSPACE_APT_PACKAGES" in hostimage
+    assert "WORKSPACE_CROSS_APT_PACKAGES" in host_builder
+    assert "WORKSPACE_CROSS_APT_PACKAGES" in hostimage
+    for package in (
+        "gcc-x86-64-linux-gnu",
+        "g++-x86-64-linux-gnu",
+        "gcc-aarch64-linux-gnu",
+        "g++-aarch64-linux-gnu",
+    ):
+        assert package not in host_builder
     for package in gate_config.load(PROJECT_ROOT).toolchain.linux.apt_packages:
         assert f"    {package} \\\n" not in host_builder

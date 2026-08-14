@@ -40,6 +40,7 @@ ARG CARGO_NEXTEST_VERSION
 ARG CARGO_LLVM_COV_VERSION
 ARG INPUT_IDENTITY
 ARG WORKSPACE_APT_PACKAGES
+ARG WORKSPACE_CROSS_APT_PACKAGES
 
 # Ubuntu's minimal base has no system CA bundle, but every configured package
 # source is HTTPS. Bootstrap trust from a tiny immutable official image; the
@@ -61,19 +62,16 @@ RUN bash /tmp/sources-multiarch.sh "$APT_SNAPSHOT_BASE" "$APT_SNAPSHOT_ID" \
 # these packages at container runtime (see swap-dev-libs.sh).
 # ---- Native-arch Tauri dev libraries ----
 RUN test -n "$WORKSPACE_APT_PACKAGES" \
+    && test -n "$WORKSPACE_CROSS_APT_PACKAGES" \
     && apt-get update && apt-get install -y --no-install-recommends \
     $WORKSPACE_APT_PACKAGES \
+    $WORKSPACE_CROSS_APT_PACKAGES \
     curl \
     wget \
     ca-certificates \
     git \
     sqlite3 \
     python3-venv \
-    # Cross-compilation toolchains (both directions)
-    gcc-x86-64-linux-gnu \
-    g++-x86-64-linux-gnu \
-    gcc-aarch64-linux-gnu \
-    g++-aarch64-linux-gnu \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Node.js 24 + pnpm 10 ----

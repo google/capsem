@@ -80,6 +80,7 @@ def input_key(config: GateConfig) -> str:
         pinned_toolchain(config.root),
         *config.toolchain.rust_targets,
         *config.toolchain.linux.apt_packages,
+        *_cross_apt_packages(config),
         *config.toolchain.linux.pkg_config_modules,
         *config.toolchain.linux.required_commands,
     ]
@@ -90,6 +91,15 @@ def input_key(config: GateConfig) -> str:
         digest.update(value.encode())
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def _cross_apt_packages(config: GateConfig) -> tuple[str, ...]:
+    """Every config-owned GNU compiler needed by either concrete target."""
+    return tuple(
+        package
+        for architecture in config.architectures.values()
+        for package in architecture.apt_cross_compilers
+    )
 
 
 def _image_tag(ref: str) -> str:
@@ -171,6 +181,7 @@ class _Build(Action, name="host-image-materialize"):
                 "RUST_TARGETS=" + " ".join(context.config.toolchain.rust_targets),
                 f"INPUT_IDENTITY={identity}",
                 "WORKSPACE_APT_PACKAGES=" + " ".join(context.config.toolchain.linux.apt_packages),
+                "WORKSPACE_CROSS_APT_PACKAGES=" + " ".join(_cross_apt_packages(context.config)),
             ]
             for argument in sorted(settings.cargo_tool_args):
                 _package, version = cargo_tool(config=context.config, argument=argument)

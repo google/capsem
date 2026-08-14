@@ -6,7 +6,7 @@ from typing import Annotated
 
 from pydantic import StringConstraints, model_validator
 
-from .configschema import Strict
+from .configschema import SafeToken, Strict
 
 
 class CrateTool(Strict):
@@ -30,8 +30,8 @@ class CrateTool(Strict):
         return self
 
 
-LinuxPackage = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9+._-]*$")]
-PkgConfigModule = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9+._-]*$")]
+LinuxPackage = SafeToken
+PkgConfigModule = SafeToken
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 

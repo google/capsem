@@ -24,7 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-native GNU architecture before its native workspace pass. Bootstrap,
   Doctor, CI, and the sealed host builder consume one four-target inventory,
   so ARM-only or x86-only lint failures cannot first appear on the other
-  hosted runner.
+  hosted runner. Each typed architecture now also owns its APT cross-compiler
+  packages; native provisioning installs and proves the foreign compiler, and
+  the Docker/Colima builder consumes the same config-owned union rather than a
+  private package list.
 
 - Every Astro build on the host now takes one repository-derived file lock.
   The gate's in-process `astro_build` claim could not coordinate pytest, a

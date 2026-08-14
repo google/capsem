@@ -8,7 +8,11 @@ can disagree with the file.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
+
+SafeToken = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9+._-]*$")]
 
 
 class Strict(BaseModel):
@@ -29,6 +33,7 @@ class Arch(Strict):
     rust_target: str
     dpkg: str
     gnu: str
+    apt_cross_compilers: tuple[SafeToken, ...]
     docker_platform: str
     aliases: tuple[str, ...]
 
@@ -39,6 +44,14 @@ class Arch(Strict):
     def pkg_config_path(self) -> str:
         """Where the cross toolchain's `.pc` files live inside the builder."""
         return self.pkg_config_template.format(gnu=self.gnu)
+
+    @model_validator(mode="after")
+    def cross_compilers_are_nonempty_and_unique(self) -> Arch:
+        if not self.apt_cross_compilers or len(self.apt_cross_compilers) != len(
+            set(self.apt_cross_compilers)
+        ):
+            raise ValueError("architecture apt_cross_compilers must be non-empty and unique")
+        return self
 
 
 class StoragePhase(Strict):
