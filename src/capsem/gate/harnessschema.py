@@ -28,6 +28,7 @@ from pydantic import (
 
 from .configschema import Strict
 from .digestschema import DigestConfig, LedgerConfig
+from .exclusions import Exclusion, HashedExclusion
 from .sandboxschema import SandboxConfig as SandboxConfig
 from .sourcecontractschema import ScriptSizeConfig
 
@@ -60,6 +61,17 @@ class ShellBodyConfig(Strict):
     oversized_line_counts: dict[str, int]
 
 
+class StepAttributeConfig(Strict):
+    """The step-attribute migration ledger.
+
+    `max_undeclared` is the destination, not the current state: it is zero, and
+    `undeclared_by_module` is the exact remaining debt that may only shrink.
+    """
+
+    max_undeclared: NonNegativeInt
+    undeclared_by_module: dict[str, int]
+
+
 class BoundaryConfig(Strict):
     max_recipe_lines: int
     max_module_lines: int
@@ -72,6 +84,18 @@ class BoundaryConfig(Strict):
     #: Dockerfiles rather than in files of their own, so there is no root or
     #: suffix to declare.
     shell_bodies: ShellBodyConfig
+    step_attributes: StepAttributeConfig
+    #: Steps that drive cargo without claiming the workspace, each saying
+    #: why. Not a bare list of names: one comment over an unbounded list
+    #: stops being a reason at the second entry.
+    unclaimed_cargo: tuple[Exclusion, ...]
+    #: `command || true`: a verdict deliberately thrown away, pinned to the
+    #: hash of the parsed command so the ledger tracks the decision, not the
+    #: formatting.
+    discarded_verdicts: tuple[HashedExclusion, ...]
+    #: Dockerfile `RUN` bodies that sequence several statements on purpose
+    #: without `set -e`, each stating why the earlier failures are tolerable.
+    sequenced_runs: tuple[Exclusion, ...]
     shell_control_flow: tuple[str, ...]
     recipes_with_inline_control_flow: tuple[str, ...]
     direct_machine_access: tuple[str, ...]
@@ -133,28 +157,6 @@ class ExecutionConfig(Strict):
             if not exclusive.name:
                 object.__setattr__(exclusive, "name", key)
         return self
-
-
-class LockConfig(Strict):
-    """One holder at a time, proven by the kernel rather than by a PID file."""
-
-    path: str
-    holder_record: str
-    report_after_seconds: float
-    wait_timeout_seconds: float
-    poll_interval_seconds: float
-    run_marker: str
-
-    @field_validator("path", "holder_record")
-    @classmethod
-    def _must_be_user_scoped(cls, value: str) -> str:
-        if value.startswith("~/") or PurePosixPath(value).is_absolute():
-            return value
-        raise ValueError("machine lock paths must be absolute or user-home-relative")
-
-
-class LocksConfig(Strict):
-    gate: LockConfig
 
 
 class TimingRegressionConfig(Strict):

@@ -11,10 +11,16 @@ from .assetcondition import missing as missing
 from .command import GateCommand
 from .config import GateConfig
 from .errors import GateError
-from .execution import Step, step
+from .execution import Kind, Needs, Speed, Step, step
 from .fileactions import Remove
 from .imagedoctor import doctor
 from .plan import Plan
+
+#: Naming the capability sets rather than the whole declaration: `**dict`
+#: unpacking would collapse three lines into one and take the type checking
+#: with it, which is the thing these attributes exist to keep.
+BUILDS = frozenset({Needs.DOCKER, Needs.DISK})
+PULLS = frozenset({Needs.DOCKER, Needs.NETWORK})
 
 
 def profiles(config: GateConfig) -> list[str]:
@@ -71,6 +77,7 @@ def build(
         label,
         Run(build_argv(config, profile=profile, arch=arch, template=template, output=output)),
         contends=(config.exclusive("docker_daemon"),),
+        kind=Kind.PACKAGE, needs=BUILDS, speed=Speed.SLOW,
     )
 
 
@@ -105,6 +112,7 @@ class BuildAssetsCommand(
                 "base-images",
                 imagebases.Prefetch(names, rust_names=rust_builders, asset_tools=needs_asset_tools),
                 contends=(config.exclusive("docker_daemon"),),
+        kind=Kind.PACKAGE, needs=PULLS, speed=Speed.SLOW,
             )
         )
         checked = plan.add(doctor(config), after=(bases,))
@@ -113,6 +121,7 @@ class BuildAssetsCommand(
                 "guest-execution",
                 crossexec.Require(names),
                 contends=(config.exclusive("docker_daemon"),),
+        kind=Kind.PACKAGE, needs=BUILDS, speed=Speed.SLOW,
             ),
             after=(checked,),
         )
@@ -123,6 +132,7 @@ class BuildAssetsCommand(
                     imagebases.MaterializeRustBuilders(rust_builders),
                     contends=(config.exclusive("docker_daemon"),),
                     carry_checks=(imagebases.RequireRustBuilders(rust_builders),),
+        kind=Kind.PACKAGE, needs=BUILDS, speed=Speed.SLOW,
                 ),
                 after=(ready,),
             )
@@ -133,6 +143,7 @@ class BuildAssetsCommand(
                     imagebases.MaterializeAssetTools(),
                     contends=(config.exclusive("docker_daemon"),),
                     carry_checks=(imagebases.RequireAssetTools(),),
+        kind=Kind.PACKAGE, needs=BUILDS, speed=Speed.SLOW,
                 ),
                 after=(ready,),
             )
@@ -196,6 +207,7 @@ def check_assets(
                 "base-images",
                 imagebases.Prefetch(names, rust_names=rust_builders, asset_tools=True),
                 contends=(config.exclusive("docker_daemon"),),
+        kind=Kind.PACKAGE, needs=PULLS, speed=Speed.SLOW,
             ),
         ),
         after=after,
@@ -208,6 +220,7 @@ def check_assets(
                 "guest-execution",
                 crossexec.Require(names),
                 contends=(config.exclusive("docker_daemon"),),
+        kind=Kind.PACKAGE, needs=BUILDS, speed=Speed.SLOW,
             ),
         ),
         after=(checked,),
@@ -221,6 +234,7 @@ def check_assets(
                     imagebases.MaterializeRustBuilders(rust_builders),
                     contends=(config.exclusive("docker_daemon"),),
                     carry_checks=(imagebases.RequireRustBuilders(rust_builders),),
+        kind=Kind.PACKAGE, needs=BUILDS, speed=Speed.SLOW,
                 ),
             ),
             after=(ready,),
@@ -233,6 +247,7 @@ def check_assets(
                 imagebases.MaterializeAssetTools(),
                 contends=(config.exclusive("docker_daemon"),),
                 carry_checks=(imagebases.RequireAssetTools(),),
+        kind=Kind.PACKAGE, needs=BUILDS, speed=Speed.SLOW,
             ),
         ),
         after=(ready,),
@@ -262,39 +277,3 @@ def _when_missing(recovery: AssetRecovery, subject: Step) -> Step:
         actions=tuple(recovery.when(action) for action in subject.actions),
         carry_checks=tuple(recovery.when(check) for check in subject.carry_checks),
     )
-
-
-class ToolchainCommand(
-    GateCommand,
-    name="install-tools",
-    help="install the cross-compilation targets and cargo tools a gate needs",
-):
-    """Idempotent: present means nothing happens, and nothing is said."""
-
-    exclusive = True
-
-    def plan(self) -> Plan:
-        from . import toolchain
-
-        plan = Plan(self.name)
-        python = plan.add(toolchain.sync(self._config))
-        plan.add(toolchain.rust(self._config), after=(python,))
-        plan.add(toolchain.node(self._config), after=(python,))
-        return plan
-
-
-class NodeCommand(
-    GateCommand,
-    name="install-node",
-    help="install every Node workspace a local gate exercises",
-):
-    """Install every Node workspace that split CI jobs exercise separately."""
-
-    exclusive = True
-
-    def plan(self) -> Plan:
-        from . import toolchain
-
-        plan = Plan(self.name)
-        plan.add(toolchain.node(self._config))
-        return plan

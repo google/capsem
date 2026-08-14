@@ -143,7 +143,7 @@ impl TestHarness {
 
     /// Write a descriptor to the descriptor table.
     fn write_desc(&self, index: u16, addr: u64, len: u32, flags: u16, next: u16) {
-        let offset = DESC_TABLE_OFFSET + (index as u64) * 16;
+        let offset = DESC_TABLE_OFFSET + u64::from(index) * 16;
         let mut data = [0u8; 16];
         data[0..8].copy_from_slice(&addr.to_le_bytes());
         data[8..12].copy_from_slice(&len.to_le_bytes());
@@ -164,7 +164,7 @@ impl TestHarness {
     /// Make descriptors available in the avail ring.
     fn push_avail(&self, ring_index: u16, desc_head: u16, avail_idx: u16) {
         // Write ring entry
-        let entry_offset = AVAIL_RING_OFFSET + 4 + (ring_index as u64) * 2;
+        let entry_offset = AVAIL_RING_OFFSET + 4 + u64::from(ring_index) * 2;
         self.mem
             .write_at(entry_offset, &desc_head.to_le_bytes())
             .unwrap();
@@ -176,7 +176,7 @@ impl TestHarness {
     }
 
     fn write_used_event(&self, used_event: u16) {
-        let offset = AVAIL_RING_OFFSET + 4 + (QUEUE_TEST_SIZE as u64) * 2;
+        let offset = AVAIL_RING_OFFSET + 4 + u64::from(QUEUE_TEST_SIZE) * 2;
         self.mem
             .write_at(offset, &used_event.to_le_bytes())
             .unwrap();
@@ -213,7 +213,7 @@ impl TestHarness {
     fn setup_request(&self, type_: u32, sector: u64, data_len: u32, data_writable: bool) {
         let header_offset = DATA_AREA_OFFSET;
         let data_offset = DATA_AREA_OFFSET + REQ_HEADER_SIZE as u64;
-        let status_offset = data_offset + data_len as u64;
+        let status_offset = data_offset + u64::from(data_len);
 
         self.write_header(header_offset, type_, sector);
 

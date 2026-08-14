@@ -11,11 +11,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from . import hostimage, installimage
+from . import hostimage, installplan
 from .actions import Call
 from .command import GateCommand
 from .content import ProfileContent
-from .execution import step
+from .execution import Kind, Needs, Speed, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .packagerail import PackageRail
 from .plan import Plan
@@ -162,6 +162,9 @@ def fragment(
                         justification=justification,
                     ),
                     contends=docker,
+                    kind=Kind.COMPILE,
+                    needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                    speed=Speed.SLOW,
                 ),
                 after=previous,
             ),
@@ -243,7 +246,7 @@ class CrossCompileCommand(
         # `capsem-install-test` tag from a registry.
         after = ()
         if target == config.host_arch() and not defer_proof:
-            after = (installimage.fragment(plan, config),)
+            after = (installplan.fragment(plan, config),)
         fragment(
             plan,
             config,

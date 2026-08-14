@@ -311,8 +311,25 @@ def test_closed_gate_vocabularies_refuse_raw_strings_at_runtime() -> None:
 
 
 def test_install_lifecycle_labels_flow_through_the_enum_converter() -> None:
-    source = (GATE_PACKAGE / "installimage.py").read_text(encoding="utf-8")
+    """The install steps in the plan are exactly the enum's members.
 
-    for member in ("CAPACITY", "MATERIALIZE", "BUILD", "SMOKE"):
-        assert f"_step_label(InstallImageStep.{member})" in source
-    assert 'step(\n            "install.' not in source
+    Asked of the plan rather than of a module's source text. The previous
+    version grepped `installimage.py` for `_step_label(InstallImageStep.X)`,
+    which failed the moment the plan composition moved to `installplan.py` --
+    a change that moved no step, renamed nothing and altered no order. A
+    contract that breaks on where code lives is measuring the wrong thing.
+
+    This states the property instead: every `install.` label the gate builds
+    comes from the closed enum, and every member appears. A literal string
+    label would show up as a plan label with no enum member behind it.
+    """
+    from helpers.gate import gate_plan
+
+    from capsem.gate.installimage import InstallImageStep, _step_label
+
+    expected = {_step_label(member) for member in InstallImageStep}
+    built = {label for label in gate_plan("candidate").labels if label.startswith("install.")}
+    assert built == expected, (
+        f"install steps in the plan {sorted(built)} are not the enum's "
+        f"{sorted(expected)}; a label was spelled rather than derived"
+    )

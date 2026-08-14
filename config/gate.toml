@@ -697,6 +697,27 @@ justification = "Existing repository-wide debt baseline; additions are forbidden
 # module over its ceiling is the 2000-line justfile growing back in Python.
 max_recipe_lines = 5
 max_module_lines = 300
+
+# Steps that drive cargo without claiming `workspace_binaries`.
+#
+# Empty, and it should stay that way. The one entry it ever held was
+# `fast.clippy`, on the theory that a step-level exclusive is coarser than the
+# lock cargo takes on its own target directory, and would park the fast lane's
+# longest job behind two short ones.
+#
+# Measured back to back, same machine, same warm cache: 3m47s without the
+# claim, 3m49s with it. Two seconds, against run-to-run variance of minutes.
+#
+# The theory was wrong in an instructive way. Cargo was already serialising
+# those steps. Clippy's 2m20s of "execution" without the claim was 1m27s of
+# work plus about fifty seconds blocked on that lock, charged to execution
+# because nothing had declared it. Declaring the claim does not add the wait --
+# it moves it out of a number nobody can attribute and into the queueing
+# report, where `runs schedule` names it.
+#
+# So an entry here needs a measurement, not an argument. The argument that
+# sounded right cost four minutes to check and was wrong.
+unclaimed_cargo = []
 # Script scope and its exact historical-debt ratchet are declared below the
 # rest of this table, immediately before the execution section.
 
@@ -897,7 +918,7 @@ reason = "two benchmark files launching VMs at once measure each other, not Caps
 reason = "production has one service and one service-scoped snapshot lock; an xdist worker per service does not reproduce that"
 
 [execution.exclusives.workspace_binaries]
-reason = "cargo build --workspace atomically replaces the binaries a running VM test is using"
+reason = "cargo build --workspace atomically replaces the binaries a running VM test is using, and two cargo invocations block on the target directory's own lock -- a wait that lands in execution time and never reaches the queueing report"
 
 [execution.exclusives.docker_daemon]
 reason = "the storage rails reserve and release a single daemon's disk budget"
@@ -1539,7 +1560,9 @@ enforced_by = ["fast.audit.markdown"]
 [[lint_surfaces]]
 name = "web"
 pattern = "*.svelte"
-enforced_by = ["fast.web.frontend"]
+# The verify half: `svelte-check` is what actually lints these, and it moved
+# out of the build when the two were split so clippy would stop waiting on it.
+enforced_by = ["fast.web.frontend-verify"]
 
 [[lint_surfaces]]
 name = "skills"
@@ -1566,12 +1589,28 @@ enforced_by = ["fast.audit.skills", "fast.citadel"]
 [websurfaces]
 script = "scripts/check-web-surface.sh"
 # Each is a separate target of the same script, so a failure names the surface.
-targets = ["frontend", "docs", "site", "release-site"]
-# The frontend must finish before clippy: capsem-app embeds frontend/dist at
-# compile time via `tauri::generate_context!`, so clippy reads a directory the
-# frontend build produces. Expressed as an edge, where the shell expressed it
-# as a conditional that skipped clippy entirely when the frontend failed.
-blocks_clippy = "frontend"
+#
+# `frontend` was one target running a type-check, a unit-test run and a build.
+# One step is one node, so the graph had no way to say that only the last of
+# the three produces anything, and clippy -- which waits on the frontend --
+# waited on all of it.
+targets = ["frontend-build", "frontend-verify", "docs", "site", "release-site"]
+# The frontend build must finish before clippy: capsem-app embeds frontend/dist
+# at compile time via `tauri::generate_context!`, so clippy reads a directory
+# that build produces. Expressed as an edge, where the shell expressed it as a
+# conditional that skipped clippy entirely when the frontend failed.
+blocks_clippy = "frontend-build"
+# The one surface that reads `mock-settings.generated`, and so the only one
+# that waits for `audit.generated-settings`. Three files import it and every
+# one of them is under `frontend/src/**/__tests__/`, which makes it a test
+# dependency; it reached clippy only because the tests shared a step with the
+# build.
+needs_generated_settings = "frontend-verify"
+# The surfaces that run a bundler, and therefore the ones that take
+# `astro_build`. The claim exists because Astro stages prerendering in a path
+# derived from the project root; a surface that only type-checks or runs vitest
+# stages nothing, and holding it there serialises work that could overlap.
+building = ["frontend-build", "docs", "site"]
 
 [suites]
 # Tests that inspect release/CI/Just composition or adversarially test the
@@ -1657,6 +1696,7 @@ source_contract = [
     "tests/test_gate_cancellation.py",
     "tests/test_gate_qualification.py",
     "tests/test_gate_scheduling.py",
+    "tests/test_gate_scheduling_analysis.py",
     "tests/test_gate_secrets.py",
     "tests/test_gate_source_checks.py",
     "tests/test_gate_source_identity.py",
@@ -2054,6 +2094,27 @@ coverage_file = "target/coverage/.coverage"
 evidence_dir = "target/test-artifacts"
 
 # ---------------------------------------------------------------------------
+# The step attribute migration
+# ---------------------------------------------------------------------------
+
+[boundary.step_attributes]
+# Every `step(...)` declares what it is: `kind`, `needs`, `arch`, `speed` and
+# `concurrency`. Those attributes are what makes the plan a graph that can be
+# reasoned about instead of a set of labels that has to be grepped -- a lint is
+# a lint because it says so, not because someone matched `fast.` against its
+# name.
+#
+# The migration is done: every call site declares. The ledger stays as the
+# ratchet -- an empty inventory with `max_undeclared = 0` refuses the first
+# step that arrives without saying what it is, which is the state the migration
+# was for.
+max_undeclared = 0
+
+
+
+[boundary.step_attributes.undeclared_by_module]
+
+# ---------------------------------------------------------------------------
 # The execution log
 # ---------------------------------------------------------------------------
 
@@ -2146,7 +2207,7 @@ maximum_factor = 1.2
 # slower, does that keep failing, did the change help -- was answerable only
 # across whatever had not yet been deleted. A row is a couple of kilobytes.
 path = "target/gate-runs/ledger.jsonl"
-row_schema = "capsem.gate.ledger.v1"
+row_schema = "capsem.gate.ledger.v2"
 # Months of history for a few megabytes. Trimmed at every append, so the file
 # cannot become the thing that fills the disk it was added to protect.
 keep_rows = 2000
@@ -2173,6 +2234,11 @@ residency_fraction = 0.6
 # a critical path made of waiting does not shorten when its steps do.
 wait_fraction = 0.3
 hotspots = 6
+# A `FAST` step owning this much of a lane's critical path is reported. Against
+# the critical path, not the sum of a stage: the sum makes a two-second `ty`
+# pass read as most of a stage that contains nothing else, while the critical
+# path is what the run actually waits for.
+lane_share = 0.25
 
 # ---------------------------------------------------------------------------
 # Disk the gate is allowed to occupy
@@ -2200,3 +2266,315 @@ reclaimable = [
 required_free_gb = 60
 # Warn when a single run's own footprint passes this.
 run_footprint_warn_gb = 40
+
+# ---------------------------------------------------------------------------
+# Discarded verdicts
+# ---------------------------------------------------------------------------
+#
+# `command || true` runs a command and throws its exit status away. Most uses
+# here are legitimate -- clearing state that may not be set, killing a process
+# that may not be running, printing diagnostics after a failure -- and a few
+# are deliberate cache prewarms. None is wrong today.
+#
+# They are ratcheted anyway, because this is the shape that costs the most for
+# the least: `test "$X" = success || true` satisfied a release contract while
+# branch protection was switched off, and nothing anywhere said so.
+#
+# The ratchet is on the *exact command*, hashed. Not a count -- a count fails
+# you for adding legitimate cleanup and passes the one dangerous change. Not a
+# program name either -- `launchctl bootout` on an unloaded service is expected
+# to fail while `launchctl` elsewhere is a real check, so the program says
+# nothing about whether the verdict mattered.
+#
+# The hash is taken over the command's parsed argv, not its source text, so
+# reformatting, requoting or moving the line does not churn the ledger. Change
+# *what* is suppressed and the hash changes, which is a new decision and has to
+# be stated as one.
+#
+# Every entry carries its reason. An entry with no reason is refused: the whole
+# point is that discarding a verdict is a choice somebody made on purpose, and
+# a choice nobody can explain later is the one worth finding.
+#
+# The reasons below were written by reading each call site at the time the
+# ledger was seeded, not by the author of the line. Correct one if it is wrong
+# -- that is cheaper than the alternative, which is trusting it.
+
+[[boundary.sequenced_runs]]
+subject = "Dockerfile.install-builder:RUN[7]"
+reason = "starts a system dbus that may already be running and whose absence the following linger fallback handles; adding set -e would turn a tolerated probe into a build failure"
+
+[[boundary.discarded_verdicts]]
+digest = "7538ffecc5da"
+where = "docker/Dockerfile.install-builder"
+subject = "userdel -r $(getent passwd 1000 | cut -d: -f1)"
+reason = "the base image may not carry a uid-1000 account; absence is the desired end state"
+
+[[boundary.discarded_verdicts]]
+digest = "6b02fa1146cb"
+where = "docker/Dockerfile.linux-rust-base"
+subject = "cargo build --locked --workspace --all-targets"
+reason = "a cache prewarm, not a proof; the lane that consumes it surfaces anything missing"
+
+[[boundary.discarded_verdicts]]
+digest = "b8d451b10f8a"
+where = ".github/workflows/release.yaml"
+subject = "bash scripts/macos-install-user-request.sh clear"
+reason = "clears a request that may never have been set"
+
+[[boundary.discarded_verdicts]]
+digest = "1f806ab11b30"
+where = ".github/workflows/release.yaml"
+subject = "bash scripts/install-manifest-request.sh clear"
+reason = "clears a request that may never have been set"
+
+[[boundary.discarded_verdicts]]
+digest = "882dd31b0f34"
+where = ".github/workflows/release.yaml"
+subject = "pkgutil --pkg-info com.capsem.pkg"
+reason = "failure diagnostics; the package not being installed is what is being diagnosed"
+
+[[boundary.discarded_verdicts]]
+digest = "5ff213a7df7f"
+where = ".github/workflows/release.yaml"
+subject = "find /Applications -maxdepth 3 -name Capsem.app -print"
+reason = "failure diagnostics; finding nothing is a result worth printing"
+
+[[boundary.discarded_verdicts]]
+digest = "1bc977b65230"
+where = ".github/workflows/release.yaml"
+subject = "ls -la $HOME/.capsem $HOME/.capsem/bin $HOME/.capsem/logs"
+reason = "failure diagnostics; a missing directory is part of the report"
+
+[[boundary.discarded_verdicts]]
+digest = "d25b4d4544f6"
+where = ".github/workflows/release.yaml"
+subject = "tail -n 400 /var/log/install.log"
+reason = "failure diagnostics; the log may not exist on a run that failed early"
+
+[[boundary.discarded_verdicts]]
+digest = "fa576fa45b21"
+where = ".github/workflows/release.yaml"
+subject = "tail -n 400 $HOME/.capsem/logs/install-latest.log"
+reason = "failure diagnostics; the log may not exist on a run that failed early"
+
+[[boundary.discarded_verdicts]]
+digest = "7f05ea7e6584"
+where = "scripts/bootstrap-linux.sh"
+subject = "capsem_linux_as_root systemctl restart systemd-binfmt.service"
+reason = "best-effort on hosts without systemd; bootstrap continues and the gate checks the capability later"
+
+[[boundary.discarded_verdicts]]
+digest = "2f11afe49a4c"
+where = "scripts/bootstrap-linux.sh"
+subject = "capsem_linux_as_root update-binfmts --enable"
+reason = "best-effort; binfmt may be absent or already enabled"
+
+[[boundary.discarded_verdicts]]
+digest = "74539be85480"
+where = "scripts/bootstrap-linux.sh"
+subject = "capsem_linux_as_root modprobe kvm"
+reason = "best-effort; KVM may be built in, absent, or already loaded, and doctor reports the real state"
+
+[[boundary.discarded_verdicts]]
+digest = "07ddd0ee5d14"
+where = "scripts/bootstrap-linux.sh"
+subject = "capsem_linux_as_root modprobe vhost_vsock"
+reason = "best-effort; the module may be built in or already loaded, and doctor reports the real state"
+
+[[boundary.discarded_verdicts]]
+digest = "425b81d285a6"
+where = "scripts/bootstrap-rust.sh"
+subject = "hash -r"
+reason = "a shell builtin that has nothing to forget in a fresh non-interactive shell"
+
+[[boundary.discarded_verdicts]]
+digest = "ae37391e3f77"
+where = "scripts/build-pkg.sh"
+subject = "xattr -rc $WORK_DIR/payload $PKG_SCRIPTS"
+reason = "having no extended attributes to clear is the desired end state"
+
+[[boundary.discarded_verdicts]]
+digest = "0e859548a8aa"
+where = "scripts/check-generated-settings.sh"
+subject = "diff -u $ROOT/$file $fresh"
+reason = "prints detail for the reader; the verdict is the cmp above it, which sets failed=1"
+
+[[boundary.discarded_verdicts]]
+digest = "3ebd958506da"
+where = "scripts/cleanup-docker-containers-by-mount.sh"
+subject = "docker inspect --format {{range .Mounts}}{{println .Source}}{{end}} $container_id"
+reason = "the container can exit between being listed and being inspected"
+
+[[boundary.discarded_verdicts]]
+digest = "218517a41536"
+where = "scripts/deb-postinst.sh"
+subject = "cp -R /usr/share/capsem/profiles/. $CAPSEM_DIR/profiles/"
+reason = "the packaged profile tree is optional; its absence must not fail the install"
+
+[[boundary.discarded_verdicts]]
+digest = "b61604839e7c"
+where = "scripts/deb-postinst.sh"
+subject = "su $TARGET_USER -c XDG_RUNTIME_DIR=$XDG_DIR systemctl --user status capsem.service --no-pager -l"
+reason = "diagnostics; a not-running unit is exactly what this prints"
+
+[[boundary.discarded_verdicts]]
+digest = "a651a24dcdbf"
+where = "scripts/deb-postinst.sh"
+subject = "su $TARGET_USER -c XDG_RUNTIME_DIR=$XDG_DIR journalctl --user-unit capsem.service --no-pager -n 100"
+reason = "diagnostics; there may be no journal yet on a first install"
+
+[[boundary.discarded_verdicts]]
+digest = "30e2e243eea1"
+where = "scripts/deb-preinst.sh"
+subject = "chown -R $TARGET_USER:$(id -gn $TARGET_USER) $CAPSEM_DIR/logs"
+reason = "the log directory may not exist before the first run"
+
+[[boundary.discarded_verdicts]]
+digest = "d52766736735"
+where = "scripts/deb-preinst.sh"
+subject = "su $TARGET_USER -c XDG_RUNTIME_DIR=$XDG_DIR systemctl --user stop capsem.service"
+reason = "stopping a service that is not running is the normal upgrade path"
+
+[[boundary.discarded_verdicts]]
+digest = "b0e4d318c0fa"
+where = "scripts/deb-preinst.sh"
+subject = "pkill -9 -f $CAPSEM_DIR/bin/$name"
+reason = "nothing to kill is the common case; pkill exits non-zero on no match"
+
+[[boundary.discarded_verdicts]]
+digest = "f91e4b3615e3"
+where = "scripts/deb-preinst.sh"
+subject = "pkill -9 -f /usr/bin/$name"
+reason = "nothing to kill is the common case; pkill exits non-zero on no match"
+
+[[boundary.discarded_verdicts]]
+digest = "23dd11c8481d"
+where = "scripts/generate-settings.sh"
+subject = "tail -200 $LOG"
+reason = "prints the generator log after a failure; the log may be empty"
+
+[[boundary.discarded_verdicts]]
+digest = "309b31a104e3"
+where = "scripts/macos_tart_guest.sh"
+subject = "cat $SERVICE_LOG_DIR/service*.log"
+reason = "diagnostics; the glob may match nothing"
+
+[[boundary.discarded_verdicts]]
+digest = "9b6a02b15944"
+where = "scripts/macos_tart_guest.sh"
+subject = "bash $INSTALL_USER_REQUEST clear"
+reason = "clears a request that may never have been set"
+
+[[boundary.discarded_verdicts]]
+digest = "7bade16dbb40"
+where = "scripts/macos_tart_guest.sh"
+subject = "bash $INSTALL_MANIFEST_REQUEST clear"
+reason = "clears a request that may never have been set"
+
+[[boundary.discarded_verdicts]]
+digest = "00197fb30042"
+where = "scripts/macos_tart_guest.sh"
+subject = "cp $ORIGINAL_MANIFEST $REMOTE_MANIFEST"
+reason = "cleanup restore; the original may not have been captured if the run failed before that point"
+
+[[boundary.discarded_verdicts]]
+digest = "fd59813c8a7d"
+where = "scripts/macos_tart_guest.sh"
+subject = "cp $SERVICE_PLIST_BACKUP $SERVICE_PLIST"
+reason = "cleanup restore; the backup may not exist if the run failed before it was taken"
+
+[[boundary.discarded_verdicts]]
+digest = "5a63cb81b516"
+where = "scripts/macos_tart_guest.sh"
+subject = "launchctl bootout gui/$(id -u) $SERVICE_PLIST"
+reason = "unloading a service that is not loaded is the normal path"
+
+[[boundary.discarded_verdicts]]
+digest = "2a080ed3b333"
+where = "scripts/macos_tart_guest.sh"
+subject = "launchctl bootstrap gui/$(id -u) $SERVICE_PLIST"
+reason = "may already be loaded from a previous stage of the same run"
+
+[[boundary.discarded_verdicts]]
+digest = "1d9ab9c5f4ee"
+where = "scripts/macos_tart_guest.sh"
+subject = "kill $RELEASE_HTTP_PID"
+reason = "the helper server may have exited on its own already"
+
+[[boundary.discarded_verdicts]]
+digest = "db4e183b296a"
+where = "scripts/macos_tart_guest.sh"
+subject = "wait $RELEASE_HTTP_PID"
+reason = "waiting on a process that has already been reaped is not an error here"
+
+[[boundary.discarded_verdicts]]
+digest = "413fdebf6e7b"
+where = "scripts/macos_tart_guest.sh"
+subject = "cat $RELEASE_HTTP_LOG"
+reason = "diagnostics; the log may not exist if the server never started"
+
+[[boundary.discarded_verdicts]]
+digest = "30c82e160d7d"
+where = "scripts/macos_tart_guest.sh"
+subject = "service_log_stream"
+reason = "a background log tail; its exit status describes the tail, not the test"
+
+[[boundary.discarded_verdicts]]
+digest = "c2acd4da8488"
+where = "scripts/macos_tart_guest.sh"
+subject = "tail -n +$first_line"
+reason = "the offset may be past the end of a log that stopped growing"
+
+[[boundary.discarded_verdicts]]
+digest = "64e000e18646"
+where = "scripts/macos_tart_guest.sh"
+subject = "launchctl print gui/$(id -u)/com.capsem.service"
+reason = "diagnostics; an unloaded service is what this is printing about"
+
+[[boundary.discarded_verdicts]]
+digest = "c5226c15dfa0"
+where = "scripts/preflight.sh"
+subject = "security delete-keychain $keychain"
+reason = "deleting a keychain that was never created is the desired end state"
+
+[[boundary.discarded_verdicts]]
+digest = "69ae39b348c2"
+where = "scripts/prove-macos-package-boot.sh"
+subject = "pkill -9 -f $CAPSEM_HOME_DIR/bin/$name"
+reason = "nothing to kill is the common case; pkill exits non-zero on no match"
+
+[[boundary.discarded_verdicts]]
+digest = "fc53e3713fe4"
+where = "scripts/simulate-install.sh"
+subject = "pkill -9 -f $INSTALL_DIR/$name"
+reason = "nothing to kill is the common case; pkill exits non-zero on no match"
+
+[[boundary.discarded_verdicts]]
+digest = "9c3827670aea"
+where = "scripts/simulate-install.sh"
+subject = "$BIN_SRC/capsem version"
+reason = "a banner printed before the real assertions; those are what decide the run"
+
+[[boundary.discarded_verdicts]]
+digest = "0ba21369ba00"
+where = "scripts/simulate-install.sh"
+subject = "head -1"
+reason = "reads the first line of a stream that may be empty"
+
+[[boundary.discarded_verdicts]]
+digest = "4596796f7191"
+where = "site/public/install.sh"
+subject = "clear_macos_install_user_request"
+reason = "clears a request that may never have been set"
+
+[[boundary.discarded_verdicts]]
+digest = "3f30ef4f1051"
+where = "site/public/install.sh"
+subject = "clear_install_manifest_request"
+reason = "clears a request that may never have been set"
+
+[[boundary.discarded_verdicts]]
+digest = "e71e2ff726f6"
+where = "site/public/install.sh"
+subject = "return 0"
+reason = "a trap handler returning success on a path where the failure has already been reported"

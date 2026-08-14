@@ -163,7 +163,7 @@ impl FuseProcessor {
                         0
                     },
                     tv_nsec: if attr_in.valid & FATTR_ATIME != 0 {
-                        attr_in.atimensec as i64
+                        i64::from(attr_in.atimensec)
                     } else {
                         libc::UTIME_OMIT
                     },
@@ -175,7 +175,7 @@ impl FuseProcessor {
                         0
                     },
                     tv_nsec: if attr_in.valid & FATTR_MTIME != 0 {
-                        attr_in.mtimensec as i64
+                        i64::from(attr_in.mtimensec)
                     } else {
                         libc::UTIME_OMIT
                     },

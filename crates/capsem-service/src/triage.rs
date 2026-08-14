@@ -65,10 +65,10 @@ fn civil_to_secs(y: i64, m: u32, d: u32, h: u32, mi: u32, s: u32) -> u64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = (y - era * 400) as u64;
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) as u64 + 2) / 5 + d as u64 - 1;
+    let doy = (153 * u64::from(if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + u64::from(d) - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     let days = (era * 146097) as u64 + doe - 719_468;
-    days * 86400 + h as u64 * 3600 + mi as u64 * 60 + s as u64
+    days * 86400 + u64::from(h) * 3600 + u64::from(mi) * 60 + u64::from(s)
 }
 
 /// One panic event extracted from a log file.

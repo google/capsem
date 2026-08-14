@@ -372,7 +372,7 @@ impl VirtioBlockDevice {
             }
         };
 
-        let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
+        let total_len: u64 = data_descs.iter().map(|&(_, l)| u64::from(l)).sum();
         if offset
             .checked_add(total_len)
             .is_none_or(|end| end > capacity_sectors * SECTOR_SIZE)
@@ -407,7 +407,7 @@ impl VirtioBlockDevice {
         data_descs: &[(u64, u32)],
     ) -> u8 {
         if read_only {
-            let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
+            let total_len: u64 = data_descs.iter().map(|&(_, l)| u64::from(l)).sum();
             log_block_ioerr("write", sector, total_len, "read_only", None);
             return VIRTIO_BLK_S_IOERR;
         }
@@ -420,7 +420,7 @@ impl VirtioBlockDevice {
             }
         };
 
-        let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
+        let total_len: u64 = data_descs.iter().map(|&(_, l)| u64::from(l)).sum();
         if offset
             .checked_add(total_len)
             .is_none_or(|end| end > capacity_sectors * SECTOR_SIZE)
@@ -451,7 +451,7 @@ impl VirtioBlockDevice {
             if len == 0 {
                 continue;
             }
-            let host_ptr = mem.gpa_range_to_host(gpa, len as u64)?;
+            let host_ptr = mem.gpa_range_to_host(gpa, u64::from(len))?;
             iovecs.push(libc::iovec {
                 iov_base: host_ptr.cast(),
                 iov_len: len as usize,
@@ -467,7 +467,7 @@ impl VirtioBlockDevice {
         data_descs: &[(u64, u32)],
     ) -> Result<(u64, u64, Vec<libc::iovec>), u8> {
         let offset = sector.checked_mul(SECTOR_SIZE).ok_or(VIRTIO_BLK_S_IOERR)?;
-        let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
+        let total_len: u64 = data_descs.iter().map(|&(_, l)| u64::from(l)).sum();
         if offset
             .checked_add(total_len)
             .is_none_or(|end| end > capacity_sectors * SECTOR_SIZE)
@@ -609,7 +609,7 @@ impl VirtioBlockDevice {
 
         for segment in data.chunks_exact(DISCARD_SEGMENT_SIZE) {
             let sector = u64::from_le_bytes(segment[0..8].try_into().unwrap());
-            let num_sectors = u32::from_le_bytes(segment[8..12].try_into().unwrap()) as u64;
+            let num_sectors = u64::from(u32::from_le_bytes(segment[8..12].try_into().unwrap()));
             if num_sectors == 0 {
                 continue;
             }
@@ -644,7 +644,7 @@ impl VirtioBlockDevice {
             if len == 0 {
                 continue;
             }
-            let host_ptr = mem.gpa_range_to_host(gpa, len as u64)?;
+            let host_ptr = mem.gpa_range_to_host(gpa, u64::from(len))?;
             let buf = unsafe { std::slice::from_raw_parts(host_ptr, len as usize) };
             data.extend_from_slice(buf);
         }
@@ -671,7 +671,7 @@ impl VirtioBlockDevice {
             Some(libc::EOPNOTSUPP | libc::ENOSYS | libc::EINVAL) => {
                 file.seek(SeekFrom::Start(offset))?;
                 let mut remaining = len;
-                let zeros = [0_u8; 64 * 1024];
+                let zeros = vec![0_u8; 64 * 1024];
                 while remaining > 0 {
                     let n = zeros.len().min(remaining as usize);
                     file.write_all(&zeros[..n])?;
@@ -808,13 +808,13 @@ impl VirtioBlockDevice {
                 VIRTIO_BLK_T_IN => {
                     read_ops += 1;
                     if status == VIRTIO_BLK_S_OK {
-                        bytes_read += total_data as u64;
+                        bytes_read += u64::from(total_data);
                     }
                 }
                 VIRTIO_BLK_T_OUT => {
                     write_ops += 1;
                     if status == VIRTIO_BLK_S_OK {
-                        bytes_written += total_data as u64;
+                        bytes_written += u64::from(total_data);
                     }
                 }
                 _ => {}
@@ -1017,12 +1017,12 @@ impl VirtioBlockDevice {
                     if type_ == VIRTIO_BLK_T_IN {
                         result.read_ops += 1;
                         if status == VIRTIO_BLK_S_OK {
-                            result.bytes_read += total_data as u64;
+                            result.bytes_read += u64::from(total_data);
                         }
                     } else {
                         result.write_ops += 1;
                         if status == VIRTIO_BLK_S_OK {
-                            result.bytes_written += total_data as u64;
+                            result.bytes_written += u64::from(total_data);
                         }
                     }
                 }
@@ -1109,7 +1109,7 @@ struct BlockIoUring {
 impl BlockIoUring {
     fn new(file_fd: RawFd) -> std::io::Result<Self> {
         let completion_fd = create_eventfd(libc::EFD_CLOEXEC | libc::EFD_NONBLOCK)?;
-        let ring = IoUring::new(QUEUE_SIZE as u32)?;
+        let ring = IoUring::new(u32::from(QUEUE_SIZE))?;
         ring.submitter()
             .register_eventfd(completion_fd.as_raw_fd())?;
         Ok(Self {
@@ -1249,13 +1249,13 @@ impl BlockIoUring {
                 VIRTIO_BLK_T_IN => {
                     result.read_ops += 1;
                     if status == VIRTIO_BLK_S_OK {
-                        result.bytes_read += request.total_data as u64;
+                        result.bytes_read += u64::from(request.total_data);
                     }
                 }
                 VIRTIO_BLK_T_OUT => {
                     result.write_ops += 1;
                     if status == VIRTIO_BLK_S_OK {
-                        result.bytes_written += request.total_data as u64;
+                        result.bytes_written += u64::from(request.total_data);
                     }
                 }
                 _ => {}
@@ -1265,7 +1265,7 @@ impl BlockIoUring {
             queue.flush_used();
             result.should_interrupt = queue.prepare_kick();
             ::metrics::counter!(METRIC_USED_ENTRIES_TOTAL, "backend" => "io_uring")
-                .increment(result.used_entries as u64);
+                .increment(u64::from(result.used_entries));
             if result.should_interrupt {
                 ::metrics::counter!(
                     METRIC_INTERRUPTS_TOTAL,
@@ -1400,7 +1400,7 @@ fn emit_request_metrics(type_: u32, total_data: u32, status: u8, duration: Durat
             "operation" => operation,
             "status" => status_label,
         )
-        .increment(total_data as u64);
+        .increment(u64::from(total_data));
     }
     ::metrics::histogram!(
         METRIC_REQUEST_DURATION_MS,
@@ -1418,11 +1418,11 @@ fn emit_queue_drain_metrics(backend: &'static str, result: &QueueProcessResult) 
     ::metrics::counter!(METRIC_QUEUE_DRAINS_TOTAL, "backend" => backend).increment(1);
     if result.processed > 0 {
         ::metrics::counter!(METRIC_DESCRIPTORS_DRAINED_TOTAL, "backend" => backend)
-            .increment(result.processed as u64);
+            .increment(u64::from(result.processed));
     }
     if result.used_entries > 0 {
         ::metrics::counter!(METRIC_USED_ENTRIES_TOTAL, "backend" => backend)
-            .increment(result.used_entries as u64);
+            .increment(u64::from(result.used_entries));
     }
     if result.should_interrupt {
         ::metrics::counter!(METRIC_INTERRUPTS_TOTAL, "backend" => backend, "decision" => "raised")
@@ -1495,7 +1495,7 @@ impl VirtioDevice for VirtioBlockDevice {
         let mut config = [0_u8; 48];
         config[0..8].copy_from_slice(&self.capacity_sectors.to_le_bytes());
         if !self.read_only {
-            let max_discard_sectors = self.capacity_sectors.min(u32::MAX as u64) as u32;
+            let max_discard_sectors = self.capacity_sectors.min(u64::from(u32::MAX)) as u32;
             config[36..40].copy_from_slice(&max_discard_sectors.to_le_bytes());
             config[40..44].copy_from_slice(&32_u32.to_le_bytes());
             config[44..48].copy_from_slice(&1_u32.to_le_bytes());

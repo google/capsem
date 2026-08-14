@@ -37,7 +37,7 @@ pub(super) struct VirtqDesc {
 
 impl VirtqDesc {
     fn read_from(mem: &GuestMemoryRef, desc_table_gpa: u64, index: u16) -> Option<Self> {
-        let offset = desc_table_gpa + (index as u64) * 16;
+        let offset = desc_table_gpa + u64::from(index) * 16;
         let host = mem.gpa_to_host(offset)?;
         unsafe {
             let addr = u64::from_le(std::ptr::read_unaligned(host as *const u64));
@@ -272,7 +272,7 @@ impl VirtQueue {
         let mut visited = 0u32;
 
         loop {
-            if visited >= self.size as u32 {
+            if visited >= u32::from(self.size) {
                 // Cycle detection: we've visited more descriptors than the queue size
                 break;
             }
@@ -383,7 +383,7 @@ impl VirtQueue {
     /// Read a ring entry from the available ring.
     fn read_avail_ring(&self, ring_index: u16) -> u16 {
         // ring entries start at offset 4 (after flags + idx)
-        let entry_gpa = self.avail_ring_gpa + 4 + (ring_index as u64) * 2;
+        let entry_gpa = self.avail_ring_gpa + 4 + u64::from(ring_index) * 2;
         if let Some(ptr) = self.mem.gpa_to_host(entry_gpa) {
             unsafe { u16::from_le(std::ptr::read_unaligned(ptr as *const u16)) }
         } else {
@@ -393,12 +393,12 @@ impl VirtQueue {
 
     /// Read `used_event` from the end of the available ring.
     fn read_used_event(&self) -> u16 {
-        read_u16(&self.mem, self.avail_ring_gpa + 4 + (self.size as u64) * 2)
+        read_u16(&self.mem, self.avail_ring_gpa + 4 + u64::from(self.size) * 2)
     }
 
     /// Write `avail_event` at the end of the used ring.
     fn write_avail_event(&self, idx: u16) {
-        let event_gpa = self.used_ring_gpa + 4 + (self.size as u64) * 8;
+        let event_gpa = self.used_ring_gpa + 4 + u64::from(self.size) * 8;
         if let Some(ptr) = self.mem.gpa_to_host(event_gpa) {
             unsafe {
                 std::ptr::write_unaligned(ptr as *mut u16, idx.to_le());
@@ -409,10 +409,10 @@ impl VirtQueue {
     /// Write a used ring entry.
     fn write_used_ring(&self, ring_index: u16, id: u16, len: u32) {
         // used ring layout: flags (u16), idx (u16), ring[size] {id: u32, len: u32}
-        let entry_gpa = self.used_ring_gpa + 4 + (ring_index as u64) * 8;
+        let entry_gpa = self.used_ring_gpa + 4 + u64::from(ring_index) * 8;
         if let Some(ptr) = self.mem.gpa_to_host(entry_gpa) {
             unsafe {
-                std::ptr::write_unaligned(ptr as *mut u32, (id as u32).to_le());
+                std::ptr::write_unaligned(ptr as *mut u32, u32::from(id).to_le());
                 std::ptr::write_unaligned(ptr.add(4) as *mut u32, len.to_le());
             }
         }

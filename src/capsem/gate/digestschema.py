@@ -85,6 +85,9 @@ class DigestConfig(Strict):
     waiting does not get shorter when its steps do.
     """
 
+    lane_share: PositiveFloat
+    """Share of a lane's critical path a single `FAST` step may own."""
+
     hotspots: PositiveInt
     """How many hotspots the digest names. A ranked list nobody finishes is a
     list that ranked nothing."""

@@ -585,6 +585,15 @@ Prove it derives rather than hardcodes: change the source value and confirm the 
 
 `cargo test --test platform_gating` scans all `.rs` files under `crates/` for macOS-only and Linux-only symbols (`libc::clonefile`, `AppleVzHypervisor`, `KvmHypervisor`, `FICLONE`, etc.) and verifies they appear inside `#[cfg(target_os = "...")]` blocks. This catches ungated platform APIs before they reach CI. Run this test when adding any platform-specific code.
 
+## Excluding something from a guard
+
+Real trees contain things a guard should not fail on. One legal shape, in
+`capsem.gate.exclusions`: **exact** (the thing, not a category), **hashed**
+where the subject is content, **with a stated reason** whose length the schema
+checks, and **reconciled both ways** so a stale entry fails too. Never a count
+-- it fails on a harmless addition and passes on a dangerous change to
+something already listed. `/dev-gate` has why each wrong shape was tried.
+
 ## Testable design
 
 Extract logic into `capsem-core` -- never embed business logic in the app layer where it's coupled to Tauri. If you can't test something without booting a VM or launching the GUI, it belongs in core.

@@ -9587,7 +9587,7 @@ fn profile_vm_resources_drive_new_session_defaults() {
 
     let default_resources = resolve_profile_vm_resources(&profile, None, None);
     assert_eq!(default_resources.cpus, profile.vm.cpu_count);
-    assert_eq!(default_resources.ram_mb, profile.vm.ram_gb as u64 * 1024);
+    assert_eq!(default_resources.ram_mb, u64::from(profile.vm.ram_gb) * 1024);
     assert_eq!(
         default_resources.scratch_disk_size_gb,
         profile.vm.scratch_disk_size_gb

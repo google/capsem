@@ -16,7 +16,7 @@ from .command import GateCommand
 from .config import GateConfig
 from .egress import Egress
 from .errors import GateError
-from .execution import step
+from .execution import Kind, Needs, Speed, step
 from .fileactions import MakeDir
 from .lifecycle import Resource
 from .plan import Plan
@@ -89,7 +89,14 @@ class ReleaseBinariesCommand(
 
         _require_channel(config, channel)
 
-        accepted = plan.add(step("qualification.accept", AcceptQualification(self.source_commit())))
+        accepted = plan.add(
+            step(
+                "qualification.accept",
+                AcceptQualification(self.source_commit()),
+                kind=Kind.STATIC_TEST,
+                speed=Speed.FAST,
+            )
+        )
         checked = plan.add(
             step(
                 "source.remote-main",
@@ -102,6 +109,9 @@ class ReleaseBinariesCommand(
                     root=checkout,
                     outside_sandbox=True,
                 ),
+                kind=Kind.STATIC_TEST,
+                needs=frozenset({Needs.NETWORK}),
+                speed=Speed.FAST,
             ),
             after=(accepted,),
         )
@@ -116,6 +126,8 @@ class ReleaseBinariesCommand(
                     outside_sandbox=True,
                 ),
                 MakeDir(config.path(settings.preflight_dir)),
+                kind=Kind.STATIC_TEST,
+                speed=Speed.FAST,
             ),
             after=(checked,),
         )
@@ -134,6 +146,9 @@ class ReleaseBinariesCommand(
                     settings.channel_source,
                     outside_sandbox=True,
                 ),
+                kind=Kind.STATIC_TEST,
+                needs=frozenset({Needs.NETWORK}),
+                speed=Speed.FAST,
             ),
             after=(prepared,),
         )
@@ -148,6 +163,9 @@ class ReleaseBinariesCommand(
                     root=checkout,
                     outside_sandbox=True,
                 ),
+                kind=Kind.PUBLISH,
+                needs=frozenset({Needs.NETWORK}),
+                speed=Speed.FAST,
             ),
             after=(fetched,),
         )
@@ -161,6 +179,9 @@ class ReleaseBinariesCommand(
                     root=checkout,
                     outside_sandbox=True,
                 ),
+                kind=Kind.PUBLISH,
+                needs=frozenset({Needs.NETWORK}),
+                speed=Speed.SLOW,
             ),
             after=(published,),
         )
@@ -200,7 +221,14 @@ class ReleaseProfileCommand(
         _require_channel(config, self._args.channel)
         _require_profile(config, self._args.profile)
 
-        accepted = plan.add(step("qualification.accept", AcceptQualification(self.source_commit())))
+        accepted = plan.add(
+            step(
+                "qualification.accept",
+                AcceptQualification(self.source_commit()),
+                kind=Kind.STATIC_TEST,
+                speed=Speed.FAST,
+            )
+        )
         checked = plan.add(
             step(
                 "source.remote-main",
@@ -214,6 +242,9 @@ class ReleaseProfileCommand(
                     outside_sandbox=True,
                 ),
                 MakeDir(config.path(settings.preflight_dir)),
+                kind=Kind.STATIC_TEST,
+                needs=frozenset({Needs.NETWORK}),
+                speed=Speed.FAST,
             ),
             after=(accepted,),
         )
@@ -228,6 +259,9 @@ class ReleaseProfileCommand(
                     root=checkout,
                     outside_sandbox=True,
                 ),
+                kind=Kind.PUBLISH,
+                needs=frozenset({Needs.NETWORK}),
+                speed=Speed.FAST,
             ),
             after=(checked,),
         )
@@ -251,6 +285,9 @@ class ReleaseProfileCommand(
                     cwd=checkout,
                     outside_sandbox=True,
                 ),
+                kind=Kind.PUBLISH,
+                needs=frozenset({Needs.NETWORK}),
+                speed=Speed.SLOW,
             ),
             after=(published,),
         )

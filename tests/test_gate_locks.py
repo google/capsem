@@ -29,7 +29,7 @@ import pytest
 
 from capsem.gate import config as gate_config
 from capsem.gate.errors import GateError
-from capsem.gate.harnessschema import LockConfig
+from capsem.gate.lockschema import LockConfig
 from capsem.gate.locks import ExclusiveLock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -168,7 +168,7 @@ def test_a_launched_daemon_does_not_inherit_the_lock(tmp_path: Path) -> None:
             textwrap.dedent("""
                 import json, os, subprocess, sys
                 sys.path.insert(0, "src")
-                from capsem.gate.harnessschema import LockConfig
+                from capsem.gate.lockschema import LockConfig
                 from capsem.gate.locks import ExclusiveLock
 
                 ExclusiveLock(LockConfig(**json.loads(sys.argv[1])),

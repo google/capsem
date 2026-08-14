@@ -47,6 +47,9 @@ class StepRow(Strict):
     duration_ms: float
     status: str
     resource_ms: float = 0.0
+    dependency_ms: float = 0.0
+    """When the graph allowed this step to start. See `Timing.dependency_waits`;
+    defaulted so a row written before the field existed still loads."""
 
 
 class LedgerRow(Strict):
@@ -158,6 +161,7 @@ def distill(events: list[dict], settings: LedgerConfig) -> LedgerRow | None:
                 duration_ms=spent,
                 status=timing.status.get(label, OK),
                 resource_ms=timing.resource_waits.get(label, 0.0),
+                dependency_ms=timing.dependency_waits.get(label, 0.0),
             )
             for label, spent in timing.steps.items()
         },

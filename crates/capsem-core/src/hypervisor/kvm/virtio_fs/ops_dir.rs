@@ -263,7 +263,7 @@ impl FuseProcessor {
             Ok(c) => c,
             Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
         };
-        if unsafe { libc::mknod(c_path.as_ptr(), mk.mode & !mk.umask, mk.rdev as libc::dev_t) } != 0
+        if unsafe { libc::mknod(c_path.as_ptr(), mk.mode & !mk.umask, libc::dev_t::from(mk.rdev)) } != 0
         {
             return fuse::error_response(header.unique, -fuse::errno());
         }

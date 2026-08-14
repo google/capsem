@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .actions import Script
 from .config import GateConfig
-from .execution import Step, step
+from .execution import Kind, Needs, Speed, Step, step
 
 
 def _binary(config: GateConfig) -> str:
@@ -60,6 +60,9 @@ def injection(
             profile,
         ),
         contends=(config.exclusive("apple_vz"),),
+        kind=Kind.CAPSEM,
+        needs=frozenset({Needs.VM, Needs.KVM, Needs.DISK}),
+        speed=Speed.SLOW,
     )
 
 
@@ -85,4 +88,7 @@ def integration(
             env=config.environment.content(profiles=profiles_dir or _profiles_dir(config)),
         ),
         contends=(config.exclusive("apple_vz"),),
+        kind=Kind.CAPSEM,
+        needs=frozenset({Needs.VM, Needs.KVM, Needs.DISK}),
+        speed=Speed.SLOW,
     )

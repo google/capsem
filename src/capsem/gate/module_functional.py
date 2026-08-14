@@ -15,7 +15,7 @@ from .actions import Action
 from .command import GateCommand
 from .config import GateConfig
 from .context import Context
-from .execution import Step, step
+from .execution import Kind, Needs, Speed, Step, step
 from .plan import Plan
 from .qualification import Qualification
 from .testmodules import InWorkspace
@@ -104,6 +104,9 @@ def functional(
                 assets=base_content[0] if base_content else None,
                 profiles_dir=base_content[1] if base_content else None,
             ),
+            kind=Kind.UNIT_TEST,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.SLOW,
         ),
         after=after,
     )

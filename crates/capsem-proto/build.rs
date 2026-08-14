@@ -34,7 +34,7 @@ fn main() {
             }
         };
         for b in &bytes {
-            hash ^= *b as u64;
+            hash ^= u64::from(*b);
             hash = hash.wrapping_mul(0x100000001b3);
         }
         println!("cargo:rerun-if-changed={}", path.display());

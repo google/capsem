@@ -17,7 +17,7 @@ from . import config as gate_config
 from .actions import Call
 from .command import GateCommand
 from .errors import GateError
-from .execution import Step, step
+from .execution import Kind, Needs, Speed, Step, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .proc import Runner
@@ -136,6 +136,9 @@ def release_step(config, phase: str) -> Step:
         f"storage.{phase}",
         release_action(phase),
         contends=(config.exclusive("docker_daemon"),),
+        kind=Kind.STATIC_TEST,
+        needs=frozenset({Needs.DISK}),
+        speed=Speed.FAST,
     )
 
 
@@ -187,6 +190,9 @@ class StorageCommand(
                     ),
                 ),
                 contends=(self._config.exclusive("docker_daemon"),),
+                kind=Kind.STATIC_TEST,
+                needs=frozenset({Needs.DISK}),
+                speed=Speed.FAST,
             )
         )
         return plan

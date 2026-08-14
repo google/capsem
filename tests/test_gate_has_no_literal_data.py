@@ -211,6 +211,31 @@ def test_no_module_spells_an_architecture_or_channel(module: Path) -> None:
     )
 
 
+def test_the_architecture_enum_agrees_with_the_config() -> None:
+    """`Arch`'s concrete members are exactly the architectures config declares.
+
+    `Arch` says which architecture a step's work belongs to, and `config.arch`
+    already owns the spellings. The enum carried its own copy of them until
+    this guard objected -- correctly: two lists of architectures is the exact
+    shape of the bug the vocabulary rule was written for. Its members now hold
+    no value at all, so there is one list, and this asserts the names still
+    line up with it.
+
+    `HOST` and `ANY` are not architectures -- they are the absence of a
+    concrete one -- so they are excluded rather than expected in config.
+    """
+    from capsem.gate.execution import Arch
+
+    concrete = {member.name.lower() for member in Arch} - {Arch.HOST.name.lower(), Arch.ANY.name.lower()}
+    declared = set(_config()["architectures"])
+
+    assert concrete == declared, (
+        "Arch and [architectures] disagree; one was edited without the other.\n"
+        f"  in the enum only: {sorted(concrete - declared)}\n"
+        f"  in config only:   {sorted(declared - concrete)}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # The guard itself
 # ---------------------------------------------------------------------------

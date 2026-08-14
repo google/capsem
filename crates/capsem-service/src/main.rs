@@ -754,7 +754,7 @@ fn resolve_profile_vm_resources(
     requested_cpus: Option<u32>,
 ) -> ResolvedVmResources {
     ResolvedVmResources {
-        ram_mb: requested_ram_mb.unwrap_or(profile.vm.ram_gb as u64 * 1024),
+        ram_mb: requested_ram_mb.unwrap_or(u64::from(profile.vm.ram_gb) * 1024),
         cpus: requested_cpus.unwrap_or(profile.vm.cpu_count),
         scratch_disk_size_gb: profile.vm.scratch_disk_size_gb,
     }
@@ -2662,7 +2662,7 @@ fn validate_session_rootfs_size(
     profile: &ProfileConfigFile,
     entry: &PersistentVmEntry,
 ) -> Result<()> {
-    let expected_bytes = profile.vm.scratch_disk_size_gb as u64 * 1024 * 1024 * 1024;
+    let expected_bytes = u64::from(profile.vm.scratch_disk_size_gb) * 1024 * 1024 * 1024;
     let rootfs = capsem_core::guest_share_dir(&entry.session_dir).join("system/rootfs.img");
     let metadata = std::fs::metadata(&rootfs).with_context(|| {
         format!(
@@ -11160,7 +11160,7 @@ fn secs_to_rfc3339(secs: u64) -> String {
     let era = if z >= 0 { z } else { z - 146096 } / 146097;
     let doe = (z - era * 146097) as u32;
     let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe as i64 + era * 400;
+    let y = i64::from(yoe) + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
     let d = doy - (153 * mp + 2) / 5 + 1;

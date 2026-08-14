@@ -16,7 +16,7 @@ from .actions import Action, Call
 from .command import GateCommand
 from .context import Context
 from .disk import footprint, reclaim
-from .execution import step
+from .execution import Kind, Needs, Speed, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .runhistory import free_gb
@@ -58,7 +58,11 @@ class GcCommand(GateCommand, name="gc", help="reclaim the disk the gate is holdi
             # description is being built is doing. `render` measures because
             # that *is* the description -- and it is read-only, which is the
             # distinction the seal is about.
-            plan.add(step("survey", _Survey(self._config)))
+            plan.add(step("survey", _Survey(self._config),
+                kind=Kind.STATIC_TEST,
+                needs=frozenset({Needs.DISK}),
+                speed=Speed.FAST,
+            ))
             return plan
 
         trees = plan.add(
@@ -73,6 +77,9 @@ class GcCommand(GateCommand, name="gc", help="reclaim the disk the gate is holdi
                         effects=machine_effects(Effect.FILESYSTEM),
                     ),
                 ),
+                kind=Kind.STATIC_TEST,
+                needs=frozenset({Needs.DISK}),
+                speed=Speed.FAST,
             )
         )
         if self._args.aggressive:
@@ -89,6 +96,9 @@ class GcCommand(GateCommand, name="gc", help="reclaim the disk the gate is holdi
                         ),
                     ),
                     contends=(self._config.exclusive("docker_daemon"),),
+                    kind=Kind.STATIC_TEST,
+                    needs=frozenset({Needs.DISK}),
+                    speed=Speed.FAST,
                 ),
                 after=(trees,),
             )

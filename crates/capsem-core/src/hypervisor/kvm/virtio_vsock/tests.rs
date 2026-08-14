@@ -208,7 +208,7 @@ fn kvm_vsock_port_block_stays_in_valid_port_range() {
 #[test]
 fn physical_vsock_port_rejects_overflow_and_u16_exhaustion() {
     assert!(physical_vsock_port(u32::MAX, 1).is_err());
-    assert!(physical_vsock_port(u16::MAX as u32, 1).is_err());
+    assert!(physical_vsock_port(u32::from(u16::MAX), 1).is_err());
 }
 
 #[test]

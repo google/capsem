@@ -93,6 +93,178 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   original bytes, a replaced symlink cannot redirect evidence into another
   run, and the Citadel once again rejects either module reaching around the
   primitive boundary.
+- `fast.clippy` claims `workspace_binaries`, and the measurement that settles
+  it is recorded rather than the argument that preceded it. The claim was
+  withheld on the theory that a step-level exclusive is coarser than the lock
+  cargo takes on its own target directory. Measured back to back on one
+  machine: 3m47s without, 3m49s with. Cargo was already serialising those
+  steps -- clippy's 2m20s of "execution" without the claim was 1m27s of work
+  plus about fifty seconds blocked on that lock, charged to execution because
+  nothing had declared it. Declaring it moves the wait into the queueing
+  report instead of adding it.
+
+- Clippy no longer waits on work it does not read. `web.frontend` was a
+  type-check, a unit-test run and a build in one step, and clippy -- which
+  needs only `frontend/dist` -- waited on all three, and through them on
+  `audit.generated-settings`, because the generated mock those tests import
+  made the whole step depend on an `mcp_export` build. Split into
+  `web.frontend-build` and `web.frontend-verify`, with the generated-settings
+  edge on the verify half. By the numbers of the run that confirmed it, clippy
+  starts about two minutes forty-five earlier.
+- Five gate steps drove `cargo` while claiming nothing. Two of them could
+  overlap, and cargo locks its target directory, so they serialised through a
+  lock the gate had never declared -- charging the wait to execution time,
+  where the queueing report cannot see it. They now claim
+  `workspace_binaries`; every holder of that exclusive was already ordered
+  against them, so this declares the contention rather than adding any.
+- `prepare.clean-stale` deleted stale files *and* verified the generated
+  settings, the second of which builds Rust. Split, so one step is one
+  measurement and the build is attributable.
+- `web.release-site` declared `COMPILE` and held the Astro exclusive after its
+  build moved to `web.release-channel`; the declaration was written once for a
+  list of four surfaces and outlived the thing it described. Kind and claim now
+  come per target from `[websurfaces] building`.
+- `Arch` carried its own copy of the architecture spellings while
+  `[architectures]` already owned them -- a second list of exactly the kind
+  centralising that table was meant to end. Its members now hold no value, and
+  a new contract holds their names to the config.
+- `tests/test_gate_scheduling_analysis.py` was never registered in
+  `[suites] source_contract`, so nothing scheduled it.
+
+### Added
+
+- One shape for every guard exclusion (`capsem.gate.exclusions`): exact,
+  hashed over the *parsed* form, with a reason the schema checks the length of,
+  and reconciled in both directions so an entry that no longer applies fails
+  as loudly as a new finding. Two wrong shapes were tried first and are
+  recorded because both look reasonable -- a per-file count, which fails on a
+  harmless addition and passes on a dangerous change to something already
+  listed; and a list of tolerant program names, which misclassified four of
+  the five findings it produced.
+- `tests/citadel/test_discarded_verdicts_are_declared.py`: every
+  `command || true` across scripts, Dockerfile `RUN` and workflow `run:` is
+  ledgered with its reason. None is a bug today; the shape is ledgered because
+  `test "$X" = success || true` once satisfied a release contract while branch
+  protection was off, and an exit status thrown away leaves no trace anywhere.
+- `tests/citadel/test_docker_run_fails_closed.py`: a `RUN` sequencing several
+  statements must `set -e`. Docker runs the body through `/bin/sh -c`, so the
+  instruction's status is the *last* command's. Not the rule GitHub Actions
+  needs -- `run:` executes under `bash -e {0}` -- and assuming it was would
+  have filed thirty-eight false reports.
+- `shellsniff`: the shell tools warn when handed a container of shell rather
+  than shell. A raw `.j2` template lexes without error and yields confident
+  nonsense, which is how the Docker guard's first version reported a correctly
+  chained `make && ls` as two unguarded statements.
+
+- A shell lexer and parser (`shelllex`, `shellnodes`, `shellparse`), because
+  every question this repository asks of shell was being asked with a pattern.
+  Each worked on the case it was written for and failed quietly on the next:
+  `cargo` in a filename, in a comment, on the left of an assignment or inside a
+  quoted argument is not `cargo` in command position, and the distinction is
+  grammatical rather than textual. The tree also models `&&` and `||`, so
+  `test "$X" = success || true` -- a check whose verdict is discarded, the
+  shape that once satisfied a release contract while branch protection was off
+  -- is a question anyone can now ask with `suppressed()`.
+
+  Its own suite found four bugs in it before any consumer did: a heredoc body
+  read as shell, `2>&1` parsed as two arguments, `function name` reporting
+  every function as named "function", and `;;` skipped as an ordinary
+  separator, which ran every arm of a `case` together into the first.
+
+- `tests/citadel/test_step_actions_are_atomic.py`: a step that reaches a
+  compiler must claim the workspace and may not declare a kind that asserts it
+  builds nothing. `web.release-site` spent one minute fifty-nine in
+  `cargo run -p capsem-admin` behind a name that said "web", and every
+  instrument reported it correctly -- one opaque line, for a step that was not
+  the unit anyone thought it was. The guard follows a script's hand-offs and
+  reads argv-form invocations, because the original cargo call was in neither
+  the step nor the shell script it named, and it carries a test proving it
+  still catches that founding case.
+
+- `static.guest-agents` claims the Docker daemon. `capsem-builder agent`
+  cross-compiles through `builder.docker.cross_compile_agent`, so it drives the
+  daemon, and it declared no contention -- leaving the scheduler free to run it
+  beside `install.materialize`, which holds the daemon exclusively. Found by
+  the new graph invariant that a step needing a capability must claim it, not
+  by anything failing.
+
+### Added
+
+- `runs schedule` also reports contention on binding steps. Slack is computed
+  over edges alone, so it says how short a run could be on an unlimited
+  machine; leaving contention out makes it actively misleading. Acting on its
+  first finding freed `web.release-site` to start early, take the `astro_build`
+  claim, and delay `web.frontend`, which is on the critical path -- the run's
+  own resource-wait report caught it. Contention is now reported from measured
+  `resource_ms`, above `slow_action_seconds` so a forty-millisecond queue is
+  not dressed up as a finding.
+
+- `capsem-gate runs schedule <command>` reports what a graph's shape costs: the
+  binding set (nodes with no slack, whose duration is the run's duration) and
+  the `FAST` steps owning a large share of the critical path. On `test-fast`
+  the critical path is 3m24s and two steps are 100% of it --
+  `fast.web.release-site` at 2m13s and `fast.audit.generated-settings` at 1m11s.
+
+  `StepRow` records `dependency_ms`, which the run log measured on every run and
+  `timing.measure` discarded. Ledger schema bumped to v2; older rows are dropped
+  by the reader rather than breaking it.
+
+- `tests/citadel/test_work_graph_invariants.py` asserts the plan's properties
+  against the graph rather than against text: no orphans, every node declared,
+  a step that escapes the sandbox declares `NETWORK`, a capability implies a
+  claim, publishing is terminal, and no edge crosses two concrete
+  architectures. These hold under any rename, reformat or move of code between
+  modules, because none of those change the graph.
+
+- Edges declare why they exist. `Requires.ARTIFACT` hands over bytes, `ORDER`
+  only sequences, `EVIDENCE` needs a recorded result -- carried on
+  `Plan.add(requires=...)` and exposed through `Plan.requires_of`. The
+  distinction is not decoration: hermeticity contaminates along `ARTIFACT`
+  edges and not along `ORDER` ones, and a redundant `ORDER` edge is lost
+  parallelism where a redundant `ARTIFACT` edge usually just restates a real
+  need.
+
+- `workgraph.py` holds the gate's work as a typed DAG, with the contention
+  relation kept separate because it is symmetric and non-transitive. Its first
+  run over the real candidate plan found five redundant edges -- nothing in the
+  tree computed a transitive reduction before -- and `from_plan` reproduces
+  `Plan.edges` exactly.
+
+- Steps declare what they are. `Kind`, `Needs`, `Arch`, `Speed` and
+  `concurrency` on `execution.Step` make the plan a graph that can be reasoned
+  about instead of a set of labels that has to be grepped -- a lint is a lint
+  because it says so, not because a contract matched `fast.` against its name.
+  Hermeticity is derived from `Needs`, never declared, so a step cannot claim a
+  property its inputs contradict.
+
+  `Speed` is relative to the work its lane protects, not an absolute duration.
+  The fast phase runs about four minutes so a lint error fails before a
+  candidate that runs about a hundred and forty; a two-minute step inside it is
+  a three percent tax on catching a typo early, which is the trade the phase
+  exists to make.
+
+  `[boundary.step_attributes]` is a migration ledger with a destination rather
+  than an exemption list: 100 call sites remain, the count may only fall, and
+  when it reaches zero the defaults come off `Step` and the arguments become
+  required. `tests/citadel/test_step_attributes.py` refuses both a module
+  gaining undeclared steps and a ledger entry drifting above the tree.
+
+### Fixed
+
+- `clippy::cast_lossless` is denied, with its 116 sites converted. It is the
+  one member of the numeric-cast family that cannot be wrong -- it flags
+  `x as u64` where `u64::from(x)` is infallible -- so every fix is mechanical
+  and behaviour-preserving. Its three siblings (truncation, sign loss,
+  wrapping) are 607 sites that each need a judgement about range, and are being
+  taken a crate at a time rather than in a sweep.
+
+- Nine I/O buffers moved off the stack, and `clippy::large_stack_arrays` is
+  denied. Three were a megabyte each -- half the 2 MB a spawned thread gets by
+  default, in a single frame -- and two of those are on the self-update path,
+  which runs on a user's machine rather than in CI. Sizes are unchanged, so the
+  I/O behaves identically; each buffer was already allocated once outside its
+  loop, so this is one heap allocation per file against reading the whole file.
+  Audited before the lint was enabled, so it arrives with no `allow`s.
 
 - The `duplicate-content` filesystem rule no longer reports Tauri's generated
   schemas, which are byte-identical on Linux and neither ours to produce nor to

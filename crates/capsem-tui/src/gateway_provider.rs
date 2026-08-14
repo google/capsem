@@ -336,12 +336,12 @@ fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
         attention,
         stats: SessionStats {
             duration: Duration::from_secs(vm.uptime_secs.unwrap_or_default()),
-            jobs: vm.total_tool_calls.unwrap_or_default().min(u16::MAX as u64) as u16,
+            jobs: vm.total_tool_calls.unwrap_or_default().min(u64::from(u16::MAX)) as u16,
             events: vm
                 .total_requests
                 .unwrap_or_default()
                 .saturating_add(vm.total_file_events.unwrap_or_default())
-                .min(u32::MAX as u64) as u32,
+                .min(u64::from(u32::MAX)) as u32,
             tokens,
             cost_micros: cost_to_micros(vm.total_estimated_cost),
         },

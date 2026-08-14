@@ -24,12 +24,13 @@ from . import (
     imagebuild,
     initrd,
     module_contracts,
+    staticmodule,
     testmodules,
     vmmodules,
 )
 from .actions import Call, Run, Script
 from .config import GateConfig
-from .execution import ResumePolicy, Step, step
+from .execution import Kind, Needs, ResumePolicy, Speed, Step, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .qualification import Qualification
@@ -67,6 +68,9 @@ def compose(
             # pushed tree.
             produces=(config.path(config.candidate.source_state_file),),
             resume=ResumePolicy.ALWAYS_RUN,
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
         ),
         after=after,
     )
@@ -89,6 +93,9 @@ def compose(
             TimingBoundary.QUALIFICATION.value,
             RequireSourceUnchanged(),
             EnforceTimingRegression(TimingBoundary.QUALIFICATION),
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
         ),
         after=(modules,),
     )
@@ -108,7 +115,7 @@ def compose_modules(
     checks already passed and they do not want to repeat them.
     """
     prepared = _prepare(plan, config, after=after)
-    static = testmodules.static(plan, config, after=(prepared,))
+    static = staticmodule.static(plan, config, after=(prepared,))
     artifacts = vmmodules.artifacts(plan, config, qualification=qualification, after=static)
     functional = vmmodules.functional(
         plan,
@@ -119,7 +126,10 @@ def compose_modules(
     )
     glowup = vmmodules.glowup(plan, config, qualification=qualification, after=(functional,))
 
-    return plan.add(step("recipes", Run(config.candidate.recipe_suite)), after=(glowup,))
+    return plan.add(step("recipes", Run(config.candidate.recipe_suite),
+        kind=Kind.STATIC_TEST,
+        speed=Speed.FAST,
+    ), after=(glowup,))
 
 
 def _prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
@@ -149,6 +159,9 @@ def _prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
             "bootstrap",
             Run(["sh", str(config.path(settings.bootstrap_script)), "-y"], env=doctor_env),
             Run(["bash", config.doctor.common_script], env=doctor_env),
+            kind=Kind.COMPILE,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
         ),
         after=after,
     )
@@ -158,6 +171,9 @@ def _prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
             _ensure_space(config),
             Remove(config.path(config.workspace.benchmark_root)),
             contends=(config.exclusive("docker_daemon"),),
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
         ),
         after=(bootstrapped,),
     )
@@ -165,11 +181,29 @@ def _prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
         step(
             "clean-stale",
             Script(settings.clean_stale_script),
-            Run(["bash", settings.generated_settings_script, str(config.root)]),
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
         ),
         after=(bounded,),
     )
-    return _runtime(plan, config, after=(cleaned,))
+    # Its own step, and not because deleting stale files and checking the
+    # generated settings are unrelated -- though they are. The check runs
+    # `generate-settings.sh`, which runs `cargo run -p capsem-core`, so a step
+    # named for a cleanup was building Rust and claiming nothing while it did.
+    # One step is one measurement, and this one was measuring two things.
+    checked = phase.add(
+        step(
+            "verify-generated-settings",
+            Run(["bash", settings.generated_settings_script, str(config.root)]),
+            contends=(config.exclusive("workspace_binaries"),),
+            kind=Kind.COMPILE,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
+        ),
+        after=(cleaned,),
+    )
+    return _runtime(plan, config, after=(checked,))
 
 
 def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
@@ -186,7 +220,16 @@ def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
     assets = imagebuild.check_assets(plan, config, after=after)
     packed = initrd.pack(plan, config, after=assets)
     materialised = phase.add(
-        step("materialize-config", Run(["bash", settings.materialize_script])),
+        # `COMPILE`, and claiming the workspace, because the script runs
+        # `cargo run -p capsem-admin` once per profile. It reads as
+        # configuration work from the label alone, which is exactly the
+        # mismatch `tests/citadel/test_step_actions_are_atomic.py` refuses.
+        step("materialize-config", Run(["bash", settings.materialize_script]),
+            contends=(config.exclusive("workspace_binaries"),),
+            kind=Kind.COMPILE,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
+        ),
         after=(packed,),
     )
     # Built, then signed. `sign_step` codesigns `target/debug/*` and nothing

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from .actions import Run
 from .command import GateCommand
-from .execution import step
+from .execution import Kind, Needs, Speed, step
 from .plan import Plan
 
 
@@ -25,6 +25,9 @@ class ShellCommand(GateCommand, name="shell", help="start the service and enter 
                 "shell",
                 Run([self._config.logs.cli, "shell"]),
                 contends=(self._config.exclusive("apple_vz"),),
+                kind=Kind.CAPSEM,
+                needs=frozenset({Needs.VM, Needs.KVM, Needs.DISK}),
+                speed=Speed.SLOW,
             )
         )
         return plan
@@ -57,6 +60,9 @@ class ExecCommand(GateCommand, name="exec", help="run one command in a fresh tem
                 "exec",
                 Run([self._config.logs.cli, "run", self._args.guest_command]),
                 contends=(self._config.exclusive("apple_vz"),),
+                kind=Kind.CAPSEM,
+                needs=frozenset({Needs.VM, Needs.KVM, Needs.DISK}),
+                speed=Speed.SLOW,
             )
         )
         return plan

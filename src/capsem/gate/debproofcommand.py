@@ -15,7 +15,7 @@ from .actions import Call
 from .command import GateCommand
 from .content import ProfileContent
 from .debproof import DebProof
-from .execution import step
+from .execution import Kind, Needs, Speed, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .sourcecommit import source_commit_for_checkout
@@ -74,6 +74,9 @@ class ProveDebCommand(
                     ),
                 ),
                 contends=(self._config.exclusive("docker_daemon"),),
+                kind=Kind.E2E,
+                needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                speed=Speed.SLOW,
             )
         )
         return plan

@@ -198,7 +198,7 @@ impl SessionIndex {
                 record.status,
                 record.created_at,
                 record.stopped_at,
-                record.scratch_disk_size_gb as i64,
+                i64::from(record.scratch_disk_size_gb),
                 record.ram_bytes as i64,
                 record.total_requests as i64,
                 record.allowed_requests as i64,
@@ -340,7 +340,7 @@ impl SessionIndex {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
-            .saturating_sub(days as u64 * 86400);
+            .saturating_sub(u64::from(days) * 86400);
         // created_at is ISO 8601 -- string comparison works for our format.
         let cutoff_str = epoch_to_iso(cutoff_secs);
         let count = self.conn.execute(
@@ -380,7 +380,7 @@ impl SessionIndex {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
-            .saturating_sub(days as u64 * 86400);
+            .saturating_sub(u64::from(days) * 86400);
         let cutoff_str = epoch_to_iso(cutoff_secs);
 
         // Terminate ALL old empty sessions (no protection).
@@ -543,7 +543,7 @@ impl SessionIndex {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
-            .saturating_sub(days as u64 * 86400);
+            .saturating_sub(u64::from(days) * 86400);
         let cutoff_str = epoch_to_iso(cutoff_secs);
         let count = self.conn.execute(
             "DELETE FROM sessions WHERE status = 'terminated' AND created_at < ?1",
@@ -705,7 +705,7 @@ impl SessionIndex {
             .map(|v| {
                 let boxed: Box<dyn rusqlite::types::ToSql> = match v {
                     Value::Null => Box::new(rusqlite::types::Null),
-                    Value::Bool(b) => Box::new(*b as i64),
+                    Value::Bool(b) => Box::new(i64::from(*b)),
                     Value::Number(n) => {
                         if let Some(i) = n.as_i64() {
                             Box::new(i)

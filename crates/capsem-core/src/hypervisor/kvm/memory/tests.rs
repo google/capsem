@@ -464,7 +464,7 @@ fn x86_64_virtio_mmio_sequential() {
 #[test]
 #[allow(clippy::assertions_on_constants)]
 fn x86_64_virtio_mmio_in_pci_hole() {
-    let window_end = VIRTIO_MMIO_BASE + VIRTIO_MMIO_SIZE * VIRTIO_MMIO_MAX_DEVICES as u64;
+    let window_end = VIRTIO_MMIO_BASE + VIRTIO_MMIO_SIZE * u64::from(VIRTIO_MMIO_MAX_DEVICES);
     assert!(
         VIRTIO_MMIO_BASE >= PCI_HOLE_START,
         "Virtio MMIO base {VIRTIO_MMIO_BASE:#x} must be inside the PCI hole"

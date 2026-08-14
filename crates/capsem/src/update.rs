@@ -4339,7 +4339,7 @@ fn verify_release_channel_asset_file(
     let mut blake3_hasher = blake3::Hasher::new();
     let mut sha256_hasher = Sha256::new();
     let mut bytes_done = 0u64;
-    let mut buffer = [0u8; 1024 * 1024];
+    let mut buffer = vec![0u8; 1024 * 1024];
     loop {
         let n = file
             .read(&mut buffer)
@@ -4377,7 +4377,7 @@ fn download_release_channel_profile_asset_from_file(
     let mut blake3_hasher = blake3::Hasher::new();
     let mut sha256_hasher = Sha256::new();
     let mut bytes_done = 0u64;
-    let mut buffer = [0u8; 1024 * 1024];
+    let mut buffer = vec![0u8; 1024 * 1024];
     loop {
         let n = source
             .read(&mut buffer)

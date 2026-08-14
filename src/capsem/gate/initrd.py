@@ -14,159 +14,18 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from shlex import quote
 
 from . import crossexec, host
 from .actions import Action, Run, Script
 from .command import GateCommand
 from .config import GateConfig
-from .context import Context
 from .errors import GateError
-from .execution import Step, step
-from .fileactions import AtomicReplace, Copy, MakeDir, Remove
+from .execution import Kind, Needs, Speed, Step, step
 from .imagebases import MaterializeRustBuilders, Prefetch
+from .initrdactions import _Repack, _Stage
+from .initrdpaths import initrd_target, needs_rebuild
 from .plan import Plan
 from .versions import workspace_version
-
-
-def _staging(config: GateConfig, arch: str | None = None) -> Path:
-    selected = config.arch(arch).name if arch else config.host_arch().name
-    return config.path(config.initrd.staging) / selected
-
-
-def _initrd_path(config: GateConfig, arch: str | None = None) -> Path:
-    """Where the repack writes, whether or not it is there yet."""
-    selected = config.arch(arch).name if arch else config.host_arch().name
-    return config.path(config.imagebuild.output) / selected / config.artifacts.initrd
-
-
-def _initrd(config: GateConfig, arch: str | None = None) -> Path:
-    found = _initrd_path(config, arch)
-    if not found.is_file():
-        raise GateError(f"initrd not found at {found}; run `just doctor fix` first")
-    return found
-
-
-def needs_rebuild(config: GateConfig, arch: str | None = None) -> bool:
-    """Whether any staged guest binary is missing or older than its inputs.
-
-    Its *inputs*, not just its `*.rs` files. A dependency bump, a feature
-    change or a toolchain bump leaves every source file older than the staged
-    binary while the binary is stale -- and a stale guest binary ships into an
-    initrd that does not match the source it claims to have been built from.
-    """
-    settings = config.initrd
-    staged = [_staging(config, arch) / name for name in settings.binaries]
-    if any(not path.is_file() for path in staged):
-        return True
-
-    oldest = min(path.stat().st_mtime for path in staged)
-    return any(source.stat().st_mtime > oldest for source in _build_inputs(config))
-
-
-def _build_inputs(config: GateConfig):
-    """Every file whose change should invalidate the staged binaries."""
-    settings = config.initrd
-    for source_root in settings.sources:
-        for pattern in settings.freshness_globs:
-            yield from config.path(source_root).rglob(pattern)
-    for relative in settings.freshness_inputs:
-        candidate = config.path(relative)
-        if candidate.is_file():
-            yield candidate
-
-
-class _Repack(Action, name="repack-initrd"):
-    """Unpack, replace the guest payload, and repack into a new inode."""
-
-    def __init__(self, *, target: Path | None = None, arch: str | None = None) -> None:
-        self._target = target
-        self._arch = arch
-
-    def render(self) -> str:
-        detail = ""
-        if self._target is not None:
-            detail = f" {self._target}"
-        if self._arch is not None:
-            detail += f" from {self._arch} staging"
-        return f"unpack the initrd{detail}, refresh its guest payload, and repack it"
-
-    def perform(self, context: Context) -> None:
-        config = context.config
-        settings = config.initrd
-        arch = config.arch(self._arch).name if self._arch else config.host_arch().name
-        target = self._target or _initrd(config, arch)
-        if not target.is_file():
-            raise GateError(f"initrd not found at {target}")
-        staging = _staging(config, arch)
-
-        for name in settings.binaries:
-            if not (staging / name).is_file():
-                raise GateError(f"{name} is missing from {staging}")
-
-        self._context = context
-
-        def build(scratch: Path) -> None:
-            workdir = scratch.with_name(scratch.name + ".dir")
-            MakeDir(workdir).perform(context)
-            try:
-                self._unpack(context, target, workdir)
-                self._stage(config, staging, workdir)
-                self._pack(context, workdir, scratch)
-            finally:
-                Remove(workdir).perform(context)
-
-        AtomicReplace(target, build).perform(context)
-
-    # -- the pieces --------------------------------------------------------
-    def _unpack(self, context: Context, initrd: Path, workdir: Path) -> None:
-        context.runner.bash(f"gzip -dc {quote(str(initrd))} | cpio -id", cwd=workdir)
-
-    def _stage(self, config: GateConfig, staging: Path, workdir: Path) -> None:
-        settings = config.initrd
-
-        init = workdir / "init"
-        Remove(init).perform(self._context)
-        Copy(config.path(settings.init), init).perform(self._context)
-        init.chmod(settings.init_mode)
-
-        # Set modes on copies only. Changing tracked source modes made a clean
-        # gate fail its later byte-and-mode source verification.
-        staged = [(staging / name, workdir / name) for name in settings.binaries]
-        staged += [
-            (config.path(relative), workdir / Path(relative).name) for relative in settings.files
-        ]
-        for source, target in staged:
-            Remove(target).perform(self._context)
-            Copy(source, target).perform(self._context)
-            target.chmod(settings.binary_mode)
-
-        for relative in settings.trees:
-            source = config.path(relative)
-            target = workdir / Path(relative).name
-            Remove(target).perform(self._context)
-            Copy(source, target).perform(self._context)
-            for cached in target.rglob(settings.prune):
-                Remove(cached).perform(self._context)
-
-    def _pack(self, context: Context, workdir: Path, scratch: Path) -> None:
-        command = f"find . | cpio -o -H newc | gzip > {quote(str(scratch))}"
-        context.runner.bash(command, cwd=workdir)
-
-
-class _Stage(Action, name="stage-initrd-agents"):
-    """Build one architecture's configured payload only when it is stale."""
-
-    def __init__(self, config: GateConfig, arch: str) -> None:
-        self._arch = config.arch(arch).name
-        self._run = Run([*config.initrd.build, "--arch", self._arch])
-
-    def render(self) -> str:
-        return f"if {self._arch} initrd agents are stale: {self._run.render()}"
-
-    def perform(self, context: Context) -> None:
-        if needs_rebuild(context.config, self._arch):
-            self._run.perform(context)
 
 
 def repack_step(config: GateConfig, targets: Mapping[str, tuple[Path, ...]]) -> Step:
@@ -188,6 +47,9 @@ def repack_step(config: GateConfig, targets: Mapping[str, tuple[Path, ...]]) -> 
         *actions,
         contends=(config.exclusive("docker_daemon"),),
         produces=tuple(produced),
+        kind=Kind.PACKAGE,
+        needs=frozenset({Needs.DOCKER, Needs.DISK}),
+        speed=Speed.SLOW,
     )
 
 
@@ -212,11 +74,21 @@ def finalize(
                     workspace_version(config.root),
                 ]
             ),
+            # `config.initrd.manifest` is `cargo run -p capsem-admin`, so this
+            # builds despite reading as a regeneration step.
+            contends=(config.exclusive("workspace_binaries"),),
+            kind=Kind.COMPILE,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
         ),
         after=after,
     )
     return phase.add(
-        step("hash-aliases", Script(config.initrd.hash_assets, str(assets))),
+        step("hash-aliases", Script(config.initrd.hash_assets, str(assets)),
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
+        ),
         after=(manifest,),
     )
 
@@ -248,6 +120,9 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
                     "guest-base",
                     Prefetch((arch,), rust_names=(arch,)),
                     contends=(config.exclusive("docker_daemon"),),
+                    kind=Kind.PACKAGE,
+                    needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                    speed=Speed.SLOW,
                 ),
                 after=after,
             )
@@ -256,6 +131,9 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
                     "guest-execution",
                     crossexec.Require((arch,)),
                     contends=(config.exclusive("docker_daemon"),),
+                    kind=Kind.PACKAGE,
+                    needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                    speed=Speed.SLOW,
                 ),
                 after=(base,),
             )
@@ -265,6 +143,9 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
                         "guest-builder",
                         MaterializeRustBuilders((arch,)),
                         contends=(config.exclusive("docker_daemon"),),
+                        kind=Kind.PACKAGE,
+                        needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                        speed=Speed.SLOW,
                     ),
                     after=(execution,),
                 ),
@@ -275,6 +156,9 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
                     "guest-agents",
                     Run([*settings.build, "--arch", config.host_arch().name]),
                     contends=(config.exclusive("docker_daemon"),),
+                    kind=Kind.PACKAGE,
+                    needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                    speed=Speed.SLOW,
                 ),
                 after=previous,
             ),
@@ -286,7 +170,10 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
             _Repack(),
             # The initrd the VM boots. The one artifact whose contents decide
             # whether a guest runs the code this gate just built.
-            produces=(_initrd_path(config),),
+            produces=(initrd_target(config),),
+            kind=Kind.PACKAGE,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.SLOW,
         ),
         after=previous,
     )

@@ -46,6 +46,8 @@ the suite has one collector and its failures have one owner.
 | `test_tree_copy_boundary.py` | only `filesystem` copies a tree, and never through a link |
 | `test_rust_check_coverage.py` | clippy, nextest and doctests between them cover all Rust |
 | `test_agent_contract_is_one_file.py` | every agent is held to the same contract |
+| `test_step_attributes.py` | a step says what it is; nothing infers it from a label |
+| `test_work_graph_invariants.py` | the plan's graph properties, asked of the graph |
 | `test_workflow_script_checkout.py` | a workflow checks out its source before running a checked-in script |
 
 ## Adding a guard

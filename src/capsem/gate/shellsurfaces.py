@@ -17,9 +17,24 @@ Paths arrive as arguments. Nothing here spells a directory.
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 
 import yaml
+
+#: Tokens that end one command and begin the next. `shlex` in
+#: `punctuation_chars` mode emits each as a token of its own, which is the
+#: whole reason to lex instead of matching: `cargo` in a filename, in a
+#: comment, or on the left of an assignment is a different token from `cargo`
+#: in command position, and a regex that tells those apart has become a lexer
+#: with none of the testing.
+SEPARATORS = frozenset({";", "|", "||", "&", "&&", "(", ")", "{", "}", "!"})
+
+#: Words that run another command. The argv worth reporting is the one after
+#: them, so they are stepped over rather than reported as the invocation.
+WRAPPERS = frozenset(
+    {"env", "sudo", "time", "exec", "caffeinate", "nice", "command", "then", "do", "!"}
+)
 
 #: A GitHub expression. The runner substitutes each as one value before bash
 #: sees it, so it masks to a variable reference: masking to a literal makes
@@ -28,6 +43,10 @@ EXPRESSION = re.compile(r"\$\{\{\s*.*?\s*\}\}", re.S)
 EXPRESSION_PLACEHOLDER = "${CAPSEM_GH_EXPRESSION}"
 
 RUN_INSTRUCTION = re.compile(r"^RUN\s+((?:.*\\\n)*.*)", re.MULTILINE)
+
+#: A command continued onto the next line. Joined before lexing, so a five-line
+#: invocation is one command rather than five fragments.
+CONTINUATION = re.compile(r"\\\n\s*")
 
 
 def executable_lines(body: str) -> list[str]:
@@ -39,6 +58,63 @@ def executable_lines(body: str) -> list[str]:
 
 def _without_comments(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
+def commands(body: str) -> list[tuple[str, ...]]:
+    """Every command in `body`, as argv, lexed rather than matched.
+
+    `shlex` handles the parts that defeat pattern matching one at a time and
+    silently: quoting, escapes, `#` starting a comment only in word position,
+    and operators that abut their arguments. Line continuations are joined
+    first so a command split across five lines is one command, which is the
+    form every interesting invocation in this repository takes.
+
+    Assignment prefixes (`FOO=bar cmd`) and wrappers (`env`, `sudo`) are
+    stepped over, so the argv reported is the command that actually runs.
+
+    A lexer, not a parser: `$(...)` and `${...}` come back as opaque tokens and
+    control words are commands like any other. That is enough to answer "what
+    does this invoke", which is the only question asked of it.
+    """
+    found: list[tuple[str, ...]] = []
+    for line in CONTINUATION.sub(" ", _without_comments(body)).splitlines():
+        if not line.strip():
+            continue
+        lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        current: list[str] = []
+        try:
+            tokens = list(lexer)
+        except ValueError:
+            # An unbalanced quote, usually a fragment of a heredoc. Skipping
+            # the line is right: reporting a guess about text we could not read
+            # is worse than reporting nothing, and the caller is looking for
+            # what is definitely there.
+            continue
+        for token in [*tokens, ";"]:
+            if token in SEPARATORS or all(character in ";|&" for character in token):
+                if current:
+                    found.append(tuple(current))
+                current = []
+                continue
+            if not current and ("=" in token.split("/")[0][:64] and not token.startswith("-")):
+                continue  # FOO=bar prefix
+            if not current and token in WRAPPERS:
+                continue
+            current.append(token)
+    return found
+
+
+def invocations(body: str, program: str) -> list[tuple[str, ...]]:
+    """Every argv in `body` whose command is `program`.
+
+    Full argv rather than a `(command, subcommand)` pair. The pair is wrong the
+    moment a flag precedes the subcommand -- `pnpm --dir frontend run build`
+    reads as `("pnpm", "--dir")` -- and which flags take a value is knowledge
+    this module has no business holding. The caller knows what it is asking
+    about, so it gets the tokens and asks.
+    """
+    return [argv for argv in commands(body) if argv and argv[0] == program]
 
 
 def run_instructions(dockerfile: str) -> list[str]:

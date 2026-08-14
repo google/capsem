@@ -60,7 +60,7 @@ fn tint_to_orange(rgba: &mut [u8]) {
             continue;
         }
         // Source is grey, so any channel equals the luminance.
-        let lum = px[0] as u16;
+        let lum = u16::from(px[0]);
         px[0] = ((lum * 255) / 255) as u8; // R
         px[1] = ((lum * 136) / 255) as u8; // G
         px[2] = 0; // B

@@ -205,15 +205,15 @@ impl QueueState {
     }
 
     fn desc_addr(&self) -> u64 {
-        (self.desc_hi as u64) << 32 | self.desc_lo as u64
+        u64::from(self.desc_hi) << 32 | u64::from(self.desc_lo)
     }
 
     fn driver_addr(&self) -> u64 {
-        (self.driver_hi as u64) << 32 | self.driver_lo as u64
+        u64::from(self.driver_hi) << 32 | u64::from(self.driver_lo)
     }
 
     fn device_addr(&self) -> u64 {
-        (self.device_hi as u64) << 32 | self.device_lo as u64
+        u64::from(self.device_hi) << 32 | u64::from(self.device_lo)
     }
 
     fn snapshot(&self) -> QueueSnapshot {
@@ -672,7 +672,7 @@ impl MmioDevice for VirtioMmioTransport {
                 let qsel = state.queue_sel as usize;
                 let sizes = state.device.queue_max_sizes();
                 if qsel < sizes.len() {
-                    sizes[qsel] as u32
+                    u32::from(sizes[qsel])
                 } else {
                     0
                 }
@@ -736,10 +736,10 @@ impl MmioDevice for VirtioMmioTransport {
             DRIVER_FEATURES => {
                 if state.driver_features_sel == 0 {
                     state.driver_features =
-                        (state.driver_features & 0xFFFF_FFFF_0000_0000) | val as u64;
+                        (state.driver_features & 0xFFFF_FFFF_0000_0000) | u64::from(val);
                 } else {
                     state.driver_features =
-                        (state.driver_features & 0x0000_0000_FFFF_FFFF) | ((val as u64) << 32);
+                        (state.driver_features & 0x0000_0000_FFFF_FFFF) | (u64::from(val) << 32);
                 }
             }
             DRIVER_FEATURES_SEL => {

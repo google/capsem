@@ -13,7 +13,7 @@ from . import (
 from .actions import Script
 from .command import GateCommand
 from .config import GateConfig
-from .execution import Step, step
+from .execution import Kind, Needs, Speed, Step, step
 from .plan import Plan
 from .qualification import Qualification
 from .testmodules import InWorkspace
@@ -57,6 +57,9 @@ def artifacts(
             step(
                 "release-inputs.verify",
                 Script(settings.verify_inputs_script, "--input-dir", qualification.input_dir),
+                kind=Kind.STATIC_TEST,
+                needs=frozenset({Needs.DISK}),
+                speed=Speed.FAST,
             ),
             after=after,
         )
@@ -75,6 +78,9 @@ def artifacts(
                     qualification.profile,
                 ),
                 contends=(config.exclusive("apple_vz"),),
+                kind=Kind.CAPSEM,
+                needs=frozenset({Needs.VM, Needs.KVM, Needs.DISK}),
+                speed=Speed.SLOW,
             ),
             after=(verify,),
         )
@@ -85,6 +91,10 @@ def artifacts(
             label="build-chain",
             paths=settings.build_chain_artifact_tests,
             stop_at_first_failure=False,
+            # `test_cargo_build.py` builds the workspace. Wearing a pytest
+            # label makes that no less true, and the target directory is the
+            # same one every other build locks.
+            contends=(config.exclusive("workspace_binaries"),),
         ).as_step(config),
         after=(built,),
     )

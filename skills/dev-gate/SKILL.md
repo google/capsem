@@ -261,6 +261,31 @@ If you add something that needs git inside the prefix, it needs the index:
 `git ls-files` and `git check-ignore` read it, and `faults`, `auditfs` and
 `sourcestate` all depend on them.
 
+## The plan is a graph, and it says what it is
+
+Every step declares `kind`, `needs`, `arch`, `speed` and `concurrency`;
+every edge declares `Requires`. `workgraph.from_plan` turns a `Plan` into a
+typed DAG, and the questions get asked there rather than of source text.
+
+Ask the graph, not the file. `uv run capsem-gate runs schedule <command>`
+reports the binding set -- the nodes with no slack, whose cost *is* the run's
+cost, which is not the same as the list of slowest steps.
+
+Three rules when adding a step:
+
+- `needs` is a set, and `NETWORK` must agree with whether any action is
+  `outside_sandbox`. Hermeticity is derived from it over `ARTIFACT` edges, and
+  is never declared: a flag would let a step claim a property its inputs
+  contradict.
+- a capability that must not be shared (`DOCKER`, `VM`, `KVM`) needs a matching
+  `contends`. `static.guest-agents` drove the daemon without claiming it and
+  could have raced `install.materialize`.
+- `speed` is relative to what the lane protects, not a second count. A
+  two-minute step in a four-minute lane guarding a two-hour run is the trade
+  that lane exists to make.
+
+`tests/citadel/test_work_graph_invariants.py` holds all of it.
+
 ## History outlives the run directories
 
 `keep_runs` is twenty, so every longitudinal question -- is this getting
@@ -369,6 +394,67 @@ five steps into a collision. Add a surface there, not in a second extractor.
 `[boundary.shell_bodies]` keeps them simple: 20 executable lines, with an exact
 debt inventory. The fix for an oversized body is a script under `scripts/`,
 which ShellCheck already lints and a test can call.
+
+## Shell is parsed, not matched
+
+`shelllex` tokenises, `shellparse` builds a tree, `shellnodes` holds the nodes
+and the queries. Ask questions of the tree.
+
+Every question this repository asks of shell used to be a regular expression,
+and each worked on the case it was written for. `cargo` in a filename, in a
+comment, on the left of an assignment or inside a quoted argument is not
+`cargo` in command position, and no refinement fixes that -- the distinction is
+grammatical.
+
+```python
+tree = parse(body, origin="check-web-surface.sh")
+commands(arm_named(tree, "release-channel") or [])   # one case arm, exactly
+[c for c in commands(tree) if c.program == "cargo"]  # command position only
+suppressed(tree)                                     # verdicts thrown away
+```
+
+`Command.program` steps over assignment prefixes and wrappers, so
+`CARGO_TARGET_DIR=/tmp env cargo build` answers `cargo`. Conjunctions are nodes
+rather than a flattened list, because the operator *is* the meaning: `check`
+and `check || true` differ only in an `AndOr`, and that difference once
+satisfied a release contract while branch protection was off.
+
+**Pass a shell body, not a container of one.** `parse` sniffs and warns when
+handed a raw `.j2` template, a whole Dockerfile or a workflow -- each lexes
+without error and yields confident nonsense. Use `shellsurfaces` to extract:
+it renders templates and pulls `RUN` and `run:` bodies out. Its own guard read
+raw templates on the first attempt and reported a correctly chained
+`make && ls` as two unguarded statements.
+
+Its suite found four bugs in it before any consumer did. Add cases to
+`tests/test_shell_parse.py` when you extend it.
+
+## An exclusion is exact, hashed, and states why
+
+Every guard eventually meets something it should not fail on. `exclusions.py`
+is the one shape that carve-out may take. Two wrong shapes were tried first,
+and both look reasonable:
+
+- **A count** -- "this file has nine". Fails when somebody adds a harmless
+  tenth; passes when somebody turns one of the nine into something dangerous.
+  The number is orthogonal to the risk.
+- **A program name** -- "`launchctl` is cleanup". It is, at three call sites,
+  and a real check at a fourth. Four of the five findings that rule produced
+  were its own misclassification.
+
+`Exclusion` carries `subject` and a `reason` with a minimum length; a reason of
+"known" or "legacy" is refused by the schema. `HashedExclusion` adds a `digest`
+over the **parsed** form, via `canonical(...)`. Hashing the parse is what makes
+it usable: requote, reflow or move the line and the decision stands; change
+what it does and it is a new decision that has to be stated.
+
+`reconcile(found, excused)` is symmetric on purpose. A ledger that only refuses
+growth is an exemption list wearing a ratchet's name -- the entry that outlives
+the thing it excused is exactly the failure these guards exist for, and it is
+the one that never announces itself.
+
+Ledgers today: `[[boundary.discarded_verdicts]]`, `[[boundary.sequenced_runs]]`,
+`[boundary.unclaimed_cargo]`.
 
 ## The Citadel runs in the fast phase
 

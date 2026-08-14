@@ -17,7 +17,7 @@ from .command import GateCommand
 from .config import GateConfig
 from .context import Context
 from .errors import GateError
-from .execution import step
+from .execution import Kind, Needs, Speed, step
 from .plan import Plan
 
 
@@ -42,6 +42,9 @@ def build_step(config: GateConfig, *, label: str = "build-binaries"):
         Run(["cargo", "build", *selected]),
         contends=(config.exclusive("workspace_binaries"),),
         produces=tuple(config.path(binary) for binary in settings.binaries),
+        kind=Kind.PACKAGE,
+        needs=frozenset({Needs.DISK, Needs.SIGNING}),
+        speed=Speed.SLOW,
     )
 
 
@@ -59,7 +62,11 @@ def sign_step(config: GateConfig, *, label: str = "sign"):
     if not host.on_macos():
         # Keep the shared graph shape and its ordering edge without pretending
         # a Linux no-op rewrote or produced the host binaries.
-        return step(label)
+        return step(label,
+            kind=Kind.PACKAGE,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
+        )
 
     settings = config.signing
     return step(
@@ -83,12 +90,19 @@ def sign_step(config: GateConfig, *, label: str = "sign"):
         # every command that composes signing inherits the claim rather than
         # each composer remembering to repeat it.
         produces=tuple(config.path(binary) for binary in settings.binaries),
+        kind=Kind.PACKAGE,
+        needs=frozenset({Needs.DISK, Needs.SIGNING}),
+        speed=Speed.SLOW,
     )
 
 
 def sbom_step(config: GateConfig):
     """Generate the host package SBOM and check it describes something."""
-    return step("host-sbom", _GenerateSbom(), _ValidateSbom())
+    return step("host-sbom", _GenerateSbom(), _ValidateSbom(),
+        kind=Kind.PACKAGE,
+        needs=frozenset({Needs.DISK}),
+        speed=Speed.SLOW,
+    )
 
 
 class SignCommand(GateCommand, name="sign", help="codesign the host binaries for VM tests"):
@@ -198,12 +212,20 @@ class BuildUiCommand(
             )
 
         bundle = plan.add(
-            step("frontend", Run(["bash", settings.build_script, settings.build_target]))
+            step("frontend", Run(["bash", settings.build_script, settings.build_target]),
+                kind=Kind.COMPILE,
+                needs=frozenset({Needs.DISK}),
+                speed=Speed.SLOW,
+            )
         )
         argv = ["cargo", "build", "-p", settings.app_crate]
         if profile != settings.profiles[0]:
             argv.append(f"--{profile}")
-        plan.add(step(f"app.{profile}", Run(argv)), after=(bundle,))
+        plan.add(step(f"app.{profile}", Run(argv),
+            kind=Kind.COMPILE,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.SLOW,
+        ), after=(bundle,))
         return plan
 
 
@@ -221,11 +243,23 @@ class LogsCommand(
         target = self._args.target
 
         if target == "failure":
-            plan.add(step("failure", _ShowPreservedFailure()))
+            plan.add(step("failure", _ShowPreservedFailure(),
+                kind=Kind.STATIC_TEST,
+                needs=frozenset({Needs.DISK}),
+                speed=Speed.FAST,
+            ))
         elif target:
-            plan.add(step("sandbox", Run([settings.cli, "logs", target])))
+            plan.add(step("sandbox", Run([settings.cli, "logs", target]),
+                kind=Kind.STATIC_TEST,
+                needs=frozenset({Needs.DISK}),
+                speed=Speed.FAST,
+            ))
         else:
-            plan.add(step("service", Run(["tail", "-f", str(host.home() / settings.service_log)])))
+            plan.add(step("service", Run(["tail", "-f", str(host.home() / settings.service_log)]),
+                kind=Kind.STATIC_TEST,
+                needs=frozenset({Needs.DISK}),
+                speed=Speed.FAST,
+            ))
         return plan
 
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 from . import toolchain
 from .actions import Run
 from .config import GateConfig
-from .execution import Step, step
+from .execution import SATURATES, Kind, Needs, Speed, Step, step
 
 
 def environment(config: GateConfig) -> dict[str, str]:
@@ -43,6 +43,10 @@ def coverage(config: GateConfig) -> Step:
             env=environment(config),
         ),
         contends=(config.exclusive("workspace_binaries"),),
+        kind=Kind.UNIT_TEST,
+        needs=frozenset({Needs.DISK}),
+        speed=Speed.SLOW,
+        concurrency=SATURATES,
     )
 
 
@@ -59,4 +63,7 @@ def doctests(config: GateConfig) -> Step:
         "rust-doctests",
         Run(list(config.modules.rust_doctests), env=environment(config)),
         contends=(config.exclusive("workspace_binaries"),),
+        kind=Kind.UNIT_TEST,
+        needs=frozenset({Needs.DISK}),
+        speed=Speed.SLOW,
     )

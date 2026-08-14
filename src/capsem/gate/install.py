@@ -20,14 +20,14 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from . import config as gate_config
-from . import installimage
+from . import installplan
 from .actions import Call
 from .command import GateCommand
 from .content import InstallContent, LocalInstallContent, ProfileContent, SelectedInstallContent
 from .docker import Docker
 from .dockermount import container_path
 from .errors import GateError
-from .execution import step
+from .execution import Kind, Needs, Speed, step
 from .fileactions import make_dir, remove
 from .installcontainer import InstallContainer
 from .installproof import InstallProof
@@ -218,6 +218,9 @@ def install_step(config, *, content: InstallContent):
             ),
         ),
         contends=(config.exclusive("docker_daemon"),),
+        kind=Kind.E2E,
+        needs=frozenset({Needs.DOCKER, Needs.DISK}),
+        speed=Speed.SLOW,
     )
 
 
@@ -239,7 +242,7 @@ class InstallCommand(
         plan = Plan(self.name)
         # Own the sealed image prerequisite. In the complete plan this shares
         # the static preflight step; standalone install builds it once here.
-        image = installimage.fragment(plan, self._config)
+        image = installplan.fragment(plan, self._config)
         selected = getattr(self._args, "selected_content_root", None)
         if selected:
             root = Path(selected)

@@ -13,7 +13,16 @@ require_release_site_astro() {
 
 surface="${1:-}"
 case "$surface" in
-    frontend)
+    frontend-verify)
+        # Type-check and unit tests, and deliberately not the build. Clippy
+        # waits on the frontend because capsem-app embeds `frontend/dist` at
+        # compile time via `tauri::generate_context!` -- it reads the build's
+        # output and nothing else. While all three ran as one step, clippy
+        # waited through these two as well, and through
+        # `audit.generated-settings` on top: `mock-settings.generated` is
+        # imported by three files, every one of them under `__tests__`, so it
+        # is a dependency of this half alone. `frontend-build` needs no such
+        # edge, and the build below is the same command it runs.
         pnpm --dir frontend run check
         if [[ -n "${CAPSEM_FRONTEND_JUNIT:-}" ]]; then
             (
@@ -26,7 +35,6 @@ case "$surface" in
         else
             pnpm --dir frontend run test
         fi
-        pnpm --dir frontend run build
         ;;
     frontend-build)
         pnpm --dir frontend run build
@@ -50,6 +58,16 @@ case "$surface" in
         grep -q "Artifact not found" "$CAPSEM_RELEASE_CHANNEL_DIST/404.html"
         ;;
     release-site)
+        # The Astro surface only. The release-channel parity proof that used to
+        # run here is `release-channel`: it spends its time in
+        # `cargo run -p capsem-admin`, not in Astro, and holding the
+        # `astro_build` claim across a Rust build stalled the one surface that
+        # gates clippy.
+        require_release_site_astro
+        pnpm --dir release-site run check
+        pnpm --dir release-site run test:coverage
+        ;;
+    release-channel)
         require_release_site_astro
         work="$ROOT/target/web-parity"
         fixture="$work/release-site-fixture"
@@ -59,8 +77,6 @@ case "$surface" in
         rm -rf "$work"
         mkdir -p "$work"
 
-        pnpm --dir release-site run check
-        pnpm --dir release-site run test:coverage
         uv run python scripts/write-release-site-ci-fixture.py "$fixture"
         uv run python scripts/build-complete-release-channel.py \
             --channel-source "stable=file://$fixture/assets/manifest.json" \
@@ -91,7 +107,7 @@ case "$surface" in
             --out-dir "$graph_dist"
         ;;
     *)
-        echo "usage: $0 {frontend|frontend-build|docs|site|release-site|release-site-build}" >&2
+        echo "usage: $0 {frontend|frontend-build|docs|site|release-site|release-channel|release-site-build}" >&2
         exit 2
         ;;
 esac

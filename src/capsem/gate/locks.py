@@ -36,8 +36,8 @@ from pathlib import Path
 
 from .config import GateConfig
 from .errors import GateError
-from .harnessschema import LockConfig
 from .lifecycle import Resource
+from .lockschema import LockConfig
 
 
 class ExclusiveLock(Resource, name="gate-lock"):

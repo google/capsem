@@ -208,7 +208,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 
             // Blocking read thread for this specific FD
             let read_handle = std::thread::spawn(move || {
-                let mut buf = [0u8; 65536];
+                let mut buf = vec![0u8; 65536];
                 while let Ok(n) = reader.read(&mut buf) {
                     if n == 0 {
                         break;

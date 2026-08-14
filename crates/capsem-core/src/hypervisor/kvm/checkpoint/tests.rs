@@ -77,12 +77,12 @@ fn restore_rejects_version_8_checkpoint() {
 #[cfg(target_arch = "x86_64")]
 fn snapshot(id: u32) -> VcpuSnapshot {
     let regs = KvmRegs {
-        rax: id as u64 + 10,
-        rip: 0x1000 + id as u64,
+        rax: u64::from(id) + 10,
+        rip: 0x1000 + u64::from(id),
         ..Default::default()
     };
     let sregs = KvmSregs {
-        cr3: 0x2000 + id as u64,
+        cr3: 0x2000 + u64::from(id),
         ..Default::default()
     };
     let mp_state = KvmMpState {
@@ -96,7 +96,7 @@ fn snapshot(id: u32) -> VcpuSnapshot {
         msrs: vec![KvmMsrEntry {
             index: 0x6e0,
             reserved: 0,
-            data: 0x1000 + id as u64,
+            data: 0x1000 + u64::from(id),
         }],
         lapic: KvmLapicState::default(),
         events: KvmVcpuEvents::default(),
@@ -313,7 +313,7 @@ fn zero_memory_is_written_as_sparse_holes() {
     let metadata = std::fs::metadata(&path).unwrap();
     let logical_len = HEADER_LEN
         + 4
-        + X86_VCPU_STATE_LEN as u64
+        + u64::from(X86_VCPU_STATE_LEN)
         + (3 * std::mem::size_of::<KvmIrqchip>()) as u64
         + std::mem::size_of::<KvmPitState2>() as u64
         + std::mem::size_of::<KvmClockData>() as u64

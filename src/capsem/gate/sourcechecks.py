@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from .actions import Run
 from .config import GateConfig
-from .execution import Step
+from .execution import Kind, Speed, Step
 from .plan import Plan
 
 
@@ -99,10 +99,15 @@ def ty_inventory_argv(
 def _ruff():
     from .execution import step
 
-    return step("ruff", Run(ruff_argv()))
+    return step("ruff", Run(ruff_argv()), kind=Kind.LINT, speed=Speed.FAST)
 
 
 def _ty(label: str, config: GateConfig, roots: list[str], held_back: tuple[str, ...]):
     from .execution import step
 
-    return step(f"ty.{label}", Run(ty_argv(config, roots, held_back=held_back)))
+    return step(
+        f"ty.{label}",
+        Run(ty_argv(config, roots, held_back=held_back)),
+        kind=Kind.LINT,
+        speed=Speed.FAST,
+    )

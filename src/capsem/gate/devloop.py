@@ -14,7 +14,7 @@ from . import imagebuild
 from .actions import Run
 from .command import GateCommand
 from .errors import GateError
-from .execution import step
+from .execution import Kind, Needs, Speed, step
 from .plan import Plan
 
 
@@ -65,10 +65,17 @@ class DevCommand(GateCommand, name="dev", help="run one development surface"):
                 step(
                     surface,
                     Run(settings.frontend_dev, cwd=config.path(settings.frontend_dir)),
+                    kind=Kind.COMPILE,
+                    needs=frozenset({Needs.DISK}),
+                    speed=Speed.FAST,
                 )
             )
         elif surface == "tui":
-            plan.add(step(surface, Run([*settings.tui, *self._args.args])))
+            plan.add(step(surface, Run([*settings.tui, *self._args.args]),
+                kind=Kind.COMPILE,
+                needs=frozenset({Needs.DISK}),
+                speed=Speed.FAST,
+            ))
         else:
             plan.add(
                 step(
@@ -77,6 +84,9 @@ class DevCommand(GateCommand, name="dev", help="run one development surface"):
                         settings.tauri,
                         env=config.environment.content(assets=config.imagebuild.output),
                     ),
+                    kind=Kind.COMPILE,
+                    needs=frozenset({Needs.DISK}),
+                    speed=Speed.FAST,
                 )
             )
         return plan
