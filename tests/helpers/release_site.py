@@ -47,9 +47,19 @@ FIXTURE_GRAPH = (
 # Only ever touched while the build lock is held.
 _ASTRO_DIST = PROJECT_ROOT / "release-site" / "dist"
 
-# Per-user rather than per-invocation: two independent pytest runs on one host
-# render into the same release-site/dist and must serialize against each other.
-_LOCK_PATH = Path(os.environ.get("TMPDIR", "/tmp")) / "capsem-release-site-build.lock"
+# Keyed to the directory it protects, not to the caller's environment.
+#
+# This was `$TMPDIR/capsem-release-site-build.lock`, which serializes two
+# callers only if they agree about `TMPDIR` -- and they do not. The gate exports
+# its own, a developer may export one, CI leaves it unset. Each got a private
+# lock file, took it uncontended, and rendered into the one shared
+# `release-site/dist` alongside the others. That surfaces as an Astro build
+# exiting non-zero with its staging removed underneath it, intermittently,
+# which reads as flake rather than as the collision it is.
+#
+# The resource is `_ASTRO_DIST`, so the lock is derived from the same
+# repository every caller is building in.
+_LOCK_PATH = PROJECT_ROOT / "target" / "capsem-release-site-build.lock"
 
 _SNAPSHOT_ROOT = Path(tempfile.mkdtemp(prefix="capsem-release-site-"))
 atexit.register(shutil.rmtree, _SNAPSHOT_ROOT, True)
@@ -65,6 +75,7 @@ def release_site_build_lock() -> Iterator[None]:
     the shared `release-site/dist` before overlaying into its own output
     directory, so it needs the lock even though its result is already private.
     """
+    _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _LOCK_PATH.open("w", encoding="utf-8") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         yield

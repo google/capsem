@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Every Astro build on the host takes one lock. There were two mechanisms for
+  one directory: the gate's `astro_build` exclusive, which is a
+  `threading.Lock` and orders steps inside a single gate process, and a file
+  lock in the test helper keyed on `$TMPDIR` -- which the gate exports, a
+  developer may export, and CI leaves unset. Callers that disagreed about
+  `TMPDIR` each took a private lock file uncontended and rendered into the same
+  `release-site/dist`. The lock now lives in `check-web-surface.sh`, where the
+  build actually runs, at a path derived from the repository, so every entry
+  point serializes through it.
+
 - Profile staging warns about an unlocked dependency list instead of refusing
   it. Refusing is the correct end state -- a requirements file without its lock
   is an unsealed resolver -- but refusing *there* locks the door from the

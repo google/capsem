@@ -11,6 +11,25 @@ require_release_site_astro() {
     fi
 }
 
+# The one lock every release-site and frontend build takes, whoever starts it.
+#
+# The gate declares `astro_build` in `[execution.exclusives]`, which is a
+# `threading.Lock`: it orders steps inside one gate process and coordinates
+# nothing with a pytest run, a second gate, or a developer running this script
+# by hand. The tests take a file lock instead. Two mechanisms, one Astro
+# staging directory derived from the project root, and no way for either to see
+# the other.
+#
+# So the lock lives here, at the place that actually runs the build, and is
+# derived from the repository rather than from the caller's environment. Every
+# entry point serializes because they all come through this file.
+BUILD_LOCK="$ROOT/target/capsem-release-site-build.lock"
+
+astro_build() {
+    mkdir -p "$(dirname "$BUILD_LOCK")"
+    flock "$BUILD_LOCK" "$@"
+}
+
 surface="${1:-}"
 case "$surface" in
     frontend-verify)
@@ -37,13 +56,13 @@ case "$surface" in
         fi
         ;;
     frontend-build)
-        pnpm --dir frontend run build
+        astro_build pnpm --dir frontend run build
         ;;
     docs)
-        pnpm --dir docs run build
+        astro_build pnpm --dir docs run build
         ;;
     site)
-        pnpm --dir site run build
+        astro_build pnpm --dir site run build
         ;;
     release-site-build)
         require_release_site_astro
@@ -53,7 +72,7 @@ case "$surface" in
         # survived as long as it did. Other callers pass a graph *file*.
         : "${CAPSEM_RELEASE_GRAPH:?CAPSEM_RELEASE_GRAPH is required}"
         : "${CAPSEM_RELEASE_CHANNEL_DIST:?CAPSEM_RELEASE_CHANNEL_DIST is required}"
-        pnpm --dir release-site run build:channel
+        astro_build pnpm --dir release-site run build:channel
         test -s "$CAPSEM_RELEASE_CHANNEL_DIST/404.html"
         grep -q "Artifact not found" "$CAPSEM_RELEASE_CHANNEL_DIST/404.html"
         ;;
