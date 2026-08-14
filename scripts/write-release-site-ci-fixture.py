@@ -19,12 +19,6 @@ APP_BINARY_FIXTURE_BLAKE3 = "a2667ec38811444a55359d41a8c7d79e2ca9a03b941571e5c24
 TRAY_BINARY_FIXTURE_BLAKE3 = "7779eeb3aa3ef35dd7054359470ea6066ed309907ccba19e29236418c817f0f4"
 SBOM_FIXTURE_BLAKE3 = "df2133a32b67cf97c9046915933d1449d886c245fedc97a6bf45078c25a19a2d"
 
-OBOM = (
-    b'{"bomFormat":"CycloneDX","specVersion":"1.6","metadata":{"tools":'
-    b'{"components":[{"name":"cdxgen","version":"11.0.0","type":"application"}]},'
-    b'"component":{"name":"capsem-code-rootfs","type":"operating-system"}},'
-    b'"components":[]}'
-)
 SOFTWARE_INVENTORY = json.dumps(
     {
         "schema": "capsem.profile_software_inventory.v1",
@@ -53,6 +47,41 @@ def b3(payload: bytes) -> str:
     return blake3.blake3(payload).hexdigest()
 
 
+def rootfs_obom(architecture: str) -> bytes:
+    """One realistic, architecture-owned exported-rootfs evidence document."""
+    return json.dumps(
+        {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.6",
+            "metadata": {
+                "tools": {
+                    "components": [{"name": "cdxgen", "version": "11.0.0", "type": "application"}]
+                },
+                "component": {
+                    "name": f"capsem-rootfs-{architecture}",
+                    "type": "operating-system",
+                    "version": "guest-rootfs",
+                    "properties": [
+                        {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
+                        {"name": "capsem:guest:architecture", "value": architecture},
+                    ],
+                },
+            },
+            "components": [
+                {
+                    "name": "apt",
+                    "type": "library",
+                    "version": "2.6.1",
+                    "purl": "pkg:deb/debian/apt@2.6.1?distro=debian-12",
+                }
+            ],
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+OBOM_ARM64 = rootfs_obom("arm64")
+OBOM_X86_64 = rootfs_obom("x86_64")
 SOFTWARE_INVENTORY_ARM64 = SOFTWARE_INVENTORY.replace(b"{arch}", b"arm64")
 SOFTWARE_INVENTORY_X86_64 = SOFTWARE_INVENTORY.replace(b"{arch}", b"x86_64")
 
@@ -71,8 +100,8 @@ FILES: dict[str, dict[str, tuple[bytes, str]]] = {
             "5539d7bee1fcced4595ca2bcc327049fb87b3f4cf11323a1f65672bcca41604c",
         ),
         "obom.cdx.json": (
-            OBOM,
-            "759df3bd5cbe089be8a729b8c12a9d73ce7e6bf2874f6521ca60b5ed3e8af656",
+            OBOM_ARM64,
+            b3(OBOM_ARM64),
         ),
         "software-inventory.json": (
             SOFTWARE_INVENTORY_ARM64,
@@ -93,8 +122,8 @@ FILES: dict[str, dict[str, tuple[bytes, str]]] = {
             "3ace8945f4dac68744cb24bbbc638d727723e61173c5eec2b1500fd9463f50e4",
         ),
         "obom.cdx.json": (
-            OBOM,
-            "759df3bd5cbe089be8a729b8c12a9d73ce7e6bf2874f6521ca60b5ed3e8af656",
+            OBOM_X86_64,
+            b3(OBOM_X86_64),
         ),
         "software-inventory.json": (
             SOFTWARE_INVENTORY_X86_64,
@@ -149,7 +178,7 @@ def write_fixture(root: Path, *, include_binary_files: bool = True) -> None:
                                 "checksumValue": hashlib.sha256(tray_payload).hexdigest(),
                             }
                         ],
-                    }
+                    },
                 ],
             },
             sort_keys=True,
@@ -200,7 +229,7 @@ def write_fixture(root: Path, *, include_binary_files: bool = True) -> None:
                         "sha256": hashlib.sha256(tray_payload).hexdigest(),
                         "blake3": TRAY_BINARY_FIXTURE_BLAKE3,
                         "sbom_component_ref": "SPDXRef-File-capsem-tray",
-                    }
+                    },
                 ],
             },
             {
@@ -227,9 +256,7 @@ def write_fixture(root: Path, *, include_binary_files: bool = True) -> None:
         },
         "binaries": {
             "current": BINARY_VERSION,
-            "releases": {
-                BINARY_VERSION: binary_release
-            },
+            "releases": {BINARY_VERSION: binary_release},
         },
     }
     (assets_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

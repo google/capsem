@@ -29,8 +29,8 @@ import pytest
 
 from capsem.gate import config as gate_config
 from capsem.gate.errors import GateError
-from capsem.gate.lockschema import LockConfig
 from capsem.gate.locks import ExclusiveLock
+from capsem.gate.lockschema import LockConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)

@@ -118,7 +118,7 @@ class Recorded:
         self, commit: SourceCommit, evidence: QualificationEvidence
     ) -> None:
         """Return ordinary success while retaining exactly why no work ran."""
-        from .execution import step
+        from .execution import Kind, Speed, step
 
         with self._recording(source_commit=str(commit)) as log:
             if not isinstance(log, RunLog):
@@ -131,7 +131,7 @@ class Recorded:
                     qualification=evidence.reference,
                 )
             )
-            with log.step(step(label)):
+            with log.step(step(label, kind=Kind.STATIC_TEST, speed=Speed.FAST)):
                 log.note(
                     f"source {commit} already qualified by {evidence.reference.run_id}; "
                     f"{evidence.reference.run_log} ({evidence.reference.digest})"

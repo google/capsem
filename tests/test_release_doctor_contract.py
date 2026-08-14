@@ -3206,6 +3206,32 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     assert "CAPSEM_FRONTEND_JUNIT" in script
 
 
+def test_release_channel_fixture_keeps_obom_evidence_architecture_owned(tmp_path: Path) -> None:
+    """The fixture must model the architecture identity of real OBOM evidence."""
+    fixture = tmp_path / "fixture"
+    subprocess.run(
+        [sys.executable, "scripts/write-release-site-ci-fixture.py", str(fixture)],
+        cwd=PROJECT_ROOT,
+        check=True,
+    )
+    documents = {
+        arch: (fixture / "assets" / arch / "obom.cdx.json").read_bytes()
+        for arch in ("arm64", "x86_64")
+    }
+
+    assert len(set(documents.values())) == len(documents), (
+        "each architecture must own distinct OBOM evidence bytes"
+    )
+    for arch, payload in documents.items():
+        document = json.loads(payload)
+        component = document["metadata"]["component"]
+        assert component["name"] == f"capsem-rootfs-{arch}"
+        assert {(item["name"], item["value"]) for item in component["properties"]} >= {
+            ("capsem:evidence:scope", "exported-rootfs"),
+            ("capsem:guest:architecture", arch),
+        }
+
+
 def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
     binary = _workflow_text("release.yaml")
     profile = _workflow_text("release-assets.yaml")
