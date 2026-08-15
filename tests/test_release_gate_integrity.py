@@ -56,13 +56,13 @@ def test_every_fresh_ci_test_runner_preinstalls_the_exact_nextest() -> None:
         (
             "release.yaml",
             "test-binary-pairing",
-            "Prepare hermetic qualification boundary",
+            "Prove Linux sandbox boundary",
             "just _test-functional",
         ),
         (
             "release-assets.yaml",
             "test-profile-pairing",
-            "Prepare hermetic qualification boundary",
+            "Prove Linux sandbox boundary",
             "just _test-functional",
         ),
     )
