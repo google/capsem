@@ -284,7 +284,6 @@ def test_standalone_macos_initrd_build_materializes_its_guest_rust_builder(
     config = gate_config.load(PROJECT_ROOT)
     plan = Plan("standalone-initrd")
     monkeypatch.setattr("capsem.gate.initrd.host.on_macos", lambda: True)
-    monkeypatch.setattr("capsem.gate.initrd.needs_rebuild", lambda _config: True)
 
     initrd.pack(plan, config)
 

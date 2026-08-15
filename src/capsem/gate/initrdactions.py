@@ -110,3 +110,35 @@ class _Stage(Action, name="stage-initrd-agents"):
     def perform(self, context: Context) -> None:
         if needs_rebuild(context.config, self._arch):
             self._run.perform(context)
+
+
+class _WhenStale(Action, name="when-initrd-agents-stale"):
+    """Keep a stable graph while avoiding helper work for current staging."""
+
+    def __init__(self, config: GateConfig, arch: str, action: Action) -> None:
+        self._arch = config.arch(arch).name
+        self._action = action
+
+    def render(self) -> str:
+        return f"if {self._arch} initrd agents are stale: {self._action.render()}"
+
+    def perform(self, context: Context) -> None:
+        if needs_rebuild(context.config, self._arch):
+            self._action.perform(context)
+
+
+class _RequireStaged(Action, name="require-staged-initrd-agents"):
+    """Fail a continuation when a carried staging result is no longer valid."""
+
+    def __init__(self, config: GateConfig, arch: str) -> None:
+        self._arch = config.arch(arch).name
+
+    def render(self) -> str:
+        return f"require current {self._arch} initrd agents"
+
+    def perform(self, context: Context) -> None:
+        if needs_rebuild(context.config, self._arch):
+            raise GateError(
+                f"{self._arch} initrd agents changed after their carried build; "
+                "resume from initrd.guest-agents"
+            )

@@ -12,10 +12,12 @@ import pytest
 from helpers.gate import RecordingJournal, RecordingRunner
 
 from capsem.gate import config as gate_config
+from capsem.gate import initrd
 from capsem.gate.context import Context
 from capsem.gate.errors import GateError
 from capsem.gate.initrd import repack_step
 from capsem.gate.initrdactions import _Repack
+from capsem.gate.plan import Plan
 from capsem.gate.proc import Runner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -142,6 +144,50 @@ def test_matrix_step_builds_only_stale_architecture_staging(tmp_path: Path) -> N
     stage.perform(context)
 
     assert runner.commands == []
+
+
+def test_standalone_initrd_plan_shape_is_identical_before_and_after_staging(
+    tmp_path: Path,
+) -> None:
+    """Generated output may change actions, never exact-resume graph identity."""
+    arch = CONFIG.host_arch().name
+    config = _config(tmp_path / "staging")
+
+    cold = Plan("cold-initrd")
+    initrd.pack(cold, config)
+
+    for name in config.initrd.binaries:
+        binary = Path(config.initrd.staging) / arch / name
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_bytes(b"fresh")
+        os.utime(binary, (4_000_000_000, 4_000_000_000))
+
+    warm = Plan("warm-initrd")
+    initrd.pack(warm, config)
+
+    assert cold.labels == warm.labels
+    assert cold.edges == warm.edges
+    assert "initrd.guest-agents" in warm.labels
+
+
+def test_carried_initrd_staging_is_revalidated_before_resume(tmp_path: Path) -> None:
+    arch = CONFIG.host_arch().name
+    config = _config(tmp_path / "staging")
+    plan = Plan("resume-initrd")
+    initrd.pack(plan, config)
+    check = plan.step_named("initrd.guest-agents").carry_checks[0]
+    context = Context(RecordingRunner(PROJECT_ROOT), config, journal=RecordingJournal())
+
+    with pytest.raises(GateError, match=r"resume from initrd\.guest-agents"):
+        check.perform(context)
+
+    for name in config.initrd.binaries:
+        binary = Path(config.initrd.staging) / arch / name
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_bytes(b"fresh")
+        os.utime(binary, (4_000_000_000, 4_000_000_000))
+
+    check.perform(context)
 
 
 def test_freshness_inventory_covers_the_direct_builder_inputs() -> None:

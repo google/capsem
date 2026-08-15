@@ -21,9 +21,9 @@ from .command import GateCommand
 from .config import GateConfig
 from .errors import GateError
 from .execution import Kind, Needs, Speed, Step, step
-from .imagebases import MaterializeRustBuilders, Prefetch
-from .initrdactions import _Repack, _Stage
-from .initrdpaths import initrd_target, needs_rebuild
+from .imagebases import MaterializeRustBuilders, Prefetch, RequireRustBuilders
+from .initrdactions import _Repack, _RequireStaged, _Stage, _WhenStale
+from .initrdpaths import initrd_target
 from .plan import Plan
 from .versions import workspace_version
 
@@ -84,7 +84,9 @@ def finalize(
         after=after,
     )
     return phase.add(
-        step("hash-aliases", Script(config.initrd.hash_assets, str(assets)),
+        step(
+            "hash-aliases",
+            Script(config.initrd.hash_assets, str(assets)),
             kind=Kind.STATIC_TEST,
             needs=frozenset({Needs.DISK}),
             speed=Speed.FAST,
@@ -109,60 +111,61 @@ class PackInitrdCommand(
 def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
     """Rebuild the guest binaries if stale, then repack the initrd."""
     phase = plan.phase("initrd")
-    settings = config.initrd
+    arch = config.host_arch().name
 
     previous: tuple = after
-    if needs_rebuild(config):
-        if host.on_macos():
-            arch = config.host_arch().name
-            base = phase.add(
-                step(
-                    "guest-base",
-                    Prefetch((arch,), rust_names=(arch,)),
-                    contends=(config.exclusive("docker_daemon"),),
-                    kind=Kind.PACKAGE,
-                    needs=frozenset({Needs.DOCKER, Needs.DISK}),
-                    speed=Speed.SLOW,
-                ),
-                after=after,
-            )
-            execution = phase.add(
-                step(
-                    "guest-execution",
-                    crossexec.Require((arch,)),
-                    contends=(config.exclusive("docker_daemon"),),
-                    kind=Kind.PACKAGE,
-                    needs=frozenset({Needs.DOCKER, Needs.DISK}),
-                    speed=Speed.SLOW,
-                ),
-                after=(base,),
-            )
-            previous = (
-                phase.add(
-                    step(
-                        "guest-builder",
-                        MaterializeRustBuilders((arch,)),
-                        contends=(config.exclusive("docker_daemon"),),
-                        kind=Kind.PACKAGE,
-                        needs=frozenset({Needs.DOCKER, Needs.DISK}),
-                        speed=Speed.SLOW,
-                    ),
-                    after=(execution,),
-                ),
-            )
+    if host.on_macos():
+        base = phase.add(
+            step(
+                "guest-base",
+                _WhenStale(config, arch, Prefetch((arch,), rust_names=(arch,))),
+                contends=(config.exclusive("docker_daemon"),),
+                kind=Kind.PACKAGE,
+                needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                speed=Speed.SLOW,
+            ),
+            after=after,
+        )
+        execution = phase.add(
+            step(
+                "guest-execution",
+                _WhenStale(config, arch, crossexec.Require((arch,))),
+                contends=(config.exclusive("docker_daemon"),),
+                carry_checks=(_WhenStale(config, arch, crossexec.Require((arch,))),),
+                kind=Kind.PACKAGE,
+                needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                speed=Speed.SLOW,
+            ),
+            after=(base,),
+        )
         previous = (
             phase.add(
                 step(
-                    "guest-agents",
-                    Run([*settings.build, "--arch", config.host_arch().name]),
+                    "guest-builder",
+                    _WhenStale(config, arch, MaterializeRustBuilders((arch,))),
                     contends=(config.exclusive("docker_daemon"),),
+                    carry_checks=(_WhenStale(config, arch, RequireRustBuilders((arch,))),),
                     kind=Kind.PACKAGE,
                     needs=frozenset({Needs.DOCKER, Needs.DISK}),
                     speed=Speed.SLOW,
                 ),
-                after=previous,
+                after=(execution,),
             ),
         )
+    previous = (
+        phase.add(
+            step(
+                "guest-agents",
+                _Stage(config, arch),
+                contends=(config.exclusive("docker_daemon"),),
+                carry_checks=(_RequireStaged(config, arch),),
+                kind=Kind.PACKAGE,
+                needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                speed=Speed.SLOW,
+            ),
+            after=previous,
+        ),
+    )
 
     packed = phase.add(
         step(

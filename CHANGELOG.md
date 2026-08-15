@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Exact-commit qualification now describes the same initrd graph before and
+  after guest-agent staging. Freshness is evaluated by the typed action at
+  execution time, while resumed staging is revalidated before it can be
+  carried; a retained prefix can therefore resume without deleting a graph
+  node merely because the preceding attempt produced its cache. The same
+  conditional helper rail preserves macOS/Colima behavior without needless
+  pulls when staging is already current.
+
 - Hosted profile and binary pairing jobs now run the same narrow Linux
   sandbox repair-and-proof primitive as the reusable fast gate before fetching
   Rust inputs or entering a private gate module. A workflow-wide inventory
