@@ -275,6 +275,11 @@ jobs:
         with:
           toolchain: 1.97.1
 
+      - name: Bootstrap complete asset build host
+        env:
+          CAPSEM_SKIP_ASSET_CHECK: "1"
+        run: sh bootstrap.sh --yes
+
       - name: Build VM assets (kernel + rootfs)
         run: |
           just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"

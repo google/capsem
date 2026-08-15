@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Profile release asset jobs now run the canonical Linux bootstrap before
+  entering `build-assets`, so fresh ARM64 and x86_64 runners have the complete
+  config-owned Doctor toolchain. A parsed Citadel guard rejects missing, late,
+  or fail-open bootstrap steps before hosted asset builds.
+
 - Installed Winterfell qualification now disables pytest's cache provider. The
   lifecycle proof is read-only, so a passing test run no longer fails while
   trying to create cache files beneath the sealed `/src` mount. Its typed test
