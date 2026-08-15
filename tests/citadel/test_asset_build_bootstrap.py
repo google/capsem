@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
 from pathlib import Path
+from typing import cast
 
 import yaml
 from helpers.workflow_contract import canonical_shell_commands
@@ -52,15 +54,21 @@ class Bootstrap(StrEnum):
 ASSET_RECIPES = frozenset(Recipe)
 
 
+def _string_mapping(value: object) -> Mapping[str, object] | None:
+    if not isinstance(value, Mapping) or not all(isinstance(key, str) for key in value):
+        return None
+    return cast(Mapping[str, object], value)
+
+
 def _is_asset_build(command: tuple[str, ...]) -> bool:
     return len(command) >= 2 and command[0] == "just" and command[1] in ASSET_RECIPES
 
 
-def _is_canonical_bootstrap(step: dict[object, object]) -> bool:
+def _is_canonical_bootstrap(step: Mapping[str, object]) -> bool:
     if Key.CONTINUE_ON_ERROR in step:
         return False
-    env = step.get(Key.ENV)
-    if not isinstance(env, dict) or env.get(Bootstrap.SKIP_ASSETS) != Bootstrap.SKIP_VALUE:
+    env = _string_mapping(step.get(Key.ENV))
+    if env is None or env.get(Bootstrap.SKIP_ASSETS) != Bootstrap.SKIP_VALUE:
         return False
     body = step.get(Key.RUN)
     if not isinstance(body, str):
@@ -69,15 +77,21 @@ def _is_canonical_bootstrap(step: dict[object, object]) -> bool:
     return canonical_shell_commands(body) == (expected,)
 
 
-def _unprovisioned_asset_steps(document: dict[object, object]) -> list[str]:
+def _unprovisioned_asset_steps(document: Mapping[str, object]) -> list[str]:
     offenders: list[str] = []
-    jobs = document.get(Key.JOBS)
-    assert isinstance(jobs, dict)
+    jobs = _string_mapping(document.get(Key.JOBS))
+    assert jobs is not None
     for job_name, job in jobs.items():
-        assert isinstance(job, dict)
+        job = _string_mapping(job)
+        assert job is not None
         provisioned = False
-        for step in job.get(Key.STEPS) or ():
-            assert isinstance(step, dict)
+        steps = job.get(Key.STEPS)
+        if steps is None:
+            continue
+        assert isinstance(steps, list)
+        for step in steps:
+            step = _string_mapping(step)
+            assert step is not None
             provisioned = provisioned or _is_canonical_bootstrap(step)
             body = step.get(Key.RUN)
             if not isinstance(body, str):
@@ -107,11 +121,11 @@ def test_every_workflow_asset_builder_bootstraps_its_fresh_host() -> None:
     assert not offenders, ASSET_BUILD_BOOTSTRAP_RATIONALE + f"\noffenders: {offenders}"
 
 
-def _fixture(*steps: dict[object, object]) -> dict[object, object]:
+def _fixture(*steps: Mapping[str, object]) -> dict[str, object]:
     return {Key.JOBS: {"assets": {Key.STEPS: list(steps)}}}
 
 
-def _bootstrap_step(run: str = "sh bootstrap.sh --yes") -> dict[object, object]:
+def _bootstrap_step(run: str = "sh bootstrap.sh --yes") -> dict[str, object]:
     return {
         Key.NAME: "Bootstrap complete asset host",
         Key.ENV: {Bootstrap.SKIP_ASSETS: Bootstrap.SKIP_VALUE},
@@ -119,7 +133,7 @@ def _bootstrap_step(run: str = "sh bootstrap.sh --yes") -> dict[object, object]:
     }
 
 
-def _build_step() -> dict[object, object]:
+def _build_step() -> dict[str, object]:
     return {Key.NAME: "Build assets", Key.RUN: "just _build-kernel x86_64 code"}
 
 
