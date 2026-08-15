@@ -60,8 +60,16 @@ def test_profiles_ship_ollama_without_cuda_payload_bloat() -> None:
             failures.append(f"{profile_id}: build script does not verify exact Ollama bytes")
         if "https://ollama.com/install.sh" in build_script:
             failures.append(f"{profile_id}: build script still uses the floating Ollama installer")
-        if "rm -rf /usr/local/lib/ollama/cuda_*" not in build_script:
-            failures.append(f"{profile_id}: build script does not prune Ollama CUDA libraries")
+        for forbidden in ("/usr/lib/ollama", "/usr/local/lib/ollama"):
+            if forbidden not in build_script:
+                failures.append(
+                    f"{profile_id}: build script does not prune Ollama root {forbidden}"
+                )
+        for family in ("cuda", "hip", "jetpack", "oneapi", "opencl", "rocm", "vulkan"):
+            if f'"$ollama_root"/{family}*' not in build_script:
+                failures.append(f"{profile_id}: build script does not prune Ollama {family}")
+        if "forbidden Ollama accelerator payload survived cleanup" not in build_script:
+            failures.append(f"{profile_id}: build script does not prove Ollama cleanup")
         if not any(requirement.startswith("ollama==") for requirement in requirements):
             failures.append(f"{profile_id}: python requirements do not include the Ollama SDK")
 
@@ -141,9 +149,7 @@ def test_profiles_package_claude_bypass_permissions_bootstrap() -> None:
             if state.get("autoUpdates") is not False:
                 failures.append(f"{profile_id}: Claude autoUpdates must be false")
             if state.get("autoUpdatesProtectedForNative") is not True:
-                failures.append(
-                    f"{profile_id}: Claude autoUpdatesProtectedForNative must be true"
-                )
+                failures.append(f"{profile_id}: Claude autoUpdatesProtectedForNative must be true")
         if not all(
             marker in build_script
             for marker in (
@@ -160,9 +166,7 @@ def test_profiles_package_claude_bypass_permissions_bootstrap() -> None:
             'install_exact_binary "$CAPSEM_CLAUDE_URL" "$CAPSEM_CLAUDE_SHA256" '
             "/usr/local/bin/claude"
         ) not in build_script:
-            failures.append(
-                f"{profile_id}: build script does not install Claude to /usr/local/bin"
-            )
+            failures.append(f"{profile_id}: build script does not install Claude to /usr/local/bin")
         if 'install -m 555 "$payload" "$destination"' not in build_script:
             failures.append(
                 f"{profile_id}: exact binary helper does not install verified bytes read-only"
@@ -233,9 +237,7 @@ def test_profiles_package_scriptable_agent_bootstrap_without_local_provider_leak
             agy_config = json.loads(agy_config_path.read_text())
             ai = agy_config.get("ai", {})
             if ai:
-                failures.append(
-                    f"{profile_id}: AGY config must not force a model provider"
-                )
+                failures.append(f"{profile_id}: AGY config must not force a model provider")
             if "auth" in ai or "token" in json.dumps(ai).lower():
                 failures.append(f"{profile_id}: AGY local model config bakes auth material")
 
@@ -312,9 +314,7 @@ def test_profile_root_manifests_pin_exactly_the_shipped_root_payload() -> None:
         root_dir = profile_dir / "root"
         manifest_entries = _root_manifest_entries(profile_dir)
         actual_paths = {
-            path.relative_to(root_dir).as_posix()
-            for path in root_dir.rglob("*")
-            if path.is_file()
+            path.relative_to(root_dir).as_posix() for path in root_dir.rglob("*") if path.is_file()
         }
         manifest_paths = set(manifest_entries)
 
@@ -381,17 +381,27 @@ def test_profiles_package_agent_bootstrap_without_baking_credentials() -> None:
             if cleanup_path not in build_script:
                 failures.append(f"{profile_id}: build script does not clean {cleanup_path}")
         if "agy-real" not in build_script:
-            failures.append(f"{profile_id}: AGY wrapper does not preserve vendor binary as agy-real")
+            failures.append(
+                f"{profile_id}: AGY wrapper does not preserve vendor binary as agy-real"
+            )
         if "--dangerously-skip-permissions" not in build_script:
             failures.append(f"{profile_id}: AGY wrapper does not enable Capsem sandbox mode")
         if "gemini-real" not in build_script:
-            failures.append(f"{profile_id}: Gemini wrapper does not expose vendor entrypoint as gemini-real")
-        if "gemini_target=\"$(readlink -f \"$gemini_path\")\"" not in build_script:
-            failures.append(f"{profile_id}: Gemini wrapper does not resolve the real npm entrypoint")
+            failures.append(
+                f"{profile_id}: Gemini wrapper does not expose vendor entrypoint as gemini-real"
+            )
+        if 'gemini_target="$(readlink -f "$gemini_path")"' not in build_script:
+            failures.append(
+                f"{profile_id}: Gemini wrapper does not resolve the real npm entrypoint"
+            )
         if 'ln -sfn "$gemini_target" "$gemini_dir/gemini-real"' not in build_script:
-            failures.append(f"{profile_id}: Gemini wrapper does not preserve vendor entrypoint by symlink")
+            failures.append(
+                f"{profile_id}: Gemini wrapper does not preserve vendor entrypoint by symlink"
+            )
         if 'install -m 555 "$gemini_path" "$gemini_dir/gemini-real"' in build_script:
-            failures.append(f"{profile_id}: Gemini wrapper copies the JS entrypoint and breaks relative imports")
+            failures.append(
+                f"{profile_id}: Gemini wrapper copies the JS entrypoint and breaks relative imports"
+            )
         if "cleanup_gemini_runtime_state" not in build_script:
             failures.append(f"{profile_id}: Gemini wrapper does not clean CLI runtime residue")
 

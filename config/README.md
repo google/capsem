@@ -32,6 +32,9 @@ it.
 - `docker/` contains Docker/Jinja templates and image build defaults used by
   the profile image builder. Profile-specific package lists, build hooks, and
   root payloads still belong under `profiles/<profile_id>/`.
+  `[build.rootfs]` owns the independent raw-export and packed-EROFS ceilings
+  plus forbidden payload prefixes. The ordinary build must enforce those
+  limits before and after compression; they are release policy, not test data.
 - `data/` contains project data embedded or loaded by code, such as model
   pricing tables.
 

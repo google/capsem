@@ -102,6 +102,17 @@ assets/
 Rootfs EROFS settings are profile-derived. The approved release default
 is EROFS with `lz4hc` compression level 12.
 
+`config/docker/image/build.toml [build.rootfs]` also owns two independent
+release budgets: the exported tar ceiling and the final EROFS ceiling. The
+builder checks the first before compression and the second before writing the
+artifact ledger. It also scans every exported member against the configured
+forbidden prefixes. Keep Ollama accelerator families forbidden under both
+`/usr/lib/ollama` and `/usr/local/lib/ollama`: vendor archives have moved the
+bundle between those roots, and the guest exposes no accelerator device. A
+profile hook should remove the payload for efficiency, while the exported-tree
+scan remains the fail-closed proof. Never raise a size ceiling to accommodate
+an unexplained image jump; inspect the rootfs composition first.
+
 ## Build Ledger
 
 Each per-arch build emits `build-ledger.log` JSONL. The

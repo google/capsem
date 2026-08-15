@@ -36,15 +36,25 @@ import sys
 args = sys.argv[1:]
 state = Path(os.environ["FAKE_GH_STATE"])
 marker = state / "release"
+title = state / "title"
 assets = state / "assets"
 assets.mkdir(parents=True, exist_ok=True)
 if args[:2] == ["release", "view"]:
     if not marker.exists():
         raise SystemExit(1)
     if "--json" in args:
-        print(len(list(assets.iterdir())))
+        field = args[args.index("--json") + 1]
+        if field == "assets":
+            print(len(list(assets.iterdir())))
+        elif field == "name":
+            print(title.read_text(encoding="utf-8"), end="")
+        else:
+            raise SystemExit(f"unsupported release view field: {field}")
 elif args[:2] == ["release", "create"]:
     marker.touch()
+    title.write_text(args[args.index("--title") + 1], encoding="utf-8")
+elif args[:2] == ["release", "edit"]:
+    title.write_text(args[args.index("--title") + 1], encoding="utf-8")
 elif args[:2] == ["release", "download"]:
     destination = Path(args[args.index("--dir") + 1])
     for source in assets.iterdir():
@@ -102,14 +112,10 @@ def test_partial_owned_publication_reports_only_missing_files(tmp_path: Path) ->
     actual = tmp_path / "actual"
     _publication(expected)
     actual.mkdir()
-    (actual / "channel-source-nightly.json").write_bytes(
-        b'{"channel":"nightly"}\n'
-    )
+    (actual / "channel-source-nightly.json").write_bytes(b'{"channel":"nightly"}\n')
     (actual / "unrelated.pkg").write_bytes(b"package")
 
-    assert VERIFY.verify_resumable_owned_publication(expected, actual) == [
-        "x86_64-rootfs.erofs"
-    ]
+    assert VERIFY.verify_resumable_owned_publication(expected, actual) == ["x86_64-rootfs.erofs"]
 
 
 def test_complete_owned_publication_ignores_other_stage_files(tmp_path: Path) -> None:
@@ -185,9 +191,7 @@ def test_publisher_uploads_source_manifest_last_and_resumes_interruption(
 
     remote = tmp_path / "remote"
     assert interrupted.returncode != 0
-    assert sorted(path.name for path in (remote / "assets").iterdir()) == [
-        "x86_64-rootfs.erofs"
-    ]
+    assert sorted(path.name for path in (remote / "assets").iterdir()) == ["x86_64-rootfs.erofs"]
 
     env.pop("FAKE_GH_FAIL_AFTER_UPLOAD")
     resumed = subprocess.run(
@@ -203,6 +207,60 @@ def test_publisher_uploads_source_manifest_last_and_resumes_interruption(
         "x86_64-rootfs.erofs",
         "channel-source-nightly.json",
     ]
+
+
+def test_publisher_reconciles_an_incomplete_release_title_to_exact_source(
+    tmp_path: Path,
+) -> None:
+    expected = tmp_path / "expected"
+    _publication(expected)
+    env = _publisher_env(tmp_path)
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    (remote / "release").touch()
+    (remote / "title").write_text("Capsem test (old-source)", encoding="utf-8")
+    assets = remote / "assets"
+    assets.mkdir()
+    (assets / "x86_64-rootfs.erofs").write_bytes(b"rootfs")
+
+    result = subprocess.run(
+        [PUBLISHER, "v1.6.test", expected],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (remote / "title").read_text(encoding="utf-8") == "Capsem test"
+    assert (assets / "channel-source-nightly.json").is_file()
+
+
+def test_publisher_refuses_to_retitle_a_completed_immutable_release(
+    tmp_path: Path,
+) -> None:
+    expected = tmp_path / "expected"
+    _publication(expected)
+    env = _publisher_env(tmp_path)
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    (remote / "release").touch()
+    old_title = "Capsem test (old-source)"
+    (remote / "title").write_text(old_title, encoding="utf-8")
+    assets = remote / "assets"
+    _publication(assets)
+
+    result = subprocess.run(
+        [PUBLISHER, "v1.6.test", expected],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "completed immutable release title" in result.stderr
+    assert (remote / "title").read_text(encoding="utf-8") == old_title
 
 
 def test_publisher_rejects_drift_without_clobbering_remote_bytes(

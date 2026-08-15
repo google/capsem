@@ -87,6 +87,11 @@ enabled = true
 compression = "lz4hc"
 compression_level = 12
 
+[build.rootfs]
+max_uncompressed_bytes = 2500000000
+max_erofs_bytes = 900000000
+forbidden_path_prefixes = ["usr/lib/ollama/cuda_"]
+
 [build.kernel]
 version = "9.9.9"
 sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -432,6 +437,11 @@ class TestLoadGuestConfigEdgeCases:
         (guest_minimal / "config" / "build.toml").write_text("""\
 [build]
 materialize_network = "default"
+
+[build.rootfs]
+max_uncompressed_bytes = 2500000000
+max_erofs_bytes = 900000000
+forbidden_path_prefixes = ["usr/lib/ollama/cuda_"]
 
 [build.asset_dependencies]
 tag_template = "capsem-{template}-dependencies-{arch}:{digest}"

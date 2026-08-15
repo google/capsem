@@ -71,7 +71,24 @@ install_agy
 install_exact_ollama "$CAPSEM_OLLAMA_URL" "$CAPSEM_OLLAMA_SHA256"
 command -v ollama >/dev/null 2>&1
 ollama --version 2>&1 | grep -F "$CAPSEM_OLLAMA_VERSION"
-rm -rf /usr/local/lib/ollama/cuda_*
+for ollama_root in /usr/lib/ollama /usr/local/lib/ollama; do
+    [ -d "$ollama_root" ] || continue
+    rm -rf \
+        "$ollama_root"/cuda* \
+        "$ollama_root"/hip* \
+        "$ollama_root"/jetpack* \
+        "$ollama_root"/oneapi* \
+        "$ollama_root"/opencl* \
+        "$ollama_root"/rocm* \
+        "$ollama_root"/vulkan*
+    if find "$ollama_root" -maxdepth 1 -mindepth 1 -type d \
+        \( -name 'cuda*' -o -name 'hip*' -o -name 'jetpack*' \
+        -o -name 'oneapi*' -o -name 'opencl*' -o -name 'rocm*' \
+        -o -name 'vulkan*' \) -print | grep -q .; then
+        echo "forbidden Ollama accelerator payload survived cleanup" >&2
+        exit 1
+    fi
+done
 
 cleanup_agent_runtime_state() {
     rm -rf \

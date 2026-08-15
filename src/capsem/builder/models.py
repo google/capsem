@@ -8,6 +8,7 @@ format.
 from __future__ import annotations
 
 from enum import Enum
+from pathlib import PurePosixPath
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -217,6 +218,36 @@ class ErofsConfig(BaseModel):
         return self
 
 
+class RootfsConfig(BaseModel):
+    """Fail-closed composition and size limits for publishable guest rootfs assets."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_uncompressed_bytes: int = Field(gt=0)
+    max_erofs_bytes: int = Field(gt=0)
+    forbidden_path_prefixes: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def _limits_are_safe(self):
+        if self.max_erofs_bytes >= self.max_uncompressed_bytes:
+            raise ValueError("max_erofs_bytes must be smaller than max_uncompressed_bytes")
+        if not self.forbidden_path_prefixes:
+            raise ValueError("forbidden_path_prefixes must not be empty")
+        if len(set(self.forbidden_path_prefixes)) != len(self.forbidden_path_prefixes):
+            raise ValueError("forbidden_path_prefixes must not contain duplicates")
+        for value in self.forbidden_path_prefixes:
+            path = PurePosixPath(value)
+            if (
+                not value
+                or value.strip() != value
+                or path.is_absolute()
+                or path.as_posix() != value
+                or any(part in {".", ".."} for part in path.parts)
+            ):
+                raise ValueError("forbidden_path_prefixes must contain normalized relative paths")
+        return self
+
+
 class BuildConfig(BaseModel):
     """Top-level build settings from build.toml."""
 
@@ -224,6 +255,7 @@ class BuildConfig(BaseModel):
 
     materialize_network: Literal[BuildNetwork.DEFAULT]
     erofs: ErofsConfig = Field(default_factory=ErofsConfig)
+    rootfs: RootfsConfig
     kernel: KernelConfig
     asset_dependencies: AssetDependencyConfig
     guest_rust_builder: GuestRustBuilderConfig

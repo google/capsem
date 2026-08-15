@@ -16,8 +16,9 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
@@ -26,7 +27,7 @@ from capsem.builder import assetdependencies, guestbuilder
 from capsem.builder.assettools import image_tag as asset_tools_image_tag
 from capsem.builder.doctor import check_container_runtime
 from capsem.builder.guestbuilder import image_tag
-from capsem.builder.models import BuildConfig, ErofsConfig, GuestImageConfig
+from capsem.builder.models import BuildConfig, ErofsConfig, GuestImageConfig, RootfsConfig
 from capsem.dockerpolicy import (
     BuildNetwork,
     ContainerNetwork,
@@ -631,6 +632,36 @@ def create_erofs(
         ],
         capture=True,
     )
+
+
+def validate_rootfs_export(tar_path: Path, limits: RootfsConfig) -> None:
+    """Reject an oversized or compositionally forbidden exported rootfs."""
+    size = tar_path.stat().st_size
+    if size > limits.max_uncompressed_bytes:
+        raise ValueError(
+            "uncompressed rootfs is "
+            f"{size} bytes, above configured maximum {limits.max_uncompressed_bytes}"
+        )
+    with tarfile.open(tar_path, mode="r") as archive:
+        for member in archive:
+            name = member.name
+            while name.startswith("./"):
+                name = name[2:]
+            path = PurePosixPath(name)
+            if path.is_absolute() or any(part == ".." for part in path.parts):
+                raise ValueError(f"unsafe rootfs archive member: {member.name}")
+            for prefix in limits.forbidden_path_prefixes:
+                if name.startswith(prefix):
+                    raise ValueError(f"forbidden rootfs payload survived cleanup: {name}")
+
+
+def validate_erofs_size(image_path: Path, limits: RootfsConfig) -> None:
+    """Reject a publishable EROFS whose packed bytes exceed its growth budget."""
+    size = image_path.stat().st_size
+    if size > limits.max_erofs_bytes:
+        raise ValueError(
+            f"EROFS rootfs is {size} bytes, above configured maximum {limits.max_erofs_bytes}"
+        )
 
 
 def _native_build_arch(config: GuestImageConfig) -> str:
@@ -1983,6 +2014,7 @@ def build_image(
             tar_path = arch_output / "rootfs.tar"
             print("Exporting rootfs filesystem...")
             export_container_fs(runtime, tag, arch.docker_platform, tar_path)
+            validate_rootfs_export(tar_path, config.build.rootfs)
             tar_entry = _file_ledger_entry(tar_path, base=arch_output)
             _append_build_ledger(
                 arch_output,
@@ -2014,6 +2046,7 @@ def build_image(
                 tool_image=_asset_tools_image(config, repo_root),
                 runtime_network=config.build.asset_tools.runtime_network,
             )
+            validate_erofs_size(erofs_path, config.build.rootfs)
             erofs_entry = _file_ledger_entry(erofs_path, base=arch_output)
             _append_build_ledger(
                 arch_output,

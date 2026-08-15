@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tomllib
 from pathlib import Path
 from typing import Any, ClassVar, cast
@@ -59,6 +60,8 @@ from capsem.builder.docker import (
     require_asset_dependencies,
     run_cmd,
     sync_container_clock,
+    validate_erofs_size,
+    validate_rootfs_export,
 )
 from capsem.builder.models import (
     AssetDependencyArchitectureConfig,
@@ -70,6 +73,7 @@ from capsem.builder.models import (
     GuestRustBuilderConfig,
     KernelConfig,
     NodeDownloadConfig,
+    RootfsConfig,
     VersionedDownloadConfig,
 )
 from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
@@ -511,6 +515,12 @@ class TestRootfsLayerOrdering:
         assert profile < cleanup
         assert "claude.ai/install.sh" not in rendered_profile_arm64
         assert "ollama.com/install.sh" not in rendered_profile_arm64
+
+    def test_dependency_helper_drops_reacquirable_package_indexes_and_temp_files(
+        self, rendered_profile_arm64
+    ):
+        cleanup = "rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*"
+        assert cleanup in rendered_profile_arm64
 
     def test_snapshot_sources_replace_inherited_sources_before_apt(self, real_config):
         """Every apt resolution must consume the checked-in HTTPS snapshot."""
@@ -1239,6 +1249,11 @@ class TestBuildVersionScript:
         config = GuestImageConfig(
             build=BuildConfig(
                 materialize_network=BuildNetwork.DEFAULT,
+                rootfs=RootfsConfig(
+                    max_uncompressed_bytes=2_500_000_000,
+                    max_erofs_bytes=900_000_000,
+                    forbidden_path_prefixes=("usr/lib/ollama/cuda_",),
+                ),
                 asset_dependencies=AssetDependencyConfig(
                     tag_template="capsem-{template}-dependencies-{arch}:{digest}",
                     rootfs_template="Dockerfile.rootfs-dependencies.j2",
@@ -1415,6 +1430,68 @@ class TestAptClockSkewOptions:
 
 
 class TestCreateErofs:
+    @staticmethod
+    def _rootfs_limits(**updates: Any) -> RootfsConfig:
+        values = {
+            "max_uncompressed_bytes": 1_024,
+            "max_erofs_bytes": 512,
+            "forbidden_path_prefixes": ("usr/lib/ollama/cuda_",),
+            **updates,
+        }
+        return RootfsConfig(**values)
+
+    def test_rootfs_export_rejects_uncompressed_growth(self, tmp_path: Path):
+        archive = tmp_path / "rootfs.tar"
+        archive.write_bytes(b"x" * 1_025)
+
+        with pytest.raises(ValueError, match=r"uncompressed rootfs.*1025.*1024"):
+            validate_rootfs_export(archive, self._rootfs_limits())
+
+    def test_rootfs_export_rejects_forbidden_ollama_payload(self, tmp_path: Path):
+        payload = tmp_path / "libcublas.so"
+        payload.write_bytes(b"gpu")
+        archive = tmp_path / "rootfs.tar"
+        with tarfile.open(archive, "w") as output:
+            output.add(payload, arcname="usr/lib/ollama/cuda_v13/libcublas.so")
+
+        with pytest.raises(ValueError, match=r"forbidden rootfs payload.*cuda_v13"):
+            validate_rootfs_export(
+                archive,
+                self._rootfs_limits(max_uncompressed_bytes=10_240),
+            )
+
+    def test_rootfs_export_rejects_unsafe_member_before_container_extract(self, tmp_path: Path):
+        payload = tmp_path / "payload"
+        payload.write_bytes(b"payload")
+        archive = tmp_path / "rootfs.tar"
+        with tarfile.open(archive, "w") as output:
+            output.add(payload, arcname="../escaped")
+
+        with pytest.raises(ValueError, match="unsafe rootfs archive member"):
+            validate_rootfs_export(
+                archive,
+                self._rootfs_limits(max_uncompressed_bytes=10_240),
+            )
+
+    def test_rootfs_export_accepts_bounded_cpu_only_payload(self, tmp_path: Path):
+        payload = tmp_path / "libggml-cpu.so"
+        payload.write_bytes(b"cpu")
+        archive = tmp_path / "rootfs.tar"
+        with tarfile.open(archive, "w") as output:
+            output.add(payload, arcname="usr/lib/ollama/libggml-cpu.so")
+
+        validate_rootfs_export(
+            archive,
+            self._rootfs_limits(max_uncompressed_bytes=10_240),
+        )
+
+    def test_erofs_rejects_compressed_growth(self, tmp_path: Path):
+        image = tmp_path / "rootfs.erofs"
+        image.write_bytes(b"x" * 513)
+
+        with pytest.raises(ValueError, match=r"EROFS rootfs.*513.*512"):
+            validate_erofs_size(image, self._rootfs_limits())
+
     @pytest.mark.parametrize(
         ("host_machine", "expected_platform"),
         [
@@ -1892,7 +1969,10 @@ class TestBuildLedger:
             return copied
 
         def fake_export(_runtime, _tag, _platform, output_tar):
-            output_tar.write_bytes(b"rootfs tar")
+            payload = tmp_path / "rootfs-payload"
+            payload.write_text("rootfs")
+            with tarfile.open(output_tar, mode="w") as archive:
+                archive.add(payload, arcname="usr/bin/rootfs-payload")
 
         def fake_erofs(_runtime, _tar_path, output_path, *_args, **_kwargs):
             output_path.write_bytes(b"erofs")

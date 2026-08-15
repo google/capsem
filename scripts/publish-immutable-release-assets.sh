@@ -29,6 +29,25 @@ download_existing() {
     fi
 }
 
+reconcile_incomplete_release_title() {
+    local expected_title="${CAPSEM_RELEASE_CREATE_TITLE:-}"
+    local actual_title
+    [[ -n "$expected_title" ]] || return 0
+
+    actual_title="$(gh release view "$release_tag" --json name --jq '.name')"
+    [[ "$actual_title" == "$expected_title" ]] && return 0
+
+    if find "$existing_dir" -mindepth 1 -maxdepth 1 -type f \
+        -name 'channel-source-*.json' -print -quit | grep -q .; then
+        echo "completed immutable release title does not match qualified source:" >&2
+        echo "  actual:   $actual_title" >&2
+        echo "  expected: $expected_title" >&2
+        exit 1
+    fi
+
+    gh release edit "$release_tag" --title "$expected_title"
+}
+
 if ! gh release view "$release_tag" >/dev/null 2>&1; then
     if [[ -z "${CAPSEM_RELEASE_CREATE_TITLE:-}" ]] \
         || [[ -z "${CAPSEM_RELEASE_CREATE_NOTES_FILE:-}" ]]; then
@@ -46,6 +65,7 @@ if ! gh release view "$release_tag" >/dev/null 2>&1; then
 fi
 
 download_existing "$existing_dir"
+reconcile_incomplete_release_title
 python3 "$script_dir/verify-immutable-publication.py" \
     --expected "$owned_dir" \
     --actual "$existing_dir" \

@@ -105,4 +105,5 @@ RUN uv pip install --system --break-system-packages --require-hashes \
     rm -f /tmp/python-requirements.lock
 {% endif %}
 
-RUN rm -rf /root && mkdir -p /root
+RUN rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* && \
+    rm -rf /root && mkdir -p /root

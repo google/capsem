@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Publishable guest rootfs assets now reject unexplained growth both before
+  and after EROFS compression, with a 900 MB packed ceiling. Code and co-work
+  profiles remove and then prove the absence of Ollama CUDA, HIP, JetPack,
+  oneAPI, OpenCL, ROCm, and Vulkan bundles from both vendor install roots; a
+  fast Citadel guard prevents the composition regression from returning. An
+  interrupted immutable publication may also reconcile its release title to
+  the new exact qualified source before the source manifest is published;
+  completed releases remain immutable and refuse any title mismatch.
+
 - Exact-commit qualification now describes the same initrd graph before and
   after guest-agent staging. Freshness is evaluated by the typed action at
   execution time, while resumed staging is revalidated before it can be

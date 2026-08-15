@@ -28,6 +28,7 @@ from capsem.builder.models import (
     PackageManager,
     PackageNetworkConfig,
     PackageSetConfig,
+    RootfsConfig,
     ShellConfig,
     ShellFileConfig,
     TlsConfig,
@@ -98,6 +99,11 @@ def _build(**kw):
             architectures={name: _dependency_arch(name) for name in architectures},
         ),
         "kernel": KernelConfig(version="9.9.9", sha256="a" * 64),
+        "rootfs": RootfsConfig(
+            max_uncompressed_bytes=2_500_000_000,
+            max_erofs_bytes=900_000_000,
+            forbidden_path_prefixes=("usr/lib/ollama/cuda_",),
+        ),
         "guest_rust_builder": GuestRustBuilderConfig(
             dockerfile="docker/Dockerfile.guest-rust-builder",
             tag_template="capsem-guest-rust-{arch}:{digest}",
@@ -183,6 +189,60 @@ class TestErofsCompression:
     def test_lz4hc_rejects_too_high_level(self):
         with pytest.raises(ValidationError):
             ErofsConfig(compression=ErofsCompression.LZ4HC, compression_level=13)
+
+
+class TestRootfsConfig:
+    def test_release_limits_and_forbidden_payloads_are_typed(self):
+        config = RootfsConfig(
+            max_uncompressed_bytes=2_500_000_000,
+            max_erofs_bytes=900_000_000,
+            forbidden_path_prefixes=("usr/lib/ollama/cuda_",),
+        )
+
+        assert config.max_uncompressed_bytes == 2_500_000_000
+        assert config.max_erofs_bytes == 900_000_000
+
+    @pytest.mark.parametrize(
+        "prefix",
+        (
+            "/usr/lib/ollama",
+            "../usr/lib/ollama",
+            "usr/lib/../ollama",
+            " usr/lib/ollama",
+            "",
+        ),
+    )
+    def test_forbidden_prefixes_must_be_safe_relative_paths(self, prefix: str):
+        with pytest.raises(ValidationError):
+            RootfsConfig(
+                max_uncompressed_bytes=2_500_000_000,
+                max_erofs_bytes=900_000_000,
+                forbidden_path_prefixes=(prefix,),
+            )
+
+    @pytest.mark.parametrize(
+        "overrides",
+        (
+            {"max_uncompressed_bytes": 900_000_000},
+            {"max_erofs_bytes": 2_500_000_000},
+            {"forbidden_path_prefixes": ()},
+            {
+                "forbidden_path_prefixes": (
+                    "usr/lib/ollama/cuda",
+                    "usr/lib/ollama/cuda",
+                )
+            },
+        ),
+    )
+    def test_release_limits_cannot_be_ambiguous_or_inverted(self, overrides: dict):
+        values = {
+            "max_uncompressed_bytes": 2_500_000_000,
+            "max_erofs_bytes": 900_000_000,
+            "forbidden_path_prefixes": ("usr/lib/ollama/cuda",),
+            **overrides,
+        }
+        with pytest.raises(ValidationError):
+            RootfsConfig.model_validate(values)
 
 
 class TestPackageManager:
