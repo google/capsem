@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Hosted profile and binary pairing jobs now run the same narrow Linux
+  sandbox repair-and-proof primitive as the reusable fast gate before fetching
+  Rust inputs or entering a private gate module. A workflow-wide inventory
+  guard rejects any future Ubuntu module caller that merely installs
+  Bubblewrap without proving loopback-only, direct-egress-denied operation.
+
 - Cold or retired channels can now publish a verified profile cohort inactive
   before they have a current package. The deferred lane uses a dedicated
   private gate module for manifest verification and real KVM boot, while the

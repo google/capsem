@@ -349,10 +349,16 @@ jobs:
         with:
           tool: cargo-nextest@0.9.137
 
-      - name: Prepare hermetic qualification boundary
+      - name: Install Linux sandbox runtime
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends bubblewrap
+
+      - name: Prove Linux sandbox boundary
+        run: python3 scripts/prepare-linux-sandbox.py --repair-hosted-runner
+
+      - name: Materialize locked Rust dependencies
+        run: |
           cargo fetch --locked
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c

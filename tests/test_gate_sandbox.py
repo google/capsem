@@ -200,6 +200,61 @@ def test_fast_gate_proves_hosted_linux_sandbox_before_dependency_work() -> None:
     assert_unmasked_step("fast-gate.yaml", workflow, "static", "Prove Linux sandbox boundary")
 
 
+def test_every_hosted_linux_job_entering_a_gate_module_proves_the_boundary_first() -> None:
+    """A package/profile pairing job is just as sandboxed as the fast gate.
+
+    Installing Bubblewrap does not prove that an Ubuntu runner may create the
+    namespace or configure loopback.  GitHub's AppArmor restriction can allow
+    the former while denying the latter, so every direct module caller must
+    use the same narrow repair-and-probe primitive before fetching Rust
+    dependencies or entering the gate.
+    """
+    callers: set[tuple[str, str]] = set()
+    for workflow_path in sorted((PROJECT_ROOT / ".github" / "workflows").glob("*.yaml")):
+        workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+        for job_name, job in workflow.get("jobs", {}).items():
+            if "ubuntu" not in str(job.get("runs-on", "")):
+                continue
+            steps = job.get("steps", [])
+            module_indexes = [
+                index
+                for index, step in enumerate(steps)
+                if "just _test-" in str(step.get("run", ""))
+            ]
+            if not module_indexes:
+                continue
+            callers.add((workflow_path.name, job_name))
+            prepare_indexes = [
+                index
+                for index, step in enumerate(steps)
+                if step.get("name") == "Prove Linux sandbox boundary"
+            ]
+            assert len(prepare_indexes) == 1, (
+                f"{workflow_path.name}:{job_name} directly enters a gate module "
+                "without exactly one hosted Linux sandbox proof"
+            )
+            prepare_index = prepare_indexes[0]
+            prepare = steps[prepare_index]
+            assert prepare["run"] == (
+                "python3 scripts/prepare-linux-sandbox.py --repair-hosted-runner"
+            )
+            assert prepare_index < min(module_indexes)
+            assert all(
+                prepare_index < index
+                for index, step in enumerate(steps)
+                if "cargo fetch" in str(step.get("run", ""))
+            ), f"{workflow_path.name}:{job_name} fetched Cargo inputs before sandbox proof"
+            assert_unmasked_step(
+                workflow_path.name, workflow, job_name, "Prove Linux sandbox boundary"
+            )
+
+    assert callers == {
+        ("fast-gate.yaml", "static"),
+        ("release-assets.yaml", "test-profile-pairing"),
+        ("release.yaml", "test-binary-pairing"),
+    }
+
+
 @pytest.mark.parametrize("job_name", ("release-profiles", "release-binaries"))
 def test_nightly_release_bootstraps_host_before_enforced_qualification(job_name: str) -> None:
     workflow_path = PROJECT_ROOT / ".github" / "workflows" / "release-nightly.yaml"
