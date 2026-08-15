@@ -9,11 +9,14 @@ from pathlib import Path
 
 from rust_sources import sibling_tests
 
+from capsem.gate.versions import workspace_version
+
 ROOT = Path(__file__).resolve().parents[2]
 ADMIN = ROOT / "crates" / "capsem-admin" / "src" / "main.rs"
 RELEASE_GRAPH = ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
 PROFILE_WORKFLOW = ROOT / ".github" / "workflows" / "release-assets.yaml"
 BINARY_WORKFLOW = ROOT / ".github" / "workflows" / "release.yaml"
+PUBLICATION_IDENTITY = f"profile-stable-code-{workspace_version(ROOT)}"
 
 
 def _function(source: str, name: str, next_name: str) -> str:
@@ -286,7 +289,7 @@ def test_cold_channel_pairing_executes_no_package_action(
         "UV_CALLS": str(calls),
         "GITHUB_ENV": str(github_env),
         "GITHUB_REPOSITORY": "google/capsem",
-        "PUBLICATION_IDENTITY": "profile-stable-code-0.6.0",
+        "PUBLICATION_IDENTITY": PUBLICATION_IDENTITY,
         "RELEASE_CHANNEL": "stable",
         "RELEASE_PROFILE": "code",
         "ACTIVATION_READY": "false",
@@ -322,7 +325,7 @@ def test_cold_channel_pairing_rejects_an_unknown_activation_decision(
             **os.environ,
             "GITHUB_ENV": str(github_env),
             "GITHUB_REPOSITORY": "google/capsem",
-            "PUBLICATION_IDENTITY": "profile-stable-code-0.6.0",
+            "PUBLICATION_IDENTITY": PUBLICATION_IDENTITY,
             "RELEASE_CHANNEL": "stable",
             "RELEASE_PROFILE": "code",
             "ACTIVATION_READY": "unknown",
