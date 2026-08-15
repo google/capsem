@@ -52,6 +52,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "pytest",
         *WINTERFELL_TESTS,
         "-q",
+        "-p",
+        "no:cacheprovider",
     ]
     result = subprocess.run(command, cwd=PROJECT_ROOT, env=environment, check=False)
     report = {

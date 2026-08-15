@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -195,8 +196,10 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
         "tests/capsem-mcp/test_winterfell_rw.py",
         "tests/capsem-mcp/test_winterfell_exec.py",
         "-q",
+        "-p",
+        "no:cacheprovider",
     ]
-    child_environment = captured["env"]
+    child_environment = cast(dict[str, str], captured["env"])
     assert child_environment["CAPSEM_WINTERFELL_BIN_DIR"] == str(bin_dir)
     assert child_environment["CAPSEM_WINTERFELL_ASSETS_DIR"] == str(assets_dir)
     assert child_environment["CAPSEM_WINTERFELL_PROFILES_DIR"] == str(profiles_dir)

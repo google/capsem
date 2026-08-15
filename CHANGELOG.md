@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Installed Winterfell qualification now disables pytest's cache provider. The
+  lifecycle proof is read-only, so a passing test run no longer fails while
+  trying to create cache files beneath the sealed `/src` mount.
+
 - Release-contract plan inspection now uses the shared disposable checkout and
   seeds frozen-source prerequisites only inside that copy. Inspectors can reach
   source-derived image actions without overwriting a live qualification's
