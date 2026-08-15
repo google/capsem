@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cold or retired channels can now publish a verified profile cohort inactive
+  before they have a current package. The deferred lane uses a dedicated
+  private gate module for manifest verification and real KVM boot, while the
+  active lane still requires the complete package/profile qualification; it no
+  longer invents or selects a package merely to reach the deferred boundary.
+
 - Profile release asset jobs now run the canonical Linux bootstrap before
   entering `build-assets`, so fresh ARM64 and x86_64 runners have the complete
   config-owned Doctor toolchain. A parsed Citadel guard rejects missing, late,

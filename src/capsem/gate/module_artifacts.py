@@ -6,6 +6,9 @@ plan line and no edge changes, which is what its guard asserts.
 
 from __future__ import annotations
 
+import argparse
+from pathlib import Path
+
 from . import (
     assetplan,
     pytestsuite,
@@ -15,7 +18,7 @@ from .command import GateCommand
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
 from .plan import Plan
-from .qualification import Qualification
+from .qualification import BinaryQualification, Qualification
 from .testmodules import InWorkspace
 
 
@@ -41,6 +44,37 @@ class ArtifactsModule(
         return plan
 
 
+class ProfileArtifactsModule(
+    InWorkspace,
+    GateCommand,
+    name="test-profile-artifacts",
+    help="verify and boot one staged profile without claiming a binary pairing",
+):
+    """The non-activation half of a cold-channel profile release.
+
+    A first profile can be published immutably before the channel has a package
+    cohort.  That is not a fourth release qualification: it cannot run the
+    functional or glow-up modules.  It is exactly the profile-owned artifact
+    proof, exposed as its own private command so the workflow never invents a
+    package merely to satisfy the complete pairing type.
+    """
+
+    @classmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("input_dir", type=Path)
+        parser.add_argument("profile")
+
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        pulled_artifacts(
+            plan,
+            self._config,
+            input_dir=self._args.input_dir,
+            profile=self._args.profile,
+        )
+        return plan
+
+
 def artifacts(
     plan: Plan,
     config: GateConfig,
@@ -52,37 +86,13 @@ def artifacts(
     phase = plan.phase("artifacts")
     settings = config.modules
 
-    if qualification.pulled:
-        verify = phase.add(
-            step(
-                "release-inputs.verify",
-                Script(settings.verify_inputs_script, "--input-dir", qualification.input_dir),
-                kind=Kind.STATIC_TEST,
-                needs=frozenset({Needs.DISK}),
-                speed=Speed.FAST,
-            ),
+    if isinstance(qualification, BinaryQualification):
+        return pulled_artifacts(
+            plan,
+            config,
+            input_dir=qualification.input_dir,
+            profile=qualification.profile,
             after=after,
-        )
-        # A binary lane resolves every profile the manifest names, so there is
-        # no single one to boot; a profile lane is publishing exactly one.
-        if qualification.profile is None:
-            return verify
-        return phase.add(
-            step(
-                "release-inputs.boot",
-                Script(
-                    settings.prove_profile_assets_script,
-                    "--input-dir",
-                    qualification.input_dir,
-                    "--profile",
-                    qualification.profile,
-                ),
-                contends=(config.exclusive("apple_vz"),),
-                kind=Kind.CAPSEM,
-                needs=frozenset({Needs.VM, Needs.KVM, Needs.DISK}),
-                speed=Speed.SLOW,
-            ),
-            after=(verify,),
         )
 
     built = assetplan.fragment(plan, config, after=after)
@@ -97,4 +107,48 @@ def artifacts(
             contends=(config.exclusive("workspace_binaries"),),
         ).as_step(config),
         after=(built,),
+    )
+
+
+def pulled_artifacts(
+    plan: Plan,
+    config: GateConfig,
+    *,
+    input_dir: str | Path,
+    profile: str | None,
+    after: tuple[Step, ...] = (),
+) -> Step:
+    """Verify pulled inputs, and boot the one profile when one is selected."""
+    phase = plan.phase("artifacts")
+    settings = config.modules
+    verify = phase.add(
+        step(
+            "release-inputs.verify",
+            Script(settings.verify_inputs_script, "--input-dir", input_dir),
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.FAST,
+        ),
+        after=after,
+    )
+    # A binary lane resolves every profile the manifest names, so there is no
+    # single one to boot; profile releases and deferred staging select one.
+    if profile is None:
+        return verify
+    return phase.add(
+        step(
+            "release-inputs.boot",
+            Script(
+                settings.prove_profile_assets_script,
+                "--input-dir",
+                input_dir,
+                "--profile",
+                profile,
+            ),
+            contends=(config.exclusive("apple_vz"),),
+            kind=Kind.CAPSEM,
+            needs=frozenset({Needs.VM, Needs.KVM, Needs.DISK}),
+            speed=Speed.SLOW,
+        ),
+        after=(verify,),
     )

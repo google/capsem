@@ -77,8 +77,18 @@ REQUIRED_JUST_STEPS = (
     RequiredJustStep(
         "release-assets.yaml",
         "test-profile-pairing",
+        "Run deferred profile artifact module",
+        (
+            'just _test-profile-artifacts "$PWD/target/candidate-profile-inputs" "${{ inputs.profile }}"',
+        ),
+        "${{ needs.author-profile-release.outputs.activation_ready != 'true' }}",
+    ),
+    RequiredJustStep(
+        "release-assets.yaml",
+        "test-profile-pairing",
         "Run shared artifact module",
         ("just _test-artifacts",),
+        "${{ needs.author-profile-release.outputs.activation_ready == 'true' }}",
     ),
     RequiredJustStep(
         "release-assets.yaml",

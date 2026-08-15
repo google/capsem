@@ -12,7 +12,13 @@ set -euo pipefail
 : "${GITHUB_REPOSITORY:?the owning repository is required}"
 : "${RELEASE_CHANNEL:?the channel under test is required}"
 : "${RELEASE_PROFILE:?the profile under test is required}"
+: "${ACTIVATION_READY:?the authored profile activation decision is required}"
 : "${GITHUB_ENV:?this stages the environment a later step reads}"
+
+if [[ "$ACTIVATION_READY" != "true" && "$ACTIVATION_READY" != "false" ]]; then
+    echo "profile activation decision must be true or false" >&2
+    exit 1
+fi
 
 PUBLICATION_BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${PUBLICATION_IDENTITY}"
 PUBLICATION_DIR="target/asset-release/${PUBLICATION_IDENTITY}"
@@ -34,6 +40,16 @@ uv run python scripts/fetch-release-artifacts.py \
     --local-publication-dir "$PUBLICATION_DIR"
 uv run python scripts/verify-release-inputs.py \
     --input-dir target/candidate-profile-inputs
+
+# A retired or first-channel public-before graph deliberately has no package.
+# The profile still owes its own digest and KVM boot proof, but that is not a
+# complete package/profile pairing and must not be made to look like one with
+# a placeholder package. The workflow invokes the dedicated private artifact
+# module after this shared input verification and withholds activation.
+if [[ "$ACTIVATION_READY" == "false" ]]; then
+    exit 0
+fi
+[[ "$ACTIVATION_READY" == "true" ]]
 
 uv run python scripts/stage-release-test-inputs.py \
     --input-dir target/profile-public-before/packages \

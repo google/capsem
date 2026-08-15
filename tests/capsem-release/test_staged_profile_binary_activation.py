@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
 
 from rust_sources import sibling_tests
@@ -177,6 +179,16 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     publish = _job(workflow, "publish-profile-release", "deploy-channel")
     deploy = workflow.split("  deploy-channel:\n", maxsplit=1)[1]
     activation_ready = "needs.author-profile-release.outputs.activation_ready == 'true'"
+    pairing_setup = _step(
+        pairing,
+        "Prepare exact profile and pulled binary pairing",
+        "Run deferred profile artifact module",
+    )
+    deferred_artifacts = _step(
+        pairing,
+        "Run deferred profile artifact module",
+        "Run shared artifact module",
+    )
     artifacts = _step(
         pairing,
         "Run shared artifact module",
@@ -207,7 +219,14 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     assert "if:" not in fast_gate
     assert "fast-gate" in build_assets.splitlines()[0]
     assert "Run shared static module" not in pairing
-    assert "if:" not in artifacts
+    assert "ACTIVATION_READY:" in pairing_setup
+    assert "needs.author-profile-release.outputs.activation_ready" in pairing_setup
+    assert f"if: ${{{{ {activation_ready} }}}}" in artifacts
+    assert "just _test-artifacts" in artifacts
+    assert "needs.author-profile-release.outputs.activation_ready != 'true'" in deferred_artifacts
+    assert "just _test-profile-artifacts" in deferred_artifacts
+    assert '"$PWD/target/candidate-profile-inputs"' in deferred_artifacts
+    assert "inputs.profile" in deferred_artifacts
     assert "Run complete shared fast module" in reusable_fast_gate
     assert "run: just _test-fast" in reusable_fast_gate
     assert "needs.author-profile-release.outputs.activation_ready != 'true'" in deferred
@@ -221,6 +240,101 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     assert f"if: ${{{{ {activation_ready} }}}}" in deployable
     assert "if:" not in immutable
     assert "needs.publish-profile-release.outputs.activation_ready == 'true'" in deploy
+
+
+def test_cold_channel_pairing_branches_before_package_selection() -> None:
+    """The first profile can publish inactive before this channel has binaries.
+
+    The hosted stable/code run 31876487898 reached this exact boundary with an
+    explicit empty-package public-before report and failed because package
+    selection was unconditional.  Keep that decision ahead of every package
+    staging/install action while retaining manifest/profile verification.
+    """
+    script = (ROOT / "scripts" / "stage-profile-pairing.sh").read_text(encoding="utf-8")
+    branch = script.index('if [[ "$ACTIVATION_READY" == "false" ]]')
+
+    assert script.index("scripts/verify-release-inputs.py") < branch
+    assert script.index("scripts/fetch-release-artifacts.py") < branch
+    assert branch < script.index("--binary-dir target/debug")
+    assert branch < script.index("--print-package-path")
+    assert branch < script.index("scripts/install-deb-runtime-dependencies.py")
+    assert '[[ "$ACTIVATION_READY" == "true" ]]' in script
+
+
+def test_cold_channel_pairing_executes_no_package_action(
+    tmp_path: Path,
+) -> None:
+    calls = tmp_path / "uv-calls"
+    github_env = tmp_path / "github-env"
+    github_env.touch()
+    for family in ("packages", "profiles"):
+        destination = tmp_path / "target" / "profile-public-before" / family
+        destination.mkdir(parents=True)
+        (destination / "manifest.json").write_text("{}\n", encoding="utf-8")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    uv = bin_dir / "uv"
+    uv.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$UV_CALLS"\n',
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+    environment = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "UV_CALLS": str(calls),
+        "GITHUB_ENV": str(github_env),
+        "GITHUB_REPOSITORY": "google/capsem",
+        "PUBLICATION_IDENTITY": "profile-stable-code-0.6.0",
+        "RELEASE_CHANNEL": "stable",
+        "RELEASE_PROFILE": "code",
+        "ACTIVATION_READY": "false",
+    }
+
+    subprocess.run(
+        ["bash", str(ROOT / "scripts" / "stage-profile-pairing.sh")],
+        cwd=tmp_path,
+        env=environment,
+        check=True,
+    )
+
+    invoked = calls.read_text(encoding="utf-8")
+    assert invoked.count("scripts/verify-release-inputs.py") == 3
+    assert "scripts/fetch-release-artifacts.py" in invoked
+    for forbidden in (
+        "scripts/stage-release-test-inputs.py",
+        "scripts/install-deb-runtime-dependencies.py",
+        "scripts/materialize-config.sh",
+    ):
+        assert forbidden not in invoked
+    assert github_env.read_text(encoding="utf-8") == ""
+
+
+def test_cold_channel_pairing_rejects_an_unknown_activation_decision(
+    tmp_path: Path,
+) -> None:
+    github_env = tmp_path / "github-env"
+    completed = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "stage-profile-pairing.sh")],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "GITHUB_ENV": str(github_env),
+            "GITHUB_REPOSITORY": "google/capsem",
+            "PUBLICATION_IDENTITY": "profile-stable-code-0.6.0",
+            "RELEASE_CHANNEL": "stable",
+            "RELEASE_PROFILE": "code",
+            "ACTIVATION_READY": "unknown",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "must be true or false" in completed.stderr
+    assert not github_env.exists()
 
 
 def test_hosted_macos_never_claims_the_local_apple_vz_proof() -> None:

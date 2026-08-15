@@ -387,8 +387,17 @@ jobs:
           PUBLICATION_IDENTITY: ${{ needs.author-profile-release.outputs.publication_identity }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
           RELEASE_PROFILE: ${{ inputs.profile }}
+          ACTIVATION_READY: ${{ needs.author-profile-release.outputs.activation_ready }}
         run: bash scripts/stage-profile-pairing.sh
+
+      - name: Run deferred profile artifact module
+        if: ${{ needs.author-profile-release.outputs.activation_ready != 'true' }}
+        run: |
+          just _test-profile-artifacts \
+            "$PWD/target/candidate-profile-inputs" \
+            "${{ inputs.profile }}"
       - name: Run shared artifact module
+        if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
         run: just _test-artifacts
 
       - name: Record deferred profile staging boundary

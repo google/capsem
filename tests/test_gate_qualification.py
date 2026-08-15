@@ -166,6 +166,43 @@ def test_a_profile_release_boots_the_one_profile_it_is_publishing() -> None:
     assert VALUES[PROFILE] in artifacts
 
 
+def test_a_deferred_profile_proves_assets_without_inventing_a_package() -> None:
+    """A cold channel has no package, but its immutable profile still boots.
+
+    This is deliberately a separate private command rather than a fourth
+    release qualification shape: no functional or glow-up module may consume
+    a package-less pairing, and the complete three-state release union stays
+    fail-closed.
+    """
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli
+    from capsem.gate.command import GateCommand
+
+    assert cli.COMMAND_MODULES  # importing the CLI registers every command
+
+    command = GateCommand.registry["test-profile-artifacts"](
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(
+            dry_run=False,
+            graph=False,
+            timing=False,
+            input_dir=VALUES[INPUT_DIR],
+            profile=VALUES[PROFILE],
+        ),
+    )
+    rendered = command._describe().describe()
+
+    assert command.uses_qualification is False
+    assert SETTINGS.verify_inputs_script in rendered
+    assert SETTINGS.prove_profile_assets_script in rendered
+    assert VALUES[INPUT_DIR] in rendered
+    assert VALUES[PROFILE] in rendered
+    assert VALUES[PACKAGE] not in rendered
+    for forbidden in ("build-assets", "_build-kernel", "_build-rootfs", "test-functional"):
+        assert forbidden not in rendered
+
+
 def test_the_functional_module_signs_locally_and_never_in_a_release_lane() -> None:
     assert "sign" in planned("test-functional", LOCAL)
     assert "sign" not in planned("test-functional", BINARY)

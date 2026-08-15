@@ -170,6 +170,9 @@ _test-static: _clean-stale _check-generated-settings
 _test-artifacts:
     uv run capsem-gate test-artifacts
 
+_test-profile-artifacts input_dir profile:
+    uv run capsem-gate test-profile-artifacts {{quote(input_dir)}} {{quote(profile)}}
+
 _test-functional: _generate-settings
     uv run capsem-gate test-functional
 

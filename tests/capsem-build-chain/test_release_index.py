@@ -836,7 +836,7 @@ def test_profile_release_deploys_generated_preview_only_when_activation_ready() 
     assert "needs.author-profile-release.outputs.release_needed == 'true'" in pairing
     assert (
         pairing.count("if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}")
-        == 2
+        == 3
     )
 
     assert "needs.test-profile-pairing.result == 'success'" in publish
@@ -873,16 +873,21 @@ def test_profile_release_publishes_deferred_assets_but_withholds_channel_deploy(
 
     assert "scripts/check-profile-release-delta.py" in author
     assert "cargo run -p capsem-admin -- release" in author
+    assert "Run deferred profile artifact module" in pairing
     assert "Run shared artifact module" in pairing
     assert "Run complete shared fast module" in reusable_fast_gate
     assert "run: just _test-fast" in reusable_fast_gate
     assert "Run shared release contracts" not in pairing
-    assert (
-        "if:"
-        not in pairing.split("- name: Run shared artifact module", maxsplit=1)[1].split(
-            "- name: Record deferred profile staging boundary", maxsplit=1
-        )[0]
-    )
+    deferred_artifacts = pairing.split("- name: Run deferred profile artifact module", maxsplit=1)[
+        1
+    ].split("- name: Run shared artifact module", maxsplit=1)[0]
+    active_artifacts = pairing.split("- name: Run shared artifact module", maxsplit=1)[1].split(
+        "- name: Record deferred profile staging boundary", maxsplit=1
+    )[0]
+    assert "needs.author-profile-release.outputs.activation_ready != 'true'" in deferred_artifacts
+    assert "just _test-profile-artifacts" in deferred_artifacts
+    assert "needs.author-profile-release.outputs.activation_ready == 'true'" in active_artifacts
+    assert "just _test-artifacts" in active_artifacts
     assert "activation-ready profile cannot defer complete pairing gates" in pairing
     assert "complete functional release binary cohort" in pairing
     assert "needs.author-profile-release.outputs.activation_ready != 'true'" in pairing
@@ -1533,9 +1538,10 @@ def test_binary_release_index_records_source_on_packages_without_changing_profil
     assert packages[pkg.name]["digest"]["sha256"] == hashlib.sha256(pkg_bytes).hexdigest()
     assert packages[deb.name]["digest"]["sha256"] == hashlib.sha256(deb_bytes).hexdigest()
     assert packages[deb.name]["binaries"]
-    assert packages[deb.name]["evidence"][0]["digest"]["sha256"] == hashlib.sha256(
-        sbom.read_bytes()
-    ).hexdigest()
+    assert (
+        packages[deb.name]["evidence"][0]["digest"]["sha256"]
+        == hashlib.sha256(sbom.read_bytes()).hexdigest()
+    )
 
 
 def test_binary_release_index_rejects_bad_spdx_sbom(tmp_path: Path) -> None:
