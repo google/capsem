@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Supervisor SIGTERM now unwinds the gate through its ordinary cancellation
+  and run-log lifecycle instead of terminating Python in place. Interrupted
+  exact-source qualifications therefore emit a terminal failed journal,
+  archive it under the selected commit, release their live lock, and retain
+  only graph-proven work for an automatic continuation.
+
 - Publishable guest rootfs assets now reject unexplained growth both before
   and after EROFS compression, with a 900 MB packed ceiling. Code and co-work
   profiles remove and then prove the absence of Ollama CUDA, HIP, JetPack,

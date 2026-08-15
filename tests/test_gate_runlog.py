@@ -16,19 +16,21 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import threading
 from argparse import Namespace
 from pathlib import Path
 
 import pytest
 
+from capsem.gate import cancellation
 from capsem.gate import config as gate_config
 from capsem.gate.actions import Run
 from capsem.gate.errors import GateError
 from capsem.gate.execution import step
 from capsem.gate.proc import Runner
 from capsem.gate.recording import Recorded
-from capsem.gate.runhistory import read, rotate, runs
+from capsem.gate.runhistory import live, read, rotate, runs
 from capsem.gate.runlog import RunLog
 from capsem.gate.runlogschema import (
     PAYLOADS,
@@ -37,6 +39,7 @@ from capsem.gate.runlogschema import (
     QualificationReuse,
     QualificationRun,
 )
+from capsem.gate.sourcecommit import SourceCommit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
@@ -237,6 +240,39 @@ def test_an_interrupt_still_closes_the_run(tmp_path: Path) -> None:
         raise KeyboardInterrupt
 
     assert [e for e in _events(log) if e["event"] == "run.end"]
+
+
+def test_sigterm_archives_a_terminal_exact_source_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A supervisor stop must leave graph-safe continuation evidence."""
+    config = _checkout(tmp_path)
+    commit = SourceCommit("1" * 40)
+    monkeypatch.setattr("capsem.gate.auditfs.tracked", lambda _path: False)
+
+    with (
+        pytest.raises(cancellation.Terminated),
+        cancellation.unwind_sigterm(),
+        RunLog.open(
+            config,
+            "candidate",
+            source_commit=str(commit),
+        ) as log,
+    ):
+        log.qualification_attempt(commit)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    archive = (
+        config.path(config.runlog.root)
+        / config.runlog.source_archive_dir
+        / str(commit)
+        / f"{log.run_id}.jsonl"
+    )
+    assert archive.samefile(log.directory / config.runlog.events)
+    ended = [event for event in _events(log) if event["event"] == "run.end"]
+    assert len(ended) == 1
+    assert ended[0]["status"] == "failed"
+    assert log.run_id not in live(config)
 
 
 # ---------------------------------------------------------------------------

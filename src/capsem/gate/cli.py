@@ -18,6 +18,7 @@ from collections.abc import Sequence
 
 from . import (
     assetplan,
+    cancellation,
     candidate,
     crosscompile,
     debproofcommand,
@@ -165,15 +166,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     raw = invocation(argv)
     args = build_parser().parse_args(argv)
     try:
-        GateCommand.registry[args.gate_command](
-            Runner(project_root()), args, invocation=raw
-        ).execute()
+        with cancellation.unwind_sigterm():
+            GateCommand.registry[args.gate_command](
+                Runner(project_root()), args, invocation=raw
+            ).execute()
     except GateError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         print("interrupted", file=sys.stderr)
         return 130
+    except cancellation.Terminated as exc:
+        print(str(exc), file=sys.stderr)
+        return exc.exit_status
     return 0
 
 

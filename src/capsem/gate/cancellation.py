@@ -25,10 +25,12 @@ gives you a flag that is set, read, and always false.
 
 from __future__ import annotations
 
+import signal
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from types import FrameType
 
 from .errors import GateError
 
@@ -43,6 +45,39 @@ class Cancelled(GateError):
     comes from the interrupt on the main thread, not from this. An interrupted
     gate is not a gate that failed its checks.
     """
+
+
+class Terminated(BaseException):
+    """A supervisor asked the gate to stop, while preserving unwinding."""
+
+    def __init__(self, received: signal.Signals) -> None:
+        self.received = received
+        super().__init__(f"terminated by {received.name}")
+
+    @property
+    def exit_status(self) -> int:
+        return 128 + int(self.received)
+
+
+@contextmanager
+def unwind_sigterm() -> Iterator[None]:
+    """Translate SIGTERM into an exception so held state and journals close.
+
+    SIGINT already becomes ``KeyboardInterrupt``. Process supervisors and
+    wrappers use SIGTERM instead, whose Python default exits immediately and
+    skips every context-manager cleanup. SIGKILL remains the deliberate
+    uncatchable escape hatch.
+    """
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def terminate(received: int, _frame: FrameType | None) -> None:
+        raise Terminated(signal.Signals(received))
+
+    signal.signal(signal.SIGTERM, terminate)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 @contextmanager

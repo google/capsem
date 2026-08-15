@@ -9,6 +9,8 @@ in this package rather than a bad checkout.
 
 from __future__ import annotations
 
+import os
+import signal
 from pathlib import Path
 
 import pytest
@@ -142,6 +144,21 @@ def test_an_interrupt_exits_130_rather_than_reporting_success(
     monkeypatch.setattr("capsem.gate.versions.workspace_version", interrupt)
 
     assert cli.main(["version"]) == 130
+
+
+def test_sigterm_unwinds_the_command_and_exits_143(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Process supervisors use SIGTERM, not the terminal's SIGINT."""
+
+    def terminate(_root):
+        os.kill(os.getpid(), signal.SIGTERM)
+        raise AssertionError("SIGTERM returned instead of unwinding the gate")
+
+    monkeypatch.setattr(cli, "Runner", lambda root: RecordingRunner(root))
+    monkeypatch.setattr("capsem.gate.versions.workspace_version", terminate)
+
+    assert cli.main(["version"]) == 143
 
 
 def test_an_unknown_command_is_refused_by_the_parser() -> None:
