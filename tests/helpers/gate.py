@@ -513,7 +513,11 @@ def _inspection_checkout(source: Path) -> Iterator[Path]:
         # its clonefile choice must use the real interpreter platform.
         with patch.object(host, "on_macos", return_value=sys.platform == "darwin"):
             snapshot.populate(source, checkout, gate_config.load(source))
-        _seed_observed_source(checkout)
+            # The frozen-source copy is infrastructure too.  Keep both copy
+            # stages on the real host even when the contract is rendering a
+            # mocked Darwin plan on Linux; otherwise snapshotting selects
+            # macOS ``cp -c`` and asks GNU cp to execute it.
+            _seed_observed_source(checkout)
         yield checkout
 
 

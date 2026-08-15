@@ -24,8 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seeds frozen-source prerequisites only inside that copy. Inspectors can reach
   source-derived image actions without overwriting a live qualification's
   source receipt, while real gates still require isolated bytecode and exact
-  image receipts. Timing policy also has its own schema module, preserving the
-  300-line gate-module ceiling instead of ratcheting it upward.
+  image receipts. Both inspection copy stages use the actual host filesystem
+  primitive even when rendering another platform's plan. Timing policy also
+  has its own schema module, preserving the 300-line gate-module ceiling
+  instead of ratcheting it upward, and the removed suppression is ratcheted
+  out of the exact debt budget.
 
 - Install qualification images now build from the immutable source snapshot
   captured by `source.record`, then persist a strict helper/source/tag/image

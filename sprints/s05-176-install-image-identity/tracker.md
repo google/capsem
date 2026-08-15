@@ -41,3 +41,12 @@
   and timing policy is split into its own schema. Focused 6/6 and owning
   install/source/observation/boundary/timing suites 395 passed, 2 skipped.
 - Contract repair committed and pushed as `aa5faf9e`.
+- Exact `034faa2a` qualification stopped after 13m40s in the same cheap
+  `contracts.release` frontier: 4,581 passed, 38 skipped, and no expensive
+  artifact/package/VM/glow-up step ran. Five failures shared one inspection
+  infrastructure bug: a mocked Darwin plan selected macOS `cp -c` while the
+  disposable frozen-source copy was executing on Linux. The sixth correctly
+  required the suppression budget to fall from 68 to 67 after the prior
+  refactor removed a `noqa`. The copy stages now stay bound to the actual host
+  while only plan construction sees the mocked host, and the debt ratchet is
+  lowered rather than padded.
