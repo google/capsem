@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Debian packages now declare the glibc floor their binaries actually require.
+  `Capsem_0.6.0_arm64.deb` declared `libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3`
+  and no libc at all while every shipped binary needed GLIBC_2.39, so on Debian
+  bookworm (2.36) and Ubuntu 22.04 (2.35) `apt install` succeeded -- every
+  declared dependency was satisfiable -- and then every binary died with
+  "version `GLIBC_2.39' not found". The floor is now derived from the packaged
+  bytes by `scripts/derive-deb-libc-floor.py` rather than hand-written beside
+  the GUI libraries, so apt refuses an unusable install instead of completing a
+  broken one.
+
 - The nightly release schedule now qualifies its commit before releasing it.
   The release commands consume an exact-commit journal and never produce one;
   the scheduler split its lanes across three runners with no `just test`

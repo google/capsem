@@ -215,7 +215,7 @@ else:
     raw = match.group(1)
     deps = [item.strip() for item in raw.replace("\n", " ").split(",") if item.strip()]
     names = {re.split(r"\s*[ (]", item, maxsplit=1)[0] for item in deps}
-    if dependency not in names:
+    if re.split(r"\s*[ (]", dependency, maxsplit=1)[0] not in names:
         deps.append(dependency)
         replacement = "Depends: " + ", ".join(deps) + "\n"
         text = text[: match.start()] + replacement + text[match.end():]
@@ -243,6 +243,10 @@ for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp
     fi
 done
 strip_packaged_binaries
+
+echo "=== Deriving glibc floor from the packaged binaries ==="
+ensure_deb_dependency "$WORK_DIR/deb/DEBIAN/control" \
+    "$(python3 "$SCRIPT_DIR/derive-deb-libc-floor.py" "$WORK_DIR/deb")"
 
 echo "=== Adding maintainer scripts ==="
 cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"

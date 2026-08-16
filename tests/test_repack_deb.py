@@ -17,6 +17,7 @@ import contextlib
 import functools
 import http.server
 import json
+import re
 import shutil
 import subprocess
 import threading
@@ -44,9 +45,13 @@ REQUIRED_BINARIES = [
     "capsem-bench-rs",
 ]
 
+# A real dynamically linked ELF to stand in for each companion binary, so the
+# derived libc floor is read from something that genuinely references glibc.
+_ELF_SOURCE = Path("/bin/true")
+
 pytestmark = pytest.mark.skipif(
-    shutil.which("dpkg-deb") is None,
-    reason="dpkg-deb not on PATH (install on macOS via `brew install dpkg`)",
+    shutil.which("dpkg-deb") is None or not _ELF_SOURCE.is_file(),
+    reason="dpkg-deb not on PATH (install on macOS via `brew install dpkg`), or no /bin/true",
 )
 
 
@@ -74,16 +79,19 @@ def _build_fixture_deb(workdir: Path, name: str = "capsem-fixture", version: str
 
 
 def _seed_binaries(bin_dir: Path, which: list[str] | None = None):
-    """Drop fake executable files named like the companion binaries."""
+    """Drop real ELF files named like the companion binaries.
+
+    These were shell-script stubs, on the grounds that repack-deb only copies
+    bytes.  It no longer only copies bytes: it derives the package's `libc6`
+    floor from the glibc versions the shipped binaries actually reference, so a
+    stub that is not an ELF proves nothing about the field being written.
+    """
     if which is None:
         which = REQUIRED_BINARIES
     bin_dir.mkdir(parents=True, exist_ok=True)
     for name in which:
-        path = bin_dir / name
-        # Minimal shell script so the file is non-empty; repack-deb copies
-        # bytes, doesn't care about ELF validity.
-        path.write_text(f"#!/bin/sh\necho {name} stub\n")
-        path.chmod(0o755)
+        shutil.copy2(_ELF_SOURCE, bin_dir / name)
+        (bin_dir / name).chmod(0o755)
 
 
 def _seed_config(config_dir: Path):
@@ -376,11 +384,50 @@ def test_repacked_deb_declares_tray_runtime_dependency(tmp_path):
     extracted = _deb_contents(output, tmp_path / "extracted")
     control = (extracted / "DEBIAN" / "control").read_text()
     depends = " ".join(
-        line.strip()
-        for line in control.splitlines()
-        if line.startswith(("Depends:", " "))
+        line.strip() for line in control.splitlines() if line.startswith(("Depends:", " "))
     )
     assert "libxdo3" in depends
+
+
+def test_repacked_deb_declares_the_glibc_floor_it_actually_needs(tmp_path):
+    """apt must refuse an unusable install instead of completing a broken one.
+
+    The 0.6.0 package declared no libc at all, so it installed cleanly on
+    Debian bookworm (glibc 2.36) and Ubuntu 22.04 (2.35) and then every binary
+    died with "version `GLIBC_2.39' not found".
+    """
+    fixture = _build_fixture_deb(tmp_path)
+    bin_dir = tmp_path / "bin"
+    config_dir = tmp_path / "target-config"
+    _seed_binaries(bin_dir)
+    _seed_config(config_dir)
+    output = tmp_path / "out.deb"
+
+    res = _run_repack(fixture, bin_dir, config_dir, output)
+    assert res.returncode == 0, f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
+
+    extracted = _deb_contents(output, tmp_path / "extracted")
+    control = (extracted / "DEBIAN" / "control").read_text()
+    depends = " ".join(
+        line.strip() for line in control.splitlines() if line.startswith(("Depends:", " "))
+    )
+
+    match = re.search(r"libc6 \(>= (\d+)\.(\d+)(?:\.(\d+))?\)", depends)
+    assert match is not None, f"no versioned libc6 dependency in Depends: {depends!r}"
+
+    # The floor must be the one the packaged bytes really require, not a
+    # constant: compare against the same binaries read independently.
+    expected = subprocess.run(
+        [
+            "python3",
+            str(REPO_ROOT / "scripts" / "derive-deb-libc-floor.py"),
+            str(extracted),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert expected in depends
 
 
 def test_explicit_manifest_url_is_packaged_without_manifest_payload(tmp_path):
@@ -464,7 +511,10 @@ def test_explicit_remote_manifest_url_is_packaged_with_origin_provenance(tmp_pat
     )
     output = tmp_path / "out.deb"
 
-    with _serve_directory_requiring_release_user_agent(manifest_root) as (base_url, seen_user_agents):
+    with _serve_directory_requiring_release_user_agent(manifest_root) as (
+        base_url,
+        seen_user_agents,
+    ):
         manifest_url = f"{base_url}/corp-manifest.json"
         res = subprocess.run(
             [

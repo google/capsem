@@ -195,6 +195,11 @@ package_runtime_packages = [
     "libwebkit2gtk-4.1-0",
     "libgtk-3-0",
     "libxdo3",
+    # Derived from the shipped binaries by scripts/derive-deb-libc-floor.py,
+    # not hand-written: the hand-written list above omitted libc entirely, so
+    # the package installed on glibc older than it needs and then every binary
+    # failed at runtime instead of apt refusing the install.
+    "libc6",
 ]
 
 [install.builder]
@@ -234,6 +239,7 @@ apt_packages = [
     "libwebkit2gtk-4.1-0",
     "libgtk-3-0",
     "libxdo3",
+    "libc6",
 ]
 
 # The unprivileged user the container runs proofs as. Every one of these paths
