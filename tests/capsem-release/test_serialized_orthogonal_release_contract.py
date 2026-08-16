@@ -138,7 +138,7 @@ def test_nothing_is_published_before_the_complete_gate_passes(
     """Nothing publishes before exact qualification is revalidated."""
     order = _release_order(command, *arguments)
 
-    assert order[0] == "qualification.accept"
+    assert order[0] == "source.worktree-clean"
     assert order.index("qualification.accept") < order.index("source.remote-main")
     if command == "release-binaries":
         assert order.index("source.remote-main") < order.index("precheck")
@@ -183,7 +183,7 @@ def test_public_release_command_accepts_journal_then_runs_preflight_before_mutat
         assert "release-binaries.py --precheck stable" in rendered
         assert "fetch-channel-source-manifest.py" in rendered
 
-    assert order[0] == "qualification.accept"
+    assert order[0] == "source.worktree-clean"
     if recipe == "release-binaries":
         assert order.index("source.remote-main") < order.index("precheck")
     assert order.index("qualification.accept") < order.index("source.publish-ref")

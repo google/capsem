@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Both release commands now refuse a working tree with uncommitted changes.
+  A release publishes one immutable commit and runs from a detached copy of it,
+  so anything still in the tree is silently excluded -- correct, and quiet
+  enough that a fix could be written, verified by hand, released, and appear to
+  have done nothing. `source.worktree-clean` is the first step of both plans and
+  names what is dirty alongside both remedies; `just release-binaries <channel>
+  <commit> true` (or `release-profile ... true`) forces past it when the
+  difference is deliberate.
+
 - Capsem now installs on every currently supported Ubuntu and Debian release.
   The published binaries were built on Ubuntu 24.04 and so required glibc 2.39,
   which excluded Ubuntu 22.04 LTS, Debian 12, Linux Mint 21 and Pop!_OS 22.04 --

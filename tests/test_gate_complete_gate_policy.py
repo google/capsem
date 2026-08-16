@@ -167,7 +167,7 @@ def test_release_consumes_evidence_instead_of_composing_the_gate(name: str) -> N
     plan = _command(name, **QUALIFIED_RELEASES[name])._describe()
     ordered = list(plan.labels)
 
-    assert ordered[0] == "qualification.accept"
+    assert ordered[0] == "source.worktree-clean"
     assert "source.record" not in ordered
     assert TimingBoundary.QUALIFICATION.value not in ordered
     assert ordered.index("qualification.accept") < ordered.index("source.publish-ref")

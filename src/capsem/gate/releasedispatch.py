@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 
 from . import sandbox
+from .actions import Script
 from .config import GateConfig
 from .egress import Egress
 from .execution import Kind, Speed, step
@@ -54,7 +55,38 @@ class QualifiedRelease:
         if channel not in self._config.release.locally_qualified_channels:
             self.qualification_policy = QualificationPolicy.NONE
 
-    def _qualification_steps(self, plan: Plan, commit: SourceCommit) -> tuple:
+    def _worktree_steps(self, plan: Plan, commit: SourceCommit) -> tuple:
+        """Refuse a release from a dirty tree, before anything is accepted.
+
+        The run works from a detached copy of `commit`, so an uncommitted fix
+        is not in the release and cannot be. Nothing used to say so, and the
+        resulting build looked like the change had done nothing.
+
+        The outer checkout is the subject, not this one: inside a prefix the
+        tree is a clean copy of the commit by construction, which would make
+        the check pass by asking the wrong tree.
+        """
+        if getattr(self._args, "force", "false") == "true":
+            return ()
+        from . import qualificationevidence
+
+        outer = qualificationevidence.authority(self._config).root
+        return (
+            plan.add(
+                step(
+                    "source.worktree-clean",
+                    Script(
+                        self._config.release.clean_worktree,
+                        str(outer),
+                        str(commit),
+                    ),
+                    kind=Kind.STATIC_TEST,
+                    speed=Speed.FAST,
+                )
+            ),
+        )
+
+    def _qualification_steps(self, plan: Plan, commit: SourceCommit, *, after: tuple = ()) -> tuple:
         """The accept step, for the channels that consume an operator's proof."""
         if self.qualification_policy is not QualificationPolicy.REQUIRE:
             return ()
@@ -65,7 +97,8 @@ class QualifiedRelease:
                     AcceptQualification(commit),
                     kind=Kind.STATIC_TEST,
                     speed=Speed.FAST,
-                )
+                ),
+                after=after,
             ),
         )
 

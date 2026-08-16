@@ -35,6 +35,13 @@ RELEASES = [
 #: else in a release plan is the gate.
 PUBLICATION = ("source.remote-main", "source.publish-ref", "release")
 
+#: The one step whose subject *is* the tree being edited. Every other step must
+#: read the detached copy, because measuring one tree while qualifying another
+#: is the confusion this file exists to prevent. This step exists to report
+#: that difference rather than be misled by it: a release publishes the commit,
+#: so an uncommitted change is silently excluded unless something says so.
+INSPECTS_THE_EDITED_TREE = ("source.worktree-clean",)
+
 # The only steps in either local release command allowed to execute outside
 # the kernel network boundary. The binary precheck reads the remote version
 # tag; manifest resolution, source validation/publication and dispatch also
@@ -104,7 +111,8 @@ def test_qualification_acceptance_stays_in_the_copy(name, args, checkout) -> Non
     escaped = [
         step.label
         for step in plan.steps
-        if step.label not in PUBLICATION and checkout.name in "\n".join(step.render())
+        if step.label not in PUBLICATION + INSPECTS_THE_EDITED_TREE
+        and checkout.name in "\n".join(step.render())
     ]
 
     assert not escaped, (
@@ -127,7 +135,10 @@ def test_release_revalidates_evidence_without_rerunning_the_gate(name, args, che
             "input, not another gate process"
         )
 
-    assert plan.labels[0] == "qualification.accept"
+    # The clean-tree refusal precedes it: releasing the wrong bytes is worse
+    # than releasing unqualified ones, because it looks like it worked.
+    assert plan.labels[0] == "source.worktree-clean"
+    assert plan.labels[1] == "qualification.accept"
     for phase in ("fast.", "static.", "artifacts.", "functional.", "glowup."):
         assert not any(step.label.startswith(phase) for step in plan.steps), (
             f"the release repeats the {phase} phase already proven by its journal"

@@ -27,6 +27,7 @@ class ReleaseConfig(Strict):
     there made the scheduled rebuild unsatisfiable: a fresh runner has none and
     cannot make one.
     """
+    clean_worktree: str
     source: str
     source_ref_template: str
     tagger_name: Annotated[str, StringConstraints(min_length=1, max_length=128)]

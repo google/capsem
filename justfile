@@ -47,13 +47,13 @@ qualify-assets input_dir profile activation_ready:
 
 
 # Build, test, and publish only Capsem binaries/packages for one channel.
-release-binaries channel source_commit:
-    uv run capsem-gate release-binaries {{quote(channel)}} {{quote(source_commit)}}
+release-binaries channel source_commit force="false":
+    uv run capsem-gate release-binaries {{quote(channel)}} {{quote(source_commit)}} --force {{quote(force)}}
 
 
 # Build, test, and publish exactly one channel/profile through capsem-admin.
-release-profile channel profile source_commit:
-    uv run capsem-gate release-profile {{quote(channel)}} {{quote(profile)}} {{quote(source_commit)}}
+release-profile channel profile source_commit force="false":
+    uv run capsem-gate release-profile {{quote(channel)}} {{quote(profile)}} {{quote(source_commit)}} --force {{quote(force)}}
 
 
 # Compile all host binaries

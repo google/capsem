@@ -74,7 +74,7 @@ def test_the_fast_gate_is_public_and_is_not_a_release_shortcut() -> None:
         )._describe()
         order = list(plan.labels)
 
-        assert order[0] == "qualification.accept"
+        assert order[0] == "source.worktree-clean"
         assert order.index("qualification.accept") < order.index("source.publish-ref")
         assert order.index("qualification.accept") < order.index("release")
         assert not [

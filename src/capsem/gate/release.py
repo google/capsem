@@ -55,6 +55,12 @@ class ReleaseBinariesCommand(
     def add_arguments(cls, parser) -> None:
         parser.add_argument("channel")
         parser.add_argument("source_commit", type=SourceCommit)
+        parser.add_argument(
+            "--force",
+            choices=("true", "false"),
+            default="false",
+            help="release even though the working tree has uncommitted changes",
+        )
 
     def source_commit(self) -> SourceCommit:
         return self._args.source_commit
@@ -68,7 +74,8 @@ class ReleaseBinariesCommand(
 
         _require_channel(config, channel)
 
-        accepted = self._qualification_steps(plan, self.source_commit())
+        clean = self._worktree_steps(plan, self.source_commit())
+        accepted = self._qualification_steps(plan, self.source_commit(), after=clean) or clean
         checked = plan.add(
             step(
                 "source.remote-main",
@@ -175,6 +182,12 @@ class ReleaseProfileCommand(
         parser.add_argument("channel")
         parser.add_argument("profile")
         parser.add_argument("source_commit", type=SourceCommit)
+        parser.add_argument(
+            "--force",
+            choices=("true", "false"),
+            default="false",
+            help="release even though the working tree has uncommitted changes",
+        )
 
     def source_commit(self) -> SourceCommit:
         return self._args.source_commit
@@ -193,7 +206,8 @@ class ReleaseProfileCommand(
         _require_channel(config, self._args.channel)
         _require_profile(config, self._args.profile)
 
-        accepted = self._qualification_steps(plan, self.source_commit())
+        clean = self._worktree_steps(plan, self.source_commit())
+        accepted = self._qualification_steps(plan, self.source_commit(), after=clean) or clean
         checked = plan.add(
             step(
                 "source.remote-main",

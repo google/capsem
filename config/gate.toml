@@ -1227,6 +1227,9 @@ line = "0.6"
 # through qualify-assets and qualify-binaries. Requiring a machine-local
 # journal there made the scheduled rebuild impossible to satisfy.
 locally_qualified_channels = ["stable"]
+# A release publishes a commit, not the working tree, so uncommitted edits are
+# silently excluded. Refuse before anything is accepted or published.
+clean_worktree = "scripts/require-clean-worktree.py"
 source = "scripts/publish-release-source.py"
 source_ref_template = "capsem-source-{source_commit}"
 tagger_name = "Capsem Release Gate"

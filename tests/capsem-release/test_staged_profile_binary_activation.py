@@ -345,7 +345,7 @@ def test_hosted_macos_never_claims_the_local_apple_vz_proof() -> None:
     # Nightly has no journal by design -- it rebuilds current `main` unattended
     # -- so the proof it consumes is its own lane's, not an operator's.
     order = list(_release_plan("release-profile", "stable", "code").labels)
-    assert order[0] == "qualification.accept"
+    assert order[0] == "source.worktree-clean"
     assert order.index("qualification.accept") < order.index("release")
 
     nightly = list(_release_plan("release-profile", "nightly", "code").labels)
