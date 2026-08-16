@@ -21,13 +21,14 @@ from abc import ABC, abstractmethod
 from typing import ClassVar
 
 from . import config as gate_config
-from . import planseal, prefix, preflight, qualificationflow, resume, sandbox
+from . import prefix, preflight, qualificationflow, resume, sandbox
 from .context import Context
 from .errors import GateError
 from .funnel import GuardedRunner
 from .lifecycle import Resource, environment_of, held
 from .observing import observing
 from .plan import Plan
+from .planseal import sealed
 from .proc import Runner
 from .qualification import Qualification
 from .qualification import from_environment as qualification_for
@@ -66,10 +67,6 @@ class GateCommand(Recorded, ABC):
 
     private_checkout: ClassVar[bool] = False
     """Whether this runs from a private copy of the checkout instead of it."""
-
-    recorded: bool = False
-    """Reached its own run directory. False means a failure leaves no evidence
-    behind, so `cli` records one for it instead."""
 
     uses_qualification: ClassVar[bool] = False
     """Whether this command's plan depends on which artifacts a release chose.
@@ -251,7 +248,6 @@ class GateCommand(Recorded, ABC):
             self._recording(source_commit=None if commit is None else str(commit)) as log,
             observing(self._config, log, plan, publishes=self.publishes) as watch,
         ):
-            self.recorded = True  # from here a failure has its own directory
             qualificationflow.begin(log, decision, commit, self.qualification_policy)
             # Every invocation from here is recorded, and none may start a
             # second gate. Neither is a call site's responsibility.
@@ -294,4 +290,11 @@ class GateCommand(Recorded, ABC):
                 )
 
     def _describe(self) -> Plan:
-        return planseal.describe(self)
+        """Build the plan with the machine sealed off.
+
+        Ambient rather than a swapped-in runner: a module that builds its own
+        `Runner` inside `plan()` -- which `release.py` did, to capture
+        `git rev-parse HEAD` -- escapes anything scoped to this instance.
+        """
+        with sealed():
+            return self.plan()
