@@ -26,7 +26,7 @@ ACCELERATOR_FAMILIES = (
 )
 
 ROOTFS_BUDGET_RATIONALE = """\
-The 0.6 profile release grew each rootfs from below 1 GB to almost 3 GB when
+The stable profile release grew each rootfs from below 1 GB to almost 3 GB when
 Ollama moved bundled CUDA/Vulkan libraries from /usr/local/lib/ollama to
 /usr/lib/ollama. GitHub then rejected the exact release assets after more than
 two hours of qualification. The guest has no accelerator device, so these
