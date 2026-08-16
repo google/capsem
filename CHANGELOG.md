@@ -28,7 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   webkit2gtk-4.1, gtk-3, libxdo3 and libsoup-3.0: it was that the builder
   copies its Rust and Node toolchains in from bookworm stages needing glibc
   2.36, so those move to bullseye (2.31), which cannot outrank the base it is
-  copied into. Because the support claim is derived from the floor rather than
+  copied into. Three scripts also wrote `Suites: noble` into apt sources,
+  installing 24.04 packages onto whatever base they were given: an image that
+  reported Ubuntu 22.04 while carrying noble's glibc. The suite is now read
+  from the base image's `UBUNTU_CODENAME`, and a Citadel guard refuses a
+  spelled one. Cross compilers are qualified with the native architecture and
+  no longer requested for the architecture the image already runs on, which
+  24.04 published anyway and 22.04 does not. Because the support claim is derived from the floor rather than
   restated, one number moved the badges, both tables and the glow-up matrix.
 
 - CI no longer reaches into private `just` recipes, and the nightly rebuild can

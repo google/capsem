@@ -46,15 +46,23 @@ Acquire::https::Timeout "30";
 APT::Update::Error-Mode "any";
 EOF
 
+# The suite is the base image's own, read from it rather than named here.
+# Hardcoding `noble` meant apt installed noble's glibc 2.39 onto whatever base
+# it was given: the image reported Ubuntu 22.04 while its libc came from 24.04,
+# so moving the base down to lower the release floor changed nothing and the
+# packages kept requiring 2.39. See issue #181.
+. /etc/os-release
+suite="${UBUNTU_CODENAME:?base image declares no UBUNTU_CODENAME}"
+
 # Write one arch-scoped immutable source (DEB822 format).
 snapshot_url="${snapshot_base%/}/${snapshot_id}"
 cat > /etc/apt/sources.list.d/ubuntu.sources << EOF
 Types: deb
 URIs: $snapshot_url
-Suites: noble noble-updates noble-backports noble-security
+Suites: $suite $suite-updates $suite-backports $suite-security
 Components: main restricted universe multiverse
 Architectures: $NATIVE_ARCH $FOREIGN_ARCH
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 EOF
 
-echo "Configured immutable multiarch snapshot: $snapshot_url ($NATIVE_ARCH $FOREIGN_ARCH)"
+echo "Configured immutable multiarch snapshot: $snapshot_url $suite ($NATIVE_ARCH $FOREIGN_ARCH)"

@@ -25,10 +25,16 @@ esac
 
 snapshot_url="${snapshot_base%/}/${snapshot_id}"
 rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*
+# The suite is the base image's own, not a name written here. A hardcoded
+# `noble` installs 24.04 packages onto whatever base it is given, which is how
+# lowering the release floor silently changed nothing -- see issue #181.
+. /etc/os-release
+suite="${UBUNTU_CODENAME:?base image declares no UBUNTU_CODENAME}"
+
 cat > /etc/apt/sources.list.d/capsem-snapshot.sources <<EOF
 Types: deb
 URIs: $snapshot_url
-Suites: noble noble-updates noble-backports noble-security
+Suites: $suite $suite-updates $suite-backports $suite-security
 Components: main restricted universe multiverse
 Architectures: $native_arch
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
