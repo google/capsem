@@ -836,7 +836,7 @@ def test_profile_release_deploys_generated_preview_only_when_activation_ready() 
     assert "needs.author-profile-release.outputs.release_needed == 'true'" in pairing
     # The activation branch moved inside `qualify-assets`, so the lane passes
     # the flag once instead of guarding three steps with it.
-    assert "--activation-ready" in pairing
+    assert "outputs.activation_ready" in pairing
     assert (
         pairing.count("if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}")
         == 0
@@ -885,7 +885,7 @@ def test_profile_release_publishes_deferred_assets_but_withholds_channel_deploy(
         "- name: Record deferred profile staging boundary", maxsplit=1
     )[0]
     assert "just qualify-assets" in qualify
-    assert "--activation-ready" in qualify
+    assert "outputs.activation_ready" in qualify
     assert "needs.author-profile-release.outputs.activation_ready" in qualify
     assert "activation-ready profile cannot defer complete pairing gates" in pairing
     assert "complete functional release binary cohort" in pairing
