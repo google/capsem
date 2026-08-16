@@ -22,6 +22,13 @@ RUN selected="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" \
     && rustup target list --toolchain "${selected}" --installed | grep -Fx "${RUST_TARGET}"
 RUN mkdir -p /capsem-deps/cargo/registry /capsem-deps/cargo/git \
     && CARGO_HOME=/capsem-deps/cargo cargo fetch --locked --target "${RUST_TARGET}"
+# `uv sync` needs an interpreter satisfying requires-python. Ubuntu 24.04 ships
+# 3.12 and satisfied it, so uv used /usr/bin and nothing had to be carried.
+# Ubuntu 22.04 ships 3.10, so uv downloads its own -- by default into
+# /root/.local, which the final stage does not copy, leaving the venv's
+# bin/python a dangling symlink and every `test -x` on it false. Put it
+# somewhere carried, and carry it. See issue #181.
+ENV UV_PYTHON_INSTALL_DIR=/capsem-deps/python
 RUN UV_PROJECT_ENVIRONMENT="${INSTALL_VENV}" uv sync --locked --no-install-project
 RUN cd release-site && pnpm fetch --frozen-lockfile --store-dir /capsem-deps/pnpm
 
@@ -58,6 +65,10 @@ RUN if getent passwd 1000 >/dev/null 2>&1; then \
     && useradd -m -s /bin/bash -u 1000 capsem \
     && echo "capsem ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/capsem
 
+# The interpreter first: a venv whose bin/python dangles is worse than absent,
+# because it looks installed.
+ENV UV_PYTHON_INSTALL_DIR=/capsem-deps/python
+COPY --from=dependency-fetch /capsem-deps/python /capsem-deps/python
 COPY --from=dependency-fetch ${INSTALL_VENV} ${INSTALL_VENV}
 COPY --from=dependency-fetch --chown=capsem:capsem /capsem-deps/cargo/registry ${CARGO_STORE}/registry
 COPY --from=dependency-fetch --chown=capsem:capsem /capsem-deps/cargo/git ${CARGO_STORE}/git
