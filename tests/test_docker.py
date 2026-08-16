@@ -1681,7 +1681,7 @@ class TestBuildLedger:
             "enabled": True,
             "compression": "lz4hc",
             "compression_level": 12,
-            "cluster_size": None,
+            "cluster_size": generated_profile_guest.build.erofs.cluster_size,
         }
         assert "installed_packages" not in record
         assert "installed_versions" not in record
@@ -2057,7 +2057,7 @@ class TestBuildLedger:
         assert erofs_record["erofs"] == {
             "compression": "lz4hc",
             "compression_level": "12",
-            "cluster_size": None,
+            "cluster_size": str(real_config.build.erofs.cluster_size),
             "utils_image": _asset_tools_image(real_config, PROJECT_ROOT),
         }
         assert erofs_record["outputs"][0]["path"] == "rootfs.erofs"
@@ -2167,6 +2167,13 @@ class TestErofsConfig:
                     "CAPSEM_BUILD_EXPERIMENTAL_EROFS": "1",
                     "CAPSEM_BUILD_EROFS_COMPRESSION": "brotli",
                 }
+            )
+
+    @pytest.mark.parametrize("cluster_size", ("0", "4095", "4097", "1048577", "nope"))
+    def test_env_config_rejects_an_invalid_cluster_size(self, cluster_size):
+        with pytest.raises(ValueError, match="EROFS_CLUSTER_SIZE"):
+            experimental_erofs_build_config(
+                {"CAPSEM_BUILD_EROFS_CLUSTER_SIZE": cluster_size}, ErofsConfig()
             )
 
     def test_env_config_rejects_lz4_level(self):

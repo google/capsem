@@ -190,6 +190,11 @@ class TestErofsCompression:
         with pytest.raises(ValidationError):
             ErofsConfig(compression=ErofsCompression.LZ4HC, compression_level=13)
 
+    @pytest.mark.parametrize("cluster_size", (0, 4095, 4097, 1048577))
+    def test_cluster_size_is_a_bounded_power_of_two(self, cluster_size):
+        with pytest.raises(ValidationError, match="cluster_size"):
+            ErofsConfig(cluster_size=cluster_size)
+
 
 class TestRootfsConfig:
     def test_release_limits_and_forbidden_payloads_are_typed(self):

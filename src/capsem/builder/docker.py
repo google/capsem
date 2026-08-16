@@ -703,6 +703,15 @@ def experimental_erofs_build_config(
     cluster_size = source.get("CAPSEM_BUILD_EROFS_CLUSTER_SIZE") or (
         str(defaults.cluster_size) if defaults is not None and defaults.cluster_size else None
     )
+    if cluster_size is not None:
+        try:
+            normalized_cluster_size = int(cluster_size)
+            ErofsConfig(cluster_size=normalized_cluster_size)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "CAPSEM_BUILD_EROFS_CLUSTER_SIZE must be a power of two between 4096 and 1048576"
+            ) from exc
+        cluster_size = str(normalized_cluster_size)
     compression_level = source.get("CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL") or (
         str(defaults.compression_level)
         if defaults is not None and defaults.compression_level is not None

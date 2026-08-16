@@ -30,7 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and after EROFS compression, with a 900 MB packed ceiling. Code and co-work
   profiles remove and then prove the absence of Ollama CUDA, HIP, JetPack,
   oneAPI, OpenCL, ROCm, and Vulkan bundles from both vendor install roots; a
-  fast Citadel guard prevents the composition regression from returning. An
+  config-owned 64 KiB LZ4HC physical cluster keeps the complete payload below
+  that ceiling, and a fast Citadel guard prevents either regression from
+  returning. An
   interrupted immutable publication may also reconcile its release title to
   the new exact qualified source before the source manifest is published;
   completed releases remain immutable and refuse any title mismatch.

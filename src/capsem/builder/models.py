@@ -215,6 +215,10 @@ class ErofsConfig(BaseModel):
                 raise ValueError("lz4hc EROFS compression requires a level")
             if not 0 <= self.compression_level <= 12:
                 raise ValueError("lz4hc EROFS compression level must be between 0 and 12")
+        if self.cluster_size is not None:
+            cluster_size = self.cluster_size
+            if not 4096 <= cluster_size <= 1048576 or cluster_size & (cluster_size - 1):
+                raise ValueError("cluster_size must be a power of two between 4096 and 1048576")
         return self
 
 

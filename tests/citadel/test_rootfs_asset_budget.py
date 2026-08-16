@@ -39,6 +39,10 @@ def _rootfs_config() -> dict:
     return tomllib.loads(BUILD_CONFIG.read_text())["build"]["rootfs"]
 
 
+def _erofs_config() -> dict:
+    return tomllib.loads(BUILD_CONFIG.read_text())["build"]["erofs"]
+
+
 def test_publishable_rootfs_has_independent_raw_and_900_mb_packed_ceilings() -> None:
     rootfs = _rootfs_config()
 
@@ -79,6 +83,15 @@ def test_ordinary_rootfs_build_checks_both_sides_of_compression() -> None:
     ledger = source.index("_file_ledger_entry(erofs_path", packed_check)
 
     assert export < pack < packed_check < ledger, ROOTFS_BUDGET_RATIONALE
+
+
+def test_release_erofs_uses_a_bounded_large_physical_cluster() -> None:
+    cluster_size = _erofs_config().get("cluster_size")
+
+    assert cluster_size is not None, ROOTFS_BUDGET_RATIONALE
+    assert cluster_size >= 65536, ROOTFS_BUDGET_RATIONALE
+    assert cluster_size <= 1048576, ROOTFS_BUDGET_RATIONALE
+    assert cluster_size & (cluster_size - 1) == 0, ROOTFS_BUDGET_RATIONALE
 
 
 def test_dependency_materializer_drops_package_manager_and_temp_residue() -> None:

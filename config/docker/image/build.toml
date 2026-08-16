@@ -5,6 +5,9 @@ materialize_network = "default"
 enabled = true
 compression = "lz4hc"
 compression_level = 12
+# Larger physical clusters preserve the release LZ4HC format while allowing
+# redundancy across adjacent blocks instead of bloating the published asset.
+cluster_size = 65536
 
 [build.rootfs]
 # Release rootfs assets were historically below 1 GB. These independent raw
