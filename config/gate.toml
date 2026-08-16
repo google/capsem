@@ -85,6 +85,103 @@ poll_interval_seconds = 0.1
 proc_stat_template = "/proc/{pid}/stat"
 
 # ---------------------------------------------------------------------------
+# What the published product runs on
+# ---------------------------------------------------------------------------
+# One home for the user-facing support claim. These floors were written out
+# longhand in both public install.sh copies, the Tauri bundle, the README and
+# the docs, with nothing comparing them -- and they had already drifted: the
+# installers refused anything below macOS 14 while the bundle advertised 13.0.
+
+[platforms.macos]
+minimum_version = "14.0"
+minimum_release_name = "Sonoma"
+
+[platforms.linux]
+# Derived from the shipped binaries by scripts/derive-deb-libc-floor.py and
+# declared by the .deb, so apt refuses an install it cannot run. Lowering it is
+# a build-base change, not a source change; see issue #181.
+minimum_glibc = "2.39"
+
+# Every release the glow-up proof runs the package on. One list: the proof
+# reads each image's real glibc and derives whether the package must run or
+# must be refused, so a release cannot sit in the wrong bucket and still pass.
+# The image reference is derived from `version`, never written out beside it.
+[[platforms.linux.distributions]]
+name = "Ubuntu"
+version = "26.04"
+libc = "glibc 2.43"
+repository = "ubuntu"
+digest = "sha256:678c6550cc43645e08669028bc177f50be4e7c5b8cca677067b1914d4afc7a03"
+
+[[platforms.linux.distributions]]
+name = "Ubuntu"
+version = "24.04"
+libc = "glibc 2.39"
+repository = "ubuntu"
+digest = "sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea"
+
+[[platforms.linux.distributions]]
+name = "Ubuntu"
+version = "22.04"
+libc = "glibc 2.35"
+repository = "ubuntu"
+digest = "sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f"
+
+[[platforms.linux.distributions]]
+name = "Ubuntu"
+version = "20.04"
+libc = "glibc 2.31"
+repository = "ubuntu"
+digest = "sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214"
+
+[[platforms.linux.distributions]]
+name = "Debian"
+version = "13"
+libc = "glibc 2.41"
+repository = "debian"
+tag_suffix = "-slim"
+digest = "sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258"
+
+[[platforms.linux.distributions]]
+name = "Debian"
+version = "12"
+libc = "glibc 2.36"
+repository = "debian"
+tag_suffix = "-slim"
+digest = "sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241"
+
+# musl, not a slightly older glibc. A glibc floor says nothing about these, so
+# they are here to keep that distinction proved rather than assumed. Serving
+# them needs a musl-linked package, not a lower floor -- see issue #182.
+[[platforms.linux.distributions]]
+name = "Alpine"
+version = "3.24"
+libc = "musl 1.2.6"
+repository = "alpine"
+digest = "sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b"
+
+[[platforms.linux.distributions]]
+name = "Alpine"
+version = "3.23"
+libc = "musl 1.2.5"
+repository = "alpine"
+digest = "sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40"
+
+[[platforms.linux.distributions]]
+name = "Alpine"
+version = "3.22"
+libc = "musl 1.2.5"
+repository = "alpine"
+digest = "sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"
+
+[[platforms.linux.distributions]]
+name = "Alpine"
+version = "3.21"
+libc = "musl 1.2.5"
+repository = "alpine"
+digest = "sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d"
+
+# ---------------------------------------------------------------------------
 # The native install and glow-up proof
 # ---------------------------------------------------------------------------
 
@@ -1915,6 +2012,10 @@ verify_inputs_script = "scripts/verify-release-inputs.py"
 prove_profile_assets_script = "scripts/prove-release-profile-assets.py"
 glowup_script = "scripts/local-release-glowup.py"
 macos_glowup_script = "scripts/macos_release_glowup.py"
+# Proves the published package runs on every release [platforms.linux]
+# claims and is refused below the floor. The rest of the install chain
+# only ever runs on ubuntu:24.04, where a wrong floor is invisible.
+platform_support_script = "scripts/prove-deb-platform-support.py"
 macos_glowup_report = "target/macos-tart-glowup/report.json"
 macos_report_variable = "CAPSEM_MACOS_NATIVE_GLOWUP_REPORT"
 glowup_work_dir = "target/release-module-glowup"

@@ -67,6 +67,7 @@ from .productschema import (
     AptSnapshotConfig,
     InstallConfig,
     PackageConfig,
+    PlatformsConfig,
 )
 from .releaseschema import ReleaseConfig
 from .toolchainschema import ToolchainConfig
@@ -86,6 +87,7 @@ class GateConfig(Strict):
     storage: StorageConfig
     pidfiles: PidfileConfig
     install: InstallConfig
+    platforms: PlatformsConfig
     environment: EnvironmentConfig
     artifacts: ArtifactsConfig
     package: PackageConfig

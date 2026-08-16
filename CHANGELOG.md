@@ -20,6 +20,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The platform support claim is now one config-owned value, proved against
+  real images. `config/gate.toml` `[platforms]` lists every release the glow-up
+  suite runs the package on; the proof reads each image's actual libc, requires
+  the binaries to run exactly where the declared floor says and to be refused
+  everywhere else, and fails if a release's recorded libc disagrees with the
+  image. Ten releases are covered: Ubuntu 20.04/22.04/24.04/26.04, Debian
+  12/13, and Alpine 3.21-3.24. The floors were previously written out longhand
+  in both public `install.sh` copies, the Tauri bundle, the README and the
+  docs, with nothing comparing them, and they had drifted -- the installers
+  refused anything below macOS 14 while the app bundle advertised 13.0, so the
+  bundle promised a release the installer denied. The bundle now says 14.0 and
+  a Citadel guard keeps every surface, including the README badges, agreeing
+  with the config.
+
 - Debian packages now declare the glibc floor their binaries actually require.
   `Capsem_0.6.0_arm64.deb` declared `libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3`
   and no libc at all while every shipped binary needed GLIBC_2.39, so on Debian

@@ -83,8 +83,28 @@ class InstallGate:
 
     # -- the run -----------------------------------------------------------
 
+    def _prove_platform_support(self) -> None:
+        """Prove the package runs where we claim before proving it installs.
+
+        Everything below runs inside `docker/Dockerfile.install-test`, whose
+        base is ubuntu:24.04 -- the same glibc the binaries are built against.
+        A wrong platform floor is invisible there by construction: the 0.6.0
+        package declared no libc dependency at all and passed this whole suite,
+        then failed on every user below glibc 2.39.
+        """
+        self._runner.step("Proving declared platform support")
+        self._runner.run(
+            [
+                "python3",
+                str(self.root / self._config.modules.platform_support_script),
+                "--package",
+                str(self.package),
+            ]
+        )
+
     def run(self) -> None:
         package = self._require_package()
+        self._prove_platform_support()
         self._require_content()
         options = self._container.runtime_options()
 

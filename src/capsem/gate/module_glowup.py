@@ -102,6 +102,14 @@ def _prove_pulled_package(
         ),
         after=after,
     )
+    # Before the install proof, not after it. That proof runs on ubuntu:24.04,
+    # which is exactly the glibc the binaries are built against, so it cannot
+    # observe a wrong platform floor -- the 0.6.0 package declared no libc at
+    # all and passed it. This is the only step that looks below the floor.
+    supported = phase.add(
+        _platform_support_step(config, qualification.package),
+        after=(verified,),
+    )
     staged = phase.add(
         _glowup_step(
             config,
@@ -110,7 +118,7 @@ def _prove_pulled_package(
             settings.glowup_work_dir,
             content,
         ),
-        after=(verified,),
+        after=(supported,),
     )
     return phase.add(
         _glowup_step(
@@ -122,6 +130,22 @@ def _prove_pulled_package(
             clear=settings.channel_switch_cleared,
         ),
         after=(staged,),
+    )
+
+
+def _platform_support_step(config: GateConfig, package: str) -> Step:
+    """Run the package on every release we claim, and one below the floor."""
+    return step(
+        "platform-support",
+        Script(
+            config.modules.platform_support_script,
+            "--package",
+            package,
+        ),
+        contends=(config.exclusive("docker_daemon"),),
+        kind=Kind.E2E,
+        needs=frozenset({Needs.DOCKER, Needs.DISK}),
+        speed=Speed.SLOW,
     )
 
 

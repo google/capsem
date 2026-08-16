@@ -7,13 +7,33 @@ sidebar:
 
 ## Requirements
 
-| | macOS | Linux |
+| System | Versions supported | Hardware |
 |---|---|---|
-| **OS** | macOS 14 (Sonoma) or later | Debian/Ubuntu (apt-based) |
-| **Hardware** | Apple Silicon (M1 or newer) | x86_64 or arm64, KVM capable |
-| **Disk** | ~2 GB for binaries + VM assets | ~2 GB for binaries + VM assets |
+| macOS | 14 (Sonoma) or later | Apple Silicon (M1 or newer) |
+| Ubuntu | 24.04 or later | x86_64 or arm64, KVM capable |
+| Debian | 13 or later | x86_64 or arm64, KVM capable |
+
+Disk use is roughly 40 MB of binaries plus whatever the selected profile's VM
+assets need, which is much the larger of the two and varies by profile.
 
 macOS uses Apple's Virtualization.framework (Apple Silicon only). Linux uses KVM.
+Intel Macs are not supported.
+
+### Why those Linux versions
+
+The `.deb` declares the glibc version its binaries were built against, derived
+from the binaries themselves rather than hand-written. `apt` therefore refuses
+an install it cannot run, instead of completing one that fails at first launch.
+
+The floor is currently **glibc 2.39**, which means Ubuntu 24.04 LTS and Debian
+13 trixie. Ubuntu 22.04 LTS (2.35) and Debian 12 bookworm (2.36) are not yet
+supported. Widening to them is tracked in
+[#181](https://github.com/google/capsem/issues/181): it needs a lower build
+base, not a source change, and lowering the floor never breaks an already
+installed system.
+
+If `apt` reports an unsatisfiable `libc6` dependency, your distribution is
+below the floor. That is the intended behaviour, not a packaging bug.
 
 ## Install
 

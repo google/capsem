@@ -35,6 +35,7 @@ class ModulesConfig(Strict):
     prove_profile_assets_script: str
     glowup_script: str
     macos_glowup_script: str
+    platform_support_script: str
     macos_glowup_report: str
     macos_report_variable: str
     glowup_work_dir: str
