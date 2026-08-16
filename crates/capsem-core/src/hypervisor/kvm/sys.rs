@@ -7,6 +7,19 @@ use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
 use anyhow::{bail, Context, Result};
 
+/// The type `libc::ioctl` takes its request in, which is not the same on every
+/// libc: glibc declares it `c_ulong`, musl declares it `c_int`.
+///
+/// The request numbers below are built as `u64` because that is what the Linux
+/// encoding scheme produces; only the cast at the call site differs. Writing
+/// `as IoctlRequest` there meant every one of the 40-odd call sites was a
+/// compile error against musl, which is what a light Alpine container around
+/// Capsem needs. On glibc this alias is exactly what was written before.
+#[cfg(target_env = "musl")]
+pub(super) type IoctlRequest = libc::c_int;
+#[cfg(not(target_env = "musl"))]
+pub(super) type IoctlRequest = libc::c_ulong;
+
 // ---------------------------------------------------------------------------
 // ioctl encoding helpers (Linux ioctl number scheme)
 // ---------------------------------------------------------------------------
@@ -410,7 +423,7 @@ impl KvmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_GET_SUPPORTED_CPUID as libc::c_ulong,
+                KVM_GET_SUPPORTED_CPUID as IoctlRequest,
                 buf as u64,
             )
         };
@@ -445,7 +458,7 @@ impl KvmFd {
     }
 
     fn ioctl(&self, request: u64, arg: u64) -> Result<i32> {
-        let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), request as libc::c_ulong, arg) };
+        let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), request as IoctlRequest, arg) };
         if ret < 0 {
             bail!(
                 "KVM ioctl 0x{:x} failed: {}",
@@ -491,7 +504,7 @@ impl VmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_USER_MEMORY_REGION as libc::c_ulong,
+                KVM_SET_USER_MEMORY_REGION as IoctlRequest,
                 &region as *const _ as u64,
             )
         };
@@ -509,7 +522,7 @@ impl VmFd {
         let raw = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_CREATE_VCPU as libc::c_ulong,
+                KVM_CREATE_VCPU as IoctlRequest,
                 u64::from(id),
             )
         };
@@ -572,7 +585,7 @@ impl VmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_ARM_PREFERRED_TARGET as libc::c_ulong,
+                KVM_ARM_PREFERRED_TARGET as IoctlRequest,
                 &mut init as *mut _ as u64,
             )
         };
@@ -598,7 +611,7 @@ impl VmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_CREATE_DEVICE as libc::c_ulong,
+                KVM_CREATE_DEVICE as IoctlRequest,
                 &mut dev as *mut _ as u64,
             )
         };
@@ -660,7 +673,7 @@ impl VmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_IRQFD as libc::c_ulong,
+                KVM_IRQFD as IoctlRequest,
                 &irqfd as *const _ as u64,
             )
         };
@@ -693,7 +706,7 @@ impl VmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_IOEVENTFD as libc::c_ulong,
+                KVM_IOEVENTFD as IoctlRequest,
                 &ioeventfd as *const _ as u64,
             )
         };
@@ -718,7 +731,7 @@ fn set_device_attr(dev_fd: RawFd, group: u32, attr: u64, addr: u64) -> Result<()
     let ret = unsafe {
         libc::ioctl(
             dev_fd,
-            KVM_SET_DEVICE_ATTR as libc::c_ulong,
+            KVM_SET_DEVICE_ATTR as IoctlRequest,
             &kda as *const _ as u64,
         )
     };
@@ -764,7 +777,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_ARM_VCPU_INIT as libc::c_ulong,
+                KVM_ARM_VCPU_INIT as IoctlRequest,
                 &init as *const _ as u64,
             )
         };
@@ -788,7 +801,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_ONE_REG as libc::c_ulong,
+                KVM_SET_ONE_REG as IoctlRequest,
                 &reg as *const _ as u64,
             )
         };
@@ -808,7 +821,7 @@ impl VcpuFd {
     /// offset into the kernel's naturally-aligned `kvm_run` is aligned too.
     #[allow(clippy::cast_ptr_alignment, reason = "kvm_run mmap is page-aligned, asserted at creation")]
     pub fn run(&self) -> Result<VcpuExit> {
-        let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_RUN as libc::c_ulong, 0u64) };
+        let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_RUN as IoctlRequest, 0u64) };
         if ret < 0 {
             let err = std::io::Error::last_os_error();
             if let Some(exit) = classify_kvm_run_error(&err) {
@@ -1366,7 +1379,7 @@ impl VmFd {
     /// Set the TSS address (required before creating IRQCHIP on x86_64).
     pub fn set_tss_addr(&self, addr: u64) -> Result<()> {
         let ret =
-            unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_TSS_ADDR as libc::c_ulong, addr) };
+            unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_SET_TSS_ADDR as IoctlRequest, addr) };
         if ret < 0 {
             bail!(
                 "KVM_SET_TSS_ADDR failed: {}",
@@ -1381,7 +1394,7 @@ impl VmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_IDENTITY_MAP_ADDR as libc::c_ulong,
+                KVM_SET_IDENTITY_MAP_ADDR as IoctlRequest,
                 &addr as *const u64 as u64,
             )
         };
@@ -1399,7 +1412,7 @@ impl VmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_CREATE_IRQCHIP as libc::c_ulong,
+                KVM_CREATE_IRQCHIP as IoctlRequest,
                 0u64,
             )
         };
@@ -1422,7 +1435,7 @@ impl VmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_ENABLE_CAP as libc::c_ulong,
+                KVM_ENABLE_CAP as IoctlRequest,
                 &cap as *const _ as u64,
             )
         };
@@ -1441,7 +1454,7 @@ impl VmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_CREATE_PIT2 as libc::c_ulong,
+                KVM_CREATE_PIT2 as IoctlRequest,
                 &config as *const _ as u64,
             )
         };
@@ -1462,7 +1475,7 @@ impl VmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_GET_IRQCHIP as libc::c_ulong,
+                KVM_GET_IRQCHIP as IoctlRequest,
                 &mut irqchip as *mut _ as u64,
             )
         };
@@ -1479,7 +1492,7 @@ impl VmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_IRQCHIP as libc::c_ulong,
+                KVM_SET_IRQCHIP as IoctlRequest,
                 irqchip as *const _ as u64,
             )
         };
@@ -1498,7 +1511,7 @@ impl VmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_GET_PIT2 as libc::c_ulong,
+                KVM_GET_PIT2 as IoctlRequest,
                 &mut pit as *mut _ as u64,
             )
         };
@@ -1512,7 +1525,7 @@ impl VmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_PIT2 as libc::c_ulong,
+                KVM_SET_PIT2 as IoctlRequest,
                 pit as *const _ as u64,
             )
         };
@@ -1527,7 +1540,7 @@ impl VmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_GET_CLOCK as libc::c_ulong,
+                KVM_GET_CLOCK as IoctlRequest,
                 &mut clock as *mut _ as u64,
             )
         };
@@ -1541,7 +1554,7 @@ impl VmFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_CLOCK as libc::c_ulong,
+                KVM_SET_CLOCK as IoctlRequest,
                 clock as *const _ as u64,
             )
         };
@@ -1564,7 +1577,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_GET_REGS as libc::c_ulong,
+                KVM_GET_REGS as IoctlRequest,
                 &mut regs as *mut _ as u64,
             )
         };
@@ -1579,7 +1592,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_REGS as libc::c_ulong,
+                KVM_SET_REGS as IoctlRequest,
                 regs as *const _ as u64,
             )
         };
@@ -1595,7 +1608,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_GET_SREGS as libc::c_ulong,
+                KVM_GET_SREGS as IoctlRequest,
                 &mut sregs as *mut _ as u64,
             )
         };
@@ -1610,7 +1623,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_SREGS as libc::c_ulong,
+                KVM_SET_SREGS as IoctlRequest,
                 sregs as *const _ as u64,
             )
         };
@@ -1633,7 +1646,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_GET_MSRS as libc::c_ulong,
+                KVM_GET_MSRS as IoctlRequest,
                 buf.as_mut_ptr() as u64,
             )
         };
@@ -1677,7 +1690,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_MSRS as libc::c_ulong,
+                KVM_SET_MSRS as IoctlRequest,
                 buf.as_ptr() as u64,
             )
         };
@@ -1723,7 +1736,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_CPUID2 as libc::c_ulong,
+                KVM_SET_CPUID2 as IoctlRequest,
                 buf as u64,
             )
         };
@@ -1742,7 +1755,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_GET_MP_STATE as libc::c_ulong,
+                KVM_GET_MP_STATE as IoctlRequest,
                 &mut state as *mut _ as u64,
             )
         };
@@ -1760,7 +1773,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_MP_STATE as libc::c_ulong,
+                KVM_SET_MP_STATE as IoctlRequest,
                 &state as *const _ as u64,
             )
         };
@@ -1779,7 +1792,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_GET_LAPIC as libc::c_ulong,
+                KVM_GET_LAPIC as IoctlRequest,
                 &mut lapic as *mut _ as u64,
             )
         };
@@ -1793,7 +1806,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_LAPIC as libc::c_ulong,
+                KVM_SET_LAPIC as IoctlRequest,
                 lapic as *const _ as u64,
             )
         };
@@ -1808,7 +1821,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_GET_VCPU_EVENTS as libc::c_ulong,
+                KVM_GET_VCPU_EVENTS as IoctlRequest,
                 &mut events as *mut _ as u64,
             )
         };
@@ -1825,7 +1838,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_VCPU_EVENTS as libc::c_ulong,
+                KVM_SET_VCPU_EVENTS as IoctlRequest,
                 events as *const _ as u64,
             )
         };
@@ -1843,7 +1856,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_GET_DEBUGREGS as libc::c_ulong,
+                KVM_GET_DEBUGREGS as IoctlRequest,
                 &mut debugregs as *mut _ as u64,
             )
         };
@@ -1860,7 +1873,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_DEBUGREGS as libc::c_ulong,
+                KVM_SET_DEBUGREGS as IoctlRequest,
                 debugregs as *const _ as u64,
             )
         };
@@ -1878,7 +1891,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_GET_FPU as libc::c_ulong,
+                KVM_GET_FPU as IoctlRequest,
                 &mut fpu as *mut _ as u64,
             )
         };
@@ -1892,7 +1905,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_FPU as libc::c_ulong,
+                KVM_SET_FPU as IoctlRequest,
                 fpu as *const _ as u64,
             )
         };
@@ -1907,7 +1920,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_GET_XCRS as libc::c_ulong,
+                KVM_GET_XCRS as IoctlRequest,
                 &mut xcrs as *mut _ as u64,
             )
         };
@@ -1921,7 +1934,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_XCRS as libc::c_ulong,
+                KVM_SET_XCRS as IoctlRequest,
                 xcrs as *const _ as u64,
             )
         };
@@ -1936,7 +1949,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_GET_XSAVE as libc::c_ulong,
+                KVM_GET_XSAVE as IoctlRequest,
                 &mut xsave as *mut _ as u64,
             )
         };
@@ -1950,7 +1963,7 @@ impl VcpuFd {
         let ret = unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),
-                KVM_SET_XSAVE as libc::c_ulong,
+                KVM_SET_XSAVE as IoctlRequest,
                 xsave as *const _ as u64,
             )
         };

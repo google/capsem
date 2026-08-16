@@ -27,6 +27,23 @@ const VCPU_STOPPED: u8 = 3;
 const VCPU_KICK_SIGNAL: libc::c_int = libc::SIGUSR1;
 static INSTALL_KICK_HANDLER: Once = Once::new();
 
+/// A registered vCPU thread's identity, held only as a `pthread_kill` target.
+///
+/// `libc::pthread_t` is an integer on glibc and `*mut c_void` on musl, so the
+/// same field made `VcpuControl` `Sync` on one libc and not on the other -- the
+/// whole vCPU thread spawn stopped compiling for musl on that alone.
+///
+/// The value is an opaque thread identity. It is never dereferenced here; it is
+/// only handed back to `pthread_kill` to make a blocking `KVM_RUN` return
+/// EINTR. Moving that between threads is sound under both libcs, which the
+/// integer form got for free and the pointer form has to say out loud.
+#[derive(Clone, Copy)]
+struct VcpuThread(libc::pthread_t);
+
+// Safety: an opaque thread identity that is never dereferenced, only passed to
+// `pthread_kill`. See the type's documentation.
+unsafe impl Send for VcpuThread {}
+
 /// Cooperative vCPU lifecycle controller.
 ///
 /// KVM does not provide a portable "pause all vCPUs" ioctl. Capsem parks each
@@ -37,7 +54,7 @@ pub(super) struct VcpuControl {
     state: AtomicBool,
     lifecycle: std::sync::atomic::AtomicU8,
     paused_count: Mutex<u32>,
-    threads: Mutex<Vec<Option<libc::pthread_t>>>,
+    threads: Mutex<Vec<Option<VcpuThread>>>,
     #[cfg(target_arch = "x86_64")]
     snapshots: Mutex<Vec<Option<checkpoint::VcpuSnapshot>>>,
     pause_cv: Condvar,
@@ -143,7 +160,7 @@ impl VcpuControl {
         let slot = threads
             .get_mut(vcpu_id as usize)
             .ok_or_else(|| anyhow::anyhow!("vCPU id {vcpu_id} outside thread table"))?;
-        *slot = Some(unsafe { libc::pthread_self() });
+        *slot = Some(VcpuThread(unsafe { libc::pthread_self() }));
         Ok(VcpuThreadRegistration {
             control: self,
             vcpu_id,
@@ -165,7 +182,7 @@ impl VcpuControl {
         let threads = self.threads.lock().expect("thread mutex poisoned");
         let mut kicked = 0;
         for thread in threads.iter().flatten() {
-            let ret = unsafe { libc::pthread_kill(*thread, VCPU_KICK_SIGNAL) };
+            let ret = unsafe { libc::pthread_kill(thread.0, VCPU_KICK_SIGNAL) };
             if ret == 0 {
                 kicked += 1;
             } else {

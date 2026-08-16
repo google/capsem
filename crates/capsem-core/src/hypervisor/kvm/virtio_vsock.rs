@@ -15,7 +15,8 @@ use tracing::{debug, info, warn};
 
 use super::memory::{self, GuestMemoryRef};
 use super::sys::{
-    self, VhostMemoryRegion, VhostVringAddr, VhostVringFile, VhostVringState, VHOST_GET_FEATURES,
+    self, IoctlRequest, VhostMemoryRegion, VhostVringAddr, VhostVringFile, VhostVringState,
+    VHOST_GET_FEATURES,
     VHOST_GET_VRING_BASE, VHOST_SET_FEATURES, VHOST_SET_MEM_TABLE, VHOST_SET_OWNER,
     VHOST_SET_VRING_ADDR, VHOST_SET_VRING_BASE, VHOST_SET_VRING_CALL, VHOST_SET_VRING_KICK,
     VHOST_SET_VRING_NUM, VHOST_VSOCK_SET_GUEST_CID, VHOST_VSOCK_SET_RUNNING,
@@ -809,7 +810,7 @@ impl VirtioDevice for VhostVsockDevice {
 // ---------------------------------------------------------------------------
 
 fn vhost_ioctl(fd: RawFd, request: u64, arg: u64) -> Result<()> {
-    let ret = unsafe { libc::ioctl(fd, request as libc::c_ulong, arg) };
+    let ret = unsafe { libc::ioctl(fd, request as IoctlRequest, arg) };
     if ret < 0 {
         bail!(
             "vhost ioctl 0x{:x} failed: {}",

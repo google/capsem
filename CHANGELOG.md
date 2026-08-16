@@ -20,6 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `capsem-core` now compiles for musl, so the host cohort can be built for
+  Alpine. `libc::ioctl` takes its request as `c_ulong` on glibc and `c_int` on
+  musl, which made 40 of the 41 errors; they are now one `cfg`-selected
+  `IoctlRequest` alias that resolves to exactly what was written before on
+  glibc. The 41st was `libc::pthread_t` being an integer on glibc and a pointer
+  on musl, which silently made `VcpuControl` `Sync` on one libc and not the
+  other -- the vCPU thread spawn stopped compiling on that alone. The handle is
+  now a `VcpuThread` newtype whose `Send` says why it is sound: an opaque thread
+  identity, never dereferenced, only passed to `pthread_kill`. `capsem` and
+  `capsem-admin` built for `x86_64-unknown-linux-musl` run on Alpine 3.21
+  through 3.24.
+
 - The platform support claim is now one config-owned value, proved against
   real images. `config/gate.toml` `[platforms]` lists every release the glow-up
   suite runs the package on; the proof reads each image's actual libc, requires
