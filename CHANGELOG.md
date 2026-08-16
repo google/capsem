@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A gate invocation that dies before its first step now leaves a record.
+  `[runlog]` promises a failed gate is "a directory you attach to a bug rather
+  than a scrollback you had to be present for", but everything before the run
+  log escaped that: two `release-profile` invocations failed on an unparseable
+  config, wrote no run directory and no ledger row, and left the digest still
+  reporting the previous run as the last one. The only evidence they had
+  happened was a terminal scrollback. Failures before the run log now append to
+  `target/gate-runs/startup.jsonl`, which is the one gate path not read from
+  the config -- because the failure being recorded may be that the config could
+  not be read -- and a Citadel guard holds it equal to `[runlog].root`.
+
 - A private release prefix no longer parses the outer checkout's
   `config/gate.toml`. The prefix runs the selected commit's gate code, so
   reading the working tree's config validated one tree's file against the other

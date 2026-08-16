@@ -13,8 +13,12 @@ every command has them by construction rather than by each author remembering.
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
+import time
 from collections.abc import Sequence
+from pathlib import Path
 
 from . import (
     assetplan,
@@ -162,21 +166,70 @@ def invocation(argv: Sequence[str] | None = None) -> tuple[str, ...]:
     return ("capsem-gate", *(sys.argv[1:] if argv is None else argv))
 
 
+# The one gate path not read from `config/gate.toml`, because the failure being
+# recorded may be that the config could not be read at all -- which is exactly
+# the failure that went unrecorded. Held equal to `[runlog].root` by
+# `tests/citadel/test_startup_record_matches_the_run_log_root.py`.
+STARTUP_RECORD = Path("target") / "gate-runs" / "startup.jsonl"
+
+
+def record_startup_failure(root: Path | None, raw: tuple[str, ...], error: str) -> None:
+    """Leave evidence for a failure that never reached a run directory.
+
+    `[runlog]` promises a failed gate is "a directory you attach to a bug
+    rather than a scrollback you had to be present for". Everything before the
+    first step escaped that: two `release-profile` invocations died on an
+    unparseable config, wrote no run directory and no ledger row, and left the
+    digest still reporting the previous run as the last one.
+
+    Appended, never rewritten, and best-effort: failing to record a failure
+    must not replace it with a different one.
+    """
+    if root is None:
+        return
+    try:
+        path = root / STARTUP_RECORD
+        path.parent.mkdir(parents=True, exist_ok=True)
+        row = {
+            "schema": "capsem.gate.startup.v1",
+            "ts": time.time(),
+            "invocation": list(raw),
+            "status": "failed",
+            "error": error,
+        }
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError:
+        return
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     raw = invocation(argv)
     args = build_parser().parse_args(argv)
+    root: Path | None = None
+    command: GateCommand | None = None
+
+    def unrecorded(message: str) -> None:
+        if command is None or not command.recorded:
+            record_startup_failure(root, raw, message)
+
     try:
+        root = project_root()
         with cancellation.unwind_sigterm():
-            GateCommand.registry[args.gate_command](
-                Runner(project_root()), args, invocation=raw
-            ).execute()
+            command = GateCommand.registry[args.gate_command](Runner(root), args, invocation=raw)
+            command.execute()
     except GateError as exc:
+        unrecorded(str(exc))
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
+        unrecorded("interrupted")
         print("interrupted", file=sys.stderr)
         return 130
     except cancellation.Terminated as exc:
+        unrecorded(str(exc))
         print(str(exc), file=sys.stderr)
         return exc.exit_status
     return 0

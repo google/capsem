@@ -1745,6 +1745,7 @@ building = ["frontend-build", "docs", "site"]
 # `tests/test_gate_*.py` to appear here, since by construction those need
 # neither.
 source_contract = [
+    "tests/test_gate_startup_failure_is_recorded.py",
     "tests/test_gate_observation.py",
     "tests/test_gate_observation_propagation.py",
     "tests/test_gate_initrd.py",
