@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The nightly release schedule now qualifies its commit before releasing it.
+  The release commands consume an exact-commit journal and never produce one;
+  the scheduler split its lanes across three runners with no `just test`
+  anywhere, so every run since 2026-08-05 failed -- first on a detached
+  checkout having no local `main`, and behind that on there being no journal to
+  accept. Qualification and all three releases now share one runner.
+
 - Supervisor SIGTERM now unwinds the gate through its ordinary cancellation
   and run-log lifecycle instead of terminating Python in place. Interrupted
   exact-source qualifications therefore emit a terminal failed journal,

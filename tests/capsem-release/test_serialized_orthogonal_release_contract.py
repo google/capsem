@@ -270,37 +270,79 @@ def test_profile_dispatch_is_correlated_and_awaited_before_the_next_lane() -> No
     assert "run_id: Option<u64>" in admin
 
 
-def test_daily_scheduler_runs_profile_and_binary_lanes_without_direct_dispatch() -> None:
+def test_daily_scheduler_qualifies_once_then_releases_every_lane() -> None:
+    """One runner, one journal, three releases.
+
+    `release-binaries` and `release-profile` declare
+    ``QualificationPolicy.REQUIRE``: they consume an exact-commit journal and
+    never produce one.  Only ``just test <commit>`` writes it, and it is
+    archived per machine under ``target/gate-runs/source-runs/<commit>/``, so a
+    second runner cannot see the first runner's proof.  The scheduler used to
+    split the lanes across three jobs with no qualification step anywhere, and
+    every nightly run from 2026-08-05 onward failed -- first on the missing
+    local ``main``, and behind it on ``AcceptQualification`` with nothing to
+    accept.  Keep qualification in the same job as the releases it feeds.
+    """
     workflow = _workflow("release-nightly.yaml")
-    profiles = _job_block(workflow, "release-profiles")
-    binaries = _job_block(workflow, "release-binaries")
+    release = _job_block(workflow, "nightly-release")
 
     assert workflow.count("cron:") == 1
     assert "push:" not in workflow
-    assert "profile: [code, co-work]" in profiles
-    assert "max-parallel: 1" in profiles
-    assert "fail-fast: false" in profiles
-    assert 'CAPSEM_SKIP_ASSET_CHECK: "1"' in profiles
-    assert "sh bootstrap.sh --yes" in profiles
-    assert "just release-profile nightly ${{ matrix.profile }} ${{ github.sha }}" in profiles
-    assert "needs: release-profiles" in binaries
-    assert "if: ${{ always() }}" in binaries
-    assert 'CAPSEM_SKIP_ASSET_CHECK: "1"' in binaries
-    assert "sh bootstrap.sh --yes" in binaries
-    assert "just release-binaries nightly ${{ github.sha }}" in binaries
+
+    qualify = "just test ${{ github.sha }}"
+    commands = [
+        qualify,
+        "just release-profile nightly code ${{ github.sha }}",
+        "just release-profile nightly co-work ${{ github.sha }}",
+        "just release-binaries nightly ${{ github.sha }}",
+    ]
+    for command in commands:
+        assert command in release, f"nightly scheduler must run {command!r}"
+
+    # Profiles before binaries, and qualification before either: a profile
+    # needing new code is published inactive until the binary release
+    # activates the compatible graph.
+    offsets = [release.index(command) for command in commands]
+    assert offsets == sorted(offsets), "qualify, then profiles, then binaries"
+
+    # Exactly one runner, so the journal written by `just test` is the journal
+    # the three release commands read back.
+    assert workflow.count("runs-on:") == 1
+    assert "needs:" not in workflow
+
+    assert 'CAPSEM_SKIP_ASSET_CHECK: "1"' in release
+    assert "sh bootstrap.sh --yes" in release
     assert "ref: main" not in workflow
-    assert workflow.count("ref: ${{ github.sha }}") == 2
+    assert workflow.count("ref: ${{ github.sha }}") == 1
     assert "release.yaml" not in workflow
     assert "release-assets.yaml" not in workflow
 
 
-def test_daily_scheduler_forwards_the_channel_source_token() -> None:
-    workflow = _workflow("release-nightly.yaml")
-    profiles = _job_block(workflow, "release-profiles")
-    binaries = _job_block(workflow, "release-binaries")
+def test_daily_scheduler_puts_the_release_commit_on_local_main() -> None:
+    """``ref: <sha>`` checks out detached, and require_local_main needs a name.
 
-    for job in (profiles, binaries):
-        assert "GITHUB_TOKEN: ${{ github.token }}" in job
+    ``require_local_main`` resolves the literal ref ``main``;
+    ``refs/remotes/origin/main`` does not answer to that name, so a detached
+    checkout fails with "is not already on local main" before any work starts.
+    """
+    release = _job_block(_workflow("release-nightly.yaml"), "nightly-release")
+
+    assert 'git branch -f main "${{ github.sha }}"' in release
+
+
+def test_daily_scheduler_requires_the_virtualization_devices_qualification_boots() -> None:
+    """Qualification boots real VMs, so a missing device must fail up front."""
+    release = _job_block(_workflow("release-nightly.yaml"), "nightly-release")
+
+    assert "test -r /dev/kvm -a -w /dev/kvm" in release
+    assert "test -r /dev/vhost-vsock -a -w /dev/vhost-vsock" in release
+    assert "continue-on-error" not in release
+
+
+def test_daily_scheduler_forwards_the_channel_source_token() -> None:
+    release = _job_block(_workflow("release-nightly.yaml"), "nightly-release")
+
+    assert "GITHUB_TOKEN: ${{ github.token }}" in release
 
 
 def test_nightly_binary_rebuild_is_correlated_but_does_not_republish_identity() -> None:

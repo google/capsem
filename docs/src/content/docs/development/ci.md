@@ -13,7 +13,7 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 |----------|---------|-------------|
 | `ci.yaml` | Pull requests and pushes to `main` | Quality gate: the shared fast/static module, Rust unit/integration, frontend, Python contracts, install checks, explicit runner substitutions, and a post-merge main signal |
 | `security-audit.yaml` | Weekly schedule or manual dispatch | Blocking RustSec and dependency advisories across every JavaScript web workspace |
-| `release-nightly.yaml` | Daily schedule or manual dispatch | Freeze `${{ github.sha }}`, pass it to each profile command serially, then pass the same SHA to the binary lane |
+| `release-nightly.yaml` | Daily schedule or manual dispatch | Freeze `${{ github.sha }}`, qualify it once with `just test`, then run both profile commands and the binary command against that one journal |
 | `release.yaml` | Correlated dispatch from `release-binaries` with `{tag, channel, publish, dispatch_id, source_commit}` | Build and install-test exact native packages from the selected immutable commit; publish and advance only a new immutable identity, or finish as a rebuild-only proof when that identity already exists |
 | `release-assets.yaml` | Correlated dispatch from `capsem-admin release` with `source_commit` | Build exactly one channel/profile's images, config, and evidence from that commit against the existing channel package; the public command watches that exact run through success |
 | `release-channel-staging.yaml` | Manual | Build a deterministic staging asset channel fixture, deploy it to a Cloudflare Pages preview branch, and validate the same release-channel contract without invoking `build-assets`, `build-app-macos`, or `build-app-linux` |
@@ -154,9 +154,18 @@ bytes, runs the complete pairing proof, and activates the channel. Neither
 artifact family is rebuilt twice.
 
 Nightly rebuild runs once daily through `release-nightly.yaml`. The scheduler
-freezes its event `${{ github.sha }}`, calls the public profile command for
-`code` and `co-work` with that SHA in a serial matrix, then calls the separate
-public binary command with the same SHA even if one profile lane failed.
+freezes its event `${{ github.sha }}`, places it on a local `main`, qualifies it
+with `just test`, then calls the public profile command for `code` and
+`co-work` and the separate public binary command with that same SHA.
+
+All four run in **one job on one runner**, because the release commands declare
+`QualificationPolicy.REQUIRE`: they consume the exact-commit journal and never
+produce one. Only `just test` writes it, under
+`target/gate-runs/source-runs/<commit>/`, and that archive is machine-local --
+a second runner cannot see the first runner's proof. The scheduler previously
+split the lanes across three jobs with no qualification step anywhere, so every
+run failed before doing any work.
+
 It contains no release implementation and never dispatches `release.yaml` or
 `release-assets.yaml` directly. Its `capsem-nightly-release-scheduler` lock
 prevents overlapping orchestrators; each downstream run independently holds

@@ -2946,7 +2946,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
 
     assert (
-        "| `release-nightly.yaml` | Daily schedule or manual dispatch | Freeze `${{ github.sha }}`, pass it to each profile command serially, then pass the same SHA to the binary lane |"
+        "| `release-nightly.yaml` | Daily schedule or manual dispatch | Freeze `${{ github.sha }}`, qualify it once with `just test`, then run both profile commands and the binary command against that one journal |"
         in docs
     )
     assert (

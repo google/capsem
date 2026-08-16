@@ -299,14 +299,14 @@ def test_daily_nightly_schedule_freezes_one_scheduler_commit() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-nightly.yaml").read_text(encoding="utf-8")
 
     assert workflow.count("cron:") == 1
-    assert workflow.count("ref: ${{ github.sha }}") == 2
+    # One job, so one checkout: the qualification journal `just test` writes is
+    # machine-local, and every release command in this workflow reads it back.
+    assert workflow.count("ref: ${{ github.sha }}") == 1
+    assert workflow.count("just test ${{ github.sha }}") == 1
     assert workflow.count("just release-binaries nightly ${{ github.sha }}") == 1
-    assert (
-        workflow.count("just release-profile nightly ${{ matrix.profile }} ${{ github.sha }}") == 1
-    )
+    for profile in ("code", "co-work"):
+        assert workflow.count(f"just release-profile nightly {profile} ${{{{ github.sha }}}}") == 1
     assert "ref: main" not in workflow
-    assert "max-parallel: 1" in workflow
-    assert "fail-fast: false" in workflow
 
 
 def test_release_notes_prepare_without_claiming_the_tag_exists() -> None:

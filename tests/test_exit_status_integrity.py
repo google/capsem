@@ -106,14 +106,26 @@ REQUIRED_JUST_STEPS = (
     ),
     RequiredJustStep(
         "release-nightly.yaml",
-        "release-profiles",
-        "Rebuild nightly ${{ matrix.profile }} profile assets",
-        ("just release-profile nightly ${{ matrix.profile }} ${{ github.sha }}",),
+        "nightly-release",
+        "Qualify the nightly source commit",
+        ("just test ${{ github.sha }}",),
     ),
     RequiredJustStep(
         "release-nightly.yaml",
-        "release-binaries",
-        "Rebuild or release nightly binaries",
+        "nightly-release",
+        "Release nightly code profile",
+        ("just release-profile nightly code ${{ github.sha }}",),
+    ),
+    RequiredJustStep(
+        "release-nightly.yaml",
+        "nightly-release",
+        "Release nightly co-work profile",
+        ("just release-profile nightly co-work ${{ github.sha }}",),
+    ),
+    RequiredJustStep(
+        "release-nightly.yaml",
+        "nightly-release",
+        "Release nightly binaries",
         ("just release-binaries nightly ${{ github.sha }}",),
     ),
     RequiredJustStep(

@@ -255,7 +255,7 @@ def test_every_hosted_linux_job_entering_a_gate_module_proves_the_boundary_first
     }
 
 
-@pytest.mark.parametrize("job_name", ("release-profiles", "release-binaries"))
+@pytest.mark.parametrize("job_name", ("nightly-release",))
 def test_nightly_release_bootstraps_host_before_enforced_qualification(job_name: str) -> None:
     workflow_path = PROJECT_ROOT / ".github" / "workflows" / "release-nightly.yaml"
     workflow = yaml.safe_load(workflow_path.read_text())
