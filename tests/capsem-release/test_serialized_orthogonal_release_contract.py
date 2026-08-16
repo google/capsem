@@ -128,8 +128,8 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
 @pytest.mark.parametrize(
     "command, arguments, publication",
     [
-        ("release-binaries", ("nightly",), "release"),
-        ("release-profile", ("nightly", "code"), "release"),
+        ("release-binaries", ("stable",), "release"),
+        ("release-profile", ("stable", "code"), "release"),
     ],
 )
 def test_nothing_is_published_before_the_complete_gate_passes(
@@ -155,13 +155,13 @@ def test_nothing_is_published_before_the_complete_gate_passes(
     (
         (
             "release-binaries",
-            ("nightly",),
-            r"scripts/release-binaries\.py nightly 0{40}",
+            ("stable",),
+            r"scripts/release-binaries\.py stable 0{40}",
         ),
         (
             "release-profile",
-            ("nightly", "code"),
-            r"capsem-admin -- release --channel nightly --profile code --source-commit 0{40}",
+            ("stable", "code"),
+            r"capsem-admin -- release --channel stable --profile code --source-commit 0{40}",
         ),
     ),
 )
@@ -180,7 +180,7 @@ def test_public_release_command_accepts_journal_then_runs_preflight_before_mutat
     assert "publish-release-source.py" in rendered
     assert "--check" in rendered
     if recipe == "release-binaries":
-        assert "release-binaries.py --precheck nightly" in rendered
+        assert "release-binaries.py --precheck stable" in rendered
         assert "fetch-channel-source-manifest.py" in rendered
 
     assert order[0] == "qualification.accept"
@@ -200,8 +200,8 @@ def test_public_release_command_accepts_journal_then_runs_preflight_before_mutat
 @pytest.mark.parametrize(
     ("recipe", "arguments"),
     (
-        ("release-binaries", ("nightly",)),
-        ("release-profile", ("nightly", "code")),
+        ("release-binaries", ("stable",)),
+        ("release-profile", ("stable", "code")),
     ),
 )
 def test_missing_qualification_prevents_every_release_side_effect(
@@ -224,7 +224,7 @@ def test_missing_qualification_prevents_every_release_side_effect(
 
     issued = "\n".join(runner.rendered)
     for mutation in (
-        "scripts/release-binaries.py nightly 0000000000000000000000000000000000000000",
+        "scripts/release-binaries.py stable 0000000000000000000000000000000000000000",
         "capsem-admin -- release",
     ):
         assert mutation not in issued, f"{mutation} ran after a failing gate"
@@ -270,18 +270,19 @@ def test_profile_dispatch_is_correlated_and_awaited_before_the_next_lane() -> No
     assert "run_id: Option<u64>" in admin
 
 
-def test_daily_scheduler_qualifies_once_then_releases_every_lane() -> None:
-    """One runner, one journal, three releases.
+def test_daily_scheduler_runs_unattended_with_no_local_qualification() -> None:
+    """Nightly takes the latest `main`, builds it, and publishes what passes.
 
-    `release-binaries` and `release-profile` declare
-    ``QualificationPolicy.REQUIRE``: they consume an exact-commit journal and
-    never produce one.  Only ``just test <commit>`` writes it, and it is
-    archived per machine under ``target/gate-runs/source-runs/<commit>/``, so a
-    second runner cannot see the first runner's proof.  The scheduler used to
-    split the lanes across three jobs with no qualification step anywhere, and
-    every nightly run from 2026-08-05 onward failed -- first on the missing
-    local ``main``, and behind it on ``AcceptQualification`` with nothing to
-    accept.  Keep qualification in the same job as the releases it feeds.
+    Spec 13.2: freeze the SHA, invoke the profile command per selected profile,
+    then the binary command, and dispatch nothing directly. Nothing here
+    qualifies anything -- the lanes it dispatches prove themselves, publishing
+    only when their pairing job succeeded.
+
+    That is only possible because `[release].locally_qualified_channels` omits
+    nightly. A qualification journal is written solely by `just test` and
+    archived per machine, so requiring one would require a human at a
+    particular keyboard every morning. Every nightly run from 2026-08-05 failed
+    for want of a journal a hosted runner cannot produce.
     """
     workflow = _workflow("release-nightly.yaml")
     release = _job_block(workflow, "nightly-release")
@@ -289,54 +290,47 @@ def test_daily_scheduler_qualifies_once_then_releases_every_lane() -> None:
     assert workflow.count("cron:") == 1
     assert "push:" not in workflow
 
-    qualify = "just test ${{ github.sha }}"
     commands = [
-        qualify,
         "just release-profile nightly code ${{ github.sha }}",
         "just release-profile nightly co-work ${{ github.sha }}",
         "just release-binaries nightly ${{ github.sha }}",
     ]
     for command in commands:
         assert command in release, f"nightly scheduler must run {command!r}"
-
-    # Profiles before binaries, and qualification before either: a profile
-    # needing new code is published inactive until the binary release
-    # activates the compatible graph.
     offsets = [release.index(command) for command in commands]
-    assert offsets == sorted(offsets), "qualify, then profiles, then binaries"
+    assert offsets == sorted(offsets), "profiles before binaries"
 
-    # Exactly one runner, so the journal written by `just test` is the journal
-    # the three release commands read back.
+    # It qualifies nothing, and it builds nothing: it dispatches and waits.
+    assert "just test" not in workflow
+    assert "/dev/kvm" not in workflow
+    assert "musl" not in workflow
+
     assert workflow.count("runs-on:") == 1
     assert "needs:" not in workflow
-
-    assert 'CAPSEM_SKIP_ASSET_CHECK: "1"' in release
-    assert "sh bootstrap.sh --yes" in release
     assert "ref: main" not in workflow
     assert workflow.count("ref: ${{ github.sha }}") == 1
     assert "release.yaml" not in workflow
     assert "release-assets.yaml" not in workflow
 
 
-def test_daily_scheduler_puts_the_release_commit_on_local_main() -> None:
-    """``ref: <sha>`` checks out detached, and require_local_main needs a name.
+def test_nightly_releases_without_a_journal_while_stable_still_demands_one() -> None:
+    """The one asymmetry that lets an unattended rebuild exist at all."""
+    from capsem.gate import config as gate_config
 
-    ``require_local_main`` resolves the literal ref ``main``;
-    ``refs/remotes/origin/main`` does not answer to that name, so a detached
-    checkout fails with "is not already on local main" before any work starts.
-    """
-    release = _job_block(_workflow("release-nightly.yaml"), "nightly-release")
+    qualified = gate_config.load(ROOT).release.locally_qualified_channels
+    assert "stable" in qualified
+    assert "nightly" not in qualified
 
-    assert 'git branch -f main "${{ github.sha }}"' in release
-
-
-def test_daily_scheduler_requires_the_virtualization_devices_qualification_boots() -> None:
-    """Qualification boots real VMs, so a missing device must fail up front."""
-    release = _job_block(_workflow("release-nightly.yaml"), "nightly-release")
-
-    assert "test -r /dev/kvm -a -w /dev/kvm" in release
-    assert "test -r /dev/vhost-vsock -a -w /dev/vhost-vsock" in release
-    assert "continue-on-error" not in release
+    for command, arguments in (
+        ("release-binaries", ("nightly",)),
+        ("release-profile", ("nightly", "code")),
+    ):
+        order = _release_order(command, *arguments)
+        assert "qualification.accept" not in order, (
+            f"{command} nightly plans a journal step it can never satisfy unattended"
+        )
+        assert "source.remote-main" in order
+        assert order.index("source.publish-ref") < order.index("release")
 
 
 def test_daily_scheduler_forwards_the_channel_source_token() -> None:
@@ -376,18 +370,15 @@ def test_nightly_profiles_always_rebuild_while_stable_retry_can_reuse() -> None:
 def test_release_lanes_run_one_reusable_fast_gate_before_builders() -> None:
     reusable = _workflow("fast-gate.yaml")
     assert "workflow_call:" in reusable
-    assert "run: just _test-fast" in reusable
-    assert "run: just _test-static" in reusable
+    assert "run: just fast-test" in reusable
     linux_prerequisites = reusable.index("Install Linux workspace lint prerequisites")
-    fast = reusable.index("Run complete shared fast module")
-    static = reusable.index("Run shared static module")
-    assert linux_prerequisites < fast < static
+    gate = reusable.index("Run the complete fast gate")
+    assert linux_prerequisites < gate
 
     binary = _workflow("release.yaml")
     assert "uses: ./.github/workflows/fast-gate.yaml" in _job_block(binary, "fast-gate")
     assert "needs: [runtime-preflight, fast-gate]" in _job_block(binary, "preflight")
-    assert "Run shared static module" not in _job_block(binary, "test-binary-pairing")
-    assert "Run complete shared fast module" not in _job_block(binary, "test-binary-pairing")
+    assert "Run the complete fast gate" not in _job_block(binary, "test-binary-pairing")
 
     profile = _workflow("release-assets.yaml")
     assert "uses: ./.github/workflows/fast-gate.yaml" in _job_block(profile, "fast-gate")
@@ -426,9 +417,7 @@ def test_binary_lane_pulls_profiles_and_never_builds_them() -> None:
     assert "binary-channel-source" in workflow
     assert "Resolve exact candidate-after profiles" in workflow
     assert "file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" in workflow
-    assert "just _test-artifacts" in workflow
-    assert "just _test-functional" in workflow
-    assert "just _test-glowup" in workflow
+    assert "just qualify-binaries" in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
     assert "--config-root target/release-config" in workflow
     assert "--shared-config-root config" in workflow
@@ -455,7 +444,7 @@ def test_profile_lane_installs_pulled_package_runtime_dependencies() -> None:
 
     resolve_package = pairing.index("--print-package-path")
     install_dependencies = pairing.index('scripts/install-deb-runtime-dependencies.py "$package"')
-    functional = pairing.index("run: just _test-functional")
+    functional = pairing.index("just qualify-assets")
 
     assert resolve_package < install_dependencies < functional
     assert "sudo dpkg -i" not in pairing
@@ -549,9 +538,7 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
     assert "steps.profile-delta.outputs.release_needed == 'true'" in workflow
     assert "check-profile-release-delta.py" in workflow
     assert "check-asset-release-delta.py" not in workflow
-    assert "just _test-artifacts" in workflow
-    assert "just _test-functional" in workflow
-    assert "just _test-glowup" in workflow
+    assert "just qualify-assets" in workflow
     assert "--shared-config-root config" in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
     assert "--input-dir target/profile-public-before/packages" in workflow

@@ -1221,6 +1221,12 @@ install = ["cargo", "install", "tauri-cli", "--version", "2.11.1", "--locked"]
 # The selected commit is prepared and committed before release. Qualification
 # may create immutable Git refs afterward; it may never edit tracked source.
 line = "0.6"
+# Channels that may only be released from a commit an operator qualified with
+# `just test`. Nightly is deliberately absent: spec 13.2 rebuilds current main
+# every day with no human involved, and the dispatched lanes prove themselves
+# through qualify-assets and qualify-binaries. Requiring a machine-local
+# journal there made the scheduled rebuild impossible to satisfy.
+locally_qualified_channels = ["stable"]
 source = "scripts/publish-release-source.py"
 source_ref_template = "capsem-source-{source_commit}"
 tagger_name = "Capsem Release Gate"

@@ -1000,14 +1000,8 @@ jobs:
             echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/target/config"
           } >> "$GITHUB_ENV"
 
-      - name: Run shared artifact module
-        run: just _test-artifacts
-
-      - name: Run shared complete functional module
-        run: just _test-functional
-
-      - name: Run shared native and update glow-up module
-        run: just _test-glowup
+      - name: Qualify the candidate binaries
+        run: just qualify-binaries
 
       # This gate blocks publication, so a failure here has to be diagnosable
       # from outside the runner. Without the session logs a Linux-only failure

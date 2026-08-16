@@ -185,29 +185,14 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     pairing_setup = _step(
         pairing,
         "Prepare exact profile and pulled binary pairing",
-        "Run deferred profile artifact module",
+        "Qualify the profile assets",
     )
-    deferred_artifacts = _step(
+    qualify = _step(
         pairing,
-        "Run deferred profile artifact module",
-        "Run shared artifact module",
-    )
-    artifacts = _step(
-        pairing,
-        "Run shared artifact module",
+        "Qualify the profile assets",
         "Record deferred profile staging boundary",
     )
-    deferred = _step(
-        pairing,
-        "Record deferred profile staging boundary",
-        "Run shared complete functional module",
-    )
-    functional = _step(
-        pairing,
-        "Run shared complete functional module",
-        "Run shared native and update glow-up module",
-    )
-    glowup = _step(pairing, "Run shared native and update glow-up module", None)
+    deferred = _step(pairing, "Record deferred profile staging boundary", None)
     deployable = _step(
         publish,
         "Build deployable channel from authored source manifest",
@@ -221,25 +206,28 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     assert "uses: ./.github/workflows/fast-gate.yaml" in fast_gate
     assert "if:" not in fast_gate
     assert "fast-gate" in build_assets.splitlines()[0]
-    assert "Run shared static module" not in pairing
+    assert "Run the complete fast gate" not in pairing
     assert "ACTIVATION_READY:" in pairing_setup
     assert "needs.author-profile-release.outputs.activation_ready" in pairing_setup
-    assert f"if: ${{{{ {activation_ready} }}}}" in artifacts
-    assert "just _test-artifacts" in artifacts
-    assert "needs.author-profile-release.outputs.activation_ready != 'true'" in deferred_artifacts
-    assert "just _test-profile-artifacts" in deferred_artifacts
-    assert '"$PWD/target/candidate-profile-inputs"' in deferred_artifacts
-    assert "inputs.profile" in deferred_artifacts
-    assert "Run complete shared fast module" in reusable_fast_gate
-    assert "run: just _test-fast" in reusable_fast_gate
+
+    # One verb, both shapes. The deferred/active choice is the lane's, made
+    # from this flag, rather than two `if:`-guarded step pairs whose halves
+    # could drift apart.
+    assert "just qualify-assets" in qualify
+    assert '"$PWD/target/candidate-profile-inputs"' in qualify
+    assert "inputs.profile" in qualify
+    assert "--activation-ready" in qualify
+    assert "needs.author-profile-release.outputs.activation_ready" in qualify
+    assert "if:" not in qualify
+
+    assert "Run the complete fast gate" in reusable_fast_gate
+    assert "run: just fast-test" in reusable_fast_gate
     assert "needs.author-profile-release.outputs.activation_ready != 'true'" in deferred
     assert "outputs.product_compatible" in deferred
     assert "outputs.functional_ready" in deferred
     assert "outside this profile's declared compatibility range" in deferred
     assert "complete functional release binary cohort" in deferred
     assert "activation-ready profile cannot defer complete pairing gates" in deferred
-    assert f"if: ${{{{ {activation_ready} }}}}" in functional
-    assert f"if: ${{{{ {activation_ready} }}}}" in glowup
     assert f"if: ${{{{ {activation_ready} }}}}" in deployable
     assert "if:" not in immutable
     assert "needs.publish-profile-release.outputs.activation_ready == 'true'" in deploy
@@ -352,11 +340,16 @@ def test_hosted_macos_never_claims_the_local_apple_vz_proof() -> None:
     assert "Local Apple Silicon `just test` owns that VZ proof" in release_skill
     assert "_gate-assets" in local_gate
 
-    order = list(_release_plan("release-profile", "nightly", "code").labels)
-    # The local Apple VZ proof lives in the complete candidate journal. The
-    # release revalidates that journal before it dispatches hosted work.
+    # The local Apple VZ proof lives in the complete candidate journal, and a
+    # stable release revalidates that journal before dispatching hosted work.
+    # Nightly has no journal by design -- it rebuilds current `main` unattended
+    # -- so the proof it consumes is its own lane's, not an operator's.
+    order = list(_release_plan("release-profile", "stable", "code").labels)
     assert order[0] == "qualification.accept"
     assert order.index("qualification.accept") < order.index("release")
+
+    nightly = list(_release_plan("release-profile", "nightly", "code").labels)
+    assert "qualification.accept" not in nightly
 
 
 def test_profile_activation_readiness_requires_the_pulled_binary_functional_cohort() -> None:
@@ -390,10 +383,7 @@ def test_profile_then_binary_reuses_authored_source_without_rebuilding_assets() 
     assert "Resolve exact candidate-after profiles" in binary
     assert "kind: profiles" in binary
     assert binary.index("Record binary candidate metadata once") < binary.index(
-        "Run shared complete functional module"
-    )
-    assert binary.index("Record binary candidate metadata once") < binary.index(
-        "Run shared native and update glow-up module"
+        "Qualify the candidate binaries"
     )
     assert "Prove binary candidate preserved every profile" in binary
     assert 'before.get("profiles") != after.get("profiles")' in binary

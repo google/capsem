@@ -10,19 +10,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from . import imagebuild, sandbox
+from . import imagebuild
 from .actions import Run, Script
 from .command import GateCommand
 from .config import GateConfig
-from .egress import Egress
 from .errors import GateError
 from .execution import Kind, Needs, Speed, step
 from .fileactions import MakeDir
-from .lifecycle import Resource
 from .plan import Plan
-from .proc import Runner
-from .qualificationevidence import AcceptQualification, QualificationPolicy
-from .sandboxreport import SandboxReport
+from .releasedispatch import QualifiedRelease
 from .sourcecommit import SourceCommit
 
 
@@ -45,25 +41,8 @@ def _require_profile(config: GateConfig, profile: str) -> None:
         raise GateError(f"unknown profile {profile!r}; expected one of {', '.join(known)}")
 
 
-class _QualifiedRelease:
-    """A short dispatcher that consumes, but never repeats, qualification."""
-
-    _config: GateConfig
-    _sandbox_mode: sandbox.SandboxMode
-    sandboxed = sandbox.ENFORCE
-    qualification_policy = QualificationPolicy.REQUIRE
-    private_checkout = True
-    outside_egress = True
-
-    def resources(self, runner: Runner) -> tuple[Resource, ...]:
-        return (
-            SandboxReport(self._config, runner, mode=self._sandbox_mode),
-            Egress(self._config, enabled=self._sandbox_mode is not sandbox.OFF),
-        )
-
-
 class ReleaseBinariesCommand(
-    _QualifiedRelease,
+    QualifiedRelease,
     GateCommand,
     name="release-binaries",
     help="release exact previously-qualified packages for one channel",
@@ -89,14 +68,7 @@ class ReleaseBinariesCommand(
 
         _require_channel(config, channel)
 
-        accepted = plan.add(
-            step(
-                "qualification.accept",
-                AcceptQualification(self.source_commit()),
-                kind=Kind.STATIC_TEST,
-                speed=Speed.FAST,
-            )
-        )
+        accepted = self._qualification_steps(plan, self.source_commit())
         checked = plan.add(
             step(
                 "source.remote-main",
@@ -113,7 +85,7 @@ class ReleaseBinariesCommand(
                 needs=frozenset({Needs.NETWORK}),
                 speed=Speed.FAST,
             ),
-            after=(accepted,),
+            after=accepted,
         )
         prepared = plan.add(
             step(
@@ -189,7 +161,7 @@ class ReleaseBinariesCommand(
 
 
 class ReleaseProfileCommand(
-    _QualifiedRelease,
+    QualifiedRelease,
     GateCommand,
     name="release-profile",
     help="release one exact previously-qualified channel profile",
@@ -221,14 +193,7 @@ class ReleaseProfileCommand(
         _require_channel(config, self._args.channel)
         _require_profile(config, self._args.profile)
 
-        accepted = plan.add(
-            step(
-                "qualification.accept",
-                AcceptQualification(self.source_commit()),
-                kind=Kind.STATIC_TEST,
-                speed=Speed.FAST,
-            )
-        )
+        accepted = self._qualification_steps(plan, self.source_commit())
         checked = plan.add(
             step(
                 "source.remote-main",
@@ -246,7 +211,7 @@ class ReleaseProfileCommand(
                 needs=frozenset({Needs.NETWORK}),
                 speed=Speed.FAST,
             ),
-            after=(accepted,),
+            after=accepted,
         )
         published = plan.add(
             step(

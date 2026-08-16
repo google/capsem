@@ -17,13 +17,34 @@
 #   release-binaries       publish packages for one channel
 #   release-profile        publish one channel/profile
 #
-# Underscore recipes are implementation detail. CI may call a private primitive
-# only when it is part of the canonical `test` graph.
+# Underscore recipes are implementation detail. No workflow may call one:
+# `tests/citadel/test_ci_calls_only_public_recipes.py` refuses it.
 
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
 # Propagate Cargo.toml's version across the release cohort (capsem.gate.versions).
 _stamp-version:
     @uv run capsem-gate stamp-version
+
+# Build one profile's VM assets for one architecture: kernel, then rootfs.
+build-assets arch profile="":
+    just _build-kernel {{quote(arch)}} {{quote(profile)}}
+    just _build-rootfs {{quote(arch)}} {{quote(profile)}}
+
+
+# Host-crate unit tests against the Linux KVM backend, with coverage.
+test-linux-rust:
+    just _gate-linux-rust
+
+
+# Qualify the candidate packages against the manifest-selected profiles.
+qualify-binaries:
+    uv run capsem-gate qualify-binaries
+
+
+# Qualify one profile's built assets against the selected binary.
+qualify-assets input_dir profile *flags:
+    uv run capsem-gate qualify-assets {{quote(input_dir)}} {{quote(profile)}} {{flags}}
+
 
 # Build, test, and publish only Capsem binaries/packages for one channel.
 release-binaries channel source_commit:
@@ -158,12 +179,12 @@ _test-candidate:
 # Parser errors, source contracts, dependency vulnerabilities, lint, Clippy,
 # and every JavaScript/web check run before Colima, bootstrap, artifacts, or
 # VMs. This is private composition, not a public release shortcut.
-_test-fast:
+_test-source-checks:
     uv run capsem-gate test-fast
     just _check-generated-settings
     just _test-release-contracts
 
-_test-static: _clean-stale _check-generated-settings
+_test-compiled-checks: _clean-stale _check-generated-settings
     just _bound-docker-test-storage
     uv run capsem-gate test-static
 
@@ -262,7 +283,7 @@ _check-generated-settings:
     bash scripts/check-generated-settings.sh {{quote(justfile_directory())}}
 
 
-# The fast gate, and nothing else. This is the *same* `_test-fast` module that
+# The fast gate, and nothing else. This is the *same* `_test-source-checks` module that
 # `test` and both release lanes run -- not a reduced developer variant of it --
 # so a green here means exactly what it means there and the two cannot drift.
 #
@@ -270,7 +291,8 @@ _check-generated-settings:
 # this gate *and* a VM loop, so the name undersold the gate and oversold the
 # loop. The VM loop is now `vm-smoke`, which is what a smoke test actually is.
 fast-test:
-    just _test-fast
+    just _test-source-checks
+    just _test-compiled-checks
 
 
 # A short VM round-trip: boot, exercise, tear down. Genuinely a smoke test --

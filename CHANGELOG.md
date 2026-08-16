@@ -20,6 +20,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CI no longer reaches into private `just` recipes, and the nightly rebuild can
+  finally run unattended. Each release lane now calls one public verb --
+  `qualify-assets` or `qualify-binaries` -- instead of assembling three or four
+  `_test-*` steps in YAML, which is how the asset lane grew a deferred-profile
+  branch the binary lane never had. `fast-test` now runs both modules the CI
+  fast gate runs, making true its claim to be "the fast gate itself"; the two
+  internals are renamed for what they do rather than a fast/static split that
+  described neither, since both take about six minutes and the real difference
+  is whether a module builds anything. A Citadel guard refuses any workflow
+  that calls a private recipe or one absent from the locked public surface.
+  `[release].locally_qualified_channels` makes the qualification journal a
+  stable-only requirement: nightly rebuilds current `main` daily with no human
+  involved, and the lanes it dispatches prove themselves before publishing.
+
 - A private release prefix no longer parses the outer checkout's
   `config/gate.toml`. The prefix runs the selected commit's gate code, so
   reading the working tree's config validated one tree's file against the other

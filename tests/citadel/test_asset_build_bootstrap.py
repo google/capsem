@@ -38,9 +38,11 @@ class Key(StrEnum):
 
 
 class Recipe(StrEnum):
-    BUILD_ASSETS = "_build-assets"
-    BUILD_KERNEL = "_build-kernel"
-    BUILD_ROOTFS = "_build-rootfs"
+    #: The private whole-cohort builder, and the public per-arch verb that
+    #: workflows call. `_build-kernel` and `_build-rootfs` folded into the
+    #: latter when CI stopped reaching into private recipes.
+    BUILD_ASSETS_PRIVATE = "_build-assets"
+    BUILD_ASSETS = "build-assets"
 
 
 class Bootstrap(StrEnum):
@@ -134,7 +136,7 @@ def _bootstrap_step(run: str = "sh bootstrap.sh --yes") -> dict[str, object]:
 
 
 def _build_step() -> dict[str, object]:
-    return {Key.NAME: "Build assets", Key.RUN: "just _build-kernel x86_64 code"}
+    return {Key.NAME: "Build assets", Key.RUN: "just build-assets x86_64 code"}
 
 
 def test_guard_rejects_missing_late_or_neutralized_bootstrap() -> None:

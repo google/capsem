@@ -282,8 +282,7 @@ jobs:
 
       - name: Build VM assets (kernel + rootfs)
         run: |
-          just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"
-          just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"
+          just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -396,15 +395,15 @@ jobs:
           ACTIVATION_READY: ${{ needs.author-profile-release.outputs.activation_ready }}
         run: bash scripts/stage-profile-pairing.sh
 
-      - name: Run deferred profile artifact module
-        if: ${{ needs.author-profile-release.outputs.activation_ready != 'true' }}
-        run: |
-          just _test-profile-artifacts \
-            "$PWD/target/candidate-profile-inputs" \
-            "${{ inputs.profile }}"
-      - name: Run shared artifact module
-        if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
-        run: just _test-artifacts
+      # A channel with no package cohort yet proves the profile alone. Which
+      # shape that is belongs to the lane, so the flag is passed rather than
+      # branched on here.
+      - name: Qualify the profile assets
+        run: >
+          just qualify-assets
+          "$PWD/target/candidate-profile-inputs"
+          "${{ inputs.profile }}"
+          --activation-ready "${{ needs.author-profile-release.outputs.activation_ready }}"
 
       - name: Record deferred profile staging boundary
         if: ${{ needs.author-profile-release.outputs.activation_ready != 'true' }}
@@ -424,14 +423,6 @@ jobs:
           fi
           echo "::notice::An activation-ready profile cannot defer complete pairing gates."
           echo "::notice::Functional and glow-up gates are deferred to release-binaries; public activation remains blocked."
-
-      - name: Run shared complete functional module
-        if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
-        run: just _test-functional
-
-      - name: Run shared native and update glow-up module
-        if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
-        run: just _test-glowup
 
   author-profile-release:
     needs: [build-assets, reuse-assets, resolve-current-binary]

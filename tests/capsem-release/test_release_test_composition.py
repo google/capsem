@@ -340,8 +340,8 @@ def test_private_release_modules_select_one_shared_runner() -> None:
     already extracted. Neither may be a recipe that does the work itself.
     """
     expected = {
-        "_test-fast": "fast",
-        "_test-static": "static",
+        "_test-source-checks": "fast",
+        "_test-compiled-checks": "static",
         "_test-artifacts": "artifacts",
         "_test-functional": "functional",
         "_test-glowup": "glowup",
@@ -366,7 +366,7 @@ def test_private_release_modules_select_one_shared_runner() -> None:
 
 def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -> None:
     public = _recipe("test")
-    fast = _recipe("_test-fast")
+    fast = _recipe("_test-source-checks")
     planned = _planned("test-fast")
 
     for required in (
@@ -398,7 +398,7 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
 
 
 def test_release_static_module_never_bootstraps_or_builds_profile_assets() -> None:
-    static = _recipe("_test-static")
+    static = _recipe("_test-compiled-checks")
 
     assert "_bootstrap" not in static.splitlines()[0]
     assert "just _bound-docker-test-storage" in static
@@ -649,7 +649,7 @@ def test_reusable_fast_gate_installs_workspace_static_prerequisites() -> None:
     ci = (PROJECT_ROOT / ".github/workflows/ci.yaml").read_text(encoding="utf-8")
     workflow = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(encoding="utf-8")
     prerequisites = workflow.index("Install Linux workspace lint prerequisites")
-    shared_module = workflow.index("Run shared static module")
+    shared_module = workflow.index("Run the complete fast gate")
 
     assert prerequisites < shared_module
     provision = "sudo python3 scripts/provision-linux-workspace.py --install apt"

@@ -82,24 +82,21 @@ def test_python_tests_use_the_tracked_lowercase_justfile_name() -> None:
 def test_the_public_fast_gate_is_the_shared_module_itself() -> None:
     """`fast-test` and `test` cannot drift, because they are the same module.
 
-    This used to assert an ordering *inside* one recipe: that `smoke` ran
-    `_test-fast` before `_prepared-runtime`, so cheap checks failed before a
-    bootable runtime was built. That recipe bundled two jobs and is now two
-    recipes, which makes the ordering unnecessary rather than violated --
-    `fast-test` is the cheap gate and nothing else, so there is nothing after
-    it to run too early.
-
-    What still has to hold is that the public name is the shared module and
-    not a reduced copy of it, and that the VM half still prepares a runtime.
+    The public name has to be the whole shared gate, not a reduced copy. It
+    was a reduced copy: `fast-test` ran only the source-checks module while
+    `fast-gate.yaml` ran that *and* the compiled-checks module, so the recipe
+    advertised as "the fast gate itself" was half of what CI called by that
+    name. It now runs both, and CI calls this recipe rather than the internals.
     """
     fast_test = variables.block(variables.FAST_TEST)
-    fast = _recipe("_test-fast")
+    fast = _recipe("_test-source-checks")
     planned = _planned("test-fast")
 
-    assert "just _test-fast" in fast_test
-    assert fast_test.strip().count("\n") == 0, (
-        f"{variables.FAST_TEST} grew a second job; it is the fast gate and "
-        f"nothing else: {fast_test!r}"
+    assert "just _test-source-checks" in fast_test
+    assert "just _test-compiled-checks" in fast_test
+    assert fast_test.strip().count("\n") == 1, (
+        f"{variables.FAST_TEST} is the two shared modules the fast gate runs "
+        f"and nothing else: {fast_test!r}"
     )
     assert "_prepared-runtime" in variables.header(variables.VM_SMOKE), (
         "the VM half stopped preparing a bootable runtime"

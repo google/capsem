@@ -3,21 +3,25 @@
 # drive-by addition, deletion, rename, or stale count fails closed.
 
 [just]
-count = 14
+count = 18
 approved = [
   "build",
   "build-all",
+  "build-assets",
   "build-docs",
   "dev",
   "doctor",
   "exec",
   "fast-test",
   "logs",
+  "qualify-assets",
+  "qualify-binaries",
   "release-binaries",
   "release-profile",
   "run-service",
   "shell",
   "test",
+  "test-linux-rust",
   "vm-smoke",
 ]
 

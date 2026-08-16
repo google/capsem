@@ -51,64 +51,29 @@ REQUIRED_JUST_STEPS = (
         "ci.yaml",
         "test-linux",
         "Unit tests (KVM backend) with coverage",
-        ("just _gate-linux-rust",),
+        ("just test-linux-rust",),
     ),
     RequiredJustStep(
         "fast-gate.yaml",
         "static",
-        "Run complete shared fast module",
-        ("just _test-fast",),
-    ),
-    RequiredJustStep(
-        "fast-gate.yaml",
-        "static",
-        "Run shared static module",
-        ("just _test-static",),
+        "Run the complete fast gate",
+        ("just fast-test",),
     ),
     RequiredJustStep(
         "release-assets.yaml",
         "build-assets",
         "Build VM assets (kernel + rootfs)",
+        ('just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"',),
+    ),
+    RequiredJustStep(
+        "release-assets.yaml",
+        "test-profile-pairing",
+        "Qualify the profile assets",
         (
-            'just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"',
-            'just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"',
+            'just qualify-assets "$PWD/target/candidate-profile-inputs" '
+            '"${{ inputs.profile }}" --activation-ready '
+            '"${{ needs.author-profile-release.outputs.activation_ready }}"',
         ),
-    ),
-    RequiredJustStep(
-        "release-assets.yaml",
-        "test-profile-pairing",
-        "Run deferred profile artifact module",
-        (
-            'just _test-profile-artifacts "$PWD/target/candidate-profile-inputs" "${{ inputs.profile }}"',
-        ),
-        "${{ needs.author-profile-release.outputs.activation_ready != 'true' }}",
-    ),
-    RequiredJustStep(
-        "release-assets.yaml",
-        "test-profile-pairing",
-        "Run shared artifact module",
-        ("just _test-artifacts",),
-        "${{ needs.author-profile-release.outputs.activation_ready == 'true' }}",
-    ),
-    RequiredJustStep(
-        "release-assets.yaml",
-        "test-profile-pairing",
-        "Run shared complete functional module",
-        ("just _test-functional",),
-        "${{ needs.author-profile-release.outputs.activation_ready == 'true' }}",
-    ),
-    RequiredJustStep(
-        "release-assets.yaml",
-        "test-profile-pairing",
-        "Run shared native and update glow-up module",
-        ("just _test-glowup",),
-        "${{ needs.author-profile-release.outputs.activation_ready == 'true' }}",
-    ),
-    RequiredJustStep(
-        "release-nightly.yaml",
-        "nightly-release",
-        "Qualify the nightly source commit",
-        ("just test ${{ github.sha }}",),
     ),
     RequiredJustStep(
         "release-nightly.yaml",
@@ -131,20 +96,8 @@ REQUIRED_JUST_STEPS = (
     RequiredJustStep(
         "release.yaml",
         "test-binary-pairing",
-        "Run shared artifact module",
-        ("just _test-artifacts",),
-    ),
-    RequiredJustStep(
-        "release.yaml",
-        "test-binary-pairing",
-        "Run shared complete functional module",
-        ("just _test-functional",),
-    ),
-    RequiredJustStep(
-        "release.yaml",
-        "test-binary-pairing",
-        "Run shared native and update glow-up module",
-        ("just _test-glowup",),
+        "Qualify the candidate binaries",
+        ("just qualify-binaries",),
     ),
 )
 
@@ -268,8 +221,8 @@ def _assert_fixture(step: str, *, job_policy: str = "") -> None:
                 "build",
                 "Build assets",
                 (
-                    'just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"',
-                    'just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"',
+                    'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"',
+                    'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"',
                 ),
             ),
         ),
@@ -281,19 +234,19 @@ def _assert_fixture(step: str, *, job_policy: str = "") -> None:
     (
         "    - name: Build assets\n"
         "      run: |\n"
-        '        just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-        '        just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+        '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
+        '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
         "    - name: Build assets\n"
         "      continue-on-error: false\n"
-        '      run: "just   _build-kernel   ${{ matrix.arch }}  \\"${{ inputs.profile }}\\"\\n'
-        'just _build-rootfs ${{ matrix.arch }} \\"${{ inputs.profile }}\\""\n',
+        '      run: "just   build-assets   ${{ matrix.arch }}  \\"${{ inputs.profile }}\\"\\n'
+        'just build-assets ${{ matrix.arch }} \\"${{ inputs.profile }}\\""\n',
         "    - name: Build assets\n"
         "      if: true\n"
         "      run: |\n"
         "        # YAML and shell presentation are not the contract.\n"
         "        just \\\n"
-        '          _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-        '        just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+        '          build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
+        '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
     ),
 )
 def test_required_workflow_commands_accept_equivalent_yaml_and_shell_forms(step: str) -> None:
@@ -306,59 +259,59 @@ def test_required_workflow_commands_accept_equivalent_yaml_and_shell_forms(step:
         (
             "    - name: Build assets\n"
             "      run: |\n"
-            '        just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}" || true\n'
-            '        just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}" || true\n'
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
             "",
         ),
         (
             "    - name: Build assets\n"
             "      continue-on-error: true\n"
             "      run: |\n"
-            '        just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-            '        just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
             "",
         ),
         (
             "    - name: Build assets\n"
             "      if: false\n"
             "      run: |\n"
-            '        just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-            '        just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
             "",
         ),
         (
             "    - name: Build assets\n"
             "      run: |\n"
-            '        just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-            '        just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
             "    continue-on-error: true\n",
         ),
         (
             "    - name: Build assets\n"
             "      run: |\n"
             "        set +e\n"
-            '        just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-            '        just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
             "",
         ),
         (
             "    - name: Build assets\n"
             "      run: |\n"
-            '        just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-            '        just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}" ; true\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}" ; true\n',
             "",
         ),
         (
             "    - name: Build assets\n"
             "      run: |\n"
-            '        just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
             "",
         ),
         (
             "    - name: Build assets\n"
             "      run: |\n"
-            '        just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"\n'
-            '        just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"\n',
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n'
+            '        just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n',
             "    if: false\n",
         ),
     ),
@@ -390,8 +343,8 @@ def test_repository_guard_rejects_the_reviewers_actual_fail_open_mutations() -> 
     masked_shell = deepcopy(original)
     step = _asset_build_step(masked_shell)
     step["run"] = step["run"].replace(
-        'just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"',
-        'just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}" || true',
+        'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"',
+        'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}" || true',
     )
     with pytest.raises(AssertionError):
         assert_required_just_steps(masked_shell, REQUIRED_JUST_STEPS)
@@ -404,7 +357,7 @@ def test_repository_guard_rejects_the_reviewers_actual_fail_open_mutations() -> 
     removed_proof = deepcopy(original)
     step = _asset_build_step(removed_proof)
     step["run"] = step["run"].replace(
-        'just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"\n', ""
+        'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"\n', ""
     )
     with pytest.raises(AssertionError):
         assert_required_just_steps(removed_proof, REQUIRED_JUST_STEPS)

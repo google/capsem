@@ -70,11 +70,8 @@ jobs:
             pnpm --dir "$workspace" install --frozen-lockfile
           done
 
-      - name: Run complete shared fast module
-        run: just _test-fast
-
-      - name: Run shared static module
+      - name: Run the complete fast gate
         env:
           CC_x86_64_unknown_linux_musl: musl-gcc
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-        run: just _test-static
+        run: just fast-test

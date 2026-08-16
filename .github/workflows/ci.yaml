@@ -77,7 +77,7 @@ jobs:
       # other host crate is portable and runs here so it gets Linux-specific regression coverage.
       - name: Unit tests (KVM backend) with coverage
         timeout-minutes: 45
-        run: just _gate-linux-rust
+        run: just test-linux-rust
 
       - name: Upload Linux coverage
         if: ${{ !cancelled() }}

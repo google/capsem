@@ -18,6 +18,15 @@ class RetiredPublicGraphConfig(Strict):
 
 class ReleaseConfig(Strict):
     line: Annotated[str, StringConstraints(pattern=r"^\d+\.\d+$")]
+    locally_qualified_channels: tuple[str, ...]
+    """Channels releasable only from a commit an operator qualified.
+
+    Nightly is deliberately absent. Spec 13.2 rebuilds current `main` every day
+    with nobody involved, and the lanes it dispatches prove themselves through
+    `qualify-assets` and `qualify-binaries`. Demanding a machine-local journal
+    there made the scheduled rebuild unsatisfiable: a fresh runner has none and
+    cannot make one.
+    """
     source: str
     source_ref_template: str
     tagger_name: Annotated[str, StringConstraints(min_length=1, max_length=128)]

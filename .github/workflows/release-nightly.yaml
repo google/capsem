@@ -13,12 +13,15 @@ permissions:
   actions: write
   contents: write
 
-# One job, not three. `release-binaries` and `release-profile` consume a
-# qualification journal (QualificationPolicy.REQUIRE); they never produce one.
-# The journal is written by `just test <commit>` and archived per machine under
-# target/gate-runs/source-runs/<commit>/, so a second runner cannot see the
-# first runner's proof. Splitting the lanes across jobs meant every one of them
-# reached `AcceptQualification` with nothing to accept.
+# Spec 13.2: freeze `github.sha`, invoke the public profile command for each
+# selected profile, then the binary command. One job keeps that SHA frozen
+# across all three lanes.
+#
+# This runner builds nothing and boots nothing: each command validates, creates
+# the immutable source ref, dispatches its lane and waits. The lane does the
+# work, and proves it with `qualify-assets` or `qualify-binaries` before
+# publishing anything -- which is why nightly needs no local qualification and
+# why `[release].locally_qualified_channels` does not list it.
 jobs:
   nightly-release:
     runs-on: ubuntu-24.04
@@ -29,49 +32,14 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
-      # `ref: <sha>` leaves a detached HEAD with no local `main`, and
-      # require_local_main() resolves the literal ref `main` --
-      # `refs/remotes/origin/main` does not answer to that name. Every nightly
-      # run since 2026-08-05 died here with "is not already on local main".
-      - name: Place the release commit on local main
-        run: |
-          git branch -f main "${{ github.sha }}"
-          git merge-base --is-ancestor "${{ github.sha }}" main
-
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
-
-      # The package source build compiles the musl guest cohort and therefore
-      # needs the same C toolchain as the release asset builder.
-      - name: Install musl C toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools
-
-      # x86_64 hosted runners expose nested virt; the best-effort treatment in
-      # ci.yaml belongs to ubuntu-24.04-arm, which does not. Qualification boots
-      # real VMs, so a missing device must fail here rather than midway through.
-      - name: Enable required KVM and vsock devices
-        run: |
-          sudo modprobe kvm
-          sudo modprobe vhost_vsock
-          sudo chmod 0666 /dev/kvm /dev/vhost-vsock
-          test -r /dev/kvm -a -w /dev/kvm
-          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
 
       - name: Bootstrap complete release host
         env:
           CAPSEM_SKIP_ASSET_CHECK: "1"
         run: sh bootstrap.sh --yes
-
-      # Produces the exact-commit journal the three release commands below
-      # consume. A repeat of this commit returns the archived journal instead of
-      # re-running, so a retried nightly resumes rather than restarts.
-      - name: Qualify the nightly source commit
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: just test ${{ github.sha }}
 
       # Profiles first, then binaries: a profile needing new code is published
       # immutably but stays inactive until the following binary release
