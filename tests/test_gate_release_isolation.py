@@ -27,8 +27,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
 
 RELEASES = [
-    ("release-binaries", {"channel": "nightly"}),
-    ("release-profile", {"channel": "nightly", "profile": "code"}),
+    ("release-binaries", {"channel": "stable"}),
+    ("release-profile", {"channel": "stable", "profile": "code"}),
 ]
 
 #: The steps that reach outside this machine, or decide whether to. Everything

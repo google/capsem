@@ -20,8 +20,8 @@ def _plan(name: str, **args):
 @pytest.mark.parametrize(
     ("name", "args"),
     [
-        ("release-binaries", {"channel": "nightly"}),
-        ("release-profile", {"channel": "nightly", "profile": "code"}),
+        ("release-binaries", {"channel": "stable"}),
+        ("release-profile", {"channel": "stable", "profile": "code"}),
     ],
 )
 def test_release_plan_accepts_qualification_then_publishes_source_ref(

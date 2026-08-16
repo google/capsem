@@ -321,8 +321,8 @@ def test_an_inspection_command_survives_a_partial_release_environment(
         ("test-artifacts", {}),
         ("test-functional", {}),
         ("test-glowup", {}),
-        ("release-binaries", {"channel": "nightly"}),
-        ("release-profile", {"channel": "nightly", "profile": "code"}),
+        ("release-binaries", {"channel": "stable"}),
+        ("release-profile", {"channel": "stable", "profile": "code"}),
     ),
 )
 def test_a_qualifying_command_still_refuses_a_partial_environment(
@@ -355,6 +355,9 @@ def test_the_capability_is_declared_rather_than_guessed() -> None:
         "test-artifacts",
         "test-functional",
         "test-glowup",
+        # The per-lane verbs CI calls, which compose the three modules above.
+        "qualify-assets",
+        "qualify-binaries",
         "release-binaries",
         "release-profile",
     }

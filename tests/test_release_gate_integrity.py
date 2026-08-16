@@ -49,21 +49,21 @@ def test_every_fresh_ci_test_runner_preinstalls_the_exact_nextest() -> None:
             "fast-gate.yaml",
             "static",
             "Materialize locked qualification dependencies",
-            "just _test-fast",
+            "just fast-test",
         ),
-        ("ci.yaml", "test-linux", None, "just _gate-linux-rust"),
+        ("ci.yaml", "test-linux", None, "just test-linux-rust"),
         ("ci.yaml", "test", None, "cargo llvm-cov nextest"),
         (
             "release.yaml",
             "test-binary-pairing",
             "Prove Linux sandbox boundary",
-            "just _test-functional",
+            "just qualify-binaries",
         ),
         (
             "release-assets.yaml",
             "test-profile-pairing",
             "Prove Linux sandbox boundary",
-            "just _test-functional",
+            "just qualify-assets",
         ),
     )
 

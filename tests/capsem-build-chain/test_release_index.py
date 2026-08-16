@@ -834,9 +834,12 @@ def test_profile_release_deploys_generated_preview_only_when_activation_ready() 
     assert "if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}" in author
 
     assert "needs.author-profile-release.outputs.release_needed == 'true'" in pairing
+    # The activation branch moved inside `qualify-assets`, so the lane passes
+    # the flag once instead of guarding three steps with it.
+    assert "--activation-ready" in pairing
     assert (
         pairing.count("if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}")
-        == 3
+        == 0
     )
 
     assert "needs.test-profile-pairing.result == 'success'" in publish
@@ -873,21 +876,17 @@ def test_profile_release_publishes_deferred_assets_but_withholds_channel_deploy(
 
     assert "scripts/check-profile-release-delta.py" in author
     assert "cargo run -p capsem-admin -- release" in author
-    assert "Run deferred profile artifact module" in pairing
-    assert "Run shared artifact module" in pairing
-    assert "Run complete shared fast module" in reusable_fast_gate
-    assert "run: just _test-fast" in reusable_fast_gate
+    assert "Qualify the profile assets" in pairing
+    assert "Run the complete fast gate" in reusable_fast_gate
+    assert "run: just fast-test" in reusable_fast_gate
     assert "Run shared release contracts" not in pairing
-    deferred_artifacts = pairing.split("- name: Run deferred profile artifact module", maxsplit=1)[
-        1
-    ].split("- name: Run shared artifact module", maxsplit=1)[0]
-    active_artifacts = pairing.split("- name: Run shared artifact module", maxsplit=1)[1].split(
+    # One verb owning both shapes; the lane decides which from this flag.
+    qualify = pairing.split("- name: Qualify the profile assets", maxsplit=1)[1].split(
         "- name: Record deferred profile staging boundary", maxsplit=1
     )[0]
-    assert "needs.author-profile-release.outputs.activation_ready != 'true'" in deferred_artifacts
-    assert "just _test-profile-artifacts" in deferred_artifacts
-    assert "needs.author-profile-release.outputs.activation_ready == 'true'" in active_artifacts
-    assert "just _test-artifacts" in active_artifacts
+    assert "just qualify-assets" in qualify
+    assert "--activation-ready" in qualify
+    assert "needs.author-profile-release.outputs.activation_ready" in qualify
     assert "activation-ready profile cannot defer complete pairing gates" in pairing
     assert "complete functional release binary cohort" in pairing
     assert "needs.author-profile-release.outputs.activation_ready != 'true'" in pairing

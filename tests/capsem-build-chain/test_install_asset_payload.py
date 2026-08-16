@@ -663,8 +663,8 @@ def test_binary_release_requires_exact_linux_deb_proof() -> None:
     assert "runner: ubuntu-24.04-arm" in native
     assert native.count("if: matrix.arch == 'x86_64'") == 2
     assert "release-exact-shell-x86_64" in native
-    assert "just _test-functional" in workflow
-    assert "just _test-glowup" in workflow
+    assert "just qualify-binaries" in workflow
+    assert "just qualify-binaries" in workflow
 
 
 def test_linux_deb_proof_selector_requires_only_the_native_package() -> None:
@@ -1562,7 +1562,7 @@ def test_host_builder_bootstraps_https_trust_before_ubuntu_package_fetches() -> 
     normalized = re.sub(r"\s+", " ", host_builder)
     first_update = "apt-get update && apt-get install -y --no-install-recommends"
     ubuntu_stage = next(
-        line for line in host_builder.splitlines() if line.startswith("FROM ubuntu:24.04")
+        line for line in host_builder.splitlines() if line.startswith("FROM ubuntu:22.04")
     )
     assert trust_stage in host_builder
     assert "@sha256:" in ubuntu_stage
@@ -1610,8 +1610,10 @@ def test_host_builder_uses_digest_pinned_prebuilt_node_runtime() -> None:
     host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
 
     node_stage = (
-        "FROM node:24-bookworm-slim@sha256:"
-        "6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d "
+        # Bullseye, not bookworm: a toolchain copied into the 22.04 base may
+        # be older than it, never newer. See issue #181.
+        "FROM node:24-bullseye-slim@sha256:"
+        "7af27dbbe7d3e4512b83a49b8831463d5cbfdd2dce22675af73558f5ad66e8ef "
         "AS node-runtime"
     )
     assert node_stage in host_builder
@@ -2918,9 +2920,8 @@ def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -
     assert "output: target/binary-public-before/profiles" in workflow
     assert "output: target/candidate-profile-inputs" in workflow
     assert "--input-dir target/candidate-profile-inputs" in workflow
-    assert "just _test-artifacts" in workflow
-    assert "just _test-functional" in workflow
-    assert "just _test-glowup" in workflow
+    assert "just qualify-binaries" in workflow
+    assert "just qualify-binaries" in workflow
     assert "just _build-kernel" not in workflow
     assert "just _build-rootfs" not in workflow
     assert "RELEASE_CHANNEL: ${{ inputs.channel }}" in workflow

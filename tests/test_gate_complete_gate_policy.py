@@ -31,24 +31,34 @@ SOURCE_COMMIT = SourceCommit("0" * 40)
 COMPLETE_GATE = {
     "candidate": {},
 }
+#: Stable, because these are the releases that consume an operator's journal.
+#: Nightly deliberately does not -- it rebuilds current `main` unattended --
+#: which `test_an_unqualified_channel_still_publishes_under_enforcement` covers.
 QUALIFIED_RELEASES = {
-    "release-binaries": {"channel": "nightly", "source_commit": SOURCE_COMMIT},
+    "release-binaries": {"channel": "stable", "source_commit": SOURCE_COMMIT},
     "release-profile": {
-        "channel": "nightly",
+        "channel": "stable",
         "profile": "code",
         "source_commit": SOURCE_COMMIT,
     },
 }
 ENFORCED = {**COMPLETE_GATE, **QUALIFIED_RELEASES}
 
+#: (recipe, gate command). The recipe names describe what a module does --
+#: source checks versus compiled checks -- while the command names are the
+#: gate's own and did not move.
 PRIVATE_MODULES = (
-    "test-fast",
-    "test-static",
-    "test-artifacts",
-    "test-functional",
-    "test-glowup",
-    "test-release-contracts",
+    ("_test-source-checks", "test-fast"),
+    ("_test-compiled-checks", "test-static"),
+    ("_test-artifacts", "test-artifacts"),
+    ("_test-functional", "test-functional"),
+    ("_test-glowup", "test-glowup"),
+    ("_test-release-contracts", "test-release-contracts"),
 )
+
+#: What CI is allowed to call. Workflows reach these and nothing else; see
+#: `tests/citadel/test_ci_calls_only_public_recipes.py`.
+PUBLIC_CI_VERBS = ("fast-test", "qualify-assets", "qualify-binaries", "build-assets")
 
 
 @pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
@@ -245,20 +255,23 @@ def _just_recipe(name: str) -> str:
 
 
 def test_private_just_module_entrypoints_do_not_override_the_sandbox() -> None:
-    for module in PRIVATE_MODULES:
-        recipe = _just_recipe(f"_{module}")
+    for recipe_name, module in PRIVATE_MODULES:
+        recipe = _just_recipe(recipe_name)
         assert f"capsem-gate {module}" in recipe
-        assert "--sandbox" not in recipe, f"_{module} overrides its command-owned boundary"
+        assert "--sandbox" not in recipe, f"{recipe_name} overrides its command-owned boundary"
 
 
 def test_ci_module_entrypoints_do_not_override_the_sandbox() -> None:
+    """CI reaches public verbs now, so this asks about those.
+
+    It used to look for `just _<module>`, which no workflow contains any more:
+    the inventory went empty and the guard would have passed by finding nothing
+    if it did not assert what it inspected.
+    """
     inspected: list[str] = []
     for workflow in sorted((PROJECT_ROOT / ".github" / "workflows").glob("*.yaml")):
         source = workflow.read_text(encoding="utf-8")
-        if not any(
-            f"just _{module}" in source or f"capsem-gate {module}" in source
-            for module in PRIVATE_MODULES
-        ):
+        if not any(f"just {verb}" in source for verb in PUBLIC_CI_VERBS):
             continue
         inspected.append(workflow.name)
         assert "--sandbox" not in source, (
@@ -266,6 +279,26 @@ def test_ci_module_entrypoints_do_not_override_the_sandbox() -> None:
         )
 
     assert inspected, "no workflow module entrypoints were inspected"
+
+
+@pytest.mark.parametrize("name", sorted(QUALIFIED_RELEASES))
+def test_an_unqualified_channel_still_publishes_under_enforcement(name: str) -> None:
+    """Nightly consumes no journal, and must still be sandbox-enforced.
+
+    Enforcement keyed on the qualification policy alone would let the channel
+    with *less* human scrutiny publish from a permissive sandbox.
+    """
+    from capsem.gate.qualificationevidence import QualificationPolicy
+
+    arguments = {**QUALIFIED_RELEASES[name], "channel": "nightly"}
+    command = _command(name, **arguments)
+
+    assert command.publishes is True
+    assert command.qualification_policy is not QualificationPolicy.REQUIRE
+    assert "qualification.accept" not in list(command._describe().labels)
+
+    with pytest.raises(GateError, match=rf"{name}.*complete qualification.*enforce"):
+        _command(name, sandbox=sandbox.OFF, **arguments).execute()
 
 
 @pytest.fixture
@@ -368,7 +401,7 @@ def test_linux_release_qualification_gets_the_kernel_wrapper(name, monkeypatch) 
     assert "--unshare-net" in replacement
 
 
-@pytest.mark.parametrize("name", PRIVATE_MODULES)
+@pytest.mark.parametrize("name", [command for _recipe, command in PRIVATE_MODULES])
 def test_release_ci_modules_declare_the_same_kernel_boundary(name) -> None:
     assert GateCommand.registry[name].sandboxed == sandbox.ENFORCE
 

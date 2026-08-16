@@ -315,8 +315,7 @@ def test_asset_ci_uses_primitives_owned_by_just_test() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text()
     lanes = _source_text("src/capsem/gate/assetlanes.py")
 
-    assert 'just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
-    assert 'just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
+    assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
     assert "pack-initrds" in _planned(
         "build-assets", profile="code", arch="arm64", template="rootfs"
     )
@@ -342,7 +341,7 @@ def test_asset_ci_installs_pinned_pnpm_before_running_build_primitives() -> None
     assert build_assets.index(pnpm_setup) < build_assets.index(
         "actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444"
     )
-    assert build_assets.index(pnpm_setup) < build_assets.index("just _build-kernel")
+    assert build_assets.index(pnpm_setup) < build_assets.index("just build-assets")
 
 
 def test_asset_matrix_preflights_once_and_reuses_the_public_build_primitive() -> None:

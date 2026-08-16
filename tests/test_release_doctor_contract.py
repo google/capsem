@@ -423,8 +423,8 @@ def test_profile_release_builds_both_published_architectures() -> None:
     build_assets = _workflow_job_block("build-assets", "release-assets.yaml")
     assert "- arch: arm64" in build_assets
     assert "- arch: x86_64" in build_assets
-    assert 'just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"' in build_assets
-    assert 'just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"' in build_assets
+    assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in build_assets
+    assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in build_assets
 
 
 def test_parallel_asset_gate_preserves_and_names_failed_architecture_logs() -> None:
@@ -811,8 +811,8 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "output: target/profile-public-before/packages" in workflow
     assert "--input-dir target/profile-public-before/packages" in workflow
     assert "--print-package-path" in workflow
-    assert 'just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
-    assert 'just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
+    assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
+    assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
     assert "- arch: arm64" in workflow
     assert "- arch: x86_64" in workflow
     assert "cargo run -p capsem-admin -- release" in workflow
@@ -823,11 +823,8 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "scripts/repack-deb.sh" not in workflow
     assert "cargo tauri build" not in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
-    assert "run: just _test-fast" in fast_gate
-    assert "run: just _test-static" in fast_gate
-    for module in ("_test-artifacts", "_test-functional", "_test-glowup"):
-        assert f"just {module}" in workflow
-    assert "just _test-fast" in fast_gate
+    assert "run: just fast-test" in fast_gate
+    assert "just qualify-assets" in workflow
     assert "just _test-release-contracts" not in workflow
     assert "scripts/build-complete-release-channel.py" in workflow
     assert "channel-source-$CHANNEL.json" in workflow
@@ -1610,11 +1607,8 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "output: target/candidate-profile-inputs" in workflow
     assert "--input-dir target/candidate-profile-inputs" in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
-    assert "run: just _test-fast" in fast_gate
-    assert "run: just _test-static" in fast_gate
-    assert "just _test-artifacts" in workflow
-    assert "just _test-functional" in workflow
-    assert "just _test-glowup" in workflow
+    assert "run: just fast-test" in fast_gate
+    assert "just qualify-binaries" in workflow
     assert "just _test-release-contracts" not in workflow
     assert "just _build-kernel" not in workflow
     assert "just _build-rootfs" not in workflow
@@ -1690,7 +1684,7 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
         author_candidate.index("Record binary candidate metadata once")
     )
     assert workflow.index("Record binary candidate metadata once") < workflow.index(
-        "Run shared complete functional module"
+        "Qualify the candidate binaries"
     )
     assert "Record binary candidate metadata once" not in assemble_channel
     assert "- name: Build release site pages" not in assemble_channel
@@ -1833,15 +1827,13 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
     testing_skill = _source_text("skills/dev-testing/SKILL.md")
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
-    assert "run: just _test-fast" in fast_gate
-    assert "run: just _test-static" in fast_gate
-    modules = ("_test-artifacts", "_test-functional", "_test-glowup")
-    for workflow in (binary, profile):
+    assert "run: just fast-test" in fast_gate
+
+    for workflow, verb in ((binary, "qualify-binaries"), (profile, "qualify-assets")):
         assert "group: capsem-release-${{ inputs.channel }}" in workflow
         assert "cancel-in-progress: false" in workflow
         assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
-        for module in modules:
-            assert f"just {module}" in workflow
+        assert f"just {verb}" in workflow
         assert "just _test-release-contracts" not in workflow
 
     assert "uses: ./.github/workflows/release-runtime-preflight.yaml" in binary
@@ -3070,24 +3062,16 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
     assert "test:" in just
-    assert "run: just _test-fast" in fast_gate
-    assert "run: just _test-static" in fast_gate
+    assert "run: just fast-test" in fast_gate
     assert "uses: ./.github/workflows/fast-gate.yaml" in assets
     assert "uses: ./.github/workflows/fast-gate.yaml" in release
-    for module in (
-        "_test-artifacts",
-        "_test-functional",
-        "_test-glowup",
-    ):
-        assert f"just {module}" in assets
-        assert f"just {module}" in release
+    assert "just qualify-assets" in assets
+    assert "just qualify-binaries" in release
     assert "just _test-release-contracts" not in assets
     assert "just _test-release-contracts" not in release
 
-    for command in ("just _build-kernel", "just _build-rootfs"):
-        assert command in assets
-    assert "_build-kernel arch" in just
-    assert "_build-rootfs arch" in just
+    assert "just build-assets" in assets
+    assert "build-assets arch" in just
 
     assert "uv run capsem-gate install" in ci
     assert "_gate-install:" in just
@@ -3253,13 +3237,10 @@ def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
         assert "every portable release gate" in document
         assert "`just test`" in document
 
-    assert "run: just _test-fast" in fast_gate
-    assert "run: just _test-static" in fast_gate
+    assert "run: just fast-test" in fast_gate
     for workflow in (binary, profile):
         assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
-        assert "just _test-artifacts" in workflow
-        assert "just _test-functional" in workflow
-        assert "just _test-glowup" in workflow
+        assert "just qualify-binaries" in workflow or "just qualify-assets" in workflow
         assert "just _test-release-contracts" not in workflow
     gate = _dispatched_text("test:")
     assert "cargo llvm-cov" in gate
@@ -4537,8 +4518,7 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert frontend_check_pos != -1
     assert "uses: ./.github/workflows/fast-gate.yaml" in binary_release
     assert "uses: ./.github/workflows/fast-gate.yaml" in profile_release
-    assert "run: just _test-fast" in fast_gate
-    assert "run: just _test-static" in fast_gate
+    assert "run: just fast-test" in fast_gate
     gate = _dispatched_text("test:")
     assert "bootstrap.sh" in gate
     assert "check-web-surface.sh frontend" in gate
@@ -5060,7 +5040,7 @@ def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
     slow_timeout = nextest["profile"]["ci"]["slow-timeout"]
 
     assert "timeout-minutes:" in coverage_step
-    assert "run: just _gate-linux-rust" in coverage_step
+    assert "run: just test-linux-rust" in coverage_step
     assert "cargo llvm-cov nextest" in runner
     report_block = runner.split("cargo llvm-cov report", maxsplit=1)[1]
     assert "--bins" not in report_block
@@ -5179,7 +5159,7 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
     assert "Docker(context.runner)" in linuxrust
     assert "host.on_linux()" not in linuxrust
     assert "host.on_macos()" not in linuxrust
-    assert "run: just _gate-linux-rust" in linux_ci
+    assert "run: just test-linux-rust" in linux_ci
     assert "cargo llvm-cov nextest" not in linux_ci
     assert "cargo llvm-cov nextest" in runner
     linux_clippy = "cargo clippy --workspace --all-targets -- -D warnings"

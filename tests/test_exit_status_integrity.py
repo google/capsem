@@ -364,7 +364,7 @@ def test_repository_guard_rejects_the_reviewers_actual_fail_open_mutations() -> 
 
     unclassified = deepcopy(original)
     unclassified["ci.yaml"]["jobs"]["test"]["steps"].append(
-        {"name": "Unclassified shortcut", "run": "just _test-fast"}
+        {"name": "Unclassified shortcut", "run": "just _test-source-checks"}
     )
     with pytest.raises(AssertionError):
         assert_required_just_steps(unclassified, REQUIRED_JUST_STEPS)

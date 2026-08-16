@@ -195,7 +195,7 @@ def test_fast_gate_proves_hosted_linux_sandbox_before_dependency_work() -> None:
         "Materialize locked qualification dependencies"
     )
     assert names.index("Prove Linux sandbox boundary") < names.index(
-        "Run complete shared fast module"
+        "Run the complete fast gate"
     )
     assert_unmasked_step("fast-gate.yaml", workflow, "static", "Prove Linux sandbox boundary")
 
@@ -216,10 +216,17 @@ def test_every_hosted_linux_job_entering_a_gate_module_proves_the_boundary_first
             if "ubuntu" not in str(job.get("runs-on", "")):
                 continue
             steps = job.get("steps", [])
+            # The public verbs that enter a gate module. This looked for
+            # `just _test-`, which no workflow contains since CI stopped
+            # calling private recipes -- the inventory went empty and the
+            # equality assertion below is the only reason that was noticed.
             module_indexes = [
                 index
                 for index, step in enumerate(steps)
-                if "just _test-" in str(step.get("run", ""))
+                if any(
+                    f"just {verb}" in str(step.get("run", ""))
+                    for verb in ("fast-test", "qualify-assets", "qualify-binaries")
+                )
             ]
             if not module_indexes:
                 continue

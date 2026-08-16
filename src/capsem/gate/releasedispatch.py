@@ -33,22 +33,26 @@ class QualifiedRelease:
 
     _args: argparse.Namespace
 
-    @property
-    def qualification_policy(self) -> QualificationPolicy:
-        """Stable consumes a proof an operator made; nightly makes its own.
+    qualification_policy: QualificationPolicy = QualificationPolicy.REQUIRE
+    """Stable consumes a proof an operator made; nightly makes its own.
 
-        A journal is written only by `just test` and archived per machine, so
-        requiring one is requiring a human at a particular keyboard. That is
-        the right bar for stable, which publishes deliberately. It is an
-        impossible bar for the daily rebuild, which runs on a fresh hosted
-        runner that has no journal and no way to produce one -- and it is an
-        unnecessary one, because the lanes a release dispatches prove
-        themselves before publishing anything.
-        """
+    A journal is written only by `just test` and archived per machine, so
+    requiring one is requiring a human at a particular keyboard. That is the
+    right bar for stable, which publishes deliberately. It is an impossible bar
+    for the daily rebuild, which runs on a fresh hosted runner that has no
+    journal and no way to produce one -- and an unnecessary one, because the
+    lanes a release dispatches prove themselves before publishing anything.
+
+    Declared as a class default and narrowed per instance, not computed as a
+    property: the gate reads this off the *class* to decide sandbox enforcement
+    before it ever builds a command, and a property object is neither policy.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
         channel = getattr(self._args, "channel", None)
-        if channel in self._config.release.locally_qualified_channels:
-            return QualificationPolicy.REQUIRE
-        return QualificationPolicy.NONE
+        if channel not in self._config.release.locally_qualified_channels:
+            self.qualification_policy = QualificationPolicy.NONE
 
     def _qualification_steps(self, plan: Plan, commit: SourceCommit) -> tuple:
         """The accept step, for the channels that consume an operator's proof."""

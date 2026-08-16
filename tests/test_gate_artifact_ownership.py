@@ -108,9 +108,9 @@ def test_release_lanes_consume_evidence_without_rebuilding_producers(command: st
 
     source_commit = SourceCommit("0" * 40)
     args = {
-        "release-binaries": {"channel": "nightly", "source_commit": source_commit},
+        "release-binaries": {"channel": "stable", "source_commit": source_commit},
         "release-profile": {
-            "channel": "nightly",
+            "channel": "stable",
             "profile": "code",
             "source_commit": source_commit,
         },

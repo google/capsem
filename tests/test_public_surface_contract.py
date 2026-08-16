@@ -59,8 +59,8 @@ def test_the_fast_gate_is_public_and_is_not_a_release_shortcut() -> None:
     from capsem.gate.sourcecommit import SourceCommit
 
     for name, extra in (
-        ("release-binaries", {"channel": "nightly"}),
-        ("release-profile", {"channel": "nightly", "profile": "code"}),
+        ("release-binaries", {"channel": "stable"}),
+        ("release-profile", {"channel": "stable", "profile": "code"}),
     ):
         plan = GateCommand.registry[name](
             RecordingRunner(ROOT),

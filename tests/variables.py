@@ -56,7 +56,7 @@ def recipe(name: str) -> str:
     return name
 
 
-#: The fast gate, run alone. Identical to the `_test-fast` module `test` and
+#: The fast gate, run alone. Identical to the modules `test` and
 #: both release lanes run, which is the whole reason it is public.
 FAST_TEST = recipe("fast-test")
 
