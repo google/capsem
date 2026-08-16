@@ -12,8 +12,13 @@ cluster_size = 65536
 [build.rootfs]
 # Release rootfs assets were historically below 1 GB. These independent raw
 # and packed ceilings catch dependency-payload explosions before publication.
+# The packed ceiling sits about 11% above the largest real asset (x86_64 packs
+# to ~843 MB). Tighter than that and an ordinary dependency bump trips the
+# guard mid-qualification, costing a full cycle to learn nothing; looser and it
+# stops describing "historically below 1 GB". Either way it catches the
+# regression it exists for by a wide margin -- that one reached nearly 3 GB.
 max_uncompressed_bytes = 2500000000
-max_erofs_bytes = 900000000
+max_erofs_bytes = 950000000
 # The guest has no GPU device. Ollama has moved its accelerator bundle between
 # /usr and /usr/local more than once, so the exported tree is checked at both.
 forbidden_path_prefixes = [

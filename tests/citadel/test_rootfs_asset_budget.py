@@ -43,10 +43,10 @@ def _erofs_config() -> dict:
     return tomllib.loads(BUILD_CONFIG.read_text())["build"]["erofs"]
 
 
-def test_publishable_rootfs_has_independent_raw_and_900_mb_packed_ceilings() -> None:
+def test_publishable_rootfs_has_independent_raw_and_950_mb_packed_ceilings() -> None:
     rootfs = _rootfs_config()
 
-    assert rootfs["max_erofs_bytes"] == 900_000_000, ROOTFS_BUDGET_RATIONALE
+    assert rootfs["max_erofs_bytes"] == 950_000_000, ROOTFS_BUDGET_RATIONALE
     assert rootfs["max_uncompressed_bytes"] > rootfs["max_erofs_bytes"], ROOTFS_BUDGET_RATIONALE
 
 

@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only graph-proven work for an automatic continuation.
 
 - Publishable guest rootfs assets now reject unexplained growth both before
-  and after EROFS compression, with a 900 MB packed ceiling. Code and co-work
+  and after EROFS compression, with a 950 MB packed ceiling. Code and co-work
   profiles remove and then prove the absence of Ollama CUDA, HIP, JetPack,
   oneAPI, OpenCL, ROCm, and Vulkan bundles from both vendor install roots; a
   config-owned 64 KiB LZ4HC physical cluster keeps the complete payload below
