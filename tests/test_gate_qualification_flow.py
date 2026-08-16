@@ -321,3 +321,39 @@ def test_manual_exact_continuation_cannot_override_the_journal(
                 carried=carried,
                 reuse_path=reuse,
             )
+
+
+def test_authority_does_not_parse_the_outer_checkouts_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A prefix consumes the outer run history, not the outer config schema.
+
+    The prefix runs the *selected commit's* gate code. Parsing the working
+    tree's `config/gate.toml` with that older schema couples the two trees: any
+    key added to the config on `main` makes every already-qualified commit
+    unreleasable, with a validation error naming a file the release does not
+    need. That is what happened to `release-profile stable co-work` after
+    `[platforms]` was added -- the commit was qualified, its own config was
+    correct, and it still refused to start.
+
+    Only the outer *location* matters here, because the retained journals live
+    there. The settings come from the prefix, which is the tree being released.
+    """
+    outer = tmp_path / "outer"
+    (outer / "config").mkdir(parents=True)
+    # A working tree that has moved on: a key this schema has never heard of.
+    text = (PROJECT_ROOT / "config/gate.toml").read_text(encoding="utf-8")
+    (outer / "config/gate.toml").write_text(
+        text + '\n[a_section_added_after_this_commit_was_qualified]\nvalue = "x"\n',
+        encoding="utf-8",
+    )
+
+    prefix = tmp_path / "prefix"
+    prefix.mkdir()
+    loaded = _isolated_config(prefix, monkeypatch)
+    monkeypatch.setenv(loaded.environment.source_checkout, str(outer))
+
+    history = qualificationevidence.authority(loaded)
+
+    assert history.root == outer
+    assert history.runlog == loaded.runlog

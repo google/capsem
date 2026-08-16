@@ -8,7 +8,6 @@ from pathlib import Path
 import blake3
 
 from . import auditfs, prefix, resume
-from . import config as gate_config
 from .actions import Action
 from .config import GateConfig
 from .context import Context
@@ -46,9 +45,20 @@ class ResumeEvidence:
 
 
 def authority(config: GateConfig) -> GateConfig:
-    """The checkout whose retained run history a private prefix consumes."""
+    """The checkout whose retained run history a private prefix consumes.
+
+    Rebased onto the outer root, never re-parsed from it. A prefix runs the
+    selected commit's gate code, so reading the working tree's
+    `config/gate.toml` validated one tree's file against the other tree's
+    schema: every key added on `main` made each already-qualified commit
+    unreleasable, failing on a file the release does not need and cannot use.
+
+    Only the outer *location* is wanted here, because the retained journals
+    live there. Which paths to look in is the prefix's own business, and the
+    prefix is the tree being released.
+    """
     source = prefix.source_checkout(config)
-    return gate_config.for_root(source) if source is not None else config
+    return config.model_copy(update={"root": Path(source)}) if source is not None else config
 
 
 def archive_path(config: GateConfig, commit: SourceCommit, run_id: str) -> Path:

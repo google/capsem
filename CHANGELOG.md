@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A private release prefix no longer parses the outer checkout's
+  `config/gate.toml`. The prefix runs the selected commit's gate code, so
+  reading the working tree's config validated one tree's file against the other
+  tree's schema: any key added on `main` made every already-qualified commit
+  unreleasable, failing on a file the release neither needs nor can use. The
+  outer checkout is now rebased onto the prefix's own settings rather than
+  re-parsed, since only its location matters -- that is where the retained
+  journals live.
+
 - `capsem-core` now compiles for musl, so the host cohort can be built for
   Alpine. `libc::ioctl` takes its request as `c_ulong` on glibc and `c_int` on
   musl, which made 40 of the 41 errors; they are now one `cfg`-selected
