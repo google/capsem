@@ -74,10 +74,10 @@ RUN bash /tmp/sources-multiarch.sh "$APT_SNAPSHOT_BASE" "$APT_SNAPSHOT_ID" \
 RUN test -n "$WORKSPACE_APT_PACKAGES" \
     && test -n "$WORKSPACE_CROSS_APT_PACKAGES" \
     && native="$(dpkg --print-architecture)" \
-    && cross="$(for pkg in $WORKSPACE_CROSS_APT_PACKAGES; do printf '%s:%s ' "$pkg" "$native"; done)" \
+    && for pkg in $WORKSPACE_CROSS_APT_PACKAGES; do set -- "$@" "$pkg:$native"; done \
     && apt-get update && apt-get install -y --no-install-recommends \
+    "$@" \
     $WORKSPACE_APT_PACKAGES \
-    $cross \
     curl \
     wget \
     ca-certificates \
