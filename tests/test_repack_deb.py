@@ -392,7 +392,7 @@ def test_repacked_deb_declares_tray_runtime_dependency(tmp_path):
 def test_repacked_deb_declares_the_glibc_floor_it_actually_needs(tmp_path):
     """apt must refuse an unusable install instead of completing a broken one.
 
-    The 0.6.0 package declared no libc at all, so it installed cleanly on
+    The first published package declared no libc at all, so it installed cleanly on
     Debian bookworm (glibc 2.36) and Ubuntu 22.04 (2.35) and then every binary
     died with "version `GLIBC_2.39' not found".
     """

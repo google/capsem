@@ -63,11 +63,11 @@ from .harnessschema import (
 )
 from .lintschema import LintConfig, LintSurface
 from .lockschema import LocksConfig
+from .platformschema import PlatformsConfig
 from .productschema import (
     AptSnapshotConfig,
     InstallConfig,
     PackageConfig,
-    PlatformsConfig,
 )
 from .releaseschema import ReleaseConfig
 from .toolchainschema import ToolchainConfig

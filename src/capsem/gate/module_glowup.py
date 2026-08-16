@@ -12,6 +12,7 @@ from . import (
     hostpackage,
     install,
     installplan,
+    platformproof,
 )
 from .actions import Call, Script
 from .command import GateCommand
@@ -107,7 +108,7 @@ def _prove_pulled_package(
     # observe a wrong platform floor -- the 0.6.0 package declared no libc at
     # all and passed it. This is the only step that looks below the floor.
     supported = phase.add(
-        _platform_support_step(config, qualification.package),
+        platformproof.platform_step(config, qualification.package),
         after=(verified,),
     )
     staged = phase.add(
@@ -130,22 +131,6 @@ def _prove_pulled_package(
             clear=settings.channel_switch_cleared,
         ),
         after=(staged,),
-    )
-
-
-def _platform_support_step(config: GateConfig, package: str) -> Step:
-    """Run the package on every release we claim, and one below the floor."""
-    return step(
-        "platform-support",
-        Script(
-            config.modules.platform_support_script,
-            "--package",
-            package,
-        ),
-        contends=(config.exclusive("docker_daemon"),),
-        kind=Kind.E2E,
-        needs=frozenset({Needs.DOCKER, Needs.DISK}),
-        speed=Speed.SLOW,
     )
 
 

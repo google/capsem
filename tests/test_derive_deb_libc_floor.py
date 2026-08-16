@@ -1,6 +1,7 @@
 """Tests for scripts/derive-deb-libc-floor.py.
 
-The 0.6.0 Debian package declared `libwebkit2gtk-4.1-0, libgtk-3-0, libxdo3`
+The first published Debian package declared `libwebkit2gtk-4.1-0, libgtk-3-0,
+libxdo3`
 and no libc, so it installed cleanly on glibc older than the binaries needed
 and then failed at runtime instead of being refused. The floor is now read out
 of the shipped bytes, and these tests pin the two ways that reading can go
