@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Capsem now installs on every currently supported Ubuntu and Debian release.
+  The published binaries were built on Ubuntu 24.04 and so required glibc 2.39,
+  which excluded Ubuntu 22.04 LTS, Debian 12, Linux Mint 21 and Pop!_OS 22.04 --
+  all still in support. The release build base is now Ubuntu 22.04 and the
+  derived floor is 2.35. The obstacle was never jammy's libraries, which carry
+  webkit2gtk-4.1, gtk-3, libxdo3 and libsoup-3.0: it was that the builder
+  copies its Rust and Node toolchains in from bookworm stages needing glibc
+  2.36, so those move to bullseye (2.31), which cannot outrank the base it is
+  copied into. Because the support claim is derived from the floor rather than
+  restated, one number moved the badges, both tables and the glow-up matrix.
+
 - CI no longer reaches into private `just` recipes, and the nightly rebuild can
   finally run unattended. Each release lane now calls one public verb --
   `qualify-assets` or `qualify-binaries` -- instead of assembling three or four
