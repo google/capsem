@@ -403,7 +403,7 @@ jobs:
           just qualify-assets
           "$PWD/target/candidate-profile-inputs"
           "${{ inputs.profile }}"
-          --activation-ready "${{ needs.author-profile-release.outputs.activation_ready }}"
+          "${{ needs.author-profile-release.outputs.activation_ready }}"
 
       - name: Record deferred profile staging boundary
         if: ${{ needs.author-profile-release.outputs.activation_ready != 'true' }}

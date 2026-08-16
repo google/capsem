@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from typing import ClassVar
 
 from . import config as gate_config
-from . import prefix, preflight, qualificationflow, resume, sandbox
+from . import enforcement, prefix, preflight, qualificationflow, resume, sandbox
 from .context import Context
 from .errors import GateError
 from .funnel import GuardedRunner
@@ -185,16 +185,9 @@ class GateCommand(Recorded, ABC):
         The order is the contract. Each line is here because the alternative
         arrangement was tried and broke something.
         """
-        # Publishing is the reason, not journal consumption. Keying this on
-        # REQUIRE alone meant a channel that does not consume an operator's
-        # journal -- nightly -- could publish from a permissive sandbox, which
-        # is exactly backwards: it has *less* human scrutiny, not more.
-        enforced = (
-            self.complete_qualification
-            or self.publishes
-            or self.qualification_policy is QualificationPolicy.REQUIRE
+        sandbox.require_complete_qualification(
+            self.name, self._sandbox_mode, enforcement.enforcement_required(self)
         )
-        sandbox.require_complete_qualification(self.name, self._sandbox_mode, enforced)
         # A plan describes; its runner refuses work, so inspection cannot act.
         plan = self._describe()
         plan.validate(self._config)

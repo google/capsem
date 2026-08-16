@@ -71,7 +71,7 @@ REQUIRED_JUST_STEPS = (
         "Qualify the profile assets",
         (
             'just qualify-assets "$PWD/target/candidate-profile-inputs" '
-            '"${{ inputs.profile }}" --activation-ready '
+            '"${{ inputs.profile }}" '
             '"${{ needs.author-profile-release.outputs.activation_ready }}"',
         ),
     ),

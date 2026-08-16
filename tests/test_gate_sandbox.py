@@ -23,6 +23,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+import variables
 import yaml
 from helpers.gate import RecordingRunner
 from helpers.workflow_contract import assert_unmasked_step
@@ -225,7 +226,11 @@ def test_every_hosted_linux_job_entering_a_gate_module_proves_the_boundary_first
                 for index, step in enumerate(steps)
                 if any(
                     f"just {verb}" in str(step.get("run", ""))
-                    for verb in ("fast-test", "qualify-assets", "qualify-binaries")
+                    for verb in (
+                        variables.FAST_TEST,
+                        variables.QUALIFY_ASSETS,
+                        variables.QUALIFY_BINARIES,
+                    )
                 )
             ]
             if not module_indexes:

@@ -63,6 +63,11 @@ FAST_TEST = recipe("fast-test")
 #: A short VM round-trip: boot, exercise, tear down. Runtime liveness only.
 VM_SMOKE = recipe("vm-smoke")
 
+#: The per-lane verbs CI calls, and the asset builder beside them.
+QUALIFY_ASSETS = recipe("qualify-assets")
+QUALIFY_BINARIES = recipe("qualify-binaries")
+BUILD_ASSETS = recipe("build-assets")
+
 #: The complete local proof, and the only release qualification.
 TEST = recipe("test")
 

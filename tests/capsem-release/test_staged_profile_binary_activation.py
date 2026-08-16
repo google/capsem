@@ -216,7 +216,7 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     assert "just qualify-assets" in qualify
     assert '"$PWD/target/candidate-profile-inputs"' in qualify
     assert "inputs.profile" in qualify
-    assert "--activation-ready" in qualify
+    assert "outputs.activation_ready" in qualify
     assert "needs.author-profile-release.outputs.activation_ready" in qualify
     assert "if:" not in qualify
 

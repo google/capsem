@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import variables
 from helpers.gate import RecordingRunner
 
 from capsem.gate import candidate, cli, sandbox  # noqa: F401 - importing registers commands
@@ -58,7 +59,12 @@ PRIVATE_MODULES = (
 
 #: What CI is allowed to call. Workflows reach these and nothing else; see
 #: `tests/citadel/test_ci_calls_only_public_recipes.py`.
-PUBLIC_CI_VERBS = ("fast-test", "qualify-assets", "qualify-binaries", "build-assets")
+PUBLIC_CI_VERBS = (
+    variables.FAST_TEST,
+    variables.QUALIFY_ASSETS,
+    variables.QUALIFY_BINARIES,
+    variables.BUILD_ASSETS,
+)
 
 
 @pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
