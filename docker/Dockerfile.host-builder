@@ -67,8 +67,8 @@ RUN bash /tmp/sources-multiarch.sh "$APT_SNAPSHOT_BASE" "$APT_SNAPSHOT_ID" \
 # these packages at container runtime (see swap-dev-libs.sh).
 # ---- Native-arch Tauri dev libraries ----
 # The cross compilers are qualified with the native architecture. Unqualified,
-# apt is free to satisfy `gcc-x86-64-linux-gnu` with the *foreign* build of it
-# -- on jammy it picks `:arm64`, whose cross-dev dependencies are not
+# apt is free to satisfy a cross compiler with the *foreign* build of it -- on
+# jammy it picks the arm64 one, whose cross-dev dependencies are not
 # installable, and the layer dies with "held broken packages". A cross compiler
 # runs on the native arch by definition, so say so.
 RUN test -n "$WORKSPACE_APT_PACKAGES" \
