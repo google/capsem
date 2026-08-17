@@ -43,6 +43,17 @@ jobs:
       - name: Give the release guard a local main to read
         run: git branch -f main origin/main
 
+      # Publishing the immutable source ref is a `git push` over HTTPS, from a
+      # detached private prefix under ~/.cg that never saw the checkout's
+      # credential header. A token in the environment is not a git credential:
+      # git asks for a username, finds no terminal, and the release fails
+      # having built nothing. Rewrite the origin URL once, globally, so the
+      # prefix inherits it.
+      - name: Let git authenticate as the workflow
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
