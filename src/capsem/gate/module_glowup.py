@@ -60,11 +60,13 @@ def glowup(
     *,
     qualification: Qualification,
     after: tuple[Step, ...] = (),
+    staged: ProfileContent | None = None,
 ) -> Step:
     """Build the release packages and prove an install upgrades cleanly."""
     phase = plan.phase("glowup")
     if qualification.pulled:
-        return _prove_pulled_package(phase, config, qualification, after)
+        content = staged or ProfileContent.standalone(config)
+        return _prove_pulled_package(phase, config, qualification, after, content)
     return _build_and_prove(plan, phase, config, after)
 
 
@@ -72,7 +74,11 @@ def glowup(
 
 
 def _prove_pulled_package(
-    phase, config: GateConfig, qualification: Qualification, after: tuple
+    phase,
+    config: GateConfig,
+    qualification: Qualification,
+    after: tuple,
+    content: ProfileContent,
 ) -> Step:
     """The publishable package, proved twice.
 
@@ -81,7 +87,6 @@ def _prove_pulled_package(
     rather than inherit what it was told.
     """
     settings = config.modules
-    content = ProfileContent.standalone(config)
     verified = phase.add(
         step(
             "content",

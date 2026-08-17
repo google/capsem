@@ -23,6 +23,7 @@ from pathlib import Path
 
 from .command import GateCommand
 from .config import GateConfig
+from .content import ProfileContent
 from .module_artifacts import artifacts, pulled_artifacts
 from .module_functional import functional
 from .module_glowup import glowup
@@ -31,15 +32,33 @@ from .qualification import Qualification
 from .testmodules import InWorkspace
 
 
-def _pairing(plan: Plan, config: GateConfig, qualification: Qualification) -> Plan:
+def _pairing(
+    plan: Plan,
+    config: GateConfig,
+    qualification: Qualification,
+    *,
+    staged: ProfileContent | None = None,
+) -> Plan:
     """Artifacts, then every VM suite, then the installed-package proof.
 
     The order is the dependency: the functional suites boot what the artifact
     module produced, and the glow-up installs the package those suites proved.
     """
     built = artifacts(plan, config, qualification=qualification)
-    proved = functional(plan, config, qualification=qualification, after=(built,))
-    glowup(plan, config, qualification=qualification, after=(proved,))
+    proved = functional(
+        plan,
+        config,
+        qualification=qualification,
+        after=(built,),
+        staged=staged,
+    )
+    glowup(
+        plan,
+        config,
+        qualification=qualification,
+        after=(proved,),
+        staged=staged,
+    )
     return plan
 
 
@@ -49,12 +68,27 @@ class QualifyBinariesModule(
     name="qualify-binaries",
     help="qualify the candidate packages against the manifest-selected profiles",
 ):
-    """The binary lane's whole proof, as one step a workflow can call."""
+    """The binary lane's whole proof, as one step a workflow can call.
+
+    The staged roots arrive as arguments for the same reason `qualify-assets`
+    takes its input directory as one: this runs from a private prefix that
+    carries only tracked files, so anything the lane staged into the workspace
+    has to be named absolutely or it cannot be found at all.
+    """
 
     uses_qualification = True
 
+    @classmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("workspace_root", type=Path)
+
     def plan(self) -> Plan:
-        return _pairing(Plan(self.name), self._config, self.qualification)
+        return _pairing(
+            Plan(self.name),
+            self._config,
+            self.qualification,
+            staged=ProfileContent.staged(self._config, self._args.workspace_root),
+        )
 
 
 class QualifyAssetsModule(

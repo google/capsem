@@ -37,8 +37,8 @@ test-linux-rust:
 
 
 # Qualify the candidate packages against the manifest-selected profiles.
-qualify-binaries:
-    uv run capsem-gate qualify-binaries
+qualify-binaries workspace_root:
+    uv run capsem-gate qualify-binaries {{quote(workspace_root)}}
 
 
 # Qualify one profile's built assets against the selected binary.

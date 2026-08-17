@@ -60,6 +60,23 @@ class ProfileContent:
             Path(config.functional.config_root),
         )
 
+    @classmethod
+    def staged(cls, config, root: Path) -> ProfileContent:
+        """The standalone layout, anchored at a lane's workspace.
+
+        Same relative shape, different root. A release lane stages its cohort
+        into the workspace and then qualifies from a private prefix carrying
+        only tracked files, so the checkout anchor names a directory nothing
+        ever wrote. Absolute, because the whole point is to leave the prefix.
+        """
+        if not root.is_absolute():
+            raise ValueError("a staged content root must be absolute")
+        return cls(
+            root,
+            Path(config.functional.assets_dir),
+            Path(config.functional.config_root),
+        )
+
     @property
     def assets(self) -> Path:
         return self.root / self.assets_path

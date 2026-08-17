@@ -1788,3 +1788,53 @@ def test_a_first_release_cannot_claim_a_predecessor_it_never_served(tmp_path: Pa
         supplied=None,
         before_manifest_bytes=json.dumps(before_manifest).encode(),
     ) == (None, None)
+
+
+def _unpublished_profile_inputs(root: Path) -> Path:
+    """The cohort a first release actually gets: a manifest offering nothing.
+
+    This is what `project-first-channel-before.py` writes and what
+    `fetch-release-inputs` verifies with `allow-empty-*`, so the report carries
+    no artifact rows and there is nothing on disk to digest.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    manifest = {"channel": "stable", "packages": [], "profiles": {}}
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (root / "release-inputs.json").write_text(
+        json.dumps(
+            {
+                "schema": "capsem.release_inputs.v1",
+                "kind": "profiles",
+                "manifest_url": "file:///public-before/manifest.json",
+                "allow_empty_profiles": True,
+                "artifacts": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_a_first_release_stages_a_transport_with_no_predecessor_package(tmp_path: Path) -> None:
+    """The public-before side of a first release has a manifest and nothing else."""
+    module = _load_local_glowup()
+    inputs = _unpublished_profile_inputs(tmp_path / "before-inputs")
+
+    staged_manifest, staged_package = module._stage_exact_transport_release(
+        label="before",
+        manifest_path=inputs / "manifest.json",
+        package_path=None,
+        profile_inputs=inputs,
+        dist=tmp_path / "dist",
+        base_url="http://127.0.0.1:9/base",
+    )
+
+    assert staged_package is None
+    # The site still has to answer with the empty graph before the candidate is
+    # promoted, so the manifest is projected even though nothing is staged.
+    assert json.loads(staged_manifest.read_text()) == {
+        "channel": "stable",
+        "packages": [],
+        "profiles": {},
+    }
+    assert not (tmp_path / "dist" / "transitions" / "before" / "package").exists()

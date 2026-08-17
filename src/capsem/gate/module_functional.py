@@ -14,6 +14,7 @@ from . import (
 from .actions import Action
 from .command import GateCommand
 from .config import GateConfig
+from .content import ProfileContent
 from .context import Context
 from .execution import Kind, Needs, Speed, Step, step
 from .plan import Plan
@@ -84,8 +85,15 @@ def functional(
     qualification: Qualification,
     after: tuple[Step, ...] = (),
     isolated_assets: bool = False,
+    staged: ProfileContent | None = None,
 ) -> Step:
-    """Every VM-owned suite, for every profile the channel selects."""
+    """Every VM-owned suite, for every profile the channel selects.
+
+    `staged` is absolute, and only a release lane passes it. That lane stages
+    its cohort into the workspace and then qualifies from a private prefix
+    which carries none of it, so a checkout-relative answer points at a
+    directory nothing ever wrote.
+    """
     phase = plan.phase("functional")
     # From checked-in `config/profiles/`, because this runs while the plan is
     # being built and a plan may not depend on build output. See
@@ -101,8 +109,12 @@ def functional(
         step(
             "axis",
             AxisAgrees(
-                assets=base_content[0] if base_content else None,
-                profiles_dir=base_content[1] if base_content else None,
+                assets=staged.assets if staged else (base_content[0] if base_content else None),
+                profiles_dir=(
+                    staged.profiles(config)
+                    if staged
+                    else (base_content[1] if base_content else None)
+                ),
             ),
             kind=Kind.UNIT_TEST,
             needs=frozenset({Needs.DISK}),

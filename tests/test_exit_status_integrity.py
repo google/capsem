@@ -97,7 +97,7 @@ REQUIRED_JUST_STEPS = (
         "release.yaml",
         "test-binary-pairing",
         "Qualify the candidate binaries",
-        ("just qualify-binaries",),
+        ('just qualify-binaries "$PWD"',),
     ),
 )
 

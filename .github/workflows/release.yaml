@@ -1002,7 +1002,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Qualify the candidate binaries
-        run: just qualify-binaries
+        run: just qualify-binaries "$PWD"
 
       # This gate blocks publication, so a failure here has to be diagnosable
       # from outside the runner. Without the session logs a Linux-only failure
