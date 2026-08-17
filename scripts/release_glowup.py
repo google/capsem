@@ -410,17 +410,23 @@ def validate_pairing_inputs(
     channel: str,
     before_manifest_bytes: bytes,
     after_manifest_bytes: bytes,
-    before_artifact: ArtifactIdentity,
+    before_artifact: ArtifactIdentity | None,
     after_artifact: ArtifactIdentity,
     changed_profiles: Sequence[str] = (),
-) -> tuple[PairingIdentity, PairingIdentity]:
-    """Validate an exact public-before/candidate-after release-lane pairing."""
+) -> tuple[PairingIdentity | None, PairingIdentity]:
+    """Validate an exact public-before/candidate-after release-lane pairing.
+
+    `before_artifact` is absent for exactly one pairing: a channel's first
+    public release, where no predecessor package was ever served and so none can
+    be identified. Every other transition still requires one.
+    """
 
     try:
         transition_kind = TransitionKind(kind)
     except ValueError as error:
         raise GlowupContractError(f"unsupported release transition: {kind}") from error
     if transition_kind not in {
+        TransitionKind.FRESH_INSTALL,
         TransitionKind.BINARY_ONLY,
         TransitionKind.PROFILE_ONLY,
         TransitionKind.PROFILE_THEN_BINARY,
@@ -439,13 +445,24 @@ def validate_pairing_inputs(
                 f"{label} manifest channel is {manifest.get('channel')!r}, expected {channel!r}"
             )
 
-    before = PairingIdentity.from_manifest_bytes(
-        before_manifest_bytes,
-        artifact=before_artifact,
-        channel=channel,
-        allow_empty_profiles=transition_kind
-        in {TransitionKind.PROFILE_ONLY, TransitionKind.PROFILE_THEN_BINARY},
-    )
+    if transition_kind is TransitionKind.FRESH_INSTALL:
+        if before_artifact is not None:
+            raise GlowupContractError(
+                "fresh_install release pairing cannot identify a public-before package"
+            )
+        before = None
+    elif before_artifact is None:
+        raise GlowupContractError(
+            f"{transition_kind.value} release pairing requires a public-before package"
+        )
+    else:
+        before = PairingIdentity.from_manifest_bytes(
+            before_manifest_bytes,
+            artifact=before_artifact,
+            channel=channel,
+            allow_empty_profiles=transition_kind
+            in {TransitionKind.PROFILE_ONLY, TransitionKind.PROFILE_THEN_BINARY},
+        )
     after = PairingIdentity.from_manifest_bytes(
         after_manifest_bytes,
         artifact=after_artifact,
@@ -495,50 +512,6 @@ def validate_pairing_inputs(
         preserved_previous=False,
     )
     return before, after
-
-
-def classify_pairing_inputs(
-    *,
-    channel: str,
-    before_manifest_bytes: bytes,
-    after_manifest_bytes: bytes,
-    before_artifact: ArtifactIdentity,
-    after_artifact: ArtifactIdentity,
-) -> tuple[TransitionKind, tuple[str, ...]]:
-    """Classify a binary lane and return its complete staged profile set."""
-
-    before_manifest = load_manifest_bytes(before_manifest_bytes)
-    after_manifest = load_manifest_bytes(after_manifest_bytes)
-    before_profiles = before_manifest.get("profiles")
-    after_profiles = after_manifest.get("profiles")
-    if not isinstance(before_profiles, dict) or not isinstance(after_profiles, dict):
-        raise GlowupContractError("release pairing manifests must contain profile objects")
-    before_profile_map = cast(Mapping[str, object], before_profiles)
-    after_profile_map = cast(Mapping[str, object], after_profiles)
-    if not all(
-        isinstance(profile_id, str)
-        for profile_id in set(before_profile_map) | set(after_profile_map)
-    ):
-        raise GlowupContractError("release pairing profile ids must be strings")
-    changed = sorted(
-        profile_id
-        for profile_id in set(before_profile_map) | set(after_profile_map)
-        if before_profile_map.get(profile_id) != after_profile_map.get(profile_id)
-    )
-    if not changed:
-        transition_kind = TransitionKind.BINARY_ONLY
-    else:
-        transition_kind = TransitionKind.PROFILE_THEN_BINARY
-    validate_pairing_inputs(
-        kind=transition_kind,
-        channel=channel,
-        before_manifest_bytes=before_manifest_bytes,
-        after_manifest_bytes=after_manifest_bytes,
-        before_artifact=before_artifact,
-        after_artifact=after_artifact,
-        changed_profiles=changed,
-    )
-    return transition_kind, tuple(changed)
 
 
 def validate_installed_evidence(
@@ -800,9 +773,7 @@ def build_report(
     }
     if transitions is None:
         if expected_transitions is not None:
-            raise GlowupContractError(
-                "declared transition scope requires transition evidence"
-            )
+            raise GlowupContractError("declared transition scope requires transition evidence")
     else:
         transition_scope = _expected_transition_values(expected_transitions)
         report["transition_scope"] = transition_scope

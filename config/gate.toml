@@ -986,12 +986,12 @@ max_lines = 1000
 "scripts/preflight.sh" = 338
 "scripts/protocol_fixture_recorder.py" = 500
 "scripts/prove-installed-shell.py" = 318
-"scripts/release-binaries.py" = 465
+"scripts/release-binaries.py" = 435
 "scripts/release_collect_evidence.py" = 462
-"scripts/release_glowup.py" = 823
+"scripts/release_glowup.py" = 794
 "scripts/release_inputs.py" = 337
 "scripts/resolve-reusable-profile-assets.py" = 334
-"scripts/stage-release-test-inputs.py" = 454
+"scripts/stage-release-test-inputs.py" = 459
 
 # ---------------------------------------------------------------------------
 # What may not run beside what
@@ -1622,9 +1622,9 @@ max_lines = 20
 "release.yaml:build-app-macos:22:Verify macOS package installation path policy" = 31
 "release.yaml:create-release:8:Build summary" = 25
 "release.yaml:preflight:3:Import Apple certificate (preflight)" = 23
-"release.yaml:test-binary-pairing:20:Activate exact candidate package binaries for functional tests" = 26
-"release.yaml:test-native-linux-package:5:Install and verify exact release deb" = 26
-"release.yaml:test-native-macos-package:5:Install and verify exact notarized package" = 30
+"release.yaml:test-binary-pairing:20:Activate exact candidate package binaries for functional tests" = 25
+"release.yaml:test-native-linux-package:5:Install and verify exact release deb" = 27
+"release.yaml:test-native-macos-package:5:Install and verify exact notarized package" = 31
 "release.yaml:verify-release-candidate:4:Verify public GitHub package storage from the candidate manifest" = 34
 "release.yaml:verify-release-candidate:5:Prove install.sh selects and installs the candidate Linux package" = 25
 "release.yaml:verify-release-downloads:4:Verify every URL in the asset channel manifest is reachable" = 42

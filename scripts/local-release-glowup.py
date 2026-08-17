@@ -40,8 +40,6 @@ try:
         assert_manifest_artifact,
         build_report,
         build_transition_evidence,
-        classify_pairing_inputs,
-        load_manifest_bytes,
         tamper_profile_artifact_digest,
         validate_installed_evidence,
         validate_pairing_inputs,
@@ -55,11 +53,24 @@ except ModuleNotFoundError:
         assert_manifest_artifact,
         build_report,
         build_transition_evidence,
-        classify_pairing_inputs,
-        load_manifest_bytes,
         tamper_profile_artifact_digest,
         validate_installed_evidence,
         validate_pairing_inputs,
+    )
+
+try:
+    from release_first_release import (
+        activates_first_profiles,
+        classify_pairing_inputs,
+        resolve_public_before_package,
+        verify_candidate_profile_publication,
+    )
+except ModuleNotFoundError:
+    from scripts.release_first_release import (
+        activates_first_profiles,
+        classify_pairing_inputs,
+        resolve_public_before_package,
+        verify_candidate_profile_publication,
     )
 
 try:
@@ -94,11 +105,12 @@ class ExactReleasePairing:
     channel: str
     transition: TransitionKind
     changed_profiles: tuple[str, ...]
-    before: PairingIdentity
+    #: Absent for a first release: no predecessor to identify or to boot.
+    before: PairingIdentity | None
     after: PairingIdentity
     before_manifest: Path
     after_manifest: Path
-    before_package: Path
+    before_package: Path | None
     after_package: Path
     before_profile_inputs: Path
     after_profile_inputs: Path
@@ -114,7 +126,8 @@ class ExactReleaseTransport:
     after_manifest_url: str
     current_manifest_url: str
     channel_catalog_url: str
-    before_package: Path
+    #: Absent for a first release, whose public-before graph serves no package.
+    before_package: Path | None
     after_package: Path
 
 
@@ -180,6 +193,7 @@ def main() -> int:
         "--release-transition",
         choices=(
             "auto",
+            TransitionKind.FRESH_INSTALL.value,
             TransitionKind.BINARY_ONLY.value,
             TransitionKind.PROFILE_ONLY.value,
             TransitionKind.PROFILE_THEN_BINARY.value,
@@ -427,7 +441,11 @@ def main() -> int:
                     "base_url": base_url,
                     "release_pairing": {
                         "kind": exact_pairing.transition.value,
-                        "before": exact_pairing.before.as_report(),
+                        "before": (
+                            None
+                            if exact_pairing.before is None
+                            else exact_pairing.before.as_report()
+                        ),
                         "after": exact_pairing.after.as_report(),
                     },
                     "polled_manifest_url": exact_transport.current_manifest_url,
@@ -500,7 +518,6 @@ def validate_exact_release_pairing(
         "release_transition": args.release_transition,
         "before_manifest": args.before_manifest,
         "after_manifest": args.after_manifest,
-        "before_package": args.before_package,
         "before_profile_inputs": args.before_profile_inputs,
         "after_profile_inputs": args.after_profile_inputs,
     }
@@ -515,14 +532,13 @@ def validate_exact_release_pairing(
     if missing:
         raise SystemExit(
             "exact pairing requires release channel, transition, before/after "
-            "manifests, before package, and before/after profile inputs; "
+            "manifests, and before/after profile inputs; "
             f"missing={missing}"
         )
 
     channel = str(args.release_channel)
     before_manifest = Path(args.before_manifest)
     after_manifest = Path(args.after_manifest)
-    before_package = Path(args.before_package)
     before_profile_inputs = Path(args.before_profile_inputs)
     after_profile_inputs = Path(args.after_profile_inputs)
     before_manifest_bytes = before_manifest.read_bytes()
@@ -540,9 +556,8 @@ def validate_exact_release_pairing(
             "exact pairing after profile inputs do not reproduce the candidate-after manifest"
         )
 
-    before_artifact = artifact_identity_from_manifest_package(
-        before_manifest_bytes,
-        before_package,
+    before_package, before_artifact = resolve_public_before_package(
+        supplied=args.before_package, before_manifest_bytes=before_manifest_bytes
     )
     after_artifact = artifact_identity_from_manifest_package(
         after_manifest_bytes,
@@ -582,25 +597,12 @@ def validate_exact_release_pairing(
                 "exact profile pairing requires profile, candidate publication, "
                 f"and publication base; missing={missing_profile}"
             )
-        try:
-            run(
-                [
-                    sys.executable,
-                    "scripts/verify-profile-publication.py",
-                    "--manifest",
-                    str(after_manifest),
-                    "--profile",
-                    str(args.profile),
-                    "--publication-base",
-                    str(args.publication_base),
-                    "--release-dir",
-                    str(args.candidate_profile_publication),
-                ]
-            )
-        except subprocess.CalledProcessError as error:
-            raise SystemExit(
-                "exact pairing candidate profile publication failed verification"
-            ) from error
+        verify_candidate_profile_publication(
+            after_manifest=after_manifest,
+            profile=args.profile,
+            publication_base=args.publication_base,
+            release_dir=args.candidate_profile_publication,
+        )
     elif transition is TransitionKind.PROFILE_THEN_BINARY:
         if not changed_profiles:
             raise SystemExit("profile_then_binary exact pairing requires staged profiles")
@@ -611,25 +613,12 @@ def validate_exact_release_pairing(
         if len(supplied_publication_fields) == 2:
             if args.profile is None:
                 raise SystemExit("a local candidate publication requires its selected profile")
-            try:
-                run(
-                    [
-                        sys.executable,
-                        "scripts/verify-profile-publication.py",
-                        "--manifest",
-                        str(after_manifest),
-                        "--profile",
-                        str(args.profile),
-                        "--publication-base",
-                        str(args.publication_base),
-                        "--release-dir",
-                        str(args.candidate_profile_publication),
-                    ]
-                )
-            except subprocess.CalledProcessError as error:
-                raise SystemExit(
-                    "exact pairing candidate profile publication failed verification"
-                ) from error
+            verify_candidate_profile_publication(
+                after_manifest=after_manifest,
+                profile=args.profile,
+                publication_base=args.publication_base,
+                release_dir=args.candidate_profile_publication,
+            )
     elif any(value is not None for value in profile_fields.values()):
         raise SystemExit(
             "binary_only exact pairing cannot supply candidate profile publication inputs"
@@ -713,11 +702,11 @@ def _stage_exact_transport_release(
     *,
     label: str,
     manifest_path: Path,
-    package_path: Path,
+    package_path: Path | None,
     profile_inputs: Path,
     dist: Path,
     base_url: str,
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path | None]:
     manifest_bytes = manifest_path.read_bytes()
     authority = json.loads(manifest_bytes)
     if not isinstance(authority, dict):
@@ -748,17 +737,23 @@ def _stage_exact_transport_release(
         replacements[url] = local_url
         expected_profile_urls.add(url)
 
-    artifact = artifact_identity_from_manifest_package(manifest_bytes, package_path)
-    package_record = assert_manifest_artifact(authority, artifact)
-    package_url = package_record.get("url")
-    if not isinstance(package_url, str):
-        raise SystemExit(f"exact {label} package record has no URL")
-    package_absolute_url = urljoin(manifest_url, package_url)
-    staged_package = root / "package" / package_path.name
-    copy_artifact_tree(package_path, staged_package)
-    replacements[package_absolute_url] = (
-        f"{base_url}/transitions/{label}/package/{package_path.name}"
-    )
+    # A first release's public-before graph serves no package, so there is no
+    # artifact to project and no URL to rewrite. The manifest still is one: the
+    # site has to answer with an empty graph before the candidate is promoted.
+    staged_package: Path | None = None
+    package_absolute_url: str | None = None
+    if package_path is not None:
+        artifact = artifact_identity_from_manifest_package(manifest_bytes, package_path)
+        package_record = assert_manifest_artifact(authority, artifact)
+        package_url = package_record.get("url")
+        if not isinstance(package_url, str):
+            raise SystemExit(f"exact {label} package record has no URL")
+        package_absolute_url = urljoin(manifest_url, package_url)
+        staged_package = root / "package" / package_path.name
+        copy_artifact_tree(package_path, staged_package)
+        replacements[package_absolute_url] = (
+            f"{base_url}/transitions/{label}/package/{package_path.name}"
+        )
 
     transport = copy.deepcopy(authority)
     reverse: dict[str, str] = {}
@@ -773,7 +768,7 @@ def _stage_exact_transport_release(
     if not expected_profile_urls.issubset(used):
         missing = sorted(expected_profile_urls - used)
         raise SystemExit(f"exact {label} transport omitted profile URLs: {missing}")
-    if package_absolute_url not in used:
+    if package_absolute_url is not None and package_absolute_url not in used:
         raise SystemExit(f"exact {label} transport omitted its native package URL")
 
     restored = copy.deepcopy(transport)
@@ -813,6 +808,8 @@ def stage_exact_release_transport(
         dist=dist,
         base_url=base_url,
     )
+    if after_package is None:
+        raise SystemExit("exact candidate-after transport must stage its native package")
     current_manifest = dist / "transitions" / "current" / "manifest.json"
     copy_artifact_tree(before_manifest, current_manifest)
     current_contents = current_manifest.read_bytes()
@@ -1519,17 +1516,6 @@ wait_for_incompatible_profile_rejection() {{
 """
 
 
-def is_first_profile_activation(pairing: ExactReleasePairing) -> bool:
-    manifest = load_manifest_bytes(pairing.before_manifest.read_bytes())
-    profiles = manifest.get("profiles")
-    if not isinstance(profiles, dict):
-        raise SystemExit("exact public-before manifest profiles must be an object")
-    return not profiles and pairing.transition in {
-        TransitionKind.PROFILE_ONLY,
-        TransitionKind.PROFILE_THEN_BINARY,
-    }
-
-
 def run_exact_installed_glowup(
     *,
     pairing: ExactReleasePairing,
@@ -1538,24 +1524,36 @@ def run_exact_installed_glowup(
     release_base_url: str,
     evidence_dir: Path,
 ) -> ExactInstalledGlowupEvidence:
-    before_artifact = artifact_identity_from_manifest_package(
-        pairing.before_manifest.read_bytes(),
-        pairing.before_package,
+    before_artifact = (
+        None
+        if pairing.before_package is None
+        else artifact_identity_from_manifest_package(
+            pairing.before_manifest.read_bytes(),
+            pairing.before_package,
+        )
     )
     after_artifact = artifact_identity_from_manifest_package(
         pairing.after_manifest.read_bytes(),
         pairing.after_package,
     )
-    if before_artifact.platform != "linux" or after_artifact.platform != "linux":
-        raise SystemExit("Linux installed glow-up requires exact Linux package artifacts")
-    if before_artifact.architecture != after_artifact.architecture:
+    for artifact in (before_artifact, after_artifact):
+        if artifact is not None and artifact.platform != "linux":
+            raise SystemExit("Linux installed glow-up requires exact Linux package artifacts")
+    if before_artifact is not None and before_artifact.architecture != after_artifact.architecture:
         raise SystemExit("exact installed transition cannot change package architecture")
 
-    first_profile_activation = is_first_profile_activation(pairing)
+    # A first release, and a channel receiving its first profiles, both install
+    # the candidate directly: neither has a predecessor to boot first.
+    first_profile_activation = activates_first_profiles(
+        transition=pairing.transition, before_manifest_bytes=pairing.before_manifest.read_bytes()
+    )
     if first_profile_activation:
         promote_exact_candidate_transport(transport)
-    fresh_artifact = after_artifact if first_profile_activation else before_artifact
-    fresh_package = pairing.after_package if first_profile_activation else pairing.before_package
+        fresh_artifact, fresh_package = after_artifact, pairing.after_package
+    elif before_artifact is None or pairing.before_package is None:
+        raise SystemExit("an upgrade transition cannot boot an absent public-before package")
+    else:
+        fresh_artifact, fresh_package = before_artifact, pairing.before_package
     evidence_dir.mkdir(parents=True, exist_ok=True)
     probe_functions = _exact_installed_probe_shell(evidence_dir)
     fresh_script = f"""
@@ -1776,6 +1774,8 @@ def exact_installed_transition_rows(
     evidence: ExactInstalledGlowupEvidence,
 ) -> list[dict[str, object]]:
     fresh_pairing = pairing.after if evidence.fresh_uses_after else pairing.before
+    if fresh_pairing is None:
+        raise SystemExit("an upgrade transition must install its public-before pairing first")
     _validate_exact_installed_state(evidence.fresh_installed, fresh_pairing)
     if not evidence.fresh_uses_after:
         _validate_exact_installed_state(evidence.candidate_installed, pairing.after)

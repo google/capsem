@@ -258,7 +258,12 @@ def _select_host_package(
     return package, url_to_path[package_url]
 
 
-def select_host_package_path(input_dir: Path) -> Path:
+def select_host_package_path(input_dir: Path) -> Path | None:
+    # None when the cohort declares no package: a channel's first release. One
+    # that declares packages and cannot produce one is still an error -- that is
+    # a deleted public release, not a channel that never had one.
+    if not _load(input_dir)[1].get("packages"):
+        return None
     return _select_host_package(input_dir)[1]
 
 
@@ -424,7 +429,7 @@ def main() -> int:
         if args.print_package_path:
             if args.input_dir is None:
                 raise ValueError("--print-package-path requires --input-dir")
-            print(select_host_package_path(args.input_dir))
+            print(select_host_package_path(args.input_dir) or "")
             return 0
         if args.package_file is not None:
             result = stage_candidate_package(args.package_file, args.binary_dir)

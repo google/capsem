@@ -756,6 +756,7 @@ jobs:
           python3 scripts/verify-installed-release.py \
             --capsem "$HOME/.capsem/bin/capsem" \
             --manifest-url "$PREACTIVATION_MANIFEST" \
+            --metadata-manifest-url "$ASSET_MANIFEST_URL" \
             --channel "$RELEASE_CHANNEL" \
             --package-version "$VERSION"
 
@@ -851,6 +852,7 @@ jobs:
           python3 scripts/verify-installed-release.py \
             --capsem /usr/bin/capsem \
             --manifest-url "$PREACTIVATION_MANIFEST" \
+            --metadata-manifest-url "$ASSET_MANIFEST_URL" \
             --channel "$RELEASE_CHANNEL" \
             --package-version "$VERSION"
 
@@ -980,7 +982,6 @@ jobs:
           before_package=$(uv run python scripts/stage-release-test-inputs.py \
             --input-dir target/binary-public-before/packages \
             --print-package-path)
-          test -n "$before_package"
           uv run python scripts/stage-release-test-inputs.py \
             --package-file "$package" \
             --binary-dir target/debug
@@ -992,7 +993,7 @@ jobs:
             echo "CAPSEM_RELEASE_TRANSITION=auto"
             echo "CAPSEM_RELEASE_BEFORE_MANIFEST=$PWD/target/binary-public-before/profiles/manifest.json"
             echo "CAPSEM_RELEASE_AFTER_MANIFEST=$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
-            echo "CAPSEM_RELEASE_BEFORE_PACKAGE=$PWD/$before_package"
+            echo "CAPSEM_RELEASE_BEFORE_PACKAGE=${before_package:+$PWD/$before_package}"
             echo "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS=$PWD/target/binary-public-before/profiles"
             echo "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS=$PWD/target/candidate-profile-inputs"
             echo "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem"

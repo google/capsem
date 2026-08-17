@@ -16,6 +16,19 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+try:
+    from release_version_tag import (
+        discard_claimed_version,
+        ensure_version_tag,
+        remote_version_target,
+    )
+except ModuleNotFoundError:
+    from scripts.release_version_tag import (
+        discard_claimed_version,
+        ensure_version_tag,
+        remote_version_target,
+    )
 CHANNELS = {"stable", "nightly"}
 VERSION_COHORT_PATHS = (
     Path("Cargo.toml"),
@@ -159,98 +172,6 @@ def _validate_version_cohort(version: str) -> None:
     }
     if mismatches:
         raise RuntimeError(f"release version cohort is inconsistent for {version}: {mismatches}")
-
-
-def _remote_version_target(runner: Runner, tag: str) -> str | None:
-    raw = _capture(
-        runner,
-        "git",
-        "ls-remote",
-        "--tags",
-        "origin",
-        f"refs/tags/{tag}",
-        f"refs/tags/{tag}^{{}}",
-    )
-    rows = [line.split() for line in raw.splitlines() if line]
-    if not rows:
-        return None
-    if any(len(row) != 2 for row in rows):
-        raise RuntimeError(f"remote returned malformed rows for {tag}: {rows}")
-    targets = {row[1]: row[0] for row in rows}
-    if len(targets) != len(rows):
-        raise RuntimeError(f"remote returned duplicate rows for {tag}: {rows}")
-    expected = {f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"}
-    if set(targets) - expected or f"refs/tags/{tag}" not in targets:
-        raise RuntimeError(f"remote returned malformed rows for {tag}: {rows}")
-    return targets.get(f"refs/tags/{tag}^{{}}", targets[f"refs/tags/{tag}"])
-
-
-def _ensure_version_tag(runner: Runner, *, tag: str, channel: str, source_commit: str) -> bool:
-    """Return whether this invocation may publish the selected binary identity."""
-    target = _remote_version_target(runner, tag)
-    if target is None:
-        runner.run(
-            (
-                "git",
-                "-c",
-                f"user.name={TAGGER_NAME}",
-                "-c",
-                f"user.email={TAGGER_EMAIL}",
-                "tag",
-                "-a",
-                tag,
-                source_commit,
-                "-m",
-                f"Capsem {tag[1:]} channel={channel}",
-            )
-        )
-        runner.run(("git", "push", "origin", f"refs/tags/{tag}:refs/tags/{tag}"))
-        if _remote_version_target(runner, tag) != source_commit:
-            raise RuntimeError(
-                f"new immutable version tag {tag} did not resolve to {source_commit}"
-            )
-        return True
-    if target == source_commit:
-        return True
-    if channel == "nightly":
-        return False
-    raise RuntimeError(f"immutable version tag {tag} points at {target}, not {source_commit}")
-
-
-def _release_exists(runner: Runner, tag: str) -> bool:
-    """Whether GitHub already has a release object behind this tag."""
-    try:
-        return bool(_capture(runner, "gh", "release", "view", tag, "--json", "tagName"))
-    except subprocess.CalledProcessError:
-        return False
-
-
-def _discard_claimed_version(runner: Runner, tag: str) -> None:
-    """Give back a version this invocation claimed and could not deliver.
-
-    The tag has to exist before the build, because CI attaches the release to
-    it. Nothing undid it when the build failed, so one failed job burned the
-    version outright: the guard that keeps an immutable identity honest then
-    refuses to reuse a tag pointing at a different commit, and the next
-    attempt has to invent a new number for work that never shipped.
-
-    Only what this run created, and only while nothing is behind it. A tag
-    with a release attached belongs to that release, and removing it would
-    leave the release pointing at nothing -- much worse than the problem.
-
-    Cleanup never raises. Whatever failed the release is the interesting
-    error, and it must not be replaced by an error about tidying up.
-    """
-    if _release_exists(runner, tag):
-        return
-    for argv in (
-        ("git", "push", "origin", f":refs/tags/{tag}"),
-        ("git", "tag", "-d", tag),
-    ):
-        try:
-            runner.run(argv)
-        except (OSError, subprocess.CalledProcessError):
-            continue
 
 
 def _matching_run(
@@ -453,8 +374,15 @@ def release_binaries(channel: str, source_commit: str, runner: Runner) -> tuple[
     version = _project_version()
     _validate_version_cohort(version)
     tag = f"v{version}"
-    claimed = _remote_version_target(runner, tag) is None
-    publish = _ensure_version_tag(runner, tag=tag, channel=channel, source_commit=source_commit)
+    claimed = remote_version_target(runner, tag) is None
+    publish = ensure_version_tag(
+        runner,
+        tag=tag,
+        channel=channel,
+        source_commit=source_commit,
+        tagger_name=TAGGER_NAME,
+        tagger_email=TAGGER_EMAIL,
+    )
     ref = SOURCE_REF_TEMPLATE.format(source_commit=source_commit)
     try:
         run_id = _resume_release(
@@ -468,7 +396,7 @@ def release_binaries(channel: str, source_commit: str, runner: Runner) -> tuple[
         )
     except BaseException:
         if claimed:
-            _discard_claimed_version(runner, tag)
+            discard_claimed_version(runner, tag)
         raise
     return tag, run_id
 

@@ -40,6 +40,20 @@ def _load_local_glowup():
     return module
 
 
+def _load_first_release():
+    """Load the first-release classifier, which imports `release_glowup` itself."""
+    path = PROJECT_ROOT / "scripts" / "release_first_release.py"
+    spec = importlib.util.spec_from_file_location("release_first_release", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(PROJECT_ROOT / "scripts"))
+    return module
+
+
 def _artifact(tmp_path: Path, module):
     package = tmp_path / "Capsem-1.5.100.pkg"
     package.write_bytes(b"exact candidate package")
@@ -792,6 +806,7 @@ def test_exact_pairing_classifier_distinguishes_binary_and_staged_profile(
     tmp_path: Path,
 ) -> None:
     module = _load_module()
+    classifier = _load_first_release()
     before_root = tmp_path / "before"
     before_root.mkdir()
     before_artifact = _artifact(before_root, module)
@@ -814,36 +829,36 @@ def test_exact_pairing_classifier_distinguishes_binary_and_staged_profile(
     after_manifest["channel"] = "nightly"
     after_manifest["profiles"] = json.loads(json.dumps(before_manifest["profiles"]))
 
-    kind, profile = module.classify_pairing_inputs(
+    kind, profile = classifier.classify_pairing_inputs(
         channel="nightly",
         before_manifest_bytes=json.dumps(before_manifest).encode(),
         after_manifest_bytes=json.dumps(after_manifest).encode(),
         before_artifact=before_artifact,
         after_artifact=after_artifact,
     )
-    assert kind is module.TransitionKind.BINARY_ONLY
+    assert kind is classifier.TransitionKind.BINARY_ONLY
     assert profile == ()
 
     after_manifest["profiles"]["experimental"]["revision"] = "experimental-2"
-    kind, profile = module.classify_pairing_inputs(
+    kind, profile = classifier.classify_pairing_inputs(
         channel="nightly",
         before_manifest_bytes=json.dumps(before_manifest).encode(),
         after_manifest_bytes=json.dumps(after_manifest).encode(),
         before_artifact=before_artifact,
         after_artifact=after_artifact,
     )
-    assert kind is module.TransitionKind.PROFILE_THEN_BINARY
+    assert kind is classifier.TransitionKind.PROFILE_THEN_BINARY
     assert profile == ("experimental",)
 
     after_manifest["profiles"]["code"]["revision"] = "code-2"
-    kind, profiles = module.classify_pairing_inputs(
+    kind, profiles = classifier.classify_pairing_inputs(
         channel="nightly",
         before_manifest_bytes=json.dumps(before_manifest).encode(),
         after_manifest_bytes=json.dumps(after_manifest).encode(),
         before_artifact=before_artifact,
         after_artifact=after_artifact,
     )
-    assert kind is module.TransitionKind.PROFILE_THEN_BINARY
+    assert kind is classifier.TransitionKind.PROFILE_THEN_BINARY
     assert profiles == ("code", "experimental")
 
 
@@ -1662,3 +1677,114 @@ def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Pa
     )
     with pytest.raises(SystemExit, match="probe failed"):
         module.exact_installed_transition_rows(pairing, evidence)
+
+
+def _first_release_manifests(tmp_path: Path, module):
+    """A channel serving nothing, and the candidate that would be its first release."""
+    after_path = tmp_path / "after" / "Capsem_9.9.9_amd64.deb"
+    after_path.parent.mkdir(parents=True)
+    after_path.write_bytes(b"exact first release package")
+    after_artifact = module.ArtifactIdentity.from_path(
+        after_path,
+        version="9.9.9",
+        platform="linux",
+        architecture="amd64",
+    )
+    after_manifest = _manifest(after_artifact)
+    after_manifest["channel"] = "stable"
+    after_manifest["profiles"] = {"code": {"revision": "code-1"}, "co-work": {"revision": "cw-1"}}
+    # What `project-first-channel-before.py` writes for a channel whose published
+    # graph was retired: an authority that offers nothing at all.
+    before_manifest = {"channel": "stable", "packages": [], "profiles": {}}
+    return before_manifest, after_manifest, after_artifact
+
+
+def test_a_channel_serving_nothing_classifies_as_a_first_release(tmp_path: Path) -> None:
+    """The case that blocked this line: retired predecessor, so no upgrade to prove."""
+    module = _load_module()
+    classifier = _load_first_release()
+    before_manifest, after_manifest, after_artifact = _first_release_manifests(tmp_path, module)
+
+    kind, profiles = classifier.classify_pairing_inputs(
+        channel="stable",
+        before_manifest_bytes=json.dumps(before_manifest).encode(),
+        after_manifest_bytes=json.dumps(after_manifest).encode(),
+        before_artifact=None,
+        after_artifact=after_artifact,
+    )
+
+    assert kind is classifier.TransitionKind.FRESH_INSTALL
+    # Every declared profile is staged: none of them was ever served.
+    assert profiles == ("co-work", "code")
+
+
+def test_a_first_release_pairing_carries_no_predecessor_identity(tmp_path: Path) -> None:
+    module = _load_module()
+    classifier = _load_first_release()
+    before_manifest, after_manifest, after_artifact = _first_release_manifests(tmp_path, module)
+
+    before, after = classifier.validate_pairing_inputs(
+        kind=classifier.TransitionKind.FRESH_INSTALL,
+        channel="stable",
+        before_manifest_bytes=json.dumps(before_manifest).encode(),
+        after_manifest_bytes=json.dumps(after_manifest).encode(),
+        before_artifact=None,
+        after_artifact=after_artifact,
+        changed_profiles=("co-work", "code"),
+    )
+
+    assert before is None
+    assert after.package_version == "9.9.9"
+
+
+def test_a_published_channel_still_requires_its_predecessor_package(tmp_path: Path) -> None:
+    """The absence must not be able to downgrade a real upgrade into a fresh install."""
+    module = _load_module()
+    classifier = _load_first_release()
+    _, after_manifest, after_artifact = _first_release_manifests(tmp_path, module)
+    published_before = json.loads(json.dumps(after_manifest))
+    published_before["profiles"] = {"code": {"revision": "code-0"}}
+
+    with pytest.raises(classifier.GlowupContractError, match="requires a public-before package"):
+        classifier.validate_pairing_inputs(
+            kind=classifier.TransitionKind.PROFILE_THEN_BINARY,
+            channel="stable",
+            before_manifest_bytes=json.dumps(published_before).encode(),
+            after_manifest_bytes=json.dumps(after_manifest).encode(),
+            before_artifact=None,
+            after_artifact=after_artifact,
+            changed_profiles=("co-work", "code"),
+        )
+
+
+def test_a_graph_with_profiles_but_no_package_is_not_a_first_release() -> None:
+    """Half-empty is broken, not fresh -- calling it fresh would skip the upgrade proof."""
+    classifier = _load_first_release()
+    half_empty = {"channel": "stable", "packages": [], "profiles": {"code": {"revision": "code-0"}}}
+
+    assert classifier.public_before_is_unpublished(json.dumps(half_empty).encode()) is False
+    assert (
+        classifier.public_before_is_unpublished(
+            json.dumps({"channel": "stable", "packages": [], "profiles": {}}).encode()
+        )
+        is True
+    )
+
+
+def test_a_first_release_cannot_claim_a_predecessor_it_never_served(tmp_path: Path) -> None:
+    classifier = _load_first_release()
+    module = _load_module()
+    before_manifest, _, _ = _first_release_manifests(tmp_path, module)
+    stray = tmp_path / "stray_1.5.0_amd64.deb"
+    stray.write_bytes(b"a package the channel never published")
+
+    with pytest.raises(SystemExit, match="published none"):
+        classifier.resolve_public_before_package(
+            supplied=stray,
+            before_manifest_bytes=json.dumps(before_manifest).encode(),
+        )
+
+    assert classifier.resolve_public_before_package(
+        supplied=None,
+        before_manifest_bytes=json.dumps(before_manifest).encode(),
+    ) == (None, None)

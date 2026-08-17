@@ -292,7 +292,7 @@ def test_remote_version_tag_rejects_duplicate_rows() -> None:
             return super().run(argv, **kwargs)
 
     with pytest.raises(RuntimeError, match="duplicate rows"):
-        RELEASE._remote_version_target(Duplicate(), TAG)
+        RELEASE.remote_version_target(Duplicate(), TAG)
 
 
 def test_daily_nightly_schedule_freezes_one_scheduler_commit() -> None:
