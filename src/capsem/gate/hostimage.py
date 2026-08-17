@@ -94,20 +94,10 @@ def input_key(config: GateConfig) -> str:
 
 
 def _cross_apt_packages(config: GateConfig) -> tuple[str, ...]:
-    """The GNU cross compilers this image needs, excluding its own.
-
-    A compiler targeting the architecture the image already runs on is not a
-    cross compiler; it is `build-essential`. Ubuntu 24.04 happens to publish
-    `gcc-x86-64-linux-gnu` for amd64 anyway, so asking for both directions
-    worked there and hid the assumption. Ubuntu 22.04 does not, and the layer
-    failed with "has no installation candidate" the moment the base moved down
-    to lower the release floor -- see issue #181.
-    """
-    native = config.host_arch().name
+    """Every config-owned GNU compiler needed by either concrete target."""
     return tuple(
         package
-        for name, architecture in config.architectures.items()
-        if name != native
+        for architecture in config.architectures.values()
         for package in architecture.apt_cross_compilers
     )
 

@@ -100,7 +100,7 @@ minimum_release_name = "Sonoma"
 # Derived from the shipped binaries by scripts/derive-deb-libc-floor.py and
 # declared by the .deb, so apt refuses an install it cannot run. Lowering it is
 # a build-base change, not a source change; see issue #181.
-minimum_glibc = "2.35"
+minimum_glibc = "2.39"
 
 # Every release the glow-up proof runs the package on. One list: the proof
 # reads each image's real glibc and derives whether the package must run or
@@ -1434,7 +1434,7 @@ builder_identity_inputs = [
 ]
 materialize_network = "default"
 pnpm_version = "10.34.5"
-rust_image = "rust:1.97.1-bullseye@sha256:02d78ca3f928195c2a907543de778adfd728ad7e2a24fdc6aef582b7c77842e0"
+rust_image = "rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97"
 uv_image = "ghcr.io/astral-sh/uv:0.12.3@sha256:2d890623d310b57771ce840f0da5eed5fc6d657da05ffaa45d82797b53fa3abc"
 cargo_tool_args = { TAURI_CLI_VERSION = "cargo-tauri", CARGO_NEXTEST_VERSION = "cargo-nextest", CARGO_LLVM_COV_VERSION = "cargo-llvm-cov" }
 script = "scripts/test-linux-rust.sh"

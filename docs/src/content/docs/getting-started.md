@@ -10,8 +10,8 @@ sidebar:
 | System | Versions supported | Hardware |
 |---|---|---|
 | macOS | 14 (Sonoma) or later | Apple Silicon (M1 or newer) |
-| Ubuntu | 22.04 or later | x86_64 or arm64, KVM capable |
-| Debian | 12 or later | x86_64 or arm64, KVM capable |
+| Ubuntu | 24.04 or later | x86_64 or arm64, KVM capable |
+| Debian | 13 or later | x86_64 or arm64, KVM capable |
 
 Disk use is roughly 40 MB of binaries plus whatever the selected profile's VM
 assets need, which is much the larger of the two and varies by profile.
@@ -25,13 +25,12 @@ The `.deb` declares the glibc version its binaries were built against, derived
 from the binaries themselves rather than hand-written. `apt` therefore refuses
 an install it cannot run, instead of completing one that fails at first launch.
 
-The floor is **glibc 2.35**, which covers every currently supported Ubuntu and
-Debian release: Ubuntu 22.04 LTS and later, Debian 12 and later, and
-derivatives such as Linux Mint 21 and Pop!_OS 22.04.
-
-Alpine and other musl distributions are a different matter, not an older
-glibc: the binaries cannot run there at any version, and serving them needs a
-separately linked package ([#182](https://github.com/google/capsem/issues/182)).
+The floor is currently **glibc 2.39**, which means Ubuntu 24.04 LTS and Debian
+13 trixie. Ubuntu 22.04 LTS (2.35) and Debian 12 bookworm (2.36) are not yet
+supported. Widening to them is tracked in
+[#181](https://github.com/google/capsem/issues/181): it needs a lower build
+base, not a source change, and lowering the floor never breaks an already
+installed system.
 
 If `apt` reports an unsatisfiable `libc6` dependency, your distribution is
 below the floor. That is the intended behaviour, not a packaging bug.
