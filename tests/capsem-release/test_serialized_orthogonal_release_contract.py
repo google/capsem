@@ -313,6 +313,49 @@ def test_daily_scheduler_runs_unattended_with_no_local_qualification() -> None:
     assert "release-assets.yaml" not in workflow
 
 
+def test_the_scheduler_meets_every_precondition_its_release_commands_check() -> None:
+    """The runner builds nothing, but it is not therefore setup-free.
+
+    Its sibling above pins what this job must *not* do -- no `just test`, no
+    KVM, no musl -- because it dispatches rather than builds. Nothing pinned
+    what it must still provide, and a refactor that stripped it down to a
+    dispatcher removed a fourth step along with those three. It looked like
+    build machinery. It was not: it served the release guard.
+
+    Five consecutive nights then failed at the first release command with
+    `source commit ... is not already on local main`, which is the guard
+    working correctly against an absence nothing was asserting.
+
+    Both preconditions here are about the checkout rather than the build:
+
+      - `actions/checkout` leaves a detached HEAD, so there is no local `main`
+        for `require_local_main` to read
+      - publishing the immutable source ref is a `git push` over HTTPS from a
+        detached prefix under ~/.cg that never saw the checkout's credential
+        header, and a token in the environment is not a git credential
+
+    Both must precede the first release command, since the first one to run
+    checks them.
+    """
+    release = _job_block(_workflow("release-nightly.yaml"), "nightly-release")
+
+    local_main = release.find("git branch -f main")
+    credentials = release.find("insteadOf")
+    first_release = release.find("just release-")
+
+    assert local_main != -1, (
+        "the scheduler must give require_local_main a local branch to read; "
+        "a detached checkout has none and every release command refuses"
+    )
+    assert credentials != -1, (
+        "the scheduler must let git authenticate, or publishing the immutable "
+        "source ref prompts for a username and dies with no terminal"
+    )
+    assert first_release != -1
+    assert local_main < first_release, "establish local main before releasing"
+    assert credentials < first_release, "authenticate before releasing"
+
+
 def test_nightly_releases_without_a_journal_while_stable_still_demands_one() -> None:
     """The one asymmetry that lets an unattended rebuild exist at all."""
     from capsem.gate import config as gate_config
