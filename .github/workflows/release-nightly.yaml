@@ -32,6 +32,17 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
+      # `actions/checkout` leaves a detached HEAD, so there is no local `main`
+      # here. Every release command refuses a subject commit that is not
+      # already on local `main`, which is the guard that keeps an arbitrary
+      # commit from being published, and it read an absence as a refusal.
+      #
+      # Point a local branch at the remote one rather than relaxing the guard:
+      # a dispatch from a branch whose head is genuinely not on `main` still
+      # fails, which is the case worth refusing.
+      - name: Give the release guard a local main to read
+        run: git branch -f main origin/main
+
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
