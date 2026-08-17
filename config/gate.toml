@@ -2404,6 +2404,21 @@ reclaimable = [
 # The gate builds two architectures of VM images; running out at minute thirty
 # wastes the thirty.
 required_free_gb = 60
+# The same floor for the scratch filesystem, which is often not the one the
+# checkout is on. `required_free_gb` measures where `target/` lives; the suites
+# do their bulk scratch work under the temporary directory, and on a host where
+# that is a tmpfs it is a much smaller, entirely separate volume. One run died
+# on ENOSPC twenty-five minutes in with 196GB free beside it, because nothing
+# was measuring the 32GB tmpfs that filled.
+#
+# Lower than `required_free_gb` because this holds a run's transient working
+# set rather than its built artifacts: VM session directories, per-test
+# temporary trees and image audit unpacks.
+#
+# Checked but never reclaimed. Every `reclaimable` entry is relative to the
+# checkout by construction, so the gate cannot -- and must not -- delete
+# anything out there.
+required_free_scratch_gb = 15
 # Warn when a single run's own footprint passes this.
 run_footprint_warn_gb = 40
 

@@ -28,9 +28,7 @@ def _checkout(tmp_path: Path, **overrides: object) -> gate_config.GateConfig:
     (tmp_path / "config").mkdir(parents=True, exist_ok=True)
     source = SOURCE
     for key, value in overrides.items():
-        original = next(
-            line for line in source.splitlines() if line.startswith(f"{key} = ")
-        )
+        original = next(line for line in source.splitlines() if line.startswith(f"{key} = "))
         source = source.replace(original, f"{key} = {value}")
     (tmp_path / "config" / "gate.toml").write_text(source, encoding="utf-8")
     return gate_config.load(tmp_path)
@@ -286,3 +284,70 @@ def test_a_reclaim_does_not_delete_the_run_it_is_writing(tmp_path: Path) -> None
 
     assert directory.is_dir(), "the reclaim deleted the run it was writing"
     assert (directory / config.runlog.summary).is_file()
+
+
+# ---------------------------------------------------------------------------
+# The scratch filesystem
+# ---------------------------------------------------------------------------
+
+
+def test_a_full_scratch_filesystem_is_refused_even_with_a_roomy_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The shape that cost a full suite run.
+
+    The checkout had 196GB free and the precondition was happy. The scratch
+    tmpfs had none, and pytest died twenty-five minutes later on ENOSPC.
+    """
+    config = _checkout(tmp_path, required_free_gb=0, required_free_scratch_gb=15)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    # `gettempdir` caches, so the environment cannot steer it once something
+    # has already asked. `tempfile.tempdir` is the supported override.
+    monkeypatch.setattr("tempfile.tempdir", str(scratch))
+    monkeypatch.setattr("capsem.gate.disk._shares_device", lambda _a, _b: False)
+    monkeypatch.setattr("capsem.gate.disk.free_gb", lambda path: 0.5 if path == scratch else 500.0)
+
+    with pytest.raises(GateError) as failure:
+        ensure_space(config, "assets")
+
+    message = str(failure.value)
+    assert str(scratch) in message, "name the filesystem that is actually full"
+    assert "15" in message and "0.5" in message
+
+
+def test_scratch_on_the_checkout_filesystem_is_not_measured_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CI shape, where /tmp is just another directory on the root disk.
+
+    One filesystem must not have to satisfy both floors, or the requirement
+    silently becomes their sum.
+    """
+    config = _checkout(tmp_path, required_free_gb=0, required_free_scratch_gb=10**9)
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    monkeypatch.setattr("capsem.gate.disk.free_gb", lambda _path: 500.0)
+
+    ensure_space(config, "assets")
+
+
+def test_scratch_is_refused_before_anything_is_reclaimed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reclaiming cannot free the scratch filesystem: every reclaimable tree
+    is inside the checkout by construction. So deleting them first would cost
+    the next run its caches and change nothing about the refusal."""
+    config = _checkout(tmp_path, required_free_gb=0, required_free_scratch_gb=15)
+    built = _occupy(config, "target/test-home")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    # `gettempdir` caches, so the environment cannot steer it once something
+    # has already asked. `tempfile.tempdir` is the supported override.
+    monkeypatch.setattr("tempfile.tempdir", str(scratch))
+    monkeypatch.setattr("capsem.gate.disk._shares_device", lambda _a, _b: False)
+    monkeypatch.setattr("capsem.gate.disk.free_gb", lambda path: 0.5 if path == scratch else 500.0)
+
+    with pytest.raises(GateError):
+        ensure_space(config, "assets")
+
+    assert built.exists(), "it has nothing to gain by deleting this"

@@ -19,6 +19,7 @@ of a forty-minute run, having deleted nothing, is the worst of both.
 from __future__ import annotations
 
 import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -90,6 +91,8 @@ def ensure_space(config: GateConfig, phase: str) -> Reclaimed:
     VM asset build wastes the hour, and leaves a half-built tree that the next
     run has to reclaim before it can begin.
     """
+    _ensure_scratch(config, phase)
+
     required = config.disk.required_free_gb
     if free_gb(config.root) >= required:
         return Reclaimed({}, free_gb(config.root), free_gb(config.root))
@@ -103,6 +106,57 @@ def ensure_space(config: GateConfig, phase: str) -> Reclaimed:
         f"{recovered.free_after_gb:.1f}GB after reclaiming "
         f"{recovered.gb_freed:.1f}GB. Free space outside the checkout, or run "
         f"`capsem-gate gc --aggressive` to release the Docker rails too."
+    )
+
+
+def scratch_root() -> Path:
+    """Where the suites do their bulk temporary work.
+
+    Asked of the environment rather than named here, so it follows `TMPDIR`
+    the way every library that allocates a temporary directory already does.
+    """
+    return Path(tempfile.gettempdir())
+
+
+def _shares_device(left: Path, right: Path) -> bool:
+    """Whether two paths sit on the same filesystem."""
+    try:
+        return left.stat().st_dev == right.stat().st_dev
+    except OSError:
+        # Unreadable means unmeasurable, and a precondition that cannot take a
+        # reading must not invent a failure. The checkout's own floor still
+        # applies.
+        return True
+
+
+def _ensure_scratch(config: GateConfig, phase: str) -> None:
+    """Refuse a phase whose scratch filesystem cannot hold its working set.
+
+    Separate from the checkout's floor because it is usually a separate
+    volume, and reclaiming cannot help: every reclaimable tree lives inside
+    the checkout, so there is nothing out here the gate is allowed to remove.
+    Checked first for that reason -- deleting the next run's caches would not
+    change this answer.
+
+    Skipped when scratch and checkout share a filesystem, which is the shape
+    CI runs in. Otherwise one volume would have to satisfy both floors and the
+    real requirement would quietly become their sum.
+    """
+    scratch = scratch_root()
+    if _shares_device(scratch, config.root):
+        return
+
+    required = config.disk.required_free_scratch_gb
+    available = free_gb(scratch)
+    if available >= required:
+        return
+
+    raise GateError(
+        f"{phase} needs {required}GB free on the scratch filesystem {scratch} "
+        f"and there is {available:.1f}GB. It holds the run's transient working "
+        "set, and it is not the filesystem the checkout is on, so reclaiming "
+        "inside the checkout cannot help. Clear it, or point TMPDIR at a "
+        "volume with room."
     )
 
 
