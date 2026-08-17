@@ -20,9 +20,10 @@ from pathlib import Path
 import pytest
 from helpers.gate import RecordingRunner
 
-from capsem.gate import cli  # noqa: F401 - registers every command
 from capsem.gate.command import GateCommand
 from capsem.gate.sourcecommit import SourceCommit
+
+importlib.import_module("capsem.gate.cli")  # registers every command
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "require-clean-worktree.py"

@@ -2044,8 +2044,8 @@ def test_release_dispatch_has_exactly_two_single_purpose_just_recipes() -> None:
 
     assert '\nrelease tag="" channel="stable":' not in f"\n{justfile}"
     assert "\nprepare-release:" not in justfile
-    assert "\nrelease-binaries channel source_commit:" in justfile
-    assert "\nrelease-profile channel profile source_commit:" in justfile
+    assert '\nrelease-binaries channel source_commit force="false":' in justfile
+    assert '\nrelease-profile channel profile source_commit force="false":' in justfile
     assert "scripts/release-binaries.py" in _recipe_block("release-binaries")
     assert "capsem-admin -- release" in _recipe_block("release-profile")
 
