@@ -219,6 +219,7 @@ class RunLogConfig(Strict):
 class DiskConfig(Strict):
     reclaimable: tuple[str, ...]
     required_free_gb: int
+    required_free_scratch_gb: int
     run_footprint_warn_gb: int
 
     @field_validator("reclaimable")
