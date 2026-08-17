@@ -280,3 +280,39 @@ def test_every_complete_rust_toolchain_setup_uses_the_config_owned_targets() -> 
     assert setups
     for path, targets in setups:
         assert {target.strip() for target in targets.split(",")} == expected, path
+
+
+def test_probing_a_tool_that_is_not_installed_yet_is_not_fatal() -> None:
+    """A fresh runner has none of these, which is the whole reason to install.
+
+    `check=False` covers a tool that runs and exits non-zero. It does nothing
+    for one that is not on PATH: `subprocess.run` raises before it can run
+    anything. The macOS release job died exactly here -- FileNotFoundError,
+    'cargo-tauri' -- having never reached the install it was about to do.
+    """
+    module = _load_cargo_tool_installer()
+
+    assert module._probe(("capsem-tool-that-is-not-installed", "--version")) == ""
+
+
+def test_a_tool_that_is_absent_is_installed_rather_than_fatal(monkeypatch) -> None:
+    """Absent and wrong-version mean the same thing to the caller: install it."""
+    module = _load_cargo_tool_installer()
+    tool = next(crate for crate in CONFIG.toolchain.crates if crate.name == "cargo-tauri")
+    installs: list[tuple[str, ...]] = []
+    present = False
+
+    def fake_run(argv, **kwargs):
+        nonlocal present
+        if tuple(argv) == tuple(tool.install):
+            installs.append(tuple(argv))
+            present = True
+            return module.subprocess.CompletedProcess(argv, 0, "", "")
+        if not present:
+            raise FileNotFoundError(2, "No such file or directory", argv[0])
+        return module.subprocess.CompletedProcess(argv, 0, tool.expected, "")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    assert module.main([tool.name]) == 0
+    assert installs == [tuple(tool.install)]

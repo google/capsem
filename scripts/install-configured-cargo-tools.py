@@ -13,7 +13,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _probe(argv: tuple[str, ...]) -> str:
-    result = subprocess.run(argv, capture_output=True, text=True, check=False)
+    """What the tool reports, or nothing when it is not there to report it.
+
+    `check=False` covers a tool that runs and exits non-zero. It does nothing
+    for one that is not on PATH, which never runs at all: `subprocess.run`
+    raises first. Both answers mean the same thing to the caller -- this is
+    not the expected version -- and a fresh runner has none of these, which
+    is the entire reason this script exists.
+    """
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, check=False)
+    except (FileNotFoundError, NotADirectoryError, PermissionError):
+        return ""
     return (result.stdout + result.stderr).strip()
 
 
