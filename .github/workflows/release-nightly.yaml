@@ -58,15 +58,6 @@ jobs:
 
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
 
-      # `bootstrap.sh` does not install these, and the doctor the release
-      # commands run refuses a host without them. Same pinned set and same
-      # action as the fast gate, so a version bump moves both together rather
-      # than leaving this lane on whatever it happened to resolve.
-      - name: Install prebuilt Rust gate tools
-        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
-        with:
-          tool: cargo-audit@0.22.1,cargo-nextest@0.9.137,cargo-llvm-cov@0.8.5,b3sum@1.8.5,cargo-sbom@0.10.0,tauri-cli@2.11.1
-
       - name: Bootstrap complete release host
         env:
           CAPSEM_SKIP_ASSET_CHECK: "1"
