@@ -174,8 +174,8 @@ def test_release_commands_require_source_commit_without_a_parallel_just_surface(
     for retired in retired_commands:
         assert f"\n{retired}:" not in justfile
         assert f"\n{retired} " not in justfile
-    assert "\nrelease-binaries channel source_commit:" in justfile
-    assert "\nrelease-profile channel profile source_commit:" in justfile
+    assert '\nrelease-binaries channel source_commit force="false":' in justfile
+    assert '\nrelease-profile channel profile source_commit force="false":' in justfile
 
 
 def test_binary_release_recipe_uses_one_adversarial_script() -> None:
@@ -189,7 +189,7 @@ def test_binary_release_recipe_uses_one_adversarial_script() -> None:
     assert "scripts/release-binaries.py" in binary_plan
     assert "_build-kernel" not in binary_plan
     assert "_build-rootfs" not in binary_plan
-    assert "\nrelease-binaries channel source_commit:" in justfile
+    assert '\nrelease-binaries channel source_commit force="false":' in justfile
     assert "MUTATED_PATHS" not in script
     assert '"push", "origin", "main"' not in script
     assert '"reset"' not in script
