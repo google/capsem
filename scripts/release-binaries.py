@@ -217,6 +217,42 @@ def _ensure_version_tag(runner: Runner, *, tag: str, channel: str, source_commit
     raise RuntimeError(f"immutable version tag {tag} points at {target}, not {source_commit}")
 
 
+def _release_exists(runner: Runner, tag: str) -> bool:
+    """Whether GitHub already has a release object behind this tag."""
+    try:
+        return bool(_capture(runner, "gh", "release", "view", tag, "--json", "tagName"))
+    except subprocess.CalledProcessError:
+        return False
+
+
+def _discard_claimed_version(runner: Runner, tag: str) -> None:
+    """Give back a version this invocation claimed and could not deliver.
+
+    The tag has to exist before the build, because CI attaches the release to
+    it. Nothing undid it when the build failed, so one failed job burned the
+    version outright: the guard that keeps an immutable identity honest then
+    refuses to reuse a tag pointing at a different commit, and the next
+    attempt has to invent a new number for work that never shipped.
+
+    Only what this run created, and only while nothing is behind it. A tag
+    with a release attached belongs to that release, and removing it would
+    leave the release pointing at nothing -- much worse than the problem.
+
+    Cleanup never raises. Whatever failed the release is the interesting
+    error, and it must not be replaced by an error about tidying up.
+    """
+    if _release_exists(runner, tag):
+        return
+    for argv in (
+        ("git", "push", "origin", f":refs/tags/{tag}"),
+        ("git", "tag", "-d", tag),
+    ):
+        try:
+            runner.run(argv)
+        except (OSError, subprocess.CalledProcessError):
+            continue
+
+
 def _matching_run(
     runner: Runner,
     ref: str,
@@ -417,17 +453,23 @@ def release_binaries(channel: str, source_commit: str, runner: Runner) -> tuple[
     version = _project_version()
     _validate_version_cohort(version)
     tag = f"v{version}"
+    claimed = _remote_version_target(runner, tag) is None
     publish = _ensure_version_tag(runner, tag=tag, channel=channel, source_commit=source_commit)
     ref = SOURCE_REF_TEMPLATE.format(source_commit=source_commit)
-    run_id = _resume_release(
-        runner,
-        ref=ref,
-        source_commit=source_commit,
-        tag=tag,
-        channel=channel,
-        publish=publish,
-        force_rebuild=not publish,
-    )
+    try:
+        run_id = _resume_release(
+            runner,
+            ref=ref,
+            source_commit=source_commit,
+            tag=tag,
+            channel=channel,
+            publish=publish,
+            force_rebuild=not publish,
+        )
+    except BaseException:
+        if claimed:
+            _discard_claimed_version(runner, tag)
+        raise
     return tag, run_id
 
 

@@ -345,3 +345,53 @@ def test_release_notes_prepare_without_claiming_the_tag_exists() -> None:
 def test_release_notes_fail_closed(changelog: str, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         NOTES.render_release_notes(changelog, "1.5.0")
+
+
+def test_a_failed_release_does_not_leave_the_version_burned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tag has to exist before the build, and must not outlive its failure.
+
+    CI attaches the release to the tag, so the tag is pushed first. Nothing
+    undid it when the build failed, and the same guard that protects an
+    immutable identity then refuses to reuse it: one failed macOS step burned
+    v0.6.0, leaving a tag that pointed at a commit and promised artifacts that
+    were never built.
+    """
+    _prepared_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    runner = FakeRunner()
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("the macOS job failed")
+
+    monkeypatch.setattr(RELEASE, "_resume_release", explode)
+
+    with pytest.raises(RuntimeError, match="macOS job failed"):
+        RELEASE.release_binaries("stable", SOURCE, runner)
+
+    assert ("git", "push", "origin", f":refs/tags/{TAG}") in runner.calls, (
+        "a tag this invocation created must not survive the failure that "
+        "followed it, or the version can never be released again"
+    )
+
+
+def test_a_version_that_already_existed_survives_a_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only clean up what this run created. A tag that was already published
+    belongs to whatever published it, and deleting it would be the far worse
+    bug."""
+    _prepared_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    runner = FakeRunner(version_target=SOURCE)
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("the macOS job failed")
+
+    monkeypatch.setattr(RELEASE, "_resume_release", explode)
+
+    with pytest.raises(RuntimeError, match="macOS job failed"):
+        RELEASE.release_binaries("stable", SOURCE, runner)
+
+    assert ("git", "push", "origin", f":refs/tags/{TAG}") not in runner.calls
