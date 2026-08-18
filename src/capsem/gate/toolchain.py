@@ -101,11 +101,16 @@ def sync(config: GateConfig) -> Step:
     )
 
 
-def node(config: GateConfig) -> Step:
-    """Every Node workspace a local gate exercises.
+def node(config: GateConfig, workspaces: tuple[str, ...] | None = None) -> Step:
+    """Every Node workspace a local gate exercises, or the named subset.
 
     CI has separate jobs for docs, site and release-site; a local `just test`
     builds all of them in this one checkout, so all of them are installed here.
+
+    A caller that needs one workspace says so. `pnpm install` reaches the
+    registry for anything its store does not already hold, and a release lane
+    runs inside a network namespace with only loopback -- so installing a
+    workspace nobody warmed is not a slow no-op, it is a failure.
     """
     settings = config.toolchain
     return step(
@@ -116,7 +121,7 @@ def node(config: GateConfig) -> Step:
                 cwd=config.path(workspace),
                 env=dict(settings.node_env),
             )
-            for workspace in settings.node_workspaces
+            for workspace in (workspaces or settings.node_workspaces)
         ],
         # `pnpm install` rewrites a workspace's node_modules in place, and
         # every web build reads it. Two installs overlapping, or an install

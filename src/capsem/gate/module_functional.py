@@ -131,7 +131,9 @@ def functional(
     # release lane, whose prefix carries only tracked files, died on a missing
     # Astro. Idempotent, and the `node_modules` exclusive keeps the two
     # installs in a candidate plan from overlapping.
-    ready = phase.add(toolchain.node(config), after=(agreed,))
+    ready = phase.add(
+        toolchain.node(config, config.functional.node_workspaces), after=(agreed,)
+    )
 
     # A release lane was handed signed binaries; signing them again would
     # replace the bytes the manifest selected with locally built ones.

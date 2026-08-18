@@ -1958,6 +1958,12 @@ integration_script = "scripts/integration_test.py"
 binary = "target/debug/capsem"
 assets_dir = "assets"
 config_root = "target/config"
+# The Node workspaces these suites render, and only those. `toolchain.node`
+# installs every workspace the local gate exercises, which is more than this
+# module needs and more than a release lane has warmed: the docs and site
+# stores are not populated there, so installing them reached the network from
+# inside a namespace that has none.
+node_workspaces = ["release-site"]
 profiles_subdir = "profiles"
 # Overridable so a release lane can point the same proof at pulled artifacts
 # instead of source-built ones.

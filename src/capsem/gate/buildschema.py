@@ -52,6 +52,7 @@ class FunctionalConfig(Strict):
     assets_dir: str
     config_root: str
     profiles_subdir: str
+    node_workspaces: tuple[str, ...]
     binary_variable: str
     assets_variable: str
     config_root_variable: str
