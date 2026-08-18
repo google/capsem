@@ -558,27 +558,15 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
                     "text/event-stream",
                 )
             } else if path == "/v1internal:listExperiments" {
-                json_response(load_google_fixture("list_experiments.json").unwrap_or_else(|_| {
-                    json!({"experimentIds": [], "flags": []})
-                }))
+                google_fixture_response("list_experiments.json")
             } else if path == "/v1internal:loadCodeAssist" {
-                json_response(load_google_fixture("load_code_assist.json").unwrap_or_else(|_| {
-                    json!({
-                        "currentTier": {"id": "free-tier"},
-                        "cloudaicompanionProject": "capsem-mock-project",
-                        "allowedTiers": []
-                    })
-                }))
+                google_fixture_response("load_code_assist.json")
             } else if path == "/v1internal:fetchAvailableModels" {
-                json_response(load_google_fixture("available_models.json").unwrap_or_else(|_| {
-                    json!({"models": {}, "defaultAgentModelId": "gemini-3.5-flash-low"})
-                }))
+                google_fixture_response("available_models.json")
             } else if path == "/v1internal:fetchUserInfo" {
                 json_response(json!({"userSettings": {"telemetryEnabled": false}, "regionCode": "US"}))
             } else if path == "/v1internal:retrieveUserQuotaSummary" {
-                json_response(load_google_fixture("quota_summary.json").unwrap_or_else(|_| {
-                    json!({"groups": []})
-                }))
+                google_fixture_response("quota_summary.json")
             } else if path == "/v1internal:setUserSettings" {
                 json_response(json!({"userSettings": {"telemetryEnabled": false}}))
             } else if path == "/v1internal:fetchAdminControls" {
@@ -1007,13 +995,55 @@ event: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n",
     ))
 }
 
+/// The code-assist fixtures, carried in the binary rather than read at run time.
+///
+/// These used to be read through `CARGO_MANIFEST_DIR`, which is an absolute
+/// path fixed at compile time into whichever tree built the binary. A gate run
+/// builds inside a private prefix that is reclaimed afterwards, so a cached
+/// binary went looking in a directory that no longer existed. The read failed,
+/// the caller turned the error into an empty model catalog, and `agy` rejected
+/// a model nobody had offered it -- one confusing failure, three steps from its
+/// cause, and only when the cache happened to be warm.
+const GOOGLE_FIXTURES: &[(&str, &str)] = &[
+    (
+        "available_models.json",
+        include_str!("../../../tests/fixtures/protocols/google_code_assist/available_models.json"),
+    ),
+    (
+        "list_experiments.json",
+        include_str!("../../../tests/fixtures/protocols/google_code_assist/list_experiments.json"),
+    ),
+    (
+        "load_code_assist.json",
+        include_str!("../../../tests/fixtures/protocols/google_code_assist/load_code_assist.json"),
+    ),
+    (
+        "quota_summary.json",
+        include_str!("../../../tests/fixtures/protocols/google_code_assist/quota_summary.json"),
+    ),
+];
+
+fn google_fixture_response(name: &str) -> Response<RespBody> {
+    // A fixture that will not parse is a defect in this repository, not an
+    // upstream condition worth simulating. Answering 500 with the reason keeps
+    // the failure where it belongs instead of handing the client a plausible
+    // empty catalog to be confused by later.
+    match load_google_fixture(name) {
+        Ok(value) => json_response(value),
+        Err(error) => response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Bytes::from(format!("mock fixture unavailable: {error:#}")),
+            "text/plain",
+        ),
+    }
+}
+
 fn load_google_fixture(name: &str) -> Result<Value> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/protocols/google_code_assist")
-        .join(name);
-    let text =
-        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
+    let text = GOOGLE_FIXTURES
+        .iter()
+        .find_map(|(fixture, text)| (*fixture == name).then_some(*text))
+        .with_context(|| format!("unknown google code-assist fixture: {name}"))?;
+    serde_json::from_str(text).with_context(|| format!("parse {name}"))
 }
 
 fn google_code_assist_stream(payload: Value) -> Bytes {
