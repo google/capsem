@@ -83,8 +83,8 @@ def export(prefix: Path, destination: Path, config: GateConfig) -> None:
 
 
 def root(config: GateConfig) -> Path:
-    """Where lent output lives between runs."""
-    return Path(config.prefix.build_cache).expanduser()
+    """Where lent output lives between runs, beside the prefix root."""
+    return Path(config.prefix.build_cache.format(parent=config.prefix.parent)).expanduser()
 
 
 def _move(origin: Path, destination: Path) -> None:

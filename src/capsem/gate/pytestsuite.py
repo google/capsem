@@ -2,7 +2,7 @@
 
 `_test-candidate-run` invoked pytest eleven times and `smoke` five more, each
 assembling its own flags. They agreed by hand: the same `--tb=short`, the same
-`--maxfail=1`, the same four `--ignore` directories, the same
+`--maxfail` budget, the same four `--ignore` directories, the same
 `CAPSEM_REQUIRE_ARTIFACTS=1`, spelled out again each time. Sixteen copies of an
 agreement is sixteen opportunities for one of them to be slightly different,
 and no way to notice which.

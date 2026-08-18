@@ -450,11 +450,7 @@ def test_a_finished_run_leaves_no_prefix(tmp_path: Path, source: Path) -> None:
     from capsem.gate import prefix, snapshot
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={
-            "prefix": _config().prefix.model_copy(
-                update={"parent": str(tmp_path), "build_cache": str(tmp_path / "cache")}
-            )
-        }
+        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path)})}
     )
     target = tmp_path / "abcd1234"
     snapshot.populate(source, target, config)
@@ -477,11 +473,7 @@ def test_reclaim_refuses_anything_that_is_not_a_prefix(tmp_path: Path) -> None:
     from capsem.gate.errors import GateError
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={
-            "prefix": _config().prefix.model_copy(
-                update={"parent": str(tmp_path), "build_cache": str(tmp_path / "cache")}
-            )
-        }
+        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path)})}
     )
     outsider = tmp_path.parent / "not-a-prefix"
     outsider.mkdir()
@@ -673,11 +665,7 @@ def test_a_sweep_keeps_the_newest_and_reclaims_the_rest(tmp_path: Path) -> None:
     from capsem.gate import prefix
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={
-            "prefix": _config().prefix.model_copy(
-                update={"parent": str(tmp_path), "keep": 1, "build_cache": str(tmp_path / "cache")}
-            )
-        }
+        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
     )
     older, newer = tmp_path / "aaaaaaaa", tmp_path / "bbbbbbbb"
     for path in (older, newer):
@@ -722,11 +710,7 @@ def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
     reused = tmp_path / "aaaaaaaa"
     reused.mkdir()
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={
-            "prefix": _config().prefix.model_copy(
-                update={"parent": str(tmp_path), "keep": 1, "build_cache": str(tmp_path / "cache")}
-            )
-        }
+        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
     )
     reclaimed: list[Path] = []
 
@@ -762,11 +746,7 @@ def test_a_fresh_successful_prefix_is_still_reclaimed(
 
     fresh = tmp_path / "bbbbbbbb"
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={
-            "prefix": _config().prefix.model_copy(
-                update={"parent": str(tmp_path), "keep": 1, "build_cache": str(tmp_path / "cache")}
-            )
-        }
+        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
     )
     reclaimed: list[Path] = []
 
@@ -802,11 +782,7 @@ def test_reclaim_does_not_report_success_on_a_tree_it_left_behind(
     from capsem.gate.errors import GateError
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={
-            "prefix": _config().prefix.model_copy(
-                update={"parent": str(tmp_path), "keep": 1, "build_cache": str(tmp_path / "cache")}
-            )
-        }
+        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
     )
     stubborn = tmp_path / "cccccccc"
     stubborn.mkdir()

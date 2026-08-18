@@ -39,7 +39,6 @@ def _relocated(tmp_path: Path):
     settings = config.prefix.model_copy(
         update={
             "parent": str(tmp_path / "prefixes"),
-            "build_cache": str(tmp_path / "cache"),
         }
     )
     return config.model_copy(update={"prefix": settings})
@@ -109,7 +108,7 @@ def test_the_cache_is_not_where_prefixes_are_swept(tmp_path: Path) -> None:
     it recognizes a prefix by where it is rather than by what it is called.
     """
     config = _config()
-    cache = Path(config.prefix.build_cache).expanduser().resolve()
+    cache = buildcache.root(config).resolve()
     parent = Path(config.prefix.parent).expanduser().resolve()
     assert parent != cache and parent not in cache.parents, (
         f"the lent build output at {cache} lives under the prefix root "

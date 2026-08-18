@@ -208,8 +208,9 @@ def test_the_timing_suite_leaves_the_recorded_baseline_to_its_own_step() -> None
 
 def test_a_timing_suite_does_not_stop_at_the_first_failure() -> None:
     """One slow probe should not hide the other five."""
-    assert "--maxfail=1" not in _argv(pytestsuite.timing(CONFIG, profile="code"))
-    assert "--maxfail=1" in _argv(pytestsuite.broad(CONFIG, profile="code"))
+    budget = CONFIG.suites.pytest.stop_at_first
+    assert budget not in _argv(pytestsuite.timing(CONFIG, profile="code"))
+    assert budget in _argv(pytestsuite.broad(CONFIG, profile="code"))
 
 
 def test_collection_is_cache_free_strict_and_artifact_independent() -> None:

@@ -2143,12 +2143,19 @@ after_profile_inputs = "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS"
 parent = "~/.cg"
 lease_template = ".{identity}.lock"
 
-# Where `[prefix] lent` output lives between runs. Beside the prefix root and
-# never inside it: `sweep` reclaims every directory under `parent` except the
-# newest `keep`, and it recognizes a prefix by where it is rather than by what
-# it is called, so a cache underneath would survive exactly one run. Same
-# filesystem, because lending is a `rename` -- see `buildcache._move`.
-build_cache = "~/.cg-build"
+# Where `[prefix] lent` output lives between runs, written as a position
+# relative to the prefix root rather than as a second absolute path.
+#
+# Beside that root and never inside it: `sweep` reclaims every directory under
+# `parent` except the newest `keep`, and it recognizes a prefix by where it is
+# rather than by what it is called, so a cache underneath would survive exactly
+# one run. On the same filesystem, because lending is a `rename`.
+#
+# `{parent}` rather than a path of its own because the two must move together.
+# Three separate tests relocated the prefix root to a temporary directory,
+# left the cache on the real filesystem, and failed on a cross-device rename
+# that had nothing to do with what they were testing.
+build_cache = "{parent}-build"
 name_length = 8
 
 # How many prefixes survive a sweep. A failed run keeps its tree so it can be

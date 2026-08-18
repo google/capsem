@@ -237,7 +237,7 @@ def test_full_gate_serializes_host_snapshot_files_without_dropping_coverage() ->
         assert f"--ignore={path}" in broad, f"{path} runs twice"
         assert path in snapshot.argv(config)
 
-    assert "--maxfail=1" in broad
+    assert config.suites.pytest.stop_at_first in broad
     assert [e.name for e in snapshot.contends] == ["host_service"]
     assert not snapshot.parallel
 

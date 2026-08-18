@@ -34,7 +34,6 @@ def _relocated(tmp_path: Path):
     settings = config.prefix.model_copy(
         update={
             "parent": str(tmp_path / "prefixes"),
-            "build_cache": str(tmp_path / "cache"),
         }
     )
     return config.model_copy(update={"prefix": settings})

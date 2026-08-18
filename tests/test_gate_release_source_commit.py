@@ -171,8 +171,8 @@ def test_release_cli_requires_the_explicit_source_commit(argv: list[str], slot: 
 def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from capsem.gate import buildcache, prefix
     from capsem.gate import config as gate_config
-    from capsem.gate import prefix
     from capsem.gate.sourcecommit import SourceCommit
 
     commit = SourceCommit("0123456789abcdef" * 2 + "01234567")
@@ -198,7 +198,7 @@ def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
 
     monkeypatch.setattr(prefix, "sweep", lambda _config: [])
     monkeypatch.setattr(prefix.snapshot, "populate_commit", populate)
-    monkeypatch.setattr(prefix, "export", lambda *args: None)
+    monkeypatch.setattr(buildcache, "export", lambda *args: None)
 
     assert (
         prefix.run_from_private_copy(

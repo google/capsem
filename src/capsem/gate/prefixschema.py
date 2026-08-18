@@ -57,6 +57,19 @@ class PrefixConfig(Strict):
             )
         return self
 
+    @field_validator("build_cache")
+    @classmethod
+    def _cache_is_positioned_against_the_prefix_root(cls, template: str) -> str:
+        """One `{parent}`, so the cache cannot be relocated independently.
+
+        They have to move together: a test that points the prefix root at a
+        temporary directory and leaves the cache on the real filesystem gets a
+        cross-device rename, which is a failure about neither of them.
+        """
+        if template.count("{parent}") != 1:
+            raise ValueError("build_cache must position itself against {parent} exactly once")
+        return template
+
     @model_validator(mode="after")
     def _cache_is_not_swept_as_a_prefix(self) -> PrefixConfig:
         """The lent output must not live where prefixes are reclaimed from.
@@ -65,7 +78,7 @@ class PrefixConfig(Strict):
         newest `keep`, and it identifies a prefix by being there rather than by
         its name. A cache underneath would be deleted on the second run.
         """
-        cache = PurePosixPath(self.build_cache)
+        cache = PurePosixPath(self.build_cache.format(parent=self.parent))
         parent = PurePosixPath(self.parent)
         if cache == parent or parent in cache.parents:
             raise ValueError(
