@@ -1914,7 +1914,14 @@ collection_flags = ["--collect-only", "-qq", "-p", "no:cacheprovider", "--strict
 # One spelling of "run pytest", so sixteen call sites cannot drift into
 # sixteen slightly different opinions about --tb, --maxfail and -n.
 base_flags = ["-v", "--tb=short"]
-stop_at_first = "--maxfail=1"
+# A failure budget, not a hair trigger. `--maxfail=1` turned every run into one
+# fact: the release-contracts phase, which is the one place this was already
+# off, reported four failures in a single eleven-minute run and all four were
+# fixed in one pass -- four runs and three quarters of an hour if it had stopped
+# at the first. Unbounded is the opposite mistake: a broken VM or service fails
+# every remaining test the same way and spends an hour restating it. Five is
+# enough to show a pattern and few enough to stop a cascade.
+stop_at_first = "--maxfail=5"
 parallel_flags = ["-n", "4", "--dist=loadfile"]
 coverage_flags = ["--cov=src/capsem", "--cov-report=xml:codecov-python.xml"]
 

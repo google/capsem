@@ -393,7 +393,6 @@ def test_export_materializes_the_selected_assets_without_copying_current(
     both materializes a second multi-gigabyte asset tree.
     """
     from capsem.gate import config as gate_config
-    from capsem.gate import prefix
 
     checkout = tmp_path / "checkout"
     private = tmp_path / "private"
@@ -425,7 +424,9 @@ def test_export_materializes_the_selected_assets_without_copying_current(
     old_config_manifest.write_text('{"stale":true}\n')
     (old_config / "retired").mkdir()
 
-    prefix.export(private, checkout, gate_config.load(private))
+    from capsem.gate import buildcache
+
+    buildcache.export(private, checkout, gate_config.load(private))
 
     assert not old.is_symlink()
     assert not (old / "stale").exists()
@@ -449,7 +450,11 @@ def test_a_finished_run_leaves_no_prefix(tmp_path: Path, source: Path) -> None:
     from capsem.gate import prefix, snapshot
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path)})}
+        update={
+            "prefix": _config().prefix.model_copy(
+                update={"parent": str(tmp_path), "build_cache": str(tmp_path / "cache")}
+            )
+        }
     )
     target = tmp_path / "abcd1234"
     snapshot.populate(source, target, config)
@@ -472,7 +477,11 @@ def test_reclaim_refuses_anything_that_is_not_a_prefix(tmp_path: Path) -> None:
     from capsem.gate.errors import GateError
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path)})}
+        update={
+            "prefix": _config().prefix.model_copy(
+                update={"parent": str(tmp_path), "build_cache": str(tmp_path / "cache")}
+            )
+        }
     )
     outsider = tmp_path.parent / "not-a-prefix"
     outsider.mkdir()
@@ -664,7 +673,11 @@ def test_a_sweep_keeps_the_newest_and_reclaims_the_rest(tmp_path: Path) -> None:
     from capsem.gate import prefix
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
+        update={
+            "prefix": _config().prefix.model_copy(
+                update={"parent": str(tmp_path), "keep": 1, "build_cache": str(tmp_path / "cache")}
+            )
+        }
     )
     older, newer = tmp_path / "aaaaaaaa", tmp_path / "bbbbbbbb"
     for path in (older, newer):
@@ -677,6 +690,18 @@ def test_a_sweep_keeps_the_newest_and_reclaims_the_rest(tmp_path: Path) -> None:
     assert reclaimed == [older]
     assert not older.exists()
     assert newer.is_dir(), "the newest survives, so a failed run can still be resumed"
+
+
+def _own_checkout(tmp_path: Path) -> Path:
+    """An empty checkout, so a driven run has nothing expensive to adopt.
+
+    A run fills an empty cache from what the checkout exported, and this
+    repository's build trees are gigabytes. Six unit tests pointed at the real
+    checkout copied them six times and filled a 32 GiB tmpfs.
+    """
+    checkout = tmp_path / "checkout"
+    checkout.mkdir(exist_ok=True)
+    return checkout
 
 
 def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
@@ -697,19 +722,27 @@ def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
     reused = tmp_path / "aaaaaaaa"
     reused.mkdir()
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
+        update={
+            "prefix": _config().prefix.model_copy(
+                update={"parent": str(tmp_path), "keep": 1, "build_cache": str(tmp_path / "cache")}
+            )
+        }
     )
     reclaimed: list[Path] = []
 
     class SuccessfulRunner:
         def note(self, message: str) -> None:
-            assert message == f"prefix kept for resuming: {reused}"
+            if message.startswith("prefix kept"):
+                assert message == f"prefix kept for resuming: {reused}"
 
         def run(self, *args, **kwargs) -> int:
             return 0
 
+    from capsem.gate import buildcache
+
+    config = config.model_copy(update={"root": _own_checkout(tmp_path)})
     monkeypatch.setattr(prefix.snapshot, "refresh", lambda *args: None)
-    monkeypatch.setattr(prefix, "export", lambda *args: None)
+    monkeypatch.setattr(buildcache, "export", lambda *args: None)
     monkeypatch.setattr(prefix, "reclaim", lambda _config, path: reclaimed.append(path))
 
     assert (
@@ -729,21 +762,29 @@ def test_a_fresh_successful_prefix_is_still_reclaimed(
 
     fresh = tmp_path / "bbbbbbbb"
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
+        update={
+            "prefix": _config().prefix.model_copy(
+                update={"parent": str(tmp_path), "keep": 1, "build_cache": str(tmp_path / "cache")}
+            )
+        }
     )
     reclaimed: list[Path] = []
 
     class SuccessfulRunner:
         def note(self, message: str) -> None:
-            raise AssertionError(f"fresh success should not be retained: {message}")
+            if message.startswith("prefix kept"):
+                raise AssertionError(f"fresh success should not be retained: {message}")
 
         def run(self, *args, **kwargs) -> int:
             return 0
 
+    from capsem.gate import buildcache
+
+    config = config.model_copy(update={"root": _own_checkout(tmp_path)})
     monkeypatch.setattr(prefix, "allocate", lambda *args: fresh)
     monkeypatch.setattr(prefix, "sweep", lambda *args: [])
     monkeypatch.setattr(prefix.snapshot, "populate", lambda *args: fresh.mkdir())
-    monkeypatch.setattr(prefix, "export", lambda *args: None)
+    monkeypatch.setattr(buildcache, "export", lambda *args: None)
     monkeypatch.setattr(prefix, "reclaim", lambda _config, path: reclaimed.append(path))
 
     assert prefix.run_from_private_copy(SuccessfulRunner(), config, ["candidate"]) == 0
@@ -761,7 +802,11 @@ def test_reclaim_does_not_report_success_on_a_tree_it_left_behind(
     from capsem.gate.errors import GateError
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
-        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
+        update={
+            "prefix": _config().prefix.model_copy(
+                update={"parent": str(tmp_path), "keep": 1, "build_cache": str(tmp_path / "cache")}
+            )
+        }
     )
     stubborn = tmp_path / "cccccccc"
     stubborn.mkdir()
@@ -886,7 +931,6 @@ def test_exporting_a_run_cannot_write_through_a_symlink(tmp_path: Path) -> None:
     exists, so a contract about the flag would have accepted a fix that fails
     every export.
     """
-    from capsem.gate import prefix
 
     config = _config()
     runs = config.runlog.root
@@ -901,7 +945,9 @@ def test_exporting_a_run_cannot_write_through_a_symlink(tmp_path: Path) -> None:
     (host / runs / "run-old" / "run.jsonl").write_text("an older, unrelated run\n")
     (host / runs / "latest").symlink_to("run-old")
 
-    prefix.export(private, host, config)
+    from capsem.gate import buildcache
+
+    buildcache.export(private, host, config)
 
     assert (host / runs / "run-old" / "run.jsonl").read_text() == "an older, unrelated run\n", (
         "the export wrote through the destination `latest` symlink and "

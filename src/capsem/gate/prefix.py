@@ -34,7 +34,6 @@ from pathlib import Path
 from . import buildcache, snapshot
 from .config import GateConfig
 from .errors import GateError, PrefixBusy
-from .filesystem import copy_tree, merge_tree, remove
 from .prefixlease import lease, parent_dir
 from .sourcecommit import SourceCommit, require_detached_checkout
 
@@ -115,35 +114,6 @@ def allocate(config: GateConfig, identity: str) -> Path:
     if path.exists():
         raise GateError(f"prefix {path} already exists, so this run has no private tree")
     return path
-
-
-def export(prefix: Path, destination: Path, config: GateConfig) -> None:
-    """Bring back what the run produced, before the copy is reclaimed.
-
-    Anything built inside the prefix and not named in `[prefix] exports` dies
-    with it. `packages/` is the one that matters most: the signed `.pkg` a
-    release publishes is built inside the run, so omitting it is a gate that
-    passes with nothing to ship.
-    """
-    exact_trees = {config.functional.assets_dir, config.functional.config_root}
-    for relative in config.prefix.exports:
-        origin = prefix / relative
-        if not origin.exists():
-            continue
-        target = destination / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if origin.is_dir():
-            if relative in exact_trees:
-                remove(target)
-                # Follow a top-level profile selector, but retain selectors
-                # inside the exported tree such as assets/current. The latter
-                # is a relative link in the tree and materializing it copies a
-                # multi-gigabyte architecture for no new bytes.
-                copy_tree(origin, target)
-            else:
-                merge_tree(origin, target)
-        else:
-            shutil.copy2(origin, target)
 
 
 def source_checkout(config: GateConfig) -> Path | None:
@@ -239,8 +209,16 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
         snapshot.populate_commit(config.root, path, config, commit)
     else:
         snapshot.populate(config.root, path, config)
-    if not clean and (lent := buildcache.lend(config, path)):
-        runner.note(f"lent build output to {path.name}: {', '.join(lent)}")
+    if not clean:
+        # Before the lend, and only when the cache has nothing of its own: the
+        # checkout holds what the last completed run exported, so a cache that
+        # is merely empty is not the same as no previous work. Without this the
+        # first run after a reclaim pays the full cold cost to fill a cache it
+        # could have started from.
+        if adopted := buildcache.adopt(config, config.root):
+            runner.note(f"adopted exported output from the checkout: {', '.join(adopted)}")
+        if lent := buildcache.lend(config, path):
+            runner.note(f"lent build output to {path.name}: {', '.join(lent)}")
     child_env = {config.environment.source_checkout: str(config.root)}
     if commit is not None:
         child_env[config.environment.source_commit] = str(commit)
@@ -250,7 +228,7 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
         env=child_env,
         check=False,
     )
-    export(path, config.root, config)
+    buildcache.export(path, config.root, config)
     # After the export and before either outcome: a kept prefix is resumed into
     # and will be lent the same trees back, and a reclaimed one salvages at the
     # door anyway. Doing it here means a run that is killed after this point

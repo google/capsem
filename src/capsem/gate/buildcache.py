@@ -1,4 +1,4 @@
-"""Build output that outlives the private copy it was produced in.
+"""What a run's output does when the run ends.
 
 A run works in a private prefix and reclaims it afterwards, which is the whole
 isolation grant -- and it is also why `resume.py` opens by saying that "a fresh
@@ -9,7 +9,13 @@ nothing with the run before it. Three consecutive runs carried zero steps while
 a 42 GiB `target/` from the previous one sat on the same disk, waiting to be
 deleted by the next sweep.
 
-The fix is to stop treating build output as something a prefix owns. It is a
+Three things happen to that output, and they are one subject: `export` brings
+what a release publishes back into the checkout, `salvage` keeps the expensive
+trees for the next run, and `lend` hands them over. All three run where `prefix`
+runs -- before the journal exists and outside the machine lock.
+
+The fix for the cold rebuilds is to stop treating build output as something a
+prefix owns. It is a
 property of the *machine* -- one gate runs at a time, enforced by `flock`, so
 there is exactly one writer and no contention to arbitrate. The cache lends the
 outputs to whichever prefix is about to run and takes them back when it ends,
@@ -39,11 +45,41 @@ runner is cold.
 from __future__ import annotations
 
 import errno
+import shutil
 from pathlib import Path
 
 from .config import GateConfig
 from .errors import GateError
-from .filesystem import remove
+from .filesystem import copy_tree, merge_tree, remove
+
+
+def export(prefix: Path, destination: Path, config: GateConfig) -> None:
+    """Bring back what the run produced, before the copy is reclaimed.
+
+    Anything built inside the prefix and not named in `[prefix] exports` dies
+    with it. `packages/` is the one that matters most: the signed `.pkg` a
+    release publishes is built inside the run, so omitting it is a gate that
+    passes with nothing to ship.
+    """
+    exact_trees = {config.functional.assets_dir, config.functional.config_root}
+    for relative in config.prefix.exports:
+        origin = prefix / relative
+        if not origin.exists():
+            continue
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if origin.is_dir():
+            if relative in exact_trees:
+                remove(target)
+                # Follow a top-level profile selector, but retain selectors
+                # inside the exported tree such as assets/current. The latter
+                # is a relative link in the tree and materializing it copies a
+                # multi-gigabyte architecture for no new bytes.
+                copy_tree(origin, target)
+            else:
+                merge_tree(origin, target)
+        else:
+            shutil.copy2(origin, target)
 
 
 def root(config: GateConfig) -> Path:
@@ -110,9 +146,51 @@ def salvage(config: GateConfig, prefix_path: Path) -> list[str]:
         origin, destination = prefix_path / relative, cache / relative
         if not origin.exists() or destination.exists():
             continue
-        _move(origin, destination)
+        # What the link points at, never the link. A prefix reaches its assets
+        # through links -- `target/ironbank-assets/<profile>/assets` is one, and
+        # `[prefix] exports` says a top-level selector may be another -- and a
+        # moved link points into a prefix that is about to be deleted. The
+        # result reads as a directory of zero bytes to `du` and as absent to
+        # `Path.exists()`, which is how this cache spent a night looking full
+        # and behaving empty.
+        if origin.is_symlink():
+            _move(origin.resolve(), destination)
+            origin.unlink()
+        else:
+            _move(origin, destination)
         taken.append(relative)
     return taken
+
+
+def adopt(config: GateConfig, checkout: Path) -> list[str]:
+    """Fill an empty cache from the checkout, and say what it took.
+
+    An empty cache is not the same as no previous work. `[prefix] exports`
+    copies these trees back into the checkout at the end of every run, so the
+    checkout holds the last completed run's output whether or not the cache
+    does -- and without this the cache only fills after a *finished* run, while
+    the run that fills it pays the full cold cost.
+
+    That is not hypothetical. This landed, several runs in a row were killed or
+    were source-only, and the cache sat empty through all of them while a
+    3.2 GiB tree the gate itself had exported sat in the checkout.
+
+    Copied rather than moved, unlike everywhere else here: the checkout is the
+    operator's, `just shell` boots from that tree, and taking it away to save a
+    copy would be the gate helping itself to something it does not own. Skipped
+    entirely when the cache already holds a tree, because that one came from a
+    run and the checkout's came from an export that may be older.
+    """
+    cache = root(config)
+    adopted: list[str] = []
+    for relative in config.prefix.lent:
+        origin, destination = checkout / relative, cache / relative
+        if not origin.is_dir() or destination.exists():
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        copy_tree(origin, destination)
+        adopted.append(relative)
+    return adopted
 
 
 def discard(config: GateConfig) -> None:
