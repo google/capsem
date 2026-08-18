@@ -7674,6 +7674,17 @@ struct ReleaseChannelProfileDocument {
     revision: String,
     #[serde(default)]
     status: String,
+    /// The binary floor the graph profile declares.
+    ///
+    /// Read here because the runtime manifest this projects into has the same
+    /// field under another name, and dropping it produced a manifest that
+    /// re-authoring a channel from could not name a floor at all: the glow-up
+    /// hands its paired runtime manifest back to `assets channel build`, which
+    /// copies `min_binary` onto every graph profile as `min_capsem_version`,
+    /// and `record-binary` then refuses an empty semver. That is the whole
+    /// release-lane glow-up, failing on a field nobody had carried across.
+    #[serde(default)]
+    min_capsem_version: String,
     #[serde(default)]
     architectures: Vec<ReleaseChannelProfileArchitecture>,
 }
@@ -7819,7 +7830,9 @@ fn profile_materialize_manifest_from_release_channel(
                     date: String::new(),
                     deprecated: false,
                     deprecated_date: None,
-                    min_binary: String::new(),
+                    // The graph profile's declared floor, under the name a
+                    // runtime manifest gives it. See the field's own comment.
+                    min_binary: profile.min_capsem_version.clone(),
                     arches: arch_entries,
                 },
             )]),

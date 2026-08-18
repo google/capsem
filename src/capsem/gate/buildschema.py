@@ -43,6 +43,18 @@ class ModulesConfig(Strict):
     release_bin_dir: str
     default_bin_dir: str
     channel_switch_cleared: tuple[str, ...]
+    #: The local rehearsal of the release lane's pulled path. Every path is
+    #: named here rather than derived from `rehearsal_work_dir`, because the
+    #: plan and the script both have to agree on all four and a shared root
+    #: with two independent join rules is two spellings of one fact.
+    rehearsal_script: str
+    rehearsal_channel: str
+    rehearsal_work_dir: str
+    rehearsal_inputs_dir: str
+    rehearsal_package: str
+    rehearsal_content_root: str
+    rehearsal_glowup_work_dir: str
+    rehearsal_channel_switch_work_dir: str
 
 
 class FunctionalConfig(Strict):

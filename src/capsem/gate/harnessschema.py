@@ -29,6 +29,7 @@ from pydantic import (
 from .configschema import Strict
 from .digestschema import DigestConfig, LedgerConfig
 from .exclusions import Exclusion, HashedExclusion
+from .prefixschema import PrefixConfig as PrefixConfig
 from .sandboxschema import SandboxConfig as SandboxConfig
 from .sourcecontractschema import ScriptSizeConfig
 from .timingschema import TimingRegressionConfig as TimingRegressionConfig
@@ -237,39 +238,6 @@ class DiskConfig(Strict):
             if parts.is_absolute() or ".." in parts.parts:
                 raise ValueError(f"{path!r} must be relative and must not escape upwards")
         return paths
-
-
-class PrefixConfig(Strict):
-    """Where a run's private copy of the checkout lives, and what it carries."""
-
-    parent: str
-    lease_template: str
-    name_length: int
-    keep: int
-    carried: tuple[str, ...]
-    exports: tuple[str, ...]
-
-    @field_validator("lease_template")
-    @classmethod
-    def _lease_is_one_identity_filename(cls, template: str) -> str:
-        if template.count("{identity}") != 1 or PurePosixPath(template).name != template:
-            raise ValueError("lease_template must be one filename containing {identity} once")
-        return template
-
-    @model_validator(mode="after")
-    def _paths_stay_inside(self) -> PrefixConfig:
-        """`carried` and `exports` name places inside a checkout.
-
-        An absolute entry would copy something the run does not own; a `..`
-        entry would write outside the prefix on export, which is the one
-        direction a private copy must never reach.
-        """
-        for group in (self.carried, self.exports):
-            for path in group:
-                parts = PurePosixPath(path)
-                if parts.is_absolute() or ".." in parts.parts:
-                    raise ValueError(f"{path!r} must be relative and must not escape upwards")
-        return self
 
 
 class WorkspaceConfig(Strict):

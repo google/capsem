@@ -117,9 +117,16 @@ def pulled_artifacts(
     input_dir: str | Path,
     profile: str | None,
     after: tuple[Step, ...] = (),
+    phase_name: str = "artifacts",
 ) -> Step:
-    """Verify pulled inputs, and boot the one profile when one is selected."""
-    phase = plan.phase("artifacts")
+    """Verify pulled inputs, and boot the one profile when one is selected.
+
+    `phase_name` is how the local rehearsal keeps its copy of this step apart
+    from the candidate's own `artifacts` phase, which in that plan is the
+    build. Two steps cannot share a label, and a rehearsal that had to be
+    renamed by hand would be a rehearsal of something else.
+    """
+    phase = plan.phase(phase_name)
     settings = config.modules
     verify = phase.add(
         step(

@@ -1740,6 +1740,17 @@ fn profile_materialize_release_channel_manifest_uses_profile_image_urls() {
     .expect("converted release channel manifest is raw v2");
     assert_eq!(converted.format, 2);
     assert_eq!(converted.assets.current, "2030.0101.1");
+    // The graph profile's `min_capsem_version` reaches the runtime manifest as
+    // `min_binary`. Dropped, it broke the release lane's whole glow-up: that
+    // step hands its paired runtime manifest back to `assets channel build`,
+    // which copies `min_binary` onto every graph profile as
+    // `min_capsem_version`, and `record-binary` refuses an empty semver.
+    assert_eq!(
+        converted.assets.releases["2030.0101.1"].min_binary,
+        "1.5.0",
+        "the graph profile declares a binary floor and the runtime manifest \
+         has to carry it, or re-authoring a channel names no floor at all"
+    );
     let converted_assets = converted.assets.releases["2030.0101.1"]
         .arches
         .get("arm64")

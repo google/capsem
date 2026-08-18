@@ -24,6 +24,7 @@ from . import (
     imagebuild,
     initrd,
     module_contracts,
+    module_rehearsal,
     staticmodule,
     testmodules,
     vmmodules,
@@ -105,6 +106,13 @@ def compose_modules(
         isolated_assets=not qualification.pulled,
     )
     glowup = vmmodules.glowup(plan, config, qualification=qualification, after=(functional,))
+    # After the glow-up, not instead of it. The local lane's install proof runs
+    # the package it built; this runs the same package again through the five
+    # steps only a release lane reaches, against a cohort resolved by digest.
+    # A release lane skips it -- there it is not a rehearsal, it is the lane.
+    rehearsed = module_rehearsal.rehearsal(
+        plan, config, qualification=qualification, after=(glowup,)
+    )
 
     return plan.add(
         step(
@@ -113,7 +121,7 @@ def compose_modules(
             kind=Kind.STATIC_TEST,
             speed=Speed.FAST,
         ),
-        after=(glowup,),
+        after=(rehearsed,),
     )
 
 

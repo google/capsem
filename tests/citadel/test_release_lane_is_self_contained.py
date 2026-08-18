@@ -265,3 +265,30 @@ def test_the_binaries_are_staged_where_the_lane_is_told_to_find_them() -> None:
             f"the lane reads binaries from {directory!r} and the job stages "
             f"them into {staged!r}"
         )
+
+
+def test_only_the_rehearsal_may_build_a_release_state_in_code() -> None:
+    """A pulled qualification comes from a workflow, or from one named place.
+
+    `from_environment` refuses a half-set environment because a hybrid proof --
+    manifest-selected bytes in one artifact family, source-built bytes in the
+    other -- is green, takes an hour, and looks exactly like a release. The
+    mirror-image risk is a module that constructs the state itself to reach
+    some branch it wants, which no environment check can see.
+
+    So `qualification.rehearsal` is the one constructor outside the parser, it
+    says in its own docstring what it is for, and this holds the count at one.
+    """
+    package = ROOT / "src/capsem/gate"
+    offenders = [
+        f"{path.relative_to(ROOT)}: {line.strip()}"
+        for path in sorted(package.glob("*.py"))
+        if path.name != "qualification.py"
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if "BinaryQualification(" in line or "ProfileQualification(" in line
+    ]
+    assert not offenders, (
+        "these build a release qualification directly instead of going "
+        "through `from_environment` or `qualification.rehearsal`:\n  "
+        + "\n  ".join(offenders)
+    )

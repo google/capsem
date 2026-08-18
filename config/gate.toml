@@ -979,7 +979,7 @@ max_lines = 1000
 "scripts/doctor_session_test.py" = 570
 "scripts/fetch-release-artifacts.py" = 353
 "scripts/integration_test.py" = 1191
-"scripts/local-release-glowup.py" = 2046
+"scripts/local-release-glowup.py" = 2054
 "scripts/macos_release_glowup.py" = 399
 "scripts/macos_tart_glowup.py" = 622
 "scripts/macos_tart_guest.sh" = 341
@@ -2035,6 +2035,27 @@ macos_glowup_report = "target/macos-tart-glowup/report.json"
 macos_report_variable = "CAPSEM_MACOS_NATIVE_GLOWUP_REPORT"
 glowup_work_dir = "target/release-module-glowup"
 channel_switch_work_dir = "target/release-module-channel-switch"
+
+# The local rehearsal of the release lane's pulled path. `just test` builds
+# every artifact and installs the one it built; what it never did is resolve a
+# cohort from a manifest, verify it by digest, and prove the package against
+# that. Those are the only steps a binary release runs and a local gate does
+# not, which is why every defect in them cost a release dispatch to find.
+#
+# The channel is stable because that is the one a first release publishes into,
+# and the rehearsal exists for the pairing a first release makes.
+rehearsal_script = "scripts/rehearse-release-cohort.py"
+rehearsal_channel = "stable"
+rehearsal_work_dir = "target/release-rehearsal"
+rehearsal_inputs_dir = "target/release-rehearsal-inputs"
+# `{arch}` is the dpkg architecture. Not decoration: `capsem-admin assets
+# channel record-binary` refuses a package whose name does not end in
+# `_amd64.deb` or `_arm64.deb`, and the rehearsal renames the built package
+# to something the plan can name before the version is known.
+rehearsal_package = "target/release-rehearsal-package/capsem_{arch}.deb"
+rehearsal_content_root = "target/release-rehearsal-content"
+rehearsal_glowup_work_dir = "target/release-rehearsal-glowup"
+rehearsal_channel_switch_work_dir = "target/release-rehearsal-channel-switch"
 release_bin_dir = "CAPSEM_RELEASE_BIN_DIR"
 default_bin_dir = "target/debug"
 # Cleared for the channel-switch run: it has to rediscover the channel from
@@ -2069,6 +2090,13 @@ channel_switch_cleared = [
 # characters and reproduced a 12,024-error socket failure. `~/.cg/<8hex>` is 24.
 parent = "~/.cg"
 lease_template = ".{identity}.lock"
+
+# Where `[prefix] lent` output lives between runs. Beside the prefix root and
+# never inside it: `sweep` reclaims every directory under `parent` except the
+# newest `keep`, and it recognizes a prefix by where it is rather than by what
+# it is called, so a cache underneath would survive exactly one run. Same
+# filesystem, because lending is a `rename` -- see `buildcache._move`.
+build_cache = "~/.cg-build"
 name_length = 8
 
 # How many prefixes survive a sweep. A failed run keeps its tree so it can be
@@ -2077,8 +2105,14 @@ name_length = 8
 # rather than on exit so a crash leaves something to inspect.
 #
 # Bounded because they are not small: one retained prefix on this machine was
-# 22 GiB, and it carried the copied signing material with it. Nothing else
+# 42 GiB, and it carried the copied signing material with it. Nothing else
 # reclaims them -- `[disk] reclaimable` only accepts paths inside the checkout.
+#
+# Still one, and deliberately: raising it was the other candidate answer to
+# cold rebuilds, and it is the wrong one. Ten retained prefixes are ten copies
+# of the same `target/`, none of which the eleventh run may use, because a
+# prefix is named for its commit and no run may work in another commit's tree.
+# `build_cache` reuses the output without duplicating it.
 keep = 1
 
 # Copied wholesale despite being invisible to `git ls-files`, which is what the
@@ -2088,6 +2122,20 @@ keep = 1
 # built from the digest set alone loses them, and the package lane finds out
 # during a release rather than here.
 carried = ["private"]
+
+# Lent to whichever prefix is running and taken back when it ends, by rename,
+# so build output survives the copy that produced it. Everything here is
+# gitignored, which is not a coincidence but the rule: anything the source
+# digest counts is the subject under qualification, and a subject carried over
+# from an earlier commit is not the tree the operator asked to prove.
+# `tests/citadel/test_build_cache_is_reusable.py` checks it against
+# `git check-ignore` rather than against a second list here.
+#
+# `.venv` and `node_modules` are deliberately absent. A uv venv records its own
+# absolute path in `pyvenv.cfg` and in every console-script shebang, so moving
+# one between prefixes with different names produces an interpreter that no
+# longer exists -- and both are already fast from their own warm global stores.
+lent = ["target", "assets"]
 
 # What must come back out before the prefix is reclaimed. A release publishes
 # from these, and without the export they die with the copy that made them.

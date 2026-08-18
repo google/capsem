@@ -968,10 +968,11 @@ jobs:
             --assets-dir assets \
             --config-root target/release-config \
             --shared-config-root config
-          CAPSEM_ASSET_MANIFEST="file://$PWD/assets/manifest.json" \
+          CAPSEM_ASSET_MANIFEST="$PWD/assets/manifest.json" \
+          CAPSEM_ASSETS_PATH="$PWD/assets" \
           CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
           CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/config" \
-            bash scripts/materialize-config.sh
+            bash scripts/materialize-config.sh --pair-content
 
       - name: Activate exact candidate package binaries for functional tests
         run: |

@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A profile's declared binary floor now survives being projected into a runtime
+  asset manifest. `capsem-admin profile materialize` read `min_capsem_version`
+  from a release-graph profile and wrote an empty `min_binary`, so re-authoring
+  a channel from that manifest produced profiles with no floor at all and the
+  release lane's glow-up refused them. Nothing reached that path locally: the
+  local install proof materializes from `config/profiles`, where the field is
+  read from source rather than from a graph.
+
 - Both release commands now refuse a working tree with uncommitted changes.
   A release publishes one immutable commit and runs from a detached copy of it,
   so anything still in the tree is silently excluded -- correct, and quiet

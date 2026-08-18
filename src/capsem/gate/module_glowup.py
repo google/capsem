@@ -66,27 +66,41 @@ def glowup(
     phase = plan.phase("glowup")
     if qualification.pulled:
         content = staged or ProfileContent.standalone(config)
-        return _prove_pulled_package(phase, config, qualification, after, content)
+        return pulled_package(phase, config, qualification, after, content)
     return _build_and_prove(plan, phase, config, after)
 
 
 # -- the release lane ------------------------------------------------------
 
 
-def _prove_pulled_package(
+def pulled_package(
     phase,
     config: GateConfig,
     qualification: Qualification,
     after: tuple,
     content: ProfileContent,
+    *,
+    work_dirs: tuple[str, str] | None = None,
+    skip_install: bool = False,
 ) -> Step:
     """The publishable package, proved twice.
 
     Once as staged, and once with the release environment cleared, so the
     channel switch has to rediscover its state from the installed system
     rather than inherit what it was told.
+
+    Public because `module_rehearsal` runs exactly this against a cohort the
+    local lane fabricated from its own build. Not copied there: a rehearsal of
+    a different sequence rehearses nothing, and the whole reason it exists is
+    that these four steps had never run outside a release dispatch. Only the
+    two work directories differ, so that a rehearsal and a real lane on the
+    same machine cannot land in one another's scratch.
     """
     settings = config.modules
+    glowup_dir, switch_dir = work_dirs or (
+        settings.glowup_work_dir,
+        settings.channel_switch_work_dir,
+    )
     verified = phase.add(
         step(
             "content",
@@ -118,11 +132,7 @@ def _prove_pulled_package(
     )
     staged = phase.add(
         _glowup_step(
-            config,
-            "package",
-            qualification,
-            settings.glowup_work_dir,
-            content,
+            config, "package", qualification, glowup_dir, content, skip_install=skip_install
         ),
         after=(supported,),
     )
@@ -131,9 +141,10 @@ def _prove_pulled_package(
             config,
             "channel-switch",
             qualification,
-            settings.channel_switch_work_dir,
+            switch_dir,
             content,
             clear=settings.channel_switch_cleared,
+            skip_install=skip_install,
         ),
         after=(staged,),
     )
@@ -147,7 +158,23 @@ def _glowup_step(
     content: ProfileContent,
     *,
     clear: tuple = (),
+    skip_install: bool = False,
 ) -> Step:
+    """The same script the local install proof runs, with the same arguments.
+
+    All three of `--evidence-dir`, `--profile-revision-policy` and the source
+    commit were missing here, and every one of them is `required=True`. This
+    step could therefore never have got past `argparse` -- a release lane whose
+    last two steps were an instant usage error, in the only phase no local run
+    reaches. `installproof.prove_glowup` has passed them all along, which is
+    what makes the omission invisible: the script is exercised constantly, just
+    never through this call site. The rehearsal in `module_rehearsal` exists so
+    that stops being true.
+
+    The evidence directory is outside `work_dir` on purpose: the script writes
+    its first evidence file and only then clears the work directory, so an
+    evidence path underneath would be deleted by the run that wrote it.
+    """
     settings = config.modules
     return step(
         label,
@@ -163,7 +190,12 @@ def _glowup_step(
             content.config,
             "--work-dir",
             work_dir,
+            "--evidence-dir",
+            f"{config.workspace.evidence_dir}/{label}",
+            "--profile-revision-policy",
+            config.install.profile_revision_policy.value,
             "--package-ready",
+            *(("--skip-install",) if skip_install else ()),
             env=dict.fromkeys(clear, ""),
         ),
         contends=(config.exclusive("docker_daemon"),),

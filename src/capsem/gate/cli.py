@@ -107,6 +107,11 @@ def _inspection() -> argparse.ArgumentParser:
         help="work in this existing private checkout instead of making one",
     )
     shared.add_argument(
+        "--clean-build",
+        action="store_true",
+        help="discard the build output reused between runs and compile from nothing",
+    )
+    shared.add_argument(
         "--from",
         dest="resume_from",
         default=None,

@@ -1,0 +1,146 @@
+"""Citadel guard: build output must outlive the prefix that produced it.
+
+Every commit used to qualify cold. `just test` works in a private copy named
+for the commit, so a fix on top of a qualified tree shares nothing with the run
+before it -- three consecutive runs carried zero steps while a 42 GiB `target/`
+from the previous one sat on the same disk waiting for the next sweep to delete
+it. `resume.py` had said so in its opening paragraph for months: "a fresh copy
+per run starts with no `target/`, so every replay is cold."
+
+`buildcache` lends those trees to whichever prefix is running and takes them
+back by `rename`. That is cheap and it is also sharp, so the two properties it
+depends on are checked here rather than discovered during an hour-forty run:
+
+  what is lent is invisible to the source digest, or a run qualifies a subject
+  assembled from two commits
+
+  a prefix gives its output back through every door it can leave by, or the
+  first sweep deletes the thing this exists to keep
+"""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+from capsem.gate import buildcache, prefix
+from capsem.gate import config as gate_config
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _config():
+    return gate_config.load(ROOT)
+
+
+def _relocated(tmp_path: Path):
+    """The real configuration, pointed at trees this test may destroy."""
+    config = _config()
+    settings = config.prefix.model_copy(
+        update={
+            "parent": str(tmp_path / "prefixes"),
+            "build_cache": str(tmp_path / "cache"),
+        }
+    )
+    return config.model_copy(update={"prefix": settings})
+
+
+def test_every_lent_path_is_invisible_to_the_source_digest() -> None:
+    """Lending a tracked path would qualify a tree the operator never had.
+
+    The subject is `git ls-files -co --exclude-standard`, so anything ignored
+    is outside it by construction and anything else is inside it. Asked of git
+    rather than restated as a second list here: the point is that the two
+    definitions cannot drift, and a second list is exactly how they would.
+    """
+    lent = list(_config().prefix.lent)
+    assert lent, "nothing is lent between runs, so every commit qualifies cold"
+
+    ignored = subprocess.run(
+        ["git", "check-ignore", "--stdin"],
+        cwd=ROOT,
+        input="\n".join(lent),
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+
+    tracked = sorted(set(lent) - set(ignored))
+    assert not tracked, (
+        f"{tracked} is counted by the source digest and lent between runs, so "
+        "a run would prove a tree assembled from more than one commit"
+    )
+
+
+def test_the_cache_is_not_where_prefixes_are_swept(tmp_path: Path) -> None:
+    """A cache under the prefix root survives exactly one run.
+
+    `sweep` reclaims every directory under `parent` but the newest `keep`, and
+    it recognizes a prefix by where it is rather than by what it is called.
+    """
+    config = _config()
+    cache = Path(config.prefix.build_cache).expanduser().resolve()
+    parent = Path(config.prefix.parent).expanduser().resolve()
+    assert parent != cache and parent not in cache.parents, (
+        f"the lent build output at {cache} lives under the prefix root "
+        f"{parent}, where the next sweep would reclaim it as a stale prefix"
+    )
+
+
+def test_a_prefix_gives_its_output_back_through_the_door_it_leaves_by(tmp_path: Path) -> None:
+    """`reclaim` is that door -- a sweep, a repopulated release prefix, a
+    successful run -- so the salvage belongs there and not at the call sites.
+
+    Written against `reclaim` rather than against `salvage` on purpose. Calling
+    the salvage directly proves the move works, which was never in doubt; what
+    cost the rebuilds is a deletion path that does not call it.
+    """
+    config = _relocated(tmp_path)
+    doomed = Path(config.prefix.parent) / "abcd1234"
+    for relative in config.prefix.lent:
+        (doomed / relative).mkdir(parents=True)
+        (doomed / relative / "built").write_text("expensive", encoding="utf-8")
+
+    prefix.reclaim(config, doomed)
+
+    assert not doomed.exists()
+    for relative in config.prefix.lent:
+        recovered = buildcache.root(config) / relative / "built"
+        assert recovered.read_text(encoding="utf-8") == "expensive", (
+            f"{relative} was deleted with the prefix instead of salvaged, so "
+            "the next commit rebuilds it from nothing"
+        )
+
+
+def test_lending_never_overwrites_what_the_prefix_already_built(tmp_path: Path) -> None:
+    """A resumed prefix kept its own `target/`, and it is the newer one.
+
+    The cache can be holding an older tree from a run that was killed before it
+    handed anything back. Overwriting here would replace the output a resume
+    exists to reuse with the output it already superseded -- and `carry` would
+    then accept a frontier proven by neither.
+    """
+    config = _relocated(tmp_path)
+    relative = config.prefix.lent[0]
+    working = Path(config.prefix.parent) / "abcd1234"
+    (working / relative).mkdir(parents=True)
+    (working / relative / "built").write_text("newer", encoding="utf-8")
+    (buildcache.root(config) / relative).mkdir(parents=True)
+    (buildcache.root(config) / relative / "built").write_text("older", encoding="utf-8")
+
+    assert buildcache.lend(config, working) == []
+    assert (working / relative / "built").read_text(encoding="utf-8") == "newer"
+
+
+def test_a_clean_rebuild_stays_reachable_without_reading_the_source() -> None:
+    """Reuse is the default, so the way to refuse it has to be one command.
+
+    Not a nicety. The failure reuse trades against is a step that reads a file
+    it did not produce this run: it passes here on stale output and fails on a
+    runner that has never built anything. An operator who suspects that needs
+    the answer in one line, not a flag they have to find in `cli.py`.
+    """
+    recipes = (ROOT / "justfile").read_text(encoding="utf-8")
+    assert "--clean-build" in recipes, (
+        "no just recipe discards the reused build output, so the only way to "
+        "reproduce a cold run is to delete a directory by hand"
+    )

@@ -29,7 +29,7 @@ from urllib.parse import unquote, urljoin, urlparse
 from capsem.gate import config as gate_config
 from capsem.gate.productschema import ProfileRevisionPolicy
 from capsem.gate.releaseauthoring import author_native_candidate
-from capsem.gate.sourcecommit import SourceCommit
+from capsem.gate.sourcecommit import SourceCommit, source_commit_for_checkout
 
 try:
     from release_glowup import (
@@ -161,7 +161,13 @@ def _environment_path(name: str) -> Path | None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-deb", required=True, type=Path)
-    parser.add_argument("--source-commit", required=True, type=SourceCommit)
+    # Optional, and resolved from the tree this script lives in when omitted.
+    # It was required, and the release lane's own glow-up steps never passed
+    # it -- so the two steps that prove the publishable package could only ever
+    # have exited on an argparse usage error. Callers that run this somewhere
+    # the repository is not the subject, such as the install container, still
+    # pass it explicitly; nothing here invents a sentinel either way.
+    parser.add_argument("--source-commit", type=SourceCommit, default=None)
     parser.add_argument("--bin-dir", required=True, type=Path)
     parser.add_argument("--assets-dir", required=True, type=Path)
     parser.add_argument("--config-root", required=True, type=Path)
@@ -236,6 +242,8 @@ def main() -> int:
         default=os.environ.get("CAPSEM_RELEASE_PUBLICATION_BASE"),
     )
     args = parser.parse_args()
+    if args.source_commit is None:
+        args.source_commit = source_commit_for_checkout(PROJECT_ROOT)
     config = gate_config.load(PROJECT_ROOT)
     args.evidence_dir.mkdir(parents=True, exist_ok=True)
     (args.evidence_dir / "started.json").write_text(

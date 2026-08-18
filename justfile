@@ -170,6 +170,13 @@ _bootstrap:
 test source_commit="":
     @uv run capsem-gate candidate {{quote(source_commit)}}
 
+# Build output is reused between runs by default, which is what makes a second
+# commit cost minutes rather than an hour; `buildcache` explains how. This is
+# the escape hatch, for when a local pass has to mean a pass on a cold runner:
+# qualify with nothing reused, compiling every artifact from nothing.
+test-clean source_commit="":
+    @uv run capsem-gate candidate {{quote(source_commit)}} --clean-build
+
 # After the source-only fast gate passes, local composition constructs every
 # artifact family before running the remaining modules used by release CI.
 _test-candidate:

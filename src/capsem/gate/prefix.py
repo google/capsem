@@ -31,7 +31,7 @@ import secrets
 import shutil
 from pathlib import Path
 
-from . import snapshot
+from . import buildcache, snapshot
 from .config import GateConfig
 from .errors import GateError, PrefixBusy
 from .filesystem import copy_tree, merge_tree, remove
@@ -183,6 +183,7 @@ def run_from_private_copy(
     *,
     reuse: Path | None = None,
     commit: SourceCommit | None = None,
+    clean: bool = False,
 ) -> int:
     """Copy the checkout, run the same command inside the copy, bring back what
     it produced, and give the copy back.
@@ -205,10 +206,16 @@ def run_from_private_copy(
     if path.is_symlink():
         raise GateError(f"exact source prefix {path} must not be a symlink")
     with lease(config, path):
-        return _run_locked(runner, config, arguments, path=path, reuse=reuse, commit=commit)
+        return _run_locked(
+            runner, config, arguments, path=path, reuse=reuse, commit=commit, clean=clean
+        )
 
 
-def _run_locked(runner, config, arguments, *, path, reuse, commit) -> int:
+def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int:
+    if clean:
+        # Before the sweep, so a stale prefix cannot refill what was discarded.
+        buildcache.discard(config)
+        runner.note("discarded the lent build output; this run compiles from nothing")
     if reuse is None:
         for stale in sweep(config):
             runner.note(f"reclaimed stale prefix {stale}")
@@ -232,6 +239,8 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit) -> int:
         snapshot.populate_commit(config.root, path, config, commit)
     else:
         snapshot.populate(config.root, path, config)
+    if not clean and (lent := buildcache.lend(config, path)):
+        runner.note(f"lent build output to {path.name}: {', '.join(lent)}")
     child_env = {config.environment.source_checkout: str(config.root)}
     if commit is not None:
         child_env[config.environment.source_commit] = str(commit)
@@ -242,6 +251,11 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit) -> int:
         check=False,
     )
     export(path, config.root, config)
+    # After the export and before either outcome: a kept prefix is resumed into
+    # and will be lent the same trees back, and a reclaimed one salvages at the
+    # door anyway. Doing it here means a run that is killed after this point
+    # has already given the machine its build output back.
+    buildcache.salvage(config, path)
     if status == 0 and (reuse is None or commit is not None):
         reclaim(config, path)
     else:
@@ -270,6 +284,12 @@ def reclaim(config: GateConfig, path: Path) -> None:
             f"refusing to reclaim {resolved}: a prefix is a direct child of {root}, "
             "and this is not one"
         )
+    # The single door every prefix leaves by -- a sweep, a repopulated release
+    # prefix, a run that succeeded -- which is why the build output is taken
+    # back here rather than at the three call sites that would each have to
+    # remember. Deleting 42 GiB of `target/` was the whole reason a new commit
+    # qualified cold; see `buildcache`.
+    buildcache.salvage(config, resolved)
     shutil.rmtree(resolved, ignore_errors=True)
     if resolved.exists():
         # `ignore_errors` is right for a tree the gate may have chmodded, and

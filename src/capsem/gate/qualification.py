@@ -117,6 +117,32 @@ Qualification = Annotated[
 _QUALIFICATION = TypeAdapter(Qualification)
 
 
+def rehearsal(config: GateConfig, *, input_dir: str, package: str) -> BinaryQualification:
+    """A binary lane over a cohort this machine built for itself.
+
+    The one construction of a pulled state that does not come from a workflow,
+    and it is a named function rather than a literal at the call site so that
+    stays true. `from_environment` refuses a half-set environment because a
+    hybrid proof looks exactly like a passing release; the danger here is the
+    mirror image -- a module reaching for `BinaryQualification(...)` to skip
+    some branch it finds inconvenient. There is one caller, `module_rehearsal`,
+    and `tests/citadel` holds it to one.
+
+    `is_release` is deliberately true of the result. A rehearsal proves the
+    release path, so everything downstream should behave exactly as it does
+    during a release; what makes it a rehearsal is that nothing publishes,
+    which is a property of the plan it is added to and not of this value.
+    """
+    return _QUALIFICATION.validate_python(
+        {
+            "mode": Mode.BINARY_RELEASE,
+            "input_dir": input_dir,
+            "package": package,
+            "bin_dir": config.modules.default_bin_dir,
+        }
+    )
+
+
 def is_release(
     state: LocalQualification | BinaryQualification | ProfileQualification | None,
 ) -> bool:

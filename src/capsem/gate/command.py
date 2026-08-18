@@ -236,6 +236,7 @@ class GateCommand(Recorded, ABC):
                     [*sys.argv[1:], *decision.child_arguments],
                     reuse=reuse,
                     commit=commit,
+                    clean=self._args.clean_build,
                 )
             )
 
