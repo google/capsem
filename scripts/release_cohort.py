@@ -47,13 +47,12 @@ def _glowup_helpers():
 def _source_profiles(config) -> Path:
     """The profile directory a release graph is authored from.
 
-    The checkout's, not the materialized copy. A graph records profile config
-    by source path and the deployed site serves those exact bytes from the
-    source ref, so authoring from materialized output produces a channel whose
-    config nothing can reproduce -- and whose staged profiles `materialize-config`
-    then refuses, because they already carry the pins it exists to add.
-
-    Read off `profiles_glob` rather than spelled again: one value, one answer.
+    The checkout's, not the materialized copy. A graph records profile config by
+    source path and the site serves those exact bytes from the source ref, so
+    authoring from materialized output produces a channel whose config nothing
+    can reproduce -- and whose staged profiles `materialize-config` then
+    refuses, because they already carry the pins it exists to add. Read off
+    `profiles_glob` rather than spelled again: one value, one answer.
     """
     return PROJECT_ROOT / Path(config.assets.profiles_glob).parent.parent
 
@@ -204,12 +203,10 @@ def build_cohort(args) -> dict[str, str]:
         ]
     )
 
-    # Over loopback rather than `file://`, and not by preference. A release
-    # graph records profile config as site-absolute paths -- `/profiles/releases/...`
-    # -- which `urljoin` resolves against the manifest's own URL. Under `file://`
-    # that is the root of the filesystem, so the cohort resolves to paths nothing
-    # wrote. A local HTTP root is the only way to express "the site root is this
-    # directory", which is exactly what the published channel means.
+    # Over loopback rather than `file://`: a graph records profile config as
+    # site-absolute `/profiles/releases/...` paths, and `urljoin` resolves those
+    # against the manifest's own URL -- under `file://` that is the root of the
+    # filesystem. An HTTP root is the only way to say "the site root is here".
     with helpers.local_release_server(dist) as base_url:
         _author_and_fetch(
             args,
