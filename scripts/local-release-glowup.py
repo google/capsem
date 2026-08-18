@@ -29,7 +29,7 @@ from urllib.parse import unquote, urljoin, urlparse
 from capsem.gate import config as gate_config
 from capsem.gate.productschema import ProfileRevisionPolicy
 from capsem.gate.releaseauthoring import author_native_candidate
-from capsem.gate.sourcecommit import SourceCommit, source_commit_for_checkout
+from capsem.gate.sourcecommit import SourceCommit
 
 try:
     from release_glowup import (
@@ -159,15 +159,28 @@ def _environment_path(name: str) -> Path | None:
 
 
 def main() -> int:
+    # Loaded before the parser, because one flag's default is a variable name
+    # this file must not spell for itself.
+    config = gate_config.load(PROJECT_ROOT)
+    qualified_source_commit = config.environment.qualified_source_commit
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-deb", required=True, type=Path)
-    # Optional, and resolved from the tree this script lives in when omitted.
-    # It was required, and the release lane's own glow-up steps never passed
-    # it -- so the two steps that prove the publishable package could only ever
-    # have exited on an argparse usage error. Callers that run this somewhere
-    # the repository is not the subject, such as the install container, still
-    # pass it explicitly; nothing here invents a sentinel either way.
-    parser.add_argument("--source-commit", type=SourceCommit, default=None)
+    # Told, never resolved. This authors a release graph carrying package
+    # provenance, and the tree this script sits in is not always the subject --
+    # inside the install container it is a mount -- so a commit taken from
+    # `HEAD` here would be provenance about the wrong bytes.
+    #
+    # Defaulted from the gate's own answer rather than left `required`, because
+    # the release lane's two glow-up steps passed nothing at all and could
+    # therefore never get past `argparse`. The gate exports the commit it
+    # resolved for every action, so the value still arrives from whoever knows
+    # it; an explicit flag continues to win, which is how the install container
+    # names the mount's subject.
+    parser.add_argument(
+        "--source-commit",
+        type=SourceCommit,
+        default=os.environ.get(qualified_source_commit) or None,
+    )
     parser.add_argument("--bin-dir", required=True, type=Path)
     parser.add_argument("--assets-dir", required=True, type=Path)
     parser.add_argument("--config-root", required=True, type=Path)
@@ -243,8 +256,11 @@ def main() -> int:
     )
     args = parser.parse_args()
     if args.source_commit is None:
-        args.source_commit = source_commit_for_checkout(PROJECT_ROOT)
-    config = gate_config.load(PROJECT_ROOT)
+        raise SystemExit(
+            "no source commit: pass --source-commit, or run under a gate that "
+            f"exports {qualified_source_commit}. This authors release "
+            "provenance and will not resolve one from whatever tree it is in."
+        )
     args.evidence_dir.mkdir(parents=True, exist_ok=True)
     (args.evidence_dir / "started.json").write_text(
         json.dumps({"schema": "capsem.glowup.run.v1", "package": args.input_deb.name}) + "\n",

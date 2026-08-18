@@ -276,7 +276,9 @@ def test_a_named_prefix_moves_a_focused_command_into_that_checkout(
     monkeypatch.setattr(prefix, "source_checkout", lambda _config: None)
     entered: list[Path | None] = []
 
-    def run_in_prefix(_runner, _config, _arguments, *, commit=None, reuse=None) -> int:
+    def run_in_prefix(
+        _runner, _config, _arguments, *, commit=None, reuse=None, clean=False
+    ) -> int:
         assert commit is None
         entered.append(reuse)
         return 0

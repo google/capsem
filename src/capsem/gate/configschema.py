@@ -148,6 +148,7 @@ class EnvironmentConfig(Strict):
     coverage_file: str
     source_checkout: str
     source_commit: str
+    qualified_source_commit: str
     command_sandbox_mode: str
     install: InstallEnvironment
     package: PackageEnvironment

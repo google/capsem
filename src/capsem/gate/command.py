@@ -36,7 +36,7 @@ from .qualification import is_release as qualification_is_release
 from .qualificationevidence import QualificationPolicy
 from .recording import Recorded
 from .scopeenv import command_environment
-from .sourcecommit import SourceCommit
+from .sourcecommit import SourceCommit, source_commit_for_checkout
 
 
 class GateCommand(Recorded, ABC):
@@ -236,7 +236,7 @@ class GateCommand(Recorded, ABC):
                     [*sys.argv[1:], *decision.child_arguments],
                     reuse=reuse,
                     commit=commit,
-                    clean=self._args.clean_build,
+                    clean=getattr(self._args, "clean_build", False),
                 )
             )
 
@@ -279,7 +279,10 @@ class GateCommand(Recorded, ABC):
                         journal=log,
                         outside_runner=outside_runner,
                         env=command_environment(
-                            self._config, environment_of(acquired), self._sandbox_mode
+                            self._config,
+                            environment_of(acquired),
+                            self._sandbox_mode,
+                            source_commit=self._qualified_commit(commit),
                         ),
                         watch=watch,
                         carried=carried,
@@ -288,6 +291,23 @@ class GateCommand(Recorded, ABC):
                 qualificationflow.finish(
                     log, self._config, commit, self.qualification_policy, plan, decision
                 )
+
+    def _qualified_commit(self, commit: SourceCommit | None) -> str | None:
+        """Which commit this run's steps are proving, if one can be named.
+
+        The selected release source when there is one, and otherwise the
+        checkout's own `HEAD` -- resolved here rather than in the step that
+        needs it, because `plan()` runs sealed and a description that shells out
+        to git is a description that touched the machine. A tree with no history
+        yields nothing, and a step that needs a commit then fails saying so
+        instead of authoring provenance about a revision nobody has.
+        """
+        if commit is not None:
+            return str(commit)
+        try:
+            return str(source_commit_for_checkout(self._config.root))
+        except GateError:
+            return None
 
     def _describe(self) -> Plan:
         """Build the plan with the machine sealed off.

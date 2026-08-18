@@ -916,9 +916,20 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
     assert "scripts/generate-host-binary-sbom.py" in script
     assert "record-binary" in authoring
     assert '"--source-commit"' in authoring
-    assert 'parser.add_argument("--source-commit", required=True, type=SourceCommit)' in script
+    # Told, never resolved -- the invariant this line has always protected. The
+    # script authors a release graph carrying package provenance, and the tree
+    # it sits in is not always the subject: inside the install container it is a
+    # mount. What changed is only where "told" may come from. It was
+    # `required=True`, and the release lane's two glow-up steps passed nothing,
+    # so neither could get past `argparse`; the default is now the commit the
+    # gate exports for every action, which is still an answer from the party
+    # that knows. An explicit flag continues to win.
+    assert '"--source-commit"' in script
+    assert "environment.qualified_source_commit" in script
     assert "source_commit = args.source_commit" in script
-    assert "source_commit_for_checkout" not in script
+    assert "source_commit_for_checkout" not in script, (
+        "the glow-up must never resolve its own commit from the tree it is in"
+    )
     assert any(
         isinstance(node, ast.Name) and node.id == "author_native_candidate"
         for node in ast.walk(tree)

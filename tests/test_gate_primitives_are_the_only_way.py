@@ -163,6 +163,10 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
         # create the directory it is already running in.
         "prefix.py",
         "snapshot.py",
+        # The third pre-run half: `buildcache` lends the machine's build output
+        # to the prefix about to run and takes it back on the way out, both
+        # where `prefix` works -- before the journal, outside the lock.
+        "buildcache.py",
         "sourcecommit.py",
         "commitsnapshot.py",
         "prefixlease.py",

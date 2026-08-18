@@ -545,7 +545,13 @@ def test_release_workflow_uses_same_config_materializer() -> None:
     assert workflow.count("bash scripts/materialize-config.sh") == 3
     assert workflow.count('CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"') == 1
     assert 'CAPSEM_ASSET_MANIFEST="$PWD/target/package-content/assets/manifest.json"' in workflow
-    assert 'CAPSEM_ASSET_MANIFEST="file://$PWD/assets/manifest.json"' in workflow
+    # A path, not a `file://` URL. The pairing job now materializes with
+    # `--pair-content`, which compares the selected manifest against the assets
+    # directory as filesystem paths to check it is pairing what it was given --
+    # so a URL fails that comparison against the very file it names, and the
+    # message reads as a content mismatch rather than a spelling one.
+    assert 'CAPSEM_ASSET_MANIFEST="$PWD/assets/manifest.json"' in workflow
+    assert 'CAPSEM_ASSETS_PATH="$PWD/assets"' in workflow
     assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in workflow
 
 

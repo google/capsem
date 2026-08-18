@@ -34,10 +34,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from release_cohort import build_cohort  # noqa: E402
-
 
 def main() -> int:
+    # Imported here rather than at module scope: the sibling is only importable
+    # once `sys.path` has been extended above, and a top-level import after that
+    # is an E402 this repository's suppression budget does not have room for.
+    from release_cohort import build_cohort
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--assets-dir", required=True, type=Path)
     parser.add_argument("--bin-dir", required=True, type=Path)
