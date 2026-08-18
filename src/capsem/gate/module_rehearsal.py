@@ -30,6 +30,8 @@ proving. Nothing here publishes: the cohort's URLs are `file://` paths under
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from . import qualification as qualification_state
 from .actions import Script
 from .config import GateConfig
@@ -39,6 +41,7 @@ from .module_artifacts import pulled_artifacts
 from .module_glowup import pulled_package
 from .plan import Plan
 from .qualification import Qualification
+from .versions import workspace_version
 
 PHASE = "rehearsal"
 
@@ -58,7 +61,9 @@ def rehearsal(
 
     settings = config.modules
     phase = plan.phase(PHASE)
-    package = settings.rehearsal_package.format(arch=config.host_arch().dpkg)
+    package = settings.rehearsal_package.format(
+        version=workspace_version(config.root), arch=config.host_arch().dpkg
+    )
     built = phase.add(
         step(
             "cohort",
@@ -80,6 +85,8 @@ def rehearsal(
                 package,
                 "--content-root",
                 settings.rehearsal_content_root,
+                "--before-inputs",
+                settings.rehearsal_before_inputs,
                 "--channel",
                 settings.rehearsal_channel,
             ),
@@ -124,4 +131,21 @@ def rehearsal(
         # container. What is rehearsed here is the assembly the release lane
         # does from a pulled cohort, which is where the defects were.
         skip_install=True,
+        # The transition, which is the deepest thing a release lane does and the
+        # last thing here that had no local counterpart. `auto` classifies from
+        # the two manifests, and the before-state the cohort fabricates is an
+        # unpublished channel -- so this rehearses FRESH_INSTALL, the pairing a
+        # first release makes. No before-package is passed, and none may be:
+        # `resolve_public_before_package` refuses one for a channel that has
+        # published nothing, which is exactly the case being proved.
+        pairing=settings.release_pairing.runtime(
+            channel=settings.rehearsal_channel,
+            transition="auto",
+            before_manifest=Path(settings.rehearsal_before_inputs) / config.install.manifest_name,
+            after_manifest=settings.rehearsal_after_manifest.format(
+                channel=settings.rehearsal_channel
+            ),
+            before_profile_inputs=settings.rehearsal_before_inputs,
+            after_profile_inputs=settings.rehearsal_inputs_dir,
+        ),
     )

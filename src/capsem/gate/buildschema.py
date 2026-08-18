@@ -16,6 +16,7 @@ from pydantic import PositiveInt, StringConstraints, model_validator
 from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
 
 from .configschema import Strict
+from .releaseschema import ReleasePairingEnvironment
 
 
 class ModulesConfig(Strict):
@@ -55,6 +56,9 @@ class ModulesConfig(Strict):
     rehearsal_content_root: str
     rehearsal_glowup_work_dir: str
     rehearsal_channel_switch_work_dir: str
+    rehearsal_before_inputs: str
+    rehearsal_after_manifest: str
+    release_pairing: ReleasePairingEnvironment
 
 
 class FunctionalConfig(Strict):

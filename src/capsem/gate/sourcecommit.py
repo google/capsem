@@ -57,6 +57,27 @@ def require_detached_checkout(root: Path, commit: SourceCommit) -> None:
         raise GateError(f"exact source prefix is attached to {branch.stdout.strip()}")
 
 
+def qualified_commit(root: Path, commit: SourceCommit | None) -> str | None:
+    """Which commit a run's steps are proving, if one can be named at all.
+
+    The selected release source when there is one, and otherwise the checkout's
+    own `HEAD`. Answered here rather than in the step that needs it: `plan()`
+    runs sealed, so a description that shells out to git is a description that
+    touched the machine, and a script resolving its own commit would resolve the
+    tree it sits in -- which inside the install container is a mount.
+
+    A tree with no history yields nothing rather than a sentinel. A step that
+    needs a commit then fails saying so, instead of authoring provenance about a
+    revision nobody has.
+    """
+    if commit is not None:
+        return str(commit)
+    try:
+        return str(source_commit_for_checkout(root))
+    except GateError:
+        return None
+
+
 def source_commit_for_checkout(root: Path) -> SourceCommit:
     """Return the canonical commit checked out at ``root``.
 

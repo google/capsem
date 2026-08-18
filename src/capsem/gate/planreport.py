@@ -14,6 +14,23 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from .plan import Plan
 
 
+def answered(plan: Plan, args, carried: frozenset[str]) -> bool:
+    """Print whichever showing was asked for, and say whether that was the ask.
+
+    Both inspections in one place because they are one decision -- "was this a
+    question about the plan rather than a request to run it" -- and because the
+    gate contract puts that decision before every re-exec: inspection answered
+    late is inspection that already acted. A caller returns on `True`.
+    """
+    if args.graph:
+        print(mermaid(plan))
+        return True
+    if args.dry_run:
+        print(describe(plan, carried=carried))
+        return True
+    return False
+
+
 def describe(plan: Plan, *, carried: frozenset[str] = frozenset()) -> str:
     """The dry run: what would run, in what order, and what it invokes.
 

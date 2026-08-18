@@ -996,7 +996,7 @@ max_lines = 1000
 "scripts/doctor_session_test.py" = 570
 "scripts/fetch-release-artifacts.py" = 353
 "scripts/integration_test.py" = 1191
-"scripts/local-release-glowup.py" = 2070
+"scripts/local-release-glowup.py" = 2071
 "scripts/macos_release_glowup.py" = 399
 "scripts/macos_tart_glowup.py" = 622
 "scripts/macos_tart_guest.sh" = 341
@@ -1005,7 +1005,7 @@ max_lines = 1000
 "scripts/prove-installed-shell.py" = 318
 "scripts/release-binaries.py" = 435
 "scripts/release_collect_evidence.py" = 462
-"scripts/release_glowup.py" = 794
+"scripts/release_glowup.py" = 807
 "scripts/release_inputs.py" = 337
 "scripts/resolve-reusable-profile-assets.py" = 334
 "scripts/stage-release-test-inputs.py" = 459
@@ -2065,14 +2065,29 @@ rehearsal_script = "scripts/rehearse-release-cohort.py"
 rehearsal_channel = "stable"
 rehearsal_work_dir = "target/release-rehearsal"
 rehearsal_inputs_dir = "target/release-rehearsal-inputs"
-# `{arch}` is the dpkg architecture. Not decoration: `capsem-admin assets
-# channel record-binary` refuses a package whose name does not end in
-# `_amd64.deb` or `_arm64.deb`, and the rehearsal renames the built package
-# to something the plan can name before the version is known.
-rehearsal_package = "target/release-rehearsal-package/capsem_{arch}.deb"
+# `{version}` is the workspace version and `{arch}` the dpkg architecture, and
+# both are load-bearing. `capsem-admin assets channel record-binary` refuses a
+# name that does not carry the version, and the exact pairing then matches the
+# candidate against its manifest row *by filename* -- so a stable placeholder
+# name is refused at authoring time and, if it got past that, would match no
+# package record at all. The plan can still name this before anything is built,
+# because the version comes from `Cargo.toml`.
+rehearsal_package = "target/release-rehearsal-package/Capsem_{version}_{arch}.deb"
 rehearsal_content_root = "target/release-rehearsal-content"
 rehearsal_glowup_work_dir = "target/release-rehearsal-glowup"
 rehearsal_channel_switch_work_dir = "target/release-rehearsal-channel-switch"
+# The public before-state the rehearsal pairs against, and the candidate
+# manifest it authored. `{channel}` is the rehearsal channel.
+#
+# The before-state is an unpublished channel, and that shape is not invented:
+# for live stable, `select-runtime-preflight-manifest.py` reports
+# `bootstrap=true`, so the lane projects its before-state with
+# `project-first-channel-before.py`, and that projection returns exactly
+# `packages: []` and `profiles: {}`. That is what makes the pairing
+# FRESH_INSTALL -- the pairing a first release makes, and the one that had never
+# run anywhere before this rehearsal existed.
+rehearsal_before_inputs = "target/release-rehearsal-before"
+rehearsal_after_manifest = "target/release-rehearsal/dist/assets/{channel}/manifest.json"
 release_bin_dir = "CAPSEM_RELEASE_BIN_DIR"
 default_bin_dir = "target/debug"
 # Cleared for the channel-switch run: it has to rediscover the channel from
@@ -2089,6 +2104,19 @@ channel_switch_cleared = [
     "CAPSEM_RELEASE_CANDIDATE_PROFILE_PUBLICATION",
     "CAPSEM_RELEASE_PUBLICATION_BASE",
 ]
+
+# What a glow-up is told about the transition it proves. A workflow exports
+# these; the local rehearsal passes them for a cohort it fabricated itself.
+# Every name here must also appear in `channel_switch_cleared` above, which the
+# schema checks rather than trusts: two lists of the same names drift, and a
+# survivor hands the second proof the answer it exists to rediscover.
+[modules.release_pairing]
+channel = "CAPSEM_RELEASE_CHANNEL"
+transition = "CAPSEM_RELEASE_TRANSITION"
+before_manifest = "CAPSEM_RELEASE_BEFORE_MANIFEST"
+after_manifest = "CAPSEM_RELEASE_AFTER_MANIFEST"
+before_profile_inputs = "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS"
+after_profile_inputs = "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS"
 
 # ---------------------------------------------------------------------------
 # The isolated home a gate run works in

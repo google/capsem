@@ -34,6 +34,7 @@ from capsem.gate.errors import GateError
 from capsem.gate.execution import step
 from capsem.gate.lifecycle import Resource
 from capsem.gate.plan import Plan
+from capsem.gate.sourcecommit import qualified_commit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -506,9 +507,14 @@ def test_the_recorded_environment_is_the_delta_not_the_machines(journal) -> None
     command.execute()
 
     (recorded,) = journal.execs
+    # The commit is part of the delta and belongs in the report: a step that
+    # authors release provenance is told which one it is proving rather than
+    # resolving the tree it happens to sit in, so a bug report that omitted it
+    # would omit which bytes the run was about. It is a revision, not a secret.
     assert recorded["env"] == {
         "CAPSEM_MARK": "1",
         CONFIG.environment.command_sandbox_mode: "off",
+        CONFIG.environment.qualified_source_commit: qualified_commit(PROJECT_ROOT, None),
     }
 
 

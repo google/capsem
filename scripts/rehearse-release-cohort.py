@@ -49,6 +49,7 @@ def main() -> int:
     parser.add_argument("--inputs-dir", required=True, type=Path)
     parser.add_argument("--package", required=True, type=Path)
     parser.add_argument("--content-root", required=True, type=Path)
+    parser.add_argument("--before-inputs", required=True, type=Path)
     parser.add_argument("--channel", required=True)
     print(json.dumps(build_cohort(parser.parse_args()), indent=2, sort_keys=True))
     return 0

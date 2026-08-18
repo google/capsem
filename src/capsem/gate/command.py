@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from typing import ClassVar
 
 from . import config as gate_config
-from . import enforcement, prefix, preflight, qualificationflow, resume, sandbox
+from . import enforcement, planreport, prefix, preflight, qualificationflow, resume, sandbox
 from .context import Context
 from .errors import GateError
 from .funnel import GuardedRunner
@@ -36,7 +36,7 @@ from .qualification import is_release as qualification_is_release
 from .qualificationevidence import QualificationPolicy
 from .recording import Recorded
 from .scopeenv import command_environment
-from .sourcecommit import SourceCommit, source_commit_for_checkout
+from .sourcecommit import SourceCommit, qualified_commit
 
 
 class GateCommand(Recorded, ABC):
@@ -199,11 +199,7 @@ class GateCommand(Recorded, ABC):
             qualifying=self.publishes or qualification_is_release(self._qualification),
         )
 
-        if self._args.graph:
-            print(plan.mermaid())
-            return
-        if self._args.dry_run:
-            print(plan.describe(carried=carried))
+        if planreport.answered(plan, self._args, carried):
             return
 
         preflight.refuse_inside_a_run(self._config, self.name, exclusive=self.exclusive)
@@ -282,7 +278,7 @@ class GateCommand(Recorded, ABC):
                             self._config,
                             environment_of(acquired),
                             self._sandbox_mode,
-                            source_commit=self._qualified_commit(commit),
+                            source_commit=qualified_commit(self._config.root, commit),
                         ),
                         watch=watch,
                         carried=carried,
@@ -291,23 +287,6 @@ class GateCommand(Recorded, ABC):
                 qualificationflow.finish(
                     log, self._config, commit, self.qualification_policy, plan, decision
                 )
-
-    def _qualified_commit(self, commit: SourceCommit | None) -> str | None:
-        """Which commit this run's steps are proving, if one can be named.
-
-        The selected release source when there is one, and otherwise the
-        checkout's own `HEAD` -- resolved here rather than in the step that
-        needs it, because `plan()` runs sealed and a description that shells out
-        to git is a description that touched the machine. A tree with no history
-        yields nothing, and a step that needs a commit then fails saying so
-        instead of authoring provenance about a revision nobody has.
-        """
-        if commit is not None:
-            return str(commit)
-        try:
-            return str(source_commit_for_checkout(self._config.root))
-        except GateError:
-            return None
 
     def _describe(self) -> Plan:
         """Build the plan with the machine sealed off.

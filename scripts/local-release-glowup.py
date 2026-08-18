@@ -40,6 +40,7 @@ try:
         assert_manifest_artifact,
         build_report,
         build_transition_evidence,
+        requires_changed_profiles,
         tamper_profile_artifact_digest,
         validate_installed_evidence,
         validate_pairing_inputs,
@@ -53,6 +54,7 @@ except ModuleNotFoundError:
         assert_manifest_artifact,
         build_report,
         build_transition_evidence,
+        requires_changed_profiles,
         tamper_profile_artifact_digest,
         validate_installed_evidence,
         validate_pairing_inputs,
@@ -603,10 +605,9 @@ def validate_exact_release_pairing(
         transition = TransitionKind(str(args.release_transition))
         changed_profiles = (str(args.profile),) if args.profile is not None else ()
 
-    changed_profile = transition in {
-        TransitionKind.PROFILE_ONLY,
-        TransitionKind.PROFILE_THEN_BINARY,
-    }
+    # Asked of the validator's own rule rather than restated. See
+    # `release_glowup.requires_changed_profiles`.
+    changed_profile = requires_changed_profiles(transition)
     publication_fields = {
         "candidate_profile_publication": args.candidate_profile_publication,
         "publication_base": args.publication_base,

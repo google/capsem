@@ -82,6 +82,7 @@ def pulled_package(
     *,
     work_dirs: tuple[str, str] | None = None,
     skip_install: bool = False,
+    pairing: dict[str, str] | None = None,
 ) -> Step:
     """The publishable package, proved twice.
 
@@ -132,7 +133,13 @@ def pulled_package(
     )
     staged = phase.add(
         _glowup_step(
-            config, "package", qualification, glowup_dir, content, skip_install=skip_install
+            config,
+            "package",
+            qualification,
+            glowup_dir,
+            content,
+            skip_install=skip_install,
+            pairing=pairing,
         ),
         after=(supported,),
     )
@@ -159,6 +166,7 @@ def _glowup_step(
     *,
     clear: tuple = (),
     skip_install: bool = False,
+    pairing: dict[str, str] | None = None,
 ) -> Step:
     """The same script the local install proof runs, with the same arguments.
 
@@ -196,7 +204,12 @@ def _glowup_step(
             config.install.profile_revision_policy.value,
             "--package-ready",
             *(("--skip-install",) if skip_install else ()),
-            env=dict.fromkeys(clear, ""),
+            # A workflow exports the pairing; a rehearsal passes it, because it
+            # fabricated the cohort and is the only party that knows where it
+            # put the two sides. `clear` wins on the channel-switch run, which
+            # must rediscover the channel rather than inherit it -- and the two
+            # never overlap, because that step is given no pairing at all.
+            env={**(pairing or {}), **dict.fromkeys(clear, "")},
         ),
         contends=(config.exclusive("docker_daemon"),),
         kind=Kind.E2E,

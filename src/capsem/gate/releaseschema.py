@@ -11,6 +11,56 @@ from capsem.releasechannel import FirstPartyChannel
 from .configschema import Strict
 
 
+class ReleasePairingEnvironment(Strict):
+    """What a glow-up is told about the transition it is proving.
+
+    One table because it is one fact: which channel, from which public state to
+    which candidate, and where each side's verified cohort is. The glow-up reads
+    all six or none -- it refuses a partial set for the same reason
+    `qualification` refuses a half-set release environment, and for the same
+    consequence: a partial one still produces a green proof of the wrong thing.
+    """
+
+    channel: str
+    transition: str
+    before_manifest: str
+    after_manifest: str
+    before_profile_inputs: str
+    after_profile_inputs: str
+
+    def runtime(
+        self,
+        *,
+        channel: object,
+        transition: object,
+        before_manifest: object,
+        after_manifest: object,
+        before_profile_inputs: object,
+        after_profile_inputs: object,
+    ) -> dict[str, str]:
+        """The exact transition one glow-up run is proving."""
+        return {
+            self.channel: str(channel),
+            self.transition: str(transition),
+            self.before_manifest: str(before_manifest),
+            self.after_manifest: str(after_manifest),
+            self.before_profile_inputs: str(before_profile_inputs),
+            self.after_profile_inputs: str(after_profile_inputs),
+        }
+
+    @property
+    def variables(self) -> tuple[str, ...]:
+        """Every name this table declares, for whoever has to clear them."""
+        return (
+            self.channel,
+            self.transition,
+            self.before_manifest,
+            self.after_manifest,
+            self.before_profile_inputs,
+            self.after_profile_inputs,
+        )
+
+
 class RetiredPublicGraphConfig(Strict):
     channel: FirstPartyChannel
     sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]

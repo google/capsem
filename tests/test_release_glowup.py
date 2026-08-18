@@ -1737,6 +1737,58 @@ def test_a_first_release_pairing_carries_no_predecessor_identity(tmp_path: Path)
     assert after.package_version == "9.9.9"
 
 
+def test_the_caller_and_the_validator_agree_on_a_first_release(tmp_path: Path) -> None:
+    """The rule was written twice and the two disagreed on a first release.
+
+    `validate_pairing_inputs` demands a non-empty changed-profile set for every
+    kind but `BINARY_ONLY`. Its caller in `local-release-glowup.py` listed only
+    the two profile transitions and passed an empty set otherwise -- so
+    `FRESH_INSTALL` raised "fresh_install release pairing requires changed
+    profiles" whatever it was handed, and that is the pairing a first release
+    makes.
+
+    Both halves had tests of their own. What had none was their composition, so
+    this feeds the caller's decision to the validator rather than restating
+    either answer, and checks the caller asks instead of deciding.
+    """
+    module = _load_module()
+    classifier = _load_first_release()
+
+    assert "requires_changed_profiles(transition)" in LOCAL_GLOWUP_PATH.read_text(
+        encoding="utf-8"
+    ), "the glow-up decides for itself which pairings name the profiles they stage"
+    for kind in classifier.TransitionKind:
+        assert module.requires_changed_profiles(kind) is (
+            kind is not module.TransitionKind.BINARY_ONLY
+        ), kind
+
+    before_manifest, after_manifest, after_artifact = _first_release_manifests(tmp_path, module)
+    before_bytes = json.dumps(before_manifest).encode()
+    after_bytes = json.dumps(after_manifest).encode()
+    kind, profiles = classifier.classify_pairing_inputs(
+        channel="stable",
+        before_manifest_bytes=before_bytes,
+        after_manifest_bytes=after_bytes,
+        before_artifact=None,
+        after_artifact=after_artifact,
+    )
+
+    # Exactly what the glow-up now does with the answer it was given.
+    selected = profiles if module.requires_changed_profiles(kind) else ()
+    before, after = classifier.validate_pairing_inputs(
+        kind=kind,
+        channel="stable",
+        before_manifest_bytes=before_bytes,
+        after_manifest_bytes=after_bytes,
+        before_artifact=None,
+        after_artifact=after_artifact,
+        changed_profiles=selected,
+    )
+
+    assert kind is classifier.TransitionKind.FRESH_INSTALL
+    assert before is None and after.package_version == "9.9.9"
+
+
 def test_a_published_channel_still_requires_its_predecessor_package(tmp_path: Path) -> None:
     """The absence must not be able to downgrade a real upgrade into a fresh install."""
     module = _load_module()

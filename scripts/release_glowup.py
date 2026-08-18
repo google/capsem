@@ -337,14 +337,10 @@ def tamper_profile_artifact_digest(
                     sha256 = digest_fields.get("sha256")
                     if not isinstance(sha256, str):
                         continue
-                    digest_fields["sha256"] = (
-                        "1" * 64 if sha256 == "0" * 64 else "0" * 64
-                    )
+                    digest_fields["sha256"] = "1" * 64 if sha256 == "0" * 64 else "0" * 64
                     blake3 = digest_fields.get("blake3")
                     if isinstance(blake3, str):
-                        digest_fields["blake3"] = (
-                            "1" * 64 if blake3 == "0" * 64 else "0" * 64
-                        )
+                        digest_fields["blake3"] = "1" * 64 if blake3 == "0" * 64 else "0" * 64
                     return profile_id
     raise GlowupContractError(
         "adversarial candidate has no current digest-bearing profile artifact"
@@ -402,6 +398,23 @@ def artifact_identity_from_manifest_package(
         manifest_architecture_aliases=manifest_architecture_aliases,
     )
     return artifact
+
+
+def requires_changed_profiles(kind: TransitionKind) -> bool:
+    """Whether a pairing of this kind names the profiles it stages.
+
+    Every kind but `BINARY_ONLY` does, and a first release most of all: none of
+    its profiles was ever served, so all of them are staged.
+
+    A function because the rule was written twice. `validate_pairing_inputs`
+    demanded a non-empty set for `FRESH_INSTALL`, while its caller in
+    `local-release-glowup.py` listed only the two profile transitions and passed
+    an empty one -- so that pairing raised "fresh_install release pairing
+    requires changed profiles" no matter what it was handed. Both halves had
+    tests; their composition did not, and `FRESH_INSTALL` is the pairing a first
+    release makes.
+    """
+    return kind is not TransitionKind.BINARY_ONLY
 
 
 def validate_pairing_inputs(
@@ -478,7 +491,7 @@ def validate_pairing_inputs(
     changed_profile_ids = tuple(changed_profiles)
     if len(changed_profile_ids) != len(set(changed_profile_ids)):
         raise GlowupContractError("release pairing changed profile ids must be unique")
-    if transition_kind is TransitionKind.BINARY_ONLY:
+    if not requires_changed_profiles(transition_kind):
         if changed_profile_ids:
             raise GlowupContractError("binary_only release pairing cannot select a changed profile")
     else:
