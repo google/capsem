@@ -62,7 +62,14 @@ class StaticModule(
         return plan
 
 
-def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tuple[Step, ...]:
+def static(
+    plan: Plan,
+    config: GateConfig,
+    *,
+    after: tuple[Step, ...] = (),
+    generated: Step | None = None,
+    bundled: Step | None = None,
+) -> tuple[Step, ...]:
     """What can be proved from source, in the order the proofs depend on.
 
     Returns *every* leaf, not just the last one written. The storage releases
@@ -77,8 +84,12 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
     leaves: list[Step] = []
     ort = phase.add(toolchain.ort(config, toolchain.OrtConsumer.STATIC), after=after)
     node = phase.add(toolchain.node(config), after=after)
-    generated = phase.add(audits.generated_settings(config), after=(node,))
-    frontend = phase.add(audits.frontend_bundle(config), after=(generated,))
+    # Generated once per run. Standalone, this module makes it; composed, it
+    # is handed the one the fast phase already made, because the script
+    # takes seventy-five seconds and the source it reads has not moved.
+    generated = generated or phase.add(audits.generated_settings(config), after=(node,))
+    # Shared for the same reason and on the same terms as the settings above.
+    frontend = bundled or phase.add(audits.frontend_bundle(config), after=(generated,))
 
     # Start the install-harness preflight early, but do not make unrelated
     # asset and functional work depend on it.  A retained-prefix refresh can

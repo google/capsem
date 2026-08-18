@@ -60,10 +60,14 @@ def test_every_release_step_has_a_local_counterpart() -> None:
     local, pulled = _plans()
     covered = set(local)
 
+    # Matched by what the step does rather than by which phase does it. A
+    # release lane makes the generated settings in its functional phase because
+    # that is the only phase it has; the local gate makes them once in the fast
+    # phase and hands the step on. Same work, same command, different label --
+    # and a guard that insisted on the phase would report that as a blind spot.
+    suffixes = {label.split(".", 1)[-1] for label in covered}
     uncovered = [
-        label
-        for label in pulled
-        if label not in covered and f"{REHEARSAL}.{label.split('.', 1)[-1]}" not in covered
+        label for label in pulled if label not in covered and label.split(".", 1)[-1] not in suffixes
     ]
 
     assert not uncovered, (

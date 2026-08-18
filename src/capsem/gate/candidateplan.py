@@ -20,6 +20,7 @@ failed is skipped -- which is exactly wrong for cleanup.
 from __future__ import annotations
 
 from . import (
+    audits,
     hostpackage,
     imagebuild,
     initrd,
@@ -38,6 +39,34 @@ from .qualification import Qualification
 from .sourcestate import RequireSourceUnchanged, record_step
 from .storage import Storage
 from .timingratchet import EnforceTimingRegression, TimingBoundary
+
+
+def _already_issuing(plan: Plan, candidate: Step) -> Step | None:
+    """A step already in this plan that issues exactly this command.
+
+    Composition is where repetition hides. Every module owns its prerequisites
+    so it can run alone, which is right, and three of them then generated the
+    same file into the same prefix in one run at seventy-five seconds each.
+
+    Asked explicitly here rather than deduplicated inside `Plan.add`: doing it
+    there also merged `pnpm install` across phases and reordered the graph.
+
+    Compared by rendered command, so nothing depends on a label spelled twice,
+    and only for commands -- a `Call` renders its description, so two of them
+    targeting different architectures read alike while doing different work.
+    """
+    kinds = frozenset({"script", "run"})
+    if not candidate.actions or any(type(action).name not in kinds for action in candidate.actions):
+        return None
+    issued = tuple(action.render() for action in candidate.actions)
+    return next(
+        (
+            existing
+            for existing in plan.steps
+            if tuple(action.render() for action in existing.actions) == issued
+        ),
+        None,
+    )
 
 
 def compose(
@@ -96,13 +125,21 @@ def compose_modules(
     checks already passed and they do not want to repeat them.
     """
     prepared = _prepare(plan, config, after=after)
-    static = staticmodule.static(plan, config, after=(prepared,))
+    # `generated` is the fast phase's settings step when there was a fast phase.
+    # `test-candidate` runs this composition alone, where there was not, so each
+    # module still makes its own.
+    generated = _already_issuing(plan, audits.generated_settings(config))
+    bundled = _already_issuing(plan, audits.frontend_bundle(config))
+    static = staticmodule.static(
+        plan, config, after=(prepared,), generated=generated, bundled=bundled
+    )
     artifacts = vmmodules.artifacts(plan, config, qualification=qualification, after=static)
     functional = vmmodules.functional(
         plan,
         config,
         qualification=qualification,
         after=(artifacts,),
+        generated=generated,
         isolated_assets=not qualification.pulled,
     )
     glowup = vmmodules.glowup(plan, config, qualification=qualification, after=(functional,))

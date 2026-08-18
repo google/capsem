@@ -2388,27 +2388,6 @@ max_undeclared = 0
 # a single candidate plan, seventy-five seconds each, for the same file in the
 # same prefix.
 [[boundary.repeated_actions]]
-subject = "generate-settings.sh"
-reason = """
-Debt, not a decision, and recorded here so it stops being invisible. Three
-modules generate the same file into the same prefix in one candidate run --
-`fast.audit`, `static.audit`, `functional.audit` -- at about seventy-five
-seconds each. Each owns the prerequisite so it can run alone, which is right;
-what is wrong is that composing them pays three times. The fix is for the
-script to do nothing when its output is already current, which makes the second
-and third free without making any module depend on having been run after
-another. Until then this entry is what keeps the cost on the record.
-"""
-
-[[boundary.repeated_actions]]
-subject = "check-web-surface.sh frontend-build"
-reason = """
-The same debt in a smaller amount: `fast.web.frontend-build` and
-`static.web.frontend-bundle` build the same bundle in one run, about a minute
-each. Same cause, same fix, and the same reason for writing it down.
-"""
-
-[[boundary.repeated_actions]]
 subject = "pnpm install --frozen-lockfile"
 reason = """
 Idempotent, and a no-op against a warm tree. Each module that renders a web

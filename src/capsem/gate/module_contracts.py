@@ -86,6 +86,13 @@ def release_contracts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]
             ignores=settings.build_chain_artifact_tests,
             stop_at_first_failure=False,
             require_artifacts=False,
+            # Ten minutes seventeen in one process: over half of what
+            # `fast-test` costs, and more than the whole lane's budget allows.
+            # These are source-level contracts -- they read workflows, plans and
+            # configuration -- and `--dist=loadfile` keeps each file's tests on
+            # one worker, so the fixtures that build at fixed paths stay inside
+            # the file that builds them.
+            parallel=True,
             # It builds release-site fixtures at fixed paths and installs the
             # workspace's node modules. As its own command a machine lock made
             # that safe by accident; in a shared plan it has to be declared.

@@ -88,6 +88,7 @@ def functional(
     after: tuple[Step, ...] = (),
     isolated_assets: bool = False,
     staged: ProfileContent | None = None,
+    generated: Step | None = None,
 ) -> Step:
     """Every VM-owned suite, for every profile the channel selects.
 
@@ -141,13 +142,25 @@ def functional(
     # this rides along with work already being done. Here it is real added
     # cost -- an `mcp_export` build in a lane that otherwise compiles no Rust --
     # and the alternative is a suite that can only pass on a warm checkout.
-    generated = phase.add(audits.generated_settings(config), after=(ready,))
+    # As in `static`: made here when this module runs alone, and handed over
+    # when a composed run has already made it.
+    #
+    # `ready` stays in the chain either way. The handed-over step lives in an
+    # earlier phase, so depending on it *instead* dropped this module's own
+    # ordering: its suites became reachable before the artifacts they boot, and
+    # the phase-order contract caught the plan with `functional` at 29 and
+    # `artifacts` at 95.
+    settled: tuple[Step, ...] = (
+        (generated, ready)
+        if generated is not None
+        else (phase.add(audits.generated_settings(config), after=(ready,)),)
+    )
 
     # A release lane was handed signed binaries; signing them again would
     # replace the bytes the manifest selected with locally built ones.
-    first: tuple = (generated,)
+    first: tuple = settled
     if not qualification.pulled:
-        first = (phase.add(hostpackage.sign_step(config), after=(generated,)),)
+        first = (phase.add(hostpackage.sign_step(config), after=settled),)
 
     previous = _profile_lane(
         phase,
