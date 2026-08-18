@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from . import (
+    audits,
     hostpackage,
     profiles,
     pytestsuite,
@@ -134,12 +135,19 @@ def functional(
     ready = phase.add(
         toolchain.node(config, config.functional.node_workspaces), after=(agreed,)
     )
+    # The third module to need this, for the reason its own docstring gives:
+    # the generated mock is gitignored, so it is never part of the source a run
+    # is given, and the broad suite checks it for staleness. In the fast lane
+    # this rides along with work already being done. Here it is real added
+    # cost -- an `mcp_export` build in a lane that otherwise compiles no Rust --
+    # and the alternative is a suite that can only pass on a warm checkout.
+    generated = phase.add(audits.generated_settings(config), after=(ready,))
 
     # A release lane was handed signed binaries; signing them again would
     # replace the bytes the manifest selected with locally built ones.
-    first: tuple = (ready,)
+    first: tuple = (generated,)
     if not qualification.pulled:
-        first = (phase.add(hostpackage.sign_step(config), after=(ready,)),)
+        first = (phase.add(hostpackage.sign_step(config), after=(generated,)),)
 
     previous = _profile_lane(
         phase,
