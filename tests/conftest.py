@@ -174,7 +174,18 @@ threading.excepthook = _thread_exception_hook
 # set by every developer's Docker dev-loop and would turn local iteration
 # into a fail-fast trap.
 _PROJECT_ROOT = Path(__file__).parent.parent
-_GATE_SOURCE_COMMIT_VARIABLE = gate_config.load(_PROJECT_ROOT).environment.source_commit
+_GATE_CONFIG = gate_config.load(_PROJECT_ROOT)
+_GATE_SOURCE_COMMIT_VARIABLE = _GATE_CONFIG.environment.source_commit
+# The variables that decide whether a gate command is a local run or half of a
+# release. `qualification.from_environment` reads exactly these, so a test that
+# builds a plan while a parent release exports them gets the release lane's
+# plan and asserts against the wrong shape.
+_GATE_QUALIFICATION_VARIABLES = (
+    _GATE_CONFIG.modules.release_input_dir,
+    _GATE_CONFIG.modules.release_package,
+    _GATE_CONFIG.modules.release_profile,
+    _GATE_CONFIG.modules.release_bin_dir,
+)
 _ARCH = "arm64" if os.uname().machine == "arm64" else "x86_64"
 _REQUIRED_ARTIFACTS = {
     # Manifest is flat/top-level (single file covering all arches). Every
@@ -203,6 +214,12 @@ def _tests_do_not_inherit_the_parent_gate_source(
     exercise release identity opt in explicitly with ``monkeypatch.setenv``.
     """
     monkeypatch.delenv(_GATE_SOURCE_COMMIT_VARIABLE, raising=False)
+    # Same reasoning for the qualification itself. `qualify-binaries` runs this
+    # suite with the release environment exported, and a unit test asking for
+    # the candidate plan is not that release: without this it received a plan
+    # with no package build in it and reported the absence as a defect.
+    for variable in _GATE_QUALIFICATION_VARIABLES:
+        monkeypatch.delenv(variable, raising=False)
 
 
 def _required_artifacts_for_run(

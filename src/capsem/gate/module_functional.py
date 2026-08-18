@@ -9,6 +9,7 @@ from . import (
     hostpackage,
     profiles,
     pytestsuite,
+    toolchain,
     vmproofs,
 )
 from .actions import Action
@@ -123,11 +124,20 @@ def functional(
         after=after,
     )
 
+    # This module owns its prerequisites, the same way `module_contracts` had
+    # to learn to. The broad suite renders the release site from fixtures with
+    # `pnpm --dir release-site run build`, and `node_modules` is gitignored --
+    # so a local run worked on whatever an earlier phase had installed, and the
+    # release lane, whose prefix carries only tracked files, died on a missing
+    # Astro. Idempotent, and the `node_modules` exclusive keeps the two
+    # installs in a candidate plan from overlapping.
+    ready = phase.add(toolchain.node(config), after=(agreed,))
+
     # A release lane was handed signed binaries; signing them again would
     # replace the bytes the manifest selected with locally built ones.
-    first: tuple = (agreed,)
+    first: tuple = (ready,)
     if not qualification.pulled:
-        first = (phase.add(hostpackage.sign_step(config), after=(agreed,)),)
+        first = (phase.add(hostpackage.sign_step(config), after=(ready,)),)
 
     previous = _profile_lane(
         phase,
