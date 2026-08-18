@@ -42,8 +42,8 @@ qualify-binaries workspace_root:
 
 
 # Qualify one profile's built assets against the selected binary.
-qualify-assets input_dir profile activation_ready:
-    uv run capsem-gate qualify-assets {{quote(input_dir)}} {{quote(profile)}} --activation-ready {{quote(activation_ready)}}
+qualify-assets input_dir profile workspace_root activation_ready:
+    uv run capsem-gate qualify-assets {{quote(input_dir)}} {{quote(profile)}} {{quote(workspace_root)}} --activation-ready {{quote(activation_ready)}}
 
 
 # Build, test, and publish only Capsem binaries/packages for one channel.

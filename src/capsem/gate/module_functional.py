@@ -136,6 +136,7 @@ def functional(
         after=first,
         broad=True,
         isolated_assets=isolated_assets,
+        staged=staged,
     )
     for profile in rest:
         previous = _profile_lane(
@@ -145,6 +146,7 @@ def functional(
             after=(previous,),
             broad=False,
             isolated_assets=isolated_assets,
+            staged=staged,
         )
     return previous
 
@@ -165,6 +167,7 @@ def _profile_lane(
     after: tuple,
     broad: bool,
     isolated_assets: bool,
+    staged: ProfileContent | None = None,
 ):
     """One profile's VM-owned suites, in the order they depend on.
 
@@ -177,7 +180,16 @@ def _profile_lane(
         if broad
         else pytestsuite.compatibility(config, profile=profile)
     )
-    assets, profiles_dir = _profile_content(config, profile) if isolated_assets else (None, None)
+    # A release lane's cohort is one staged pair for every profile, not a
+    # private tree per profile. Without this the suites inherit no content
+    # selection at all and fall back to the checkout -- which, inside the
+    # prefix, is the one place the lane never staged anything.
+    if staged is not None:
+        assets, profiles_dir = staged.assets, staged.profiles(config)
+    elif isolated_assets:
+        assets, profiles_dir = _profile_content(config, profile)
+    else:
+        assets, profiles_dir = None, None
 
     def selected(suite):
         if assets is None or profiles_dir is None:

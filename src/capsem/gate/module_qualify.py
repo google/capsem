@@ -113,6 +113,7 @@ class QualifyAssetsModule(
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("input_dir", type=Path)
         parser.add_argument("profile")
+        parser.add_argument("workspace_root", type=Path)
         parser.add_argument(
             "--activation-ready",
             required=True,
@@ -130,4 +131,14 @@ class QualifyAssetsModule(
                 profile=self._args.profile,
             )
             return plan
-        return _pairing(plan, self._config, self.qualification)
+        # The activation-ready pairing stages into the workspace exactly as the
+        # binary lane does, and qualifies from the same kind of private prefix,
+        # so it needs the same absolute anchor. Taken unconditionally: a root
+        # supplied only on the branch that happens to be exercised is a root
+        # nobody notices is missing.
+        return _pairing(
+            plan,
+            self._config,
+            self.qualification,
+            staged=ProfileContent.staged(self._config, self._args.workspace_root),
+        )
