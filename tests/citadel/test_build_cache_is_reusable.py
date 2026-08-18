@@ -71,6 +71,37 @@ def test_every_lent_path_is_invisible_to_the_source_digest() -> None:
     )
 
 
+def test_nothing_that_records_where_it_was_built_is_lent() -> None:
+    """Cargo relocates a build directory. Build scripts do not.
+
+    The first run handed a borrowed `target/` died in Tauri's build script,
+    which records its generated permission files by absolute `OUT_DIR` and went
+    looking inside a prefix that had already been reclaimed. A uv venv is the
+    same shape through `pyvenv.cfg` and its console-script shebangs, and a
+    pnpm store links absolutely too.
+
+    Named individually rather than inferred: there is no way to look at a
+    directory and see whether something inside it wrote its own path down, so
+    the list is the knowledge and this is where it is kept. Reusing compiler
+    output needs a build directory that sits at one path for every run -- a
+    shared `CARGO_TARGET_DIR` -- which is a different mechanism from lending a
+    directory between trees.
+    """
+    records_its_own_path = {"target", ".venv"}
+    lent = set(_config().prefix.lent)
+
+    overlap = sorted(lent & records_its_own_path)
+    assert not overlap, (
+        f"{overlap} contains artifacts that name the tree they were built in, "
+        "so lending them to a differently named prefix produces paths nothing "
+        "wrote; see the comment on `[prefix] lent`"
+    )
+    assert not any("node_modules" in relative for relative in lent), (
+        "a pnpm store links absolutely, so a lent `node_modules` points into "
+        "whichever prefix installed it"
+    )
+
+
 def test_the_cache_is_not_where_prefixes_are_swept(tmp_path: Path) -> None:
     """A cache under the prefix root survives exactly one run.
 

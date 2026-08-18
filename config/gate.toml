@@ -2131,11 +2131,29 @@ carried = ["private"]
 # `tests/citadel/test_build_cache_is_reusable.py` checks it against
 # `git check-ignore` rather than against a second list here.
 #
-# `.venv` and `node_modules` are deliberately absent. A uv venv records its own
-# absolute path in `pyvenv.cfg` and in every console-script shebang, so moving
-# one between prefixes with different names produces an interpreter that no
-# longer exists -- and both are already fast from their own warm global stores.
-lent = ["target", "assets"]
+# Only content-addressed artifacts. `assets/` is VM images plus a manifest of
+# their digests: nothing in it records where it was built, so the same bytes are
+# valid under any prefix name, and the asset conditions already decide from
+# content whether a rebuild is needed.
+#
+# `target/` is not here, and that was measured rather than assumed. Cargo
+# relocates a build directory happily; build *scripts* do not. Tauri records its
+# generated permission files by absolute `OUT_DIR`, so the first run given a
+# borrowed `target/` died with
+#
+#   failed to read plugin permissions: failed to read file
+#   '~/.cg/6d7cc52c/target/debug/build/tauri-.../permissions/app/.../app_hide.toml'
+#
+# naming a prefix that had already been reclaimed. Reusing compiler output needs
+# the build directory to sit at one path for every run -- a shared
+# `CARGO_TARGET_DIR` -- which is a different change from lending a directory
+# between trees, and not one to make on the way to a release.
+#
+# `.venv` and `node_modules` are absent for the same reason with a different
+# mechanism: a uv venv records its own absolute path in `pyvenv.cfg` and in
+# every console-script shebang, and both are already fast from warm global
+# stores.
+lent = ["assets"]
 
 # What must come back out before the prefix is reclaimed. A release publishes
 # from these, and without the export they die with the copy that made them.
