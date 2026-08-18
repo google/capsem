@@ -2381,6 +2381,42 @@ max_undeclared = 0
 
 [boundary.step_attributes.undeclared_by_module]
 
+# Commands one plan runs more than once on purpose, each saying why.
+# Composition is where repetition hides: every module owns its prerequisites so
+# it can run alone, which is right, and nothing noticed what happens when three
+# of them are composed into one run. `generate-settings.sh` ran three times in
+# a single candidate plan, seventy-five seconds each, for the same file in the
+# same prefix.
+[[boundary.repeated_actions]]
+subject = "generate-settings.sh"
+reason = """
+Debt, not a decision, and recorded here so it stops being invisible. Three
+modules generate the same file into the same prefix in one candidate run --
+`fast.audit`, `static.audit`, `functional.audit` -- at about seventy-five
+seconds each. Each owns the prerequisite so it can run alone, which is right;
+what is wrong is that composing them pays three times. The fix is for the
+script to do nothing when its output is already current, which makes the second
+and third free without making any module depend on having been run after
+another. Until then this entry is what keeps the cost on the record.
+"""
+
+[[boundary.repeated_actions]]
+subject = "check-web-surface.sh frontend-build"
+reason = """
+The same debt in a smaller amount: `fast.web.frontend-build` and
+`static.web.frontend-bundle` build the same bundle in one run, about a minute
+each. Same cause, same fix, and the same reason for writing it down.
+"""
+
+[[boundary.repeated_actions]]
+subject = "pnpm install --frozen-lockfile"
+reason = """
+Idempotent, and a no-op against a warm tree. Each module that renders a web
+surface installs its own node_modules so it can run alone; the alternative is a
+module whose independence depends on having been run after another one, which
+is more expensive to reason about than a second install that does nothing.
+"""
+
 # ---------------------------------------------------------------------------
 # The execution log
 # ---------------------------------------------------------------------------
@@ -2456,6 +2492,21 @@ slow_action_seconds = 30
 # log stays in `steps/`; this is the part that has to be in front of whoever is
 # reading the failure, without putting a gigabyte of compiler output in JSONL.
 failure_tail_lines = 40
+
+# What `fast-test` may cost end to end, enforced while the run is happening.
+#
+# Separate from `timing_regression` below, which compares a run against its own
+# history and is right for a release: a run twice as slow as the last one is a
+# regression, and a run that was always slow is not. Only one of those tells you
+# whether a gate named `fast` deserves the name. It measured twenty-one minutes
+# when this was written -- ten of them one un-parallelised pytest invocation,
+# and two and a half the same settings script run three times in one plan.
+#
+# Enforced between step waves rather than reported afterwards. A report about
+# last night arrives after you have already waited.
+[runlog.fast_lane]
+seconds = 600
+commands = ["test-fast", "test-release-contracts", "test-static"]
 
 [runlog.timing_regression]
 # A release guard, not a stopwatch SLA. Compare complete qualification with

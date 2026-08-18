@@ -254,6 +254,12 @@ class Context:
     an output and every later step went unseen.
     """
 
+    deadline_seconds: float | None = None
+    """How long this whole plan may take, or `None` for no ceiling.
+
+    Set only for the lane whose name promises speed; see `deadline`.
+    """
+
     carried: frozenset[str] = frozenset()
     """Steps a previous run already proved, which this one may skip.
 

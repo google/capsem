@@ -32,6 +32,7 @@ from .exclusions import Exclusion, HashedExclusion
 from .prefixschema import PrefixConfig as PrefixConfig
 from .sandboxschema import SandboxConfig as SandboxConfig
 from .sourcecontractschema import ScriptSizeConfig
+from .timingschema import FastLaneBudget as FastLaneBudget
 from .timingschema import TimingRegressionConfig as TimingRegressionConfig
 
 #: A first-party tree to check. Relative, normalized, and inside the checkout:
@@ -98,6 +99,11 @@ class BoundaryConfig(Strict):
     #: Dockerfile `RUN` bodies that sequence several statements on purpose
     #: without `set -e`, each stating why the earlier failures are tolerable.
     sequenced_runs: tuple[Exclusion, ...]
+    #: Commands one plan runs more than once on purpose, each saying why.
+    #: Composition is where repetition hides: every module owns its
+    #: prerequisites so it can run alone, and nothing noticed that three of
+    #: them then generate the same file in one run.
+    repeated_actions: tuple[Exclusion, ...]
     shell_control_flow: tuple[str, ...]
     recipes_with_inline_control_flow: tuple[str, ...]
     direct_machine_access: tuple[str, ...]
@@ -197,6 +203,8 @@ class RunLogConfig(Strict):
     slow_action_seconds: NonNegativeFloat
     failure_tail_lines: PositiveInt
     timing_regression: TimingRegressionConfig
+    #: What `fast-test` may cost end to end, as an absolute promise.
+    fast_lane: FastLaneBudget
     #: The distilled history that outlives the directories above, and the
     #: overview computed from it. In `digestschema` because this module is at
     #: its own line boundary and thresholds are what people come to tune.

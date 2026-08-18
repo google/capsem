@@ -282,6 +282,7 @@ class GateCommand(Recorded, ABC):
                         ),
                         watch=watch,
                         carried=carried,
+                        deadline_seconds=self._config.runlog.fast_lane.for_command(self.name),
                     )
                 )
                 qualificationflow.finish(
