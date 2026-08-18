@@ -1,9 +1,9 @@
 """Citadel guard: a release lane may only read what it was handed.
 
 The Citadel is where Capsem records architectural mistakes that must not be
-repeated. This one cost five dispatches of the 0.6 binary release, each about
-forty minutes, and every one of them failed for the same reason wearing a
-different face.
+repeated. This one cost five dispatches of a binary release, each about forty
+minutes, and every one of them failed for the same reason wearing a different
+face.
 
 `qualify-binaries` isolates itself into a private prefix holding tracked files
 and nothing else, while the workflow stages the cohort it is meant to prove --
