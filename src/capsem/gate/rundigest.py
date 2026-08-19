@@ -129,8 +129,22 @@ def _trends(
     ratchet uses. The ratchet is comparing one proof against one proof; a trend
     is trying to see through the variance of a shared machine, and one noisy
     neighbour makes a previous-run comparison fire constantly.
+
+    Every measured step, and not only the critical path. This read
+    `latest.critical_path or latest.steps` while claiming the sentence above,
+    so on any run that had a path -- which is every real run -- a step that had
+    tripled was invisible until it became the path itself. That is backwards:
+    the whole value of a trend is seeing the growth *before* it is what the run
+    waits for.
+
+    Widening it costs nothing at the enforcement end, because nothing here
+    enforces. It does cost a reader, so `trend_floor_seconds` drops the steps
+    too short to be worth a sentence and `trends` bounds how many are named --
+    this file is injected into every agent session, and an unbounded list of
+    half-second wobbles is how a document stops being read.
     """
-    for label in latest.critical_path or latest.steps:
+    floor_ms = settings.trend_floor_seconds * 1000
+    for label in latest.steps:
         current = latest.measured(label)
         if current is None:
             continue
@@ -140,12 +154,19 @@ def _trends(
         if not samples:
             continue
         trend = Trend(label, current, median(samples), len(samples))
+        # Against the larger of the two, so a step that collapsed from a minute
+        # to a moment is still reported. Testing `current` alone would drop
+        # exactly the improvements worth confirming.
+        if max(trend.current_ms, trend.median_ms) < floor_ms:
+            continue
         if trend.factor >= settings.regression_factor:
             analysis.regressions.append(trend)
         elif trend.factor <= 1 / settings.improvement_factor:
             analysis.improvements.append(trend)
     analysis.regressions.sort(key=lambda t: -(t.current_ms - t.median_ms))
     analysis.improvements.sort(key=lambda t: t.current_ms - t.median_ms)
+    del analysis.regressions[settings.trends :]
+    del analysis.improvements[settings.trends :]
 
 
 def _hotspots(analysis: Analysis, window: list[LedgerRow], settings: DigestConfig) -> None:

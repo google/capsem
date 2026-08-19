@@ -312,13 +312,13 @@ def test_the_median_ignores_runs_where_the_step_was_skipped() -> None:
     on record, and then flags the next real build as a regression against it.
     """
     history = [
-        _row("r5", steps={"build": (100.0, "ok")}, critical=("build",)),
-        *[_row(f"r{n}", steps={"build": (0.4, "skipped")}, critical=("build",)) for n in (4, 3)],
-        *[_row(f"r{n}", steps={"build": (95.0, "ok")}, critical=("build",)) for n in (2, 1)],
+        _row("r5", steps={"build": (100_000.0, "ok")}, critical=("build",)),
+        *[_row(f"r{n}", steps={"build": (400.0, "skipped")}, critical=("build",)) for n in (4, 3)],
+        *[_row(f"r{n}", steps={"build": (95_000.0, "ok")}, critical=("build",)) for n in (2, 1)],
     ]
     analysis = analyse(history, DIGEST)
     assert analysis.regressions == [], (
-        "100ms against a 95ms median is not a regression; a median dragged to "
+        "100s against a 95s median is not a regression; a median dragged to "
         "zero by two skips would have made it one"
     )
 
@@ -355,8 +355,11 @@ def test_without_a_comparable_run_no_duration_is_compared() -> None:
 
 def test_a_regression_names_the_measurement_it_came_from() -> None:
     history = [
-        _row("r4", steps={"build": (400.0, "ok")}, critical=("build",)),
-        *[_row(f"r{n}", steps={"build": (100.0, "ok")}, critical=("build",)) for n in (3, 2, 1)],
+        _row("r4", steps={"build": (400_000.0, "ok")}, critical=("build",)),
+        *[
+            _row(f"r{n}", steps={"build": (100_000.0, "ok")}, critical=("build",))
+            for n in (3, 2, 1)
+        ],
     ]
     analysis = analyse(history, DIGEST)
     assert [trend.label for trend in analysis.regressions] == ["build"]
@@ -391,3 +394,64 @@ def test_a_long_step_off_the_critical_path_is_not_a_hotspot() -> None:
     ]
     analysis = analyse(history, DIGEST)
     assert [hotspot.label for hotspot in analysis.hotspots] == ["on-the-path"]
+
+
+def test_a_step_off_the_critical_path_is_still_measured() -> None:
+    """The growth worth seeing is the growth before it becomes the path.
+
+    Trends read `critical_path or steps`, so on any run that had a path -- which
+    is every real run -- only the path was examined. A step that had tripled
+    stayed invisible until it was slow enough to become the path itself, which
+    is the one moment the warning is too late to be useful.
+    """
+    history = [
+        _row(
+            "r4",
+            steps={"link": (300_000.0, "ok"), "compile": (900_000.0, "ok")},
+            critical=("compile",),
+        ),
+        *[
+            _row(
+                f"r{n}",
+                steps={"link": (60_000.0, "ok"), "compile": (900_000.0, "ok")},
+                critical=("compile",),
+            )
+            for n in (3, 2, 1)
+        ],
+    ]
+    analysis = analyse(history, DIGEST)
+    assert [trend.label for trend in analysis.regressions] == ["link"], (
+        "`link` is 5x its median and never owns the critical path; reading the "
+        "path alone reports nothing at all"
+    )
+
+
+def test_a_step_too_short_to_matter_does_not_earn_a_sentence() -> None:
+    """A factor means least where the absolute numbers are smallest.
+
+    Reading every step across a hundred-step plan means reading a great many
+    whose duration is noise. This document is injected into every agent
+    session, so an unbounded list of half-second wobbles is paid for on work
+    that has nothing to do with the gate.
+    """
+    history = [
+        _row("r4", steps={"stamp": (900.0, "ok")}, critical=("stamp",)),
+        *[_row(f"r{n}", steps={"stamp": (100.0, "ok")}, critical=("stamp",)) for n in (3, 2, 1)],
+    ]
+    analysis = analyse(history, DIGEST)
+    assert analysis.regressions == [], "0.9s against 0.1s is 9x and still not worth a line"
+
+
+def test_the_named_trends_are_bounded_and_ranked_by_time_lost() -> None:
+    """A ranked list nobody finishes is a list that ranked nothing."""
+    slow = {f"step{n}": (float(n) * 20_000.0, "ok") for n in range(1, 21)}
+    fast = {label: (spent / 10, state) for label, (spent, state) in slow.items()}
+    history = [
+        _row("r4", steps=slow, critical=("step1",)),
+        *[_row(f"r{n}", steps=fast, critical=("step1",)) for n in (3, 2, 1)],
+    ]
+    analysis = analyse(history, DIGEST)
+    assert len(analysis.regressions) == DIGEST.trends
+    lost = [trend.current_ms - trend.median_ms for trend in analysis.regressions]
+    assert lost == sorted(lost, reverse=True), "the ones that fit must be the ones that cost most"
+    assert analysis.regressions[0].label == "step20"

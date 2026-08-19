@@ -2581,6 +2581,13 @@ recent_runs = 8
 # a sentence, and a sentence that fires on ordinary variance gets ignored.
 regression_factor = 1.6
 improvement_factor = 1.5
+# Trends read every measured step, not just the critical path -- growth is
+# worth seeing before it becomes what the run waits for. Across a hundred-step
+# plan that needs a floor and a bound, or the document stops being read: a
+# factor means least where the absolute numbers are smallest, and this file is
+# paid for in context on every session.
+trend_floor_seconds = 5.0
+trends = 8
 # Two failures is not noise and not yet a pattern. Naming it is the point: an
 # intermittent step is excused every time it is seen alone.
 thrash_runs = 2

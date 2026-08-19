@@ -65,6 +65,24 @@ class DigestConfig(Strict):
     confirmed or quietly not.
     """
 
+    trend_floor_seconds: PositiveFloat
+    """How long a step must take before a change in it is worth a sentence.
+
+    Trends read every measured step rather than the critical path alone, which
+    is the only way to see growth before it becomes the path. Across a
+    hundred-step plan that also means a great many steps whose duration is
+    noise, and a factor is at its least meaningful where the absolute numbers
+    are smallest.
+    """
+
+    trends: PositiveInt
+    """How many regressions and improvements the digest names, each.
+
+    Same reason as `hotspots`: this document is injected into every agent
+    session, so its length is paid for on work that has nothing to do with the
+    gate. Ranked by time lost, so the ones that fit are the ones that matter.
+    """
+
     thrash_runs: PositiveInt
     """Failures across the compared window before a step is called unreliable.
 
