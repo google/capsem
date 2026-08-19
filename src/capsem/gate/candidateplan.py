@@ -28,6 +28,7 @@ from . import (
     module_rehearsal,
     staticmodule,
     testmodules,
+    toolchain,
     vmmodules,
 )
 from .actions import Call, Run, Script
@@ -144,11 +145,18 @@ def compose_modules(
     )
     glowup = vmmodules.glowup(plan, config, qualification=qualification, after=(functional,))
     # After the glow-up, not instead of it. The local lane's install proof runs
-    # the package it built; this runs the same package again through the five
-    # steps only a release lane reaches, against a cohort resolved by digest.
+    # the package it built; this runs the same package again through the pulled
+    # path a release lane takes, against a cohort resolved by digest.
     # A release lane skips it -- there it is not a rehearsal, it is the lane.
+    # Asked after `functional`, because that is when the step it finds exists.
+    installed = _already_issuing(plan, toolchain.node(config, config.functional.node_workspaces))
     rehearsed = module_rehearsal.rehearsal(
-        plan, config, qualification=qualification, after=(glowup,)
+        plan,
+        config,
+        qualification=qualification,
+        after=(glowup,),
+        generated=generated,
+        node=installed,
     )
 
     return plan.add(

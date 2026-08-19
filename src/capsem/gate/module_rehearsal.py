@@ -17,9 +17,16 @@ steps passed none of the script's three required arguments, so they could not
 have started at all.
 
 So the cohort is fabricated from what the local lane built, and then everything
-downstream is the release lane itself: the same `pulled_artifacts` verify step
-and the same `pulled_package` sequence, from the same functions, differing only
-in the directories they scratch in.
+downstream is the release lane itself: the same `pulled_artifacts` verify step,
+the same `functional` suites, and the same `pulled_package` sequence, from the
+same functions, differing only in the directories they scratch in.
+
+`functional` was added last and was the expensive omission. Covering only the
+five steps that had no local counterpart still left the phase where four of the
+next eight dispatch failures happened -- the suites themselves, run against a
+pulled cohort instead of the layout the build left behind. Every one died within
+four seconds on a precondition, which is the cheapest kind of failure to find
+and was being bought at two hours apiece.
 
 This is not a shortcut around the release, and it does not become one. It runs
 only in the local lane -- a release *is* the pulled path, and rehearsing it
@@ -39,6 +46,7 @@ from .config import GateConfig
 from .content import ProfileContent
 from .execution import Kind, Needs, Speed, Step, step
 from .module_artifacts import pulled_artifacts
+from .module_functional import functional
 from .module_glowup import pulled_package
 from .plan import Plan
 from .qualification import Qualification
@@ -54,7 +62,7 @@ class RehearsalModule(
     name="test-rehearsal",
     help="replay the release lane's pulled path against what this tree built",
 ):
-    """The five steps only a release lane reaches, as a command of their own.
+    """The release lane's pulled path, as a command of its own.
 
     Its own command for the reason every other phase has one: so it can be run
     without the hour in front of it. Composed into `candidate` it sits after the
@@ -81,11 +89,19 @@ def rehearsal(
     *,
     qualification: Qualification,
     after: tuple[Step, ...] = (),
+    generated: Step | None = None,
+    node: Step | None = None,
 ) -> Step:
-    """Replay the release lane's pulled steps against a local cohort."""
+    """Replay the release lane's pulled steps against a local cohort.
+
+    `generated` is handed over for the reason `functional` documents: a
+    composed run has already built the gitignored mock the suites check, and
+    building it a second time is work the plan cannot justify. Absent when this
+    module runs alone, where nothing has made it yet.
+    """
     if qualification.pulled:
-        # Already the subject. A release proves these five steps for real, and
-        # a rehearsal beside them would be the same fifteen minutes spent twice.
+        # Already the subject. A release proves this path for real, and a
+        # rehearsal beside it would be the same work done twice.
         return after[-1]
 
     settings = config.modules
@@ -139,16 +155,43 @@ def rehearsal(
         after=(built,),
         phase_name=PHASE,
     )
+    rehearsed = qualification_state.rehearsal(
+        config,
+        input_dir=settings.rehearsal_inputs_dir,
+        package=package,
+    )
+    staged = ProfileContent.staged(config, config.path(settings.rehearsal_content_root))
+
+    # The VM suites, against the pulled cohort rather than the layout the build
+    # left behind. This was the gap that made the release lane discoverable only
+    # by dispatching it: the five steps below are the ones nobody could run
+    # locally, but `functional` is where four of the eight pairing failures
+    # actually happened -- a profile axis reading the checkout, suites handed no
+    # content selection, a gitignored generated file, and host binaries resolved
+    # from `target/debug` in a prefix that carries only tracked files. Each cost
+    # a dispatch to see and four seconds to fail.
+    #
+    # The base profile only. The pulled path is the same for every profile, and
+    # repeating it per profile would buy nothing while doubling the slowest
+    # phase the gate has; the compatibility axis is what the candidate's own
+    # `functional` phase is for.
+    proved = functional(
+        plan,
+        config,
+        qualification=rehearsed,
+        after=(verified,),
+        staged=staged,
+        generated=generated,
+        node=node,
+        phase_name=PHASE,
+        axis=(config.suites.pytest.base_profile,),
+    )
     return pulled_package(
         phase,
         config,
-        qualification_state.rehearsal(
-            config,
-            input_dir=settings.rehearsal_inputs_dir,
-            package=package,
-        ),
-        (verified,),
-        ProfileContent.staged(config, config.path(settings.rehearsal_content_root)),
+        rehearsed,
+        (proved,),
+        staged,
         work_dirs=(
             settings.rehearsal_glowup_work_dir,
             settings.rehearsal_channel_switch_work_dir,

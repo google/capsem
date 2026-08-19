@@ -65,7 +65,17 @@ class AxisAgrees(Action, name="axis-agrees"):
         self._profiles_dir = profiles_dir
 
     def render(self) -> str:
-        return "check the materialized profiles match the checked-in axis"
+        """Name what is being checked, not just that a check happens.
+
+        Two lanes ask this question of two different trees -- the layout the
+        build left behind, and a cohort staged the way a release stages one.
+        A fixed string made those indistinguishable in the run log, so a
+        failure did not say which tree it had read.
+        """
+        where = self._profiles_dir or self._assets
+        return "check the materialized profiles match the checked-in axis" + (
+            f" in {where}" if where is not None else ""
+        )
 
     def perform(self, context: Context) -> None:
         profiles.agree(
@@ -89,6 +99,9 @@ def functional(
     isolated_assets: bool = False,
     staged: ProfileContent | None = None,
     generated: Step | None = None,
+    node: Step | None = None,
+    phase_name: str = "functional",
+    axis: tuple[str, ...] | None = None,
 ) -> Step:
     """Every VM-owned suite, for every profile the channel selects.
 
@@ -96,12 +109,23 @@ def functional(
     its cohort into the workspace and then qualifies from a private prefix
     which carries none of it, so a checkout-relative answer points at a
     directory nothing ever wrote.
+
+    `phase_name` and `axis` are how the local rehearsal replays this phase
+    against a pulled cohort without colliding with the candidate's own
+    `functional` steps, for the reason `pulled_artifacts` already documents:
+    two steps cannot share a label. Four of the eight binary-release failures
+    were here rather than in the five steps the rehearsal used to cover, and
+    every one of them died within four seconds on a precondition -- a missing
+    profiles directory, initrd, generated file or host binary. Those are
+    minutes of local work that were being paid for at dispatch prices.
     """
-    phase = plan.phase("functional")
+    phase = plan.phase(phase_name)
     # From checked-in `config/profiles/`, because this runs while the plan is
     # being built and a plan may not depend on build output. See
-    # `profiles.selected`.
-    axis = profiles.selected(config)
+    # `profiles.selected`. A caller may narrow it: the rehearsal proves the
+    # pulled path, which is the same for every profile, and the compatibility
+    # axis is what the candidate's own `functional` phase is for.
+    axis = profiles.selected(config) if axis is None else axis
     base, rest = axis[0], axis[1:]
 
     # That the materialized catalog agrees with the source axis and with the
@@ -133,8 +157,19 @@ def functional(
     # release lane, whose prefix carries only tracked files, died on a missing
     # Astro. Idempotent, and the `node_modules` exclusive keeps the two
     # installs in a candidate plan from overlapping.
-    ready = phase.add(
-        toolchain.node(config, config.functional.node_workspaces), after=(agreed,)
+    #
+    # Handed over when a composed run already installed it, exactly as
+    # `generated` is below. Not `plan.shared`: two lanes want this step at two
+    # different points in the order, so a single shared node inherits both
+    # sets of edges and closes a cycle -- which is the reordering
+    # `_already_issuing` documents as the reason dedup lives at the call site
+    # rather than inside `Plan.add`.
+    prepared: tuple[Step, ...] = (
+        (node, agreed)
+        if node is not None
+        else (
+            phase.add(toolchain.node(config, config.functional.node_workspaces), after=(agreed,)),
+        )
     )
     # The third module to need this, for the reason its own docstring gives:
     # the generated mock is gitignored, so it is never part of the source a run
@@ -151,9 +186,9 @@ def functional(
     # the phase-order contract caught the plan with `functional` at 29 and
     # `artifacts` at 95.
     settled: tuple[Step, ...] = (
-        (generated, ready)
+        (generated, *prepared)
         if generated is not None
-        else (phase.add(audits.generated_settings(config), after=(ready,)),)
+        else (phase.add(audits.generated_settings(config), after=prepared),)
     )
 
     # A release lane was handed signed binaries; signing them again would

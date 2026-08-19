@@ -11,10 +11,16 @@ minutes each, and the last of those defects was that two of the five passed
 none of their script's three required arguments. They could never have started.
 Nothing said so, because nothing compared the two plans.
 
-This does. The comparison is by label, in both directions, and the mapping is
-one rule: a release step named `<phase>.<rest>` is covered locally either by
-the identical label or by `rehearsal.<rest>`. Anything else is a step that only
-a release dispatch will ever run.
+This does. Coverage is compared by label: a release step named `<phase>.<rest>`
+is covered locally either by the identical label or by `rehearsal.<rest>`.
+Anything else is a step that only a release dispatch will ever run.
+
+Idleness is compared by rendered command instead, because the two questions are
+not the same one. A step can share its name with a candidate step and still be
+the only local proof of anything -- the VM suites read a staged cohort under a
+pulled qualification where the candidate reads the layout it just built. Three
+more dispatches went to defects in that difference after the five nameless
+steps were covered.
 """
 
 from __future__ import annotations
@@ -67,7 +73,9 @@ def test_every_release_step_has_a_local_counterpart() -> None:
     # and a guard that insisted on the phase would report that as a blind spot.
     suffixes = {label.split(".", 1)[-1] for label in covered}
     uncovered = [
-        label for label in pulled if label not in covered and label.split(".", 1)[-1] not in suffixes
+        label
+        for label in pulled
+        if label not in covered and label.split(".", 1)[-1] not in suffixes
     ]
 
     assert not uncovered, (
@@ -80,26 +88,46 @@ def test_the_rehearsal_covers_exactly_the_steps_that_differ() -> None:
     """A rehearsal step with nothing to rehearse is a step proving itself.
 
     The guard above is satisfied by adding rehearsal steps; this one keeps them
-    honest. Every `rehearsal.<rest>` has to answer for some release step that
-    the local plan does not already run under its own name -- otherwise the
-    phase accumulates work that duplicates the candidate rather than extending
-    it, and the extra quarter-hour buys nothing.
-    """
-    local, pulled = _plans()
-    answers = {label.split(".", 1)[-1] for label in pulled if label not in set(local)}
+    honest: a `rehearsal.<rest>` that duplicates work the candidate already does
+    buys nothing and costs the run.
 
-    idle = [
+    Compared by what the step *runs*, not by what it is called. That distinction
+    is the whole reason the VM suites are rehearsed at all. `functional` and
+    `rehearsal` both hold a step named `pytest.broad.code`, and by label the
+    second looks redundant -- but the first reads the layout the build left
+    behind and the second reads a cohort staged the way a release stages one,
+    under a qualification that reports itself as pulled. Four of the eight
+    binary-release failures were in exactly that gap, each dying within four
+    seconds on a precondition the local run had already satisfied by building
+    it. A guard that matched on the name alone would have called every one of
+    those steps idle and sent the defects back to the dispatch queue.
+    """
+    local_plan = built_command(ROOT, "candidate", (), None)._describe()
+    commands: dict[str, set[str]] = {}
+    for step in local_plan.steps:
+        commands[step.label] = {action.render() for action in step.actions}
+
+    elsewhere = {
+        rendered
+        for label, rendered_set in commands.items()
+        if not label.startswith(f"{REHEARSAL}.")
+        for rendered in rendered_set
+    }
+
+    idle = sorted(
         label
-        for label in local
-        if label.startswith(f"{REHEARSAL}.") and label.split(".", 1)[-1] not in answers
-    ]
-    # The cohort step is the fabricator itself: it has no release counterpart
-    # because a release is handed its cohort rather than building one.
-    idle = [label for label in idle if label != f"{REHEARSAL}.cohort"]
+        for label, rendered_set in commands.items()
+        if label.startswith(f"{REHEARSAL}.")
+        # The cohort step is the fabricator itself: it has no release
+        # counterpart because a release is handed its cohort rather than
+        # building one.
+        if label != f"{REHEARSAL}.cohort"
+        if rendered_set and rendered_set <= elsewhere
+    )
 
     assert not idle, (
-        f"{idle} rehearse steps the local gate already runs under their own "
-        "name, so they add time without adding coverage"
+        f"{idle} run commands the candidate already runs verbatim elsewhere, so "
+        "they add time without adding coverage"
     )
 
 
