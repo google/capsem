@@ -3,7 +3,7 @@
 # drive-by addition, deletion, rename, or stale count fails closed.
 
 [just]
-count = 19
+count = 20
 approved = [
   "build",
   "build-all",
@@ -12,6 +12,7 @@ approved = [
   "dev",
   "doctor",
   "exec",
+  "install",
   "fast-test",
   "logs",
   "qualify-assets",

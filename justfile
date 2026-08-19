@@ -104,6 +104,13 @@ dev surface="ui": _ensure-dev-ready _pnpm-install
     uv run capsem-gate dev {{quote(surface)}}
 
 
+# Install the package `just test` built, on this machine, so you can use the
+# version you just qualified. Builds nothing: it takes the exact release-mode
+# package the gate exported into dist/, stops the running service, installs it,
+# and waits for the new one to answer.
+install:
+    @uv run capsem-gate install-host
+
 # Build the desktop application with its embedded frontend.
 build profile="debug":
     just _build-ui {{quote(profile)}}

@@ -107,8 +107,35 @@ class InstallBuilderConfig(Strict):
     apt_packages: tuple[str, ...]
 
 
+class HostInstallConfig(Strict):
+    """Building this checkout and putting it on the machine you are sitting at.
+
+    Distinct from everything else under `[install]`, which describes the
+    container the gate proves a package in. This is the developer path: what
+    `just install` did until the recipe carrying it was deleted for having a
+    shell body, and what nothing has done since.
+
+    It carries no build settings. The package rail already builds the exact
+    release-mode package this project ships, so the plan composes that rail
+    rather than describing a second way to produce one.
+    """
+
+    isolation_variables: tuple[str, ...]
+    processes: tuple[str, ...]
+    run_dir: str
+    run_files: tuple[str, ...]
+    service_socket: str
+    health_url: str
+    health_seconds: float
+    macos_agent_plist: str
+    macos_launch_domain: str
+    macos_package: str
+    macos_user_request_script: str
+
+
 class InstallConfig(Strict):
     builder: InstallBuilderConfig
+    host: HostInstallConfig
     container: str
     generated_inputs: tuple[str, ...]
     image: str
