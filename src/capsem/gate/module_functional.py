@@ -125,8 +125,8 @@ def functional(
     # `profiles.selected`. A caller may narrow it: the rehearsal proves the
     # pulled path, which is the same for every profile, and the compatibility
     # axis is what the candidate's own `functional` phase is for.
-    axis = profiles.selected(config) if axis is None else axis
-    base, rest = axis[0], axis[1:]
+    proven = tuple(profiles.selected(config)) if axis is None else axis
+    base, rest = proven[0], proven[1:]
 
     # That the materialized catalog agrees with the source axis and with the
     # manifest under test is still required -- it is simply a run-time
