@@ -923,6 +923,20 @@ def test_release_pairing_cli_is_all_or_nothing() -> None:
     with pytest.raises(SystemExit, match="exact pairing requires"):
         module.validate_exact_release_pairing(partial)
 
+    # Cleared, not absent. The channel-switch run is *given* these variables as
+    # empty strings -- that is how it is made to rediscover the channel from the
+    # installed system instead of inheriting what the previous run was told. An
+    # empty string that counts as present makes the whole set look half-supplied
+    # and the run dies before it starts, which is what happened: the rehearsal's
+    # channel-switch step failed with all four manifests "missing" while the
+    # environment had deliberately emptied every one of them.
+    cleared = SimpleNamespace(**vars(empty))
+    cleared.release_channel = ""
+    cleared.release_transition = ""
+    cleared.profile = ""
+    cleared.publication_base = ""
+    assert module.validate_exact_release_pairing(cleared) is None
+
 
 def test_local_channel_import_uses_the_typed_selected_revision_policy() -> None:
     """Public legacy revisions are imported, never accepted for new authoring."""

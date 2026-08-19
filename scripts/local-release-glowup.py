@@ -156,8 +156,22 @@ class AdversarialExactCandidates:
 
 
 def _environment_path(name: str) -> Path | None:
-    value = os.environ.get(name)
-    return Path(value) if value else None
+    return Path(value) if (value := _environment_value(name)) else None
+
+
+def _environment_value(name: str) -> str | None:
+    """An exported-but-empty variable is absent, exactly as elsewhere.
+
+    Not a nicety. The channel-switch run is *given* the pairing variables as
+    empty strings -- that is how it is made to rediscover the channel from the
+    installed system rather than inherit what the previous run was told. Read
+    as present, one empty string makes the whole set look half-supplied, and
+    `validate_exact_release_pairing` refuses a partial pairing before the run
+    starts. `qualification.from_environment` had already learned this and
+    written it down; this reader had not.
+    """
+    value = (os.environ.get(name) or "").strip()
+    return value or None
 
 
 def main() -> int:
@@ -208,7 +222,7 @@ def main() -> int:
     parser.add_argument(
         "--release-channel",
         choices=("stable", "nightly"),
-        default=os.environ.get("CAPSEM_RELEASE_CHANNEL"),
+        default=_environment_value("CAPSEM_RELEASE_CHANNEL"),
     )
     parser.add_argument(
         "--release-transition",
@@ -219,7 +233,7 @@ def main() -> int:
             TransitionKind.PROFILE_ONLY.value,
             TransitionKind.PROFILE_THEN_BINARY.value,
         ),
-        default=os.environ.get("CAPSEM_RELEASE_TRANSITION"),
+        default=_environment_value("CAPSEM_RELEASE_TRANSITION"),
     )
     parser.add_argument(
         "--before-manifest",
@@ -246,7 +260,7 @@ def main() -> int:
         type=Path,
         default=_environment_path("CAPSEM_RELEASE_AFTER_PROFILE_INPUTS"),
     )
-    parser.add_argument("--profile", default=os.environ.get("CAPSEM_RELEASE_PROFILE"))
+    parser.add_argument("--profile", default=_environment_value("CAPSEM_RELEASE_PROFILE"))
     parser.add_argument(
         "--candidate-profile-publication",
         type=Path,
@@ -254,7 +268,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--publication-base",
-        default=os.environ.get("CAPSEM_RELEASE_PUBLICATION_BASE"),
+        default=_environment_value("CAPSEM_RELEASE_PUBLICATION_BASE"),
     )
     args = parser.parse_args()
     if args.source_commit is None:
@@ -539,18 +553,25 @@ def validate_exact_release_pairing(
 ) -> ExactReleasePairing | None:
     """Fail closed when a release lane supplies an incomplete exact pairing."""
 
+    # `or None` on every one: cleared and absent have to mean the same thing.
+    # The channel-switch run is handed these as empty strings so it rediscovers
+    # the channel from the installed system instead of inheriting what the
+    # previous run was told, and one empty string read as present makes the set
+    # look half-supplied -- which refuses the run before it starts. Normalized
+    # here rather than only at the argument defaults, because this is the
+    # function that decides, and it should not depend on how it was called.
     core_fields = {
-        "release_channel": args.release_channel,
-        "release_transition": args.release_transition,
-        "before_manifest": args.before_manifest,
-        "after_manifest": args.after_manifest,
-        "before_profile_inputs": args.before_profile_inputs,
-        "after_profile_inputs": args.after_profile_inputs,
+        "release_channel": args.release_channel or None,
+        "release_transition": args.release_transition or None,
+        "before_manifest": args.before_manifest or None,
+        "after_manifest": args.after_manifest or None,
+        "before_profile_inputs": args.before_profile_inputs or None,
+        "after_profile_inputs": args.after_profile_inputs or None,
     }
     profile_fields = {
-        "profile": args.profile,
-        "candidate_profile_publication": args.candidate_profile_publication,
-        "publication_base": args.publication_base,
+        "profile": args.profile or None,
+        "candidate_profile_publication": args.candidate_profile_publication or None,
+        "publication_base": args.publication_base or None,
     }
     if not any(value is not None for value in (*core_fields.values(), *profile_fields.values())):
         return None
