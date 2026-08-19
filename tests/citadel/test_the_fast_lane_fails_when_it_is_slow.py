@@ -82,23 +82,33 @@ def test_the_fast_lane_declares_a_budget_and_the_commands_it_bounds() -> None:
     # And that it reaches the lane rather than merely existing. A budget the
     # fast lane is never given is the same as no budget, and reads the same in
     # configuration.
-    assert budget.for_command("test-fast") == budget.seconds
+    #
+    # `CI` is cleared for this half, because the suite itself runs in CI and the
+    # budget is deliberately unenforced there. Asserting the local answer while
+    # sitting in the environment that suspends it is how this test passed on my
+    # machine and failed the release.
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.delenv(budget.unenforced_when_set, raising=False)
+    try:
+        assert budget.for_command("test-fast") == budget.seconds
+        assert budget.for_command("candidate") is None, (
+            "a release is bounded by patience and the machine lock; failing one "
+            "on a stopwatch trades a real proof for a quick one"
+        )
+    finally:
+        monkeypatch.undo()
 
     # And not in CI, which is a measurement rather than an exemption: a hosted
     # runner starts cold and spent 1285s against this budget, 21m23s of it
     # building the Linux host builder image that a developer's machine has
     # cached. It failed a release the first time it ran. The promise is about
     # the gate somebody sits and waits for.
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setenv(budget.unenforced_when_set, "true")
+    enforced = pytest.MonkeyPatch()
+    enforced.setenv(budget.unenforced_when_set, "true")
     try:
         assert budget.for_command("test-fast") is None
     finally:
-        monkeypatch.undo()
-    assert budget.for_command("candidate") is None, (
-        "a release is bounded by patience and the machine lock; failing one on "
-        "a stopwatch trades a real proof for a quick one"
-    )
+        enforced.undo()
     from capsem.gate.command import GateCommand
 
     source = Path(GateCommand.__module__.replace(".", "/") + ".py")
