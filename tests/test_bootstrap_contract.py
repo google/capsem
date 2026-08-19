@@ -117,8 +117,16 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert 'provision-linux-workspace.py" --packages apt' in linux
     assert 'provision-linux-workspace.py" --packages dnf' in linux
     assert 'provision-linux-workspace.py" --verify' in linux
-    assert "apt-get update" in linux
-    assert "apt-get install" in linux
+    # Through one helper, which is where the fetch is bounded. `apt-get update`
+    # reached `archive.ubuntu.com` and never returned on a hosted runner, twice,
+    # and each time a release sat there until the job timeout killed it two
+    # hours later. What is asserted is unchanged -- bootstrap owns installing
+    # the host's packages -- and the helper is how that stays true of both calls
+    # at once.
+    assert "capsem_linux_apt() {" in linux
+    assert "timeout 600 apt-get" in linux
+    assert "capsem_linux_apt update" in linux
+    assert "capsem_linux_apt install -y" in linux
     assert "systemctl enable --now docker" in linux
 
     # Durable group membership helps future shells. vhost-vsock keeps a narrow

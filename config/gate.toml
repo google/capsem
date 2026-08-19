@@ -984,7 +984,7 @@ max_lines = 1000
 "crates/capsem-service/src/tests.rs" = 11948
 
 [boundary.scripts.oversized_line_counts]
-"scripts/bootstrap-linux.sh" = 581
+"scripts/bootstrap-linux.sh" = 599
 "scripts/build-pkg.sh" = 352
 "scripts/check-hardcoded-release-selections.py" = 301
 "scripts/check-public-binary-release.py" = 1097

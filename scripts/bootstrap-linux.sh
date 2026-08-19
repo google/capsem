@@ -144,8 +144,26 @@ capsem_linux_install_apt_packages() {
         return 1
     fi
 
-    capsem_linux_as_root env DEBIAN_FRONTEND=noninteractive apt-get update
-    capsem_linux_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    # Bounded, retried, and over IPv4. On a hosted runner `apt-get update`
+    # reached `archive.ubuntu.com` and never returned: two release attempts
+    # sat there until the job's 120-minute timeout killed them, having
+    # published nothing, and the log's last line both times was the same
+    # `InRelease` fetch. The runner advertises IPv6 that does not route to
+    # that host, and apt's default is to wait rather than fall back.
+    #
+    # The timeout is the part that matters most. Whatever the cause next time,
+    # a package fetch that stalls should cost minutes and say so, not two
+    # hours of silence followed by a cancelled release.
+    capsem_linux_apt() {
+        capsem_linux_as_root env DEBIAN_FRONTEND=noninteractive timeout 600 apt-get \
+            -o Acquire::ForceIPv4=true \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            "$@"
+    }
+    capsem_linux_apt update
+    capsem_linux_apt install -y \
         --no-install-recommends \
         $CAPSEM_APT_BASE_PACKAGES
     python3 "$CAPSEM_APT_PROJECT_ROOT/scripts/provision-linux-workspace.py" --verify
