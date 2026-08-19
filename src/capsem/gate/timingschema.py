@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from pydantic import PositiveFloat, PositiveInt, field_validator
 
 from .configschema import Strict
@@ -37,6 +39,12 @@ class FastLaneBudget(Strict):
     seconds: PositiveFloat
     commands: tuple[str, ...]
 
+    #: The variable whose presence means "not the lane anybody waits for".
+    #: A hosted runner starts cold and pays for infrastructure a developer's
+    #: machine has cached, so enforcing there fails releases for a Docker
+    #: build rather than for a slow test.
+    unenforced_when_set: str
+
     def for_command(self, name: str) -> float | None:
         """What this command may cost, or nothing if its name promises nothing.
 
@@ -44,7 +52,9 @@ class FastLaneBudget(Strict):
         to take an hour, and failing one on a stopwatch trades a real proof for
         a quick one.
         """
-        return self.seconds if name in self.commands else None
+        if name not in self.commands or os.environ.get(self.unenforced_when_set):
+            return None
+        return self.seconds
 
     @field_validator("commands")
     @classmethod

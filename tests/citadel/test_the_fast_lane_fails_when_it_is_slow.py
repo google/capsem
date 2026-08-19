@@ -16,6 +16,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import pytest
 from helpers.gate import RecordingJournal, RecordingRunner
 
 from capsem.gate import config as gate_config
@@ -82,6 +83,18 @@ def test_the_fast_lane_declares_a_budget_and_the_commands_it_bounds() -> None:
     # fast lane is never given is the same as no budget, and reads the same in
     # configuration.
     assert budget.for_command("test-fast") == budget.seconds
+
+    # And not in CI, which is a measurement rather than an exemption: a hosted
+    # runner starts cold and spent 1285s against this budget, 21m23s of it
+    # building the Linux host builder image that a developer's machine has
+    # cached. It failed a release the first time it ran. The promise is about
+    # the gate somebody sits and waits for.
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv(budget.unenforced_when_set, "true")
+    try:
+        assert budget.for_command("test-fast") is None
+    finally:
+        monkeypatch.undo()
     assert budget.for_command("candidate") is None, (
         "a release is bounded by patience and the machine lock; failing one on "
         "a stopwatch trades a real proof for a quick one"
