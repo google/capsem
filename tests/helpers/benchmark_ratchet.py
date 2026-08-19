@@ -1,8 +1,22 @@
-"""Evidence-derived guards for checked-in product benchmarks."""
+"""Evidence-derived guards for checked-in product benchmarks.
+
+Evidence is scoped to the profile that produced it. It was not, and the
+compatibility lane was measured against the base lane's numbers: `co-work`
+carries more packages and a heavier rootfs, so its exec is honestly slower, and
+comparing the two says nothing about whether anything regressed. That lane had
+never run to completion in the recorded history, so the first time it did, a
+1.23x "regression" was a profile difference wearing a ratchet's clothes.
+
+The 18 files predating this carry no profile at all. They are read as the base
+profile's, because that is the lane that recorded them -- which keeps the guard
+enforced where it has always meant something, rather than dropping it for
+everyone to make one lane pass.
+"""
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tomllib
 from enum import StrEnum
@@ -26,8 +40,27 @@ class BenchmarkCategory(StrEnum):
     FORK = "fork"
 
 
-def latest_checked_in_benchmark(project_root: Path, category: BenchmarkCategory) -> dict[str, Any]:
+def base_profile(project_root: Path) -> str:
+    """The lane whose numbers the unlabelled historical evidence describes."""
+    config = tomllib.loads((project_root / "config" / "gate.toml").read_text(encoding="utf-8"))
+    return str(config["suites"]["pytest"]["base_profile"])
+
+
+def measuring_profile(project_root: Path) -> str:
+    """The profile this test process is exercising."""
+    return os.environ.get("CAPSEM_TEST_PROFILE") or base_profile(project_root)
+
+
+def latest_checked_in_benchmark(
+    project_root: Path,
+    category: BenchmarkCategory,
+    profile: str | None = None,
+) -> dict[str, Any] | None:
     candidates: list[tuple[float, Path, dict[str, Any]]] = []
+    # Only when a lane is actually being selected for. Unfiltered callers -- the
+    # retention contract builds a fixture repository with no `config/` at all --
+    # have no reason to need the project's profile set to read a directory.
+    base = base_profile(project_root) if profile is not None else None
     evidence_dir = Path("benchmarks") / category.value
     tracked = subprocess.run(
         ["git", "ls-files", "-z", "--", str(evidence_dir)],
@@ -42,8 +75,19 @@ def latest_checked_in_benchmark(project_root: Path, category: BenchmarkCategory)
         if path.suffix != ".json":
             continue
         document = json.loads(path.read_text(encoding="utf-8"))
+        # Unlabelled is the base profile's: every file that predates this field
+        # was recorded by that lane, and reading them as nobody's would drop a
+        # guard that has been meaningful since the first one was committed.
+        if profile is not None and (document.get("profile") or base) != profile:
+            continue
         candidates.append((float(document["timestamp"]), path, document))
     if not candidates:
+        if profile is not None and profile != base:
+            # A lane with no evidence of its own is seeded by this run rather
+            # than measured against another lane's. Returning the base
+            # profile's numbers here is exactly the comparison this exists to
+            # stop making.
+            return None
         raise AssertionError(f"no checked-in {category.value} benchmark evidence")
     return max(candidates, key=lambda row: (row[0], row[1].name))[2]
 

@@ -156,6 +156,9 @@ def test_latest_benchmark_evidence_ignores_untracked_results(tmp_path: Path) -> 
 
     selected = latest_checked_in_benchmark(tmp_path, BenchmarkCategory.FORK)
 
+    # Unfiltered, so absence is an error rather than a lane waiting to be
+    # seeded -- the function raises instead of returning None here.
+    assert selected is not None
     assert selected["identity"] == "tracked"
 
 
@@ -182,6 +185,73 @@ def test_release_benchmarks_use_typed_evidence_instead_of_authored_limits() -> N
     }
     for category, metrics in categories.items():
         evidence = latest_checked_in_benchmark(PROJECT_ROOT, category)
+        assert evidence is not None, f"no checked-in {category.value} evidence at all"
         for metric in metrics:
             assert f"BenchmarkMetric.{metric.name}" in source
             assert metric_value(evidence, metric) > 0
+
+
+def _evidence_repo(tmp_path: Path, files: dict[str, dict]) -> Path:
+    """A tracked evidence directory, plus the config the lane names come from."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    evidence = tmp_path / "benchmarks" / "fork"
+    evidence.mkdir(parents=True)
+    for name, document in files.items():
+        (evidence / name).write_text(json.dumps(document), encoding="utf-8")
+        subprocess.run(["git", "add", f"benchmarks/fork/{name}"], cwd=tmp_path, check=True)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "gate.toml").write_text(
+        '[suites.pytest]\nbase_profile = "code"\n', encoding="utf-8"
+    )
+    return tmp_path
+
+
+def test_evidence_without_a_profile_is_read_as_the_base_lane_s(tmp_path: Path) -> None:
+    """Every file predating the field was recorded by that lane.
+
+    Reading them as nobody's would drop a guard that has meant something since
+    the first one was committed, which is a worse answer than the one this
+    replaces.
+    """
+    root = _evidence_repo(tmp_path, {"old.json": {"timestamp": 1, "identity": "unlabelled"}})
+
+    selected = latest_checked_in_benchmark(root, BenchmarkCategory.FORK, "code")
+
+    assert selected is not None and selected["identity"] == "unlabelled"
+
+
+def test_a_lane_is_never_measured_against_another_lane_s_numbers(tmp_path: Path) -> None:
+    """The failure this exists to stop.
+
+    `co-work` carries more packages and a heavier rootfs, so its exec is
+    honestly slower than `code`'s. Ratcheted against `code`'s evidence it
+    reported a 1.23x regression that was a profile difference, and it did so
+    the first time that lane ever ran to completion.
+    """
+    root = _evidence_repo(
+        tmp_path,
+        {
+            "code.json": {"timestamp": 1, "identity": "code", "profile": "code"},
+            "newer-code.json": {"timestamp": 9, "identity": "newer", "profile": "code"},
+        },
+    )
+
+    assert latest_checked_in_benchmark(root, BenchmarkCategory.FORK, "co-work") is None, (
+        "a lane with no evidence of its own is seeded by the run, not compared "
+        "against the newest file some other lane happened to leave"
+    )
+
+
+def test_a_lane_selects_its_own_evidence_over_a_newer_foreign_one(tmp_path: Path) -> None:
+    """Newest wins only within a lane. Across lanes it is not a comparison."""
+    root = _evidence_repo(
+        tmp_path,
+        {
+            "mine.json": {"timestamp": 1, "identity": "mine", "profile": "co-work"},
+            "theirs.json": {"timestamp": 9, "identity": "theirs", "profile": "code"},
+        },
+    )
+
+    selected = latest_checked_in_benchmark(root, BenchmarkCategory.FORK, "co-work")
+
+    assert selected is not None and selected["identity"] == "mine"

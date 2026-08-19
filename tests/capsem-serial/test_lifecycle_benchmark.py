@@ -23,6 +23,7 @@ from helpers.benchmark_ratchet import (
     assert_within_evidence,
     latest_checked_in_benchmark,
     maximum_factor,
+    measuring_profile,
 )
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.package_probe import (
@@ -45,10 +46,19 @@ def _project_version():
 
 
 def _save_benchmark(category, data):
-    """Save benchmark JSON to the configured gate or archive directory."""
+    """Save benchmark JSON to the configured gate or archive directory.
+
+    Named and stamped by the profile that produced it. Both lanes wrote
+    `data_<version>.json` into one directory, so the compatibility lane
+    silently overwrote the base lane's recording and a run that measured two
+    profiles kept one number. The stamp is what lets the ratchet compare a
+    lane against itself rather than against whichever lane was checked in last.
+    """
     version = _project_version()
+    profile = measuring_profile(PROJECT_ROOT)
+    data = {**data, "profile": profile}
     out_dir = benchmark_output_dir(PROJECT_ROOT, category)
-    out_path = out_dir / f"data_{version}.json"
+    out_path = out_dir / f"data_{version}_{profile}.json"
     with open(out_path, "w") as f:
         json.dump(data, f, indent=2)
     print(f"Benchmark saved to {out_path}")
@@ -252,7 +262,9 @@ def test_lifecycle_benchmark():
         r["provision_ms"] + r["exec_ready_ms"] + r["exec_ms"] + r["delete_ms"] for r in runs
     ]
     summary["operations"]["total_ms"] = _summary([round(v, 1) for v in total_values])
-    baseline = latest_checked_in_benchmark(PROJECT_ROOT, BenchmarkCategory.LIFECYCLE)
+    baseline = latest_checked_in_benchmark(
+        PROJECT_ROOT, BenchmarkCategory.LIFECYCLE, measuring_profile(PROJECT_ROOT)
+    )
     factor = maximum_factor(PROJECT_ROOT)
 
     # Rich table
@@ -276,6 +288,13 @@ def test_lifecycle_benchmark():
     # JSON output
     _save_benchmark("lifecycle", summary)
 
+    if baseline is None:
+        print(
+            f"no checked-in {'lifecycle'} evidence for profile "
+            f"{measuring_profile(PROJECT_ROOT)}; this run records it rather than "
+            "ratcheting against another profile's numbers"
+        )
+        return
     for metric, op in [
         (BenchmarkMetric.LIFECYCLE_PROVISION, "provision_ms"),
         (BenchmarkMetric.LIFECYCLE_READY, "exec_ready_ms"),
@@ -334,7 +353,9 @@ def test_fork_benchmark():
             "max": mx(op),
             "values": [r[op] for r in runs],
         }
-    baseline = latest_checked_in_benchmark(PROJECT_ROOT, BenchmarkCategory.FORK)
+    baseline = latest_checked_in_benchmark(
+        PROJECT_ROOT, BenchmarkCategory.FORK, measuring_profile(PROJECT_ROOT)
+    )
     factor = maximum_factor(PROJECT_ROOT)
 
     # Rich table
@@ -354,6 +375,17 @@ def test_fork_benchmark():
     # JSON output
     _save_benchmark("fork", summary)
 
+    if baseline is not None:
+        _ratchet_fork(summary, baseline, factor)
+
+    # Gate: data survival is a correctness claim, not a performance one, so it
+    # holds for every profile whether or not that lane has timing evidence yet.
+    for i, r in enumerate(runs):
+        assert r["pkg_survived"], f"run {i + 1}: packages did not survive fork"
+        assert r["ws_survived"], f"run {i + 1}: workspace files did not survive fork"
+
+
+def _ratchet_fork(summary, baseline, factor):
     for metric, op, statistic in [
         (BenchmarkMetric.FORK_DURATION, "fork_ms", "mean"),
         (BenchmarkMetric.FORK_IMAGE_SIZE, "image_size_mb", "max"),
@@ -366,8 +398,3 @@ def test_fork_benchmark():
             baseline=baseline,
             factor=factor,
         )
-
-    # Gate: data survival (every run must preserve both rootfs and workspace)
-    for i, r in enumerate(runs):
-        assert r["pkg_survived"], f"run {i + 1}: packages did not survive fork"
-        assert r["ws_survived"], f"run {i + 1}: workspace files did not survive fork"
