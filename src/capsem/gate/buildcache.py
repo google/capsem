@@ -194,5 +194,12 @@ def adopt(config: GateConfig, checkout: Path) -> list[str]:
 
 
 def discard(config: GateConfig) -> None:
-    """Throw the cache away, so the next run builds everything from nothing."""
+    """Throw the retained output away, so the next run builds from nothing.
+
+    Both halves of it. The lent trees are one, and the shared build directory
+    is the other and much the larger -- a `--clean-build` that left the
+    compiler output in place would be the flag that most needs to mean what it
+    says meaning almost nothing.
+    """
     remove(root(config))
+    remove(Path(config.prefix.cargo_target.format(parent=config.prefix.parent)).expanduser())

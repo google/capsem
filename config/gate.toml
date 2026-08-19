@@ -408,6 +408,8 @@ coverage_file = "COVERAGE_FILE"
 # the *source* checkout's path, because a run in a prefix still has to be able
 # to name the tree it is qualifying.
 source_checkout = "CAPSEM_GATE_SOURCE_CHECKOUT"
+# Where cargo compiles, shared by every run; see `[prefix] cargo_target`.
+cargo_target = "CARGO_TARGET_DIR"
 # Full immutable release source selected by the parent. Unlike
 # source_checkout, this says the outer working tree is not the subject.
 source_commit = "CAPSEM_GATE_SOURCE_COMMIT"
@@ -2156,6 +2158,33 @@ lease_template = ".{identity}.lock"
 # left the cache on the real filesystem, and failed on a cross-device rename
 # that had nothing to do with what they were testing.
 build_cache = "{parent}-build"
+
+# Where cargo writes, for every run, at one absolute path.
+#
+# Lending a build directory between prefixes cannot work: cargo records
+# `OUT_DIR` under whatever target directory it was given, so a build script's
+# generated paths name the prefix that produced them, and the next run is a
+# different prefix. Tauri's permission files hit exactly that. Sharing does
+# work, and for the same reason lending does not -- the path never changes, so
+# every absolute path baked into build output stays true.
+#
+# Sound because cargo, not this gate, decides what is stale. That is what
+# fingerprints are for, and it is the same judgement a developer relies on
+# switching branches in one checkout. `[prefix] lent` cannot make that judgement
+# and so may only carry content-addressed output.
+#
+# One writer, because one gate runs per machine under `flock`. Outside `parent`
+# so a sweep does not reclaim it as a prefix, and beside it so both sit on one
+# filesystem. `--clean-build` discards it, which is what makes that flag mean
+# what it says.
+#
+# The prefix gets a symlink per profile at `target/<profile>`, so the ~30
+# checked-in `target/debug/...` and `target/release/...` paths keep resolving
+# and the rest of `target/` -- the journal, the materialized config, the test
+# homes -- stays private to the run that made it.
+cargo_target = "{parent}-target"
+cargo_profiles = ["debug", "release"]
+
 name_length = 8
 
 # How many prefixes survive a sweep. A failed run keeps its tree so it can be
@@ -2203,10 +2232,9 @@ carried = ["private"]
 #   failed to read plugin permissions: failed to read file
 #   '~/.cg/6d7cc52c/target/debug/build/tauri-.../permissions/app/.../app_hide.toml'
 #
-# naming a prefix that had already been reclaimed. Reusing compiler output needs
-# the build directory to sit at one path for every run -- a shared
-# `CARGO_TARGET_DIR` -- which is a different change from lending a directory
-# between trees, and not one to make on the way to a release.
+# naming a prefix that had already been reclaimed. That is why compiler output
+# is not lent: it is shared instead, at `cargo_target` above, which is the one
+# arrangement under which an absolute `OUT_DIR` stays true.
 #
 # `.venv` and `node_modules` are absent for the same reason with a different
 # mechanism: a uv venv records its own absolute path in `pyvenv.cfg` and in

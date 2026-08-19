@@ -51,6 +51,44 @@ _CLONE = ("-c",)
 _BATCH = 200
 
 
+def cargo_target(config: GateConfig) -> Path:
+    """The one build directory every run compiles into."""
+    return Path(config.prefix.cargo_target.format(parent=config.prefix.parent)).expanduser()
+
+
+def _link_cargo_output(config: GateConfig, path: Path) -> None:
+    """Point this prefix's profile directories at the shared build root.
+
+    Cargo is told where to write by `CARGO_TARGET_DIR`; these symlinks are for
+    everything else. Roughly thirty checked-in paths name `target/debug/...` or
+    `target/release/...` relative to the tree a step runs in, and they are
+    correct -- a step should not have to know that compiler output is a
+    property of the machine rather than of the run.
+
+    Only the profile directories. The rest of `target/` is the run's own: the
+    journal it is writing, the config it materialized, the homes its VMs boot
+    from. Sharing those would make two runs one run.
+    """
+    shared = cargo_target(config)
+    root = path / "target"
+    root.mkdir(parents=True, exist_ok=True)
+    for profile in config.prefix.cargo_profiles:
+        (shared / profile).mkdir(parents=True, exist_ok=True)
+        link = root / profile
+        # A resumed prefix already has the link, and a populated one cannot:
+        # `snapshot` copies tracked files, and `target/` is gitignored.
+        if link.is_symlink():
+            if link.readlink() == shared / profile:
+                continue
+            link.unlink()
+        elif link.exists():
+            raise GateError(
+                f"{link} is a real directory, so this run would compile into the "
+                "prefix instead of the shared build root and pay a cold build"
+            )
+        link.symlink_to(shared / profile, target_is_directory=True)
+
+
 def example(config: GateConfig) -> Path:
     """A representative prefix path, for arithmetic that must not boot a VM.
 
@@ -219,7 +257,11 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
             runner.note(f"adopted exported output from the checkout: {', '.join(adopted)}")
         if lent := buildcache.lend(config, path):
             runner.note(f"lent build output to {path.name}: {', '.join(lent)}")
-    child_env = {config.environment.source_checkout: str(config.root)}
+    _link_cargo_output(config, path)
+    child_env = {
+        config.environment.source_checkout: str(config.root),
+        config.environment.cargo_target: str(cargo_target(config)),
+    }
     if commit is not None:
         child_env[config.environment.source_commit] = str(commit)
     status = runner.run(

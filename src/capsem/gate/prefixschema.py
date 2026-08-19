@@ -22,6 +22,8 @@ class PrefixConfig(Strict):
 
     parent: str
     build_cache: str
+    cargo_target: str
+    cargo_profiles: tuple[str, ...]
     lease_template: str
     name_length: int
     keep: int
@@ -57,7 +59,7 @@ class PrefixConfig(Strict):
             )
         return self
 
-    @field_validator("build_cache")
+    @field_validator("build_cache", "cargo_target")
     @classmethod
     def _cache_is_positioned_against_the_prefix_root(cls, template: str) -> str:
         """One `{parent}`, so the cache cannot be relocated independently.
@@ -67,22 +69,40 @@ class PrefixConfig(Strict):
         cross-device rename, which is a failure about neither of them.
         """
         if template.count("{parent}") != 1:
-            raise ValueError("build_cache must position itself against {parent} exactly once")
+            raise ValueError("must position itself against {parent} exactly once")
         return template
 
     @model_validator(mode="after")
     def _cache_is_not_swept_as_a_prefix(self) -> PrefixConfig:
-        """The lent output must not live where prefixes are reclaimed from.
+        """Retained output must not live where prefixes are reclaimed from.
 
         `prefix.sweep` reclaims every directory under `parent` except the
         newest `keep`, and it identifies a prefix by being there rather than by
         its name. A cache underneath would be deleted on the second run.
         """
-        cache = PurePosixPath(self.build_cache.format(parent=self.parent))
         parent = PurePosixPath(self.parent)
-        if cache == parent or parent in cache.parents:
-            raise ValueError(
-                f"build_cache {self.build_cache!r} is inside the prefix root "
-                f"{self.parent!r}, where a sweep would reclaim it as a prefix"
-            )
+        for name, template in (
+            ("build_cache", self.build_cache),
+            ("cargo_target", self.cargo_target),
+        ):
+            retained = PurePosixPath(template.format(parent=self.parent))
+            if retained == parent or parent in retained.parents:
+                raise ValueError(
+                    f"{name} {template!r} is inside the prefix root "
+                    f"{self.parent!r}, where a sweep would reclaim it as a prefix"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _cargo_profiles_are_plain_names(self) -> PrefixConfig:
+        """Each names one directory cargo writes a profile's output into.
+
+        They become symlinks inside the prefix, so a nested or escaping name
+        would point the build somewhere the prefix does not own.
+        """
+        if not self.cargo_profiles:
+            raise ValueError("cargo_profiles must name the profile directories cargo writes")
+        for profile in self.cargo_profiles:
+            if PurePosixPath(profile).name != profile or profile in {"", ".", ".."}:
+                raise ValueError(f"cargo profile {profile!r} must be one plain directory name")
         return self

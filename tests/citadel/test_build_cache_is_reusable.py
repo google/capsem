@@ -21,7 +21,7 @@ depends on are checked here rather than discovered during an hour-forty run:
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from capsem.gate import buildcache, prefix
 from capsem.gate import config as gate_config
@@ -81,10 +81,12 @@ def test_nothing_that_records_where_it_was_built_is_lent() -> None:
 
     Named individually rather than inferred: there is no way to look at a
     directory and see whether something inside it wrote its own path down, so
-    the list is the knowledge and this is where it is kept. Reusing compiler
-    output needs a build directory that sits at one path for every run -- a
-    shared `CARGO_TARGET_DIR` -- which is a different mechanism from lending a
-    directory between trees.
+    the list is the knowledge and this is where it is kept.
+
+    Compiler output is reused by the other mechanism, which is why it is absent
+    here rather than merely forgotten: `[prefix] cargo_target` gives every run
+    one build directory at one absolute path, so the paths build scripts write
+    down stay true instead of naming a prefix that no longer exists.
     """
     records_its_own_path = {"target", ".venv"}
     lent = set(_config().prefix.lent)
@@ -173,4 +175,28 @@ def test_a_clean_rebuild_stays_reachable_without_reading_the_source() -> None:
     assert "--clean-build" in recipes, (
         "no just recipe discards the reused build output, so the only way to "
         "reproduce a cold run is to delete a directory by hand"
+    )
+
+
+def test_compiler_output_is_shared_rather_than_lent() -> None:
+    """The mechanism that replaces lending `target/`, pinned where it is chosen.
+
+    A shared build directory is only sound while it sits outside the prefix
+    root -- inside it, `prefix.sweep` reclaims it as a prefix and the next run
+    is cold again, which is the failure it exists to remove and the one nobody
+    would look for.
+    """
+    prefix_config = _config().prefix
+    shared = PurePosixPath(prefix_config.cargo_target.format(parent=prefix_config.parent))
+    parent = PurePosixPath(prefix_config.parent)
+
+    assert shared != parent and parent not in shared.parents, (
+        f"{shared} is inside the prefix root, where a sweep reclaims it"
+    )
+    assert prefix_config.cargo_profiles, (
+        "no profile directory is linked into the shared build root, so every "
+        "checked-in `target/debug/...` path resolves into the prefix instead"
+    )
+    assert "target" not in set(prefix_config.lent), (
+        "compiler output is shared at one path, not lent between prefixes"
     )
