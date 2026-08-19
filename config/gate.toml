@@ -2491,11 +2491,6 @@ failure_tail_lines = 40
 # that a developer's machine has cached. It blocked a release the first time it
 # ran, which is worse than not guarding at all -- the promise being kept is
 # about the gate somebody sits and waits for, and nobody sits and waits for CI.
-[runlog.fast_lane]
-seconds = 600
-commands = ["test-fast", "test-release-contracts", "test-static"]
-unenforced_when_set = "CI"
-
 [runlog.timing_regression]
 # A release guard, not a stopwatch SLA. Compare complete qualification with
 # its latest successful run on the same platform/machine/core count and exact

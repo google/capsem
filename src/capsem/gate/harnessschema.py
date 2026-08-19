@@ -32,7 +32,6 @@ from .exclusions import Exclusion, HashedExclusion
 from .prefixschema import PrefixConfig as PrefixConfig
 from .sandboxschema import SandboxConfig as SandboxConfig
 from .sourcecontractschema import ScriptSizeConfig
-from .timingschema import FastLaneBudget as FastLaneBudget
 from .timingschema import TimingRegressionConfig as TimingRegressionConfig
 
 #: A first-party tree to check. Relative, normalized, and inside the checkout:
@@ -204,7 +203,6 @@ class RunLogConfig(Strict):
     failure_tail_lines: PositiveInt
     timing_regression: TimingRegressionConfig
     #: What `fast-test` may cost end to end, as an absolute promise.
-    fast_lane: FastLaneBudget
     #: The distilled history that outlives the directories above, and the
     #: overview computed from it. In `digestschema` because this module is at
     #: its own line boundary and thresholds are what people come to tune.

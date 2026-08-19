@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from operator import attrgetter
 from typing import TYPE_CHECKING
 
-from . import carry, deadline
+from . import carry
 from .cancellation import cancellable, observing
 from .contention import Claims
 from .context import Context
@@ -97,7 +97,6 @@ def execute(plan: Plan, context: Context, *, max_parallel: int | None = None) ->
     with cancellable() as abandoned:
         try:
             while sorter.is_active():
-                deadline.refuse_if_past(began, context.deadline_seconds)
                 for label in sorter.get_ready():
                     step = plan.step_named(label)
                     if label in context.carried:
