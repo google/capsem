@@ -34,6 +34,7 @@ from pathlib import Path
 
 from . import qualification as qualification_state
 from .actions import Script
+from .command import GateCommand
 from .config import GateConfig
 from .content import ProfileContent
 from .execution import Kind, Needs, Speed, Step, step
@@ -41,9 +42,37 @@ from .module_artifacts import pulled_artifacts
 from .module_glowup import pulled_package
 from .plan import Plan
 from .qualification import Qualification
+from .testmodules import InWorkspace
 from .versions import workspace_version
 
 PHASE = "rehearsal"
+
+
+class RehearsalModule(
+    InWorkspace,
+    GateCommand,
+    name="test-rehearsal",
+    help="replay the release lane's pulled path against what this tree built",
+):
+    """The five steps only a release lane reaches, as a command of their own.
+
+    Its own command for the reason every other phase has one: so it can be run
+    without the hour in front of it. Composed into `candidate` it sits after the
+    glow-up, which means a defect in it costs a complete gate run to see -- and
+    six were found that way, at two hours and twenty minutes each. That is the
+    cost structure this module exists to remove from CI, reproduced one level
+    down, and the fix is the same one: make the expensive thing runnable early.
+
+    Needs a tree that has already built its assets and packages, so it is not
+    part of the fast lane. Point it at a prefix that has them with `--prefix`.
+    """
+
+    uses_qualification = True
+
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        rehearsal(plan, self._config, qualification=self.qualification)
+        return plan
 
 
 def rehearsal(
