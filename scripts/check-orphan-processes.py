@@ -91,8 +91,33 @@ def _process_facts(proc: psutil.Process) -> dict | None:
     }
 
 
+def _owned_roots(root: Path) -> list[Path]:
+    """`root`, plus wherever its own `target/` profile links actually point.
+
+    Compiler output is shared between runs at one absolute path, so a prefix
+    reaches it through `target/debug` and `target/release` symlinks. Resolving
+    an exe therefore lands outside the tree that launched it, and a check that
+    only compared against `root` stopped recognizing this run's own service --
+    which is the failure direction that matters: an unrecognized process is not
+    reaped, so a leaked VM or gateway survives the run that started it.
+
+    Derived from the tree rather than from config, because a link is the fact.
+    A profile directory that is a real directory contributes nothing, since
+    `root` already covers it. Safe against another run's leftovers for the same
+    reason the sharing is safe at all: one gate runs per machine under `flock`.
+    """
+    roots = [root.resolve()]
+    for link in sorted((root / "target").glob("*")):
+        try:
+            if link.is_symlink():
+                roots.append(link.resolve())
+        except OSError:
+            continue
+    return roots
+
+
 def _from_this_tree(facts: dict, root: Path) -> bool:
-    """True if the binary lives under `root`.
+    """True if the binary lives under `root` or a build root `root` points at.
 
     The gate builds and runs out of the checkout. A service installed under
     `~/.capsem/bin`, or one launched from a different worktree, is somebody
@@ -102,7 +127,8 @@ def _from_this_tree(facts: dict, root: Path) -> bool:
     if not candidate:
         return False
     try:
-        return Path(candidate).resolve().is_relative_to(root.resolve())
+        resolved = Path(candidate).resolve()
+        return any(resolved.is_relative_to(owned) for owned in _owned_roots(root))
     except (OSError, ValueError):
         return False
 
