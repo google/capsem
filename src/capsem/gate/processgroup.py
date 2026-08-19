@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TypeAlias
 
 from psutil import STATUS_ZOMBIE, NoSuchProcess
+from psutil import Error as ProcessError
 from psutil import Process as SystemProcess
 
 from . import cancellation
@@ -164,11 +165,36 @@ def _refuse_descendants(process: ForegroundProcess, policy: StopPolicy, owned: O
         time.sleep(policy.poll_seconds)
     if not _group_exists(process.pid) and not _descendants_alive(descendants):
         return
+    # Named before they are killed, because `_terminate` is what makes them
+    # unnameable. This fired once in a release lane and said only that
+    # *something* survived, which left bisecting a 4742-test suite as the way
+    # to find out what -- the guard was holding the process objects the whole
+    # time and reporting none of them.
+    surviving = _surviving(descendants)
     _terminate(process, policy, owned)
     raise GateError(
         f"foreground process {process.pid} exited while descendants remained; "
         "long-lived work must use Runner.launch"
+        + (
+            f" -- still running: {'; '.join(surviving)}"
+            if surviving
+            else " -- the process group outlived it with no descendant left to name"
+        )
     )
+
+
+def _surviving(descendants: tuple[SystemProcess, ...]) -> list[str]:
+    """What is still alive, identified well enough to go looking for it."""
+    alive: list[str] = []
+    for process in descendants:
+        try:
+            if not process.is_running() or process.status() == STATUS_ZOMBIE:
+                continue
+            command = " ".join(process.cmdline()[:6]) or process.name()
+        except ProcessError:
+            continue
+        alive.append(f"{process.pid} {command}")
+    return alive
 
 
 def _terminate(

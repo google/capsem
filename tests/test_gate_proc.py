@@ -253,7 +253,17 @@ def test_a_foreground_command_cannot_hide_a_daemon_in_a_new_session(tmp_path: Pa
         "open(sys.argv[1],'w').write(f'{os.getpid()} {child.pid}'); time.sleep(0.3)"
     )
 
-    with pytest.raises(GateError, match="descendants remained"):
+    with pytest.raises(GateError, match="descendants remained") as refused:
         Runner(PROJECT_ROOT).run((sys.executable, "-c", helper, str(pids)))
+
+    # Naming the survivor is the whole use of this guard away from a terminal.
+    # It fired once in a release lane and said only that *something* had
+    # outlived the command, which left bisecting a 4742-test suite as the way
+    # to learn what -- while the guard held the process objects and reported
+    # none of them.
+    assert "still running:" in str(refused.value)
+    assert "signal.pause()" in str(refused.value), (
+        f"the surviving command must be identifiable, got: {refused.value}"
+    )
 
     _assert_gone(pids)
