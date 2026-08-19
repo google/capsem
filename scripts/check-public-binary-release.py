@@ -28,8 +28,15 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from package_payload import package_payload_files
-from release_manifest_rows import dead_rows
+# Sibling scripts, imported the way `release-binaries.py` imports its own: the
+# script directory is on `sys.path` when this is run as a program and is not
+# when something imports it as `scripts.<name>`, and both happen.
+try:
+    from package_payload import package_payload_files
+    from release_manifest_rows import dead_rows
+except ModuleNotFoundError:  # pragma: no cover - exercised by the other path
+    from scripts.package_payload import package_payload_files
+    from scripts.release_manifest_rows import dead_rows
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SBOM_GENERATOR = PROJECT_ROOT / "scripts" / "generate-host-binary-sbom.py"
@@ -162,7 +169,15 @@ def main() -> int:
         # live stable channel could serve `status: current` for a month with
         # all three package URLs returning 404 -- the tag they named had been
         # deleted after publication, and no build-time check can see that.
-        failures.extend(dead_rows(manifest, manifest_url))
+        #
+        # Only when the packages are being fetched. `--package-dir` means the
+        # caller supplied the bytes and is asking what is inside them, which is
+        # a question about a build rather than about a publication -- and the
+        # fixtures that ask it name versions nobody released, from a sandbox
+        # with no resolver. The release lane passes no `--package-dir`, so the
+        # check runs exactly where "can a user download this" is the question.
+        if args.package_dir is None:
+            failures.extend(dead_rows(manifest, manifest_url))
         packages = current_packages_by_requirement(manifest, required, failures)
 
         with managed_work_dir(args.work_dir) as work_dir:
