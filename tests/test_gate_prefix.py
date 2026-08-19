@@ -1030,3 +1030,122 @@ def test_copying_a_tree_keeps_a_symlink_a_symlink(tmp_path: Path) -> None:
     assert (target / "current").is_symlink(), "copy_tree dereferenced the selector"
     assert os.readlink(target / "current") == "arch"
     assert (target / "arch" / "big.bin").read_bytes() == b"payload"
+
+
+def _capped(tmp_path: Path, cap_gb: float):
+    """A config whose prefix root and shared build root are both disposable."""
+    original = _config()
+    return original.model_copy(
+        update={
+            "prefix": original.prefix.model_copy(
+                update={
+                    "parent": str(tmp_path / "prefixes"),
+                    "cargo_target": "{parent}-target",
+                    "cargo_target_max_gb": cap_gb,
+                }
+            )
+        }
+    )
+
+
+def test_the_shared_build_directory_is_measured_and_kept_under_its_cap(
+    tmp_path: Path,
+) -> None:
+    """Under cap it is reported and left alone; over cap it goes, whole.
+
+    The one part of this system nothing reclaimed. Cargo never garbage-collects,
+    so without a bound the directory only grows -- and `[disk] required_free_gb`
+    is a floor on the filesystem rather than a bound on this, which means it
+    reports that something already ate the disk instead of stopping the growth.
+    """
+    from capsem.gate import cargotarget
+
+    config = _capped(tmp_path, cap_gb=1.0)
+    shared = cargotarget.path(config)
+    (shared / "debug").mkdir(parents=True)
+    (shared / "debug" / "libcapsem.rlib").write_bytes(b"\0" * 4096)
+
+    held = cargotarget.bound(config)
+    assert not held.discarded, "a directory well under its cap must survive"
+    assert 0 < held.gb < 1.0
+    assert (shared / "debug" / "libcapsem.rlib").exists()
+
+    # The same tree, against a cap it cannot fit under.
+    over = cargotarget.bound(_capped(tmp_path, cap_gb=4096 / 1024**3 / 2))
+    assert over.discarded
+    assert not shared.exists(), (
+        "the cap discards the build directory whole -- cargo decides staleness "
+        "by fingerprint, so removing chosen files underneath it corrupts that"
+    )
+
+
+def test_measuring_the_build_directory_does_not_follow_the_prefixes_into_it(
+    tmp_path: Path,
+) -> None:
+    """Every prefix points into this tree; counting through them double-bills.
+
+    `target/debug` in each prefix is a symlink to the shared root. A size that
+    followed links would bill the same bytes once per run on disk and discard a
+    directory that had not grown at all.
+    """
+    from capsem.gate import cargotarget
+
+    config = _capped(tmp_path, cap_gb=1.0)
+    shared = cargotarget.path(config)
+    (shared / "debug").mkdir(parents=True)
+    (shared / "debug" / "libcapsem.rlib").write_bytes(b"\0" * 8192)
+    alone = cargotarget.bound(config).gb
+
+    prefix_path = tmp_path / "prefixes" / ("0" * 8)
+    cargotarget.link_profiles(config, prefix_path)
+    assert (prefix_path / "target" / "debug").is_symlink()
+    # The link now resolves into the shared tree; the measurement must not.
+    assert cargotarget.bound(config).gb == alone
+
+
+def test_a_lease_outlives_its_prefix_only_until_the_next_sweep(tmp_path: Path) -> None:
+    """127 of these had accumulated, one per identity ever run.
+
+    Zero bytes each, so this is not about space: it is that the directory
+    holding the prefixes stops being readable at a glance, and that listing is
+    where a prefix nobody reclaimed gets noticed.
+    """
+    from capsem.gate.prefixlease import reclaim_orphan_leases
+
+    config = _capped(tmp_path, cap_gb=1.0)
+    root = Path(config.prefix.parent)
+    root.mkdir(parents=True)
+    live = root / ("a" * 8)
+    live.mkdir()
+    for identity in (live.name, "b" * 8):
+        (root / config.prefix.lease_template.format(identity=identity)).touch()
+
+    reclaimed = reclaim_orphan_leases(config)
+
+    assert [path.name for path in reclaimed] == [
+        config.prefix.lease_template.format(identity="b" * 8)
+    ], "only the lease whose prefix is gone may be removed"
+    assert (root / config.prefix.lease_template.format(identity=live.name)).exists()
+
+
+def test_a_held_lease_is_never_unlinked_from_under_its_owner(tmp_path: Path) -> None:
+    """The file *is* the mutual exclusion, so a busy one is skipped.
+
+    Unlinking it would leave the holder locked on an unreachable inode while
+    the next run creates a fresh file and locks that one too, and both would
+    believe they owned the prefix.
+    """
+    from capsem.gate.prefixlease import lease, reclaim_orphan_leases
+
+    config = _capped(tmp_path, cap_gb=1.0)
+    root = Path(config.prefix.parent)
+    root.mkdir(parents=True)
+    gone = root / ("c" * 8)
+    name = config.prefix.lease_template.format(identity=gone.name)
+    (root / name).touch()
+
+    with lease(config, gone):
+        assert reclaim_orphan_leases(config) == []
+        assert (root / name).exists()
+
+    assert [path.name for path in reclaim_orphan_leases(config)] == [name]

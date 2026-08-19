@@ -920,6 +920,13 @@ direct_machine_access = [
     # outside the machine lock. A plan step that moved the directory the plan
     # is already executing from is not a step anything could order.
     "buildcache.py",
+    # And the shared build directory those two work against, split out of
+    # `prefix` at the module ceiling. Same pre-run position: it links the
+    # profile directories the child compiles into and bounds their size, both
+    # from `reexec()` -- before the journal, outside the machine lock. An
+    # action expressing it would have to be a plan step that creates the
+    # directory the plan is already compiling into.
+    "cargotarget.py",
     # Immutable release source selection is the other pre-run half of prefix:
     # its Git validation, detached clone, and exact-prefix lease must exist
     # before the process and journal in that source can start.
@@ -2184,6 +2191,23 @@ build_cache = "{parent}-build"
 # homes -- stays private to the run that made it.
 cargo_target = "{parent}-target"
 cargo_profiles = ["debug", "release"]
+
+# How large that shared directory may get before a run discards it whole.
+#
+# The bound this system was missing. Prefixes are swept to `keep` on the way
+# into every run and `build_cache` is a rename target that never accumulates,
+# but cargo never garbage-collects: every dependency bump and deleted crate
+# leaves output here forever. Measured 8 GB in three days.
+#
+# `[disk] required_free_gb` is not this. That is a floor on the filesystem --
+# it reports that something has already eaten the disk and stops whoever runs
+# next, rather than bounding whatever grew. It stays as the backstop; this is
+# the mechanism.
+#
+# Generous on purpose. Crossing it costs one cold build, so the number should
+# be large enough that a working week never does and small enough that the
+# floor is never what fires first.
+cargo_target_max_gb = 40.0
 
 name_length = 8
 

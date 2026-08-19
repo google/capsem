@@ -167,6 +167,11 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
         # to the prefix about to run and takes it back on the way out, both
         # where `prefix` works -- before the journal, outside the lock.
         "buildcache.py",
+        # And the shared build directory those two work against, split out of
+        # `prefix` at the module ceiling and in the same pre-run position: it
+        # links the profile directories the child compiles into and bounds
+        # their size, both from `reexec()`.
+        "cargotarget.py",
         "sourcecommit.py",
         "commitsnapshot.py",
         "prefixlease.py",

@@ -24,6 +24,7 @@ class PrefixConfig(Strict):
     build_cache: str
     cargo_target: str
     cargo_profiles: tuple[str, ...]
+    cargo_target_max_gb: float
     lease_template: str
     name_length: int
     keep: int
@@ -106,3 +107,16 @@ class PrefixConfig(Strict):
             if PurePosixPath(profile).name != profile or profile in {"", ".", ".."}:
                 raise ValueError(f"cargo profile {profile!r} must be one plain directory name")
         return self
+
+    @field_validator("cargo_target_max_gb")
+    @classmethod
+    def _cap_is_a_real_size(cls, cap: float) -> float:
+        """A cap that can be switched off is not a cap.
+
+        `[disk] required_free_gb` is the floor and stays one; this is the bound
+        on the directory itself, and zero or negative would make every run
+        discard what the run before it built.
+        """
+        if cap <= 0:
+            raise ValueError("cargo_target_max_gb must be a positive size in GB")
+        return cap

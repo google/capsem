@@ -38,3 +38,45 @@ def lease(config: GateConfig, path: Path):
             yield
         finally:
             fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _identity_of(config: GateConfig, name: str) -> str | None:
+    """The prefix a lease file names, or None if the file is not one."""
+    head, _, tail = config.prefix.lease_template.partition("{identity}")
+    if not name.startswith(head) or not name.endswith(tail):
+        return None
+    identity = name[len(head) : len(name) - len(tail)] if tail else name[len(head) :]
+    return identity or None
+
+
+def reclaim_orphan_leases(config: GateConfig) -> list[Path]:
+    """Remove lease files whose prefix is gone, and say which went.
+
+    One is created per identity ever run and nothing removed them; 127 had
+    accumulated here. Zero bytes each, so this is not about space -- it is that
+    the directory holding the prefixes stops being readable at a glance, and
+    that listing is where a prefix nobody reclaimed gets noticed.
+
+    Each removal happens under the lease itself, and a busy one is skipped. A
+    lease file another process holds *is* its mutual exclusion: unlinking it
+    would leave that process holding a lock on an unreachable inode while the
+    next run creates a fresh file and locks that one too, and both would
+    believe they owned the prefix.
+    """
+    root = parent_dir(config)
+    if not root.is_dir():
+        return []
+    removed: list[Path] = []
+    for entry in sorted(root.iterdir()):
+        if entry.is_dir():
+            continue
+        identity = _identity_of(config, entry.name)
+        if identity is None or (root / identity).exists():
+            continue
+        try:
+            with lease(config, root / identity):
+                entry.unlink(missing_ok=True)
+                removed.append(entry)
+        except (PrefixBusy, GateError):
+            continue
+    return removed

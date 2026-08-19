@@ -31,10 +31,10 @@ import secrets
 import shutil
 from pathlib import Path
 
-from . import buildcache, snapshot
+from . import buildcache, cargotarget, snapshot
 from .config import GateConfig
 from .errors import GateError, PrefixBusy
-from .prefixlease import lease, parent_dir
+from .prefixlease import lease, parent_dir, reclaim_orphan_leases
 from .sourcecommit import SourceCommit, require_detached_checkout
 
 #: `cp` flags that ask APFS for copy-on-write. Clonefile is what makes this
@@ -49,44 +49,6 @@ _CLONE = ("-c",)
 #: How many paths to hand one `cp`. Per-file invocation is 2080 subprocesses;
 #: one invocation is an argv the kernel refuses.
 _BATCH = 200
-
-
-def cargo_target(config: GateConfig) -> Path:
-    """The one build directory every run compiles into."""
-    return Path(config.prefix.cargo_target.format(parent=config.prefix.parent)).expanduser()
-
-
-def _link_cargo_output(config: GateConfig, path: Path) -> None:
-    """Point this prefix's profile directories at the shared build root.
-
-    Cargo is told where to write by `CARGO_TARGET_DIR`; these symlinks are for
-    everything else. Roughly thirty checked-in paths name `target/debug/...` or
-    `target/release/...` relative to the tree a step runs in, and they are
-    correct -- a step should not have to know that compiler output is a
-    property of the machine rather than of the run.
-
-    Only the profile directories. The rest of `target/` is the run's own: the
-    journal it is writing, the config it materialized, the homes its VMs boot
-    from. Sharing those would make two runs one run.
-    """
-    shared = cargo_target(config)
-    root = path / "target"
-    root.mkdir(parents=True, exist_ok=True)
-    for profile in config.prefix.cargo_profiles:
-        (shared / profile).mkdir(parents=True, exist_ok=True)
-        link = root / profile
-        # A resumed prefix already has the link, and a populated one cannot:
-        # `snapshot` copies tracked files, and `target/` is gitignored.
-        if link.is_symlink():
-            if link.readlink() == shared / profile:
-                continue
-            link.unlink()
-        elif link.exists():
-            raise GateError(
-                f"{link} is a real directory, so this run would compile into the "
-                "prefix instead of the shared build root and pay a cold build"
-            )
-        link.symlink_to(shared / profile, target_is_directory=True)
 
 
 def example(config: GateConfig) -> Path:
@@ -227,6 +189,16 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
     if reuse is None:
         for stale in sweep(config):
             runner.note(f"reclaimed stale prefix {stale}")
+        for orphan in reclaim_orphan_leases(config):
+            runner.note(f"reclaimed orphan lease {orphan.name}")
+        # Reported every run, not only when it fires. A cap nobody sees the
+        # approach to is a cold build that arrives without warning.
+        held = cargotarget.bound(config)
+        runner.note(
+            f"shared build directory {held.gb:.1f} GB "
+            f"of {config.prefix.cargo_target_max_gb:.0f} GB"
+            + (" -- over cap, discarded; this run compiles from nothing" if held.discarded else "")
+        )
     retained_commit = commit is not None and path.exists()
     if reuse is not None and commit is not None:
         if path.stat().st_uid != os.getuid():
@@ -257,10 +229,10 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
             runner.note(f"adopted exported output from the checkout: {', '.join(adopted)}")
         if lent := buildcache.lend(config, path):
             runner.note(f"lent build output to {path.name}: {', '.join(lent)}")
-    _link_cargo_output(config, path)
+    cargotarget.link_profiles(config, path)
     child_env = {
         config.environment.source_checkout: str(config.root),
-        config.environment.cargo_target: str(cargo_target(config)),
+        config.environment.cargo_target: str(cargotarget.path(config)),
     }
     if commit is not None:
         child_env[config.environment.source_commit] = str(commit)

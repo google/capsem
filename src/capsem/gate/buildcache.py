@@ -48,6 +48,7 @@ import errno
 import shutil
 from pathlib import Path
 
+from . import cargotarget
 from .config import GateConfig
 from .errors import GateError
 from .filesystem import copy_tree, merge_tree, remove
@@ -202,4 +203,4 @@ def discard(config: GateConfig) -> None:
     says meaning almost nothing.
     """
     remove(root(config))
-    remove(Path(config.prefix.cargo_target.format(parent=config.prefix.parent)).expanduser())
+    remove(cargotarget.path(config))

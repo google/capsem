@@ -171,7 +171,7 @@ def test_release_cli_requires_the_explicit_source_commit(argv: list[str], slot: 
 def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate import buildcache, prefix
+    from capsem.gate import buildcache, cargotarget, prefix
     from capsem.gate import config as gate_config
     from capsem.gate.sourcecommit import SourceCommit
 
@@ -211,6 +211,11 @@ def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
         {
             config.environment.source_checkout: str(config.root),
             config.environment.source_commit: str(commit),
+            # Named here rather than merely tolerated: the child compiles into
+            # one shared build directory, and it learns that from the exported
+            # environment. A release prefix that did not carry it would take a
+            # cold build on every dispatch.
+            config.environment.cargo_target: str(cargotarget.path(config)),
         }
     ]
 
