@@ -299,43 +299,6 @@ package_runtime_packages = [
     "libc6",
 ]
 
-
-# Building this checkout and putting it on the machine you are sitting at.
-#
-# Everything else under `[install]` describes the container the gate proves a
-# package in. This is the developer path: what `just install` did until
-# `2c2f977c refactor: lock disciplined public surfaces` deleted the recipe for
-# carrying a shell body, and what nothing has done since.
-#
-# The package itself is not built here. The package rail already builds the
-# exact release-mode `.deb` this project ships, and installing anything else
-# would prove a artifact nobody can publish -- so this composes that rail and
-# then puts its output on the machine.
-[install.host]
-# Cleared before anything runs. A shell that has been running `just test`
-# exports these, and installing with them set bakes a `target/test-home` path
-# into the service unit that the next test run wipes.
-isolation_variables = ["CAPSEM_HOME", "CAPSEM_RUN_DIR", "CAPSEM_ASSETS_DIR"]
-
-# Stopped before the package lands, or macOS respawns the service mid-install
-# and Linux writes over binaries that are open.
-processes = [
-    "capsem-service", "capsem-gateway", "capsem-tray", "capsem-process", "capsem-app",
-]
-run_dir = ".capsem/run"
-run_files = ["service.sock", "gateway.token", "gateway.port"]
-
-service_socket = "service.sock"
-health_url = "http://localhost/list"
-health_seconds = 15.0
-macos_agent_plist = "Library/LaunchAgents/com.capsem.service.plist"
-# `launchctl` addresses a per-user GUI domain, and the uid is filled in.
-macos_launch_domain = "gui/{uid}"
-# macOS ships a `.pkg`, not a `.deb`, and its postinstall registers a
-# LaunchAgent -- which needs to know whose. The request file is how it is told,
-# and it is cleared whether or not the install succeeds.
-macos_package = "packages/Capsem-{version}.pkg"
-macos_user_request_script = "scripts/macos-install-user-request.sh"
 [install.builder]
 dockerfile = "docker/Dockerfile.install-builder"
 tag_template = "capsem-install-builder:{digest}"
