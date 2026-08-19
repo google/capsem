@@ -185,6 +185,9 @@ def rehearsal(
         node=node,
         phase_name=PHASE,
         axis=(config.suites.pytest.base_profile,),
+        # The one suite here that would be a second recording rather than a
+        # second proof. See `functional`.
+        benchmark=False,
     )
     return pulled_package(
         phase,

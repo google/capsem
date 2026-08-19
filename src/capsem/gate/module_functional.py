@@ -13,13 +13,12 @@ from . import (
     toolchain,
     vmproofs,
 )
-from .actions import Action
 from .command import GateCommand
 from .config import GateConfig
 from .content import ProfileContent
-from .context import Context
 from .execution import Kind, Needs, Speed, Step, step
 from .plan import Plan
+from .profileaxis import AxisAgrees
 from .qualification import Qualification
 from .testmodules import InWorkspace
 
@@ -50,46 +49,6 @@ class FunctionalModule(
         return plan
 
 
-class AxisAgrees(Action, name="axis-agrees"):
-    """Check the materialized profiles are the ones the plan was built for.
-
-    `selected()` reads checked-in `config/profiles/`; this reads what the
-    build actually materialized, and refuses when they differ. A materialized
-    catalog that does not match means the gate would prove a pairing nobody is
-    shipping -- which is why the check did not go away when the plan stopped
-    reading build output, it moved to where it can run.
-    """
-
-    def __init__(self, assets: Path | None = None, profiles_dir: Path | None = None) -> None:
-        self._assets = assets
-        self._profiles_dir = profiles_dir
-
-    def render(self) -> str:
-        """Name what is being checked, not just that a check happens.
-
-        Two lanes ask this question of two different trees -- the layout the
-        build left behind, and a cohort staged the way a release stages one.
-        A fixed string made those indistinguishable in the run log, so a
-        failure did not say which tree it had read.
-        """
-        where = self._profiles_dir or self._assets
-        return "check the materialized profiles match the checked-in axis" + (
-            f" in {where}" if where is not None else ""
-        )
-
-    def perform(self, context: Context) -> None:
-        profiles.agree(
-            context.config,
-            profiles_dir=self._profiles_dir,
-            manifest=(
-                self._assets / context.config.install.manifest_name
-                if self._assets is not None
-                else None
-            ),
-        )
-        context.journal.note(f"profile axis {', '.join(profiles.selected(context.config))}")
-
-
 def functional(
     plan: Plan,
     config: GateConfig,
@@ -102,6 +61,7 @@ def functional(
     node: Step | None = None,
     phase_name: str = "functional",
     axis: tuple[str, ...] | None = None,
+    benchmark: bool = True,
 ) -> Step:
     """Every VM-owned suite, for every profile the channel selects.
 
@@ -113,7 +73,16 @@ def functional(
     `phase_name` and `axis` are how the local rehearsal replays this phase
     against a pulled cohort without colliding with the candidate's own
     `functional` steps, for the reason `pulled_artifacts` already documents:
-    two steps cannot share a label. Four of the eight binary-release failures
+    two steps cannot share a label.
+
+    `benchmark` is off for that rehearsal, and it is the one suite here that
+    must not run twice. The others answer a question about the pulled cohort --
+    does this content resolve, do these binaries exist, does a VM boot from
+    them -- and the answer differs from the candidate's. The benchmark records
+    a performance baseline, and a second recording of the same profile on the
+    same machine in the same run is not a second measurement of anything: it is
+    the first one repeated on a warm host, and it leaves the profile with two
+    baselines where the contract says one. Four of the eight binary-release failures
     were here rather than in the five steps the rehearsal used to cover, and
     every one of them died within four seconds on a precondition -- a missing
     profiles directory, initrd, generated file or host binary. Those are
@@ -205,6 +174,7 @@ def functional(
         broad=True,
         isolated_assets=isolated_assets,
         staged=staged,
+        benchmark=benchmark,
     )
     for profile in rest:
         previous = _profile_lane(
@@ -215,6 +185,7 @@ def functional(
             broad=False,
             isolated_assets=isolated_assets,
             staged=staged,
+            benchmark=benchmark,
         )
     return previous
 
@@ -236,6 +207,7 @@ def _profile_lane(
     broad: bool,
     isolated_assets: bool,
     staged: ProfileContent | None = None,
+    benchmark: bool = True,
 ):
     """One profile's VM-owned suites, in the order they depend on.
 
@@ -291,6 +263,8 @@ def _profile_lane(
         ),
         after=(current,),
     )
+    if not benchmark:
+        return current
     return phase.add(
         selected(pytestsuite.benchmark(config, profile=profile)).as_step(config),
         after=(current,),
