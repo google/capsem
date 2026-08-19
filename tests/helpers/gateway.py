@@ -16,8 +16,10 @@ from log_streams import read_log_stream
 
 from scripts.release_test_binary import ensure_host_test_binary
 
+from .constants import BIN_DIR
+
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
+GATEWAY_BINARY = BIN_DIR / "capsem-gateway"
 GATEWAY_SOURCE_PATHS = [
     PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "main.rs",
     PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "proxy.rs",

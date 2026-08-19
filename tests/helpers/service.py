@@ -16,19 +16,21 @@ from log_streams import read_log_stream
 
 from .constants import (
     ASSETS_DIR,
+    BIN_DIR,
     EXEC_READY_TIMEOUT,
     PROFILES_DIR,
     content_assets_root,
     content_profiles_root,
+    host_bin_root,
 )
 from .sign import sign_binary
 from .uds_client import UdsHttpClient
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-SERVICE_BINARY = PROJECT_ROOT / "target/debug/capsem-service"
-PROCESS_BINARY = PROJECT_ROOT / "target/debug/capsem-process"
-GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
-TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
+SERVICE_BINARY = BIN_DIR / "capsem-service"
+PROCESS_BINARY = BIN_DIR / "capsem-process"
+GATEWAY_BINARY = BIN_DIR / "capsem-gateway"
+TRAY_BINARY = BIN_DIR / "capsem-tray"
 LINUX_TEST_TMP_PARENT = Path("/var/tmp/capsem-tests")
 WINTERFELL_ROOT_ENV = {
     "binary_dir": "CAPSEM_WINTERFELL_BIN_DIR",
@@ -110,7 +112,7 @@ def resolve_winterfell_artifact_roots(
     if not present:
         architecture = "arm64" if os.uname().machine == "arm64" else "x86_64"
         return WinterfellArtifactRoots(
-            binary_dir=PROJECT_ROOT / "target" / "debug",
+            binary_dir=host_bin_root(environment),
             assets_dir=content_assets_root(environment) / architecture,
             profiles_dir=content_profiles_root(environment),
             installed=False,
@@ -134,7 +136,7 @@ def resolve_winterfell_artifact_roots(
     assets_dir = configured_path("assets_dir")
     profiles_dir = configured_path("profiles_dir")
     source_roots = (
-        (binary_dir, (PROJECT_ROOT / "target" / "debug").resolve(), "binary"),
+        (binary_dir, host_bin_root(environment).resolve(), "binary"),
         (assets_dir, (PROJECT_ROOT / "assets").resolve(), "asset"),
         (profiles_dir, PROFILES_DIR.resolve(), "profile"),
     )
@@ -165,7 +167,7 @@ def resolve_winterfell_artifact_roots(
             )
         if _path_is_within(
             binary.resolve(),
-            (PROJECT_ROOT / "target" / "debug").resolve(),
+            host_bin_root(environment).resolve(),
         ):
             raise RuntimeError(
                 f"installed Winterfell binary points at source-built artifacts: {binary}"
