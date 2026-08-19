@@ -2500,25 +2500,23 @@ slow_action_seconds = 30
 # reading the failure, without putting a gigabyte of compiler output in JSONL.
 failure_tail_lines = 40
 
-# What `fast-test` may cost end to end on a developer's machine, enforced while
-# the run is happening and only there.
+# Nothing bounds how long `fast-test` may take, and deliberately so. The
+# wall-clock budget that did was removed after it failed two releases: a
+# constant cannot tell a slow test from a cold runner, and the escape hatch it
+# needed to stop doing that made it a budget suspended everywhere it would
+# fire. `timing_regression` below is added only at
+# `TimingBoundary.QUALIFICATION`, so it does not reach this lane either.
 #
-# Separate from `timing_regression` below, which compares a run against its own
-# history and is right for a release: a run twice as slow as the last one is a
-# regression, and a run that was always slow is not. Only one of those tells you
-# whether a gate named `fast` deserves the name. It measured twenty-one minutes
-# when this was written -- ten of them one un-parallelised pytest invocation,
-# and two and a half the same settings script run three times in one plan.
+# The replacement is a report, not a gate. Every run already records per-step
+# durations; what is missing is comparing them to the previous comparable run
+# and *saying so* -- per step, so "the lane got slower" arrives as "this step
+# went from 4s to 40s" rather than as a number to argue with. Nothing fails on
+# it. A step can be legitimately slower, and the run that discovers this should
+# tell whoever is watching, not stop them.
 #
-# Enforced between step waves rather than reported afterwards. A report about
-# last night arrives after you have already waited.
-#
-# Not enforced in CI, and that is a measurement rather than an exemption. A
-# hosted runner starts cold: `test-static` there spent 1285s against this
-# budget, of which 21m23s was `docker build` of the Linux host builder image
-# that a developer's machine has cached. It blocked a release the first time it
-# ran, which is worse than not guarding at all -- the promise being kept is
-# about the gate somebody sits and waits for, and nobody sits and waits for CI.
+# Comparing two fast-lane runs is only meaningful now because a shared build
+# directory removed the cold/warm split that dominated every earlier
+# measurement.
 [runlog.timing_regression]
 # A release guard, not a stopwatch SLA. Compare complete qualification with
 # its latest successful run on the same platform/machine/core count and exact
