@@ -82,6 +82,14 @@ def decide(
     complete = qualificationevidence.find_complete(history, commit)
     if policy is QualificationPolicy.REQUIRE:
         if complete is None:
+            if getattr(args, "force", "false") == "true":
+                # The second gate `--force` has to reach. The plan swaps its
+                # accept step for a recorded waiver, and this refuses before any
+                # plan runs, so relaxing only one of them leaves the flag
+                # looking broken. The policy itself is deliberately not
+                # downgraded here: it is what decides sandbox enforcement, and
+                # forcing a release must not quietly unseal the sandbox too.
+                return Decision(None, None, carried, reuse_path)
             raise GateError(
                 f"source commit {commit} has no complete exact qualification run log; "
                 f"run `just test {commit}` first"
