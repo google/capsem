@@ -247,3 +247,42 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
   rail is `.deb`-only and macOS ships a `.pkg`; there is no AppImage updater
   bundle. Do not make release creation depend on `latest.json`.
 - **AppImage was dropped after 14 failed releases.** linuxdeploy (a FUSE2 AppImage) cannot run on Ubuntu 24.04 CI runners (FUSE3 only). Tested: `libfuse2` install, `APPIMAGE_EXTRACT_AND_RUN=1` env var, both together -- none worked reliably. If AppImage support is needed in the future, the approach would be to pre-extract linuxdeploy (`--appimage-extract`) and run the extracted binary directly, bypassing FUSE entirely.
+
+## A yanked dependency may be the attack, not the fix
+
+`check-cargo-audit.py` treats `yanked` as blocking, and the obvious response --
+`cargo update -p <crate>` -- is sometimes exactly what an attacker is waiting
+for.
+
+On 2026-08-20 the `arrayref` account was compromised. Every existing version was
+yanked and a single malicious `0.3.10` published as the only installable one. It
+declared a dependency on `proc-macro1`, a typosquat of `proc-macro2` impersonating
+its author, whose `build.rs` base64-decoded a URL, fetched a binary over TLS with
+certificate verification disabled, wrote it to `/tmp/rust-setup`, and executed it
+-- at compile time, so merely building was enough. `arrayref` reaches us through
+`blake3`; it has ~245M downloads and sits under much of the Rust GUI, Ethereum
+and Solana ecosystems.
+
+The yank was the delivery mechanism. It made the audit fail, and the audit
+failing is what argues for the upgrade.
+
+So when this gate blocks on `yanked`:
+
+- Read the diff before taking it. A crate that gains its **first ever
+  dependency**, or gains a `build.rs`, is the signature. `arrayref` is ~200
+  lines of `macro_rules!` and had no dependencies at all.
+- `cargo update` and `cargo tree` download and resolve but never run `build.rs`.
+  `cargo build` does. Inspect between those two steps -- that gap is the only
+  reason this checkout stayed clean.
+- Yanked is not vulnerable. A pinned older version is usually safe to keep while
+  the situation is understood; `Cargo.lock` plus `--locked` is what kept CI on
+  the good version throughout.
+- Check crates.io and the RustSec advisory database before concluding anything.
+  Both malicious releases were deleted and the legitimate versions un-yanked
+  within a couple of hours, after which the audit passed with no change on our
+  side.
+
+The structural defence is the build sandbox: cargo runs in a network namespace
+with loopback only, so a `build.rs` reaching a C2 fails regardless of whether
+anybody noticed. That is why "Prove Linux sandbox boundary" is a required step
+and not a nicety.
