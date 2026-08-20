@@ -104,6 +104,19 @@ def test_rejects_unknown_or_incomplete_manifest_shapes(manifest: dict) -> None:
 
 
 def test_release_workflow_uses_shared_dual_schema_asset_lister() -> None:
+    """The enumeration is shared, and the verification is now testable.
+
+    This used to read the workflow step's shell body, because that is where the
+    `curl` loop, the byte comparison and a blake3 check written as an indented
+    Python heredoc lived. A program inside YAML is one no test can call, which
+    is why the last publication step had no coverage at all -- and it is the
+    step whose absence let a channel serve `status: current` with three dead
+    package URLs for a month.
+
+    So the assertions follow the code down: the step runs the verifier, and the
+    verifier enumerates through the one shared dual-schema lister rather than
+    parsing a manifest shape of its own.
+    """
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
     step = workflow.split(
         "- name: Verify every URL in the asset channel manifest is reachable",
@@ -112,12 +125,15 @@ def test_release_workflow_uses_shared_dual_schema_asset_lister() -> None:
         "- name: Verify public release packages and installer contract",
         maxsplit=1,
     )[0]
+    assert "scripts/verify-channel-downloads.py" in step
 
-    assert "scripts/list-release-manifest-assets.py" in step
-    assert "m['assets']['current']" not in step
-    assert 'blob="/tmp/verify/${hash#blake3:}"' in step
-    assert 'actual_bytes=$(wc -c < "$blob"' in step
-    assert 'if [ "$actual_bytes" != "$bytes" ]; then' in step
+    verifier = (PROJECT_ROOT / "scripts" / "verify-channel-downloads.py").read_text()
+    assert "list-release-manifest-assets.py" in verifier
+    assert "m['assets']['current']" not in verifier
+    # The three questions a published row has to answer.
+    assert "not reachable" in verifier
+    assert "expected_bytes" in verifier
+    assert "blake3" in verifier
 
 
 def test_cli_emits_tab_separated_rows(tmp_path: Path) -> None:

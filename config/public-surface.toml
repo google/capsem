@@ -3,7 +3,7 @@
 # drive-by addition, deletion, rename, or stale count fails closed.
 
 [just]
-count = 19
+count = 20
 approved = [
   "build",
   "build-all",
@@ -18,6 +18,9 @@ approved = [
   "qualify-binaries",
   "release-binaries",
   "release-profile",
+  # Replays a release qualification lane against a cohort built here, so the
+  # layout a release runs under is reachable without dispatching one.
+  "replay-release-lane",
   "run-service",
   "shell",
   "test",

@@ -1349,53 +1349,9 @@ jobs:
           done
 
       - name: Verify every URL in the asset channel manifest is reachable
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/verify
-          curl -fsSL "$ASSET_MANIFEST_URL" -o /tmp/verify/manifest.json
-          fail=0
-          # Iterate every profile-owned URL declared by either supported manifest schema.
-          while IFS=$'\t' read -r _asset_version _arch _name hash bytes url; do
-            code=$(curl -sIL -o /dev/null -w "%{http_code}" "$url")
-            if [ "$code" != "200" ]; then
-              echo "::error::$url -> HTTP $code"
-              fail=1
-            else
-              echo "ok  $url"
-            fi
-            blob="/tmp/verify/${hash#blake3:}"
-            if ! curl -fsSL "$url" -o "$blob"; then
-              echo "::error::$url download failed"
-              fail=1
-              continue
-            fi
-            actual_bytes=$(wc -c < "$blob" | tr -d ' ')
-            if [ "$actual_bytes" != "$bytes" ]; then
-              echo "::error::$url byte-size mismatch: expected $bytes, got $actual_bytes"
-              fail=1
-            fi
-            expected_hash="${hash#blake3:}"
-            if ! uv run python3 - "$blob" "$expected_hash" <<'PY'
-          import pathlib
-          import sys
-
-          import blake3
-
-          path = pathlib.Path(sys.argv[1])
-          expected = sys.argv[2]
-          actual = blake3.blake3(path.read_bytes()).hexdigest()
-          if actual != expected:
-              raise SystemExit(1)
-          PY
-            then
-              echo "::error::$url blake3 mismatch"
-              fail=1
-            fi
-          done < <(python3 scripts/list-release-manifest-assets.py \
-            --manifest-path /tmp/verify/manifest.json \
-            --manifest-url "$ASSET_MANIFEST_URL")
-          [ "$fail" = 0 ] || { echo '::error::one or more asset URLs are unreachable or hash-mismatched'; exit 1; }
-
+        run: >
+          uv run python scripts/verify-channel-downloads.py
+          --manifest-url "$ASSET_MANIFEST_URL"
       - name: Verify public release packages and installer contract
         run: |
           set -euo pipefail

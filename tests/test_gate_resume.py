@@ -398,3 +398,74 @@ def test_the_dry_run_says_what_it_would_skip() -> None:
     assert "source.record" in rendering
     assert "(carried)" in rendering
     assert "steps carried from an earlier run" in rendering
+
+
+def test_until_carries_a_step_and_everything_after_it() -> None:
+    """The mirror of `--from`, and the reason a local replay is safe.
+
+    The installed-package proof purges the host `capsem`, deletes `~/.capsem`
+    and reinstalls from the channel under test. That is correct on a runner
+    deleted minutes later and destructive on a machine somebody is working on --
+    which is what happened the first time the release lane was replayed here.
+    """
+    from argparse import Namespace
+
+    from helpers.gate import gate_plan
+
+    from capsem.gate import config as gate_config
+    from capsem.gate import resume
+
+    plan = gate_plan("candidate")
+    config = gate_config.load(PROJECT_ROOT)
+
+    carried, _ = resume.resolve(
+        plan, config, Namespace(stop_before="glowup.install"), qualifying=False
+    )
+
+    assert "glowup.install" in carried, "the named step is carried, not run"
+    assert "rehearsal.cohort" in carried, "and so is everything waiting on it"
+    assert "fast.citadel" not in carried, "everything before it still runs"
+
+
+def test_a_release_refuses_until_for_the_reason_it_refuses_from() -> None:
+    """Both drop steps this process did not execute."""
+    from argparse import Namespace
+
+    import pytest
+    from helpers.gate import gate_plan
+
+    from capsem.gate import config as gate_config
+    from capsem.gate import resume
+    from capsem.gate.errors import GateError
+
+    with pytest.raises(GateError, match="--until cannot be used while qualifying"):
+        resume.resolve(
+            gate_plan("candidate"),
+            gate_config.load(PROJECT_ROOT),
+            Namespace(stop_before="glowup.install"),
+            qualifying=True,
+        )
+
+
+def test_until_names_the_step_and_the_plan_it_is_missing_from() -> None:
+    """`glowup.package` is in the release plan and not the candidate one.
+
+    Naming both is what turns a typo into a two-second fix: the replay tool
+    defaults to that label, and pointed at the wrong plan it must say which.
+    """
+    from argparse import Namespace
+
+    import pytest
+    from helpers.gate import gate_plan
+
+    from capsem.gate import config as gate_config
+    from capsem.gate import resume
+    from capsem.gate.errors import GateError
+
+    with pytest.raises(GateError, match=r"no step named 'glowup.package' in the candidate plan"):
+        resume.resolve(
+            gate_plan("candidate"),
+            gate_config.load(PROJECT_ROOT),
+            Namespace(stop_before="glowup.package"),
+            qualifying=False,
+        )

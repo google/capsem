@@ -2618,21 +2618,24 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
     verify_downloads = _workflow_job_block("verify-release-downloads", "release.yaml")
 
     assert "needs: [deploy-release-channel]" in verify_downloads
-    assert 'curl -fsSL "$ASSET_MANIFEST_URL" -o /tmp/verify/manifest.json' in verify_downloads
-    assert "scripts/list-release-manifest-assets.py" in verify_downloads
-    assert "--manifest-path /tmp/verify/manifest.json" in verify_downloads
-    assert "m['assets']['current']" not in verify_downloads
-    assert 'BASE="${ASSET_MANIFEST_URL%/stable/manifest.json}/releases"' not in verify_downloads
-    assert 'url="$BASE/$asset_version/$arch-$name"' not in verify_downloads
-    assert 'expected_hash="${hash#blake3:}"' in verify_downloads
-    assert 'curl -fsSL "$url" -o "$blob"' in verify_downloads
-    assert 'actual_bytes=$(wc -c < "$blob"' in verify_downloads
-    assert 'if [ "$actual_bytes" != "$bytes" ]; then' in verify_downloads
-    assert "import blake3" in verify_downloads
-    assert "actual = blake3.blake3(path.read_bytes()).hexdigest()" in verify_downloads
-    assert "::error::$url blake3 mismatch" in verify_downloads
-    assert "asset URLs are unreachable or hash-mismatched" in verify_downloads
-    assert 'code=$(curl -sIL -o /dev/null -w "%{http_code}" "$url")' in verify_downloads
+    assert "scripts/verify-channel-downloads.py" in verify_downloads
+    assert '--manifest-url "$ASSET_MANIFEST_URL"' in verify_downloads
+
+    # The checks themselves moved out of the YAML and into a script that tests
+    # can call. They were a `curl` loop, a byte comparison and a blake3 check
+    # written as a Python heredoc indented inside a `run:` block -- a program no
+    # test could reach, guarding the last step before anyone installs a release.
+    verifier = (PROJECT_ROOT / "scripts" / "verify-channel-downloads.py").read_text()
+    assert "list-release-manifest-assets.py" in verifier
+    assert "m['assets']['current']" not in verifier
+    assert "blake3.blake3(payload).hexdigest()" in verifier
+    assert "expected_bytes" in verifier
+    # The three verdicts the step must still be able to reach, now phrased by
+    # the script rather than by a `curl` loop: unreachable, wrong length, wrong
+    # bytes. Asserted where they live so they stay callable from a test.
+    assert "is not reachable" in verifier
+    assert "the manifest declares" in verifier
+    assert "hashes to" in verifier
     assert "scripts/check-public-binary-release.py" in verify_downloads
     assert '--channel "$RELEASE_CHANNEL"' in verify_downloads
     assert (

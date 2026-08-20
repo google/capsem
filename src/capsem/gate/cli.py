@@ -119,6 +119,13 @@ def _inspection() -> argparse.ArgumentParser:
         help="carry every step before STEP and start there (never in a release)",
     )
     shared.add_argument(
+        "--until",
+        dest="stop_before",
+        default=None,
+        metavar="STEP",
+        help="carry STEP and everything after it, stopping short (never in a release)",
+    )
+    shared.add_argument(
         "--sandbox",
         type=sandbox.SandboxMode,
         choices=tuple(sandbox.SandboxMode),

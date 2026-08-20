@@ -68,6 +68,45 @@ def ancestors(plan, label: str) -> frozenset[str]:
     return frozenset(seen)
 
 
+def descendants(plan, label: str) -> frozenset[str]:
+    """`label` and everything that waits on it, transitively.
+
+    What `--until` carries, and the mirror of `ancestors`. A developer machine
+    needs it: the glow-up purges the host, deletes `~/.capsem` and reinstalls
+    from the channel under test, which is correct on a disposable runner and
+    not something to do to a machine somebody is working on. Without a way to
+    stop short, replaying the lane locally means running that.
+    """
+    if label not in plan.labels:
+        near = sorted(name for name in plan.labels if label in name)
+        raise GateError(
+            f"no step named {label!r} in the {plan.name} plan"
+            + (f"; did you mean {near}?" if near else "")
+        )
+    seen: set[str] = {label}
+    frontier = [label]
+    while frontier:
+        current = frontier.pop()
+        for candidate in plan.labels:
+            if current in plan.after_of(candidate) and candidate not in seen:
+                seen.add(candidate)
+                frontier.append(candidate)
+    return frozenset(seen)
+
+
+def stopped(plan, label: str | None, *, qualifying: bool) -> frozenset[str]:
+    """The steps a `--until` run may skip, with the same refusal as `--from`."""
+    if label is None:
+        return frozenset()
+    if qualifying:
+        raise GateError(
+            "--until cannot be used while qualifying a release. It drops the "
+            "steps a release exists to run, which is exactly the reduced gate "
+            "the release process forbids."
+        )
+    return descendants(plan, label)
+
+
 def carried(plan, config: GateConfig, label: str | None, *, qualifying: bool) -> frozenset[str]:
     """The steps a `--from` run may skip, with the refusals that keep it honest."""
     if label is None:
@@ -116,5 +155,8 @@ def resolve(
     the test suite do not and should not have to.
     """
     carried_steps = carried(plan, config, getattr(args, "resume_from", None), qualifying=qualifying)
+    # `--until` joins the same set for the same reason: both name steps this
+    # process will not execute, and a release refuses either.
+    carried_steps |= stopped(plan, getattr(args, "stop_before", None), qualifying=qualifying)
     named = getattr(args, "prefix", None)
     return carried_steps, existing(config, named) if named else None
