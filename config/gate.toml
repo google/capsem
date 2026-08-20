@@ -990,7 +990,7 @@ max_lines = 1000
 
 [boundary.rust.oversized_line_counts]
 "crates/capsem-service/src/main.rs" = 13802
-"crates/capsem-service/src/tests.rs" = 11948
+"crates/capsem-service/src/tests.rs" = 11953
 
 [boundary.scripts.oversized_line_counts]
 "scripts/bootstrap-linux.sh" = 599
