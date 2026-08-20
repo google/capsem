@@ -1,4 +1,4 @@
-"""The one build directory every run compiles into, and what bounds it.
+"""What a prefix's `target/` points at: the shared build root, or a pulled tree.
 
 Split out of `prefix`, which had grown past the module ceiling this project
 holds itself to -- and the seam is a real one rather than a line count.
@@ -105,6 +105,51 @@ def link_profiles(config: GateConfig, prefix: Path) -> None:
                 "prefix instead of the shared build root and pay a cold build"
             )
         link.symlink_to(shared / profile, target_is_directory=True)
+
+
+def link_prefix_trees(config: GateConfig, prefix: Path) -> None:
+    """Decide what this prefix's `target/` points at, once, in one place.
+
+    Two lanes and one answer. Ordinary runs compile into the shared build root;
+    a release lane reads binaries and config a manifest selected and something
+    else staged. Either way the checked-in tests resolve
+    `PROJECT_ROOT/target/...` and are right to, so the prefix is what makes that
+    resolve to the correct tree.
+    """
+    pulled = os.environ.get(config.modules.release_bin_dir)
+    if not pulled:
+        link_profiles(config, prefix)
+        return
+    link_pulled_binaries(config, prefix, Path(pulled).resolve())
+    staged = os.environ.get(config.environment.profiles_dir)
+    if staged:
+        link_pulled_tree(config, prefix, "config", Path(staged).resolve().parent)
+
+
+def link_pulled_tree(config: GateConfig, prefix: Path, relative: str, target: Path) -> None:
+    """Point one path under the prefix's `target/` at a tree staged outside it.
+
+    The same fix as the binaries and for the same reason. A release lane
+    qualifies from a prefix carrying only tracked files, while the checked-in
+    tests resolve `PROJECT_ROOT/target/<something>` because a test should not
+    have to know whether this run built its inputs or was handed them. Linking
+    is what makes both true at once.
+
+    Refuses a real directory rather than preferring it: a lane that exists to
+    prove manifest-selected content must not quietly read content it made.
+    """
+    link = prefix / "target" / relative
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink():
+        if link.readlink() == target:
+            return
+        link.unlink()
+    elif link.exists():
+        raise GateError(
+            f"{link} is a real directory, so this lane would read content it "
+            "produced rather than the content the manifest selected"
+        )
+    link.symlink_to(target, target_is_directory=True)
 
 
 def _tree_bytes(root: Path) -> int:

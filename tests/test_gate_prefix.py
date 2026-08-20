@@ -1189,3 +1189,47 @@ def test_a_pulled_lane_refuses_to_read_binaries_it_built_itself(tmp_path: Path) 
 
     with pytest.raises(GateError, match="rather than the ones the manifest selected"):
         cargotarget.link_pulled_binaries(config, prefix_path, pulled)
+
+
+def test_a_pulled_lane_also_finds_the_config_it_was_handed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`target/config/profiles` is resolved directly by checked-in tests too.
+
+    The same gap as the binaries, one directory over, and found the same
+    expensive way: `test_generated_target_profiles_are_the_only_checked_
+    materialized_profiles` reads `PROJECT_ROOT/target/config/profiles` and does
+    not consult `CAPSEM_PROFILES_DIR`, so in a prefix it saw an empty set after
+    every binary had built and installed.
+    """
+    from capsem.gate import cargotarget
+
+    config = _capped(tmp_path, cap_gb=1.0)
+    staged = tmp_path / "staged" / "target" / "config"
+    (staged / "profiles" / "code").mkdir(parents=True)
+    binaries = tmp_path / "pulled-bin"
+    binaries.mkdir()
+    prefix_path = tmp_path / "prefixes" / ("c" * 8)
+
+    monkeypatch.setenv(config.modules.release_bin_dir, str(binaries))
+    monkeypatch.setenv(config.environment.profiles_dir, str(staged / "profiles"))
+    cargotarget.link_prefix_trees(config, prefix_path)
+
+    assert (prefix_path / "target" / "config" / "profiles" / "code").is_dir()
+    assert (prefix_path / "target" / "debug").readlink() == binaries
+
+
+def test_an_ordinary_run_still_compiles_into_the_shared_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No release variables means the build root, exactly as before."""
+    from capsem.gate import cargotarget
+
+    config = _capped(tmp_path, cap_gb=1.0)
+    monkeypatch.delenv(config.modules.release_bin_dir, raising=False)
+    prefix_path = tmp_path / "prefixes" / ("d" * 8)
+
+    cargotarget.link_prefix_trees(config, prefix_path)
+
+    assert (prefix_path / "target" / "debug").readlink() == cargotarget.path(config) / "debug"
+    assert not (prefix_path / "target" / "config").exists()

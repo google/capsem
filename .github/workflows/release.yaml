@@ -900,7 +900,12 @@ jobs:
       - name: Install pinned functional test runner
         uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
         with:
-          tool: cargo-nextest@0.9.137
+          # b3sum is not optional here: this job runs the same broad suite the
+          # fast gate does, and the asset-integrity tests shell out to it to
+          # check a manifest digest against the bytes it names. It was in the
+          # fast gate's list and not this one, so three tests failed on a
+          # missing tool after every binary had already built and installed.
+          tool: cargo-nextest@0.9.137,b3sum@1.8.5
 
       - name: Install Linux sandbox runtime
         run: |
