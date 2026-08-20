@@ -94,6 +94,34 @@ class QualifiedRelease:
         """Whether the operator typed `--force`, which is the whole safeguard."""
         return getattr(self._args, "force", "false") == "true"
 
+    def _forced_source_proof(self, plan: Plan, *, after: tuple) -> tuple:
+        """The cheap proof a forced release still owes.
+
+        `--force` waives the two-and-a-half-hour product qualification, and
+        that is the point: the commits worth forcing are the ones that do not
+        change the product. But it used to waive *everything*, so a forced
+        release could dispatch source that fails a six-second guard -- and did,
+        three times in one afternoon, each costing a forty-minute lane to
+        discover a line-count ratchet or a stale contract.
+
+        The fit is exact. What people force-release are gate and CI changes,
+        and the citadel guards and release contracts are precisely the suites
+        that judge those. So force now means "prove the source, skip the
+        artifacts" rather than "prove nothing", and it costs about four minutes
+        against the dispatch it replaces.
+
+        Composed rather than invoked: a plan action may not start a second
+        gate, so this is the same fragment `test-release-contracts` builds.
+        """
+        if not self._forced():
+            return after
+        from . import module_contracts, pytestsuite
+
+        guards = plan.add(
+            pytestsuite.citadel(self._config).as_step(self._config), after=after
+        )
+        return (module_contracts.release_contracts(plan, self._config, after=(guards,)),)
+
     def _qualification_steps(self, plan: Plan, commit: SourceCommit, *, after: tuple = ()) -> tuple:
         """The accept step, for the channels that consume an operator's proof."""
         if self.qualification_policy is not QualificationPolicy.REQUIRE:

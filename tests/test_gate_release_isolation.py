@@ -205,3 +205,55 @@ def test_force_waives_the_journal_and_says_so_in_the_run_log() -> None:
         action.render() for stepped in forced.steps for action in stepped.actions
     )
     assert "without an exact journal" in rendered
+
+
+def test_a_forced_release_still_proves_its_source() -> None:
+    """`--force` waives the artifacts, not every check.
+
+    The qualification proves the product, and the commits worth forcing are the
+    ones that do not change it -- a workflow file, a gate policy. But force used
+    to waive *everything*, so a forced release could dispatch source failing a
+    six-second guard, and did: three dispatches in one afternoon died on a
+    line-count ratchet and a pair of stale contracts, each found forty minutes
+    into a lane instead of four minutes before it.
+
+    The fit is exact. What gets forced are gate and CI changes, and citadel and
+    the release contracts are the suites that judge exactly those.
+    """
+    from helpers.gate import built_command
+
+    commit = "f" * 40
+    forced = built_command(
+        PROJECT_ROOT,
+        "release-binaries",
+        (("channel", "stable"), ("source_commit", commit), ("force", "true")),
+        None,
+    )._describe()
+
+    ordered = list(forced.labels)
+    for proof in ("citadel", "contracts.release"):
+        assert proof in ordered, f"a forced release skips {proof}"
+        assert ordered.index(proof) < ordered.index("release"), (
+            f"{proof} must run before anything is published"
+        )
+
+
+def test_an_unforced_release_repeats_no_local_suite() -> None:
+    """The other half: a real release consumes its journal and repeats nothing.
+
+    Adding the forced proof must not turn every release into a second gate --
+    that is the reduced-versus-doubled gate the release contract refuses in
+    both directions.
+    """
+    from helpers.gate import built_command
+
+    ordinary = built_command(
+        PROJECT_ROOT,
+        "release-binaries",
+        (("channel", "stable"), ("source_commit", "f" * 40)),
+        None,
+    )._describe()
+
+    assert "citadel" not in ordinary.labels
+    assert "contracts.release" not in ordinary.labels
+    assert "qualification.accept" in ordinary.labels

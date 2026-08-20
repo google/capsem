@@ -76,6 +76,7 @@ class ReleaseBinariesCommand(
 
         clean = self._worktree_steps(plan, self.source_commit())
         accepted = self._qualification_steps(plan, self.source_commit(), after=clean) or clean
+        accepted = self._forced_source_proof(plan, after=accepted)
         checked = plan.add(
             step(
                 "source.remote-main",
@@ -208,6 +209,7 @@ class ReleaseProfileCommand(
 
         clean = self._worktree_steps(plan, self.source_commit())
         accepted = self._qualification_steps(plan, self.source_commit(), after=clean) or clean
+        accepted = self._forced_source_proof(plan, after=accepted)
         checked = plan.add(
             step(
                 "source.remote-main",
