@@ -1589,6 +1589,11 @@ doctor_skips = { CAPSEM_SKIP_ASSET_CHECK = "1", CAPSEM_SKIP_KVM_CHECK = "1" }
 # these were seven `&` and seven `wait` aggregating into a single FAIL bit,
 # which told you something broke but not what.
 cargo = "scripts/check-cargo-audit.py"
+# Reports, never refuses. A supply-chain signal that fails a build is one people
+# learn to route around, and the containment is elsewhere: every compiling step
+# runs in a loopback-only namespace, so a build script cannot reach a C2 host.
+# This says which package changed shape, before anything is built.
+dependency_drift = "scripts/check-dependency-drift.py"
 pnpm = "scripts/audit-pnpm-bulk.py"
 python_lock = "scripts/audit-python-lock.sh"
 public_surface = "scripts/check_public_surface.py"

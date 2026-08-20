@@ -179,6 +179,7 @@ class ImageBuildConfig(Strict):
 
 class AuditsConfig(Strict):
     cargo: str
+    dependency_drift: str
     pnpm: str
     python_lock: str
     public_surface: str

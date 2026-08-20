@@ -106,6 +106,62 @@ def test_a_step_that_escapes_the_sandbox_declares_network(graph: WorkGraph) -> N
     assert not offenders, GRAPH_RATIONALE + "\n" + "\n".join(offenders)
 
 
+#: Cargo subcommands that compile, and therefore execute build scripts. A
+#: build script is arbitrary code running with the developer's privileges at
+#: compile time, which is where the 2026-08-20 `arrayref` compromise put its
+#: payload: fetch a binary from a hardcoded address, chmod it, run it.
+_COMPILING = ("cargo build", "cargo clippy", "cargo test", "cargo nextest", "cargo run")
+
+#: Reads a manifest or an advisory feed and compiles nothing, so escaping the
+#: sandbox costs no build-script execution. Named rather than pattern-matched,
+#: because the whole point is that adding one is a decision.
+_NON_COMPILING = ("cargo audit", "cargo metadata", "cargo fetch", "cargo vendor")
+
+
+def test_nothing_that_compiles_can_reach_the_network(graph: WorkGraph) -> None:
+    """A dependency must never be able to phone home while it builds.
+
+    `build.rs` is arbitrary code with the invoking user's privileges, and 826
+    packages resolve into this workspace -- so the question is not whether they
+    are trustworthy but whether it matters. It does not, as long as every
+    compile happens inside the loopback-only namespace: a build script that
+    reaches a command-and-control host gets no route and the build dies loudly.
+
+    That property held on 2026-08-20, when `arrayref` was compromised to fetch
+    and execute a remote payload from a build script. It held because every
+    compiling step is sandboxed -- which was true by construction and asserted
+    nowhere, so nothing would have noticed one being marked `outside_sandbox`
+    for some unrelated convenience.
+
+    Fetching is deliberately not compiling. Dependencies are materialized
+    outside the boundary and built inside it, and that split is the whole
+    design: `cargo update` and `cargo metadata` never run a build script,
+    `cargo build` always does.
+    """
+    plan = gate_plan("candidate")
+    offenders = []
+    compiling = 0
+    for label in plan.labels:
+        step = plan.step_named(label)
+        for action in step.actions:
+            rendered = action.render()
+            if not any(subcommand in rendered for subcommand in _COMPILING):
+                continue
+            compiling += 1
+            if any(allowed in rendered for allowed in _NON_COMPILING):
+                continue
+            if _outside(action):
+                offenders.append(
+                    f"{label}: compiles outside the sandbox, so a dependency's "
+                    f"build script could reach the network -- {rendered[:90]}"
+                )
+    assert compiling, (
+        "no step in the candidate plan compiles anything, so this guard just "
+        "asserted nothing -- the subcommand list has drifted from what the gate runs"
+    )
+    assert not offenders, GRAPH_RATIONALE + "\n" + "\n".join(offenders)
+
+
 def test_a_capability_that_needs_a_claim_declares_one(graph: WorkGraph) -> None:
     """Needing the daemon or a VM means contending for it.
 

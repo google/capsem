@@ -1,0 +1,8346 @@
+{
+ "adler2": {
+  "build_script": false,
+  "dependencies": [
+   "rustc-std-workspace-core"
+  ]
+ },
+ "ahash": {
+  "build_script": true,
+  "dependencies": [
+   "cfg-if",
+   "const-random",
+   "criterion",
+   "fnv",
+   "fxhash",
+   "getrandom",
+   "hashbrown",
+   "hex",
+   "no-panic",
+   "once_cell",
+   "pcg-mwc",
+   "portable-atomic",
+   "rand",
+   "seahash",
+   "serde",
+   "serde_json",
+   "smallvec",
+   "version_check",
+   "zerocopy"
+  ]
+ },
+ "aho-corasick": {
+  "build_script": false,
+  "dependencies": [
+   "doc-comment",
+   "log",
+   "memchr"
+  ]
+ },
+ "alloc-no-stdlib": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "alloc-stdlib": {
+  "build_script": false,
+  "dependencies": [
+   "alloc-no-stdlib"
+  ]
+ },
+ "allocator-api2": {
+  "build_script": false,
+  "dependencies": [
+   "serde"
+  ]
+ },
+ "android_system_properties": {
+  "build_script": false,
+  "dependencies": [
+   "libc"
+  ]
+ },
+ "anes": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "criterion",
+   "libc"
+  ]
+ },
+ "anstream": {
+  "build_script": false,
+  "dependencies": [
+   "anstyle",
+   "anstyle-parse",
+   "anstyle-query",
+   "anstyle-wincon",
+   "colorchoice",
+   "divan",
+   "is_terminal_polyfill",
+   "lexopt",
+   "owo-colors",
+   "proptest",
+   "strip-ansi-escapes",
+   "utf8parse"
+  ]
+ },
+ "anstyle": {
+  "build_script": false,
+  "dependencies": [
+   "lexopt",
+   "snapbox"
+  ]
+ },
+ "anstyle-parse": {
+  "build_script": false,
+  "dependencies": [
+   "arrayvec",
+   "codegenrs",
+   "divan",
+   "proptest",
+   "snapbox",
+   "utf8parse",
+   "vte_generate_state_changes"
+  ]
+ },
+ "anstyle-query": {
+  "build_script": false,
+  "dependencies": [
+   "windows-sys"
+  ]
+ },
+ "anstyle-wincon": {
+  "build_script": false,
+  "dependencies": [
+   "anstyle",
+   "lexopt",
+   "once_cell_polyfill",
+   "windows-sys"
+  ]
+ },
+ "anyhow": {
+  "build_script": true,
+  "dependencies": [
+   "futures",
+   "rustversion",
+   "syn",
+   "thiserror",
+   "trybuild"
+  ]
+ },
+ "approx": {
+  "build_script": false,
+  "dependencies": [
+   "num-complex",
+   "num-traits"
+  ]
+ },
+ "arrayref": {
+  "build_script": false,
+  "dependencies": [
+   "quickcheck"
+  ]
+ },
+ "arrayvec": {
+  "build_script": false,
+  "dependencies": [
+   "bencher",
+   "borsh",
+   "matches",
+   "serde",
+   "serde_test",
+   "zeroize"
+  ]
+ },
+ "asn1-rs": {
+  "build_script": false,
+  "dependencies": [
+   "asn1-rs-derive",
+   "asn1-rs-impl",
+   "bitvec",
+   "colored",
+   "cookie-factory",
+   "displaydoc",
+   "hex-literal",
+   "nom",
+   "num-bigint",
+   "num-traits",
+   "pem",
+   "rusticata-macros",
+   "thiserror",
+   "time",
+   "trybuild"
+  ]
+ },
+ "asn1-rs-derive": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn",
+   "synstructure"
+  ]
+ },
+ "asn1-rs-impl": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "async-broadcast": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "doc-comment",
+   "easy-parallel",
+   "event-listener",
+   "event-listener-strategy",
+   "futures-core",
+   "futures-lite",
+   "futures-util",
+   "pin-project-lite"
+  ]
+ },
+ "async-channel": {
+  "build_script": false,
+  "dependencies": [
+   "concurrent-queue",
+   "easy-parallel",
+   "event-listener-strategy",
+   "futures-core",
+   "futures-lite",
+   "pin-project-lite",
+   "portable-atomic",
+   "portable-atomic-util",
+   "wasm-bindgen-test"
+  ]
+ },
+ "async-compression": {
+  "build_script": false,
+  "dependencies": [
+   "brotli",
+   "bytes",
+   "bzip2",
+   "compression-codecs",
+   "compression-core",
+   "deflate64",
+   "flate2",
+   "futures",
+   "futures-io",
+   "futures-test",
+   "liblzma",
+   "lz4",
+   "ntest",
+   "pin-project-lite",
+   "proptest",
+   "proptest-derive",
+   "rand",
+   "tokio",
+   "tokio-util",
+   "zstd",
+   "zstd-safe"
+  ]
+ },
+ "async-executor": {
+  "build_script": false,
+  "dependencies": [
+   "async-channel",
+   "async-io",
+   "async-lock",
+   "async-task",
+   "concurrent-queue",
+   "criterion",
+   "easy-parallel",
+   "fastrand",
+   "futures-lite",
+   "once_cell",
+   "pin-project-lite",
+   "slab"
+  ]
+ },
+ "async-io": {
+  "build_script": true,
+  "dependencies": [
+   "async-channel",
+   "async-net",
+   "autocfg",
+   "blocking",
+   "cfg-if",
+   "concurrent-queue",
+   "criterion",
+   "futures-io",
+   "futures-lite",
+   "getrandom",
+   "inotify",
+   "parking",
+   "polling",
+   "rustix",
+   "signal-hook",
+   "slab",
+   "tempfile",
+   "timerfd",
+   "tracing",
+   "uds_windows",
+   "windows-sys"
+  ]
+ },
+ "async-lock": {
+  "build_script": false,
+  "dependencies": [
+   "event-listener",
+   "event-listener-strategy",
+   "fastrand",
+   "flume",
+   "futures-lite",
+   "loom",
+   "pin-project-lite",
+   "waker-fn",
+   "wasm-bindgen-test"
+  ]
+ },
+ "async-process": {
+  "build_script": false,
+  "dependencies": [
+   "async-channel",
+   "async-executor",
+   "async-io",
+   "async-lock",
+   "async-signal",
+   "async-task",
+   "blocking",
+   "cfg-if",
+   "event-listener",
+   "futures-lite",
+   "rustix",
+   "tracing",
+   "windows-sys"
+  ]
+ },
+ "async-recursion": {
+  "build_script": false,
+  "dependencies": [
+   "futures-executor",
+   "macrotest",
+   "proc-macro2",
+   "quote",
+   "syn",
+   "trybuild"
+  ]
+ },
+ "async-signal": {
+  "build_script": false,
+  "dependencies": [
+   "async-io",
+   "async-lock",
+   "atomic-waker",
+   "cfg-if",
+   "fastrand",
+   "futures-core",
+   "futures-io",
+   "futures-lite",
+   "libc",
+   "rustix",
+   "signal-hook",
+   "signal-hook-registry",
+   "slab",
+   "windows-sys"
+  ]
+ },
+ "async-task": {
+  "build_script": false,
+  "dependencies": [
+   "atomic-waker",
+   "easy-parallel",
+   "flaky_test",
+   "flume",
+   "futures-lite",
+   "once_cell",
+   "pin-project-lite",
+   "portable-atomic",
+   "smol"
+  ]
+ },
+ "async-trait": {
+  "build_script": false,
+  "dependencies": [
+   "futures",
+   "proc-macro2",
+   "quote",
+   "rustversion",
+   "syn",
+   "tracing",
+   "tracing-attributes",
+   "trybuild"
+  ]
+ },
+ "atk": {
+  "build_script": false,
+  "dependencies": [
+   "atk-sys",
+   "gir-format-check",
+   "glib",
+   "libc"
+  ]
+ },
+ "atk-sys": {
+  "build_script": true,
+  "dependencies": [
+   "glib-sys",
+   "gobject-sys",
+   "libc",
+   "shell-words",
+   "system-deps",
+   "tempfile"
+  ]
+ },
+ "atomic": {
+  "build_script": false,
+  "dependencies": [
+   "bytemuck",
+   "serde",
+   "serde_json"
+  ]
+ },
+ "atomic-waker": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "futures",
+   "portable-atomic",
+   "rayon"
+  ]
+ },
+ "autocfg": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "aws-lc-rs": {
+  "build_script": true,
+  "dependencies": [
+   "aws-lc-fips-sys",
+   "aws-lc-sys",
+   "clap",
+   "hex",
+   "lazy_static",
+   "paste",
+   "regex",
+   "untrusted",
+   "zeroize"
+  ]
+ },
+ "aws-lc-sys": {
+  "build_script": true,
+  "dependencies": [
+   "bindgen",
+   "cc",
+   "cmake",
+   "dunce",
+   "fs_extra"
+  ]
+ },
+ "axum": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "axum-core",
+   "axum-macros",
+   "base64",
+   "bytes",
+   "form_urlencoded",
+   "futures-util",
+   "http",
+   "http-body",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
+   "itoa",
+   "matchit",
+   "memchr",
+   "mime",
+   "multer",
+   "percent-encoding",
+   "pin-project-lite",
+   "quickcheck",
+   "quickcheck_macros",
+   "reqwest",
+   "serde",
+   "serde_core",
+   "serde_json",
+   "serde_path_to_error",
+   "serde_urlencoded",
+   "sha1",
+   "sync_wrapper",
+   "time",
+   "tokio",
+   "tokio-stream",
+   "tokio-tungstenite",
+   "tower",
+   "tower-http",
+   "tower-layer",
+   "tower-service",
+   "tracing",
+   "tracing-subscriber",
+   "uuid"
+  ]
+ },
+ "axum-core": {
+  "build_script": false,
+  "dependencies": [
+   "bytes",
+   "futures-core",
+   "http",
+   "http-body",
+   "http-body-util",
+   "hyper",
+   "mime",
+   "pin-project-lite",
+   "sync_wrapper",
+   "tokio",
+   "tower-http",
+   "tower-layer",
+   "tower-service",
+   "tracing"
+  ]
+ },
+ "axum-macros": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "rustversion",
+   "serde",
+   "serde_json",
+   "syn",
+   "tokio",
+   "trybuild"
+  ]
+ },
+ "base64": {
+  "build_script": false,
+  "dependencies": [
+   "clap",
+   "criterion",
+   "once_cell",
+   "rand",
+   "rstest",
+   "rstest_reuse",
+   "strum"
+  ]
+ },
+ "bincode": {
+  "build_script": false,
+  "dependencies": [
+   "serde",
+   "serde_bytes",
+   "serde_derive"
+  ]
+ },
+ "bit-set": {
+  "build_script": false,
+  "dependencies": [
+   "bit-vec",
+   "rand",
+   "serde",
+   "serde_json"
+  ]
+ },
+ "bit-vec": {
+  "build_script": false,
+  "dependencies": [
+   "borsh",
+   "miniserde",
+   "nanoserde",
+   "rand",
+   "rand_xorshift",
+   "serde",
+   "serde_json"
+  ]
+ },
+ "bitflags": {
+  "build_script": false,
+  "dependencies": [
+   "arbitrary",
+   "bytemuck",
+   "compiler_builtins",
+   "rustc-std-workspace-core",
+   "rustversion",
+   "serde",
+   "serde_core",
+   "serde_derive",
+   "serde_json",
+   "serde_test",
+   "trybuild",
+   "walkdir",
+   "zerocopy"
+  ]
+ },
+ "blake3": {
+  "build_script": true,
+  "dependencies": [
+   "arrayref",
+   "arrayvec",
+   "cc",
+   "cfg-if",
+   "chacha20",
+   "ciborium",
+   "constant_time_eq",
+   "cpufeatures",
+   "digest",
+   "hex",
+   "hmac",
+   "memmap2",
+   "page_size",
+   "rand",
+   "rayon-core",
+   "serde",
+   "serde_json",
+   "tempfile",
+   "zeroize"
+  ]
+ },
+ "block-buffer": {
+  "build_script": false,
+  "dependencies": [
+   "generic-array"
+  ]
+ },
+ "block2": {
+  "build_script": false,
+  "dependencies": [
+   "objc2"
+  ]
+ },
+ "blocking": {
+  "build_script": false,
+  "dependencies": [
+   "async-channel",
+   "async-task",
+   "futures-io",
+   "futures-lite",
+   "piper",
+   "tracing"
+  ]
+ },
+ "brotli": {
+  "build_script": false,
+  "dependencies": [
+   "alloc-no-stdlib",
+   "alloc-stdlib",
+   "brotli-decompressor",
+   "sha2"
+  ]
+ },
+ "brotli-decompressor": {
+  "build_script": false,
+  "dependencies": [
+   "alloc-no-stdlib",
+   "alloc-stdlib"
+  ]
+ },
+ "bs58": {
+  "build_script": false,
+  "dependencies": [
+   "assert_matches",
+   "base58",
+   "criterion",
+   "rust-base58",
+   "sha2",
+   "smallvec",
+   "tinyvec"
+  ]
+ },
+ "bumpalo": {
+  "build_script": false,
+  "dependencies": [
+   "allocator-api2",
+   "blink-alloc",
+   "criterion",
+   "quickcheck",
+   "rand",
+   "rayon",
+   "rayon-core",
+   "serde",
+   "serde_json"
+  ]
+ },
+ "by_address": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "bytemuck": {
+  "build_script": false,
+  "dependencies": [
+   "bytemuck_derive",
+   "rustversion"
+  ]
+ },
+ "byteorder": {
+  "build_script": false,
+  "dependencies": [
+   "quickcheck",
+   "rand"
+  ]
+ },
+ "bytes": {
+  "build_script": false,
+  "dependencies": [
+   "loom",
+   "portable-atomic",
+   "serde",
+   "serde_test"
+  ]
+ },
+ "cairo-rs": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "cairo-sys-rs",
+   "float_eq",
+   "freetype-rs",
+   "glib",
+   "libc",
+   "once_cell",
+   "tempfile",
+   "thiserror"
+  ]
+ },
+ "cairo-sys-rs": {
+  "build_script": true,
+  "dependencies": [
+   "glib-sys",
+   "libc",
+   "system-deps",
+   "winapi",
+   "x11"
+  ]
+ },
+ "camino": {
+  "build_script": true,
+  "dependencies": [
+   "bincode",
+   "proptest",
+   "serde",
+   "serde_bytes",
+   "serde_core"
+  ]
+ },
+ "capsem": {
+  "build_script": true,
+  "dependencies": [
+   "anyhow",
+   "blake3",
+   "bytes",
+   "capsem-core",
+   "capsem-proto",
+   "clap",
+   "clap_complete",
+   "flate2",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
+   "inquire",
+   "nix",
+   "regex",
+   "reqwest",
+   "self-replace",
+   "semver",
+   "serde",
+   "serde_json",
+   "sha2",
+   "tar",
+   "tempfile",
+   "tokio",
+   "tokio-unix-ipc",
+   "toml",
+   "tracing",
+   "tracing-subscriber",
+   "urlencoding"
+  ]
+ },
+ "capsem-admin": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "blake3",
+   "capsem-core",
+   "clap",
+   "flate2",
+   "reqwest",
+   "semver",
+   "serde",
+   "serde_json",
+   "sha2",
+   "tar",
+   "tempfile",
+   "time",
+   "toml",
+   "zstd"
+  ]
+ },
+ "capsem-agent": {
+  "build_script": false,
+  "dependencies": [
+   "capsem-proto",
+   "nix",
+   "rmp-serde",
+   "serde",
+   "serde_json",
+   "tokio"
+  ]
+ },
+ "capsem-app": {
+  "build_script": true,
+  "dependencies": [
+   "capsem-proto",
+   "filetime",
+   "serde",
+   "serde_json",
+   "tauri",
+   "tauri-build",
+   "tauri-plugin-dialog",
+   "tauri-plugin-opener",
+   "tauri-plugin-process",
+   "tauri-plugin-single-instance",
+   "tempfile",
+   "tokio",
+   "tracing",
+   "tracing-appender",
+   "tracing-subscriber"
+  ]
+ },
+ "capsem-bench": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "clap",
+   "futures",
+   "reqwest",
+   "serde",
+   "serde_json",
+   "tokio"
+  ]
+ },
+ "capsem-core": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "async-compression",
+   "axum",
+   "blake3",
+   "block2",
+   "bytes",
+   "capsem-logger",
+   "capsem-proto",
+   "core-foundation-sys",
+   "criterion",
+   "dispatch2",
+   "dotenvy",
+   "ego-tree",
+   "flate2",
+   "futures",
+   "hickory-proto",
+   "http",
+   "http-body-util",
+   "humantime",
+   "hyper",
+   "hyper-util",
+   "io-uring",
+   "libc",
+   "lru",
+   "metrics",
+   "metrics-util",
+   "notify",
+   "objc2",
+   "objc2-foundation",
+   "objc2-virtualization",
+   "pin-project-lite",
+   "proptest",
+   "rcgen",
+   "regex",
+   "reqwest",
+   "rmcp",
+   "rmp-serde",
+   "rusqlite",
+   "rustls",
+   "rustls-pemfile",
+   "scraper",
+   "serde",
+   "serde_json",
+   "serde_yaml",
+   "sse-stream",
+   "tempfile",
+   "thiserror",
+   "time",
+   "tokio",
+   "tokio-rustls",
+   "tokio-stream",
+   "tokio-unix-ipc",
+   "tokio-util",
+   "toml",
+   "tracing",
+   "tracing-appender",
+   "tracing-subscriber",
+   "uuid",
+   "vm-fdt",
+   "walkdir",
+   "webpki-roots"
+  ]
+ },
+ "capsem-gateway": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "axum",
+   "bytes",
+   "capsem-core",
+   "capsem-guard",
+   "clap",
+   "futures",
+   "http",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
+   "rand",
+   "serde",
+   "serde_json",
+   "tempfile",
+   "tokio",
+   "tokio-tungstenite",
+   "tower",
+   "tower-http",
+   "tracing",
+   "tracing-subscriber"
+  ]
+ },
+ "capsem-guard": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "libc",
+   "tempfile",
+   "thiserror",
+   "tracing"
+  ]
+ },
+ "capsem-logger": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "blake3",
+   "criterion",
+   "humantime",
+   "memmap2",
+   "metrics",
+   "metrics-util",
+   "rusqlite",
+   "serde",
+   "serde_json",
+   "tempfile",
+   "tokio",
+   "tracing",
+   "uuid"
+  ]
+ },
+ "capsem-mcp": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "async-trait",
+   "bytes",
+   "capsem-core",
+   "capsem-logger",
+   "capsem-proto",
+   "futures",
+   "http",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
+   "percent-encoding",
+   "reqwest",
+   "rmcp",
+   "serde",
+   "serde_json",
+   "tokio",
+   "tracing",
+   "tracing-subscriber"
+  ]
+ },
+ "capsem-mcp-aggregator": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "capsem-core",
+   "capsem-guard",
+   "clap",
+   "reqwest",
+   "rmp-serde",
+   "serde",
+   "serde_json",
+   "tokio",
+   "tracing",
+   "tracing-subscriber"
+  ]
+ },
+ "capsem-mcp-builtin": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "blake3",
+   "capsem-core",
+   "capsem-guard",
+   "capsem-logger",
+   "regex",
+   "reqwest",
+   "rmcp",
+   "scraper",
+   "serde",
+   "serde_json",
+   "tempfile",
+   "tokio",
+   "toml",
+   "tracing",
+   "tracing-subscriber",
+   "walkdir"
+  ]
+ },
+ "capsem-mock-server": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "base64",
+   "bytes",
+   "clap",
+   "flate2",
+   "futures",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
+   "rcgen",
+   "reqwest",
+   "rustls",
+   "serde",
+   "serde_json",
+   "sha1",
+   "tempfile",
+   "tokio",
+   "tokio-rustls",
+   "tracing",
+   "tracing-subscriber"
+  ]
+ },
+ "capsem-process": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "axum",
+   "capsem-core",
+   "capsem-logger",
+   "capsem-proto",
+   "clap",
+   "core-foundation-sys",
+   "futures",
+   "nix",
+   "reqwest",
+   "serde",
+   "serde_json",
+   "tempfile",
+   "tokio",
+   "tokio-unix-ipc",
+   "tokio-util",
+   "toml",
+   "tracing",
+   "tracing-subscriber"
+  ]
+ },
+ "capsem-proto": {
+  "build_script": true,
+  "dependencies": [
+   "anyhow",
+   "bincode",
+   "rmp-serde",
+   "serde",
+   "serde_json",
+   "tempfile",
+   "thiserror"
+  ]
+ },
+ "capsem-service": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "axum",
+   "base64",
+   "blake3",
+   "capsem-core",
+   "capsem-guard",
+   "capsem-logger",
+   "capsem-proto",
+   "clap",
+   "filetime",
+   "futures",
+   "humantime",
+   "magika",
+   "nix",
+   "ort",
+   "rand",
+   "reqwest",
+   "rusqlite",
+   "serde",
+   "serde_json",
+   "tempfile",
+   "tokio",
+   "tokio-stream",
+   "tokio-unix-ipc",
+   "tokio-util",
+   "toml",
+   "tower",
+   "tower-http",
+   "tracing",
+   "tracing-subscriber",
+   "uuid"
+  ]
+ },
+ "capsem-tray": {
+  "build_script": true,
+  "dependencies": [
+   "anyhow",
+   "capsem-core",
+   "capsem-guard",
+   "clap",
+   "muda",
+   "objc2-app-kit",
+   "objc2-foundation",
+   "png",
+   "reqwest",
+   "serde",
+   "serde_json",
+   "tokio",
+   "tracing",
+   "tracing-subscriber",
+   "tray-icon"
+  ]
+ },
+ "capsem-tui": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "clap",
+   "crossterm",
+   "futures",
+   "ratatui",
+   "reqwest",
+   "serde",
+   "serde_json",
+   "tokio",
+   "tokio-tungstenite",
+   "vt100"
+  ]
+ },
+ "cargo-platform": {
+  "build_script": false,
+  "dependencies": [
+   "serde"
+  ]
+ },
+ "cargo_metadata": {
+  "build_script": false,
+  "dependencies": [
+   "camino",
+   "cargo-platform",
+   "derive_builder",
+   "semver",
+   "serde",
+   "serde_json",
+   "thiserror"
+  ]
+ },
+ "cargo_toml": {
+  "build_script": false,
+  "dependencies": [
+   "serde",
+   "toml"
+  ]
+ },
+ "cast": {
+  "build_script": false,
+  "dependencies": [
+   "quickcheck"
+  ]
+ },
+ "castaway": {
+  "build_script": false,
+  "dependencies": [
+   "paste",
+   "rustversion"
+  ]
+ },
+ "cc": {
+  "build_script": false,
+  "dependencies": [
+   "find-msvc-tools",
+   "jobserver",
+   "libc",
+   "shlex",
+   "tempfile"
+  ]
+ },
+ "cesu8": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "cfb": {
+  "build_script": false,
+  "dependencies": [
+   "byteorder",
+   "clap",
+   "fnv",
+   "rand",
+   "rand_pcg",
+   "time",
+   "uuid"
+  ]
+ },
+ "cfg-expr": {
+  "build_script": false,
+  "dependencies": [
+   "similar-asserts",
+   "smallvec",
+   "target-lexicon"
+  ]
+ },
+ "cfg-if": {
+  "build_script": false,
+  "dependencies": [
+   "rustc-std-workspace-core"
+  ]
+ },
+ "cfg_aliases": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "chacha20": {
+  "build_script": false,
+  "dependencies": [
+   "cfg-if",
+   "cipher",
+   "cpufeatures",
+   "hex-literal",
+   "rand_core",
+   "zeroize"
+  ]
+ },
+ "chrono": {
+  "build_script": false,
+  "dependencies": [
+   "arbitrary",
+   "bincode",
+   "defmt",
+   "iana-time-zone",
+   "js-sys",
+   "num-traits",
+   "pure-rust-locales",
+   "rkyv",
+   "serde",
+   "serde_derive",
+   "serde_json",
+   "similar-asserts",
+   "wasm-bindgen",
+   "wasm-bindgen-test",
+   "windows-bindgen",
+   "windows-link"
+  ]
+ },
+ "ciborium": {
+  "build_script": false,
+  "dependencies": [
+   "ciborium-io",
+   "ciborium-ll",
+   "hex",
+   "rand",
+   "rstest",
+   "serde",
+   "serde_bytes"
+  ]
+ },
+ "ciborium-io": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "ciborium-ll": {
+  "build_script": false,
+  "dependencies": [
+   "ciborium-io",
+   "half",
+   "hex"
+  ]
+ },
+ "clap": {
+  "build_script": false,
+  "dependencies": [
+   "automod",
+   "clap-cargo",
+   "clap_builder",
+   "clap_derive",
+   "jiff",
+   "rustversion",
+   "semver",
+   "shlex",
+   "snapbox",
+   "trybuild",
+   "trycmd"
+  ]
+ },
+ "clap_builder": {
+  "build_script": false,
+  "dependencies": [
+   "anstream",
+   "anstyle",
+   "backtrace",
+   "clap_lex",
+   "color-print",
+   "snapbox",
+   "static_assertions",
+   "strsim",
+   "terminal_size",
+   "unic-emoji-char",
+   "unicase",
+   "unicode-width"
+  ]
+ },
+ "clap_complete": {
+  "build_script": false,
+  "dependencies": [
+   "automod",
+   "clap",
+   "clap_lex",
+   "completest",
+   "completest-pty",
+   "is_executable",
+   "shlex",
+   "snapbox",
+   "trycmd"
+  ]
+ },
+ "clap_derive": {
+  "build_script": false,
+  "dependencies": [
+   "anstyle",
+   "heck",
+   "proc-macro2",
+   "pulldown-cmark",
+   "quote",
+   "syn"
+  ]
+ },
+ "clap_lex": {
+  "build_script": false,
+  "dependencies": [
+   "automod"
+  ]
+ },
+ "cmake": {
+  "build_script": false,
+  "dependencies": [
+   "cc"
+  ]
+ },
+ "colorchoice": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "combine": {
+  "build_script": false,
+  "dependencies": [
+   "async-std",
+   "bytes",
+   "criterion",
+   "futures",
+   "futures-core",
+   "futures-io",
+   "memchr",
+   "once_cell",
+   "partial-io",
+   "pin-project-lite",
+   "quick-error",
+   "quickcheck",
+   "regex",
+   "tokio",
+   "tokio-util"
+  ]
+ },
+ "compact_str": {
+  "build_script": false,
+  "dependencies": [
+   "arbitrary",
+   "borsh",
+   "bytes",
+   "castaway",
+   "cfg-if",
+   "diesel",
+   "itoa",
+   "markup",
+   "proptest",
+   "quickcheck",
+   "quickcheck_macros",
+   "rayon",
+   "rkyv",
+   "rustversion",
+   "ryu",
+   "serde",
+   "serde_json",
+   "smallvec",
+   "sqlx",
+   "static_assertions",
+   "test-case",
+   "test-strategy",
+   "zeroize"
+  ]
+ },
+ "compression-codecs": {
+  "build_script": false,
+  "dependencies": [
+   "brotli",
+   "bzip2",
+   "compression-core",
+   "deflate64",
+   "flate2",
+   "liblzma",
+   "lz4",
+   "memchr",
+   "zstd",
+   "zstd-safe"
+  ]
+ },
+ "compression-core": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "concurrent-queue": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "crossbeam-utils",
+   "easy-parallel",
+   "fastrand",
+   "loom",
+   "portable-atomic",
+   "wasm-bindgen-test"
+  ]
+ },
+ "constant_time_eq": {
+  "build_script": false,
+  "dependencies": [
+   "count_instructions",
+   "criterion"
+  ]
+ },
+ "convert_case": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "unicode-segmentation"
+  ]
+ },
+ "cookie": {
+  "build_script": true,
+  "dependencies": [
+   "aes-gcm",
+   "base64",
+   "hkdf",
+   "hmac",
+   "percent-encoding",
+   "rand",
+   "sha2",
+   "subtle",
+   "time",
+   "version_check"
+  ]
+ },
+ "core-foundation": {
+  "build_script": false,
+  "dependencies": [
+   "core-foundation-sys",
+   "libc",
+   "uuid"
+  ]
+ },
+ "core-foundation-sys": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "core-graphics": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "core-foundation",
+   "core-graphics-types",
+   "foreign-types",
+   "libc"
+  ]
+ },
+ "core-graphics-types": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "core-foundation",
+   "libc"
+  ]
+ },
+ "cpufeatures": {
+  "build_script": false,
+  "dependencies": [
+   "libc"
+  ]
+ },
+ "crc32fast": {
+  "build_script": true,
+  "dependencies": [
+   "bencher",
+   "cfg-if",
+   "quickcheck",
+   "rand"
+  ]
+ },
+ "criterion": {
+  "build_script": false,
+  "dependencies": [
+   "anes",
+   "approx",
+   "async-std",
+   "cast",
+   "ciborium",
+   "clap",
+   "criterion-plot",
+   "csv",
+   "futures",
+   "is-terminal",
+   "itertools",
+   "num-traits",
+   "once_cell",
+   "oorandom",
+   "plotters",
+   "quickcheck",
+   "rand",
+   "rayon",
+   "regex",
+   "serde",
+   "serde_derive",
+   "serde_json",
+   "smol",
+   "tempfile",
+   "tinytemplate",
+   "tokio",
+   "walkdir"
+  ]
+ },
+ "criterion-plot": {
+  "build_script": false,
+  "dependencies": [
+   "cast",
+   "itertools",
+   "itertools-num",
+   "num-complex",
+   "rand"
+  ]
+ },
+ "critical-section": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "crossbeam-channel": {
+  "build_script": false,
+  "dependencies": [
+   "crossbeam-utils",
+   "num_cpus",
+   "rand",
+   "signal-hook"
+  ]
+ },
+ "crossbeam-deque": {
+  "build_script": false,
+  "dependencies": [
+   "crossbeam-epoch",
+   "crossbeam-utils",
+   "rand"
+  ]
+ },
+ "crossbeam-epoch": {
+  "build_script": true,
+  "dependencies": [
+   "crossbeam-utils",
+   "loom",
+   "rand"
+  ]
+ },
+ "crossbeam-utils": {
+  "build_script": true,
+  "dependencies": [
+   "loom",
+   "rand"
+  ]
+ },
+ "crossterm": {
+  "build_script": false,
+  "dependencies": [
+   "async-std",
+   "base64",
+   "bitflags",
+   "crossterm_winapi",
+   "derive_more",
+   "document-features",
+   "filedescriptor",
+   "futures",
+   "futures-core",
+   "futures-timer",
+   "libc",
+   "mio",
+   "parking_lot",
+   "rustix",
+   "serde",
+   "serde_json",
+   "serial_test",
+   "signal-hook",
+   "signal-hook-mio",
+   "temp-env",
+   "tokio",
+   "winapi"
+  ]
+ },
+ "crossterm_winapi": {
+  "build_script": false,
+  "dependencies": [
+   "winapi"
+  ]
+ },
+ "crunchy": {
+  "build_script": true,
+  "dependencies": []
+ },
+ "crypto-common": {
+  "build_script": false,
+  "dependencies": [
+   "generic-array",
+   "rand_core",
+   "typenum"
+  ]
+ },
+ "csscolorparser": {
+  "build_script": false,
+  "dependencies": [
+   "cint",
+   "lab",
+   "phf",
+   "rgb",
+   "serde",
+   "serde_test"
+  ]
+ },
+ "cssparser": {
+  "build_script": false,
+  "dependencies": [
+   "cssparser-macros",
+   "difference",
+   "dtoa-short",
+   "encoding_rs",
+   "itoa",
+   "malloc_size_of",
+   "phf",
+   "serde",
+   "serde_json",
+   "smallvec"
+  ]
+ },
+ "cssparser-macros": {
+  "build_script": false,
+  "dependencies": [
+   "quote",
+   "syn"
+  ]
+ },
+ "ctor": {
+  "build_script": false,
+  "dependencies": [
+   "ctor-proc-macro",
+   "dtor",
+   "libc-print"
+  ]
+ },
+ "ctor-proc-macro": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "darling": {
+  "build_script": false,
+  "dependencies": [
+   "darling_core",
+   "darling_macro",
+   "proc-macro2",
+   "quote",
+   "rustversion",
+   "syn",
+   "trybuild"
+  ]
+ },
+ "darling_core": {
+  "build_script": false,
+  "dependencies": [
+   "ident_case",
+   "proc-macro2",
+   "quote",
+   "serde",
+   "serde_json",
+   "strsim",
+   "syn"
+  ]
+ },
+ "darling_macro": {
+  "build_script": false,
+  "dependencies": [
+   "darling_core",
+   "quote",
+   "syn"
+  ]
+ },
+ "data-encoding": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "dbus": {
+  "build_script": false,
+  "dependencies": [
+   "futures-channel",
+   "futures-executor",
+   "futures-util",
+   "libc",
+   "libdbus-sys",
+   "tempfile",
+   "windows-sys"
+  ]
+ },
+ "deltae": {
+  "build_script": false,
+  "dependencies": [
+   "clap"
+  ]
+ },
+ "der-parser": {
+  "build_script": false,
+  "dependencies": [
+   "asn1-rs",
+   "cookie-factory",
+   "displaydoc",
+   "hex-literal",
+   "nom",
+   "num-bigint",
+   "num-traits",
+   "pretty_assertions",
+   "rusticata-macros",
+   "test-case"
+  ]
+ },
+ "deranged": {
+  "build_script": false,
+  "dependencies": [
+   "deranged-macros",
+   "num-traits",
+   "powerfmt",
+   "quickcheck",
+   "rand",
+   "serde_core",
+   "serde_json"
+  ]
+ },
+ "derive_more": {
+  "build_script": false,
+  "dependencies": [
+   "derive_more-impl",
+   "rustc_version",
+   "rustversion",
+   "static_assertions",
+   "trybuild"
+  ]
+ },
+ "derive_more-impl": {
+  "build_script": false,
+  "dependencies": [
+   "convert_case",
+   "itertools",
+   "proc-macro2",
+   "quote",
+   "rustc_version",
+   "syn",
+   "unicode-xid"
+  ]
+ },
+ "digest": {
+  "build_script": false,
+  "dependencies": [
+   "blobby",
+   "block-buffer",
+   "const-oid",
+   "crypto-common",
+   "subtle"
+  ]
+ },
+ "dirs": {
+  "build_script": false,
+  "dependencies": [
+   "dirs-sys"
+  ]
+ },
+ "dirs-sys": {
+  "build_script": false,
+  "dependencies": [
+   "libc",
+   "option-ext",
+   "redox_users",
+   "windows-sys"
+  ]
+ },
+ "dispatch2": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "block2",
+   "libc",
+   "objc2",
+   "static_assertions"
+  ]
+ },
+ "displaydoc": {
+  "build_script": false,
+  "dependencies": [
+   "libc",
+   "pretty_assertions",
+   "proc-macro2",
+   "quote",
+   "rustversion",
+   "static_assertions",
+   "syn",
+   "thiserror",
+   "trybuild"
+  ]
+ },
+ "dlopen2": {
+  "build_script": false,
+  "dependencies": [
+   "current_platform",
+   "dlopen2_derive",
+   "libc",
+   "once_cell",
+   "regex",
+   "serde",
+   "serde_json",
+   "winapi"
+  ]
+ },
+ "dlopen2_derive": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "document-features": {
+  "build_script": false,
+  "dependencies": [
+   "litrs"
+  ]
+ },
+ "dom_query": {
+  "build_script": false,
+  "dependencies": [
+   "alloc_cat",
+   "bit-set",
+   "cssparser",
+   "foldhash",
+   "hashbrown",
+   "html5ever",
+   "nom",
+   "precomputed-hash",
+   "selectors",
+   "tendril",
+   "wasm-bindgen-test"
+  ]
+ },
+ "dotenvy": {
+  "build_script": false,
+  "dependencies": [
+   "clap",
+   "once_cell",
+   "tempfile"
+  ]
+ },
+ "dpi": {
+  "build_script": false,
+  "dependencies": [
+   "mint",
+   "serde"
+  ]
+ },
+ "dtoa": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "no-panic"
+  ]
+ },
+ "dtoa-short": {
+  "build_script": false,
+  "dependencies": [
+   "dtoa",
+   "float-cmp"
+  ]
+ },
+ "dtor": {
+  "build_script": false,
+  "dependencies": [
+   "dtor-proc-macro",
+   "libc-print"
+  ]
+ },
+ "dtor-proc-macro": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "dunce": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "dyn-clone": {
+  "build_script": false,
+  "dependencies": [
+   "rustversion",
+   "trybuild"
+  ]
+ },
+ "ego-tree": {
+  "build_script": false,
+  "dependencies": [
+   "serde",
+   "serde_test"
+  ]
+ },
+ "either": {
+  "build_script": false,
+  "dependencies": [
+   "serde",
+   "serde_json"
+  ]
+ },
+ "embed-resource": {
+  "build_script": false,
+  "dependencies": [
+   "cc",
+   "memchr",
+   "rustc_version",
+   "toml",
+   "vswhom",
+   "winreg"
+  ]
+ },
+ "embed_plist": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "endi": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "endian-type": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "enumflags2": {
+  "build_script": false,
+  "dependencies": [
+   "enumflags2_derive",
+   "serde"
+  ]
+ },
+ "enumflags2_derive": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "equivalent": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "erased-serde": {
+  "build_script": true,
+  "dependencies": [
+   "criterion",
+   "rustversion",
+   "serde",
+   "serde_cbor",
+   "serde_core",
+   "serde_derive",
+   "serde_json",
+   "trybuild",
+   "typeid"
+  ]
+ },
+ "errno": {
+  "build_script": false,
+  "dependencies": [
+   "libc",
+   "windows-sys"
+  ]
+ },
+ "euclid": {
+  "build_script": false,
+  "dependencies": [
+   "arbitrary",
+   "bytemuck",
+   "malloc_size_of",
+   "mint",
+   "num-traits",
+   "serde",
+   "serde_test"
+  ]
+ },
+ "event-listener": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "critical-section",
+   "futures-lite",
+   "loom",
+   "parking",
+   "pin-project-lite",
+   "portable-atomic",
+   "portable-atomic-util",
+   "try-lock",
+   "waker-fn",
+   "wasm-bindgen-test"
+  ]
+ },
+ "event-listener-strategy": {
+  "build_script": false,
+  "dependencies": [
+   "event-listener",
+   "futures-lite",
+   "pin-project-lite",
+   "wasm-bindgen-test"
+  ]
+ },
+ "fallible-iterator": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "fallible-streaming-iterator": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "fancy-regex": {
+  "build_script": false,
+  "dependencies": [
+   "bit-set",
+   "criterion",
+   "matches",
+   "quickcheck",
+   "regex"
+  ]
+ },
+ "fastrand": {
+  "build_script": false,
+  "dependencies": [
+   "getrandom",
+   "rand",
+   "wasm-bindgen-test",
+   "wyhash"
+  ]
+ },
+ "fdeflate": {
+  "build_script": false,
+  "dependencies": [
+   "miniz_oxide",
+   "rand",
+   "simd-adler32"
+  ]
+ },
+ "field-offset": {
+  "build_script": true,
+  "dependencies": [
+   "memoffset",
+   "rustc_version"
+  ]
+ },
+ "filedescriptor": {
+  "build_script": false,
+  "dependencies": [
+   "libc",
+   "thiserror",
+   "winapi"
+  ]
+ },
+ "filetime": {
+  "build_script": false,
+  "dependencies": [
+   "cfg-if",
+   "libc",
+   "libredox",
+   "tempfile"
+  ]
+ },
+ "find-msvc-tools": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "finl_unicode": {
+  "build_script": false,
+  "dependencies": [
+   "bstr",
+   "criterion",
+   "unicode-segmentation",
+   "unicode_categories"
+  ]
+ },
+ "fixedbitset": {
+  "build_script": false,
+  "dependencies": [
+   "serde",
+   "serde_json"
+  ]
+ },
+ "flate2": {
+  "build_script": false,
+  "dependencies": [
+   "cloudflare-zlib-sys",
+   "crc32fast",
+   "document-features",
+   "futures",
+   "libz-ng-sys",
+   "libz-sys",
+   "miniz_oxide",
+   "quickcheck",
+   "rand",
+   "zlib-rs"
+  ]
+ },
+ "fnv": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "foldhash": {
+  "build_script": false,
+  "dependencies": [
+   "ahash",
+   "chrono",
+   "criterion",
+   "fxhash",
+   "hashbrown",
+   "rand",
+   "rapidhash",
+   "uuid"
+  ]
+ },
+ "foreign-types": {
+  "build_script": false,
+  "dependencies": [
+   "foreign-types-macros",
+   "foreign-types-shared"
+  ]
+ },
+ "foreign-types-macros": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "foreign-types-shared": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "form_urlencoded": {
+  "build_script": false,
+  "dependencies": [
+   "percent-encoding"
+  ]
+ },
+ "fs_extra": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "fsevent-sys": {
+  "build_script": false,
+  "dependencies": [
+   "libc"
+  ]
+ },
+ "futf": {
+  "build_script": false,
+  "dependencies": [
+   "mac",
+   "new_debug_unreachable"
+  ]
+ },
+ "futures": {
+  "build_script": false,
+  "dependencies": [
+   "assert_matches",
+   "futures-channel",
+   "futures-core",
+   "futures-executor",
+   "futures-io",
+   "futures-sink",
+   "futures-task",
+   "futures-util",
+   "pin-project",
+   "static_assertions",
+   "tokio"
+  ]
+ },
+ "futures-channel": {
+  "build_script": false,
+  "dependencies": [
+   "futures-core",
+   "futures-sink"
+  ]
+ },
+ "futures-core": {
+  "build_script": false,
+  "dependencies": [
+   "portable-atomic"
+  ]
+ },
+ "futures-executor": {
+  "build_script": false,
+  "dependencies": [
+   "futures-core",
+   "futures-task",
+   "futures-util"
+  ]
+ },
+ "futures-io": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "futures-lite": {
+  "build_script": false,
+  "dependencies": [
+   "fastrand",
+   "futures-core",
+   "futures-io",
+   "memchr",
+   "parking",
+   "pin-project-lite",
+   "spin_on",
+   "waker-fn"
+  ]
+ },
+ "futures-macro": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "futures-sink": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "futures-task": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "futures-util": {
+  "build_script": false,
+  "dependencies": [
+   "futures",
+   "futures-channel",
+   "futures-core",
+   "futures-io",
+   "futures-macro",
+   "futures-sink",
+   "futures-task",
+   "libc",
+   "memchr",
+   "pin-project-lite",
+   "slab",
+   "spin",
+   "tokio",
+   "tokio-io"
+  ]
+ },
+ "fuzzy-matcher": {
+  "build_script": false,
+  "dependencies": [
+   "termion",
+   "thread_local"
+  ]
+ },
+ "fxhash": {
+  "build_script": false,
+  "dependencies": [
+   "byteorder",
+   "fnv",
+   "seahash"
+  ]
+ },
+ "gdk": {
+  "build_script": false,
+  "dependencies": [
+   "cairo-rs",
+   "gdk-pixbuf",
+   "gdk-sys",
+   "gio",
+   "gir-format-check",
+   "glib",
+   "libc",
+   "pango"
+  ]
+ },
+ "gdk-pixbuf": {
+  "build_script": false,
+  "dependencies": [
+   "gdk-pixbuf-sys",
+   "gio",
+   "gir-format-check",
+   "glib",
+   "libc",
+   "once_cell"
+  ]
+ },
+ "gdk-pixbuf-sys": {
+  "build_script": true,
+  "dependencies": [
+   "gio-sys",
+   "glib-sys",
+   "gobject-sys",
+   "libc",
+   "shell-words",
+   "system-deps",
+   "tempfile"
+  ]
+ },
+ "gdk-sys": {
+  "build_script": true,
+  "dependencies": [
+   "cairo-sys-rs",
+   "gdk-pixbuf-sys",
+   "gio-sys",
+   "glib-sys",
+   "gobject-sys",
+   "libc",
+   "pango-sys",
+   "pkg-config",
+   "shell-words",
+   "system-deps",
+   "tempfile"
+  ]
+ },
+ "gdkwayland-sys": {
+  "build_script": false,
+  "dependencies": [
+   "gdk-sys",
+   "glib-sys",
+   "gobject-sys",
+   "libc",
+   "pkg-config",
+   "system-deps"
+  ]
+ },
+ "gdkx11": {
+  "build_script": false,
+  "dependencies": [
+   "gdk",
+   "gdkx11-sys",
+   "gio",
+   "gir-format-check",
+   "glib",
+   "libc",
+   "x11"
+  ]
+ },
+ "gdkx11-sys": {
+  "build_script": true,
+  "dependencies": [
+   "cairo-sys-rs",
+   "gdk-sys",
+   "glib-sys",
+   "libc",
+   "shell-words",
+   "system-deps",
+   "tempfile",
+   "x11"
+  ]
+ },
+ "generic-array": {
+  "build_script": true,
+  "dependencies": [
+   "bincode",
+   "serde",
+   "serde_json",
+   "typenum",
+   "version_check",
+   "zeroize"
+  ]
+ },
+ "getopts": {
+  "build_script": false,
+  "dependencies": [
+   "log",
+   "rustc-std-workspace-core",
+   "rustc-std-workspace-std",
+   "unicode-width"
+  ]
+ },
+ "getrandom": {
+  "build_script": true,
+  "dependencies": [
+   "cfg-if",
+   "compiler_builtins",
+   "js-sys",
+   "libc",
+   "r-efi",
+   "rand_core",
+   "rustc-std-workspace-core",
+   "wasi",
+   "wasip2",
+   "wasip3",
+   "wasm-bindgen",
+   "wasm-bindgen-test"
+  ]
+ },
+ "gio": {
+  "build_script": true,
+  "dependencies": [
+   "futures",
+   "futures-channel",
+   "futures-core",
+   "futures-io",
+   "futures-util",
+   "gio-sys",
+   "gir-format-check",
+   "glib",
+   "libc",
+   "once_cell",
+   "pin-project-lite",
+   "serial_test",
+   "smallvec",
+   "thiserror"
+  ]
+ },
+ "gio-sys": {
+  "build_script": true,
+  "dependencies": [
+   "glib-sys",
+   "gobject-sys",
+   "libc",
+   "shell-words",
+   "system-deps",
+   "tempfile",
+   "winapi"
+  ]
+ },
+ "glib": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "criterion",
+   "futures-channel",
+   "futures-core",
+   "futures-executor",
+   "futures-task",
+   "futures-util",
+   "gio-sys",
+   "gir-format-check",
+   "glib-macros",
+   "glib-sys",
+   "gobject-sys",
+   "libc",
+   "log",
+   "memchr",
+   "once_cell",
+   "smallvec",
+   "tempfile",
+   "thiserror",
+   "trybuild2"
+  ]
+ },
+ "glib-macros": {
+  "build_script": false,
+  "dependencies": [
+   "glib",
+   "heck",
+   "once_cell",
+   "proc-macro-crate",
+   "proc-macro-error",
+   "proc-macro2",
+   "quote",
+   "syn",
+   "trybuild2"
+  ]
+ },
+ "glib-sys": {
+  "build_script": true,
+  "dependencies": [
+   "libc",
+   "shell-words",
+   "system-deps",
+   "tempfile"
+  ]
+ },
+ "glob": {
+  "build_script": false,
+  "dependencies": [
+   "doc-comment",
+   "tempdir"
+  ]
+ },
+ "gobject-sys": {
+  "build_script": true,
+  "dependencies": [
+   "glib-sys",
+   "libc",
+   "shell-words",
+   "system-deps",
+   "tempfile"
+  ]
+ },
+ "gtk": {
+  "build_script": true,
+  "dependencies": [
+   "atk",
+   "cairo-rs",
+   "field-offset",
+   "futures-channel",
+   "gdk",
+   "gdk-pixbuf",
+   "gio",
+   "gir-format-check",
+   "glib",
+   "gtk-sys",
+   "gtk3-macros",
+   "libc",
+   "pango",
+   "pkg-config"
+  ]
+ },
+ "gtk-sys": {
+  "build_script": true,
+  "dependencies": [
+   "atk-sys",
+   "cairo-sys-rs",
+   "gdk-pixbuf-sys",
+   "gdk-sys",
+   "gio-sys",
+   "glib-sys",
+   "gobject-sys",
+   "libc",
+   "pango-sys",
+   "shell-words",
+   "system-deps",
+   "tempfile"
+  ]
+ },
+ "gtk3-macros": {
+  "build_script": false,
+  "dependencies": [
+   "gtk",
+   "proc-macro-crate",
+   "proc-macro-error",
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "half": {
+  "build_script": false,
+  "dependencies": [
+   "arbitrary",
+   "bytemuck",
+   "cfg-if",
+   "criterion",
+   "crunchy",
+   "num-traits",
+   "quickcheck",
+   "quickcheck_macros",
+   "rand",
+   "rand_distr",
+   "rkyv",
+   "serde",
+   "zerocopy"
+  ]
+ },
+ "hashbrown": {
+  "build_script": false,
+  "dependencies": [
+   "ahash",
+   "allocator-api2",
+   "bumpalo",
+   "compiler_builtins",
+   "criterion",
+   "doc-comment",
+   "equivalent",
+   "fnv",
+   "foldhash",
+   "lazy_static",
+   "libc",
+   "rand",
+   "rayon",
+   "rkyv",
+   "rustc-std-workspace-alloc",
+   "rustc-std-workspace-core",
+   "serde",
+   "serde_core",
+   "serde_test"
+  ]
+ },
+ "hashlink": {
+  "build_script": false,
+  "dependencies": [
+   "hashbrown",
+   "rustc-hash",
+   "serde",
+   "serde_test"
+  ]
+ },
+ "heck": {
+  "build_script": false,
+  "dependencies": [
+   "unicode-segmentation"
+  ]
+ },
+ "hermit-abi": {
+  "build_script": false,
+  "dependencies": [
+   "rustc-std-workspace-alloc",
+   "rustc-std-workspace-core"
+  ]
+ },
+ "hex": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "faster-hex",
+   "pretty_assertions",
+   "rustc-hex",
+   "serde",
+   "serde_json",
+   "version-sync"
+  ]
+ },
+ "hickory-proto": {
+  "build_script": false,
+  "dependencies": [
+   "aws-lc-rs",
+   "bitflags",
+   "critical-section",
+   "data-encoding",
+   "idna",
+   "ipnet",
+   "jni",
+   "js-sys",
+   "once_cell",
+   "prefix-trie",
+   "rand",
+   "ring",
+   "rustls-pki-types",
+   "serde",
+   "thiserror",
+   "time",
+   "tinyvec",
+   "tracing",
+   "url",
+   "wasm-bindgen"
+  ]
+ },
+ "hmac-sha256": {
+  "build_script": false,
+  "dependencies": [
+   "digest"
+  ]
+ },
+ "html5ever": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "log",
+   "markup5ever",
+   "typed-arena"
+  ]
+ },
+ "http": {
+  "build_script": false,
+  "dependencies": [
+   "bytes",
+   "doc-comment",
+   "itoa",
+   "quickcheck",
+   "rand",
+   "serde",
+   "serde_json"
+  ]
+ },
+ "http-body": {
+  "build_script": false,
+  "dependencies": [
+   "bytes",
+   "http"
+  ]
+ },
+ "http-body-util": {
+  "build_script": false,
+  "dependencies": [
+   "bytes",
+   "futures-core",
+   "futures-util",
+   "http",
+   "http-body",
+   "pin-project-lite",
+   "tokio"
+  ]
+ },
+ "httparse": {
+  "build_script": true,
+  "dependencies": [
+   "criterion",
+   "rand"
+  ]
+ },
+ "httpdate": {
+  "build_script": false,
+  "dependencies": [
+   "criterion"
+  ]
+ },
+ "humantime": {
+  "build_script": false,
+  "dependencies": [
+   "bencher",
+   "chrono",
+   "rand",
+   "time"
+  ]
+ },
+ "hyper": {
+  "build_script": false,
+  "dependencies": [
+   "atomic-waker",
+   "bytes",
+   "form_urlencoded",
+   "futures-channel",
+   "futures-core",
+   "futures-util",
+   "h2",
+   "http",
+   "http-body",
+   "http-body-util",
+   "httparse",
+   "httpdate",
+   "itoa",
+   "pin-project-lite",
+   "pretty_env_logger",
+   "serde",
+   "serde_json",
+   "smallvec",
+   "spmc",
+   "tokio",
+   "tokio-test",
+   "tokio-util",
+   "tracing",
+   "want"
+  ]
+ },
+ "hyper-rustls": {
+  "build_script": false,
+  "dependencies": [
+   "cfg-if",
+   "http",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
+   "log",
+   "rustls",
+   "rustls-native-certs",
+   "rustls-platform-verifier",
+   "tokio",
+   "tokio-rustls",
+   "tower-service",
+   "webpki-roots"
+  ]
+ },
+ "hyper-util": {
+  "build_script": false,
+  "dependencies": [
+   "base64",
+   "bytes",
+   "futures-channel",
+   "futures-util",
+   "http",
+   "http-body",
+   "http-body-util",
+   "hyper",
+   "ipnet",
+   "libc",
+   "percent-encoding",
+   "pin-project-lite",
+   "pnet_datalink",
+   "pretty_env_logger",
+   "socket2",
+   "system-configuration",
+   "tokio",
+   "tokio-test",
+   "tower-layer",
+   "tower-service",
+   "tower-test",
+   "tracing",
+   "windows-registry"
+  ]
+ },
+ "iana-time-zone": {
+  "build_script": false,
+  "dependencies": [
+   "android_system_properties",
+   "chrono-tz",
+   "core-foundation-sys",
+   "getrandom",
+   "iana-time-zone-haiku",
+   "js-sys",
+   "log",
+   "wasm-bindgen",
+   "wasm-bindgen-test",
+   "windows-core"
+  ]
+ },
+ "iana-time-zone-haiku": {
+  "build_script": true,
+  "dependencies": [
+   "cc"
+  ]
+ },
+ "ico": {
+  "build_script": false,
+  "dependencies": [
+   "byteorder",
+   "clap",
+   "png",
+   "serde"
+  ]
+ },
+ "icu_collections": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "databake",
+   "displaydoc",
+   "iai",
+   "postcard",
+   "potential_utf",
+   "serde",
+   "serde_json",
+   "toml",
+   "utf8_iter",
+   "yoke",
+   "zerofrom",
+   "zerovec"
+  ]
+ },
+ "icu_locale_core": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "databake",
+   "displaydoc",
+   "iai",
+   "litemap",
+   "postcard",
+   "potential_utf",
+   "serde",
+   "serde_json",
+   "tinystr",
+   "writeable",
+   "zerovec"
+  ]
+ },
+ "icu_normalizer": {
+  "build_script": false,
+  "dependencies": [
+   "arraystring",
+   "arrayvec",
+   "atoi",
+   "criterion",
+   "databake",
+   "detone",
+   "harfbuzz-traits",
+   "icu_collections",
+   "icu_normalizer_data",
+   "icu_properties",
+   "icu_provider",
+   "serde",
+   "smallvec",
+   "utf16_iter",
+   "utf8_iter",
+   "write16",
+   "zerovec"
+  ]
+ },
+ "icu_normalizer_data": {
+  "build_script": true,
+  "dependencies": []
+ },
+ "icu_properties": {
+  "build_script": false,
+  "dependencies": [
+   "databake",
+   "harfbuzz-traits",
+   "icu_collections",
+   "icu_locale_core",
+   "icu_properties_data",
+   "icu_provider",
+   "serde",
+   "unicode-bidi",
+   "zerotrie",
+   "zerovec"
+  ]
+ },
+ "icu_properties_data": {
+  "build_script": true,
+  "dependencies": []
+ },
+ "icu_provider": {
+  "build_script": false,
+  "dependencies": [
+   "bincode",
+   "criterion",
+   "databake",
+   "displaydoc",
+   "erased-serde",
+   "icu_locale_core",
+   "log",
+   "postcard",
+   "serde",
+   "serde_json",
+   "stable_deref_trait",
+   "writeable",
+   "yoke",
+   "zerofrom",
+   "zerotrie",
+   "zerovec"
+  ]
+ },
+ "id-arena": {
+  "build_script": false,
+  "dependencies": [
+   "rayon"
+  ]
+ },
+ "ident_case": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "idna": {
+  "build_script": false,
+  "dependencies": [
+   "assert_matches",
+   "bencher",
+   "idna_adapter",
+   "serde_json",
+   "smallvec",
+   "tester",
+   "utf8_iter"
+  ]
+ },
+ "idna_adapter": {
+  "build_script": false,
+  "dependencies": [
+   "icu_normalizer",
+   "icu_properties"
+  ]
+ },
+ "indexmap": {
+  "build_script": true,
+  "dependencies": [
+   "arbitrary",
+   "autocfg",
+   "borsh",
+   "equivalent",
+   "fastrand",
+   "fnv",
+   "fxhash",
+   "hashbrown",
+   "itertools",
+   "lazy_static",
+   "quickcheck",
+   "rand",
+   "rayon",
+   "rustc-rayon",
+   "serde",
+   "serde_core",
+   "serde_derive",
+   "sval"
+  ]
+ },
+ "indoc": {
+  "build_script": false,
+  "dependencies": [
+   "rustversion",
+   "trybuild",
+   "unindent"
+  ]
+ },
+ "infer": {
+  "build_script": false,
+  "dependencies": [
+   "cfb"
+  ]
+ },
+ "inotify": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "futures-core",
+   "futures-util",
+   "inotify-sys",
+   "libc",
+   "maplit",
+   "rand",
+   "tempfile",
+   "tokio"
+  ]
+ },
+ "inotify-sys": {
+  "build_script": false,
+  "dependencies": [
+   "libc"
+  ]
+ },
+ "inquire": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "chrono",
+   "console",
+   "crossterm",
+   "dyn-clone",
+   "fuzzy-matcher",
+   "fxhash",
+   "newline-converter",
+   "once_cell",
+   "rstest",
+   "tempfile",
+   "termion",
+   "unicode-segmentation",
+   "unicode-width"
+  ]
+ },
+ "instability": {
+  "build_script": true,
+  "dependencies": [
+   "darling",
+   "indoc",
+   "pretty_assertions",
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "instant": {
+  "build_script": false,
+  "dependencies": [
+   "cfg-if",
+   "js-sys",
+   "stdweb",
+   "wasm-bindgen",
+   "wasm-bindgen-test",
+   "web-sys"
+  ]
+ },
+ "io-uring": {
+  "build_script": true,
+  "dependencies": [
+   "anyhow",
+   "bindgen",
+   "bitflags",
+   "cfg-if",
+   "libc",
+   "sc",
+   "slab",
+   "socket2"
+  ]
+ },
+ "ipnet": {
+  "build_script": false,
+  "dependencies": [
+   "heapless",
+   "schemars",
+   "serde",
+   "serde_test"
+  ]
+ },
+ "iri-string": {
+  "build_script": false,
+  "dependencies": [
+   "memchr",
+   "serde",
+   "serde_test"
+  ]
+ },
+ "is-docker": {
+  "build_script": false,
+  "dependencies": [
+   "once_cell"
+  ]
+ },
+ "is-terminal": {
+  "build_script": false,
+  "dependencies": [
+   "atty",
+   "hermit-abi",
+   "libc",
+   "rustix",
+   "tempfile",
+   "windows-sys"
+  ]
+ },
+ "is-wsl": {
+  "build_script": false,
+  "dependencies": [
+   "is-docker",
+   "once_cell"
+  ]
+ },
+ "is_terminal_polyfill": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "itertools": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "either",
+   "paste",
+   "permutohedron",
+   "quickcheck",
+   "rand"
+  ]
+ },
+ "itoa": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "no-panic"
+  ]
+ },
+ "javascriptcore-rs": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "glib",
+   "javascriptcore-rs-sys"
+  ]
+ },
+ "javascriptcore-rs-sys": {
+  "build_script": true,
+  "dependencies": [
+   "glib-sys",
+   "gobject-sys",
+   "libc",
+   "shell-words",
+   "system-deps",
+   "tempfile"
+  ]
+ },
+ "jni": {
+  "build_script": true,
+  "dependencies": [
+   "assert_matches",
+   "bytemuck",
+   "cesu8",
+   "cfg-if",
+   "combine",
+   "criterion",
+   "java-locator",
+   "javac",
+   "jni-macros",
+   "jni-sys",
+   "lazy_static",
+   "libloading",
+   "log",
+   "rusty-fork",
+   "simd_cesu8",
+   "static_assertions",
+   "thiserror",
+   "trybuild",
+   "walkdir",
+   "windows-link",
+   "windows-sys"
+  ]
+ },
+ "jni-macros": {
+  "build_script": true,
+  "dependencies": [
+   "javac",
+   "proc-macro2",
+   "quote",
+   "rustc_version",
+   "rusty-fork",
+   "simd_cesu8",
+   "syn",
+   "thiserror",
+   "trybuild"
+  ]
+ },
+ "jni-sys": {
+  "build_script": true,
+  "dependencies": [
+   "jni-sys",
+   "jni-sys-macros",
+   "thiserror",
+   "trybuild"
+  ]
+ },
+ "jni-sys-macros": {
+  "build_script": false,
+  "dependencies": [
+   "quote",
+   "syn"
+  ]
+ },
+ "jobserver": {
+  "build_script": false,
+  "dependencies": [
+   "getrandom",
+   "libc",
+   "nix",
+   "tempfile"
+  ]
+ },
+ "js-sys": {
+  "build_script": false,
+  "dependencies": [
+   "cfg-if",
+   "futures-channel",
+   "futures-core",
+   "futures-lite",
+   "futures-util",
+   "half",
+   "once_cell",
+   "wasm-bindgen"
+  ]
+ },
+ "json-patch": {
+  "build_script": false,
+  "dependencies": [
+   "expectorate",
+   "jsonptr",
+   "rand",
+   "serde",
+   "serde_json",
+   "serde_yaml",
+   "thiserror",
+   "utoipa"
+  ]
+ },
+ "jsonptr": {
+  "build_script": false,
+  "dependencies": [
+   "quickcheck",
+   "quickcheck_macros",
+   "serde",
+   "serde_json",
+   "syn",
+   "toml"
+  ]
+ },
+ "kasuari": {
+  "build_script": false,
+  "dependencies": [
+   "document-features",
+   "hashbrown",
+   "portable-atomic",
+   "portable-atomic-util",
+   "rstest",
+   "thiserror"
+  ]
+ },
+ "keyboard-types": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "serde",
+   "unicode-segmentation"
+  ]
+ },
+ "kqueue": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "dhat",
+   "kqueue-sys",
+   "libc",
+   "tempfile"
+  ]
+ },
+ "kqueue-sys": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "libc"
+  ]
+ },
+ "lab": {
+  "build_script": false,
+  "dependencies": [
+   "approx",
+   "criterion",
+   "lazy_static",
+   "pretty_assertions",
+   "rand"
+  ]
+ },
+ "lazy_static": {
+  "build_script": false,
+  "dependencies": [
+   "doc-comment",
+   "spin",
+   "trybuild"
+  ]
+ },
+ "leb128fmt": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "libappindicator": {
+  "build_script": false,
+  "dependencies": [
+   "glib",
+   "gtk",
+   "gtk-sys",
+   "libappindicator-sys",
+   "log"
+  ]
+ },
+ "libappindicator-sys": {
+  "build_script": false,
+  "dependencies": [
+   "gtk-sys",
+   "libloading",
+   "once_cell"
+  ]
+ },
+ "libc": {
+  "build_script": true,
+  "dependencies": [
+   "rustc-std-workspace-core"
+  ]
+ },
+ "libdbus-sys": {
+  "build_script": true,
+  "dependencies": [
+   "cc",
+   "pkg-config"
+  ]
+ },
+ "libloading": {
+  "build_script": false,
+  "dependencies": [
+   "cfg-if",
+   "libc",
+   "static_assertions",
+   "winapi"
+  ]
+ },
+ "libm": {
+  "build_script": true,
+  "dependencies": [
+   "no-panic"
+  ]
+ },
+ "libredox": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "ioslice",
+   "libc",
+   "plain",
+   "redox_syscall"
+  ]
+ },
+ "libsqlite3-sys": {
+  "build_script": true,
+  "dependencies": [
+   "bindgen",
+   "cc",
+   "openssl-sys",
+   "pkg-config",
+   "prettyplease",
+   "quote",
+   "syn",
+   "vcpkg"
+  ]
+ },
+ "libxdo": {
+  "build_script": false,
+  "dependencies": [
+   "libxdo-sys"
+  ]
+ },
+ "libxdo-sys": {
+  "build_script": true,
+  "dependencies": [
+   "libc",
+   "x11"
+  ]
+ },
+ "line-clipping": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "rstest"
+  ]
+ },
+ "linux-raw-sys": {
+  "build_script": false,
+  "dependencies": [
+   "libc",
+   "rustc-std-workspace-core",
+   "static_assertions"
+  ]
+ },
+ "litemap": {
+  "build_script": false,
+  "dependencies": [
+   "bincode",
+   "criterion",
+   "databake",
+   "postcard",
+   "rand",
+   "rkyv",
+   "serde_core",
+   "serde_json",
+   "yoke"
+  ]
+ },
+ "litrs": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "unicode-xid"
+  ]
+ },
+ "lock_api": {
+  "build_script": false,
+  "dependencies": [
+   "owning_ref",
+   "scopeguard",
+   "serde"
+  ]
+ },
+ "log": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "serde",
+   "serde_core",
+   "serde_json",
+   "serde_test",
+   "sval",
+   "sval_derive",
+   "sval_ref",
+   "value-bag"
+  ]
+ },
+ "lru": {
+  "build_script": false,
+  "dependencies": [
+   "hashbrown",
+   "scoped_threadpool",
+   "stats_alloc"
+  ]
+ },
+ "lru-slab": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "lzma-rust2": {
+  "build_script": false,
+  "dependencies": [
+   "crc",
+   "criterion",
+   "liblzma",
+   "sha2"
+  ]
+ },
+ "mac": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "mac_address": {
+  "build_script": false,
+  "dependencies": [
+   "nix",
+   "serde",
+   "serde_json",
+   "serde_test",
+   "winapi"
+  ]
+ },
+ "magika": {
+  "build_script": false,
+  "dependencies": [
+   "data-encoding",
+   "flate2",
+   "ndarray",
+   "ort",
+   "serde",
+   "serde_json",
+   "thiserror",
+   "tokio"
+  ]
+ },
+ "markup5ever": {
+  "build_script": false,
+  "dependencies": [
+   "log",
+   "tendril",
+   "web_atoms"
+  ]
+ },
+ "matchers": {
+  "build_script": false,
+  "dependencies": [
+   "regex-automata"
+  ]
+ },
+ "matchit": {
+  "build_script": false,
+  "dependencies": [
+   "actix-router",
+   "criterion",
+   "gonzales",
+   "hyper",
+   "path-tree",
+   "regex",
+   "route-recognizer",
+   "routefinder",
+   "tokio",
+   "tower"
+  ]
+ },
+ "matrixmultiply": {
+  "build_script": true,
+  "dependencies": [
+   "autocfg",
+   "bencher",
+   "itertools",
+   "num_cpus",
+   "once_cell",
+   "rawpointer",
+   "thread-tree"
+  ]
+ },
+ "memchr": {
+  "build_script": false,
+  "dependencies": [
+   "log",
+   "quickcheck",
+   "rustc-std-workspace-core"
+  ]
+ },
+ "memmap2": {
+  "build_script": false,
+  "dependencies": [
+   "libc",
+   "owning_ref",
+   "stable_deref_trait",
+   "tempfile"
+  ]
+ },
+ "memmem": {
+  "build_script": false,
+  "dependencies": [
+   "quickcheck"
+  ]
+ },
+ "memoffset": {
+  "build_script": true,
+  "dependencies": [
+   "autocfg",
+   "doc-comment"
+  ]
+ },
+ "metrics": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "log",
+   "portable-atomic",
+   "rand",
+   "rapidhash",
+   "trybuild"
+  ]
+ },
+ "metrics-util": {
+  "build_script": false,
+  "dependencies": [
+   "ahash",
+   "aho-corasick",
+   "approx",
+   "criterion",
+   "crossbeam-epoch",
+   "crossbeam-queue",
+   "crossbeam-utils",
+   "getopts",
+   "hashbrown",
+   "hdrhistogram",
+   "indexmap",
+   "metrics",
+   "mockall",
+   "ndarray",
+   "ndarray-stats",
+   "noisy_float",
+   "ordered-float",
+   "predicates",
+   "predicates-core",
+   "predicates-tree",
+   "quanta",
+   "quickcheck",
+   "quickcheck_macros",
+   "radix_trie",
+   "rand",
+   "rand_xoshiro",
+   "sketches-ddsketch",
+   "tracing",
+   "tracing-subscriber"
+  ]
+ },
+ "mime": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "minimal-lexical": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "miniz_oxide": {
+  "build_script": false,
+  "dependencies": [
+   "adler2",
+   "rustc-std-workspace-alloc",
+   "rustc-std-workspace-core",
+   "serde",
+   "simd-adler32"
+  ]
+ },
+ "mio": {
+  "build_script": false,
+  "dependencies": [
+   "env_logger",
+   "libc",
+   "log",
+   "rand",
+   "wasi",
+   "windows-sys"
+  ]
+ },
+ "muda": {
+  "build_script": false,
+  "dependencies": [
+   "crossbeam-channel",
+   "dpi",
+   "gtk",
+   "image",
+   "keyboard-types",
+   "libxdo",
+   "objc2",
+   "objc2-app-kit",
+   "objc2-core-foundation",
+   "objc2-foundation",
+   "once_cell",
+   "png",
+   "serde",
+   "tao",
+   "thiserror",
+   "windows-sys",
+   "winit",
+   "wry"
+  ]
+ },
+ "ndarray": {
+  "build_script": false,
+  "dependencies": [
+   "approx",
+   "cblas-sys",
+   "defmac",
+   "itertools",
+   "libc",
+   "matrixmultiply",
+   "num-complex",
+   "num-integer",
+   "num-traits",
+   "portable-atomic",
+   "portable-atomic-util",
+   "quickcheck",
+   "rawpointer",
+   "rayon",
+   "serde"
+  ]
+ },
+ "ndk": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "jni",
+   "jni-sys",
+   "libc",
+   "log",
+   "ndk-sys",
+   "num_enum",
+   "raw-window-handle",
+   "thiserror"
+  ]
+ },
+ "ndk-sys": {
+  "build_script": false,
+  "dependencies": [
+   "jni-sys"
+  ]
+ },
+ "new_debug_unreachable": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "newline-converter": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "fancy-regex",
+   "lazy-regex",
+   "once_cell",
+   "quickcheck",
+   "unicode-segmentation"
+  ]
+ },
+ "nibble_vec": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "smallvec"
+  ]
+ },
+ "nix": {
+  "build_script": true,
+  "dependencies": [
+   "assert-impl",
+   "bitflags",
+   "caps",
+   "cfg-if",
+   "cfg_aliases",
+   "lazy_static",
+   "libc",
+   "memoffset",
+   "parking_lot",
+   "pin-utils",
+   "rand",
+   "semver",
+   "sysctl",
+   "tempfile"
+  ]
+ },
+ "nom": {
+  "build_script": false,
+  "dependencies": [
+   "doc-comment",
+   "memchr",
+   "minimal-lexical",
+   "proptest"
+  ]
+ },
+ "notify": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "crossbeam-channel",
+   "filetime",
+   "fsevent-sys",
+   "inotify",
+   "insta",
+   "kqueue",
+   "libc",
+   "log",
+   "mio",
+   "nix",
+   "notify-types",
+   "serde_json",
+   "tempfile",
+   "walkdir",
+   "windows-sys"
+  ]
+ },
+ "notify-types": {
+  "build_script": false,
+  "dependencies": [
+   "insta",
+   "instant",
+   "rstest",
+   "serde",
+   "serde_json"
+  ]
+ },
+ "nu-ansi-term": {
+  "build_script": false,
+  "dependencies": [
+   "doc-comment",
+   "serde",
+   "serde_json",
+   "windows-sys"
+  ]
+ },
+ "num-bigint": {
+  "build_script": false,
+  "dependencies": [
+   "arbitrary",
+   "num-integer",
+   "num-traits",
+   "quickcheck",
+   "rand",
+   "serde"
+  ]
+ },
+ "num-complex": {
+  "build_script": false,
+  "dependencies": [
+   "bytecheck",
+   "bytemuck",
+   "num-traits",
+   "rand",
+   "rkyv",
+   "serde"
+  ]
+ },
+ "num-conv": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "num-derive": {
+  "build_script": false,
+  "dependencies": [
+   "num",
+   "num-traits",
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "num-integer": {
+  "build_script": false,
+  "dependencies": [
+   "num-traits"
+  ]
+ },
+ "num-traits": {
+  "build_script": true,
+  "dependencies": [
+   "autocfg",
+   "libm"
+  ]
+ },
+ "num_enum": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "num_enum_derive",
+   "paste",
+   "rustversion",
+   "trybuild",
+   "walkdir"
+  ]
+ },
+ "num_enum_derive": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro-crate",
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "num_threads": {
+  "build_script": false,
+  "dependencies": [
+   "libc"
+  ]
+ },
+ "objc2": {
+  "build_script": true,
+  "dependencies": [
+   "backtrace",
+   "core-foundation",
+   "iai",
+   "libc",
+   "memoffset",
+   "objc2-encode",
+   "objc2-exception-helper",
+   "objc2-proc-macros",
+   "static_assertions"
+  ]
+ },
+ "objc2-app-kit": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "block2",
+   "libc",
+   "objc2",
+   "objc2-cloud-kit",
+   "objc2-core-data",
+   "objc2-core-foundation",
+   "objc2-core-graphics",
+   "objc2-core-image",
+   "objc2-core-text",
+   "objc2-core-video",
+   "objc2-foundation",
+   "objc2-open-gl",
+   "objc2-quartz-core",
+   "objc2-uniform-type-identifiers"
+  ]
+ },
+ "objc2-cloud-kit": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "block2",
+   "objc2",
+   "objc2-contacts",
+   "objc2-core-location",
+   "objc2-foundation"
+  ]
+ },
+ "objc2-core-data": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "block2",
+   "objc2",
+   "objc2-cloud-kit",
+   "objc2-core-spotlight",
+   "objc2-foundation"
+  ]
+ },
+ "objc2-core-foundation": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "block2",
+   "dispatch2",
+   "libc",
+   "objc2",
+   "static_assertions"
+  ]
+ },
+ "objc2-core-graphics": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "block2",
+   "dispatch2",
+   "libc",
+   "objc2",
+   "objc2-core-foundation",
+   "objc2-io-surface",
+   "objc2-metal"
+  ]
+ },
+ "objc2-core-image": {
+  "build_script": false,
+  "dependencies": [
+   "block2",
+   "objc2",
+   "objc2-core-foundation",
+   "objc2-core-graphics",
+   "objc2-core-ml",
+   "objc2-core-video",
+   "objc2-foundation",
+   "objc2-image-io",
+   "objc2-io-surface",
+   "objc2-metal",
+   "objc2-open-gl"
+  ]
+ },
+ "objc2-core-location": {
+  "build_script": false,
+  "dependencies": [
+   "block2",
+   "dispatch2",
+   "objc2",
+   "objc2-contacts",
+   "objc2-foundation"
+  ]
+ },
+ "objc2-core-text": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "block2",
+   "libc",
+   "objc2",
+   "objc2-core-foundation",
+   "objc2-core-graphics",
+   "static_assertions"
+  ]
+ },
+ "objc2-core-video": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "block2",
+   "objc2",
+   "objc2-core-foundation",
+   "objc2-core-graphics",
+   "objc2-io-surface",
+   "objc2-metal",
+   "objc2-open-gl"
+  ]
+ },
+ "objc2-encode": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "objc2-exception-helper": {
+  "build_script": true,
+  "dependencies": [
+   "cc"
+  ]
+ },
+ "objc2-foundation": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "block2",
+   "libc",
+   "objc2",
+   "objc2-core-foundation",
+   "objc2-core-services",
+   "static_assertions"
+  ]
+ },
+ "objc2-io-surface": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "libc",
+   "objc2",
+   "objc2-core-foundation",
+   "objc2-foundation"
+  ]
+ },
+ "objc2-quartz-core": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "block2",
+   "libc",
+   "objc2",
+   "objc2-core-foundation",
+   "objc2-core-graphics",
+   "objc2-core-video",
+   "objc2-foundation",
+   "objc2-metal",
+   "objc2-open-gl"
+  ]
+ },
+ "objc2-ui-kit": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "block2",
+   "objc2",
+   "objc2-cloud-kit",
+   "objc2-core-data",
+   "objc2-core-foundation",
+   "objc2-core-graphics",
+   "objc2-core-image",
+   "objc2-core-location",
+   "objc2-core-text",
+   "objc2-foundation",
+   "objc2-quartz-core",
+   "objc2-symbols",
+   "objc2-uniform-type-identifiers",
+   "objc2-user-notifications"
+  ]
+ },
+ "objc2-user-notifications": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "block2",
+   "objc2",
+   "objc2-core-location",
+   "objc2-foundation"
+  ]
+ },
+ "objc2-virtualization": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "block2",
+   "dispatch2",
+   "objc2",
+   "objc2-app-kit",
+   "objc2-core-foundation",
+   "objc2-foundation"
+  ]
+ },
+ "objc2-web-kit": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "block2",
+   "objc2",
+   "objc2-app-kit",
+   "objc2-core-foundation",
+   "objc2-foundation",
+   "objc2-javascript-core",
+   "objc2-security"
+  ]
+ },
+ "oid-registry": {
+  "build_script": true,
+  "dependencies": [
+   "asn1-rs"
+  ]
+ },
+ "once_cell": {
+  "build_script": false,
+  "dependencies": [
+   "critical-section",
+   "parking_lot_core",
+   "portable-atomic",
+   "regex"
+  ]
+ },
+ "once_cell_polyfill": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "oorandom": {
+  "build_script": false,
+  "dependencies": [
+   "rand_core",
+   "rand_pcg",
+   "random-fast-rng",
+   "randomize"
+  ]
+ },
+ "open": {
+  "build_script": false,
+  "dependencies": [
+   "dunce",
+   "is-wsl",
+   "libc",
+   "pathdiff"
+  ]
+ },
+ "option-ext": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "ordered-float": {
+  "build_script": false,
+  "dependencies": [
+   "arbitrary",
+   "borsh",
+   "bytemuck",
+   "derive-visitor",
+   "num-cmp",
+   "num-traits",
+   "proptest",
+   "rand",
+   "rkyv",
+   "schemars",
+   "serde",
+   "serde_test",
+   "speedy"
+  ]
+ },
+ "ordered-stream": {
+  "build_script": false,
+  "dependencies": [
+   "futures-core",
+   "futures-executor",
+   "futures-util",
+   "pin-project-lite"
+  ]
+ },
+ "ort": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "half",
+   "image",
+   "libloading",
+   "ndarray",
+   "num-complex",
+   "ort-sys",
+   "sha2",
+   "smallvec",
+   "tokio",
+   "tracing",
+   "tracing-subscriber",
+   "ureq"
+  ]
+ },
+ "ort-sys": {
+  "build_script": true,
+  "dependencies": [
+   "glob",
+   "hmac-sha256",
+   "lzma-rust2",
+   "pkg-config",
+   "ureq"
+  ]
+ },
+ "palette": {
+  "build_script": false,
+  "dependencies": [
+   "approx",
+   "bytemuck",
+   "enterpolation",
+   "image",
+   "libm",
+   "palette_derive",
+   "palette_math",
+   "phf",
+   "rand",
+   "rand_mt",
+   "ron",
+   "serde",
+   "serde_json",
+   "wide"
+  ]
+ },
+ "palette_derive": {
+  "build_script": false,
+  "dependencies": [
+   "by_address",
+   "find-crate",
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "palette_math": {
+  "build_script": false,
+  "dependencies": [
+   "libm",
+   "wide"
+  ]
+ },
+ "pango": {
+  "build_script": false,
+  "dependencies": [
+   "gio",
+   "gir-format-check",
+   "glib",
+   "libc",
+   "once_cell",
+   "pango-sys"
+  ]
+ },
+ "pango-sys": {
+  "build_script": true,
+  "dependencies": [
+   "glib-sys",
+   "gobject-sys",
+   "libc",
+   "shell-words",
+   "system-deps",
+   "tempfile"
+  ]
+ },
+ "parking": {
+  "build_script": false,
+  "dependencies": [
+   "easy-parallel",
+   "loom"
+  ]
+ },
+ "parking_lot": {
+  "build_script": false,
+  "dependencies": [
+   "bincode",
+   "lock_api",
+   "parking_lot_core",
+   "rand"
+  ]
+ },
+ "parking_lot_core": {
+  "build_script": true,
+  "dependencies": [
+   "backtrace",
+   "cfg-if",
+   "libc",
+   "petgraph",
+   "redox_syscall",
+   "smallvec",
+   "windows-link"
+  ]
+ },
+ "pastey": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "pathdiff": {
+  "build_script": false,
+  "dependencies": [
+   "camino",
+   "cfg-if"
+  ]
+ },
+ "pem": {
+  "build_script": false,
+  "dependencies": [
+   "base64",
+   "criterion",
+   "proptest",
+   "serde_core",
+   "serde_json"
+  ]
+ },
+ "percent-encoding": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "pest": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "memchr",
+   "miette",
+   "serde",
+   "serde_json",
+   "ucd-trie"
+  ]
+ },
+ "pest_derive": {
+  "build_script": false,
+  "dependencies": [
+   "pest",
+   "pest_generator"
+  ]
+ },
+ "pest_generator": {
+  "build_script": false,
+  "dependencies": [
+   "pest",
+   "pest_meta",
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "pest_meta": {
+  "build_script": false,
+  "dependencies": [
+   "cargo",
+   "pest",
+   "sha2"
+  ]
+ },
+ "phf": {
+  "build_script": false,
+  "dependencies": [
+   "phf_macros",
+   "phf_shared",
+   "serde"
+  ]
+ },
+ "phf_codegen": {
+  "build_script": false,
+  "dependencies": [
+   "phf_generator",
+   "phf_shared"
+  ]
+ },
+ "phf_generator": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "fastrand",
+   "phf_shared",
+   "rand"
+  ]
+ },
+ "phf_macros": {
+  "build_script": false,
+  "dependencies": [
+   "phf_generator",
+   "phf_shared",
+   "proc-macro2",
+   "quote",
+   "syn",
+   "uncased",
+   "unicase"
+  ]
+ },
+ "phf_shared": {
+  "build_script": false,
+  "dependencies": [
+   "siphasher",
+   "uncased",
+   "unicase"
+  ]
+ },
+ "pin-project-lite": {
+  "build_script": false,
+  "dependencies": [
+   "rustversion",
+   "static_assertions"
+  ]
+ },
+ "piper": {
+  "build_script": false,
+  "dependencies": [
+   "async-channel",
+   "async-executor",
+   "async-io",
+   "atomic-waker",
+   "criterion",
+   "easy-parallel",
+   "fastrand",
+   "futures-io",
+   "futures-lite",
+   "portable-atomic",
+   "portable-atomic-util"
+  ]
+ },
+ "pkg-config": {
+  "build_script": false,
+  "dependencies": [
+   "lazy_static"
+  ]
+ },
+ "plain": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "plist": {
+  "build_script": false,
+  "dependencies": [
+   "base64",
+   "indexmap",
+   "macrotest",
+   "quick-xml",
+   "serde",
+   "serde_derive",
+   "serde_yaml",
+   "time",
+   "trybuild"
+  ]
+ },
+ "plotters": {
+  "build_script": false,
+  "dependencies": [
+   "ab_glyph",
+   "chrono",
+   "criterion",
+   "font-kit",
+   "image",
+   "itertools",
+   "lazy_static",
+   "num-traits",
+   "once_cell",
+   "pathfinder_geometry",
+   "plotters-backend",
+   "plotters-bitmap",
+   "plotters-svg",
+   "rand",
+   "rand_distr",
+   "rand_xorshift",
+   "rayon",
+   "serde",
+   "serde_derive",
+   "serde_json",
+   "ttf-parser",
+   "wasm-bindgen",
+   "wasm-bindgen-test",
+   "web-sys"
+  ]
+ },
+ "plotters-backend": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "plotters-svg": {
+  "build_script": false,
+  "dependencies": [
+   "image",
+   "plotters-backend"
+  ]
+ },
+ "png": {
+  "build_script": false,
+  "dependencies": [
+   "approx",
+   "bitflags",
+   "byteorder",
+   "clap",
+   "crc32fast",
+   "criterion",
+   "fdeflate",
+   "flate2",
+   "getopts",
+   "glium",
+   "glob",
+   "miniz_oxide",
+   "rand",
+   "term"
+  ]
+ },
+ "polling": {
+  "build_script": false,
+  "dependencies": [
+   "cfg-if",
+   "concurrent-queue",
+   "easy-parallel",
+   "fastrand",
+   "hermit-abi",
+   "libc",
+   "pin-project-lite",
+   "rustix",
+   "signal-hook",
+   "socket2",
+   "tracing",
+   "windows-sys"
+  ]
+ },
+ "portable-atomic": {
+  "build_script": true,
+  "dependencies": [
+   "build-context",
+   "crabgrind",
+   "critical-section",
+   "crossbeam-utils",
+   "fastrand",
+   "libc",
+   "paste",
+   "quickcheck",
+   "rustversion",
+   "serde",
+   "sptr",
+   "static_assertions",
+   "windows-sys"
+  ]
+ },
+ "portable-atomic-util": {
+  "build_script": true,
+  "dependencies": [
+   "build-context",
+   "portable-atomic",
+   "serde"
+  ]
+ },
+ "potential_utf": {
+  "build_script": false,
+  "dependencies": [
+   "bincode",
+   "databake",
+   "serde_core",
+   "serde_json",
+   "writeable",
+   "zerovec"
+  ]
+ },
+ "powerfmt": {
+  "build_script": false,
+  "dependencies": [
+   "powerfmt-macros"
+  ]
+ },
+ "ppv-lite86": {
+  "build_script": false,
+  "dependencies": [
+   "zerocopy"
+  ]
+ },
+ "precomputed-hash": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "prettyplease": {
+  "build_script": true,
+  "dependencies": [
+   "indoc",
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "proc-macro-crate": {
+  "build_script": false,
+  "dependencies": [
+   "once_cell",
+   "proc-macro2",
+   "quote",
+   "syn",
+   "toml_datetime",
+   "toml_edit"
+  ]
+ },
+ "proc-macro-error": {
+  "build_script": true,
+  "dependencies": [
+   "proc-macro-error-attr",
+   "proc-macro2",
+   "quote",
+   "serde_derive",
+   "syn",
+   "toml",
+   "trybuild",
+   "version_check"
+  ]
+ },
+ "proc-macro-error-attr": {
+  "build_script": true,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "version_check"
+  ]
+ },
+ "proc-macro2": {
+  "build_script": true,
+  "dependencies": [
+   "flate2",
+   "quote",
+   "rayon",
+   "rustversion",
+   "tar",
+   "unicode-ident"
+  ]
+ },
+ "process-wrap": {
+  "build_script": false,
+  "dependencies": [
+   "futures",
+   "indexmap",
+   "nix",
+   "remoteprocess",
+   "tempfile",
+   "tokio",
+   "tracing",
+   "windows"
+  ]
+ },
+ "proptest": {
+  "build_script": false,
+  "dependencies": [
+   "bit-set",
+   "bit-vec",
+   "bitflags",
+   "num-traits",
+   "proptest-macro",
+   "rand",
+   "rand_chacha",
+   "rand_xorshift",
+   "regex",
+   "regex-syntax",
+   "rusty-fork",
+   "tempfile",
+   "trybuild",
+   "unarray",
+   "x86"
+  ]
+ },
+ "quanta": {
+  "build_script": false,
+  "dependencies": [
+   "average",
+   "criterion",
+   "crossbeam-utils",
+   "libc",
+   "once_cell",
+   "prost-types",
+   "raw-cpuid",
+   "wasi",
+   "wasm-bindgen-test",
+   "web-sys",
+   "winapi"
+  ]
+ },
+ "quick-error": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "quick-xml": {
+  "build_script": false,
+  "dependencies": [
+   "arbitrary",
+   "criterion",
+   "document-features",
+   "encoding_rs",
+   "memchr",
+   "pretty_assertions",
+   "regex",
+   "serde",
+   "serde-value",
+   "serde_derive",
+   "tokio",
+   "tokio-test"
+  ]
+ },
+ "quinn": {
+  "build_script": true,
+  "dependencies": [
+   "anyhow",
+   "async-io",
+   "async-std",
+   "bencher",
+   "bytes",
+   "cfg_aliases",
+   "clap",
+   "crc",
+   "directories-next",
+   "futures-io",
+   "pin-project-lite",
+   "quinn-proto",
+   "quinn-udp",
+   "rand",
+   "rcgen",
+   "rustc-hash",
+   "rustls",
+   "rustls-pemfile",
+   "smol",
+   "socket2",
+   "thiserror",
+   "tokio",
+   "tracing",
+   "tracing-futures",
+   "tracing-subscriber",
+   "url",
+   "web-time"
+  ]
+ },
+ "quinn-proto": {
+  "build_script": false,
+  "dependencies": [
+   "arbitrary",
+   "assert_matches",
+   "aws-lc-rs",
+   "bytes",
+   "fastbloom",
+   "getrandom",
+   "hex-literal",
+   "lazy_static",
+   "lru-slab",
+   "qlog",
+   "rand",
+   "rand_pcg",
+   "rcgen",
+   "ring",
+   "rustc-hash",
+   "rustls",
+   "rustls-pki-types",
+   "rustls-platform-verifier",
+   "slab",
+   "thiserror",
+   "tinyvec",
+   "tracing",
+   "tracing-subscriber",
+   "wasm-bindgen-test",
+   "web-time"
+  ]
+ },
+ "quinn-udp": {
+  "build_script": true,
+  "dependencies": [
+   "cfg_aliases",
+   "criterion",
+   "libc",
+   "log",
+   "once_cell",
+   "socket2",
+   "tokio",
+   "tracing",
+   "windows-sys"
+  ]
+ },
+ "quote": {
+  "build_script": true,
+  "dependencies": [
+   "proc-macro2",
+   "rustversion",
+   "trybuild"
+  ]
+ },
+ "r-efi": {
+  "build_script": false,
+  "dependencies": [
+   "rustc-std-workspace-core"
+  ]
+ },
+ "radix_trie": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "endian-type",
+   "nibble_vec",
+   "quickcheck",
+   "rand",
+   "serde",
+   "serde_test"
+  ]
+ },
+ "rand": {
+  "build_script": false,
+  "dependencies": [
+   "bincode",
+   "chacha20",
+   "getrandom",
+   "libc",
+   "postcard",
+   "rand_chacha",
+   "rand_core",
+   "rand_pcg",
+   "rayon",
+   "serde",
+   "serde_json"
+  ]
+ },
+ "rand_chacha": {
+  "build_script": false,
+  "dependencies": [
+   "ppv-lite86",
+   "rand_core",
+   "serde",
+   "serde_json"
+  ]
+ },
+ "rand_core": {
+  "build_script": false,
+  "dependencies": [
+   "getrandom",
+   "serde"
+  ]
+ },
+ "rand_xorshift": {
+  "build_script": false,
+  "dependencies": [
+   "bincode",
+   "rand_core",
+   "serde"
+  ]
+ },
+ "rand_xoshiro": {
+  "build_script": false,
+  "dependencies": [
+   "bincode",
+   "rand_core",
+   "serde"
+  ]
+ },
+ "rapidhash": {
+  "build_script": false,
+  "dependencies": [
+   "assert_cmd",
+   "rand",
+   "rand_core",
+   "rustversion",
+   "tempfile"
+  ]
+ },
+ "ratatui": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "crossterm",
+   "document-features",
+   "fakeit",
+   "indoc",
+   "instability",
+   "palette",
+   "pretty_assertions",
+   "rand",
+   "ratatui-core",
+   "ratatui-crossterm",
+   "ratatui-macros",
+   "ratatui-termina",
+   "ratatui-termion",
+   "ratatui-termwiz",
+   "ratatui-widgets",
+   "rstest",
+   "serde",
+   "serde_json",
+   "time"
+  ]
+ },
+ "ratatui-core": {
+  "build_script": false,
+  "dependencies": [
+   "anstyle",
+   "bitflags",
+   "compact_str",
+   "critical-section",
+   "document-features",
+   "hashbrown",
+   "indoc",
+   "itertools",
+   "kasuari",
+   "lru",
+   "palette",
+   "pretty_assertions",
+   "rstest",
+   "serde",
+   "serde_json",
+   "strum",
+   "thiserror",
+   "unicode-segmentation",
+   "unicode-truncate",
+   "unicode-width"
+  ]
+ },
+ "ratatui-crossterm": {
+  "build_script": false,
+  "dependencies": [
+   "cfg-if",
+   "crossterm",
+   "document-features",
+   "instability",
+   "ratatui-core",
+   "rstest"
+  ]
+ },
+ "ratatui-macros": {
+  "build_script": false,
+  "dependencies": [
+   "ratatui-core",
+   "ratatui-widgets",
+   "trybuild"
+  ]
+ },
+ "ratatui-termina": {
+  "build_script": false,
+  "dependencies": [
+   "color-eyre",
+   "document-features",
+   "instability",
+   "ratatui-core",
+   "termina"
+  ]
+ },
+ "ratatui-termwiz": {
+  "build_script": false,
+  "dependencies": [
+   "document-features",
+   "ratatui-core",
+   "termwiz"
+  ]
+ },
+ "ratatui-widgets": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "color-eyre",
+   "crossterm",
+   "document-features",
+   "hashbrown",
+   "indoc",
+   "instability",
+   "itertools",
+   "line-clipping",
+   "pretty_assertions",
+   "ratatui-core",
+   "rstest",
+   "serde",
+   "strum",
+   "time",
+   "unicode-segmentation",
+   "unicode-width"
+  ]
+ },
+ "raw-cpuid": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "clap",
+   "core_affinity",
+   "libc",
+   "phf",
+   "rustversion",
+   "serde",
+   "serde_derive",
+   "serde_json",
+   "termimad"
+  ]
+ },
+ "raw-window-handle": {
+  "build_script": false,
+  "dependencies": [
+   "static_assertions",
+   "wasm-bindgen"
+  ]
+ },
+ "rawpointer": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "rayon": {
+  "build_script": false,
+  "dependencies": [
+   "either",
+   "rand",
+   "rand_xorshift",
+   "rayon-core",
+   "wasm_sync"
+  ]
+ },
+ "rayon-core": {
+  "build_script": true,
+  "dependencies": [
+   "crossbeam-deque",
+   "crossbeam-utils",
+   "libc",
+   "rand",
+   "rand_xorshift",
+   "scoped-tls",
+   "wasm_sync"
+  ]
+ },
+ "rcgen": {
+  "build_script": false,
+  "dependencies": [
+   "aws-lc-rs",
+   "botan",
+   "openssl",
+   "pem",
+   "rand",
+   "ring",
+   "rsa",
+   "rustls-pki-types",
+   "rustls-webpki",
+   "time",
+   "x509-parser",
+   "yasna",
+   "zeroize"
+  ]
+ },
+ "redox_syscall": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "loom",
+   "rustc-std-workspace-core"
+  ]
+ },
+ "redox_users": {
+  "build_script": false,
+  "dependencies": [
+   "getrandom",
+   "libredox",
+   "rust-argon2",
+   "thiserror",
+   "zeroize"
+  ]
+ },
+ "ref-cast": {
+  "build_script": true,
+  "dependencies": [
+   "ref-cast-impl",
+   "ref-cast-test-suite",
+   "rustversion",
+   "trybuild"
+  ]
+ },
+ "ref-cast-impl": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "ref-cast",
+   "syn"
+  ]
+ },
+ "regex": {
+  "build_script": false,
+  "dependencies": [
+   "aho-corasick",
+   "anyhow",
+   "doc-comment",
+   "env_logger",
+   "memchr",
+   "quickcheck",
+   "regex-automata",
+   "regex-syntax",
+   "regex-test"
+  ]
+ },
+ "regex-automata": {
+  "build_script": false,
+  "dependencies": [
+   "aho-corasick",
+   "anyhow",
+   "bstr",
+   "doc-comment",
+   "env_logger",
+   "log",
+   "memchr",
+   "quickcheck",
+   "regex-syntax",
+   "regex-test"
+  ]
+ },
+ "regex-syntax": {
+  "build_script": false,
+  "dependencies": [
+   "arbitrary"
+  ]
+ },
+ "reqwest": {
+  "build_script": false,
+  "dependencies": [
+   "base64",
+   "brotli",
+   "bytes",
+   "cookie",
+   "cookie_store",
+   "doc-comment",
+   "encoding_rs",
+   "env_logger",
+   "flate2",
+   "futures-channel",
+   "futures-core",
+   "futures-util",
+   "h2",
+   "h3",
+   "h3-quinn",
+   "hickory-resolver",
+   "http",
+   "http-body",
+   "http-body-util",
+   "hyper",
+   "hyper-rustls",
+   "hyper-tls",
+   "hyper-util",
+   "js-sys",
+   "libc",
+   "log",
+   "mime",
+   "mime_guess",
+   "native-tls",
+   "num_cpus",
+   "once_cell",
+   "percent-encoding",
+   "pin-project-lite",
+   "quinn",
+   "rustls",
+   "rustls-native-certs",
+   "rustls-pki-types",
+   "rustls-platform-verifier",
+   "serde",
+   "serde_json",
+   "serde_urlencoded",
+   "sync_wrapper",
+   "tokio",
+   "tokio-native-tls",
+   "tokio-rustls",
+   "tokio-util",
+   "tower",
+   "tower-http",
+   "tower-service",
+   "url",
+   "wasm-bindgen",
+   "wasm-bindgen-futures",
+   "wasm-bindgen-test",
+   "wasm-streams",
+   "web-sys",
+   "webpki-roots",
+   "zstd"
+  ]
+ },
+ "rfd": {
+  "build_script": true,
+  "dependencies": [
+   "ashpd",
+   "block2",
+   "dispatch2",
+   "futures",
+   "glib-sys",
+   "gobject-sys",
+   "gtk-sys",
+   "js-sys",
+   "log",
+   "objc2",
+   "objc2-app-kit",
+   "objc2-core-foundation",
+   "objc2-foundation",
+   "pollster",
+   "raw-window-handle",
+   "urlencoding",
+   "wasm-bindgen",
+   "wasm-bindgen-futures",
+   "web-sys",
+   "windows-sys"
+  ]
+ },
+ "ring": {
+  "build_script": true,
+  "dependencies": [
+   "cc",
+   "cfg-if",
+   "getrandom",
+   "libc",
+   "untrusted",
+   "wasm-bindgen-test",
+   "windows-sys"
+  ]
+ },
+ "rmcp": {
+  "build_script": true,
+  "dependencies": [
+   "anyhow",
+   "async-trait",
+   "axum",
+   "base64",
+   "bytes",
+   "chrono",
+   "futures",
+   "http",
+   "http-body",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
+   "jsonwebtoken",
+   "oauth2",
+   "pastey",
+   "pin-project-lite",
+   "process-wrap",
+   "rand",
+   "reqwest",
+   "rmcp-macros",
+   "schemars",
+   "serde",
+   "serde_json",
+   "sse-stream",
+   "thiserror",
+   "tokio",
+   "tokio-stream",
+   "tokio-util",
+   "tower-service",
+   "tracing",
+   "tracing-subscriber",
+   "url",
+   "uuid",
+   "which"
+  ]
+ },
+ "rmcp-macros": {
+  "build_script": false,
+  "dependencies": [
+   "darling",
+   "proc-macro2",
+   "quote",
+   "serde_json",
+   "syn"
+  ]
+ },
+ "rmp": {
+  "build_script": false,
+  "dependencies": [
+   "num-traits",
+   "quickcheck"
+  ]
+ },
+ "rmp-serde": {
+  "build_script": false,
+  "dependencies": [
+   "rmp",
+   "serde",
+   "serde_bytes"
+  ]
+ },
+ "rusqlite": {
+  "build_script": false,
+  "dependencies": [
+   "bencher",
+   "bitflags",
+   "chrono",
+   "csv",
+   "doc-comment",
+   "fallible-iterator",
+   "fallible-streaming-iterator",
+   "hashlink",
+   "lazy_static",
+   "libsqlite3-sys",
+   "regex",
+   "rusqlite-macros",
+   "serde_json",
+   "smallvec",
+   "tempfile",
+   "time",
+   "unicase",
+   "url",
+   "uuid"
+  ]
+ },
+ "rustc-hash": {
+  "build_script": false,
+  "dependencies": [
+   "rand"
+  ]
+ },
+ "rustc_version": {
+  "build_script": false,
+  "dependencies": [
+   "doc-comment",
+   "semver"
+  ]
+ },
+ "rusticata-macros": {
+  "build_script": false,
+  "dependencies": [
+   "nom"
+  ]
+ },
+ "rustix": {
+  "build_script": true,
+  "dependencies": [
+   "bitflags",
+   "criterion",
+   "errno",
+   "flate2",
+   "libc",
+   "linux-raw-sys",
+   "memoffset",
+   "once_cell",
+   "rustc-std-workspace-alloc",
+   "rustc-std-workspace-core",
+   "serial_test",
+   "static_assertions",
+   "tempfile",
+   "windows-sys"
+  ]
+ },
+ "rustls": {
+  "build_script": true,
+  "dependencies": [
+   "aws-lc-rs",
+   "base64",
+   "bencher",
+   "brotli",
+   "brotli-decompressor",
+   "env_logger",
+   "hashbrown",
+   "hex",
+   "log",
+   "macro_rules_attribute",
+   "num-bigint",
+   "once_cell",
+   "rcgen",
+   "ring",
+   "rustls-pki-types",
+   "rustls-webpki",
+   "rustversion",
+   "serde",
+   "serde_json",
+   "subtle",
+   "time",
+   "webpki-roots",
+   "x509-parser",
+   "zeroize",
+   "zlib-rs"
+  ]
+ },
+ "rustls-pemfile": {
+  "build_script": false,
+  "dependencies": [
+   "bencher",
+   "rustls-pki-types"
+  ]
+ },
+ "rustls-pki-types": {
+  "build_script": false,
+  "dependencies": [
+   "crabgrind",
+   "web-time",
+   "zeroize"
+  ]
+ },
+ "rustls-webpki": {
+  "build_script": false,
+  "dependencies": [
+   "aws-lc-rs",
+   "base64",
+   "bencher",
+   "bzip2",
+   "once_cell",
+   "rcgen",
+   "ring",
+   "rustls-pki-types",
+   "serde",
+   "serde_json",
+   "untrusted",
+   "x509-parser"
+  ]
+ },
+ "rustversion": {
+  "build_script": true,
+  "dependencies": [
+   "trybuild"
+  ]
+ },
+ "rusty-fork": {
+  "build_script": false,
+  "dependencies": [
+   "fnv",
+   "quick-error",
+   "tempfile",
+   "wait-timeout"
+  ]
+ },
+ "ryu": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "no-panic",
+   "num_cpus",
+   "rand",
+   "rand_core",
+   "rand_xorshift"
+  ]
+ },
+ "same-file": {
+  "build_script": false,
+  "dependencies": [
+   "doc-comment",
+   "winapi-util"
+  ]
+ },
+ "schemars": {
+  "build_script": true,
+  "dependencies": [
+   "arrayvec",
+   "bigdecimal",
+   "bytes",
+   "chrono",
+   "dyn-clone",
+   "either",
+   "enumset",
+   "garde",
+   "indexmap",
+   "jiff",
+   "jsonschema",
+   "pretty_assertions",
+   "ref-cast",
+   "regex",
+   "rust_decimal",
+   "schemars_derive",
+   "semver",
+   "serde",
+   "serde_json",
+   "serde_repr",
+   "smallvec",
+   "smol_str",
+   "snapbox",
+   "trybuild",
+   "url",
+   "uuid",
+   "validator"
+  ]
+ },
+ "schemars_derive": {
+  "build_script": false,
+  "dependencies": [
+   "pretty_assertions",
+   "proc-macro2",
+   "quote",
+   "serde_derive_internals",
+   "syn"
+  ]
+ },
+ "scopeguard": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "scraper": {
+  "build_script": false,
+  "dependencies": [
+   "cssparser",
+   "ego-tree",
+   "getopts",
+   "html5ever",
+   "indexmap",
+   "precomputed-hash",
+   "selectors",
+   "serde",
+   "tendril"
+  ]
+ },
+ "selectors": {
+  "build_script": true,
+  "dependencies": [
+   "bitflags",
+   "cssparser",
+   "derive_more",
+   "log",
+   "new_debug_unreachable",
+   "phf",
+   "phf_codegen",
+   "precomputed-hash",
+   "rustc-hash",
+   "servo_arc",
+   "smallvec",
+   "to_shmem",
+   "to_shmem_derive"
+  ]
+ },
+ "self-replace": {
+  "build_script": false,
+  "dependencies": [
+   "fastrand",
+   "tempfile",
+   "windows-sys"
+  ]
+ },
+ "semver": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "serde",
+   "serde_core"
+  ]
+ },
+ "serde": {
+  "build_script": true,
+  "dependencies": [
+   "serde_core",
+   "serde_derive"
+  ]
+ },
+ "serde-untagged": {
+  "build_script": false,
+  "dependencies": [
+   "erased-serde",
+   "serde",
+   "serde_core",
+   "serde_derive",
+   "serde_json",
+   "toml",
+   "typeid"
+  ]
+ },
+ "serde_core": {
+  "build_script": true,
+  "dependencies": [
+   "serde",
+   "serde_derive"
+  ]
+ },
+ "serde_derive": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "serde",
+   "syn"
+  ]
+ },
+ "serde_derive_internals": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "serde_json": {
+  "build_script": true,
+  "dependencies": [
+   "automod",
+   "indexmap",
+   "indoc",
+   "itoa",
+   "memchr",
+   "ref-cast",
+   "rustversion",
+   "serde",
+   "serde_bytes",
+   "serde_core",
+   "serde_derive",
+   "serde_stacker",
+   "trybuild",
+   "zmij"
+  ]
+ },
+ "serde_path_to_error": {
+  "build_script": false,
+  "dependencies": [
+   "itoa",
+   "serde",
+   "serde_core",
+   "serde_derive",
+   "serde_json"
+  ]
+ },
+ "serde_repr": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "rustversion",
+   "serde",
+   "serde_json",
+   "syn",
+   "trybuild"
+  ]
+ },
+ "serde_spanned": {
+  "build_script": false,
+  "dependencies": [
+   "serde",
+   "serde-untagged",
+   "serde_core",
+   "serde_derive"
+  ]
+ },
+ "serde_urlencoded": {
+  "build_script": false,
+  "dependencies": [
+   "form_urlencoded",
+   "itoa",
+   "ryu",
+   "serde",
+   "serde_derive"
+  ]
+ },
+ "serde_with": {
+  "build_script": false,
+  "dependencies": [
+   "base64",
+   "bs58",
+   "chrono",
+   "document-features",
+   "expect-test",
+   "fnv",
+   "glob",
+   "hashbrown",
+   "hex",
+   "indexmap",
+   "jsonschema",
+   "mime",
+   "pretty_assertions",
+   "regex",
+   "rmp-serde",
+   "ron",
+   "rustversion",
+   "schemars",
+   "serde",
+   "serde-xml-rs",
+   "serde_core",
+   "serde_json",
+   "serde_test",
+   "serde_with_macros",
+   "smallvec",
+   "time",
+   "yaml_serde"
+  ]
+ },
+ "serde_with_macros": {
+  "build_script": false,
+  "dependencies": [
+   "darling",
+   "expect-test",
+   "glob",
+   "pretty_assertions",
+   "proc-macro2",
+   "quote",
+   "regex",
+   "rustversion",
+   "serde",
+   "serde_json",
+   "syn",
+   "trybuild"
+  ]
+ },
+ "serde_yaml": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "indexmap",
+   "indoc",
+   "itoa",
+   "ryu",
+   "serde",
+   "serde_derive",
+   "unsafe-libyaml"
+  ]
+ },
+ "serialize-to-javascript": {
+  "build_script": false,
+  "dependencies": [
+   "serde",
+   "serde_json",
+   "serialize-to-javascript-impl"
+  ]
+ },
+ "serialize-to-javascript-impl": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "servo_arc": {
+  "build_script": false,
+  "dependencies": [
+   "serde",
+   "stable_deref_trait"
+  ]
+ },
+ "sha1": {
+  "build_script": false,
+  "dependencies": [
+   "cfg-if",
+   "cpufeatures",
+   "digest",
+   "hex-literal",
+   "sha1-asm"
+  ]
+ },
+ "sha2": {
+  "build_script": false,
+  "dependencies": [
+   "cfg-if",
+   "cpufeatures",
+   "digest",
+   "hex-literal",
+   "sha2-asm"
+  ]
+ },
+ "sharded-slab": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "indexmap",
+   "lazy_static",
+   "loom",
+   "memory-stats",
+   "proptest",
+   "slab"
+  ]
+ },
+ "shlex": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "signal-hook": {
+  "build_script": true,
+  "dependencies": [
+   "cc",
+   "libc",
+   "serial_test",
+   "signal-hook-registry"
+  ]
+ },
+ "signal-hook-mio": {
+  "build_script": false,
+  "dependencies": [
+   "libc",
+   "mio",
+   "mio-uds",
+   "serial_test",
+   "signal-hook"
+  ]
+ },
+ "signal-hook-registry": {
+  "build_script": false,
+  "dependencies": [
+   "errno",
+   "libc",
+   "signal-hook"
+  ]
+ },
+ "simd-adler32": {
+  "build_script": false,
+  "dependencies": [
+   "adler",
+   "adler32",
+   "criterion",
+   "rand"
+  ]
+ },
+ "simd_cesu8": {
+  "build_script": false,
+  "dependencies": [
+   "cesu8",
+   "criterion",
+   "rustc_version",
+   "simdutf8"
+  ]
+ },
+ "simdutf8": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "siphasher": {
+  "build_script": false,
+  "dependencies": [
+   "serde",
+   "serde_json"
+  ]
+ },
+ "sketches-ddsketch": {
+  "build_script": false,
+  "dependencies": [
+   "approx",
+   "rand",
+   "rand_distr",
+   "serde"
+  ]
+ },
+ "slab": {
+  "build_script": false,
+  "dependencies": [
+   "serde",
+   "serde_test"
+  ]
+ },
+ "smallvec": {
+  "build_script": false,
+  "dependencies": [
+   "arbitrary",
+   "bincode",
+   "debugger_test",
+   "debugger_test_parser",
+   "malloc_size_of",
+   "serde",
+   "unty"
+  ]
+ },
+ "socket2": {
+  "build_script": false,
+  "dependencies": [
+   "libc",
+   "windows-sys"
+  ]
+ },
+ "socks": {
+  "build_script": false,
+  "dependencies": [
+   "byteorder",
+   "libc",
+   "winapi"
+  ]
+ },
+ "softbuffer": {
+  "build_script": false,
+  "dependencies": [
+   "android-activity",
+   "as-raw-xcb-connection",
+   "bytemuck",
+   "colorous",
+   "criterion",
+   "drm",
+   "fastrand",
+   "image",
+   "js-sys",
+   "memmap2",
+   "ndk",
+   "objc2",
+   "objc2-core-foundation",
+   "objc2-core-graphics",
+   "objc2-foundation",
+   "objc2-quartz-core",
+   "raw-window-handle",
+   "rayon",
+   "redox_syscall",
+   "rustix",
+   "tiny-xlib",
+   "tracing",
+   "wasm-bindgen",
+   "wasm-bindgen-test",
+   "wayland-backend",
+   "wayland-client",
+   "wayland-sys",
+   "web-sys",
+   "web-time",
+   "windows-sys",
+   "winit",
+   "x11rb"
+  ]
+ },
+ "soup3": {
+  "build_script": false,
+  "dependencies": [
+   "futures-channel",
+   "gio",
+   "gir-format-check",
+   "glib",
+   "libc",
+   "rustdoc-stripper",
+   "soup3-sys"
+  ]
+ },
+ "soup3-sys": {
+  "build_script": true,
+  "dependencies": [
+   "gio-sys",
+   "glib-sys",
+   "gobject-sys",
+   "libc",
+   "shell-words",
+   "system-deps",
+   "tempfile"
+  ]
+ },
+ "sse-stream": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "axum",
+   "bytes",
+   "futures-util",
+   "http-body",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
+   "pin-project-lite",
+   "reqwest",
+   "serde",
+   "tokio",
+   "tokio-util",
+   "tracing",
+   "tracing-subscriber"
+  ]
+ },
+ "stable_deref_trait": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "static_assertions": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "string_cache": {
+  "build_script": false,
+  "dependencies": [
+   "malloc_size_of",
+   "new_debug_unreachable",
+   "parking_lot",
+   "phf_shared",
+   "precomputed-hash",
+   "serde"
+  ]
+ },
+ "string_cache_codegen": {
+  "build_script": false,
+  "dependencies": [
+   "phf_generator",
+   "phf_shared",
+   "proc-macro2",
+   "quote"
+  ]
+ },
+ "strsim": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "strum": {
+  "build_script": false,
+  "dependencies": [
+   "phf",
+   "strum_macros"
+  ]
+ },
+ "strum_macros": {
+  "build_script": false,
+  "dependencies": [
+   "heck",
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "subtle": {
+  "build_script": false,
+  "dependencies": [
+   "rand"
+  ]
+ },
+ "swift-rs": {
+  "build_script": true,
+  "dependencies": [
+   "base64",
+   "serde",
+   "serde_json",
+   "serial_test"
+  ]
+ },
+ "symlink": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "syn": {
+  "build_script": true,
+  "dependencies": [
+   "anyhow",
+   "automod",
+   "flate2",
+   "insta",
+   "proc-macro2",
+   "quote",
+   "rayon",
+   "ref-cast",
+   "regex",
+   "reqwest",
+   "rustversion",
+   "syn-test-suite",
+   "tar",
+   "termcolor",
+   "unicode-ident",
+   "walkdir"
+  ]
+ },
+ "sync_wrapper": {
+  "build_script": false,
+  "dependencies": [
+   "futures",
+   "futures-core",
+   "pin-project-lite"
+  ]
+ },
+ "synstructure": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn",
+   "synstructure_test_traits"
+  ]
+ },
+ "system-deps": {
+  "build_script": false,
+  "dependencies": [
+   "assert_matches",
+   "cfg-expr",
+   "heck",
+   "itertools",
+   "lazy_static",
+   "pkg-config",
+   "toml",
+   "version-compare"
+  ]
+ },
+ "tao": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "block2",
+   "core-foundation",
+   "core-graphics",
+   "crossbeam-channel",
+   "dbus",
+   "dispatch2",
+   "dlopen2",
+   "dpi",
+   "env_logger",
+   "gdkwayland-sys",
+   "gdkx11-sys",
+   "gtk",
+   "image",
+   "jni",
+   "libc",
+   "log",
+   "ndk",
+   "ndk-sys",
+   "objc2",
+   "objc2-app-kit",
+   "objc2-foundation",
+   "objc2-ui-kit",
+   "once_cell",
+   "parking_lot",
+   "percent-encoding",
+   "raw-window-handle",
+   "serde",
+   "softbuffer",
+   "tao-macros",
+   "unicode-segmentation",
+   "url",
+   "windows",
+   "windows-core",
+   "windows-version",
+   "x11-dl"
+  ]
+ },
+ "tao-macros": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "tar": {
+  "build_script": false,
+  "dependencies": [
+   "astral-tokio-tar",
+   "filetime",
+   "libc",
+   "rand",
+   "tempfile",
+   "tokio",
+   "tokio-stream",
+   "xattr"
+  ]
+ },
+ "target-lexicon": {
+  "build_script": true,
+  "dependencies": [
+   "serde",
+   "serde_json"
+  ]
+ },
+ "tauri": {
+  "build_script": true,
+  "dependencies": [
+   "anyhow",
+   "bytes",
+   "cargo_toml",
+   "cookie",
+   "data-url",
+   "dirs",
+   "dunce",
+   "embed_plist",
+   "getrandom",
+   "glob",
+   "gtk",
+   "heck",
+   "http",
+   "http-range",
+   "image",
+   "jni",
+   "libc",
+   "log",
+   "mime",
+   "muda",
+   "objc2",
+   "objc2-app-kit",
+   "objc2-foundation",
+   "objc2-ui-kit",
+   "objc2-web-kit",
+   "percent-encoding",
+   "plist",
+   "proptest",
+   "quickcheck",
+   "quickcheck_macros",
+   "raw-window-handle",
+   "reqwest",
+   "rustls",
+   "serde",
+   "serde_json",
+   "serde_repr",
+   "serialize-to-javascript",
+   "specta",
+   "swift-rs",
+   "tauri-build",
+   "tauri-macros",
+   "tauri-runtime",
+   "tauri-runtime-wry",
+   "tauri-utils",
+   "thiserror",
+   "tokio",
+   "tracing",
+   "tray-icon",
+   "url",
+   "uuid",
+   "webkit2gtk",
+   "webview2-com",
+   "window-vibrancy",
+   "windows"
+  ]
+ },
+ "tauri-build": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "cargo_toml",
+   "dirs",
+   "glob",
+   "heck",
+   "json-patch",
+   "quote",
+   "schemars",
+   "semver",
+   "serde",
+   "serde_json",
+   "tauri-codegen",
+   "tauri-utils",
+   "tauri-winres",
+   "walkdir"
+  ]
+ },
+ "tauri-codegen": {
+  "build_script": false,
+  "dependencies": [
+   "base64",
+   "brotli",
+   "ico",
+   "json-patch",
+   "plist",
+   "png",
+   "proc-macro2",
+   "quote",
+   "semver",
+   "serde",
+   "serde_json",
+   "sha2",
+   "syn",
+   "tauri-utils",
+   "thiserror",
+   "time",
+   "url",
+   "uuid",
+   "walkdir"
+  ]
+ },
+ "tauri-macros": {
+  "build_script": false,
+  "dependencies": [
+   "heck",
+   "proc-macro2",
+   "quote",
+   "syn",
+   "tauri-codegen",
+   "tauri-utils"
+  ]
+ },
+ "tauri-plugin": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "glob",
+   "plist",
+   "schemars",
+   "serde",
+   "serde_json",
+   "tauri-utils",
+   "walkdir"
+  ]
+ },
+ "tauri-plugin-dialog": {
+  "build_script": true,
+  "dependencies": [
+   "log",
+   "raw-window-handle",
+   "rfd",
+   "serde",
+   "serde_json",
+   "tauri",
+   "tauri-plugin",
+   "tauri-plugin-fs",
+   "thiserror",
+   "url"
+  ]
+ },
+ "tauri-plugin-fs": {
+  "build_script": true,
+  "dependencies": [
+   "anyhow",
+   "dunce",
+   "glob",
+   "log",
+   "notify",
+   "notify-debouncer-full",
+   "objc2-foundation",
+   "percent-encoding",
+   "schemars",
+   "serde",
+   "serde_json",
+   "serde_repr",
+   "tauri",
+   "tauri-plugin",
+   "tauri-utils",
+   "thiserror",
+   "toml",
+   "url"
+  ]
+ },
+ "tauri-plugin-opener": {
+  "build_script": true,
+  "dependencies": [
+   "dunce",
+   "glob",
+   "objc2-app-kit",
+   "objc2-foundation",
+   "open",
+   "schemars",
+   "serde",
+   "serde_json",
+   "tauri",
+   "tauri-plugin",
+   "thiserror",
+   "url",
+   "windows",
+   "zbus"
+  ]
+ },
+ "tauri-plugin-process": {
+  "build_script": true,
+  "dependencies": [
+   "tauri",
+   "tauri-plugin"
+  ]
+ },
+ "tauri-plugin-single-instance": {
+  "build_script": false,
+  "dependencies": [
+   "semver",
+   "serde",
+   "serde_json",
+   "tauri",
+   "tauri-plugin-deep-link",
+   "thiserror",
+   "tracing",
+   "windows-sys",
+   "zbus"
+  ]
+ },
+ "tauri-runtime": {
+  "build_script": true,
+  "dependencies": [
+   "cookie",
+   "dpi",
+   "gtk",
+   "http",
+   "jni",
+   "objc2",
+   "objc2-ui-kit",
+   "objc2-web-kit",
+   "raw-window-handle",
+   "serde",
+   "serde_json",
+   "tauri-utils",
+   "thiserror",
+   "url",
+   "webkit2gtk",
+   "webview2-com",
+   "windows"
+  ]
+ },
+ "tauri-runtime-wry": {
+  "build_script": true,
+  "dependencies": [
+   "gtk",
+   "http",
+   "jni",
+   "log",
+   "objc2",
+   "objc2-app-kit",
+   "once_cell",
+   "percent-encoding",
+   "raw-window-handle",
+   "softbuffer",
+   "tao",
+   "tauri-runtime",
+   "tauri-utils",
+   "tracing",
+   "url",
+   "webkit2gtk",
+   "webview2-com",
+   "windows",
+   "wry"
+  ]
+ },
+ "tauri-utils": {
+  "build_script": false,
+  "dependencies": [
+   "aes-gcm",
+   "anyhow",
+   "brotli",
+   "cargo_metadata",
+   "ctor",
+   "dom_query",
+   "dunce",
+   "getrandom",
+   "glob",
+   "html5ever",
+   "http",
+   "infer",
+   "json-patch",
+   "json5",
+   "kuchikiki",
+   "log",
+   "memchr",
+   "phf",
+   "plist",
+   "proc-macro2",
+   "quote",
+   "regex",
+   "schemars",
+   "semver",
+   "serde",
+   "serde-untagged",
+   "serde_json",
+   "serde_with",
+   "serial_test",
+   "serialize-to-javascript",
+   "swift-rs",
+   "tempfile",
+   "thiserror",
+   "toml",
+   "url",
+   "urlpattern",
+   "uuid",
+   "walkdir"
+  ]
+ },
+ "tauri-winres": {
+  "build_script": false,
+  "dependencies": [
+   "dunce",
+   "embed-resource",
+   "toml"
+  ]
+ },
+ "tempfile": {
+  "build_script": false,
+  "dependencies": [
+   "doc-comment",
+   "fastrand",
+   "getrandom",
+   "once_cell",
+   "rustix",
+   "windows-sys"
+  ]
+ },
+ "tendril": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "encoding",
+   "encoding_rs",
+   "futf",
+   "mac",
+   "new_debug_unreachable",
+   "rand",
+   "utf-8"
+  ]
+ },
+ "termina": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "futures-core",
+   "parking_lot",
+   "rustix",
+   "signal-hook",
+   "windows-sys"
+  ]
+ },
+ "terminfo": {
+  "build_script": true,
+  "dependencies": [
+   "fnv",
+   "nom",
+   "phf",
+   "phf_codegen"
+  ]
+ },
+ "termios": {
+  "build_script": false,
+  "dependencies": [
+   "libc"
+  ]
+ },
+ "termwiz": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "base64",
+   "bitflags",
+   "cassowary",
+   "criterion",
+   "env_logger",
+   "fancy-regex",
+   "filedescriptor",
+   "finl_unicode",
+   "fixedbitset",
+   "fnv",
+   "hex",
+   "image",
+   "k9",
+   "lazy_static",
+   "libc",
+   "log",
+   "memmem",
+   "nix",
+   "num-derive",
+   "num-traits",
+   "ordered-float",
+   "pest",
+   "pest_derive",
+   "phf",
+   "serde",
+   "sha2",
+   "signal-hook",
+   "siphasher",
+   "terminfo",
+   "termios",
+   "thiserror",
+   "ucd-trie",
+   "unicode-segmentation",
+   "varbincode",
+   "vtparse",
+   "wezterm-bidi",
+   "wezterm-blob-leases",
+   "wezterm-color-types",
+   "wezterm-dynamic",
+   "wezterm-input-types",
+   "winapi"
+  ]
+ },
+ "thiserror": {
+  "build_script": true,
+  "dependencies": [
+   "anyhow",
+   "ref-cast",
+   "rustversion",
+   "thiserror-impl",
+   "trybuild"
+  ]
+ },
+ "thiserror-impl": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "thread_local": {
+  "build_script": false,
+  "dependencies": [
+   "cfg-if",
+   "criterion"
+  ]
+ },
+ "time": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "deranged",
+   "itoa",
+   "js-sys",
+   "libc",
+   "num-conv",
+   "num_threads",
+   "powerfmt",
+   "quickcheck",
+   "quickcheck_macros",
+   "rand",
+   "rstest",
+   "rstest_reuse",
+   "serde",
+   "serde_core",
+   "serde_json",
+   "serde_test",
+   "time-core",
+   "time-macros",
+   "trybuild"
+  ]
+ },
+ "time-core": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "time-macros": {
+  "build_script": false,
+  "dependencies": [
+   "num-conv",
+   "time-core"
+  ]
+ },
+ "tinystr": {
+  "build_script": false,
+  "dependencies": [
+   "bincode",
+   "criterion",
+   "databake",
+   "displaydoc",
+   "postcard",
+   "rand",
+   "serde_core",
+   "serde_json",
+   "zerovec"
+  ]
+ },
+ "tinytemplate": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "serde",
+   "serde_derive",
+   "serde_json"
+  ]
+ },
+ "tinyvec": {
+  "build_script": false,
+  "dependencies": [
+   "arbitrary",
+   "borsh",
+   "criterion",
+   "debugger_test",
+   "debugger_test_parser",
+   "defmt",
+   "generic-array",
+   "serde_core",
+   "serde_test",
+   "smallvec",
+   "tinyvec_macros"
+  ]
+ },
+ "tinyvec_macros": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "tokio": {
+  "build_script": false,
+  "dependencies": [
+   "async-stream",
+   "backtrace",
+   "bytes",
+   "futures",
+   "futures-concurrency",
+   "futures-test",
+   "io-uring",
+   "libc",
+   "loom",
+   "mio",
+   "mio-aio",
+   "mockall",
+   "nix",
+   "parking_lot",
+   "pin-project-lite",
+   "proptest",
+   "rand",
+   "signal-hook-registry",
+   "slab",
+   "socket2",
+   "tempfile",
+   "tokio-macros",
+   "tokio-stream",
+   "tokio-test",
+   "tokio-util",
+   "tracing",
+   "tracing-mock",
+   "wasm-bindgen-test",
+   "windows-sys"
+  ]
+ },
+ "tokio-macros": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn",
+   "tokio"
+  ]
+ },
+ "tokio-rustls": {
+  "build_script": false,
+  "dependencies": [
+   "argh",
+   "futures-util",
+   "lazy_static",
+   "rcgen",
+   "rustls",
+   "tokio",
+   "webpki-roots"
+  ]
+ },
+ "tokio-stream": {
+  "build_script": false,
+  "dependencies": [
+   "async-stream",
+   "futures",
+   "futures-core",
+   "parking_lot",
+   "pin-project-lite",
+   "tokio",
+   "tokio-test",
+   "tokio-util"
+  ]
+ },
+ "tokio-tungstenite": {
+  "build_script": false,
+  "dependencies": [
+   "env_logger",
+   "futures-channel",
+   "futures-util",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
+   "log",
+   "native-tls",
+   "rustls",
+   "rustls-native-certs",
+   "rustls-pki-types",
+   "tokio",
+   "tokio-native-tls",
+   "tokio-rustls",
+   "tungstenite",
+   "webpki-roots"
+  ]
+ },
+ "tokio-unix-ipc": {
+  "build_script": false,
+  "dependencies": [
+   "backtrace",
+   "bincode",
+   "libc",
+   "nix",
+   "rand",
+   "rmp-serde",
+   "serde",
+   "tokio"
+  ]
+ },
+ "tokio-util": {
+  "build_script": false,
+  "dependencies": [
+   "async-stream",
+   "bytes",
+   "futures",
+   "futures-core",
+   "futures-io",
+   "futures-sink",
+   "futures-test",
+   "futures-util",
+   "hashbrown",
+   "loom",
+   "parking_lot",
+   "pin-project-lite",
+   "slab",
+   "tempfile",
+   "tokio",
+   "tokio-stream",
+   "tokio-test",
+   "tracing"
+  ]
+ },
+ "toml": {
+  "build_script": false,
+  "dependencies": [
+   "anstream",
+   "anstyle",
+   "foldhash",
+   "indexmap",
+   "itertools",
+   "serde",
+   "serde-untagged",
+   "serde_core",
+   "serde_json",
+   "serde_spanned",
+   "snapbox",
+   "toml-test-data",
+   "toml-test-harness",
+   "toml_datetime",
+   "toml_edit",
+   "toml_parser",
+   "toml_writer",
+   "walkdir",
+   "winnow"
+  ]
+ },
+ "toml_datetime": {
+  "build_script": false,
+  "dependencies": [
+   "serde",
+   "serde_core",
+   "snapbox"
+  ]
+ },
+ "toml_edit": {
+  "build_script": false,
+  "dependencies": [
+   "anstream",
+   "anstyle",
+   "indexmap",
+   "kstring",
+   "libtest-mimic",
+   "proptest",
+   "serde",
+   "serde-untagged",
+   "serde_core",
+   "serde_json",
+   "serde_spanned",
+   "snapbox",
+   "toml-test-data",
+   "toml-test-harness",
+   "toml_datetime",
+   "toml_parser",
+   "toml_writer",
+   "walkdir",
+   "winnow"
+  ]
+ },
+ "toml_parser": {
+  "build_script": false,
+  "dependencies": [
+   "anstream",
+   "anstyle",
+   "snapbox",
+   "winnow"
+  ]
+ },
+ "toml_writer": {
+  "build_script": false,
+  "dependencies": [
+   "proptest",
+   "snapbox",
+   "toml"
+  ]
+ },
+ "tower": {
+  "build_script": false,
+  "dependencies": [
+   "futures",
+   "futures-core",
+   "futures-util",
+   "hdrhistogram",
+   "http",
+   "indexmap",
+   "pin-project-lite",
+   "quickcheck",
+   "rand",
+   "slab",
+   "sync_wrapper",
+   "tokio",
+   "tokio-stream",
+   "tokio-test",
+   "tokio-util",
+   "tower-layer",
+   "tower-service",
+   "tower-test",
+   "tracing",
+   "tracing-subscriber"
+  ]
+ },
+ "tower-http": {
+  "build_script": false,
+  "dependencies": [
+   "async-compression",
+   "base64",
+   "bitflags",
+   "brotli",
+   "bytes",
+   "flate2",
+   "futures-core",
+   "futures-util",
+   "http",
+   "http-body",
+   "http-body-util",
+   "http-range-header",
+   "httpdate",
+   "hyper-util",
+   "iri-string",
+   "mime",
+   "mime_guess",
+   "once_cell",
+   "percent-encoding",
+   "pin-project-lite",
+   "serde_json",
+   "sync_wrapper",
+   "tokio",
+   "tokio-util",
+   "tower",
+   "tower-layer",
+   "tower-service",
+   "tracing",
+   "tracing-subscriber",
+   "uuid",
+   "zstd"
+  ]
+ },
+ "tower-layer": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "tower-service": {
+  "build_script": false,
+  "dependencies": [
+   "futures",
+   "http",
+   "tokio",
+   "tower-layer"
+  ]
+ },
+ "tracing": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "futures",
+   "log",
+   "pin-project-lite",
+   "tracing-attributes",
+   "tracing-core",
+   "wasm-bindgen-test"
+  ]
+ },
+ "tracing-appender": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "crossbeam-channel",
+   "parking_lot",
+   "symlink",
+   "tempfile",
+   "thiserror",
+   "time",
+   "tracing",
+   "tracing-subscriber"
+  ]
+ },
+ "tracing-attributes": {
+  "build_script": false,
+  "dependencies": [
+   "async-trait",
+   "proc-macro2",
+   "quote",
+   "rustversion",
+   "syn",
+   "tokio-test",
+   "tracing",
+   "tracing-subscriber",
+   "trybuild"
+  ]
+ },
+ "tracing-core": {
+  "build_script": false,
+  "dependencies": [
+   "once_cell",
+   "valuable"
+  ]
+ },
+ "tracing-log": {
+  "build_script": false,
+  "dependencies": [
+   "ahash",
+   "criterion",
+   "log",
+   "lru",
+   "once_cell",
+   "tracing",
+   "tracing-core"
+  ]
+ },
+ "tracing-serde": {
+  "build_script": false,
+  "dependencies": [
+   "serde",
+   "serde_json",
+   "tracing-core",
+   "valuable",
+   "valuable-serde"
+  ]
+ },
+ "tracing-subscriber": {
+  "build_script": false,
+  "dependencies": [
+   "chrono",
+   "criterion",
+   "log",
+   "matchers",
+   "nu-ansi-term",
+   "once_cell",
+   "parking_lot",
+   "regex",
+   "regex-automata",
+   "serde",
+   "serde_json",
+   "sharded-slab",
+   "smallvec",
+   "thread_local",
+   "time",
+   "tokio",
+   "tracing",
+   "tracing-core",
+   "tracing-futures",
+   "tracing-log",
+   "tracing-serde",
+   "valuable",
+   "valuable-serde"
+  ]
+ },
+ "tray-icon": {
+  "build_script": false,
+  "dependencies": [
+   "crossbeam-channel",
+   "dirs",
+   "eframe",
+   "gtk",
+   "image",
+   "libappindicator",
+   "muda",
+   "objc2",
+   "objc2-app-kit",
+   "objc2-core-foundation",
+   "objc2-core-graphics",
+   "objc2-foundation",
+   "once_cell",
+   "png",
+   "serde",
+   "serde_json",
+   "tao",
+   "thiserror",
+   "windows-sys",
+   "winit"
+  ]
+ },
+ "try-lock": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "tungstenite": {
+  "build_script": false,
+  "dependencies": [
+   "bytes",
+   "criterion",
+   "data-encoding",
+   "env_logger",
+   "http",
+   "httparse",
+   "input_buffer",
+   "log",
+   "native-tls",
+   "rand",
+   "rustls",
+   "rustls-native-certs",
+   "rustls-pki-types",
+   "sha1",
+   "socket2",
+   "thiserror",
+   "url",
+   "webpki-roots"
+  ]
+ },
+ "typeid": {
+  "build_script": true,
+  "dependencies": []
+ },
+ "typenum": {
+  "build_script": false,
+  "dependencies": [
+   "scale-info"
+  ]
+ },
+ "ucd-trie": {
+  "build_script": false,
+  "dependencies": [
+   "once_cell"
+  ]
+ },
+ "uds_windows": {
+  "build_script": false,
+  "dependencies": [
+   "memoffset",
+   "tempfile",
+   "windows-sys"
+  ]
+ },
+ "unarray": {
+  "build_script": false,
+  "dependencies": [
+   "test-strategy"
+  ]
+ },
+ "unic-char-property": {
+  "build_script": false,
+  "dependencies": [
+   "unic-char-range"
+  ]
+ },
+ "unic-char-range": {
+  "build_script": false,
+  "dependencies": [
+   "rayon"
+  ]
+ },
+ "unic-common": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "unic-ucd-ident": {
+  "build_script": false,
+  "dependencies": [
+   "matches",
+   "regex",
+   "unic-char-property",
+   "unic-char-range",
+   "unic-ucd-category",
+   "unic-ucd-version"
+  ]
+ },
+ "unic-ucd-version": {
+  "build_script": false,
+  "dependencies": [
+   "unic-common"
+  ]
+ },
+ "unicode-ident": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "fst",
+   "rand",
+   "roaring",
+   "ucd-trie",
+   "unicode-xid"
+  ]
+ },
+ "unicode-segmentation": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "proptest",
+   "quickcheck"
+  ]
+ },
+ "unicode-truncate": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "itertools",
+   "unicode-segmentation",
+   "unicode-width"
+  ]
+ },
+ "unicode-width": {
+  "build_script": false,
+  "dependencies": [
+   "compiler_builtins",
+   "rustc-std-workspace-core",
+   "rustc-std-workspace-std"
+  ]
+ },
+ "unicode-xid": {
+  "build_script": false,
+  "dependencies": [
+   "criterion"
+  ]
+ },
+ "unsafe-libyaml": {
+  "build_script": false,
+  "dependencies": [
+   "pretty_assertions"
+  ]
+ },
+ "untrusted": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "ureq": {
+  "build_script": false,
+  "dependencies": [
+   "assert_no_alloc",
+   "auto-args",
+   "base64",
+   "brotli-decompressor",
+   "cookie_store",
+   "der",
+   "encoding_rs",
+   "env_logger",
+   "flate2",
+   "getrandom",
+   "log",
+   "mime_guess",
+   "native-tls",
+   "percent-encoding",
+   "rustls",
+   "rustls-pki-types",
+   "rustls-platform-verifier",
+   "serde",
+   "serde_json",
+   "socks",
+   "ureq-proto",
+   "url",
+   "utf8-zero",
+   "webpki-root-certs",
+   "webpki-roots",
+   "winreg"
+  ]
+ },
+ "ureq-proto": {
+  "build_script": false,
+  "dependencies": [
+   "base64",
+   "http",
+   "httparse",
+   "log"
+  ]
+ },
+ "url": {
+  "build_script": false,
+  "dependencies": [
+   "bencher",
+   "form_urlencoded",
+   "idna",
+   "percent-encoding",
+   "serde",
+   "serde_derive",
+   "serde_json",
+   "wasm-bindgen-test"
+  ]
+ },
+ "urlencoding": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "urlpattern": {
+  "build_script": false,
+  "dependencies": [
+   "regex",
+   "serde",
+   "serde_json",
+   "unic-ucd-ident",
+   "url"
+  ]
+ },
+ "utf-8": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "utf8-zero": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "utf8_iter": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "utf8parse": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "uuid": {
+  "build_script": false,
+  "dependencies": [
+   "arbitrary",
+   "atomic",
+   "borsh",
+   "borsh-derive",
+   "bytemuck",
+   "getrandom",
+   "js-sys",
+   "md-5",
+   "rand",
+   "rustversion",
+   "serde",
+   "serde_core",
+   "serde_derive",
+   "serde_json",
+   "serde_test",
+   "sha1_smol",
+   "slog",
+   "trybuild",
+   "uuid-rng-internal",
+   "wasm-bindgen",
+   "wasm-bindgen-test",
+   "zerocopy"
+  ]
+ },
+ "valuable": {
+  "build_script": true,
+  "dependencies": [
+   "criterion",
+   "valuable-derive"
+  ]
+ },
+ "vcpkg": {
+  "build_script": false,
+  "dependencies": [
+   "lazy_static",
+   "tempdir"
+  ]
+ },
+ "version-compare": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "version_check": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "vm-fdt": {
+  "build_script": false,
+  "dependencies": [
+   "hashbrown"
+  ]
+ },
+ "vswhom": {
+  "build_script": false,
+  "dependencies": [
+   "libc",
+   "vswhom-sys"
+  ]
+ },
+ "vswhom-sys": {
+  "build_script": true,
+  "dependencies": [
+   "cc",
+   "libc"
+  ]
+ },
+ "vt100": {
+  "build_script": false,
+  "dependencies": [
+   "itoa",
+   "nix",
+   "quickcheck",
+   "rand",
+   "serde",
+   "serde_json",
+   "terminal_size",
+   "unicode-width",
+   "vte"
+  ]
+ },
+ "vte": {
+  "build_script": false,
+  "dependencies": [
+   "arrayvec",
+   "bitflags",
+   "cursor-icon",
+   "log",
+   "memchr",
+   "serde"
+  ]
+ },
+ "vtparse": {
+  "build_script": false,
+  "dependencies": [
+   "k9",
+   "utf8parse"
+  ]
+ },
+ "wait-timeout": {
+  "build_script": false,
+  "dependencies": [
+   "libc"
+  ]
+ },
+ "walkdir": {
+  "build_script": false,
+  "dependencies": [
+   "doc-comment",
+   "same-file",
+   "winapi-util"
+  ]
+ },
+ "want": {
+  "build_script": false,
+  "dependencies": [
+   "tokio-executor",
+   "tokio-sync",
+   "try-lock"
+  ]
+ },
+ "wasi": {
+  "build_script": false,
+  "dependencies": [
+   "rustc-std-workspace-alloc",
+   "rustc-std-workspace-core"
+  ]
+ },
+ "wasip2": {
+  "build_script": false,
+  "dependencies": [
+   "rustc-std-workspace-alloc",
+   "rustc-std-workspace-core",
+   "wit-bindgen"
+  ]
+ },
+ "wasip3": {
+  "build_script": false,
+  "dependencies": [
+   "bytes",
+   "futures",
+   "http",
+   "http-body",
+   "thiserror",
+   "wit-bindgen"
+  ]
+ },
+ "wasm-bindgen": {
+  "build_script": true,
+  "dependencies": [
+   "cfg-if",
+   "once_cell",
+   "paste",
+   "rustversion",
+   "serde",
+   "serde_derive",
+   "serde_json",
+   "wasm-bindgen-macro",
+   "wasm-bindgen-shared"
+  ]
+ },
+ "wasm-bindgen-futures": {
+  "build_script": false,
+  "dependencies": [
+   "futures-channel",
+   "futures-lite",
+   "js-sys",
+   "wasm-bindgen"
+  ]
+ },
+ "wasm-bindgen-macro": {
+  "build_script": false,
+  "dependencies": [
+   "quote",
+   "trybuild",
+   "wasm-bindgen-macro-support"
+  ]
+ },
+ "wasm-bindgen-macro-support": {
+  "build_script": false,
+  "dependencies": [
+   "bumpalo",
+   "proc-macro2",
+   "quote",
+   "syn",
+   "wasm-bindgen-shared"
+  ]
+ },
+ "wasm-bindgen-shared": {
+  "build_script": true,
+  "dependencies": [
+   "unicode-ident"
+  ]
+ },
+ "wasm-encoder": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "leb128fmt",
+   "tempfile",
+   "wasmparser",
+   "wasmprinter"
+  ]
+ },
+ "wasm-metadata": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "auditable-serde",
+   "clap",
+   "flate2",
+   "indexmap",
+   "serde",
+   "serde_derive",
+   "serde_json",
+   "spdx",
+   "url",
+   "wasm-encoder",
+   "wasmparser"
+  ]
+ },
+ "wasm-streams": {
+  "build_script": false,
+  "dependencies": [
+   "futures-util",
+   "gloo-timers",
+   "js-sys",
+   "pin-project",
+   "tokio",
+   "wasm-bindgen",
+   "wasm-bindgen-futures",
+   "wasm-bindgen-test",
+   "web-sys"
+  ]
+ },
+ "wasmparser": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "bitflags",
+   "criterion",
+   "env_logger",
+   "hashbrown",
+   "indexmap",
+   "log",
+   "once_cell",
+   "rayon",
+   "semver",
+   "serde"
+  ]
+ },
+ "web-sys": {
+  "build_script": false,
+  "dependencies": [
+   "futures",
+   "js-sys",
+   "wasm-bindgen"
+  ]
+ },
+ "web-time": {
+  "build_script": false,
+  "dependencies": [
+   "futures-channel",
+   "futures-util",
+   "getrandom",
+   "js-sys",
+   "pollster",
+   "rand",
+   "serde",
+   "serde_json",
+   "static_assertions",
+   "wasm-bindgen",
+   "wasm-bindgen-futures",
+   "wasm-bindgen-test",
+   "web-sys"
+  ]
+ },
+ "web_atoms": {
+  "build_script": true,
+  "dependencies": [
+   "phf",
+   "phf_codegen",
+   "string_cache",
+   "string_cache_codegen"
+  ]
+ },
+ "webkit2gtk": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "cairo-rs",
+   "gdk",
+   "gdk-sys",
+   "gio",
+   "gio-sys",
+   "glib",
+   "glib-sys",
+   "gobject-sys",
+   "gtk",
+   "gtk-sys",
+   "javascriptcore-rs",
+   "libc",
+   "once_cell",
+   "soup3",
+   "webkit2gtk-sys"
+  ]
+ },
+ "webkit2gtk-sys": {
+  "build_script": true,
+  "dependencies": [
+   "bitflags",
+   "cairo-sys-rs",
+   "gdk-sys",
+   "gio-sys",
+   "glib-sys",
+   "gobject-sys",
+   "gtk-sys",
+   "javascriptcore-rs-sys",
+   "libc",
+   "pkg-config",
+   "shell-words",
+   "soup3-sys",
+   "system-deps",
+   "tempfile"
+  ]
+ },
+ "webpki-roots": {
+  "build_script": false,
+  "dependencies": [
+   "aws-lc-rs",
+   "hex",
+   "percent-encoding",
+   "rcgen",
+   "ring",
+   "rustls",
+   "rustls-pki-types",
+   "rustls-webpki",
+   "tokio",
+   "webpki-roots",
+   "x509-parser",
+   "yasna"
+  ]
+ },
+ "webview2-com": {
+  "build_script": false,
+  "dependencies": [
+   "regex",
+   "serde",
+   "serde_json",
+   "webview2-com-macros",
+   "webview2-com-sys",
+   "windows",
+   "windows-core",
+   "windows-implement",
+   "windows-interface"
+  ]
+ },
+ "webview2-com-macros": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "webview2-com-sys": {
+  "build_script": true,
+  "dependencies": [
+   "thiserror",
+   "windows",
+   "windows-core"
+  ]
+ },
+ "wezterm-bidi": {
+  "build_script": false,
+  "dependencies": [
+   "env_logger",
+   "k9",
+   "log",
+   "wezterm-dynamic"
+  ]
+ },
+ "wezterm-blob-leases": {
+  "build_script": false,
+  "dependencies": [
+   "getrandom",
+   "mac_address",
+   "serde",
+   "sha2",
+   "tempfile",
+   "thiserror",
+   "uuid"
+  ]
+ },
+ "wezterm-color-types": {
+  "build_script": false,
+  "dependencies": [
+   "csscolorparser",
+   "deltae",
+   "lazy_static",
+   "serde",
+   "wezterm-dynamic"
+  ]
+ },
+ "wezterm-dynamic": {
+  "build_script": false,
+  "dependencies": [
+   "log",
+   "maplit",
+   "ordered-float",
+   "strsim",
+   "thiserror",
+   "wezterm-dynamic-derive"
+  ]
+ },
+ "wezterm-dynamic-derive": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "wezterm-input-types": {
+  "build_script": false,
+  "dependencies": [
+   "bitflags",
+   "euclid",
+   "lazy_static",
+   "serde",
+   "wezterm-dynamic"
+  ]
+ },
+ "winapi": {
+  "build_script": true,
+  "dependencies": [
+   "winapi-i686-pc-windows-gnu",
+   "winapi-x86_64-pc-windows-gnu"
+  ]
+ },
+ "winapi-i686-pc-windows-gnu": {
+  "build_script": true,
+  "dependencies": []
+ },
+ "winapi-util": {
+  "build_script": false,
+  "dependencies": [
+   "windows-sys"
+  ]
+ },
+ "winapi-x86_64-pc-windows-gnu": {
+  "build_script": true,
+  "dependencies": []
+ },
+ "window-vibrancy": {
+  "build_script": false,
+  "dependencies": [
+   "objc2",
+   "objc2-app-kit",
+   "objc2-core-foundation",
+   "objc2-foundation",
+   "raw-window-handle",
+   "tao",
+   "windows-sys",
+   "windows-version",
+   "winit"
+  ]
+ },
+ "windows": {
+  "build_script": false,
+  "dependencies": [
+   "windows-collections",
+   "windows-core",
+   "windows-future",
+   "windows-link",
+   "windows-numerics"
+  ]
+ },
+ "windows-collections": {
+  "build_script": false,
+  "dependencies": [
+   "windows-core",
+   "windows-result",
+   "windows-strings"
+  ]
+ },
+ "windows-core": {
+  "build_script": false,
+  "dependencies": [
+   "windows-implement",
+   "windows-interface",
+   "windows-link",
+   "windows-result",
+   "windows-strings"
+  ]
+ },
+ "windows-future": {
+  "build_script": false,
+  "dependencies": [
+   "windows-core",
+   "windows-link",
+   "windows-result",
+   "windows-threading"
+  ]
+ },
+ "windows-implement": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "windows-interface": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
+ "windows-link": {
+  "build_script": false,
+  "dependencies": []
+ },
+ "windows-numerics": {
+  "build_script": false,
+  "dependencies": [
+   "windows-core",
+   "windows-link"
+  ]
+ },
+ "windows-result": {
+  "build_script": false,
+  "dependencies": [
+   "windows-link"
+  ]
+ },
+ "windows-strings": {
+  "build_script": false,
+  "dependencies": [
+   "windows-link"
+  ]
+ },
+ "windows-sys": {
+  "build_script": false,
+  "dependencies": [
+   "windows-link",
+   "windows-targets"
+  ]
+ },
+ "windows-targets": {
+  "build_script": false,
+  "dependencies": [
+   "windows-link",
+   "windows_aarch64_gnullvm",
+   "windows_aarch64_msvc",
+   "windows_i686_gnu",
+   "windows_i686_gnullvm",
+   "windows_i686_msvc",
+   "windows_x86_64_gnu",
+   "windows_x86_64_gnullvm",
+   "windows_x86_64_msvc"
+  ]
+ },
+ "windows-threading": {
+  "build_script": false,
+  "dependencies": [
+   "windows-link"
+  ]
+ },
+ "windows-version": {
+  "build_script": false,
+  "dependencies": [
+   "windows-link"
+  ]
+ },
+ "windows_aarch64_gnullvm": {
+  "build_script": true,
+  "dependencies": []
+ },
+ "windows_aarch64_msvc": {
+  "build_script": true,
+  "dependencies": []
+ },
+ "windows_i686_gnu": {
+  "build_script": true,
+  "dependencies": []
+ },
+ "windows_i686_gnullvm": {
+  "build_script": true,
+  "dependencies": []
+ },
+ "windows_i686_msvc": {
+  "build_script": true,
+  "dependencies": []
+ },
+ "windows_x86_64_gnu": {
+  "build_script": true,
+  "dependencies": []
+ },
+ "windows_x86_64_gnullvm": {
+  "build_script": true,
+  "dependencies": []
+ },
+ "windows_x86_64_msvc": {
+  "build_script": true,
+  "dependencies": []
+ },
+ "winnow": {
+  "build_script": false,
+  "dependencies": [
+   "annotate-snippets",
+   "anstream",
+   "anstyle",
+   "anyhow",
+   "automod",
+   "circular",
+   "criterion",
+   "doc-comment",
+   "escargot",
+   "is-terminal",
+   "is_terminal_polyfill",
+   "lexopt",
+   "memchr",
+   "proptest",
+   "rustc-hash",
+   "snapbox",
+   "term-transcript",
+   "terminal_size"
+  ]
+ },
+ "winreg": {
+  "build_script": false,
+  "dependencies": [
+   "cfg-if",
+   "chrono",
+   "rand",
+   "serde",
+   "serde-transcode",
+   "serde_bytes",
+   "serde_derive",
+   "serde_json",
+   "tempfile",
+   "windows-sys"
+  ]
+ },
+ "wit-bindgen": {
+  "build_script": true,
+  "dependencies": [
+   "bitflags",
+   "futures",
+   "rustc-std-workspace-alloc",
+   "rustc-std-workspace-core",
+   "wit-bindgen-rust-macro"
+  ]
+ },
+ "wit-bindgen-core": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "clap",
+   "heck",
+   "serde",
+   "wit-parser"
+  ]
+ },
+ "wit-bindgen-rust": {
+  "build_script": true,
+  "dependencies": [
+   "anyhow",
+   "bytes",
+   "clap",
+   "futures",
+   "heck",
+   "indexmap",
+   "prettyplease",
+   "serde",
+   "serde_json",
+   "syn",
+   "wasm-metadata",
+   "wit-bindgen-core",
+   "wit-component"
+  ]
+ },
+ "wit-bindgen-rust-macro": {
+  "build_script": true,
+  "dependencies": [
+   "anyhow",
+   "prettyplease",
+   "proc-macro2",
+   "quote",
+   "syn",
+   "wit-bindgen-core",
+   "wit-bindgen-rust"
+  ]
+ },
+ "wit-component": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "bitflags",
+   "env_logger",
+   "glob",
+   "indexmap",
+   "libtest-mimic",
+   "log",
+   "pretty_assertions",
+   "serde",
+   "serde_derive",
+   "serde_json",
+   "wasm-encoder",
+   "wasm-metadata",
+   "wasmparser",
+   "wasmprinter",
+   "wasmtime",
+   "wast",
+   "wat",
+   "wit-parser"
+  ]
+ },
+ "wit-parser": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "env_logger",
+   "id-arena",
+   "indexmap",
+   "libtest-mimic",
+   "log",
+   "pretty_assertions",
+   "semver",
+   "serde",
+   "serde_derive",
+   "serde_json",
+   "unicode-xid",
+   "wasmparser",
+   "wat"
+  ]
+ },
+ "writeable": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "either",
+   "rand"
+  ]
+ },
+ "wry": {
+  "build_script": true,
+  "dependencies": [
+   "base64",
+   "block2",
+   "cookie",
+   "crossbeam-channel",
+   "dirs",
+   "dom_query",
+   "dpi",
+   "dunce",
+   "gdkx11",
+   "getrandom",
+   "glow",
+   "gtk",
+   "http",
+   "http-range",
+   "javascriptcore-rs",
+   "jni",
+   "libc",
+   "libloading",
+   "ndk",
+   "objc2",
+   "objc2-app-kit",
+   "objc2-core-foundation",
+   "objc2-foundation",
+   "objc2-ui-kit",
+   "objc2-web-kit",
+   "once_cell",
+   "percent-encoding",
+   "pollster",
+   "raw-window-handle",
+   "sha2",
+   "soup3",
+   "tao",
+   "tao-macros",
+   "thiserror",
+   "tracing",
+   "url",
+   "webkit2gtk",
+   "webkit2gtk-sys",
+   "webview2-com",
+   "wgpu",
+   "windows",
+   "windows-core",
+   "windows-version",
+   "winit",
+   "x11-dl"
+  ]
+ },
+ "x11": {
+  "build_script": true,
+  "dependencies": [
+   "libc",
+   "pkg-config"
+  ]
+ },
+ "x11-dl": {
+  "build_script": true,
+  "dependencies": [
+   "libc",
+   "once_cell",
+   "pkg-config"
+  ]
+ },
+ "x509-parser": {
+  "build_script": false,
+  "dependencies": [
+   "asn1-rs",
+   "data-encoding",
+   "der-parser",
+   "lazy_static",
+   "nom",
+   "oid-registry",
+   "ring",
+   "rusticata-macros",
+   "thiserror",
+   "time"
+  ]
+ },
+ "xattr": {
+  "build_script": false,
+  "dependencies": [
+   "libc",
+   "rustix",
+   "tempfile"
+  ]
+ },
+ "yasna": {
+  "build_script": false,
+  "dependencies": [
+   "bit-vec",
+   "num-bigint",
+   "num-traits",
+   "time"
+  ]
+ },
+ "yoke": {
+  "build_script": false,
+  "dependencies": [
+   "bincode",
+   "postcard",
+   "serde",
+   "stable_deref_trait",
+   "yoke-derive",
+   "zerofrom"
+  ]
+ },
+ "yoke-derive": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn",
+   "synstructure"
+  ]
+ },
+ "zbus": {
+  "build_script": false,
+  "dependencies": [
+   "async-broadcast",
+   "async-executor",
+   "async-io",
+   "async-lock",
+   "async-process",
+   "async-recursion",
+   "async-task",
+   "async-trait",
+   "blocking",
+   "codspeed-criterion-compat",
+   "doc-comment",
+   "enumflags2",
+   "event-listener",
+   "futures-core",
+   "futures-lite",
+   "futures-util",
+   "hex",
+   "libc",
+   "ntest",
+   "ordered-stream",
+   "rustix",
+   "serde",
+   "serde_repr",
+   "tempfile",
+   "test-log",
+   "tokio",
+   "tokio-vsock",
+   "tracing",
+   "tracing-subscriber",
+   "uds_windows",
+   "uuid",
+   "vsock",
+   "windows-sys",
+   "winnow",
+   "zbus_macros",
+   "zbus_names",
+   "zvariant"
+  ]
+ },
+ "zbus_macros": {
+  "build_script": false,
+  "dependencies": [
+   "async-io",
+   "futures-util",
+   "proc-macro-crate",
+   "proc-macro2",
+   "quote",
+   "serde",
+   "syn",
+   "zbus_names",
+   "zvariant",
+   "zvariant_utils"
+  ]
+ },
+ "zbus_names": {
+  "build_script": false,
+  "dependencies": [
+   "codspeed-criterion-compat",
+   "serde",
+   "winnow",
+   "zvariant"
+  ]
+ },
+ "zerocopy": {
+  "build_script": true,
+  "dependencies": [
+   "elain",
+   "itertools",
+   "rand",
+   "regex",
+   "rustversion",
+   "static_assertions",
+   "zerocopy-derive"
+  ]
+ },
+ "zerocopy-derive": {
+  "build_script": false,
+  "dependencies": [
+   "dissimilar",
+   "prettyplease",
+   "proc-macro2",
+   "quote",
+   "rustversion",
+   "static_assertions",
+   "syn"
+  ]
+ },
+ "zerofrom": {
+  "build_script": false,
+  "dependencies": [
+   "zerofrom-derive"
+  ]
+ },
+ "zerofrom-derive": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn",
+   "synstructure"
+  ]
+ },
+ "zeroize": {
+  "build_script": false,
+  "dependencies": [
+   "serde",
+   "zeroize_derive"
+  ]
+ },
+ "zerotrie": {
+  "build_script": false,
+  "dependencies": [
+   "bincode",
+   "criterion",
+   "databake",
+   "displaydoc",
+   "icu_locale_core",
+   "itertools",
+   "litemap",
+   "postcard",
+   "rand",
+   "rand_pcg",
+   "rmp-serde",
+   "serde",
+   "serde_core",
+   "serde_json",
+   "yoke",
+   "zerofrom",
+   "zerovec"
+  ]
+ },
+ "zerovec": {
+  "build_script": false,
+  "dependencies": [
+   "bincode",
+   "criterion",
+   "databake",
+   "getrandom",
+   "iai",
+   "insta",
+   "postcard",
+   "rand",
+   "rand_distr",
+   "rand_pcg",
+   "rmp-serde",
+   "schemars",
+   "serde",
+   "serde_json",
+   "twox-hash",
+   "yoke",
+   "zerofrom",
+   "zerovec-derive"
+  ]
+ },
+ "zerovec-derive": {
+  "build_script": false,
+  "dependencies": [
+   "bincode",
+   "proc-macro2",
+   "quote",
+   "serde",
+   "serde_json",
+   "syn"
+  ]
+ },
+ "zmij": {
+  "build_script": true,
+  "dependencies": [
+   "criterion",
+   "no-panic",
+   "num-bigint",
+   "num-integer",
+   "num_cpus",
+   "opt-level",
+   "rand",
+   "ryu"
+  ]
+ },
+ "zstd": {
+  "build_script": false,
+  "dependencies": [
+   "clap",
+   "humansize",
+   "partial-io",
+   "walkdir",
+   "zstd-safe"
+  ]
+ },
+ "zstd-safe": {
+  "build_script": true,
+  "dependencies": [
+   "zstd-sys"
+  ]
+ },
+ "zstd-sys": {
+  "build_script": true,
+  "dependencies": [
+   "bindgen",
+   "cc",
+   "pkg-config"
+  ]
+ },
+ "zvariant": {
+  "build_script": false,
+  "dependencies": [
+   "arrayvec",
+   "camino",
+   "chrono",
+   "codspeed-criterion-compat",
+   "endi",
+   "enumflags2",
+   "fastrand",
+   "heapless",
+   "serde",
+   "serde_bytes",
+   "serde_json",
+   "serde_repr",
+   "time",
+   "url",
+   "uuid",
+   "winnow",
+   "zvariant_derive",
+   "zvariant_utils"
+  ]
+ },
+ "zvariant_derive": {
+  "build_script": false,
+  "dependencies": [
+   "enumflags2",
+   "proc-macro-crate",
+   "proc-macro2",
+   "quote",
+   "serde",
+   "serde_repr",
+   "syn",
+   "zvariant_utils"
+  ]
+ },
+ "zvariant_utils": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "serde",
+   "syn",
+   "winnow"
+  ]
+ }
+}

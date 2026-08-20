@@ -36,6 +36,14 @@ def all_of(config: GateConfig) -> list[Step]:
             needs=frozenset({Needs.NETWORK}),
             speed=Speed.FAST,
         ),
+        # Sandboxed, and deliberately: it reads `cargo metadata --locked`,
+        # resolving from the materialized cache and compiling nothing.
+        step(
+            "audit.dependency-drift",
+            Script(audits.dependency_drift),
+            kind=Kind.STATIC_TEST,
+            speed=Speed.FAST,
+        ),
         step(
             "audit.pnpm",
             Script(audits.pnpm, outside_sandbox=True),
