@@ -116,6 +116,26 @@ class ToolchainConfig(Strict):
     linux: LinuxWorkspaceConfig
     crates: tuple[CrateTool, ...]
 
+    sets: dict[str, tuple[str, ...]]
+    """Which crates a job needs, named by what the job does.
+
+    Workflows select a set rather than restating tool names and versions, so a
+    hand-written list cannot quietly differ from another job running the same
+    suite. See `scripts/gate-tool-list.py`.
+    """
+
+    @model_validator(mode="after")
+    def every_set_names_declared_crates(self) -> ToolchainConfig:
+        """A set naming a crate that does not exist installs nothing, silently."""
+        known = {crate.name for crate in self.crates}
+        for label, members in self.sets.items():
+            if not members:
+                raise ValueError(f"toolchain.sets.{label} is empty")
+            unknown = sorted(set(members) - known)
+            if unknown:
+                raise ValueError(f"toolchain.sets.{label} names undeclared crates: {unknown}")
+        return self
+
     @model_validator(mode="after")
     def target_inventory_is_nonempty_and_unique(self) -> ToolchainConfig:
         if not self.rust_targets or len(self.rust_targets) != len(set(self.rust_targets)):

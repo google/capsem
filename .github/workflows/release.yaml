@@ -897,15 +897,15 @@ jobs:
           components: llvm-tools
           targets: aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
 
+      - name: Select the declared tool set
+        id: gate_tools
+        run: |
+          list=$(python3 scripts/gate-tool-list.py --sets functional)
+          echo "list=$list" >> "$GITHUB_OUTPUT"
       - name: Install pinned functional test runner
         uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
         with:
-          # b3sum is not optional here: this job runs the same broad suite the
-          # fast gate does, and the asset-integrity tests shell out to it to
-          # check a manifest digest against the bytes it names. It was in the
-          # fast gate's list and not this one, so three tests failed on a
-          # missing tool after every binary had already built and installed.
-          tool: cargo-nextest@0.9.137,b3sum@1.8.5
+          tool: ${{ steps.gate_tools.outputs.list }}
 
       - name: Install Linux sandbox runtime
         run: |
@@ -1222,10 +1222,15 @@ jobs:
           name: binary-channel-candidate
           path: target/binary-channel/
 
+      - name: Select the declared tool set
+        id: gate_tools
+        run: |
+          list=$(python3 scripts/gate-tool-list.py --sets digest)
+          echo "list=$list" >> "$GITHUB_OUTPUT"
       - name: Install prebuilt digest tool
         uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
         with:
-          tool: b3sum@1.8.5
+          tool: ${{ steps.gate_tools.outputs.list }}
 
       - name: Verify public GitHub package storage from the candidate manifest
         run: |

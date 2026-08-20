@@ -42,8 +42,30 @@ def test_install_test_inherits_uv_through_its_exact_local_helper() -> None:
     assert "astral-sh/uv" not in child
 
 
+def selected_tools(job: str) -> set[str]:
+    """The crates a job installs, resolved through the sets it names.
+
+    A job used to spell its tools; now it names a set and
+    `scripts/gate-tool-list.py` derives them, so a guard asking "does this job
+    install X" has to resolve the same way. That indirection is the point: the
+    membership lives in one file, and a job cannot quietly hold a different
+    subset from another job running the same suite.
+    """
+    import re
+    import tomllib
+
+    declared = tomllib.loads(
+        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    )["toolchain"]["sets"]
+    chosen: set[str] = set()
+    for match in re.findall(r"--sets ([a-z,]+)", job):
+        for label in match.split(","):
+            chosen.update(declared[label])
+    return chosen
+
+
 def test_every_fresh_ci_test_runner_preinstalls_the_exact_nextest() -> None:
-    pin = "cargo-nextest@0.9.137"
+    pin = "cargo-nextest"
     jobs = (
         (
             "fast-gate.yaml",
@@ -67,12 +89,41 @@ def test_every_fresh_ci_test_runner_preinstalls_the_exact_nextest() -> None:
         ),
     )
 
+    marker = "scripts/gate-tool-list.py"
     for workflow_name, job_name, seal, consumer in jobs:
         job = _job_block(_read(f".github/workflows/{workflow_name}"), job_name)
-        assert pin in job, f"{workflow_name}:{job_name} does not install {pin}"
-        assert job.index(pin) < job.index(consumer)
+        assert pin in selected_tools(job), f"{workflow_name}:{job_name} does not install {pin}"
+        assert job.index(marker) < job.index(consumer)
         if seal is not None:
-            assert job.index(pin) < job.index(seal) < job.index(consumer)
+            assert job.index(marker) < job.index(seal) < job.index(consumer)
+
+
+def test_every_runner_of_the_broad_suite_installs_what_that_suite_shells_out_to() -> None:
+    """The gap the `b3sum` failure came through.
+
+    One guard checked that *every* runner installs `cargo-nextest`. Another
+    checked that *one* job installs `b3sum`. Neither said that a job installs
+    what the suite it runs actually invokes, so the binary pairing gate went
+    without `b3sum` while running the same broad suite as the fast gate -- and
+    three asset-integrity tests failed on a missing tool ten minutes into a
+    release where every binary had already built and installed.
+    """
+    needed = {"cargo-nextest", "b3sum"}
+    runners = (
+        ("fast-gate.yaml", "static"),
+        ("ci.yaml", "test"),
+        ("release.yaml", "test-binary-pairing"),
+        ("release-assets.yaml", "test-profile-pairing"),
+    )
+    missing = []
+    for workflow_name, job_name in runners:
+        job = _job_block(_read(f".github/workflows/{workflow_name}"), job_name)
+        absent = sorted(needed - selected_tools(job))
+        if absent:
+            missing.append(f"{workflow_name}:{job_name} lacks {absent}")
+    assert not missing, (
+        "these run the broad suite without the tools it invokes: " + "; ".join(missing)
+    )
 
 
 def test_host_builder_installs_the_same_exact_nextest() -> None:
@@ -283,8 +334,11 @@ def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
     for block in workflow_text.split("uses: taiki-e/install-action@")[1:]:
         step = block.split("\n      - ", maxsplit=1)[0]
         tool_line = next(line for line in step.splitlines() if "tool:" in line)
-        tools = tool_line.split("tool:", maxsplit=1)[1].strip().split(",")
-        assert all("@" in tool for tool in tools)
+        handed = tool_line.split("tool:", maxsplit=1)[1].strip()
+        # Derived from `[toolchain.sets]` rather than pinned in YAML. The
+        # versions are still exact; they are just declared once, where the rest
+        # of the toolchain is. See tests/citadel/test_ci_tools_come_from_config.
+        assert handed == "${{ steps.gate_tools.outputs.list }}", handed
 
     builder = _read("docker/Dockerfile.host-builder")
     config = gate_config.load(PROJECT_ROOT)

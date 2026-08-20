@@ -4341,14 +4341,31 @@ def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
 def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
     workflow = _workflow_job_block("test")
 
-    install_tools_pos = workflow.find("- name: Install prebuilt Rust tools")
-    b3sum_pos = workflow.find("tool: cargo-llvm-cov@0.8.5,cargo-nextest@0.9.137,b3sum@1.8.5")
+    import re
+    import tomllib
+
+    select_pos = workflow.find("scripts/gate-tool-list.py")
+    install_pos = workflow.find("- name: Install prebuilt Rust tools")
     bootstrap_pos = workflow.find("uv run python -m pytest tests/capsem-bootstrap/")
 
-    assert install_tools_pos != -1
-    assert b3sum_pos != -1
+    assert select_pos != -1, "the job no longer derives its tools from config"
+    assert install_pos != -1
     assert bootstrap_pos != -1
-    assert install_tools_pos < b3sum_pos < bootstrap_pos
+    # Derive, install, then use. The set is resolved before the installer runs
+    # and both happen before anything hashes an asset.
+    assert select_pos < install_pos < bootstrap_pos
+
+    # And that the set it selects actually carries b3sum. Spelling the pin here
+    # is what let the binary pairing gate go without it: this guard covered
+    # every tool in one job, while its sibling covered one tool in every job.
+    sets = tomllib.loads(
+        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    )["toolchain"]["sets"]
+    members: set[str] = set()
+    for match in re.findall(r"--sets ([a-z,]+)", workflow):
+        for label in match.split(","):
+            members.update(sets[label])
+    assert "b3sum" in members
 
 
 def test_ci_provides_sha256sum_before_codecov_uploads_on_macos() -> None:

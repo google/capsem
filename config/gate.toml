@@ -1210,6 +1210,25 @@ pkg_config_modules = [
 ]
 required_commands = ["bwrap", "file", "musl-gcc", "pkg-config"]
 
+# Which crates a job needs, named by what the job does rather than by the tools
+# it happens to want. Workflows select a set; this file owns the membership and
+# the versions, so neither can be restated in YAML and drift.
+#
+# `b3sum` was in the fast gate's hand-written list and not the binary pairing
+# gate's, though both run the broad suite and its asset-integrity tests shell
+# out to `b3sum`. Three tests failed on a missing tool ten minutes into a
+# release job where every binary had already built and installed. Nobody chose
+# that subset; it was simply never compared with any other.
+[toolchain.sets]
+# Everything, for the lane that runs everything.
+complete = ["cargo-audit", "cargo-nextest", "cargo-llvm-cov", "b3sum", "cargo-sbom", "cargo-tauri"]
+# The VM-owned suites: nextest runs the Rust half, b3sum checks that a manifest
+# digest matches the bytes it names.
+functional = ["cargo-nextest", "b3sum"]
+coverage = ["cargo-nextest", "cargo-llvm-cov"]
+advisory = ["cargo-audit"]
+digest = ["b3sum"]
+
 # `probe` is what proves it is already present; `install` is what puts it
 # there. A table rather than eight code blocks, so adding one is a line.
 [[toolchain.crates]]

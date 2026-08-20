@@ -71,10 +71,23 @@ def test_an_outdated_cargo_tool_is_reinstalled_and_must_verify(monkeypatch) -> N
 
 
 def test_sealed_fast_ci_preinstalls_the_same_nextest_pin() -> None:
-    workflow = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text()
-    tools = next(line for line in workflow.splitlines() if "tool: cargo-audit@" in line)
+    import re
+    import tomllib
 
-    assert "cargo-nextest@0.9.137" in tools
+    workflow = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text()
+    chosen = re.search(r"--sets ([a-z,]+)", workflow)
+    assert chosen is not None, "the fast gate no longer selects a declared tool set"
+
+    sets = tomllib.loads(
+        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    )["toolchain"]["sets"]
+    members: set[str] = set()
+    for label in chosen.group(1).split(","):
+        members.update(sets[label])
+
+    # The pin itself lives in `[[toolchain.crates]]`; what this holds is that
+    # the sealed fast lane installs the same nextest the rest of the gate does.
+    assert "cargo-nextest" in members
 
 
 def test_ort_distributions_are_one_toolchain_authority_for_linux_and_macos() -> None:

@@ -343,10 +343,15 @@ jobs:
           components: llvm-tools
           targets: aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
 
+      - name: Select the declared tool set
+        id: gate_tools
+        run: |
+          list=$(python3 scripts/gate-tool-list.py --sets functional)
+          echo "list=$list" >> "$GITHUB_OUTPUT"
       - name: Install pinned functional test runner
         uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
         with:
-          tool: cargo-nextest@0.9.137
+          tool: ${{ steps.gate_tools.outputs.list }}
 
       - name: Install Linux sandbox runtime
         run: |

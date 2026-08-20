@@ -67,10 +67,15 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Select the declared tool set
+        id: gate_tools
+        run: |
+          list=$(python3 scripts/gate-tool-list.py --sets coverage)
+          echo "list=$list" >> "$GITHUB_OUTPUT"
       - name: Install prebuilt Rust tools
         uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
         with:
-          tool: cargo-nextest@0.9.137,cargo-llvm-cov@0.8.5
+          tool: ${{ steps.gate_tools.outputs.list }}
 
       # Library + service crate tests with coverage (capsem-core includes KVM backend on Linux).
       # capsem-app (Tauri shell) and capsem-tray (macOS muda menu-bar) are macOS-only; every
@@ -174,10 +179,15 @@ jobs:
       - name: Install release site dependencies
         run: cd release-site && pnpm install --frozen-lockfile
 
+      - name: Select the declared tool set
+        id: gate_tools
+        run: |
+          list=$(python3 scripts/gate-tool-list.py --sets coverage,digest)
+          echo "list=$list" >> "$GITHUB_OUTPUT"
       - name: Install prebuilt Rust tools
         uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
         with:
-          tool: cargo-llvm-cov@0.8.5,cargo-nextest@0.9.137,b3sum@1.8.5
+          tool: ${{ steps.gate_tools.outputs.list }}
 
       - name: Install sha256sum compatibility wrapper
         run: |
