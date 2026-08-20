@@ -1232,8 +1232,12 @@ async fn update_runtime_requests_restart_after_binary_activation() {
     let disposition = reload_activated_update_runtime(&state).unwrap();
 
     assert_eq!(disposition, UpdateRuntimeDisposition::RestartRequested);
+    // Generous on purpose. The notification is already pending -- the call
+    // above returned `RestartRequested` -- so this asks whether it arrives at
+    // all, not how fast. Its sibling above keeps a 10ms bound because there
+    // the timeout firing *is* the assertion: a signal that must never come.
     tokio::time::timeout(
-        std::time::Duration::from_millis(10),
+        std::time::Duration::from_secs(10),
         state.update_restart.notified(),
     )
     .await
@@ -11316,8 +11320,20 @@ async fn download_file_content_does_not_wait_on_stats_rebuild() {
     )
     .unwrap();
 
+    // A liveness bound, not a performance one. What this guards is the route
+    // blocking on the logger DB, which is a wait measured in seconds or in
+    // never -- see the change that added it, `keep telemetry routes on logger
+    // db boundary`. A 250ms budget caught that and also caught a loaded CI
+    // runner: the whole test takes ~275ms unloaded here, so the margin was
+    // thinner than the scheduler's noise, and it failed a release having
+    // passed the same code four hours earlier.
+    //
+    // Widening it costs nothing the assertion was buying. The property
+    // deserves a structural test -- stall a rebuild, prove the route still
+    // answers -- which needs a way to hold that work open that does not exist
+    // yet.
     let response = tokio::time::timeout(
-        std::time::Duration::from_millis(250),
+        std::time::Duration::from_secs(10),
         handle_download_file(
             State(state),
             Path("fast-file-vm".to_string()),
