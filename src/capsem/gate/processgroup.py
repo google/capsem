@@ -38,19 +38,24 @@ class StopPolicy:
     grace_seconds: float
     poll_seconds: float
     refuse_survivors: bool = True
-    """Whether a process outliving its command fails the run.
+    """Whether a process outliving its command fails the run, or is reported.
 
-    A leaked service, VM or container is worth stopping for on a machine that
-    keeps running: the next gate inherits its ports, sockets and locks, and
-    fails somewhere unrelated. That is the failure this exists to prevent, and
-    locally it is the right trade.
-
-    A hosted runner is deleted minutes later and inherits nothing, so there the
-    same refusal protects a machine that is about to cease to exist -- and it
-    held the 0.6.0 release twice for a process nobody could name. Reported
-    there, and still cleaned up, because the leak is worth knowing about and
-    worth killing either way; it is only not worth failing for.
+    Reaped and named either way. See `[execution]
+    survivors_unenforced_when_set` for which machines it fails on and why.
     """
+
+    @classmethod
+    def from_execution(cls, execution) -> StopPolicy:
+        """Build the policy from `[execution]`, including where it applies.
+
+        Assembled here rather than field by field at the call site: the place
+        that knows what a stop policy is also knows what relaxes it.
+        """
+        return cls(
+            grace_seconds=execution.cancellation_grace_seconds,
+            poll_seconds=execution.cancellation_poll_seconds,
+            refuse_survivors=not os.environ.get(execution.survivors_unenforced_when_set),
+        )
 
     def __post_init__(self) -> None:
         if self.grace_seconds <= 0 or self.poll_seconds <= 0:
@@ -180,11 +185,9 @@ def _refuse_descendants(process: ForegroundProcess, policy: StopPolicy, owned: O
         time.sleep(policy.poll_seconds)
     if not _group_exists(process.pid) and not _descendants_alive(descendants):
         return
-    # Named before they are killed, because `_terminate` is what makes them
-    # unnameable. This fired once in a release lane and said only that
-    # *something* survived, which left bisecting a 4742-test suite as the way
-    # to find out what -- the guard was holding the process objects the whole
-    # time and reporting none of them.
+    # Named before they are killed: `_terminate` is what makes them unnameable.
+    # This fired in a release lane saying only that *something* survived, while
+    # holding the process objects the whole time.
     surviving = _surviving(descendants)
     _terminate(process, policy, owned)
     if not policy.refuse_survivors:

@@ -25,6 +25,11 @@ ALLOWED_CONFIG_FILES = {
     "gate.toml",
     "public-surface.toml",
     "storage-policy.toml",
+    # The dependency graph this workspace has accepted: which packages resolve,
+    # which declare a build script, and what each one depends on. An authority
+    # file for the same reason as the others -- the drift report is only
+    # meaningful against a baseline somebody agreed to.
+    "dependency-inventory.json",
 }
 
 FORBIDDEN_CONFIG_DIRS = {

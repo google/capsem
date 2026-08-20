@@ -253,8 +253,15 @@ def test_a_foreground_command_cannot_hide_a_daemon_in_a_new_session(tmp_path: Pa
         "open(sys.argv[1],'w').write(f'{os.getpid()} {child.pid}'); time.sleep(0.3)"
     )
 
+    # Pinned rather than inherited: the refusal is now switched off where a
+    # runner is disposable, so a test that asks for it must say so. Reading the
+    # ambient environment made this pass here and fail in CI, which is the
+    # inversion that wastes the most time to diagnose.
+    strict = StopPolicy(grace_seconds=10.0, poll_seconds=0.1, refuse_survivors=True)
     with pytest.raises(GateError, match="descendants remained") as refused:
-        Runner(PROJECT_ROOT).run((sys.executable, "-c", helper, str(pids)))
+        Runner(PROJECT_ROOT, stop_policy=strict).run(
+            (sys.executable, "-c", helper, str(pids))
+        )
 
     # Naming the survivor is the whole use of this guard away from a terminal.
     # It fired once in a release lane and said only that *something* had
@@ -277,7 +284,7 @@ def test_a_survivor_is_reported_rather_than_refused_on_a_disposable_runner(
     A leaked service, VM or container is worth failing for here, where the next
     gate inherits its ports, sockets and locks. A hosted runner is deleted
     minutes later and inherits nothing, so there the same refusal guards a
-    machine about to cease to exist -- and it held the 0.6.0 release twice over
+    machine about to cease to exist -- and it held a binary release twice over
     a process nobody could name.
 
     Still reaped, and still named, because the leak is a real defect worth

@@ -65,14 +65,7 @@ class Runner:
             return self._configured_stop_policy
         from .config import for_root
 
-        config = for_root(self.root)
-        return StopPolicy(
-            grace_seconds=config.execution.cancellation_grace_seconds,
-            poll_seconds=config.execution.cancellation_poll_seconds,
-            # Decided here, where the config is, so nothing further down reads
-            # the environment for itself.
-            refuse_survivors=not os.environ.get(config.execution.survivors_unenforced_when_set),
-        )
+        return StopPolicy.from_execution(for_root(self.root).execution)
 
     # -- reporting ---------------------------------------------------------
 
