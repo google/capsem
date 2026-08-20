@@ -224,3 +224,31 @@ Before dispatching a real release, run `just test <source-commit>` and then the
 actual public release command, never a hand-written workflow dispatch. The
 first produces or reuses the local proof; the second revalidates its archived
 journal and is the only supported bridge into CI.
+
+## `--force`: the commit that is not the product
+
+```bash
+just release-binaries stable <commit> true    # the trailing `true` is --force
+```
+
+Use it for **CI-only changes that do not affect local code or shipped bytes**: a
+workflow file, a gate policy, a check that only ever runs on a hosted runner.
+The artifacts such a commit produces are byte-identical to ones already
+qualified, so re-proving them spends two and a half hours to learn nothing.
+Paying that repeatedly is how a release stops happening at all -- the 0.6.0
+binaries were held twice by a guard that only fired on disposable runners, and
+each retry cost a full requalification of a product nobody had touched.
+
+It is not a shortcut for product changes. Anything altering what ships --
+crates, guest binaries, assets, profiles, packaging -- takes the full
+qualification, because that run is the only thing that proves those bytes.
+
+What it waives, and what it still records:
+
+- `qualification.accept` becomes `qualification.waived`, which stays a *step*
+  rather than becoming an absence. It notes whether the commit had a complete
+  journal anyway, so a forced release is never afterwards indistinguishable
+  from one that did not need forcing. The journal is the evidence this contract
+  runs on, and an omission leaves no evidence of itself.
+- The clean-worktree refusal is skipped, so the tree still has to be one you
+  would publish -- a release publishes the commit, never the working tree.

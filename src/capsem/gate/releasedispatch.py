@@ -18,7 +18,11 @@ from .execution import Kind, Speed, step
 from .lifecycle import Resource
 from .plan import Plan
 from .proc import Runner
-from .qualificationevidence import AcceptQualification, QualificationPolicy
+from .qualificationevidence import (
+    AcceptQualification,
+    QualificationPolicy,
+    WaiveQualification,
+)
 from .sandboxreport import SandboxReport
 from .sourcecommit import SourceCommit
 
@@ -66,7 +70,7 @@ class QualifiedRelease:
         tree is a clean copy of the commit by construction, which would make
         the check pass by asking the wrong tree.
         """
-        if getattr(self._args, "force", "false") == "true":
+        if self._forced():
             return ()
         from . import qualificationevidence
 
@@ -86,6 +90,10 @@ class QualifiedRelease:
             ),
         )
 
+    def _forced(self) -> bool:
+        """Whether the operator typed `--force`, which is the whole safeguard."""
+        return getattr(self._args, "force", "false") == "true"
+
     def _qualification_steps(self, plan: Plan, commit: SourceCommit, *, after: tuple = ()) -> tuple:
         """The accept step, for the channels that consume an operator's proof."""
         if self.qualification_policy is not QualificationPolicy.REQUIRE:
@@ -93,8 +101,8 @@ class QualifiedRelease:
         return (
             plan.add(
                 step(
-                    "qualification.accept",
-                    AcceptQualification(commit),
+                    "qualification.waived" if self._forced() else "qualification.accept",
+                    WaiveQualification(commit) if self._forced() else AcceptQualification(commit),
                     kind=Kind.STATIC_TEST,
                     speed=Speed.FAST,
                 ),

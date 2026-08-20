@@ -175,3 +175,33 @@ def test_only_networked_release_edges_cross_the_kernel_boundary(name, args) -> N
         or (label.startswith(("fast.", "static.")) and label not in NETWORKED[name])
         for label in marked
     )
+
+
+def test_force_waives_the_journal_and_says_so_in_the_run_log() -> None:
+    """`--force` is the escape hatch for a commit that is not the product.
+
+    The qualification proves the product, and not every commit changes it. A
+    gate or CI policy change costs two and a half hours to re-prove artifacts
+    byte-identical to ones already proven, and paying that repeatedly is how a
+    release stops happening.
+
+    It stays a step rather than becoming an absence: a release that skipped its
+    proof and left no trace of skipping is afterwards indistinguishable from
+    one that never needed it, and the journal is the evidence this contract
+    runs on.
+    """
+    from helpers.gate import built_command
+
+    commit = "f" * 40
+    forced = built_command(
+        PROJECT_ROOT,
+        "release-binaries",
+        (("channel", "stable"), ("source_commit", commit), ("force", "true")),
+        None,
+    )._describe()
+    assert "qualification.accept" not in forced.labels
+    assert forced.labels[0] == "qualification.waived"
+    rendered = " ".join(
+        action.render() for stepped in forced.steps for action in stepped.actions
+    )
+    assert "without an exact journal" in rendered

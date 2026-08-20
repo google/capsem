@@ -222,3 +222,37 @@ class AcceptQualification(Action, name="accept-exact-qualification"):
             f"accepted qualification {found.reference.run_id} at {found.reference.run_log} "
             f"({found.reference.digest})"
         )
+
+
+class WaiveQualification(Action, name="waive-exact-qualification"):
+    """Record that an operator released a commit without its own journal.
+
+    `--force` exists because the qualification proves the *product*, and not
+    every commit changes the product. A gate or CI policy change costs two and
+    a half hours to re-prove artifacts that are byte-identical to ones already
+    proven, and paying that repeatedly is how a release stops happening at all.
+
+    It stays a step rather than becoming an absence, so the run log still says
+    what happened. A release that skipped its proof and left no trace of having
+    skipped it is indistinguishable afterwards from one that never needed it,
+    and the journal is the evidence this contract runs on.
+    """
+
+    def __init__(self, commit: SourceCommit) -> None:
+        self._commit = commit
+
+    def render(self) -> str:
+        return f"record that {self._commit} is released without an exact journal"
+
+    def perform(self, context: Context) -> None:
+        found = find_complete(authority(context.config), self._commit)
+        if found is not None:
+            context.journal.note(
+                f"forced release, though {self._commit} does have a complete "
+                f"qualification: {found.reference.run_id}"
+            )
+            return
+        context.journal.note(
+            f"FORCED: {self._commit} has no complete qualification journal and was "
+            "released anyway by --force"
+        )
