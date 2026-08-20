@@ -121,9 +121,15 @@ def link_prefix_trees(config: GateConfig, prefix: Path) -> None:
         link_profiles(config, prefix)
         return
     link_pulled_binaries(config, prefix, Path(pulled).resolve())
-    staged = os.environ.get(config.environment.profiles_dir)
-    if staged:
-        link_pulled_tree(config, prefix, "config", Path(staged).resolve().parent)
+    # The materialized config the lane staged, taken from the checkout this
+    # prefix is being made from rather than from an environment variable.
+    # `CAPSEM_PROFILES_DIR` is an overlay the gate adds per step, so it is not
+    # set when the prefix is built -- keying on it meant this never fired, and
+    # a test that set it first agreed with the assumption instead of checking
+    # it.
+    staged = config.root / "target" / "config"
+    if staged.is_dir():
+        link_pulled_tree(config, prefix, "config", staged.resolve())
 
 
 def link_pulled_tree(config: GateConfig, prefix: Path, relative: str, target: Path) -> None:

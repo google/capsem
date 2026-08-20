@@ -12,6 +12,7 @@ declared, and the plan honours it however the steps are written.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -251,7 +252,23 @@ def test_every_serial_node_has_a_non_broad_execution_rail() -> None:
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
+        # Collection reads source, not artifacts, so it must not demand them.
+        # The autouse fixture strips `CAPSEM_RELEASE_*` from this process so a
+        # unit test cannot mistake itself for a release -- and the child then
+        # inherits an environment that still says artifacts are required while
+        # no longer saying which lane is running. It concluded it was a local
+        # build and asked for `target/linux-agent`, which a pulled lane
+        # correctly does not have, fifteen minutes into a release gate.
+        env={k: v for k, v in os.environ.items() if k != "CAPSEM_REQUIRE_ARTIFACTS"},
+    )
+    # Reported rather than raised bare. `check=True` throws the child's stderr
+    # away, so a collection failure in a release lane said only that a command
+    # exited non-zero -- after fourteen minutes, on a machine nobody can attach
+    # to, with the reason in the output it had just discarded.
+    assert result.returncode == 0, (
+        f"collecting serial nodes failed ({result.returncode}):\n"
+        f"stdout:\n{result.stdout[-2000:]}\nstderr:\n{result.stderr[-2000:]}"
     )
     node_paths = {
         line.split("::", 1)[0].split(": ", 1)[0]

@@ -1204,15 +1204,18 @@ def test_a_pulled_lane_also_finds_the_config_it_was_handed(
     """
     from capsem.gate import cargotarget
 
-    config = _capped(tmp_path, cap_gb=1.0)
-    staged = tmp_path / "staged" / "target" / "config"
-    (staged / "profiles" / "code").mkdir(parents=True)
+    checkout = tmp_path / "checkout"
+    (checkout / "target" / "config" / "profiles" / "code").mkdir(parents=True)
+    config = _capped(tmp_path, cap_gb=1.0).model_copy(update={"root": checkout})
     binaries = tmp_path / "pulled-bin"
     binaries.mkdir()
     prefix_path = tmp_path / "prefixes" / ("c" * 8)
 
+    # Only the release variable is set. `CAPSEM_PROFILES_DIR` is a per-step
+    # overlay and is absent when a prefix is built; setting it here is what let
+    # the first version of this test agree with a link that never happened.
     monkeypatch.setenv(config.modules.release_bin_dir, str(binaries))
-    monkeypatch.setenv(config.environment.profiles_dir, str(staged / "profiles"))
+    monkeypatch.delenv(config.environment.profiles_dir, raising=False)
     cargotarget.link_prefix_trees(config, prefix_path)
 
     assert (prefix_path / "target" / "config" / "profiles" / "code").is_dir()
@@ -1233,3 +1236,38 @@ def test_an_ordinary_run_still_compiles_into_the_shared_root(
 
     assert (prefix_path / "target" / "debug").readlink() == cargotarget.path(config) / "debug"
     assert not (prefix_path / "target" / "config").exists()
+
+
+def test_export_does_not_carry_back_a_tree_the_run_was_handed(tmp_path: Path) -> None:
+    """A link out of the prefix names input; exporting it claims authorship.
+
+    A release lane points `target/config` at the cohort it was handed. Copying
+    that into the checkout would export an input as though the run produced it,
+    and dies outright if the tree it names has since gone -- which is how a
+    local replay of the pairing lane ended, in `shutil.copytree`, naming a path
+    nothing had ever written.
+
+    The profile selector one directory up is a link *within* the prefix and
+    must still be dereferenced; that is the case above.
+    """
+    from capsem.gate import buildcache
+    from capsem.gate import config as gate_config
+
+    checkout = tmp_path / "checkout"
+    private = tmp_path / "private"
+    for root in (checkout, private):
+        (root / "config").mkdir(parents=True)
+        (root / "config" / "gate.toml").write_text(
+            (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+    handed = tmp_path / "staged-cohort" / "config"
+    (handed / "profiles" / "code").mkdir(parents=True)
+    (private / "target").mkdir(parents=True, exist_ok=True)
+    (private / "target" / "config").symlink_to(handed, target_is_directory=True)
+
+    buildcache.export(private, checkout, gate_config.load(private))
+
+    assert not (checkout / "target" / "config").exists(), (
+        "a tree the run was handed must not be exported as though it built it"
+    )

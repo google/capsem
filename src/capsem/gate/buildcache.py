@@ -67,6 +67,14 @@ def export(prefix: Path, destination: Path, config: GateConfig) -> None:
         origin = prefix / relative
         if not origin.exists():
             continue
+        # A link *out* of the prefix names input, not output. A release lane
+        # points `target/config` at the cohort it was handed, and copying that
+        # back would export an input as though the run had produced it -- and
+        # dies outright if the tree it names has since gone. A link *within*
+        # the prefix is the local gate's own profile selector and must still be
+        # dereferenced, which is what the assets case below is about.
+        if origin.is_symlink() and not origin.resolve().is_relative_to(prefix.resolve()):
+            continue
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         if origin.is_dir():
