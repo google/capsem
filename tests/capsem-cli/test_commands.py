@@ -5,11 +5,15 @@ import uuid
 from pathlib import Path
 
 import pytest
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import BIN_DIR, CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-CLI_BINARY = PROJECT_ROOT / "target/debug/capsem"
+#: Where this lane's binaries are, built or pulled. A release qualifies from
+#: a prefix carrying only tracked files, so `target/debug` there is a
+#: directory nothing ever wrote -- which is how five CLI tests took down the
+#: twelfth binary-release dispatch after every install had passed.
+CLI_BINARY = BIN_DIR / "capsem"
 
 
 def run_cli(*args, uds_path=None, timeout=60):

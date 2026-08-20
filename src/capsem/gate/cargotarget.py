@@ -43,6 +43,37 @@ def path(config: GateConfig) -> Path:
     return Path(config.prefix.cargo_target.format(parent=config.prefix.parent)).expanduser()
 
 
+def link_pulled_binaries(config: GateConfig, prefix: Path, bin_dir: Path) -> None:
+    """Put a release lane's pulled binaries where everything already looks.
+
+    A pulled lane's binaries are staged outside the prefix, and roughly
+    twenty-five checked-in test modules resolve a host binary as
+    `PROJECT_ROOT/target/debug/<name>`. Those paths are not wrong -- a test
+    should not have to know that this run was handed its binaries instead of
+    building them -- but in a prefix carrying only tracked files they name a
+    directory nothing ever wrote.
+
+    That cost three binary-release dispatches, each found one file at a time:
+    the service and gateway helpers, then the CLI suite, with `--maxfail=5`
+    hiding however many were behind them. Editing every call site is the same
+    fix applied twenty-five times and forgotten on the twenty-sixth; a link is
+    the mechanism, and it is the same one the compiler output already uses.
+    """
+    root = prefix / "target"
+    root.mkdir(parents=True, exist_ok=True)
+    link = root / config.modules.default_bin_dir.rsplit("/", 1)[-1]
+    if link.is_symlink():
+        if link.readlink() == bin_dir:
+            return
+        link.unlink()
+    elif link.exists():
+        raise GateError(
+            f"{link} is a real directory, so this lane would read binaries it "
+            "built rather than the ones the manifest selected"
+        )
+    link.symlink_to(bin_dir, target_is_directory=True)
+
+
 def link_profiles(config: GateConfig, prefix: Path) -> None:
     """Point this prefix's profile directories at the shared build root.
 

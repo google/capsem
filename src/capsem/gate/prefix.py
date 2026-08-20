@@ -229,7 +229,14 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
             runner.note(f"adopted exported output from the checkout: {', '.join(adopted)}")
         if lent := buildcache.lend(config, path):
             runner.note(f"lent build output to {path.name}: {', '.join(lent)}")
-    cargotarget.link_profiles(config, path)
+    # A pulled lane reads binaries the manifest selected, staged outside this
+    # prefix; every other lane compiles its own. Both end up at `target/debug`,
+    # because that is where the whole test tree already looks.
+    pulled = os.environ.get(config.modules.release_bin_dir)
+    if pulled:
+        cargotarget.link_pulled_binaries(config, path, Path(pulled).resolve())
+    else:
+        cargotarget.link_profiles(config, path)
     child_env = {
         config.environment.source_checkout: str(config.root),
         config.environment.cargo_target: str(cargotarget.path(config)),

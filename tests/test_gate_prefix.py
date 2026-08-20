@@ -1149,3 +1149,43 @@ def test_a_held_lease_is_never_unlinked_from_under_its_owner(tmp_path: Path) -> 
         assert (root / name).exists()
 
     assert [path.name for path in reclaim_orphan_leases(config)] == [name]
+
+
+def test_a_pulled_lane_finds_its_binaries_where_every_test_looks(tmp_path: Path) -> None:
+    """`target/debug` is the one place the test tree resolves a host binary.
+
+    Roughly twenty-five checked-in modules spell `PROJECT_ROOT/target/debug/
+    <name>`, and they are not wrong to: a test should not have to know whether
+    this run built its binaries or was handed them. In a prefix carrying only
+    tracked files that directory is empty, which took down three binary-release
+    dispatches, each found one file at a time with `--maxfail=5` hiding the
+    rest.
+    """
+    from capsem.gate import cargotarget
+
+    config = _capped(tmp_path, cap_gb=1.0)
+    pulled = tmp_path / "pulled-bin"
+    pulled.mkdir()
+    (pulled / "capsem").write_text("#!/bin/sh\n", encoding="utf-8")
+    prefix_path = tmp_path / "prefixes" / ("a" * 8)
+
+    cargotarget.link_pulled_binaries(config, prefix_path, pulled)
+
+    resolved = prefix_path / "target" / "debug" / "capsem"
+    assert resolved.is_file(), "a hardcoded target/debug path must resolve to the pulled binary"
+    assert (prefix_path / "target" / "debug").readlink() == pulled
+
+
+def test_a_pulled_lane_refuses_to_read_binaries_it_built_itself(tmp_path: Path) -> None:
+    """The point is the manifest's bytes, not whichever bytes are nearest."""
+    from capsem.gate import cargotarget
+    from capsem.gate.errors import GateError
+
+    config = _capped(tmp_path, cap_gb=1.0)
+    pulled = tmp_path / "pulled"
+    pulled.mkdir()
+    prefix_path = tmp_path / "prefixes" / ("b" * 8)
+    (prefix_path / "target" / "debug").mkdir(parents=True)
+
+    with pytest.raises(GateError, match="rather than the ones the manifest selected"):
+        cargotarget.link_pulled_binaries(config, prefix_path, pulled)
