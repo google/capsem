@@ -1670,18 +1670,18 @@ max_lines = 20
 # Exact ratchets, as everywhere else: an entry may not grow, and a body that
 # shrinks updates or removes its entry in the same change.
 [boundary.shell_bodies.oversized_line_counts]
-"ci.yaml:test:20:Python schema tests with coverage" = 25
+"ci.yaml:test:21:Python schema tests with coverage" = 25
 "release-assets.yaml:author-profile-release:17:Author selected channel profile in the source manifest" = 32
 "release-assets.yaml:publish-profile-release:16:Publish immutable GitHub profile release" = 33
 "release-binary-staging.yaml:assemble-binary-channel:9:Prove VM asset metadata did not change" = 34
 "release.yaml:build-app-macos:22:Verify macOS package installation path policy" = 31
 "release.yaml:create-release:8:Build summary" = 25
 "release.yaml:preflight:3:Import Apple certificate (preflight)" = 23
-"release.yaml:test-binary-pairing:20:Activate exact candidate package binaries for functional tests" = 25
+"release.yaml:test-binary-pairing:21:Activate exact candidate package binaries for functional tests" = 25
 "release.yaml:test-native-linux-package:5:Install and verify exact release deb" = 27
 "release.yaml:test-native-macos-package:5:Install and verify exact notarized package" = 31
-"release.yaml:verify-release-candidate:4:Verify public GitHub package storage from the candidate manifest" = 34
-"release.yaml:verify-release-candidate:5:Prove install.sh selects and installs the candidate Linux package" = 25
+"release.yaml:verify-release-candidate:5:Verify public GitHub package storage from the candidate manifest" = 34
+"release.yaml:verify-release-candidate:6:Prove install.sh selects and installs the candidate Linux package" = 25
 "release.yaml:verify-release-downloads:4:Verify every URL in the asset channel manifest is reachable" = 42
 "release.yaml:verify-release-downloads:7:Install live public Linux release and prove guest shell execution" = 40
 
