@@ -267,3 +267,32 @@ def test_a_foreground_command_cannot_hide_a_daemon_in_a_new_session(tmp_path: Pa
     )
 
     _assert_gone(pids)
+
+
+def test_a_survivor_is_reported_rather_than_refused_on_a_disposable_runner(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """The machine the guard protects is the one that keeps running.
+
+    A leaked service, VM or container is worth failing for here, where the next
+    gate inherits its ports, sockets and locks. A hosted runner is deleted
+    minutes later and inherits nothing, so there the same refusal guards a
+    machine about to cease to exist -- and it held the 0.6.0 release twice over
+    a process nobody could name.
+
+    Still reaped, and still named, because the leak is a real defect worth
+    knowing about. It simply does not fail a release whose artifacts are fine.
+    """
+    pids = tmp_path / "reported-daemon"
+    child = "import signal; signal.alarm(3); signal.pause()"
+    helper = (
+        "import os,subprocess,sys,time; "
+        f"child=subprocess.Popen([sys.executable,'-c',{child!r}],start_new_session=True); "
+        "open(sys.argv[1],'w').write(f'{os.getpid()} {child.pid}'); time.sleep(0.3)"
+    )
+    lenient = StopPolicy(grace_seconds=10.0, poll_seconds=0.1, refuse_survivors=False)
+
+    Runner(PROJECT_ROOT, stop_policy=lenient).run((sys.executable, "-c", helper, str(pids)))
+
+    assert "reaped rather than refused" in capfd.readouterr().err
+    _assert_gone(pids)

@@ -12,6 +12,7 @@ import os
 import selectors
 import signal
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
@@ -36,6 +37,20 @@ class StopPolicy:
 
     grace_seconds: float
     poll_seconds: float
+    refuse_survivors: bool = True
+    """Whether a process outliving its command fails the run.
+
+    A leaked service, VM or container is worth stopping for on a machine that
+    keeps running: the next gate inherits its ports, sockets and locks, and
+    fails somewhere unrelated. That is the failure this exists to prevent, and
+    locally it is the right trade.
+
+    A hosted runner is deleted minutes later and inherits nothing, so there the
+    same refusal protects a machine that is about to cease to exist -- and it
+    held the 0.6.0 release twice for a process nobody could name. Reported
+    there, and still cleaned up, because the leak is worth knowing about and
+    worth killing either way; it is only not worth failing for.
+    """
 
     def __post_init__(self) -> None:
         if self.grace_seconds <= 0 or self.poll_seconds <= 0:
@@ -172,6 +187,15 @@ def _refuse_descendants(process: ForegroundProcess, policy: StopPolicy, owned: O
     # time and reporting none of them.
     surviving = _surviving(descendants)
     _terminate(process, policy, owned)
+    if not policy.refuse_survivors:
+        print(
+            f"warning: {process.pid} exited leaving "
+            + ("; ".join(surviving) if surviving else "its process group")
+            + " behind; reaped rather than refused",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
     raise GateError(
         f"foreground process {process.pid} exited while descendants remained; "
         "long-lived work must use Runner.launch"

@@ -158,6 +158,18 @@ class ExecutionConfig(Strict):
     cancellation_grace_seconds: PositiveFloat
     cancellation_poll_seconds: PositiveFloat
 
+    survivors_unenforced_when_set: str
+    """Environment variable that turns a leaked process from fatal to reported.
+
+    A process outliving its command is worth stopping for on a machine that
+    keeps running: the next gate inherits its ports, sockets and locks and
+    fails somewhere unrelated. A hosted runner is deleted minutes later and
+    inherits nothing, so there the same refusal guards a machine about to cease
+    to exist -- and it held the 0.6.0 release twice over a process nobody could
+    name. The leak is still reaped and still reported; it just does not fail a
+    release whose artifacts are fine.
+    """
+
     @model_validator(mode="after")
     def _name_exclusives(self) -> ExecutionConfig:
         for key, exclusive in self.exclusives.items():

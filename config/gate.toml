@@ -1044,6 +1044,11 @@ max_parallel_steps = 8
 # often, then gives the exact group this long to stop before SIGKILL. Both are
 # operational policy rather than subprocess call-site folklore.
 cancellation_poll_seconds = 0.1
+# Where a leaked process is reported rather than refused. It is a real defect
+# either way and is reaped either way -- but the machine it protects is this
+# one, and a hosted runner is deleted minutes after the run. Enforced by
+# absence, so a developer machine keeps the guard without opting in.
+survivors_unenforced_when_set = "CI"
 cancellation_grace_seconds = 10.0
 
 [execution.exclusives.apple_vz]
