@@ -30,6 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Debian package installs on a machine that has `systemctl` but is not
+  running systemd -- a container, most obviously. The post-install guarded
+  service registration with `command -v systemctl`, which tests for the binary;
+  the desktop dependencies pull systemd in, so in a container the binary is
+  there while PID 1 is something else and `systemctl --user` has no manager to
+  reach. Registration failed and dpkg left the package unconfigured. It now
+  also requires `/run/systemd/system`, which is `sd_booted(3)` -- systemd's own
+  answer to whether it is the init system -- and records
+  `event=service_registration_skipped` rather than skipping silently. Nothing
+  caught this because the job that installs the candidate in a container has
+  been skipped in every binary release attempt so far, so the path had never
+  run.
+
 - A profile's declared binary floor now survives being projected into a runtime
   asset manifest. `capsem-admin profile materialize` read `min_capsem_version`
   from a release-graph profile and wrote an empty `min_binary`, so re-authoring

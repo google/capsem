@@ -143,10 +143,17 @@ esac
 
 # Register systemd user unit as the target user.
 # XDG_RUNTIME_DIR is required for systemctl --user; su drops it.
+#
+# The binary is not the manager. A container installs systemctl as a
+# dependency of the desktop libraries while running some other process as PID
+# 1, so `command -v systemctl` alone says yes where `systemctl --user` has
+# nothing to talk to. /run/systemd/system is sd_booted(3): systemd's own
+# published answer to whether it is the init system. Without it there is no
+# service to register, which is not a failed install -- fall through.
 CAPSEM_INSTALL_PHASE="register_service"
 TARGET_UID=$(id -u "$TARGET_USER")
 XDG_DIR="/run/user/$TARGET_UID"
-if command -v systemctl >/dev/null 2>&1; then
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     if ! su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem install" 2>/dev/null; then
         echo "capsem: service registration failed" >&2
         echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=service_registration_failed"
@@ -183,6 +190,8 @@ if command -v systemctl >/dev/null 2>&1; then
         echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=service_not_ready"
         exit 1
     fi
+else
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=service_registration_skipped reason=no_running_service_manager"
 fi
 
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=complete"
