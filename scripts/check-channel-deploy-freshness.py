@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -25,6 +26,14 @@ def read_live_manifest(release_site: str, channel: str) -> bytes:
         return response.read()
 
 
+def _is_manifest(body: bytes) -> bool:
+    """Whether the site returned a channel manifest rather than its own page."""
+    try:
+        return isinstance(json.loads(body), dict)
+    except (ValueError, UnicodeDecodeError):
+        return False
+
+
 def verify_untouched_channels(
     *,
     selected_channel: str,
@@ -40,10 +49,19 @@ def verify_untouched_channels(
         if channel == selected_channel:
             continue
         candidate_path = dist / "assets" / channel / "manifest.json"
-        if not candidate_path.is_file():
-            raise ValueError(f"generated dist is missing untouched {channel} manifest")
-        candidate = candidate_path.read_bytes()
         live = read_live_manifest(release_site, channel)
+        if not candidate_path.is_file():
+            # Absent from both sides is consistent: a deploy cannot replace a
+            # channel that does not exist. The site answers an unpublished path
+            # with HTML under a 200, so "never published" arrives as a body
+            # that is not a manifest rather than as a 404.
+            if not _is_manifest(live):
+                continue
+            raise ValueError(
+                f"generated dist is missing published {channel} manifest; "
+                "deploying would remove it"
+            )
+        candidate = candidate_path.read_bytes()
         if candidate != live:
             raise ValueError(
                 f"untouched {channel} manifest changed after candidate assembly; "

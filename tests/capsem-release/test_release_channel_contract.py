@@ -141,6 +141,61 @@ def test_deploy_rejects_stale_untouched_channel(
         )
 
 
+def test_a_channel_that_has_never_published_is_absent_from_both_sides(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Absent from the dist and absent live is consistent, not a fault.
+
+    The deploy cannot replace a nightly that does not exist. Requiring its
+    manifest in the dist made a stable deploy depend on nightly having
+    published, while nightly cannot publish until a stable release creates the
+    package cohort it bootstraps from -- the same cycle the channel assembly
+    had, one job further on.
+    """
+    dist = tmp_path / "dist"
+    (dist / "assets" / "stable").mkdir(parents=True)
+
+    def unpublished(_release_site: str, channel: str) -> bytes:
+        # The site answers an unpublished path with its own HTML under a 200.
+        assert channel == "nightly"
+        return b"<!DOCTYPE html><html><head><title>Not found</title>"
+
+    monkeypatch.setattr(DEPLOY_FRESHNESS, "read_live_manifest", unpublished)
+
+    DEPLOY_FRESHNESS.verify_untouched_channels(
+        selected_channel="stable",
+        dist=dist,
+        release_site="https://release.example.test",
+    )
+
+
+def test_dropping_a_channel_that_is_live_is_still_refused(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The protection worth keeping: a deploy must not delete a real channel.
+
+    Absent from the dist while published live is the dangerous shape -- the
+    deploy would replace the site without it.
+    """
+    dist = tmp_path / "dist"
+    (dist / "assets" / "stable").mkdir(parents=True)
+
+    monkeypatch.setattr(
+        DEPLOY_FRESHNESS,
+        "read_live_manifest",
+        lambda _release_site, _channel: b'{"channel":"nightly","version":"1.0.8"}\n',
+    )
+
+    with pytest.raises(ValueError, match="published nightly"):
+        DEPLOY_FRESHNESS.verify_untouched_channels(
+            selected_channel="stable",
+            dist=dist,
+            release_site="https://release.example.test",
+        )
+
+
 def _run(
     command: list[str],
     *,
