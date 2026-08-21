@@ -512,7 +512,12 @@ def _inspection_checkout(source: Path) -> Iterator[Path]:
         # Darwin plan on Linux.  The copy itself still runs on this kernel, so
         # its clonefile choice must use the real interpreter platform.
         with patch.object(host, "on_macos", return_value=sys.platform == "darwin"):
-            snapshot.populate(source, checkout, gate_config.load(source))
+            # The subject only, not `_copy_carried`'s build outputs. A plan's
+            # text comes from source; the carried inputs are `target/`, which a
+            # release proof is actively writing while this copy is taken --
+            # so the faithfulness check saw the tree in two states and refused
+            # a copy that "holds files from more than one state of it".
+            snapshot.populate_subject(source, checkout, gate_config.load(source))
             # The frozen-source copy is infrastructure too.  Keep both copy
             # stages on the real host even when the contract is rendering a
             # mocked Darwin plan on Linux; otherwise snapshotting selects
