@@ -1,3 +1,9 @@
+mod commands;
+mod machine;
+mod record;
+mod schema;
+mod stats;
+
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use futures::future::try_join_all;
@@ -31,6 +37,59 @@ enum Command {
     ProtocolDelta(ProtocolDeltaArgs),
     /// Compare host-direct and guest-through-Capsem artifacts.
     Delta(DeltaArgs),
+    /// Every dimension this binary can measure, and whether a quick run covers it.
+    List,
+    /// Report whether this machine is fit to measure on.
+    Doctor(DoctorArgs),
+    /// Compare two records metric by metric.
+    Compare(CompareArgs),
+    /// Ratchet a directory of records against checked-in evidence.
+    Verify(VerifyArgs),
+}
+
+/// How much growth is allowed, and how much of a move is just the machine.
+///
+/// Defaults mirror `[benchmark_regression] maximum_factor` in
+/// `config/gate.toml`; they become flags rather than constants so the gate can
+/// pass the config-owned value in until this binary reads that file directly.
+#[derive(Parser, Debug, Clone, Copy)]
+pub(crate) struct Thresholds {
+    /// A metric may grow by this ratio before it counts as a regression.
+    #[arg(long, default_value_t = 1.2)]
+    pub(crate) maximum_factor: f64,
+    /// Multiplier on the evidence's own spread. A move inside its baseline's
+    /// noise is reported but never called significant.
+    #[arg(long, default_value_t = 1.0)]
+    pub(crate) noise_factor: f64,
+}
+
+#[derive(Parser, Debug)]
+struct CompareArgs {
+    /// The record to treat as the baseline.
+    baseline: PathBuf,
+    /// The record to judge.
+    current: PathBuf,
+    #[command(flatten)]
+    thresholds: Thresholds,
+}
+
+#[derive(Parser, Debug)]
+struct VerifyArgs {
+    /// Records written by this run.
+    #[arg(long)]
+    records: PathBuf,
+    /// Checked-in evidence to judge them against.
+    #[arg(long)]
+    evidence: PathBuf,
+    #[command(flatten)]
+    thresholds: Thresholds,
+}
+
+#[derive(Parser, Debug)]
+struct DoctorArgs {
+    /// Emit the verdict as JSON rather than prose.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -51,6 +110,15 @@ struct ProtocolArgs {
     lane: String,
     #[arg(long, default_value = "/tmp/capsem-benchmark.json")]
     json_out: PathBuf,
+    /// Also write a `capsem.bench.v1` record into this directory.
+    #[arg(long)]
+    record: Option<PathBuf>,
+    #[arg(long, default_value = "unknown")]
+    channel: String,
+    #[arg(long, default_value = "unknown")]
+    commit: String,
+    #[arg(long, default_value = "code")]
+    profile: String,
 }
 
 #[derive(Parser, Debug)]
@@ -287,7 +355,7 @@ const SCENARIOS: &[Scenario] = &[
 ];
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct Artifact {
+pub(crate) struct Artifact {
     version: String,
     timestamp: f64,
     hostname: String,
@@ -296,7 +364,7 @@ struct Artifact {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct ProtocolReport {
+pub(crate) struct ProtocolReport {
     version: String,
     lane: String,
     base_url: String,
@@ -310,7 +378,7 @@ struct ProtocolReport {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct ScenarioResult {
+pub(crate) struct ScenarioResult {
     name: String,
     path: String,
     body_kind: String,
@@ -325,6 +393,11 @@ struct ScenarioResult {
     transfer_bytes: u64,
     bytes_per_sec: f64,
     latency_ms: LatencySummary,
+    /// Raw per-request latencies, kept for `capsem.bench.v1` and never
+    /// serialized into this artifact: `capsem-bench` computes every statistic
+    /// itself, so a collector that pre-summarizes hides the distribution.
+    #[serde(skip)]
+    latency_samples: Vec<f64>,
     errors: BTreeMap<String, usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     secret_shaped_fixture_seen: Option<bool>,
@@ -333,7 +406,7 @@ struct ScenarioResult {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct LatencySummary {
+pub(crate) struct LatencySummary {
     min: f64,
     max: f64,
     mean: f64,
@@ -407,9 +480,27 @@ async fn main() -> Result<()> {
         scenarios: None,
         lane: "host_direct".to_string(),
         json_out: PathBuf::from("/tmp/capsem-benchmark.json"),
+        record: None,
+        channel: "unknown".to_string(),
+        commit: "unknown".to_string(),
+        profile: "code".to_string(),
     })) {
         Command::Protocol(args) => {
+            let destination = args.record.clone();
+            let (channel, commit, profile) =
+                (args.channel.clone(), args.commit.clone(), args.profile.clone());
             let artifact = run_protocol(args).await?;
+            if let Some(root) = destination {
+                let record = commands::protocol_record(
+                    &artifact,
+                    &channel,
+                    &commit,
+                    &profile,
+                    running_capsem_processes(),
+                );
+                let path = record::write(&root, &record)?;
+                eprintln!("recorded {} metrics to {}", record.metrics.len(), path.display());
+            }
             println!("{}", serde_json::to_string_pretty(&artifact)?);
         }
         Command::ProtocolDelta(args) => {
@@ -420,8 +511,23 @@ async fn main() -> Result<()> {
             let artifact = run_delta(args)?;
             println!("{}", serde_json::to_string_pretty(&artifact)?);
         }
+        Command::List => commands::list_dimensions(),
+        Command::Doctor(args) => return commands::doctor(args.json, running_capsem_processes()),
+        Command::Compare(args) => return commands::compare(&args.baseline, &args.current, args.thresholds),
+        Command::Verify(args) => return commands::verify(&args.records, &args.evidence, args.thresholds),
     }
     Ok(())
+}
+
+/// Capsem processes already running, which compete for the CPU being measured.
+fn running_capsem_processes() -> Vec<String> {
+    let Ok(output) = StdCommand::new("pgrep").args(["-l", "^capsem"]).output() else {
+        return Vec::new();
+    };
+    machine::strays_from_pgrep(
+        &String::from_utf8_lossy(&output.stdout),
+        &std::process::id().to_string(),
+    )
 }
 
 async fn run_protocol(args: ProtocolArgs) -> Result<Artifact> {
@@ -560,6 +666,12 @@ async fn run_protocol_delta(args: ProtocolDeltaArgs) -> Result<ProtocolDeltaArti
         scenarios: Some(selected_names.clone()),
         lane: "host_direct".to_string(),
         json_out: temp_artifact_path("host"),
+        // The delta lane compares two artifacts; recording is the caller's
+        // decision, made once for the pair rather than twice inside it.
+        record: None,
+        channel: "unknown".to_string(),
+        commit: "unknown".to_string(),
+        profile: "code".to_string(),
     })
     .await?;
 
@@ -917,6 +1029,7 @@ fn summarize(
         transfer_bytes,
         bytes_per_sec: round1(transfer_bytes as f64 / duration_s),
         latency_ms: latency_summary(samples.iter().map(|sample| sample.latency_ms).collect()),
+        latency_samples: samples.iter().map(|sample| sample.latency_ms).collect(),
         errors,
         secret_shaped_fixture_seen: secret_seen,
         raw_secret_stored_in_result: scenario.secret_shaped_fixture.then_some(false),

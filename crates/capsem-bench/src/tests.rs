@@ -110,6 +110,7 @@ fn delta_computes_abstraction_cost() {
             p95: 1.0,
             p99: 1.5,
         },
+        latency_samples: Vec::new(),
         errors: BTreeMap::new(),
         secret_shaped_fixture_seen: None,
         raw_secret_stored_in_result: None,
@@ -123,6 +124,7 @@ fn delta_computes_abstraction_cost() {
             p99: 9.5,
             ..host.latency_ms.clone()
         },
+        latency_samples: Vec::new(),
         ..host.clone()
     };
     let host_values = [host];
@@ -165,6 +167,7 @@ fn failed_scenarios_are_poisoned_benchmark_numbers() {
             p95: 1.0,
             p99: 1.5,
         },
+        latency_samples: Vec::new(),
         errors: BTreeMap::from([("request:connection refused".to_string(), 100)]),
         secret_shaped_fixture_seen: None,
         raw_secret_stored_in_result: None,
@@ -339,6 +342,7 @@ fn build_delta_report_keeps_inline_artifact_identity() {
             p95: 1.0,
             p99: 1.5,
         },
+        latency_samples: Vec::new(),
         errors: BTreeMap::new(),
         secret_shaped_fixture_seen: None,
         raw_secret_stored_in_result: None,
@@ -371,6 +375,7 @@ fn build_delta_report_keeps_inline_artifact_identity() {
                     p99: 4.5,
                     ..row.latency_ms.clone()
                 },
+                latency_samples: Vec::new(),
                 ..row
             }],
             ..host.mock_server_protocol.clone()
