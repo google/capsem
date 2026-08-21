@@ -115,4 +115,18 @@ def test_the_check_gates_qualification_and_force_removes_it(name: str) -> None:
     assert guarded.index("source.worktree-clean") < guarded.index("source.publish-ref")
 
     assert "source.worktree-clean" not in forced
-    assert len(forced) == len(guarded) - 1
+
+    # Force waives the artifacts, not every check. It drops the clean-tree
+    # refusal and swaps the exact-journal requirement for a recorded waiver,
+    # then proves the source it is about to publish -- the citadel guards and
+    # the release contracts, which are the suites that judge the gate and CI
+    # changes worth forcing in the first place. Counting steps asserted the
+    # old shape, where force meant "one fewer".
+    assert "qualification.accept" not in forced
+    assert "qualification.waived" in forced
+    for proof in ("citadel", "contracts.release"):
+        assert proof in forced, f"a forced release skips {proof}"
+        assert forced.index(proof) < forced.index("source.publish-ref"), (
+            f"{proof} must run before anything is published"
+        )
+    assert set(guarded) - set(forced) == {"source.worktree-clean", "qualification.accept"}
