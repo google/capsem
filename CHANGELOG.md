@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scripts/write-release-notes.py`: the GitHub release notes are rendered by a
+  program with tests instead of a shell heredoc. The heredoc's tag was
+  unquoted, which makes backticks command substitution -- so the line meant to
+  read ``Qualified source: `<commit>` `` ran the commit hash as a program,
+  substituted nothing, and shipped "Qualified source: ." The shell exits 0, so
+  `set -euo pipefail` never saw it. An empty value now refuses instead.
+- `tests/citadel/test_workflow_heredocs_do_not_run_their_backticks.py`: no
+  workflow heredoc may contain a backtick or `$(...)` unless its tag is quoted.
+  The two heredocs that legitimately interpolate a coverage number are
+  unaffected; substitution is the part that was never wanted.
 - `tests/citadel/test_required_jobs_are_derived.py`: the set of CI jobs that
   must pass is derived from the workflow, not restated. Four places had to
   agree -- `jobs:`, `pr-gate.needs:`, `pr-gate.env:`, and the required list in

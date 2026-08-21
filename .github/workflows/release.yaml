@@ -1090,15 +1090,7 @@ jobs:
           cp release-artifacts/*.pkg "$owned/"
           cp release-artifacts/*.deb "$owned/"
           cp release-artifacts/capsem-sbom.spdx.json "$owned/"
-          cat > "$notes" <<EOF
-          Qualified source: `$SOURCE_COMMIT`.
-
-          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/$SOURCE_COMMIT/CHANGELOG.md) for details.
-
-          ### VM Assets
-
-          VM assets are released independently at ${ASSET_MANIFEST_URL}.
-          EOF
+          python3 scripts/write-release-notes.py "$notes"
           CAPSEM_RELEASE_CREATE_TITLE="Capsem $RELEASE_TAG ($SOURCE_COMMIT)" \
           CAPSEM_RELEASE_CREATE_NOTES_FILE="$notes" \
           CAPSEM_RELEASE_CREATE_TARGET="$SOURCE_COMMIT" \
