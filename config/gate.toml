@@ -1675,7 +1675,6 @@ max_lines = 20
 "release-assets.yaml:publish-profile-release:16:Publish immutable GitHub profile release" = 33
 "release-binary-staging.yaml:assemble-binary-channel:9:Prove VM asset metadata did not change" = 34
 "release.yaml:build-app-macos:22:Verify macOS package installation path policy" = 31
-"release.yaml:create-release:8:Build summary" = 25
 "release.yaml:preflight:3:Import Apple certificate (preflight)" = 23
 "release.yaml:test-binary-pairing:21:Activate exact candidate package binaries for functional tests" = 25
 "release.yaml:test-native-linux-package:5:Install and verify exact release deb" = 27

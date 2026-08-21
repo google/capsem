@@ -1774,10 +1774,18 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
 
 
 def test_binary_release_summary_names_pkg_and_deb_sbom_coverage() -> None:
-    create_release = _workflow_job_block("create-release", "release.yaml")
+    """The claim follows the summary into the script that now renders it.
 
-    assert "SBOM attested (SPDX 2.3, pkg + deb)" in create_release
-    assert "SBOM attested (SPDX 2.3, pkg)" not in create_release
+    It was asserted against the workflow because the summary was a shell body
+    inside `run:`. That body also carried `[ -n "$LINUX_ROWS" ]` -- a refusal,
+    not formatting -- which no test could reach.
+    """
+    create_release = _workflow_job_block("create-release", "release.yaml")
+    assert "scripts/write-release-summary.py" in create_release
+
+    summary = (PROJECT_ROOT / "scripts" / "write-release-summary.py").read_text(encoding="utf-8")
+    assert "SBOM attested (SPDX 2.3, pkg + deb)" in summary
+    assert "SBOM attested (SPDX 2.3, pkg)\n" not in summary
 
 
 def test_binary_release_does_not_publish_latest_json_updater_metadata() -> None:

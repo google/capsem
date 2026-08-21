@@ -1074,43 +1074,11 @@ jobs:
           predicate-path: release-artifacts/capsem-sbom.spdx.json
 
       - name: Build summary
-        run: |
-          VERSION="${RELEASE_TAG#v}"
-          PKG=$(find release-artifacts -maxdepth 1 -name '*.pkg' -print -quit)
-          PKG_NAME=$(basename "$PKG" 2>/dev/null || echo "N/A")
-          PKG_SIZE=$(du -h "$PKG" 2>/dev/null | cut -f1 || echo "N/A")
-          SBOM_PKGS=$(python3 -c "import json; d=json.load(open('release-artifacts/capsem-sbom.spdx.json')); print(len(d.get('packages',[])))" 2>/dev/null || echo "?")
-
-          # Build artifact table rows for all mandatory debs.
-          LINUX_ROWS=""
-          for f in release-artifacts/*.deb; do
-            [ -f "$f" ] || continue
-            NAME=$(basename "$f")
-            SIZE=$(du -h "$f" | cut -f1)
-            LINUX_ROWS="${LINUX_ROWS}| ${NAME} | ${SIZE} |
-          "
-          done
-          [ -n "$LINUX_ROWS" ]
-
-          cat >> "$GITHUB_STEP_SUMMARY" << EOF
-          ## Release $VERSION
-
-          ### Artifacts
-
-          | File | Size |
-          |------|------|
-          | $PKG_NAME | $PKG_SIZE |
-          ${LINUX_ROWS}| Asset manifest | $ASSET_MANIFEST_URL |
-          | capsem-sbom.spdx.json | $SBOM_PKGS packages |
-
-          ### Security
-
-          - Apple codesigned (Developer ID), notarized + stapled (.pkg)
-          - SLSA build provenance attested (pkg + deb)
-          - SBOM attested (SPDX 2.3, pkg + deb)
-          - VM assets are served by the manual asset workflow through release.capsem.org
-          EOF
-
+        run: >
+          python3 scripts/write-release-summary.py
+          --artifacts release-artifacts
+          --tag "$RELEASE_TAG"
+          --manifest-url "$ASSET_MANIFEST_URL"
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
