@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Measure VM lifecycle: provision, exec-ready, exec, delete.
+
+Prints raw per-run milliseconds on stdout; `capsem-bench` computes every
+statistic. The measurement itself is the one
+`tests/capsem-serial/test_lifecycle_benchmark.py` already performs -- this
+drives the same helpers rather than growing a second copy of it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+import uuid
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tests"))
+
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT  # noqa: E402
+from helpers.service import ServiceInstance, wait_exec_ready  # noqa: E402
+
+
+def one_cycle(client) -> dict[str, float]:
+    name = f"bench-{uuid.uuid4().hex[:8]}"
+
+    started = time.monotonic()
+    client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS})
+    provision_ms = (time.monotonic() - started) * 1000
+
+    started = time.monotonic()
+    ready = wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
+    exec_ready_ms = (time.monotonic() - started) * 1000
+    if not ready:
+        raise RuntimeError(f"{name} never became exec-ready")
+
+    started = time.monotonic()
+    result = client.post(
+        f"/vms/{name}/exec", {"command": "echo ok", "timeout_secs": 10}, timeout=15
+    )
+    exec_ms = (time.monotonic() - started) * 1000
+    if result is None or "ok" not in result.get("stdout", ""):
+        raise RuntimeError(f"exec in {name} returned {result}")
+
+    started = time.monotonic()
+    client.delete(f"/vms/{name}/delete")
+    delete_ms = (time.monotonic() - started) * 1000
+
+    return {
+        "provision_ms": provision_ms,
+        "exec_ready_ms": exec_ready_ms,
+        "exec_ms": exec_ms,
+        "delete_ms": delete_ms,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--quick", action="store_true", help="one cycle instead of three")
+    parser.add_argument("--runs", type=int, default=None)
+    args = parser.parse_args()
+
+    runs = args.runs if args.runs is not None else (1 if args.quick else 3)
+    service = ServiceInstance()
+    service.start()
+    client = service.client()
+
+    collected: dict[str, list[float]] = {}
+    try:
+        for index in range(runs):
+            print(f"lifecycle cycle {index + 1}/{runs}", file=sys.stderr)
+            for key, value in one_cycle(client).items():
+                collected.setdefault(key, []).append(value)
+    finally:
+        service.stop()
+
+    json.dump(
+        {
+            "metrics": {
+                key: {"unit": "milliseconds", "samples": values}
+                for key, values in collected.items()
+            }
+        },
+        sys.stdout,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

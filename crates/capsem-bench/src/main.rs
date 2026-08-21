@@ -1,9 +1,9 @@
 mod collector;
 mod commands;
 mod machine;
-mod record;
 mod schema;
 mod stats;
+mod store;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
@@ -48,6 +48,17 @@ enum Command {
     Verify(VerifyArgs),
     /// Measure dimensions and record what they measured.
     Run(RunArgs),
+    /// What every measured subject reads, and how it has moved.
+    Report(ReportArgs),
+}
+
+#[derive(Parser, Debug)]
+struct ReportArgs {
+    /// The benchmark store to read.
+    #[arg(long, default_value = "target/test-benchmarks/benchmarks.db")]
+    store: PathBuf,
+    #[arg(long, default_value = "code")]
+    profile: String,
 }
 
 #[derive(Parser, Debug)]
@@ -57,8 +68,8 @@ struct RunArgs {
     /// Directory holding one executable per dimension.
     #[arg(long, default_value = "bench/collectors")]
     collectors: PathBuf,
-    /// Where records are written.
-    #[arg(long, default_value = "target/test-benchmarks")]
+    /// The benchmark store to record into.
+    #[arg(long, default_value = "target/test-benchmarks/benchmarks.db")]
     out: PathBuf,
     /// Reduced samples, skipping everything that boots a guest.
     #[arg(long)]
@@ -92,20 +103,24 @@ pub(crate) struct Thresholds {
 
 #[derive(Parser, Debug)]
 struct CompareArgs {
-    /// The record to treat as the baseline.
+    /// The store holding the evidence.
     baseline: PathBuf,
-    /// The record to judge.
+    /// The store holding this run.
     current: PathBuf,
+    /// Which dimension to compare.
+    dimension: String,
+    #[arg(long, default_value = "code")]
+    profile: String,
     #[command(flatten)]
     thresholds: Thresholds,
 }
 
 #[derive(Parser, Debug)]
 struct VerifyArgs {
-    /// Records written by this run.
-    #[arg(long)]
+    /// The store holding this run.
+    #[arg(long, default_value = "target/test-benchmarks/benchmarks.db")]
     records: PathBuf,
-    /// Checked-in evidence to judge them against.
+    /// The store holding checked-in evidence.
     #[arg(long)]
     evidence: PathBuf,
     #[command(flatten)]
@@ -137,7 +152,7 @@ struct ProtocolArgs {
     lane: String,
     #[arg(long, default_value = "/tmp/capsem-benchmark.json")]
     json_out: PathBuf,
-    /// Also write a `capsem.bench.v1` record into this directory.
+    /// Also record into this benchmark store.
     #[arg(long)]
     record: Option<PathBuf>,
     #[arg(long, default_value = "unknown")]
@@ -525,8 +540,13 @@ async fn main() -> Result<()> {
                     &profile,
                     running_capsem_processes(),
                 );
-                let path = record::write(&root, &record)?;
-                eprintln!("recorded {} metrics to {}", record.metrics.len(), path.display());
+                let mut connection = store::open(&root)?;
+                let run_id = store::insert(&mut connection, &record)?;
+                eprintln!(
+                    "recorded {} metrics as run {run_id} in {}",
+                    record.metrics.len(),
+                    root.display()
+                );
             }
             println!("{}", serde_json::to_string_pretty(&artifact)?);
         }
@@ -538,9 +558,22 @@ async fn main() -> Result<()> {
             let artifact = run_delta(args)?;
             println!("{}", serde_json::to_string_pretty(&artifact)?);
         }
+        Command::Report(args) => {
+            return commands::report(&args.store, std::env::consts::ARCH, &args.profile)
+        }
         Command::List => commands::list_dimensions(),
         Command::Doctor(args) => return commands::doctor(args.json, running_capsem_processes()),
-        Command::Compare(args) => return commands::compare(&args.baseline, &args.current, args.thresholds),
+        Command::Compare(args) => {
+            let dimension = commands::select_dimensions(std::slice::from_ref(&args.dimension))?[0];
+            return commands::compare(
+                &args.baseline,
+                &args.current,
+                dimension,
+                std::env::consts::ARCH,
+                &args.profile,
+                args.thresholds,
+            );
+        }
         Command::Verify(args) => return commands::verify(&args.records, &args.evidence, args.thresholds),
         Command::Run(args) => {
             let wanted = commands::select_dimensions(&args.dimensions)?;

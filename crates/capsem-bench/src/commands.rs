@@ -7,11 +7,11 @@
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::collector;
 use crate::machine;
-use crate::record;
+use crate::store;
 use crate::schema;
 use crate::stats;
 use crate::{Artifact, Thresholds};
@@ -85,6 +85,7 @@ pub(crate) fn run_dimensions(
     strays: Vec<String>,
 ) -> Result<()> {
     let fitness = machine::examine(std::env::consts::ARCH, std::env::consts::OS, &strays);
+    let mut connection = store::open(out)?;
     let mut ran = 0usize;
 
     for dimension in wanted {
@@ -132,12 +133,11 @@ pub(crate) fn run_dimensions(
             metrics,
             sidecar: collected.sidecar,
         };
-        let path = record::write(out, &record)?;
+        let run_id = store::insert(&mut connection, &record)?;
         println!(
-            "{}: {} metrics -> {}",
+            "{}: {} metrics recorded as run {run_id}",
             dimension.as_str(),
-            record.metrics.len(),
-            path.display()
+            record.metrics.len()
         );
         ran += 1;
     }
@@ -148,13 +148,24 @@ pub(crate) fn run_dimensions(
     Ok(())
 }
 
-/// Compare every metric the two records share.
+/// Compare one subject in two stores, metric by metric.
 ///
-/// A metric present in only one of them is reported rather than skipped: a
-/// disappearing metric is how coverage quietly shrinks.
-pub(crate) fn compare(baseline_path: &Path, current_path: &Path, thresholds: Thresholds) -> Result<()> {
-    let baseline = record::read(baseline_path)?;
-    let current = record::read(current_path)?;
+/// A metric present in only one is skipped rather than guessed at; `verify` is
+/// what reports a whole run.
+pub(crate) fn compare(
+    baseline_db: &Path,
+    current_db: &Path,
+    dimension: schema::Dimension,
+    arch: &str,
+    profile: &str,
+    thresholds: Thresholds,
+) -> Result<()> {
+    let baseline_store = store::open(baseline_db)?;
+    let current_store = store::open(current_db)?;
+    let baseline = store::latest(&baseline_store, dimension, arch, profile)?
+        .with_context(|| format!("no {} evidence for {arch} {profile}", dimension.as_str()))?;
+    let current = store::latest(&current_store, dimension, arch, profile)?
+        .with_context(|| format!("no {} run for {arch} {profile}", dimension.as_str()))?;
     let verdicts = judge(&baseline, &current, thresholds);
     report_comparisons(&baseline, &verdicts);
     Ok(())
@@ -166,31 +177,28 @@ pub(crate) fn compare(baseline_path: &Path, current_path: &Path, thresholds: Thr
 /// baseline's own noise is printed and forgiven -- the 0.6.0 release was held
 /// for two hours by exactly such a reading, which then did not reproduce.
 pub(crate) fn verify(records: &Path, evidence_dir: &Path, thresholds: Thresholds) -> Result<()> {
-    let evidence = record::read_all(evidence_dir)?;
-    let current = record::read_all(records)?;
-    if current.is_empty() {
+    let evidence = store::open(evidence_dir)?;
+    let measured = store::open(records)?;
+    let subjects = store::subjects(&measured)?;
+    if subjects.is_empty() {
         bail!("no records to verify in {}", records.display());
     }
 
     let mut significant = 0usize;
-    for record in &current {
-        let Some(baseline) = record::latest_for(
-            &evidence,
-            record.dimension,
-            &record.host.arch,
-            &record.profile,
-        ) else {
+    for (dimension, arch, profile) in subjects {
+        let Some(record) = store::latest(&measured, dimension, &arch, &profile)? else {
+            continue;
+        };
+        let Some(baseline) = store::latest(&evidence, dimension, &arch, &profile)? else {
             // Seeding, not failing: a dimension measured for the first time
             // has nothing to regress against.
             println!(
-                "{}: no evidence yet for {} {} -- seeding",
-                record.dimension.as_str(),
-                record.host.arch,
-                record.profile
+                "{}: no evidence yet for {arch} {profile} -- seeding",
+                dimension.as_str()
             );
             continue;
         };
-        let verdicts = judge(&baseline, record, thresholds);
+        let verdicts = judge(&baseline, &record, thresholds);
         significant += verdicts.iter().filter(|v| v.significant).count();
         report_comparisons(&baseline, &verdicts);
     }
@@ -374,4 +382,56 @@ pub(crate) fn select_dimensions(names: &[String]) -> Result<Vec<schema::Dimensio
                 })
         })
         .collect()
+}
+
+/// What every measured subject currently reads, and how it has moved.
+///
+/// The question the old layout could not answer without globbing filenames
+/// and parsing ten shapes: is this slower than it was?
+pub(crate) fn report(store_db: &Path, arch: &str, profile: &str) -> Result<()> {
+    let connection = store::open(store_db)?;
+    let subjects = store::subjects(&connection)?;
+    if subjects.is_empty() {
+        bail!("no runs recorded in {}", store_db.display());
+    }
+
+    for (dimension, subject_arch, subject_profile) in subjects {
+        if subject_arch != arch || subject_profile != profile {
+            continue;
+        }
+        let Some(record) = store::latest(&connection, dimension, arch, profile)? else {
+            continue;
+        };
+        println!(
+            "\n## {} -- {} {} {}, recorded {}",
+            dimension.as_str(),
+            record.release.version,
+            arch,
+            profile,
+            record.recorded_at
+        );
+        println!("| metric | median | p99 | cv | n | trend |");
+        println!("|---|---:|---:|---:|---:|---|");
+        for metric in &record.metrics {
+            let points = store::history(&connection, &metric.key, arch, profile)?;
+            // Oldest to newest, so the direction is visible without a chart.
+            let trend = points
+                .iter()
+                .rev()
+                .take(5)
+                .rev()
+                .map(|(_, _, value)| format!("{value:.2}"))
+                .collect::<Vec<_>>()
+                .join(" -> ");
+            println!(
+                "| {} | {:.2} | {:.2} | {:.2} | {} | {trend} |",
+                metric.key,
+                metric.summary.median,
+                metric.summary.p99,
+                metric.summary.cv,
+                metric.summary.n
+            );
+        }
+    }
+    Ok(())
 }

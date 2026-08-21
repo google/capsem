@@ -90,27 +90,6 @@ fn statistics_are_flattened_beside_the_key() {
 }
 
 #[test]
-fn the_filename_carries_every_identity_axis() {
-    // route-latency wrote `data_<version>.json` with neither arch nor profile,
-    // so one gate's `code` and `co-work` runs overwrote each other.
-    assert_eq!(record().filename(), "routes_0.6.0_x86_64_code.json");
-}
-
-#[test]
-fn two_profiles_of_one_release_do_not_collide() {
-    let mut other = record();
-    other.profile = "co-work".to_string();
-    assert_ne!(record().filename(), other.filename());
-}
-
-#[test]
-fn two_architectures_of_one_release_do_not_collide() {
-    let mut other = record();
-    other.host.arch = "arm64".to_string();
-    assert_ne!(record().filename(), other.filename());
-}
-
-#[test]
 fn every_dimension_is_listed_once() {
     let mut names: Vec<&str> = Dimension::ALL.iter().map(|d| d.as_str()).collect();
     let listed = names.len();

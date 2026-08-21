@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Measure one dimension inside a VM, via the guest `capsem-bench` package.
+
+One program for eight dimensions: it reads the mode from the name it was
+invoked as, so `disk`, `rootfs`, `storage`, `startup`, `snapshot`, `mcp-load`,
+`mitm-load` and `dns-load` are symlinks to this file. Eight copies of "boot a
+VM, run a mode, pull the JSON out" would drift apart, which is how the three
+load modes ended up with committed baselines and no caller.
+
+`mitm-load`, `mcp-load` and `dns-load` are excluded from the guest package's
+`all`, so nothing has ever run them automatically. Naming them here is what
+gives them a caller.
+
+The guest reports one number per operation rather than a sample array, so most
+of these are single-observation metrics. `n` says so rather than implying a
+distribution that was never measured.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shlex
+import sys
+import uuid
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tests"))
+
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT  # noqa: E402
+from helpers.service import ServiceInstance, wait_exec_ready  # noqa: E402
+
+# Units the guest reports, by the suffix its key carries.
+UNITS = {
+    "_mbps": "megabits_per_second",
+    "_ms": "milliseconds",
+    "_bytes": "bytes",
+    "iops": "operations",
+    "rps": "requests_per_second",
+}
+
+
+def unit_for(key: str) -> str | None:
+    """The unit a key declares, or `None` when it declares none.
+
+    A key with no recognised unit is not a measurement. The guest reports the
+    kernel's block-queue settings alongside its timings -- `rotational`,
+    `nr_requests`, `read_ahead_kb` -- and walking everything numeric turned
+    `storage` into 640 "metrics", most of them static configuration that would
+    then be ratcheted like a duration.
+    """
+    for suffix, unit in UNITS.items():
+        if key.endswith(suffix):
+            return unit
+    return None
+
+
+def flatten(node, prefix: str = "") -> dict[str, float]:
+    """Every number the guest reported, under a dotted key.
+
+    The guest sections nest differently per mode -- disk by operation, storage
+    by mount, startup by command -- so the shape is walked rather than known.
+    """
+    found: dict[str, float] = {}
+    if isinstance(node, dict):
+        for key, value in node.items():
+            found.update(flatten(value, f"{prefix}.{key}" if prefix else str(key)))
+    elif isinstance(node, bool):
+        pass  # a flag is not a measurement
+    elif isinstance(node, (int, float)):
+        found[prefix] = float(node)
+    return found
+
+
+def main() -> int:
+    mode = Path(sys.argv[0]).name
+    parser = argparse.ArgumentParser(description=f"measure {mode} inside a VM")
+    parser.add_argument("--quick", action="store_true", help="unused; guest modes are fixed")
+    parser.add_argument("--timeout", type=int, default=600)
+    args = parser.parse_args()
+
+    name = f"bench-{mode}-{uuid.uuid4().hex[:8]}"
+    service = ServiceInstance()
+    service.start()
+    client = service.client()
+
+    try:
+        print(f"provisioning {name}", file=sys.stderr)
+        client.post(
+            "/vms/create",
+            {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+        )
+        if not wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT):
+            raise RuntimeError(f"{name} never became exec-ready")
+
+        print(f"running capsem-bench {mode}", file=sys.stderr)
+        result = client.post(
+            f"/vms/{name}/exec",
+            {"command": shlex.join(["capsem-bench", mode]), "timeout_secs": args.timeout},
+            timeout=args.timeout + 10,
+        )
+        if not result or result.get("exit_code") != 0:
+            raise RuntimeError(
+                f"capsem-bench {mode} failed: "
+                f"exit={None if not result else result.get('exit_code')}\n"
+                f"{(result or {}).get('stderr', '')[:500]}"
+            )
+
+        result = client.post(
+            f"/vms/{name}/exec",
+            {"command": "cat /tmp/capsem-benchmark.json", "timeout_secs": 15},
+            timeout=25,
+        )
+        document = json.loads((result or {}).get("stdout", ""))
+    finally:
+        with __import__("contextlib").suppress(Exception):
+            client.delete(f"/vms/{name}/delete")
+        service.stop()
+
+    # The guest writes one document per run keyed by mode; take that section
+    # when present so keys are not prefixed with the mode twice.
+    section = document.get(mode.replace("-", "_"), document)
+    numbers = flatten(section)
+    if not numbers:
+        raise RuntimeError(f"capsem-bench {mode} reported no numbers")
+
+    measured = {
+        key: {"unit": unit, "samples": [value]}
+        for key, value in sorted(numbers.items())
+        if (unit := unit_for(key)) is not None
+    }
+    if not measured:
+        raise RuntimeError(
+            f"capsem-bench {mode} reported {len(numbers)} numbers, none of which "
+            "name a unit; nothing here is a measurement"
+        )
+    print(
+        f"{len(measured)} measurements from {len(numbers)} numbers",
+        file=sys.stderr,
+    )
+    json.dump({"metrics": measured}, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

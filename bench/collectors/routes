@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""Measure HTTP route latency and per-request CPU, direct and via the gateway.
+
+53 of the 101 service routes had no timing signal of any kind. This measures
+the read-only ones that need no VM, both straight to the service and through
+the gateway, so the proxy hop's cost is a number rather than a guess.
+
+Which routes are measured comes from `[benchmark.routes] measured` in
+`config/gate.toml`, and `tests/test_bench_route_coverage.py` requires every
+registered route to be in that list or explicitly in `unmeasured`. Moving a
+route between the two lists is what adding coverage looks like.
+
+Prints raw per-request milliseconds and the process CPU delta; `capsem-bench`
+computes every statistic.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tests"))
+
+import psutil  # noqa: E402
+from helpers.gateway import GatewayInstance  # noqa: E402
+from helpers.service import ServiceInstance  # noqa: E402
+
+WARMUP = 2
+
+
+def measured_routes() -> list[str]:
+    config = tomllib.loads((ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))
+    return list(config["benchmark"]["routes"]["measured"])
+
+
+def cpu_seconds(process: psutil.Process) -> float:
+    times = process.cpu_times()
+    return float(times.user + times.system)
+
+
+def sample_route(client, path: str, process, samples: int) -> tuple[list[float], float]:
+    """Raw per-request milliseconds, and the CPU the server spent on them."""
+    for _ in range(WARMUP):
+        client.get(path)
+    before = cpu_seconds(process)
+    latencies = []
+    for _ in range(samples):
+        started = time.perf_counter()
+        client.get(path)
+        latencies.append((time.perf_counter() - started) * 1000.0)
+    return latencies, cpu_seconds(process) - before
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--quick", action="store_true", help="fewer samples per route")
+    parser.add_argument("--samples", type=int, default=None)
+    args = parser.parse_args()
+
+    samples = args.samples if args.samples is not None else (16 if args.quick else 128)
+    routes = measured_routes()
+    if not routes:
+        print(
+            "no routes are listed as measured in [benchmark.routes]; every one "
+            "is still in the unmeasured debt inventory",
+            file=sys.stderr,
+        )
+        return 1
+
+    service = ServiceInstance()
+    service.start()
+    gateway = GatewayInstance(service)
+    gateway.start()
+
+    metrics: dict[str, dict] = {}
+    try:
+        service_proc = psutil.Process(service.proc.pid)
+        gateway_proc = psutil.Process(gateway.proc.pid)
+        for path in routes:
+            for label, client, process in (
+                ("service", service.client(), service_proc),
+                ("gateway", gateway.client(), gateway_proc),
+            ):
+                print(f"{label} {path}", file=sys.stderr)
+                latencies, cpu = sample_route(client, path, process, samples)
+                metrics[f"{label}.{path}.latency_ms"] = {
+                    "unit": "milliseconds",
+                    "samples": latencies,
+                }
+                # One observation of the whole window, which `n` reports.
+                metrics[f"{label}.{path}.cpu_s"] = {"unit": "seconds", "samples": [cpu]}
+    finally:
+        gateway.stop()
+        service.stop()
+
+    json.dump({"metrics": metrics}, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -191,21 +191,6 @@ pub struct Record {
 }
 
 impl Record {
-    /// The filename this record is stored under.
-    ///
-    /// Identity is in the name because a lane that omits it overwrites its
-    /// sibling: `route-latency` carried neither arch nor profile, so the
-    /// `code` and `co-work` runs of one gate wrote the same path.
-    pub fn filename(&self) -> String {
-        format!(
-            "{}_{}_{}_{}.json",
-            self.dimension.as_str(),
-            self.release.version,
-            self.host.arch,
-            self.profile
-        )
-    }
-
     pub fn metric(&self, key: &str) -> Option<&Metric> {
         self.metrics.iter().find(|metric| metric.key == key)
     }
