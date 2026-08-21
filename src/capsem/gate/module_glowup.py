@@ -210,10 +210,20 @@ def _glowup_step(
             # must rediscover the channel rather than inherit it -- and the two
             # never overlap, because that step is given no pairing at all.
             env={**(pairing or {}), **dict.fromkeys(clear, "")},
+            # Installs a system package, so it needs privileges Bubblewrap
+            # denies by construction: `PR_SET_NO_NEW_PRIVS` stops sudo dead on
+            # a hosted runner. Not the boundary widened for convenience -- it
+            # exists to keep a dependency's build script off the network during
+            # a compile, and this step compiles nothing. Every compiling step
+            # stays inside it, which `test_work_graph_invariants` enforces.
+            outside_sandbox=True,
         ),
         contends=(config.exclusive("docker_daemon"),),
         kind=Kind.E2E,
-        needs=frozenset({Needs.DOCKER, Needs.DISK}),
+        # NETWORK because it escapes, which the graph invariant holds as one
+        # fact stated twice; the installer fetches over loopback and apt
+        # resolves runtime dependencies.
+        needs=frozenset({Needs.DOCKER, Needs.DISK, Needs.NETWORK}),
         speed=Speed.SLOW,
     )
 

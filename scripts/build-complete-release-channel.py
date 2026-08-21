@@ -90,12 +90,26 @@ def resolve_channel_sources(
                 raise ValueError(
                     f"public preserved graph declares {public_document.get('channel')!r}"
                 )
-        except (HTTPError, URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError) as error:
+        except (ValueError, json.JSONDecodeError) as error:
+            # Resolved, and not a channel: the site answers an unpublished
+            # path with HTML under a 200. Nothing to preserve, so preserve
+            # nothing -- requiring it made stable depend on nightly, which
+            # cannot publish until stable creates the cohort it bootstraps
+            # from. Dropping a nightly that *does* exist stays refused below.
+            print(
+                f"{channel} is not published at {public_source} ({error}); "
+                "assembling without it",
+                file=sys.stderr,
+            )
+            continue
+        except (HTTPError, URLError, OSError, TimeoutError) as error:
+            # Unreachable is not evidence about the channel: treating a blip
+            # as "unpublished" is how an existing nightly gets dropped.
             primary_source = sources[primary_channel]
             primary_document = documents[primary_channel]
             if not allow_mirror_missing:
                 raise RuntimeError(
-                    f"cannot preserve required {channel} channel from {public_source}: {error}"
+                    f"cannot reach {channel} channel at {public_source}: {error}"
                 ) from error
             if is_release_graph(primary_document):
                 raise RuntimeError(
@@ -153,7 +167,13 @@ def build_complete_dist(args: argparse.Namespace) -> None:
     out_dir.mkdir(parents=True)
     generated_at = args.generated_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    build_order = [channel for channel in REQUIRED_CHANNELS if channel != args.primary_channel]
+    # What resolved, not what the list names: a channel that has never
+    # published is skipped above. The primary always resolves.
+    build_order = [
+        channel
+        for channel in REQUIRED_CHANNELS
+        if channel != args.primary_channel and channel in documents
+    ]
     build_order.append(args.primary_channel)
     graph_channels: list[str] = []
     for channel in build_order:

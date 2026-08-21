@@ -92,6 +92,13 @@ def test_graph_manifest_cannot_be_relabelled_to_bootstrap_another_channel(monkey
 
 
 def test_missing_public_channel_fails_closed_without_explicit_bootstrap(monkeypatch) -> None:
+    """Unreachable stays fatal, which is the protection worth keeping.
+
+    A channel that answers and is not a graph has never published, and is now
+    assembled without. A channel that cannot be reached says nothing about
+    whether it exists -- treating a blip as "unpublished" is how a nightly that
+    does exist gets dropped by the release that never saw it.
+    """
     module = _module()
 
     def fake_read(source: str):
@@ -100,7 +107,7 @@ def test_missing_public_channel_fails_closed_without_explicit_bootstrap(monkeypa
         raise URLError("missing")
 
     monkeypatch.setattr(module, "read_json_source", fake_read)
-    with pytest.raises(RuntimeError, match="cannot preserve required nightly"):
+    with pytest.raises(RuntimeError, match="cannot reach nightly channel"):
         module.resolve_channel_sources(
             explicit={"stable": "source.json"},
             primary_channel="stable",
@@ -137,3 +144,52 @@ def test_complete_builder_preserves_public_mirror_from_public_bytes() -> None:
 
     assert "is_public_mirror" in builder
     assert 'command.extend(["--public-base", args.release_site])' in builder
+
+
+def test_an_unpublished_channel_is_assembled_without_rather_than_required(monkeypatch) -> None:
+    """A stable release must not depend on nightly having published.
+
+    `release.capsem.org` answers an unpublished path with its own HTML page
+    under a 200, so "no such channel" arrives as a JSON parse error rather than
+    a 404. Treating that as fatal made a stable release require nightly, while
+    nightly cannot publish until a stable release creates the package cohort it
+    bootstraps from -- a cycle neither channel could leave, and the one that
+    blocked a binary release four jobs past where any attempt had reached.
+    """
+    module = _module()
+
+    def fake_read(source: str):
+        if source == "source.json":
+            return _graph("stable")
+        raise ValueError("public preserved manifest is not a release graph")
+
+    monkeypatch.setattr(module, "read_json_source", fake_read)
+    sources, documents = module.resolve_channel_sources(
+        explicit={"stable": "source.json"},
+        primary_channel="stable",
+        release_site="https://release.example",
+        allow_mirror_missing=False,
+    )
+
+    assert sources == {"stable": "source.json"}, "nothing to preserve means preserve nothing"
+    assert "nightly" not in documents
+
+
+def test_the_cycle_is_broken_in_both_directions(monkeypatch) -> None:
+    """Nightly must not depend on stable either; the list holds both."""
+    module = _module()
+
+    def fake_read(source: str):
+        if source == "nightly.json":
+            return _graph("nightly")
+        raise ValueError("public preserved manifest is not a release graph")
+
+    monkeypatch.setattr(module, "read_json_source", fake_read)
+    sources, _ = module.resolve_channel_sources(
+        explicit={"nightly": "nightly.json"},
+        primary_channel="nightly",
+        release_site="https://release.example",
+        allow_mirror_missing=False,
+    )
+
+    assert sources == {"nightly": "nightly.json"}
