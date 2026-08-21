@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `pip` moves to 26.2.1. PYSEC-2026-3721 was published against 26.1.2, which
+  the lock pinned transitively through `pip-api` under `pip-audit` -- the audit
+  tool's own dependency tripping the audit. Only that one package changed.
+
 - The Debian package installs on a machine that has `systemctl` but is not
   running systemd -- a container, most obviously. The post-install guarded
   service registration with `command -v systemctl`, which tests for the binary;
