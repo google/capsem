@@ -193,3 +193,39 @@ def test_the_cycle_is_broken_in_both_directions(monkeypatch) -> None:
     )
 
     assert sources == {"nightly": "nightly.json"}
+
+
+def test_only_the_channels_that_resolved_are_built_and_checked() -> None:
+    """The build loop and the check loop must agree on the same list.
+
+    They disagreed once: the build skipped an unpublished nightly and the check
+    still demanded it, so `assets channel check --channel nightly` failed after
+    the primary channel had already been assembled and reported valid. Both read
+    this now, which is why it is a function rather than a comprehension written
+    twice.
+    """
+    module = _module()
+
+    assert module.channels_to_assemble({"stable": {}}, "stable") == ["stable"]
+    assert module.channels_to_assemble({"stable": {}, "nightly": {}}, "stable") == [
+        "nightly",
+        "stable",
+    ]
+    # The primary is always last, so a preserved channel is built against a
+    # graph the primary has not yet replaced.
+    assert module.channels_to_assemble({"stable": {}, "nightly": {}}, "nightly")[-1] == "nightly"
+
+
+def test_both_loops_read_the_same_channel_list() -> None:
+    """Stated in the source, because the failure was the two drifting apart."""
+    source = (
+        PROJECT_ROOT / "scripts" / "build-complete-release-channel.py"
+    ).read_text(encoding="utf-8")
+
+    assert source.count("channels_to_assemble(") == 2, (
+        "one definition and one call: a second inline list is how the build and "
+        "the check disagreed about nightly"
+    )
+    assert source.count("for channel in build_order:") == 2, (
+        "the build loop and the check loop must both iterate the resolved list"
+    )

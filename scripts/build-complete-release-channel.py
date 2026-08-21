@@ -60,6 +60,19 @@ def parse_channel_sources(values: list[str]) -> dict[str, str]:
     return sources
 
 
+def channels_to_assemble(documents: dict[str, Any], primary_channel: str) -> list[str]:
+    """What resolved, in build order. Read by both the build and check loops,
+    which disagreed once: the build skipped an unpublished nightly and the
+    check still demanded it."""
+    ordered = [
+        channel
+        for channel in REQUIRED_CHANNELS
+        if channel != primary_channel and channel in documents
+    ]
+    ordered.append(primary_channel)
+    return ordered
+
+
 def resolve_channel_sources(
     *,
     explicit: dict[str, str],
@@ -91,20 +104,13 @@ def resolve_channel_sources(
                     f"public preserved graph declares {public_document.get('channel')!r}"
                 )
         except (ValueError, json.JSONDecodeError) as error:
-            # Resolved, and not a channel: the site answers an unpublished
-            # path with HTML under a 200. Nothing to preserve, so preserve
-            # nothing -- requiring it made stable depend on nightly, which
-            # cannot publish until stable creates the cohort it bootstraps
-            # from. Dropping a nightly that *does* exist stays refused below.
-            print(
-                f"{channel} is not published at {public_source} ({error}); "
-                "assembling without it",
-                file=sys.stderr,
-            )
+            # Resolved, and not a channel: the site serves HTML under a 200
+            # for an unpublished path. Nothing to preserve, so preserve
+            # nothing; requiring it made stable depend on nightly.
+            print(f"{channel} is not published ({error}); assembling without it", file=sys.stderr)
             continue
         except (HTTPError, URLError, OSError, TimeoutError) as error:
-            # Unreachable is not evidence about the channel: treating a blip
-            # as "unpublished" is how an existing nightly gets dropped.
+            # Unreachable is not evidence: a blip must not drop a real nightly.
             primary_source = sources[primary_channel]
             primary_document = documents[primary_channel]
             if not allow_mirror_missing:
@@ -167,14 +173,7 @@ def build_complete_dist(args: argparse.Namespace) -> None:
     out_dir.mkdir(parents=True)
     generated_at = args.generated_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # What resolved, not what the list names: a channel that has never
-    # published is skipped above. The primary always resolves.
-    build_order = [
-        channel
-        for channel in REQUIRED_CHANNELS
-        if channel != args.primary_channel and channel in documents
-    ]
-    build_order.append(args.primary_channel)
+    build_order = channels_to_assemble(documents, args.primary_channel)
     graph_channels: list[str] = []
     for channel in build_order:
         manifest_version = manifest_version_for_channel(
@@ -243,7 +242,7 @@ def build_complete_dist(args: argparse.Namespace) -> None:
         elif args.profile_source_root:
             command.extend(["--source-root", str(args.profile_source_root)])
         run(command)
-    for channel in REQUIRED_CHANNELS:
+    for channel in build_order:
         run(
             [
                 "cargo",
