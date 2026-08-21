@@ -276,6 +276,18 @@ class Context:
         """The checkout the gate is running against."""
         return self.config.root
 
+    def sandboxed(self) -> bool:
+        """Whether a kernel sandbox is actually in force for this run.
+
+        Read from the environment the command exported, which is the same
+        value the sandbox itself was configured from. An action that declares
+        it escapes has nothing to escape when this is false.
+        """
+        from .sandbox import OFF
+
+        mode = self.env.get(self.config.environment.command_sandbox_mode, "")
+        return bool(mode) and mode != OFF.value
+
     def path(self, relative: str) -> Path:
         return self.config.path(relative)
 

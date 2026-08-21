@@ -101,3 +101,22 @@ def test_every_command_owning_an_escaping_step_declares_egress() -> None:
 def test_the_guard_has_subjects() -> None:
     """A guard over nothing asserts nothing."""
     assert _modules_using_outside_sandbox(), "no module declares outside_sandbox"
+
+
+def test_without_a_sandbox_there_is_nothing_to_escape() -> None:
+    """An unsandboxed command runs escaping actions on the ordinary runner.
+
+    `Egress` is built `enabled=(mode != OFF)`, so a command running with the
+    sandbox off holds a disabled one and has no outside runner at all.
+    Refusing there fails every such command for the sake of a boundary that is
+    not present -- which is what broke both Linux release builds, twice, on a
+    `docker build` that needed no sandbox to escape because none was in force.
+    """
+    escape = (GATE / "escape.py").read_text(encoding="utf-8")
+    assert "context.sandboxed()" in escape, (
+        "the escape path no longer asks whether a sandbox is in force, so it "
+        "refuses unsandboxed commands that have nothing to escape"
+    )
+
+    context = (GATE / "context.py").read_text(encoding="utf-8")
+    assert "def sandboxed" in context
