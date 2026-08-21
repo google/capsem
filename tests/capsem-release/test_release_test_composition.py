@@ -474,7 +474,8 @@ def test_release_contract_module_does_not_reenter_source_build_suites() -> None:
     # The glob is expanded before pytest sees it: pytest does not expand path
     # arguments, so passing the pattern through would collect nothing and the
     # module would pass vacuously.
-    assert CONFIG.modules.contract_glob not in release_contracts
+    for pattern in CONFIG.modules.contract_globs:
+        assert pattern not in release_contracts
     assert "tests/test_bootstrap_contract.py" in release_contracts
 
     for source_test in SOURCE_CONTRACT_TESTS:
@@ -482,7 +483,8 @@ def test_release_contract_module_does_not_reenter_source_build_suites() -> None:
     assert "tests/capsem-recipes" not in release_contracts
     assert "tests/capsem-recipes/" in _recipe("_test-recipes")
 
-    assert f"--ignore-glob={CONFIG.modules.contract_glob}" in functional
+    for pattern in CONFIG.modules.contract_globs:
+        assert f"--ignore-glob={pattern}" in functional
     for source_test in SOURCE_CONTRACT_TESTS[:3]:
         assert f"--ignore={source_test}" in functional
 
@@ -539,7 +541,8 @@ def test_functional_coverage_replays_cheap_contracts_after_the_early_gate() -> N
 
     for source_test in SOURCE_CONTRACT_TESTS[:3]:
         assert f"--ignore={source_test}" not in argv
-    assert f"--ignore-glob={CONFIG.modules.contract_glob}" not in argv
+    for pattern in CONFIG.modules.contract_globs:
+        assert f"--ignore-glob={pattern}" not in argv
 
 
 def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) -> None:

@@ -22,7 +22,7 @@ from .releaseschema import ReleasePairingEnvironment
 class ModulesConfig(Strict):
     build_chain_artifact_tests: tuple[str, ...]
     release_suites: tuple[str, ...]
-    contract_glob: str
+    contract_globs: tuple[str, ...]
     rust_coverage: tuple[str, ...]
     rust_coverage_floor: str
     rust_test_profile_variable: str

@@ -228,8 +228,15 @@ journal and is the only supported bridge into CI.
 ## `--force`: the commit that is not the product
 
 ```bash
-just release-binaries stable <commit> true    # the trailing `true` is --force
+GITHUB_TOKEN="$(gh auth token)" \
+  just release-binaries stable <commit> true  # the trailing `true` is --force
 ```
+
+Both release commands need `GITHUB_TOKEN` in the environment. This machine keeps
+the credential in `gh` rather than exported, so a shell that did not inherit it
+runs the whole source proof and then dies at `channel-source` with "GITHUB_TOKEN
+is required to resolve source manifests" -- four minutes in, naming the variable
+but not where to get it.
 
 Use it for **CI-only changes that do not affect local code or shipped bytes**: a
 workflow file, a gate policy, a check that only ever runs on a hosted runner.

@@ -2045,7 +2045,13 @@ build_chain_artifact_tests = [
     "tests/capsem-build-chain/test_pack_initrd.py",
 ]
 release_suites = ["tests/capsem-release/", "tests/capsem-build-chain/"]
-contract_glob = "tests/test_*contract.py"
+# A release test named `test_*contract.py` was in the contracts phase; one named
+# anything else was not, and ran only in the broad phase behind a VM build.
+# `test_release_refuses_a_dirty_tree.py` was such a file: it asserts what
+# `--force` waives, and a forced release -- which skips the broad phase
+# entirely -- was the one run that never checked it. Match the subject, not the
+# filename. The `test_gate_*` files are already named in [suites].source_contract.
+contract_globs = ["tests/test_*contract.py", "tests/test_release_*.py"]
 
 # The Rust coverage floor is 63, not 100. Some files -- uninstall, completions
 # -- are intentionally at 0% because they are thin shells over OS and CLI

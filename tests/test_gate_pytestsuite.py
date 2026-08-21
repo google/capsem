@@ -277,7 +277,8 @@ def test_every_serial_node_has_a_non_broad_execution_rail() -> None:
     }
     release_contracts = {
         str(path.relative_to(PROJECT_ROOT))
-        for path in PROJECT_ROOT.glob(CONFIG.modules.contract_glob)
+        for pattern in CONFIG.modules.contract_globs
+        for path in PROJECT_ROOT.glob(pattern)
     }
     file_owners = {
         *CONFIG.suites.source_contract,

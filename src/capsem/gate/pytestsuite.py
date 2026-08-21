@@ -226,7 +226,7 @@ def compatibility(config: GateConfig, *, profile: str) -> Suite:
             *config.suites.source_contract,
             *settings.broad_ignores,
         ),
-        ignore_globs=("tests/test_*contract.py",),
+        ignore_globs=config.modules.contract_globs,
         parallel=True,
         profile=profile,
         contends=(config.exclusive("workspace_binaries"),),

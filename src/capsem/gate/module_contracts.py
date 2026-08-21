@@ -48,6 +48,19 @@ class ReleaseContractsModule(
         return plan
 
 
+
+def _once(*paths: str) -> tuple[str, ...]:
+    """The same file named by a glob and by `source_contract` is still one file.
+
+    pytest collects a path given twice twice, and reports the duplicate as a
+    passing test, so the count goes up while the coverage does not.
+    """
+    seen: dict[str, None] = {}
+    for path in paths:
+        seen.setdefault(path, None)
+    return tuple(seen)
+
+
 def release_contracts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
     """The release and composition contracts, without artifacts."""
     phase = plan.phase("contracts")
@@ -57,10 +70,14 @@ def release_contracts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]
     # pytest does not expand path arguments itself, so passing the pattern
     # through collects nothing and the module passes vacuously.
     contracts = sorted(
-        str(path.relative_to(config.root)) for path in config.root.glob(settings.contract_glob)
+        {
+            str(path.relative_to(config.root))
+            for pattern in settings.contract_globs
+            for path in config.root.glob(pattern)
+        }
     )
     if not contracts:
-        raise GateError(f"no contract tests matched {settings.contract_glob}")
+        raise GateError(f"no contract tests matched {settings.contract_globs}")
 
     # This module owns its prerequisites, which AGENTS.md requires of every
     # one of them and this one did not do. `test_local_multichannel_dist_contract`
@@ -78,7 +95,7 @@ def release_contracts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]
     return phase.add(
         pytestsuite.Suite(
             label="release",
-            paths=(
+            paths=_once(
                 *settings.release_suites,
                 *contracts,
                 *config.suites.source_contract,
