@@ -22,6 +22,7 @@ from pydantic import Field, ValidationError, model_validator
 
 from . import host
 from .assetschema import ArtifactsConfig, AssetsConfig
+from .benchmarkschema import BenchmarkConfig
 from .buildschema import (
     AuditsConfig,
     DevLoopConfig,
@@ -108,6 +109,7 @@ class GateConfig(Strict):
     workspace: WorkspaceConfig
     service: ServiceConfig
     smoke: SmokeConfig
+    benchmark: BenchmarkConfig
     initrd: InitrdConfig
     release: ReleaseConfig
     devloop: DevLoopConfig
