@@ -21,15 +21,20 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from . import sandbox
 from .command import GateCommand
 from .config import GateConfig
 from .content import ProfileContent
+from .egress import Egress
+from .lifecycle import Resource
 from .module_artifacts import artifacts, pulled_artifacts
 from .module_functional import functional
 from .module_glowup import glowup
 from .plan import Plan
+from .proc import Runner
 from .qualification import Qualification
 from .testmodules import InWorkspace
+from .workspace import Workspace
 
 
 def _pairing(
@@ -78,9 +83,26 @@ class QualifyBinariesModule(
 
     uses_qualification = True
 
+    # Its glow-up installs a system package. Bubblewrap sets
+    # `PR_SET_NO_NEW_PRIVS`, which stops sudo dead, so `glowup.package`
+    # declares `outside_sandbox=True` -- and that declaration only means
+    # anything if this command holds the egress resource to honour it.
+    # Without it the step ran inside the sandbox anyway and the lane failed two
+    # hours in with `sudo: /etc/sudo.conf is owned by uid 65534`, which names
+    # neither the step nor the sandbox. The local `candidate` lane holds the
+    # same resource for the same reason; this lane is the one no local run
+    # reaches.
+    outside_egress = True
+
     @classmethod
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("workspace_root", type=Path)
+
+    def resources(self, runner: Runner) -> tuple[Resource, ...]:
+        return (
+            Workspace(self._config),
+            Egress(self._config, enabled=self._sandbox_mode != sandbox.OFF),
+        )
 
     def plan(self) -> Plan:
         return _pairing(

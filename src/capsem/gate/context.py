@@ -276,11 +276,6 @@ class Context:
         """The checkout the gate is running against."""
         return self.config.root
 
-    @property
-    def external_runner(self) -> Runner:
-        """The narrow outside runner, or the ordinary one when none is held."""
-        return self.outside_runner or self.runner
-
     def path(self, relative: str) -> Path:
         return self.config.path(relative)
 

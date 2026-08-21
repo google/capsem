@@ -558,7 +558,20 @@ def _gate_issued_from(root: Path, name: str, args: tuple[tuple[str, object], ...
     # A step that needs a machine fails here; what it issued before failing is
     # still the evidence.
     with suppress(Exception):
-        plan.run(Context(runner, gate_config.load(root), observing=True))
+        plan.run(
+            Context(
+                runner,
+                gate_config.load(root),
+                observing=True,
+                # A step declaring `outside_sandbox=True` asks for the runner a
+                # real command holds through its `Egress` resource. Recording
+                # both sides on one runner keeps the whole plan visible; with
+                # none held, the first escaping action refuses and everything
+                # after it goes unrecorded -- which read as "the gate never
+                # issues a docker command".
+                outside_runner=runner,
+            )
+        )
     return "\n".join([rendered, *runner.rendered, *runner.notes])
 
 

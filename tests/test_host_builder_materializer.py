@@ -52,7 +52,15 @@ def _tool_inventory(path: Path) -> Counter[str]:
 
 
 def _context(runner: RecordingRunner) -> Context:
-    return Context(runner, CONFIG, journal=RecordingJournal())
+    # `outside_runner` is the runner a real command holds through its `Egress`
+    # resource. The host-image build declares `outside_sandbox=True`, so
+    # without one it refuses rather than running inside the sandbox.
+    return Context(
+        runner,
+        CONFIG,
+        journal=RecordingJournal(),
+        outside_runner=runner,
+    )
 
 
 def _load_cargo_tool_installer() -> ModuleType:

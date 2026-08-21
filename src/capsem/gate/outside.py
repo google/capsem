@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from .actions import Action
 from .context import Context
+from .escape import escaping_runner
 from .scopeenv import action_environment
 
 
@@ -22,7 +23,7 @@ class Outside(Action, name="outside-sandbox"):
         self._action.perform(
             replace(
                 context,
-                runner=context.external_runner,
+                runner=escaping_runner(context, self._action.render()),
                 outside_runner=None,
                 env=action_environment(
                     context.config,

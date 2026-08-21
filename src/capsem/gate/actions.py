@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from .context import Context
+from .escape import escaping_runner
 from .invocation import Command
 from .opacity import CallJustification
 from .scopeenv import action_environment
@@ -103,7 +104,11 @@ class Run(Action, name="run"):
 
     def perform(self, context: Context) -> None:
         command = self._command
-        runner = context.external_runner if self._outside_sandbox else context.runner
+        runner = (
+            escaping_runner(context, str(command))
+            if self._outside_sandbox
+            else context.runner
+        )
         runner.run(
             command.argv,
             cwd=command.cwd,
@@ -171,7 +176,11 @@ class Script(Action, name="script"):
             self._env,
             outside_sandbox=self._outside_sandbox,
         )
-        runner = context.external_runner if self._outside_sandbox else context.runner
+        runner = (
+            escaping_runner(context, self._relative)
+            if self._outside_sandbox
+            else context.runner
+        )
         if self._root is None:
             runner.script(self._relative, *self._args, env=env, check=self._check)
             return

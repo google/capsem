@@ -171,7 +171,7 @@ class TestDelete:
         not finished registering, or a first delete that had not removed the
         VM, produced a second delete that legitimately succeeded -- and the
         failure named the final assertion rather than the step that actually
-        went wrong. It held a 0.6.0 release attempt saying only
+        went wrong. It held a binary release attempt saying only
         `assert {'success': True} is None or ...`.
         """
         name = vm_name("del2x")
