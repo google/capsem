@@ -234,6 +234,9 @@ class InstallCommand(
     name="install",
     help="install the exact release package and prove it works",
 ):
+    # Its plan builds an image outside the kernel sandbox, which needs the
+    # egress resource to run it with.
+    outside_egress = True
     exclusive = True
 
     @classmethod

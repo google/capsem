@@ -59,6 +59,18 @@ ROUTE_HELPER_PATTERNS: tuple[str, ...] = (
     "credential_stats_payload",
 )
 
+# The benchmark time series is a different database with a different schema,
+# not the logged-data ledger this boundary is about. It follows the same rule
+# the boundary exists to enforce -- exactly one module owns the connection, the
+# schema and the queries, and nothing else opens it -- so it is named here as
+# an owner rather than exempted as an exception. A benchmark harness reading
+# `session.db` is still bound by the rule above: that is a ledger read and goes
+# through the DB object.
+BENCHMARK_DB_INTERNALS = {
+    Path("crates/capsem-bench/src/store.rs"),
+    Path("crates/capsem-bench/src/store/tests.rs"),
+}
+
 LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/db.rs"),
     Path("crates/capsem-logger/src/db/handle_tests.rs"),
@@ -89,7 +101,8 @@ def is_test_source(path: Path) -> bool:
 
 
 def is_logger_db_internal(path: Path) -> bool:
-    return relative(path) in LOGGER_DB_INTERNALS
+    """A module that owns a database, rather than reaching into one."""
+    return relative(path) in LOGGER_DB_INTERNALS | BENCHMARK_DB_INTERNALS
 
 
 def test_logger_is_the_only_database_execution_boundary() -> None:
@@ -112,3 +125,22 @@ def test_logger_is_the_only_database_execution_boundary() -> None:
             )
 
     assert not violations, DB_BOUNDARY_RATIONALE + "\n" + "\n".join(violations)
+
+
+def test_only_one_module_owns_the_benchmark_database() -> None:
+    """The boundary is a rule about ownership, not a list of exceptions.
+
+    Naming `store.rs` as an owner is only defensible while it is the single
+    place that opens that database. If a second module in the crate starts
+    opening it, the pattern has been forked and this must fail.
+    """
+    openers = [
+        relative(path)
+        for path in rust_sources()
+        if path.is_relative_to(CRATES_DIR / "capsem-bench")
+        and "Connection::open" in path.read_text()
+    ]
+    assert openers == [Path("crates/capsem-bench/src/store.rs")], (
+        "the benchmark database must have exactly one owning module; found "
+        f"{openers}"
+    )

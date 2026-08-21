@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from typing import ClassVar
 
 from . import config as gate_config
-from . import enforcement, planreport, prefix, preflight, qualificationflow, resume, sandbox
+from . import egress, enforcement, planreport, prefix, preflight, qualificationflow, resume, sandbox
 from .context import Context
 from .errors import GateError
 from .funnel import GuardedRunner
@@ -257,7 +257,7 @@ class GateCommand(Recorded, ABC):
                 self._config,
                 self.name,
                 exclusive=self.exclusive,
-                declared=self.resources(runner),
+                declared=egress.for_command(self, runner),
             )
             with held(*acquiring) as acquired:
                 from .egress import guarded_runner_of

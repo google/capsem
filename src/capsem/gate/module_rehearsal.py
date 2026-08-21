@@ -75,6 +75,10 @@ class RehearsalModule(
     part of the fast lane. Point it at a prefix that has them with `--prefix`.
     """
 
+    # Its plan builds an image outside the kernel sandbox, which needs the
+    # egress resource to run it with.
+    outside_egress = True
+
     uses_qualification = True
 
     def plan(self) -> Plan:

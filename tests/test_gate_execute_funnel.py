@@ -418,6 +418,10 @@ def _recorded_command_policy(command: GateCommand, monkeypatch) -> str:
     probe.add(step("policy", Run(["doctor-policy-probe"])))
     monkeypatch.setattr(command, "plan", lambda: probe)
     monkeypatch.setattr(command, "resources", lambda _runner: ())
+    # And declares none either: a command's `outside_egress` now produces an
+    # `Egress` whether or not its `resources` mentions one, and a real egress
+    # capability refuses to acquire inside an already-sandboxed process.
+    monkeypatch.setattr(command, "outside_egress", False)
     monkeypatch.setattr(command, "reexec", lambda: None)
     monkeypatch.setattr(command, "exclusive", False)
     monkeypatch.setattr(command, "private_checkout", False)

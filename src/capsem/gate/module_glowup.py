@@ -46,6 +46,10 @@ class GlowupModule(
     Virtualization.framework.
     """
 
+    # Its plan builds an image outside the kernel sandbox, which needs the
+    # egress resource to run it with.
+    outside_egress = True
+
     uses_qualification = True
 
     def plan(self) -> Plan:

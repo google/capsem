@@ -230,6 +230,9 @@ class WarmCommand(
     name="warm-linux-rust-base",
     help="build the Linux parity base image, with network, before a sealed run",
 ):
+    # Its plan builds an image outside the kernel sandbox, which needs the
+    # egress resource to run it with.
+    outside_egress = True
     exclusive = True
 
     def plan(self) -> Plan:

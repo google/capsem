@@ -246,6 +246,10 @@ class HostImageCommand(
 ):
     """Focused cold/warm acceptance without continuing into package proof."""
 
+    # Its plan builds an image outside the kernel sandbox, which needs the
+    # egress resource to run it with.
+    outside_egress = True
+
     exclusive = True
 
     def plan(self) -> Plan:

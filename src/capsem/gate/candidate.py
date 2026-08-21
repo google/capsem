@@ -215,6 +215,10 @@ class CandidateModulesCommand(
     exclusive children, each waiting for the lock this command was holding.
     """
 
+    # Its plan builds an image outside the kernel sandbox, which needs the
+    # egress resource to run it with.
+    outside_egress = True
+
     exclusive = True
     uses_qualification = True
 

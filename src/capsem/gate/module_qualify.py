@@ -21,20 +21,15 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from . import sandbox
 from .command import GateCommand
 from .config import GateConfig
 from .content import ProfileContent
-from .egress import Egress
-from .lifecycle import Resource
 from .module_artifacts import artifacts, pulled_artifacts
 from .module_functional import functional
 from .module_glowup import glowup
 from .plan import Plan
-from .proc import Runner
 from .qualification import Qualification
 from .testmodules import InWorkspace
-from .workspace import Workspace
 
 
 def _pairing(
@@ -98,12 +93,6 @@ class QualifyBinariesModule(
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("workspace_root", type=Path)
 
-    def resources(self, runner: Runner) -> tuple[Resource, ...]:
-        return (
-            Workspace(self._config),
-            Egress(self._config, enabled=self._sandbox_mode != sandbox.OFF),
-        )
-
     def plan(self) -> Plan:
         return _pairing(
             Plan(self.name),
@@ -128,6 +117,10 @@ class QualifyAssetsModule(
     from the flag the authoring job computed, rather than in two `if:`
     expressions a reader has to reassemble.
     """
+
+    # Same reason as the binary lane: when a binary exists to pair against,
+    # this composes the glow-up that installs a package outside the sandbox.
+    outside_egress = True
 
     uses_qualification = True
 

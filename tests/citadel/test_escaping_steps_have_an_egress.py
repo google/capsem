@@ -57,24 +57,45 @@ def test_every_action_that_escapes_goes_through_the_refusing_accessor() -> None:
     )
 
 
-def test_a_command_owning_an_escaping_step_declares_egress() -> None:
-    """The declaration and the resource have to travel together."""
+def _commands_whose_plans_escape() -> dict[str, bool]:
+    """Every command whose plan contains an escaping action, and its declaration.
+
+    Derived by building each plan rather than listing names. Naming two of them
+    by hand is what let `cross-compile` through: it builds the Linux host
+    image, which declares `outside_sandbox=True`, and held no egress -- so both
+    Linux release builds failed on a refusal the guard had not thought to ask
+    about.
+    """
     import importlib
 
     from capsem.gate.command import GateCommand
 
-    # Importing the CLI is what registers every command.
     importlib.import_module("capsem.gate.cli")
+    from helpers.gate import gate_plan
 
-    # Commands whose plans compose the glow-up module, which is the one that
-    # installs a package and therefore must leave the sandbox.
-    for name in ("candidate", "qualify-binaries"):
-        command = GateCommand.registry[name]
-        assert command.outside_egress, (
-            f"`{name}` composes a step that declares `outside_sandbox=True`, "
-            "but holds no egress resource to honour it, so the step would run "
-            "inside the sandbox and fail on sudo"
-        )
+    found = {}
+    for name, command in sorted(GateCommand.registry.items()):
+        try:
+            plan = gate_plan(name)
+        except Exception:
+            # A command needing arguments cannot be built here; the ones that
+            # own escaping steps in a release lane all can.
+            continue
+        if "[outside kernel sandbox]" in plan.describe():
+            found[name] = bool(command.outside_egress)
+    return found
+
+
+def test_every_command_owning_an_escaping_step_declares_egress() -> None:
+    escaping = _commands_whose_plans_escape()
+    assert escaping, "no command's plan contains an escaping action"
+
+    undeclared = sorted(name for name, declared in escaping.items() if not declared)
+    assert not undeclared, (
+        "these commands compose a step declaring `outside_sandbox=True` but "
+        "hold no egress resource to honour it, so the step refuses at runtime "
+        f"instead of escaping: {undeclared}"
+    )
 
 
 def test_the_guard_has_subjects() -> None:

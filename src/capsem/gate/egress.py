@@ -246,6 +246,23 @@ def prepare(config, directory: Path) -> Path:
     return metadata
 
 
+def for_command(command, runner: Runner) -> tuple[Resource, ...]:
+    """What a command holds, plus the egress its declaration implies.
+
+    `outside_egress` was a flag each command had to remember to turn into an
+    `Egress` in its own `resources`, and nine of them did not -- so a step
+    declaring `outside_sandbox=True` had nothing to escape with, and the fallback
+    ran it inside the sandbox instead. Doing it in one place is what makes the
+    flag mean something wherever it is set.
+    """
+    from .sandbox import OFF
+
+    held = command.resources(runner)
+    if not command.outside_egress or any(isinstance(one, Egress) for one in held):
+        return held
+    return (*held, Egress(command._config, enabled=command._sandbox_mode != OFF))
+
+
 def runner_of(resources: tuple[Resource, ...]) -> Runner | None:
     """The acquired capability runner, when this command requested one."""
     for resource in resources:
