@@ -36,25 +36,20 @@ pub struct Summary {
     pub mad: f64,
 }
 
-/// Significant figures kept in a recorded statistic.
+/// Recorded statistics are rounded to hundredths.
 ///
-/// A benchmark does not measure anything to seventeen significant digits, and
-/// emitting them costs correctness: `serde_json` writes a full-precision f64
-/// exactly but parses it back up to one ULP off, so read-then-write changed
-/// the bytes. Records are digested and attached to releases as evidence, so
-/// unstable bytes mean unstable digests and a diff on every read. Six figures
-/// is far finer than any threshold here and stores stably.
-const SIGNIFICANT_FIGURES: i32 = 6;
+/// This is CPU time and milliseconds, not astronomy. Full f64 precision is
+/// noise, and it is unstable noise: `serde_json` writes a full-precision value
+/// exactly but parses it back up to one ULP off, so reading a record and
+/// writing it again changed the bytes -- and records are digested and attached
+/// to releases as evidence.
+const DECIMALS: i32 = 2;
 
-/// Round to `SIGNIFICANT_FIGURES`, scale-independently.
-///
-/// Decimal places would not do: these values span nanoseconds to megabytes.
-fn round_significant(value: f64) -> f64 {
+fn round_recorded(value: f64) -> f64 {
     if value == 0.0 || !value.is_finite() {
         return value;
     }
-    let magnitude = value.abs().log10().floor();
-    let factor = 10f64.powi(SIGNIFICANT_FIGURES - 1 - magnitude as i32);
+    let factor = 10f64.powi(DECIMALS);
     (value * factor).round() / factor
 }
 
@@ -103,18 +98,18 @@ impl Summary {
 
         Some(Self {
             n,
-            min: round_significant(sorted[0]),
-            max: round_significant(sorted[n - 1]),
-            mean: round_significant(mean),
-            median: round_significant(median),
-            p90: round_significant(percentile(&sorted, 0.90)),
-            p95: round_significant(percentile(&sorted, 0.95)),
-            p99: round_significant(percentile(&sorted, 0.99)),
-            p999: round_significant(percentile(&sorted, 0.999)),
-            stddev: round_significant(stddev),
+            min: round_recorded(sorted[0]),
+            max: round_recorded(sorted[n - 1]),
+            mean: round_recorded(mean),
+            median: round_recorded(median),
+            p90: round_recorded(percentile(&sorted, 0.90)),
+            p95: round_recorded(percentile(&sorted, 0.95)),
+            p99: round_recorded(percentile(&sorted, 0.99)),
+            p999: round_recorded(percentile(&sorted, 0.999)),
+            stddev: round_recorded(stddev),
             // A zero mean makes the ratio meaningless rather than infinite.
-            cv: round_significant(if mean == 0.0 { 0.0 } else { stddev / mean }),
-            mad: round_significant(percentile(&deviations, 0.5)),
+            cv: round_recorded(if mean == 0.0 { 0.0 } else { stddev / mean }),
+            mad: round_recorded(percentile(&deviations, 0.5)),
         })
     }
 

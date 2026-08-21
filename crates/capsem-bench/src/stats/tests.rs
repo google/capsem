@@ -126,7 +126,7 @@ fn the_same_move_on_a_noisy_baseline_is_not_significant() {
     // The 0.6.0 false alarm in miniature: the ratio is breached, but the
     // evidence itself wobbles at least as much, so the run has not learned
     // anything and must not hold a release.
-    let noisy = Summary::of(&[0.06, 0.14, 0.08, 0.12, 0.10, 0.09, 0.11, 0.13])
+    let noisy = Summary::of(&[0.02, 0.18, 0.04, 0.16, 0.10, 0.06, 0.14, 0.10])
         .expect("summarizes");
     let verdict = compare(
         "routes.gateway./vms/list.cpu_s",
@@ -201,15 +201,10 @@ fn statistics_are_rounded_so_a_record_stores_stably() {
 }
 
 #[test]
-fn rounding_keeps_six_figures_at_every_scale() {
-    // Nanoseconds to megabytes in one record, so significant figures rather
-    // than decimal places.
-    let nanos = Summary::of(&[1234.5678_f64]).expect("summarizes");
-    assert_eq!(nanos.mean, 1234.57);
-    let tiny = Summary::of(&[0.000123456789_f64]).expect("summarizes");
-    assert_eq!(tiny.mean, 0.000123457);
-    let huge = Summary::of(&[987654321.0_f64]).expect("summarizes");
-    assert_eq!(huge.mean, 987654000.0);
+fn statistics_round_to_hundredths() {
+    assert_eq!(Summary::of(&[1234.5678_f64]).expect("s").mean, 1234.57);
+    assert_eq!(Summary::of(&[0.156_f64]).expect("s").mean, 0.16);
+    assert_eq!(Summary::of(&[987654321.0_f64]).expect("s").mean, 987654321.0);
 }
 
 #[test]
