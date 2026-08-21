@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Measure the Rust Criterion benchmarks.
+
+Nine bench targets are declared across three crates and, before this,
+nothing ran any of them: not CI, not the gate, not a just recipe. Two had
+drifted into placeholders measuring something other than what they name.
+
+Targets are read from the Cargo manifests rather than listed here, so a new
+`[[bench]]` is picked up by existing code instead of being silently orphaned
+the way these nine were.
+
+Prints raw per-iteration nanoseconds on stdout; `capsem-bench` computes every
+statistic. Diagnostics go to stderr.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+CRITERION = ROOT / "target" / "criterion"
+
+
+def declared_targets() -> list[tuple[str, str]]:
+    """Every `[[bench]]` in the workspace, as (crate, bench name)."""
+    found = []
+    for manifest in sorted((ROOT / "crates").glob("*/Cargo.toml")):
+        data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        crate = data.get("package", {}).get("name")
+        for bench in data.get("bench", []):
+            if crate and bench.get("name"):
+                found.append((crate, bench["name"]))
+    return found
+
+
+def run_bench(crate: str, target: str, *, sample_size: int | None) -> None:
+    command = ["cargo", "bench", "-p", crate, "--bench", target]
+    if sample_size is not None:
+        # Criterion reads this after `--`; fewer samples is a coarser estimate,
+        # which is the trade a dev-loop run is making on purpose.
+        command += ["--", "--sample-size", str(sample_size)]
+    print(f"running {crate}::{target}", file=sys.stderr)
+    subprocess.run(command, cwd=ROOT, check=True, stdout=sys.stderr)
+
+
+def samples_for(target: str) -> dict[str, list[float]]:
+    """Raw per-iteration nanoseconds for each case of one bench target."""
+    root = CRITERION / target
+    if not root.is_dir():
+        return {}
+    measured: dict[str, list[float]] = {}
+    for sample_path in sorted(root.glob("**/new/sample.json")):
+        sample = json.loads(sample_path.read_text(encoding="utf-8"))
+        times, iters = sample.get("times", []), sample.get("iters", [])
+        per_iteration = [
+            float(total) / float(count)
+            for total, count in zip(times, iters, strict=False)
+            if float(count) > 0
+        ]
+        if not per_iteration:
+            continue
+        # `<target>/<case>/new/sample.json` -- the case is the parent of `new`.
+        case = sample_path.parent.parent.relative_to(root).as_posix()
+        measured[case] = per_iteration
+    return measured
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="fewer samples per case; a coarser estimate for the dev loop",
+    )
+    parser.add_argument(
+        "--reuse",
+        action="store_true",
+        help="read results already on disk instead of running the benchmarks",
+    )
+    parser.add_argument("--target", action="append", help="limit to one bench target")
+    args = parser.parse_args()
+
+    targets = declared_targets()
+    if args.target:
+        targets = [pair for pair in targets if pair[1] in args.target]
+    if not targets:
+        print("no [[bench]] targets are declared", file=sys.stderr)
+        return 1
+
+    metrics: dict[str, dict] = {}
+    for crate, target in targets:
+        if not args.reuse:
+            run_bench(crate, target, sample_size=10 if args.quick else None)
+        for case, values in samples_for(target).items():
+            metrics[f"{target}.{case}.ns"] = {
+                "unit": "nanoseconds",
+                "samples": values,
+            }
+
+    if not metrics:
+        print(
+            "no Criterion results found; the benches produced nothing to read",
+            file=sys.stderr,
+        )
+        return 1
+
+    json.dump({"metrics": metrics}, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

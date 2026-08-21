@@ -20,7 +20,13 @@ use crate::{Artifact, Thresholds};
 pub(crate) fn list_dimensions() {
     println!("{:<12}  QUICK", "DIMENSION");
     for dimension in schema::Dimension::ALL {
-        let quick = if dimension.needs_vm() { "no (boots a guest)" } else { "yes" };
+        let quick = if dimension.in_quick_lane() {
+            "yes"
+        } else if dimension.needs_vm() {
+            "no (boots a guest)"
+        } else {
+            "no (slow)"
+        };
         println!("{:<12}  {}", dimension.as_str(), quick);
     }
 }
@@ -82,9 +88,9 @@ pub(crate) fn run_dimensions(
     let mut ran = 0usize;
 
     for dimension in wanted {
-        // A quick run answers "how bad is it" while developing, and everything
-        // that provisions a guest is the expensive half.
-        if quick && dimension.needs_vm() {
+        // A quick run answers "how bad is it" while developing, so it takes
+        // only the dimensions that finish in seconds.
+        if quick && !dimension.in_quick_lane() {
             continue;
         }
         let program = collectors.join(dimension.as_str());

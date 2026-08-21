@@ -131,17 +131,20 @@ fn dimension_names_round_trip_through_their_wire_form() {
 }
 
 #[test]
-fn the_quick_lane_skips_everything_that_boots_a_guest() {
-    // This is the whole reason a dev loop can finish in under a minute.
+fn the_quick_lane_holds_only_what_finishes_in_seconds() {
     let quick: Vec<&str> = Dimension::ALL
         .iter()
-        .filter(|d| !d.needs_vm())
+        .filter(|d| d.in_quick_lane())
         .map(|d| d.as_str())
         .collect();
-    assert!(quick.contains(&"criterion"));
     assert!(quick.contains(&"routes"));
+    assert!(quick.contains(&"websocket"));
     assert!(!quick.contains(&"disk"), "disk needs a booted guest");
-    assert!(!quick.contains(&"snapshot"), "snapshot needs a booted guest");
+    // Needs no guest and is still far too slow: it compiles benchmarks and
+    // runs each to a confidence interval.
+    assert!(!Dimension::Criterion.needs_vm());
+    assert!(!quick.contains(&"criterion"), "criterion takes minutes");
+    assert!(!quick.contains(&"protocol"), "protocol sends 50k requests");
 }
 
 #[test]

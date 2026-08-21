@@ -94,15 +94,24 @@ impl Dimension {
         }
     }
 
-    /// Needs a booted VM, so `quick` skips it.
-    ///
-    /// This is what makes a dev-loop run finish in under a minute: everything
-    /// that provisions a guest is the expensive half.
+    /// Needs a booted VM.
     pub fn needs_vm(self) -> bool {
         !matches!(
             self,
             Dimension::Criterion | Dimension::Protocol | Dimension::Routes | Dimension::Websocket
         )
+    }
+
+    /// Runs in the dev loop, where the whole sweep must finish in a minute.
+    ///
+    /// Not simply "needs no guest". `criterion` boots nothing and still takes
+    /// minutes, because it compiles benchmarks and then runs each to a
+    /// statistical confidence interval; `protocol` sends fifty thousand
+    /// requests. Both are excluded for being slow, which is a different fact
+    /// from needing a VM and has to be stated separately or the quick lane
+    /// quietly stops being quick.
+    pub fn in_quick_lane(self) -> bool {
+        matches!(self, Dimension::Routes | Dimension::Websocket)
     }
 }
 
