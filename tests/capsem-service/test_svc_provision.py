@@ -164,8 +164,18 @@ class TestDelete:
         assert name not in ids
 
     def test_delete_twice(self, client):
+        """The second delete of one VM is refused.
+
+        Each step is asserted rather than assumed. This test used to run
+        create, delete, delete and assert only the last, so a create that had
+        not finished registering, or a first delete that had not removed the
+        VM, produced a second delete that legitimately succeeded -- and the
+        failure named the final assertion rather than the step that actually
+        went wrong. It held a 0.6.0 release attempt saying only
+        `assert {'success': True} is None or ...`.
+        """
         name = vm_name("del2x")
-        client.post(
+        created = client.post(
             "/vms/create",
             {
                 "name": name,
@@ -174,9 +184,22 @@ class TestDelete:
                 "cpus": DEFAULT_CPUS,
             },
         )
-        client.delete(f"/vms/{name}/delete")
+        assert created is not None, "create returned nothing"
+        assert "error" not in str(created).lower(), f"create failed: {created}"
+
+        listed = [vm["id"] for vm in client.get("/vms/list")["sandboxes"]]
+        assert name in listed, f"{name} is not registered after create: {listed}"
+
+        first = client.delete(f"/vms/{name}/delete")
+        assert "error" not in str(first).lower(), f"first delete failed: {first}"
+
+        listed = [vm["id"] for vm in client.get("/vms/list")["sandboxes"]]
+        assert name not in listed, f"{name} still registered after delete: {listed}"
+
         resp = client.delete(f"/vms/{name}/delete")
-        assert resp is None or "error" in str(resp).lower() or "not found" in str(resp).lower()
+        assert resp is None or "error" in str(resp).lower() or "not found" in str(resp).lower(), (
+            f"deleting {name} twice succeeded: {resp}"
+        )
 
     def test_delete_nonexistent(self, client):
         resp = client.delete("/vms/no-such-vm-xyz/delete")
