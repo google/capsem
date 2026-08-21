@@ -1,3 +1,4 @@
+mod collector;
 mod commands;
 mod machine;
 mod record;
@@ -45,6 +46,32 @@ enum Command {
     Compare(CompareArgs),
     /// Ratchet a directory of records against checked-in evidence.
     Verify(VerifyArgs),
+    /// Measure dimensions and record what they measured.
+    Run(RunArgs),
+}
+
+#[derive(Parser, Debug)]
+struct RunArgs {
+    /// Dimensions to measure. Every one when omitted.
+    dimensions: Vec<String>,
+    /// Directory holding one executable per dimension.
+    #[arg(long, default_value = "bench/collectors")]
+    collectors: PathBuf,
+    /// Where records are written.
+    #[arg(long, default_value = "target/test-benchmarks")]
+    out: PathBuf,
+    /// Reduced samples, skipping everything that boots a guest.
+    #[arg(long)]
+    quick: bool,
+    /// Seconds a single collector may take.
+    #[arg(long, default_value_t = 900)]
+    timeout_secs: u64,
+    #[arg(long, default_value = "unknown")]
+    channel: String,
+    #[arg(long, default_value = "unknown")]
+    commit: String,
+    #[arg(long, default_value = "code")]
+    profile: String,
 }
 
 /// How much growth is allowed, and how much of a move is just the machine.
@@ -515,6 +542,20 @@ async fn main() -> Result<()> {
         Command::Doctor(args) => return commands::doctor(args.json, running_capsem_processes()),
         Command::Compare(args) => return commands::compare(&args.baseline, &args.current, args.thresholds),
         Command::Verify(args) => return commands::verify(&args.records, &args.evidence, args.thresholds),
+        Command::Run(args) => {
+            let wanted = commands::select_dimensions(&args.dimensions)?;
+            return commands::run_dimensions(
+                &wanted,
+                &args.collectors,
+                &args.out,
+                std::time::Duration::from_secs(args.timeout_secs),
+                args.quick,
+                &args.channel,
+                &args.commit,
+                &args.profile,
+                running_capsem_processes(),
+            );
+        }
     }
     Ok(())
 }

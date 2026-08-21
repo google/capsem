@@ -5,10 +5,11 @@
 //! record pipeline to it.
 
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Result};
 
+use crate::collector;
 use crate::machine;
 use crate::record;
 use crate::schema;
@@ -58,6 +59,87 @@ pub(crate) fn doctor(json: bool, strays: Vec<String>) -> Result<()> {
     } else {
         bail!("this machine is not fit to measure on")
     }
+}
+
+/// Run the collectors for the requested dimensions and record what they measured.
+///
+/// A collector reports raw samples; every statistic is computed here, so `p99`
+/// means the same thing across dimensions and adding one costs a program that
+/// prints numbers.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_dimensions(
+    wanted: &[schema::Dimension],
+    collectors: &Path,
+    out: &Path,
+    timeout: Duration,
+    quick: bool,
+    channel: &str,
+    commit: &str,
+    profile: &str,
+    strays: Vec<String>,
+) -> Result<()> {
+    let fitness = machine::examine(std::env::consts::ARCH, std::env::consts::OS, &strays);
+    let mut ran = 0usize;
+
+    for dimension in wanted {
+        // A quick run answers "how bad is it" while developing, and everything
+        // that provisions a guest is the expensive half.
+        if quick && dimension.needs_vm() {
+            continue;
+        }
+        let program = collectors.join(dimension.as_str());
+        if !program.exists() {
+            println!("{}: no collector yet", dimension.as_str());
+            continue;
+        }
+
+        let mut args = Vec::new();
+        if quick {
+            args.push("--quick".to_string());
+        }
+        let collected = collector::run(&program, &args, timeout)?;
+
+        let metrics = collected
+            .metrics
+            .iter()
+            .filter_map(|(key, raw)| {
+                stats::Summary::of(&raw.samples).map(|summary| schema::Metric {
+                    key: format!("{}.{key}", dimension.as_str()),
+                    unit: raw.unit,
+                    summary,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let record = schema::Record {
+            schema: schema::SCHEMA.to_string(),
+            dimension: *dimension,
+            recorded_at: rfc3339_now(),
+            release: schema::Release {
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                channel: channel.to_string(),
+                commit: commit.to_string(),
+            },
+            host: fitness.host.clone(),
+            profile: profile.to_string(),
+            quick,
+            metrics,
+            sidecar: collected.sidecar,
+        };
+        let path = record::write(out, &record)?;
+        println!(
+            "{}: {} metrics -> {}",
+            dimension.as_str(),
+            record.metrics.len(),
+            path.display()
+        );
+        ran += 1;
+    }
+
+    if ran == 0 {
+        bail!("no dimension produced a record");
+    }
+    Ok(())
 }
 
 /// Compare every metric the two records share.
@@ -256,4 +338,34 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// Resolve dimension names from the command line.
+///
+/// An unknown name is refused with the full list rather than silently
+/// measuring nothing, which is how a typo becomes a green run that proved
+/// nothing.
+pub(crate) fn select_dimensions(names: &[String]) -> Result<Vec<schema::Dimension>> {
+    if names.is_empty() {
+        return Ok(schema::Dimension::ALL.to_vec());
+    }
+    names
+        .iter()
+        .map(|name| {
+            schema::Dimension::ALL
+                .iter()
+                .copied()
+                .find(|dimension| dimension.as_str() == name)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "unknown dimension {name}; known: {}",
+                        schema::Dimension::ALL
+                            .iter()
+                            .map(|d| d.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })
+        })
+        .collect()
 }
