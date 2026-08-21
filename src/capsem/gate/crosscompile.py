@@ -206,9 +206,6 @@ class CrossCompileCommand(
     name="cross-compile",
     help="build the Linux release package for one architecture",
 ):
-    # Its plan builds an image outside the kernel sandbox, which needs the
-    # egress resource to run it with.
-    outside_egress = True
     exclusive = True
 
     @classmethod

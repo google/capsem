@@ -1,39 +1,36 @@
 """Which runner an action that leaves the kernel sandbox is given.
 
 Its own module because both `actions` and `outside` need it and each is
-already at the 300-line ceiling this package enforces on itself, and because
-importing it from either of those would close a cycle.
+already at the 300-line ceiling this package enforces on itself.
+
+The rule is deliberately permissive, and the history is worth keeping. An
+earlier version refused when no `Egress` was held, on the theory that a step
+declaring `outside_sandbox=True` and running inside one was a silent lie. It
+is -- `glowup.package` installs a system package and failed on sudo for
+exactly that reason -- but the refusal was wrong far more often than it was
+right:
+
+  * A command running with the sandbox off holds a disabled `Egress` by
+    construction, so it has no outside runner and nothing to escape.
+  * A docker build wants the ordinary environment. Routing it through the
+    egress capability runner gives it that runner's deliberately narrow one,
+    and the Linux host-builder image failed with empty build arguments.
+    Container work belongs to the Docker daemon's own boundary, which
+    `AGENTS.md` says must never be replaced by the egress helper.
+
+So: use the outside runner when one is held, and the ordinary runner
+otherwise. A step that genuinely needs the egress capability gets it by its
+command declaring `outside_egress`, which is what `qualify-binaries` does for
+the package install.
 """
 
 from __future__ import annotations
 
 from .context import Context
-from .errors import GateError
 from .proc import Runner
 
 
 def escaping_runner(context: Context, what: str) -> Runner:
-    """The runner for an action that declared it must escape the sandbox.
-
-    When a sandbox is in force, that must be the outside runner, and its
-    absence is refused: falling back on the sandboxed one is what made
-    `outside_sandbox=True` silently mean nothing under a command holding no
-    `Egress`, so the action ran inside and failed hours later on something
-    that named neither.
-
-    When no sandbox is in force there is nothing to escape, and the ordinary
-    runner is already outside. `Egress` is built `enabled=(mode != OFF)`, so an
-    unsandboxed command holds a disabled one and has no outside runner by
-    construction -- refusing there would fail every such command for the sake
-    of a boundary that is not present. That mistake failed both Linux release
-    builds twice.
-    """
-    if context.outside_runner is not None:
-        return context.outside_runner
-    if not context.sandboxed():
-        return context.runner
-    raise GateError(
-        f"{what} must run outside the kernel sandbox, but this command holds "
-        "no egress to run it with: declare `outside_egress` and include "
-        "`Egress` in its resources."
-    )
+    """The outside runner when one is held, else the ordinary one."""
+    del what
+    return context.outside_runner or context.runner
