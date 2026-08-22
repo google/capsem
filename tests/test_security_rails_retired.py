@@ -89,6 +89,12 @@ def test_session_event_writes_stay_behind_dbwriter():
         "crates/capsem-core/src/auto_snapshot.rs",
         "crates/capsem-core/src/session/index.rs",
         "crates/capsem-core/src/session/maintenance.rs",
+        # The benchmark time series is its own database with its own schema,
+        # not the session ledger this rail is about, and `store.rs` is its
+        # single owning module -- the same rule, applied to a different DB.
+        # `tests/citadel/test_db_boundary.py` asserts nothing else in the
+        # crate ever opens it.
+        "crates/capsem-bench/src/store.rs",
     }
     allowed_event_inserts = {
         "crates/capsem-logger/src/schema.rs",

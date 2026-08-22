@@ -160,8 +160,10 @@ class TestDelete:
         )
         client.delete(f"/vms/{name}/delete")
         resp = client.get("/vms/list")
-        ids = [s["id"] for s in resp["sandboxes"]]
-        assert name not in ids
+        # `name`, not `id`: ids are UUIDs, so comparing a name against them
+        # passed whether or not the delete did anything.
+        names = [s.get("name") for s in resp["sandboxes"]]
+        assert name not in names, f"{name} survived delete: {names}"
 
     def test_delete_twice(self, client):
         """The second delete of one VM is refused.
@@ -187,14 +189,19 @@ class TestDelete:
         assert created is not None, "create returned nothing"
         assert "error" not in str(created).lower(), f"create failed: {created}"
 
-        listed = [vm["id"] for vm in client.get("/vms/list")["sandboxes"]]
-        assert name in listed, f"{name} is not registered after create: {listed}"
+        # `id` is a UUID; the name lives in `name`. Matching on `id` asserts
+        # nothing, because a name is never a UUID -- which is why the
+        # neighbouring `test_delete_removes_from_list` passes whether or not
+        # the VM was ever removed.
+        def names() -> list[str]:
+            return [vm.get("name") for vm in client.get("/vms/list")["sandboxes"]]
+
+        assert name in names(), f"{name} is not registered after create: {names()}"
 
         first = client.delete(f"/vms/{name}/delete")
         assert "error" not in str(first).lower(), f"first delete failed: {first}"
 
-        listed = [vm["id"] for vm in client.get("/vms/list")["sandboxes"]]
-        assert name not in listed, f"{name} still registered after delete: {listed}"
+        assert name not in names(), f"{name} still registered after delete: {names()}"
 
         resp = client.delete(f"/vms/{name}/delete")
         assert resp is None or "error" in str(resp).lower() or "not found" in str(resp).lower(), (
