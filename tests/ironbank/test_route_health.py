@@ -24,7 +24,7 @@ from typing import Any
 
 import psutil
 import pytest
-from helpers.benchmark_ratchet import maximum_factor
+from helpers.benchmark_ratchet import hot_route_factor
 from helpers.constants import (
     CODE_PROFILE_ID,
     DEFAULT_CPUS,
@@ -52,7 +52,7 @@ HOT_ROUTE_REFERENCE_SAMPLES = 64
 HOT_ROUTE_WINDOW_SAMPLES = 128
 HOT_ROUTE_WINDOWS = 3
 HOT_ROUTE_MEASUREMENT_SAMPLES = HOT_ROUTE_WINDOW_SAMPLES * HOT_ROUTE_WINDOWS
-HOT_ROUTE_REGRESSION_FACTOR = maximum_factor(PROJECT_ROOT)
+HOT_ROUTE_REGRESSION_FACTOR = hot_route_factor(PROJECT_ROOT)
 
 pytestmark = pytest.mark.integration
 

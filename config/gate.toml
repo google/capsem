@@ -2748,6 +2748,12 @@ quick_timeout_secs = 60
 # fails when any measured duration or allocated-byte metric grows by more than
 # this ratio; there is deliberately no independently authored seconds/MB cap.
 maximum_factor = 1.2
+# Headroom over the authored hot-route budgets in the ironbank route-health
+# gate. Same number today, and a separate knob on purpose: the value above
+# answers "has this changed", this one answers "is this fast enough". They
+# were one value, so widening tolerance while chasing a flaky comparison also
+# quietly relaxed every route budget.
+hot_route_factor = 1.2
 
 [runlog.ledger]
 # What survives rotation. `keep_runs` above is twenty and a day of gating

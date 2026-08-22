@@ -325,3 +325,30 @@ def test_the_summary_says_the_same_thing_either_way() -> None:
     assert PRUNE.summary(total=82, superseded=47, keep=(0, 6)) == PRUNE.summary(
         total=82, superseded=47, keep=(0, 6)
     )
+
+
+def test_evidence_tolerance_and_route_budgets_are_separate_knobs() -> None:
+    """One number meant two things, and moving it moved both.
+
+    `[benchmark_regression] maximum_factor` is how far a metric may drift from
+    checked-in evidence. `test_route_health.py` read the same value as the
+    headroom over an authored hot-route budget. They answer different
+    questions -- "has this changed" and "is this fast enough" -- so widening
+    tolerance while chasing a flaky comparison also quietly relaxed every
+    route budget in the ironbank gate.
+    """
+    config = tomllib.loads(
+        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    )["benchmark_regression"]
+
+    assert "hot_route_factor" in config, (
+        "the ironbank hot-route budgets have no knob of their own, so they "
+        "move whenever evidence tolerance is tuned"
+    )
+    source = (PROJECT_ROOT / "tests" / "ironbank" / "test_route_health.py").read_text(
+        encoding="utf-8"
+    )
+    assert "hot_route_factor" in source, (
+        "test_route_health.py still reads the evidence ratchet as its budget "
+        "headroom"
+    )

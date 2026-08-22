@@ -93,8 +93,23 @@ def latest_checked_in_benchmark(
 
 
 def maximum_factor(project_root: Path) -> float:
+    return _regression(project_root, "maximum_factor")
+
+
+def hot_route_factor(project_root: Path) -> float:
+    """Headroom over the ironbank gate's authored hot-route budgets.
+
+    Separate from `maximum_factor` because they answer different questions --
+    "is this fast enough" against an authored budget, and "has this changed"
+    against recorded evidence. One value served both, so tuning either moved
+    the other.
+    """
+    return _regression(project_root, "hot_route_factor")
+
+
+def _regression(project_root: Path, key: str) -> float:
     config = tomllib.loads((project_root / "config" / "gate.toml").read_text(encoding="utf-8"))
-    return float(config["benchmark_regression"]["maximum_factor"])
+    return float(config["benchmark_regression"][key])
 
 
 def metric_value(document: dict[str, Any], metric: BenchmarkMetric) -> float:
