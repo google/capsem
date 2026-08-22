@@ -11392,9 +11392,15 @@ async fn acquire_vz_host_lock(
 }
 
 /// Wait for a process to exit, force-killing after timeout.
-async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
+/// Wait for a VM process to exit, SIGKILLing it if it outstays `timeout`.
+///
+/// Returns whether it left on its own. A caller that asked to retain state
+/// needs to know: everything the guest had not flushed when it was killed is
+/// gone, and reporting that stop as a success is how acknowledged writes went
+/// missing without a word.
+async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) -> bool {
     if pid == 0 {
-        return;
+        return true;
     }
     let pid_i32 = pid as i32;
     let exited = || async move { (unsafe { nix::libc::kill(pid_i32, 0) } != 0).then_some(()) };
@@ -11402,7 +11408,7 @@ async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
         .await
         .is_ok()
     {
-        return;
+        return true;
     }
     tracing::warn!(
         pid,
@@ -11421,6 +11427,7 @@ async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) {
     {
         tracing::error!(pid, "VM process survived SIGKILL");
     }
+    false
 }
 
 /// Shutdown a running VM process by ID. Returns (session_dir, persistent, pid).
@@ -11528,7 +11535,17 @@ async fn shutdown_vm_process(
     // Wait for actual exit (poll_until + SIGKILL fallback), then clean up
     // sockets. Synchronous: callers must not see "shutdown returned" while
     // the process is still alive (leak detector + suspend/resume rely on it).
-    wait_for_process_exit(pid, mode.exit_timeout()).await;
+    let exited_cleanly = wait_for_process_exit(pid, mode.exit_timeout()).await;
+    if !exited_cleanly && mode.retains_state() {
+        // The guest was killed mid-sync on a shutdown that promised to keep
+        // its state. Whatever had not reached the disk is gone, and this is
+        // the only place that knows it.
+        tracing::error!(
+            id,
+            timeout_secs = mode.exit_timeout().as_secs(),
+            "VM was killed before it finished flushing; writes made just before              stop may be lost"
+        );
+    }
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
     if !shutdown_claimed {
