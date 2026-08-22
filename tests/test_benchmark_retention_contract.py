@@ -255,3 +255,73 @@ def test_a_lane_selects_its_own_evidence_over_a_newer_foreign_one(tmp_path: Path
     selected = latest_checked_in_benchmark(root, BenchmarkCategory.FORK, "co-work")
 
     assert selected is not None and selected["identity"] == "mine"
+
+
+# ---------------------------------------------------------------------------
+# Semver. The clock-derived scheme -- `1.5.1783712334` -- was retired, and the
+# pruner's filename pattern was not: it requires a six-digit third component,
+# which semver never has. Under `0.6.0` every recording fell through to
+# "curated baseline, never pruned", so the retention policy above described
+# behaviour the tree no longer had.
+# ---------------------------------------------------------------------------
+
+
+def test_a_semver_recording_is_recognised_at_all(tmp_path: Path) -> None:
+    """The bug in one assertion: an unrecognised file is immortal."""
+    _write(tmp_path / "routes", "data_0.5.0_x86_64.json", "data_0.5.1_x86_64.json")
+
+    superseded = [path.name for path in PRUNE.plan(tmp_path, (0, 6))]
+
+    assert superseded == ["data_0.5.0_x86_64.json"], (
+        "a semver recording was not recognised as routine output, so it can "
+        "never be pruned; the history grows without bound and silently"
+    )
+
+
+def test_semver_patches_of_one_release_are_samples_of_it(tmp_path: Path) -> None:
+    """`0.6.0` and `0.6.1` are the release being worked on, both kept.
+
+    Retention groups by major and minor because that is what "this release"
+    means here -- the same grouping the clock-derived scheme had.
+    """
+    _write(tmp_path / "routes", "data_0.6.0_x86_64.json", "data_0.6.1_x86_64.json")
+
+    assert PRUNE.plan(tmp_path, (0, 6)) == []
+
+
+def test_semver_recordings_are_ordered_by_patch_not_by_string(tmp_path: Path) -> None:
+    """`0.5.10` is newer than `0.5.9`, which sorting as text gets backwards."""
+    _write(tmp_path / "routes", "data_0.5.9_x86_64.json", "data_0.5.10_x86_64.json")
+
+    superseded = [path.name for path in PRUNE.plan(tmp_path, (0, 6))]
+
+    assert superseded == ["data_0.5.9_x86_64.json"]
+
+
+def test_a_curated_baseline_is_still_never_pruned(tmp_path: Path) -> None:
+    """Widening the pattern must not swallow the deliberate reference points.
+
+    They are what "curated baseline" meant before the pattern started matching
+    almost nothing, and the widening is the moment that could lose them.
+    """
+    _write(tmp_path / "routes", "baseline.json", "post_t3_debug_reference.json")
+
+    assert PRUNE.plan(tmp_path, (0, 6)) == []
+
+
+def test_a_dry_run_reports_what_would_remain() -> None:
+    """The number a human reads before deciding to apply.
+
+    It reported the count *before* pruning on a dry run and after it on a real
+    one, under one label -- so "47 superseded ... -> 82 files" on a tree of 82
+    read as "this changes nothing" while planning to delete more than half.
+    """
+    planned = PRUNE.summary(total=82, superseded=47, keep=(0, 6))
+    assert "-> 35 files" in planned, planned
+
+
+def test_the_summary_says_the_same_thing_either_way() -> None:
+    """A dry run and the apply that follows it describe one outcome."""
+    assert PRUNE.summary(total=82, superseded=47, keep=(0, 6)) == PRUNE.summary(
+        total=82, superseded=47, keep=(0, 6)
+    )

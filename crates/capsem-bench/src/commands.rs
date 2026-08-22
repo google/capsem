@@ -158,6 +158,14 @@ pub(crate) fn run_dimensions(
     if ran == 0 {
         bail!("no dimension produced a record");
     }
+
+    // Recording bounds itself. A retention rule that has to be remembered as
+    // a separate command is one that gets run until the day it stops being
+    // run, which is what happened to the JSON tree this replaced.
+    let removed = store::prune(&mut connection, env!("CARGO_PKG_VERSION"))?;
+    if removed > 0 {
+        println!("pruned {removed} superseded run(s) of older releases");
+    }
     Ok(())
 }
 

@@ -1,4 +1,4 @@
-use super::{history, insert, latest, open, SCHEMA_VERSION};
+use super::{history, insert, latest, open, prune, SCHEMA_VERSION};
 use crate::schema::{Dimension, Host, Metric, Record, Release, Unit, SCHEMA};
 use crate::stats::Summary;
 
@@ -194,4 +194,115 @@ fn the_schema_version_is_stamped() {
         })
         .expect("reads");
     assert_eq!(stamped, SCHEMA_VERSION.to_string());
+}
+
+// ---------------------------------------------------------------------------
+// Retention. The JSON tree this store replaces grew to 82 files and 1.4 MB
+// with a pruner that could not read its own filenames: `RECORDING` requires a
+// six-digit timestamp, which the retired `1.5.1783712334` scheme had and
+// semver does not, so under `0.6.0` every recording matched nothing and was
+// treated as a curated baseline. A store with no retention repeats that in a
+// shape nobody can see, because a growing file has no filenames to notice.
+// ---------------------------------------------------------------------------
+
+fn versioned(at: &str, version: &str, value: f64) -> Record {
+    let mut row = record(Dimension::Routes, "x86_64", "code", at, value);
+    row.release.version = version.to_string();
+    row
+}
+
+#[test]
+fn every_run_of_the_current_version_is_kept() {
+    // Several samples of the release being worked on is what a threshold that
+    // does not flap is set from. One is a guess.
+    let (_dir, mut connection) = store();
+    for (index, at) in ["2026-08-21T10:00:00Z", "2026-08-21T11:00:00Z", "2026-08-21T12:00:00Z"]
+        .iter()
+        .enumerate()
+    {
+        insert(&mut connection, &versioned(at, "0.6.0", 0.1 + index as f64)).expect("inserts");
+    }
+    assert_eq!(prune(&mut connection, "0.6.0").expect("prunes"), 0);
+    assert_eq!(runs(&connection), 3);
+}
+
+#[test]
+fn only_the_newest_run_of_an_older_version_survives() {
+    let (_dir, mut connection) = store();
+    for at in ["2026-06-01T10:00:00Z", "2026-06-02T10:00:00Z", "2026-06-03T10:00:00Z"] {
+        insert(&mut connection, &versioned(at, "0.5.0", 0.1)).expect("inserts");
+    }
+    assert_eq!(prune(&mut connection, "0.6.0").expect("prunes"), 2);
+    let kept = latest(&connection, Dimension::Routes, "x86_64", "code")
+        .expect("queries")
+        .expect("present");
+    assert_eq!(kept.recorded_at, "2026-06-03T10:00:00Z");
+}
+
+#[test]
+fn each_subject_keeps_its_own_survivor() {
+    // An arm64 number and an x86_64 number are not two samples of one thing,
+    // so retention groups by what makes runs comparable.
+    let (_dir, mut connection) = store();
+    for arch in ["x86_64", "arm64"] {
+        for at in ["2026-06-01T10:00:00Z", "2026-06-02T10:00:00Z"] {
+            let mut row = versioned(at, "0.5.0", 0.1);
+            row.host.arch = arch.to_string();
+            insert(&mut connection, &row).expect("inserts");
+        }
+    }
+    assert_eq!(prune(&mut connection, "0.6.0").expect("prunes"), 2);
+    for arch in ["x86_64", "arm64"] {
+        assert!(latest(&connection, Dimension::Routes, arch, "code")
+            .expect("queries")
+            .is_some());
+    }
+}
+
+#[test]
+fn a_pruned_run_takes_its_metrics_with_it() {
+    // Rows with no run are invisible growth: nothing queries them and nothing
+    // counts them.
+    let (_dir, mut connection) = store();
+    for at in ["2026-06-01T10:00:00Z", "2026-06-02T10:00:00Z"] {
+        insert(&mut connection, &versioned(at, "0.5.0", 0.1)).expect("inserts");
+    }
+    prune(&mut connection, "0.6.0").expect("prunes");
+    let orphans: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM metrics WHERE run_id NOT IN (SELECT id FROM runs)",
+            [],
+            |row| row.get(0),
+        )
+        .expect("counts");
+    assert_eq!(orphans, 0);
+}
+
+#[test]
+fn a_quick_run_of_an_older_version_is_not_the_survivor() {
+    // It was never evidence, so keeping it as the one surviving sample would
+    // leave the older version represented by a number that may not be used.
+    let (_dir, mut connection) = store();
+    insert(&mut connection, &versioned("2026-06-01T10:00:00Z", "0.5.0", 0.1)).expect("inserts");
+    let mut quick = versioned("2026-06-02T10:00:00Z", "0.5.0", 0.9);
+    quick.quick = true;
+    insert(&mut connection, &quick).expect("inserts");
+
+    prune(&mut connection, "0.6.0").expect("prunes");
+    let kept = latest(&connection, Dimension::Routes, "x86_64", "code")
+        .expect("queries")
+        .expect("present");
+    assert_eq!(kept.recorded_at, "2026-06-01T10:00:00Z");
+}
+
+#[test]
+fn pruning_an_empty_store_is_not_an_error() {
+    let (_dir, mut connection) = store();
+    assert_eq!(prune(&mut connection, "0.6.0").expect("prunes"), 0);
+}
+
+fn runs(connection: &rusqlite::Connection) -> i64 {
+    connection
+        .query_row("SELECT count(*) FROM runs", [], |row| row.get(0))
+        .expect("counts")
 }

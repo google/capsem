@@ -31,10 +31,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARKS = ROOT / "benchmarks"
 
-# <series>_<major>.<minor>.<timestamp>[_<arch>].json -- the timestamp is what
-# makes a file routine output rather than a curated baseline.
+# <series>_<major>.<minor>.<ordinal>[_<arch>].json -- a version-shaped name is
+# what makes a file routine output rather than a curated baseline.
+#
+# The third component used to be required to be a six-digit timestamp, from
+# the retired `1.5.1783712334` scheme. Semver never has six digits there, so
+# from `0.6.0` onward every recording fell through to "a shape we do not
+# recognise" and became immortal: the policy below described a tree it had
+# stopped applying to. It is now any run of digits, which reads both schemes
+# and orders both correctly -- the two never share a (major, minor) group, and
+# within a group an integer compares right where text does not (`0.5.10` is
+# newer than `0.5.9`).
 RECORDING = re.compile(
-    r"^(?P<series>.+?)_(?P<major>\d+)\.(?P<minor>\d+)\.(?P<ts>\d{6,})"
+    r"^(?P<series>.+?)_(?P<major>\d+)\.(?P<minor>\d+)\.(?P<ts>\d+)"
     r"(?:_(?P<arch>[\w-]+))?\.json$"
 )
 
@@ -72,6 +81,24 @@ def plan(benchmarks: Path, keep_version: tuple[int, int]) -> list[Path]:
     return sorted(superseded)
 
 
+def summary(
+    total: int, superseded: int, keep: tuple[int, int], freed: int | None = None
+) -> str:
+    """One sentence describing the outcome, the same either way.
+
+    It used to subtract the deletions only when `--apply` was passed, so a dry
+    run over 82 files planning to delete 47 of them ended "-> 82 files" -- the
+    count before, presented as the count after. The number a person reads to
+    decide whether to apply said nothing would change.
+    """
+    size = "" if freed is None else f", {freed / 1024:.0f} KiB"
+    return (
+        f"{superseded} superseded recordings{size}; keeping every "
+        f"{keep[0]}.{keep[1]} sample and the newest of each older release"
+        f" -> {total - superseded} files"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -95,12 +122,7 @@ def main() -> int:
         if args.apply:
             path.unlink()
 
-    kept = total - (len(superseded) if args.apply else 0)
-    print(
-        f"\n{len(superseded)} superseded recordings, {freed / 1024:.0f} KiB; "
-        f"keeping every {keep[0]}.{keep[1]} sample and the newest of each older release"
-        f" -> {kept} files"
-    )
+    print("\n" + summary(total, len(superseded), keep, freed))
     if not args.apply:
         print("dry run; pass --apply to delete")
     return 0

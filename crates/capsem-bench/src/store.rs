@@ -295,6 +295,55 @@ pub fn subjects(connection: &Connection) -> Result<Vec<(Dimension, String, Strin
     Ok(found)
 }
 
+/// Bound the history without losing either of its two uses.
+///
+/// The history answers two questions that need different amounts of data:
+/// "did this release regress against the last one", which one recording per
+/// release answers, and "what threshold would not flap", which needs several
+/// recordings of the release being worked on. So: keep every run of
+/// `current`, and only the newest non-quick run of each older version, per
+/// subject -- an arm64 number and an x86_64 number are not two samples of one
+/// thing.
+///
+/// This is the rule `scripts/prune-benchmark-history.py` states and could not
+/// apply. Its filename pattern requires a six-digit timestamp, which the
+/// retired `1.5.1783712334` scheme had and semver does not, so under `0.6.0`
+/// every recording fell through to "curated baseline, never pruned". The tree
+/// reached 82 files. A table would have reached the same place more quietly,
+/// having no filenames for anyone to notice.
+///
+/// Returns how many runs were removed. Their metrics go with them: rows with
+/// no run are growth nothing queries and nothing counts.
+pub fn prune(connection: &mut Connection, current: &str) -> Result<usize> {
+    let transaction = connection.transaction()?;
+    transaction.execute("PRAGMA foreign_keys = ON", [])?;
+    let removed = transaction.execute(
+        "DELETE FROM runs
+          WHERE version != ?1
+            AND id NOT IN (
+                SELECT id FROM (
+                    SELECT id,
+                           row_number() OVER (
+                               PARTITION BY version, dimension, arch, profile
+                               ORDER BY quick, recorded_at DESC, id DESC
+                           ) AS rank
+                      FROM runs
+                     WHERE version != ?1
+                ) WHERE rank = 1
+            )",
+        params![current],
+    )?;
+    // `ON DELETE CASCADE` is only honoured with foreign keys enabled, and the
+    // pragma is per-connection rather than stored in the schema, so the sweep
+    // is stated here too rather than trusted to whoever opened this handle.
+    transaction.execute(
+        "DELETE FROM metrics WHERE run_id NOT IN (SELECT id FROM runs)",
+        [],
+    )?;
+    transaction.commit()?;
+    Ok(removed)
+}
+
 /// One metric's history, oldest first: what a trend line is drawn from.
 pub fn history(
     connection: &Connection,
