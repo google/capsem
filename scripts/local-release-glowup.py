@@ -1530,33 +1530,60 @@ installed_profile_tree_digest() {{
     | sha256sum \
     | cut -d' ' -f1
 }}
+# The service logs to `$CAPSEM_RUN_DIR/service.log` -- `telemetry::init` is
+# given `LogSink::File`, not stderr -- so `journalctl --user-unit` only ever
+# holds systemd's own start/stop lines. This waited on a message that could
+# never appear there, and its failure looked exactly like a service that had
+# refused to reject a tampered manifest.
+service_log() {{
+  echo "$CAPSEM_HOME_DIR/run/service.log"
+}}
 wait_for_automatic_rejection() {{
   since="$1"
   for attempt in $(seq 1 90); do
-    if journalctl --user-unit capsem.service --since "$since" --no-pager -o cat \
-      | grep -Fq "automatic release update failed"; then
+    if grep -Fq "automatic release update failed" "$(service_log)" 2>/dev/null; then
       return 0
     fi
     sleep 2
   done
-  journalctl --user-unit capsem.service --since "$since" --no-pager -o cat >&2 || true
+  dump_update_diagnostics "$since" "automatic rejection"
   return 1
+}}
+
+# Everything a reader needs to tell the failure modes apart, printed once on
+# the way out: whether the polling loop started at all and on what schedule,
+# what it decided each cycle, whether systemd thinks the unit is up, and the
+# service's own log. Not knowing which of these was true is what made the
+# last failure unreadable.
+dump_update_diagnostics() {{
+  since="$1"
+  what="$2"
+  echo "=== $what did not happen; diagnostics follow ===" >&2
+  echo "--- automatic update loop decisions ---" >&2
+  grep -F "automatic release" "$(service_log)" 2>&1 | tail -40 >&2 || true
+  echo "--- service log tail ---" >&2
+  tail -80 "$(service_log)" >&2 2>&1 || echo "no $(service_log)" >&2
+  echo "--- update log ---" >&2
+  tail -40 "$CAPSEM_HOME_DIR/logs/update.log" >&2 2>&1 || true
+  echo "--- systemd unit ---" >&2
+  systemctl --user status capsem.service --no-pager -l >&2 2>&1 || true
+  echo "--- unit environment ---" >&2
+  systemctl --user show-environment >&2 2>&1 || true
+  echo "--- journal (systemd's own view) ---" >&2
+  journalctl --user-unit capsem.service --since "$since" --no-pager -o cat >&2 2>&1 || true
 }}
 wait_for_incompatible_profile_rejection() {{
   since="$1"
   for attempt in $(seq 1 90); do
-    journal=$(
-      journalctl --user-unit capsem.service --since "$since" --no-pager -o cat
-    )
-    if printf '%s\n' "$journal" \
-      | grep -Fq "automatic release update failed" \
-      && printf '%s\n' "$journal" \
-      | grep -Fq "requires Capsem 9999.0.0 or newer"; then
+    # The service's own log, for the same reason as above: its tracing goes to
+    # a file, and the journal holds only systemd's unit lines.
+    if grep -Fq "automatic release update failed" "$(service_log)" 2>/dev/null \
+      && grep -Fq "requires Capsem 9999.0.0 or newer" "$(service_log)" 2>/dev/null; then
       return 0
     fi
     sleep 2
   done
-  journalctl --user-unit capsem.service --since "$since" --no-pager -o cat >&2 || true
+  dump_update_diagnostics "$since" "incompatible-profile rejection"
   return 1
 }}
 """

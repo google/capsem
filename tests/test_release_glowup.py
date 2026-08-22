@@ -1933,3 +1933,54 @@ def test_installed_status_is_read_from_the_installed_home() -> None:
         "whichever CAPSEM_HOME the caller exported rather than on the "
         "installation being verified"
     )
+
+
+def test_update_rejection_is_read_from_the_log_the_service_writes() -> None:
+    """The proof must look where the service's tracing actually goes.
+
+    `capsem-service` initialises telemetry with `LogSink::File` pointing at
+    `$CAPSEM_RUN_DIR/service.log`, so `journalctl --user-unit capsem.service`
+    holds systemd's start/stop lines and nothing the service itself wrote. The
+    tamper proof waited ninety times for `automatic release update failed` to
+    appear in that journal, where it can never appear, and the timeout was
+    indistinguishable from a service that had accepted a tampered manifest.
+    """
+    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(
+        encoding="utf-8"
+    )
+    waiters = [
+        source[source.index(f"{name}() {{{{") : source.index(f"{name}() {{{{") + 900]
+        for name in ("wait_for_automatic_rejection", "wait_for_incompatible_profile_rejection")
+    ]
+    for waiter in waiters:
+        body = waiter[: waiter.index("\n}}")]
+        assert "service_log" in body, (
+            "the rejection wait does not read the service's own log:\n" + body
+        )
+        assert "journalctl" not in body, (
+            "the rejection wait polls journalctl, which never carries the "
+            "service's tracing:\n" + body
+        )
+
+
+def test_a_failed_rejection_wait_says_why() -> None:
+    """Every ruled-out cause is printed, not left to be guessed at.
+
+    Diagnosing the last failure meant reading the service source to learn
+    where it logs, checking the unit for `--parent-pid`, and finding the poll
+    interval -- none of which the failure output contained.
+    """
+    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(
+        encoding="utf-8"
+    )
+    dump = source[source.index("dump_update_diagnostics() {{") :]
+    dump = dump[: dump.index("\n}}")]
+    for evidence in (
+        "automatic release",       # did the polling loop start, and decide what
+        "service_log",             # the service's own tracing
+        "update.log",              # what the updater recorded
+        "systemctl --user status", # does systemd think the unit is up
+        "show-environment",        # was the poll interval override applied
+        "journalctl",              # systemd's own view, for contrast
+    ):
+        assert evidence in dump, f"the diagnostic dump never shows {evidence}"

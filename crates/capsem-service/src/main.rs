@@ -13332,11 +13332,30 @@ async fn main() -> Result<()> {
 
     if should_start_automatic_update_loop(args.parent_pid) {
         let state_for_updates = Arc::clone(&state);
+        // Announced before the first sleep. A proof that waits for this loop to
+        // say something had no way to tell "not started" from "started and
+        // quiet", and spent a release cycle on the difference.
+        info!(
+            initial_delay_secs = automatic_update_delay(
+                AUTOMATIC_UPDATE_INITIAL_DELAY_ENV,
+                AUTOMATIC_UPDATE_INITIAL_DELAY_SECS,
+            )
+            .as_secs(),
+            poll_secs = automatic_update_delay(
+                AUTOMATIC_UPDATE_POLL_ENV,
+                AUTOMATIC_UPDATE_POLL_SECS,
+            )
+            .as_secs(),
+            "automatic release polling started"
+        );
         tokio::spawn(async move {
             run_automatic_update_loop(state_for_updates).await;
         });
     } else {
-        info!("automatic release polling is disabled for the bounded test service");
+        info!(
+            parent_pid = args.parent_pid,
+            "automatic release polling is disabled for the bounded test service"
+        );
     }
 
     // Spawn companion processes (gateway + tray) in the background so the UDS
