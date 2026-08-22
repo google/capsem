@@ -1954,7 +1954,7 @@ def test_update_rejection_is_read_from_the_log_the_service_writes() -> None:
     ]
     for waiter in waiters:
         body = waiter[: waiter.index("\n}}")]
-        assert "service_log" in body, (
+        assert "service_log_grep" in body, (
             "the rejection wait does not read the service's own log:\n" + body
         )
         assert "journalctl" not in body, (
@@ -1984,3 +1984,22 @@ def test_a_failed_rejection_wait_says_why() -> None:
         "journalctl",              # systemd's own view, for contrast
     ):
         assert evidence in dump, f"the diagnostic dump never shows {evidence}"
+
+
+def test_the_service_log_is_matched_by_pattern_not_by_a_fixed_name() -> None:
+    """`service.log` is a rotation pattern, not a file.
+
+    `telemetry::init` hands `run_dir/service.log` to a daily rolling appender,
+    which writes `service.<date>.log`. Waiting on the literal name polled a
+    path that never exists -- reported by the diagnostics as "No such file or
+    directory" after three minutes of waiting.
+    """
+    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(
+        encoding="utf-8"
+    )
+    listing = source[source.index("service_logs() {{") :]
+    listing = listing[: listing.index("\n}}")]
+    assert "service*.log" in listing, (
+        "the glow-up looks for a fixed log name; rotation means it must glob:\n"
+        + listing
+    )

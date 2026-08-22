@@ -1535,13 +1535,24 @@ installed_profile_tree_digest() {{
 # holds systemd's own start/stop lines. This waited on a message that could
 # never appear there, and its failure looked exactly like a service that had
 # refused to reject a tampered manifest.
-service_log() {{
-  echo "$CAPSEM_HOME_DIR/run/service.log"
+# `telemetry::init` is given `service.log` as a *pattern*, not a filename: the
+# appender rotates daily, so what exists on disk is `service.<date>.log`. The
+# first version of this waited on a path that never exists, which the
+# diagnostics below reported as "No such file or directory".
+service_logs() {{
+  ls -1t "$CAPSEM_HOME_DIR/run"/service*.log 2>/dev/null || true
+}}
+service_log_grep() {{
+  needle="$1"
+  logs=$(service_logs)
+  test -n "$logs" || return 1
+  # shellcheck disable=SC2086
+  grep -Fq "$needle" $logs 2>/dev/null
 }}
 wait_for_automatic_rejection() {{
   since="$1"
   for attempt in $(seq 1 90); do
-    if grep -Fq "automatic release update failed" "$(service_log)" 2>/dev/null; then
+    if service_log_grep "automatic release update failed"; then
       return 0
     fi
     sleep 2
@@ -1560,9 +1571,12 @@ dump_update_diagnostics() {{
   what="$2"
   echo "=== $what did not happen; diagnostics follow ===" >&2
   echo "--- automatic update loop decisions ---" >&2
-  grep -F "automatic release" "$(service_log)" 2>&1 | tail -40 >&2 || true
+  # shellcheck disable=SC2046
+  grep -F "automatic release" $(service_logs) 2>&1 | tail -40 >&2 || true
   echo "--- service log tail ---" >&2
-  tail -80 "$(service_log)" >&2 2>&1 || echo "no $(service_log)" >&2
+  echo "service logs found: $(service_logs | tr '\n' ' ')" >&2
+  # shellcheck disable=SC2046
+  tail -80 $(service_logs) >&2 2>&1 || echo "no service log under $CAPSEM_HOME_DIR/run" >&2
   echo "--- update log ---" >&2
   tail -40 "$CAPSEM_HOME_DIR/logs/update.log" >&2 2>&1 || true
   echo "--- systemd unit ---" >&2
@@ -1577,8 +1591,8 @@ wait_for_incompatible_profile_rejection() {{
   for attempt in $(seq 1 90); do
     # The service's own log, for the same reason as above: its tracing goes to
     # a file, and the journal holds only systemd's unit lines.
-    if grep -Fq "automatic release update failed" "$(service_log)" 2>/dev/null \
-      && grep -Fq "requires Capsem 9999.0.0 or newer" "$(service_log)" 2>/dev/null; then
+    if service_log_grep "automatic release update failed" \
+      && service_log_grep "requires Capsem 9999.0.0 or newer"; then
       return 0
     fi
     sleep 2
