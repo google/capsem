@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -145,12 +146,21 @@ def main() -> int:
         if path.exists():
             fail(f"legacy state path still exists: {path}")
 
+    # Told which installation to look at. Without this, `capsem` reads
+    # whichever CAPSEM_HOME the caller exported -- under the release pairing
+    # gate that is the gate's own isolated test home, which has no service in
+    # it, so a correctly running product reported `Running: false`.
     result = subprocess.run(
         [str(args.capsem), "status"],
         check=False,
         capture_output=True,
         text=True,
         timeout=30,
+        env={
+            **os.environ,
+            "CAPSEM_HOME": str(args.capsem_home),
+            "CAPSEM_RUN_DIR": str(args.capsem_home / "run"),
+        },
     )
     status = f"{result.stdout}\n{result.stderr}"
     if result.returncode != 0:

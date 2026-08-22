@@ -77,6 +77,11 @@ struct RunArgs {
     /// Seconds a single collector may take.
     #[arg(long, default_value_t = 900)]
     timeout_secs: u64,
+    /// Run each collector through this interpreter rather than executing it
+    /// directly. Collectors that import the project's Python dependencies
+    /// need its environment, not whatever `#!/usr/bin/env python3` resolves to.
+    #[arg(long)]
+    interpreter: Option<String>,
     #[arg(long, default_value = "unknown")]
     channel: String,
     #[arg(long, default_value = "unknown")]
@@ -582,6 +587,7 @@ async fn main() -> Result<()> {
                 &args.collectors,
                 &args.out,
                 std::time::Duration::from_secs(args.timeout_secs),
+                args.interpreter.as_deref(),
                 args.quick,
                 &args.channel,
                 &args.commit,

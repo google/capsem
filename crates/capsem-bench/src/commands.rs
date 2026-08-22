@@ -78,6 +78,7 @@ pub(crate) fn run_dimensions(
     collectors: &Path,
     out: &Path,
     timeout: Duration,
+    interpreter: Option<&str>,
     quick: bool,
     channel: &str,
     commit: &str,
@@ -100,7 +101,19 @@ pub(crate) fn run_dimensions(
             continue;
         }
 
-        let mut args = Vec::new();
+        // An interpreter prefix runs the collector as an argument to it, so a
+        // collector needing the project's Python gets that environment rather
+        // than whatever `#!/usr/bin/env python3` happens to resolve to.
+        let (program, mut args) = match interpreter {
+            None => (program.clone(), Vec::new()),
+            Some(prefix) => {
+                let mut words = prefix.split_whitespace().map(str::to_string);
+                let head = words.next().unwrap_or_default();
+                let mut rest: Vec<String> = words.collect();
+                rest.push(program.to_string_lossy().into_owned());
+                (std::path::PathBuf::from(head), rest)
+            }
+        };
         if quick {
             args.push("--quick".to_string());
         }

@@ -1904,3 +1904,32 @@ def test_a_first_release_stages_a_transport_with_no_predecessor_package(tmp_path
         "profiles": {},
     }
     assert not (tmp_path / "dist" / "transitions" / "before" / "package").exists()
+
+
+def test_installed_status_is_read_from_the_installed_home() -> None:
+    """`capsem status` must be told which home to look at.
+
+    The verifier takes `--capsem-home` and uses it for file checks, but ran
+    `capsem status` with no environment at all -- so `capsem` read whatever
+    `CAPSEM_HOME` and `CAPSEM_RUN_DIR` the caller happened to export. Under the
+    release pairing gate that is the gate's own isolated test home, which has
+    no service in it, so a correctly installed and running product reported:
+
+        installed release verification failed: capsem status is missing
+        'Running:   true'
+
+    The glow-up script's own readiness loop passed moments earlier precisely
+    because it sets both variables before calling the same binary.
+    """
+    source = (PROJECT_ROOT / "scripts" / "verify-installed-release.py").read_text(
+        encoding="utf-8"
+    )
+    start = source.index('[str(args.capsem), "status"]')
+    # To the end of the `subprocess.run(...)` call: a naive cut at the first
+    # `)` lands inside `str(args.capsem)` and reads none of the arguments.
+    invocation = source[start : source.index("\n    )", start)]
+    assert "env=" in invocation, (
+        "`capsem status` is run without an environment, so it reports on "
+        "whichever CAPSEM_HOME the caller exported rather than on the "
+        "installation being verified"
+    )

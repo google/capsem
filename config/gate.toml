@@ -2595,7 +2595,16 @@ slowest_steps = 10
 # every route because the bench system measures none of them yet, and each
 # entry is deleted as the routes collector covers it.
 [benchmark.routes]
-measured = []
+measured = [
+    "/status",
+    "/version",
+    "/vms/list",
+    "/profiles/list",
+    "/profiles/status",
+    "/stats",
+    "/system/status",
+    "/update/status",
+]
 unmeasured = [
     "/corp/edit",
     "/corp/info",
@@ -2607,9 +2616,7 @@ unmeasured = [
     "/enforcement/status",
     "/host-logs/{name}",
     "/panics",
-    "/profiles/list",
     "/profiles/reload",
-    "/profiles/status",
     "/profiles/{profile_id}/assets/ensure",
     "/profiles/{profile_id}/assets/info",
     "/profiles/{profile_id}/assets/status",
@@ -2657,16 +2664,10 @@ unmeasured = [
     "/service-logs",
     "/settings/edit",
     "/settings/info",
-    "/stats",
-    "/status",
-    "/system/status",
     "/triage",
     "/update/apply",
     "/update/check",
-    "/update/status",
-    "/version",
     "/vms/create",
-    "/vms/list",
     "/vms/{id}/delete",
     "/vms/{id}/detection/latest",
     "/vms/{id}/detection/status",
