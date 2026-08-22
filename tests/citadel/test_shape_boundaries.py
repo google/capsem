@@ -22,7 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BOUNDARY = gate_config.load(PROJECT_ROOT).boundary
 
 #: Every declared source family, by the config key that declares it.
-FAMILIES = ("scripts", "rust")
+FAMILIES = ("scripts", "rust", "bench")
 
 SHAPE_RATIONALE = """\
 First-party source must keep a shape its tools can read.
@@ -186,8 +186,18 @@ def test_the_ratchet_notices_a_file_growing(family: str, monkeypatch: pytest.Mon
     """
     rule = getattr(BOUNDARY, family)
     inflated = dict(_tracked_line_counts(rule.roots, rule.suffixes))
-    target = next(iter(rule.oversized_line_counts))
-    inflated[target] += 1
+    if rule.oversized_line_counts:
+        target = next(iter(rule.oversized_line_counts))
+        expected = "grew past their ratchet"
+        inflated[target] += 1
+    else:
+        # A family with no debt -- `bench` -- has nothing to grow past a
+        # ratchet, so the failure it must still produce is the other one: a
+        # file crossing the ceiling for the first time. Skipping here would
+        # leave the only clean family the only unexercised one.
+        target = max(inflated, key=lambda path: inflated[path])
+        expected = "newly over the ceiling"
+        inflated[target] = rule.max_lines + 1
 
     monkeypatch.setattr(
         "tests.citadel.test_shape_boundaries._tracked_line_counts",
@@ -196,7 +206,7 @@ def test_the_ratchet_notices_a_file_growing(family: str, monkeypatch: pytest.Mon
     )
     globals()["_tracked_line_counts"] = lambda *_a, **_k: inflated
     try:
-        with pytest.raises(AssertionError, match="grew past their ratchet"):
+        with pytest.raises(AssertionError, match=expected):
             test_oversized_sources_match_the_exact_debt_ratchet(family)
     finally:
         globals()["_tracked_line_counts"] = _REAL_TRACKED_LINE_COUNTS

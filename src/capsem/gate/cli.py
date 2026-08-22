@@ -18,6 +18,7 @@ from collections.abc import Sequence
 
 from . import (
     assetplan,
+    bench,
     cancellation,
     candidate,
     crosscompile,
@@ -59,6 +60,7 @@ COMMAND_MODULES = (
     versions,
     candidate,
     assetplan,
+    bench,
     storage,
     installimage,
     install,

@@ -3,8 +3,14 @@
 # drive-by addition, deletion, rename, or stale count fails closed.
 
 [just]
-count = 20
+count = 23
 approved = [
+  # Measuring is a public verb now. It had no entry point at all: nine
+  # Criterion targets existed and nothing ran them, and a release failed on a
+  # gateway CPU figure no run had ever recorded.
+  "bench",
+  "bench-quick",
+  "bench-report",
   "build",
   "build-all",
   "build-assets",

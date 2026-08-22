@@ -82,6 +82,9 @@ class BoundaryConfig(Strict):
     #: because they are the same rule asked of different trees.
     scripts: ScriptSizeConfig
     rust: ScriptSizeConfig
+    #: The benchmark collectors, whose ceiling guards a contract rather than
+    #: just a size: a collector prints raw samples and computes nothing.
+    bench: ScriptSizeConfig
     #: Shell bodies are measured, not listed: they live inside YAML and
     #: Dockerfiles rather than in files of their own, so there is no root or
     #: suffix to declare.

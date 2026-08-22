@@ -314,6 +314,25 @@ vm-smoke: _prepared-runtime
     uv run capsem-gate smoke
 
 
+# Measure performance and record it. `just bench` takes every dimension that
+# has a collector; `just bench <dim>...` takes the named ones.
+#
+# Capsem had no such entry point: nine Criterion targets existed and nothing
+# ran them, and a release once failed on a gateway CPU figure that no run had
+# ever recorded.
+bench *dimensions: _prepared-runtime
+    @uv run capsem-gate bench {{ dimensions }}
+
+# The dev loop: only the dimensions that need no guest, bounded so it stays a
+# dev loop. Records like any other run; never evidence.
+bench-quick *dimensions:
+    @uv run capsem-gate bench --quick {{ dimensions }}
+
+# What every measured subject reads, and how it has moved.
+bench-report:
+    @uv run capsem-gate bench-report
+
+
 # Run install e2e tests in Docker (Linux + systemd).
 # Depends on _pnpm-install: the install suite builds the release site inside
 # the container, and CI's test-install job enables the pnpm cache -- whose
