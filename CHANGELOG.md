@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Guest file-write responses no longer wait for an unrelated full session-DB
+  flush after their ledger rows have been accepted. A busy ledger could hold a
+  successful VM write past the service's 30-second IPC deadline; failures now
+  identify both the VM and the guest-completion stage. Session-scoped test
+  homes are preserved for any worker failure and exported from private gate
+  prefixes, so release-pairing failures retain their process and gate evidence.
+
 - Doctor and test mock servers now exit when their launcher dies. A crashed
   launcher previously released the shared flock while its child kept the fixed
   fixture port bound, leaving later parallel qualification unable to start any

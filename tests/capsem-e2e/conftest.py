@@ -125,7 +125,9 @@ class RealService:
             self._log_file.close()
         if self._stderr_file:
             self._stderr_file.close()
-        preserve_tmp_dir_on_failure(self.tmp_dir)
+        # The service is session-scoped; its home belongs to every test this
+        # worker ran, not only to the last PYTEST_CURRENT_TEST value.
+        preserve_tmp_dir_on_failure(self.tmp_dir, any_worker_failure=True)
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def cli(self, *args, timeout=60):

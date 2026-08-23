@@ -235,6 +235,24 @@ def test_prior_worker_failure_does_not_archive_later_passing_test(
     assert not artifact_env.exists()
 
 
+def test_session_archive_uses_prior_worker_failure_after_later_pass(
+    artifact_env, tmp_path, monkeypatch
+):
+    src = _seed_tmp_dir(tmp_path)
+    failed = "tests/capsem-mcp/test_errors.py::test_two_vms_isolated"
+    monkeypatch.setattr(tests_conftest, "FAILED_NODEIDS", [failed])
+    monkeypatch.setenv(
+        "PYTEST_CURRENT_TEST", "tests/capsem-mcp/test_tools.py::test_later_pass (teardown)"
+    )
+
+    svc_mod.preserve_tmp_dir_on_failure(src, any_worker_failure=True)
+
+    archives = [path.name for path in artifact_env.iterdir() if path.is_dir()]
+    assert len(archives) == 1
+    assert "tests_capsem-mcp_test_errors.py__test_two_vms_isolated" in archives[0]
+    assert "test_later_pass" not in archives[0]
+
+
 def test_preserve_survives_concurrent_unlink(artifact_env, tmp_path, monkeypatch):
     """Regression: under test teardown, capsem-process may still be alive
     and deleting files while preserve walks the tree. A file listed by

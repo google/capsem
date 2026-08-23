@@ -247,7 +247,9 @@ def materialize_test_profiles(tmp_dir: Path) -> Path:
     return profiles_dir
 
 
-def preserve_tmp_dir_on_failure(tmp_dir, *, force: bool = False):
+def preserve_tmp_dir_on_failure(
+    tmp_dir, *, force: bool = False, any_worker_failure: bool = False
+):
     """Copy tmp_dir to test-artifacts/ when this worker saw any failure.
 
     Called by integration-test fixture teardowns BEFORE they rmtree the
@@ -285,15 +287,21 @@ def preserve_tmp_dir_on_failure(tmp_dir, *, force: bool = False):
     force = force or bool(os.environ.get("CAPSEM_TEST_PRESERVE_ALWAYS"))
     current_test = os.environ.get("PYTEST_CURRENT_TEST", "").rsplit(" (", 1)[0]
     if not force:
-        if current_test and current_test not in FAILED_NODEIDS:
-            return
         if not FAILED_NODEIDS:
+            return
+        if (
+            not any_worker_failure
+            and current_test
+            and current_test not in FAILED_NODEIDS
+        ):
             return
     import stat as statmod
     import time
 
     worker = os.environ.get("PYTEST_XDIST_WORKER", "master")
-    if current_test:
+    if any_worker_failure and FAILED_NODEIDS:
+        tag = FAILED_NODEIDS[-1].replace("/", "_").replace(":", "_")[:80]
+    elif current_test:
         tag = current_test.replace("/", "_").replace(":", "_")[:80]
     elif FAILED_NODEIDS:
         tag = FAILED_NODEIDS[-1].replace("/", "_").replace(":", "_")[:80]

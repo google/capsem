@@ -11154,8 +11154,15 @@ fn setup_vm_with_workspace_and_uds(
     );
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WriteFileIpcReply {
+    Success,
+    Disconnect,
+}
+
 async fn spawn_file_boundary_ipc(
     expected_messages: usize,
+    write_reply: WriteFileIpcReply,
 ) -> (
     tempfile::TempDir,
     PathBuf,
@@ -11199,13 +11206,17 @@ async fn spawn_file_boundary_ipc(
                     .unwrap();
                 }
                 ServiceToProcess::WriteFile { id, .. } => {
-                    tx.send(ProcessToService::WriteFileResult {
-                        id: *id,
-                        success: true,
-                        error: None,
-                    })
-                    .await
-                    .unwrap();
+                    if write_reply == WriteFileIpcReply::Disconnect {
+                        drop(tx);
+                    } else {
+                        tx.send(ProcessToService::WriteFileResult {
+                            id: *id,
+                            success: true,
+                            error: None,
+                        })
+                        .await
+                        .unwrap();
+                    }
                 }
                 ServiceToProcess::ReadFile { id, .. } => {
                     tx.send(ProcessToService::ReadFileResult {
@@ -11229,7 +11240,8 @@ async fn spawn_file_boundary_ipc(
 async fn upload_logs_file_import_before_writing_workspace_file() {
     let dir = tempfile::tempdir().unwrap();
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1).await;
+    let (_ipc_dir, uds_path, ipc) =
+        spawn_file_boundary_ipc(1, WriteFileIpcReply::Success).await;
     setup_vm_with_workspace_and_uds(&state, dir.path(), "up-ledger-vm", uds_path);
 
     let result = handle_upload_file(
@@ -11271,7 +11283,8 @@ async fn upload_logs_file_import_before_writing_workspace_file() {
 async fn download_logs_file_export_before_returning_response() {
     let dir = tempfile::tempdir().unwrap();
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1).await;
+    let (_ipc_dir, uds_path, ipc) =
+        spawn_file_boundary_ipc(1, WriteFileIpcReply::Success).await;
     setup_vm_with_workspace_and_uds(&state, dir.path(), "dl-ledger-vm", uds_path);
     let workspace_file = dir.path().join("session/guest/workspace/report.txt");
     std::fs::write(&workspace_file, b"export through ledger").unwrap();
@@ -11310,7 +11323,8 @@ async fn download_logs_file_export_before_returning_response() {
 async fn download_file_content_does_not_wait_on_stats_rebuild() {
     let dir = tempfile::tempdir().unwrap();
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(1).await;
+    let (_ipc_dir, uds_path, ipc) =
+        spawn_file_boundary_ipc(1, WriteFileIpcReply::Success).await;
     setup_vm_with_workspace_and_uds(&state, dir.path(), "fast-file-vm", uds_path);
     std::fs::write(
         dir.path().join("session/guest/workspace/latency.txt"),
@@ -11352,7 +11366,8 @@ async fn download_file_content_does_not_wait_on_stats_rebuild() {
 async fn mounted_file_import_export_routes_log_boundary_events() {
     let dir = tempfile::tempdir().unwrap();
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(2).await;
+    let (_ipc_dir, uds_path, ipc) =
+        spawn_file_boundary_ipc(2, WriteFileIpcReply::Success).await;
     setup_vm_with_workspace_and_uds(&state, dir.path(), "file-route-vm", uds_path);
     let app = build_service_router(state);
 
@@ -11497,7 +11512,8 @@ async fn upload_does_not_write_workspace_file_when_import_ledger_fails() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn write_file_logs_import_before_guest_write() {
     let (state, _state_dir) = make_test_state_with_tempdir();
-    let (_ipc_dir, uds_path, ipc) = spawn_file_boundary_ipc(2).await;
+    let (_ipc_dir, uds_path, ipc) =
+        spawn_file_boundary_ipc(2, WriteFileIpcReply::Success).await;
     state.instances.lock().unwrap().insert(
         "write-ledger-vm".into(),
         InstanceInfo {
@@ -11552,6 +11568,40 @@ async fn write_file_logs_import_before_guest_write() {
         messages[1],
         ServiceToProcess::WriteFile { ref path, .. } if path == "/workspace/from-api.txt"
     ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn write_file_ipc_failure_names_vm_and_completion_stage() {
+    let dir = tempfile::tempdir().unwrap();
+    let (state, _state_dir) = make_test_state_with_tempdir();
+    let (_ipc_dir, uds_path, ipc) =
+        spawn_file_boundary_ipc(2, WriteFileIpcReply::Disconnect).await;
+    setup_vm_with_workspace_and_uds(&state, dir.path(), "diagnostic-vm", uds_path);
+
+    let error = handle_write_file(
+        State(state),
+        Path("diagnostic-vm".to_string()),
+        Json(WriteFileRequest {
+            path: "/workspace/failure.txt".to_string(),
+            content: "diagnose me".to_string(),
+        }),
+    )
+    .await
+    .expect_err("a disconnected process must fail the write");
+
+    let messages = ipc.await.unwrap();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        error.1.contains("VM diagnostic-vm write_file"),
+        "{}",
+        error.1
+    );
+    assert!(
+        error.1.contains("awaiting the guest completion response"),
+        "{}",
+        error.1
+    );
 }
 
 #[test]

@@ -8,8 +8,8 @@
 - [x] S06-004 — normalize Docker runtime cache identity
 - [x] S02-001 — restore deterministic cross-platform CI
 - [ ] S02-002 — unify channel state and exact install inputs
-- [ ] S02-003 — eliminate the two-VM IPC qualification timeout and preserve evidence
-- [ ] S02-004 — bind every fixed-port mock server to its launcher lifecycle
+- [x] S02-003 — eliminate the two-VM IPC qualification timeout and preserve evidence
+- [x] S02-004 — bind every fixed-port mock server to its launcher lifecycle
 - [ ] S03-001 — run every nightly lane before the aggregate verdict
 - [ ] S04-001 — produce causal installed transition evidence
 - [ ] S05-001 — prove atomic channel activation and rollback
@@ -70,6 +70,14 @@
   launcher-owned flock had already been released, so all later locked users
   acquired exclusion and then failed to bind. S02-004 binds the socket owner
   to both Python and Rust Doctor launchers with `capsem-guard`.
+- S02-003 fixed both evidence-loss boundaries: session-scoped fixtures now
+  preserve when any test on their worker failed, and the private qualification
+  prefix exports `test-artifacts/` beside its gate journal before GitHub uploads
+  them. The successful guest-write path no longer waits for a full session-DB
+  flush after the ledger accepts its event, and a remaining failure names the
+  VM and guest-completion stage. The gate-generated four-worker co-work cohort
+  then passed all 340 tests with 52 expected skips in 8m54s, including the
+  exact two-VM isolation case under load.
 - Current install CI directly reads the explicitly retired stable graph.
 - Nightly scheduler currently short-circuits after the first failed profile.
 - Asset reuse initially never hit because preflight discarded
@@ -88,11 +96,14 @@
   the identical exact child with a 2m30s cold and 35.8s warm run
 - Adversarial: public continuation; mutated/partial/extra/escaping asset output;
   corrupt, stale, non-finite, symlinked, over-bound, and partial-reclaim state green
-- E2E/VM: stable pairing reached the two-VM cohort and failed closed at the
-  30-second IPC boundary; root cause and repetition are S02-003
-- Ironbank: pending
-- Telemetry/evidence: the failed pairing prefix was retained, but the workflow
-  did not export or upload it; S02-003 must make failure evidence unavoidable
+- E2E/VM: exact four-worker co-work compatibility is green (340 passed, 52
+  skipped); two-VM writes complete without a 30-second IPC gap
+- Ironbank: every IronBank test selected by the co-work compatibility cohort is
+  green, including Doctor, MCP, model/client, credential, HTTP, DNS, package,
+  file/process/snapshot, plugin, and profile-mutation ledgers
+- Telemetry/evidence: worker-wide failure detection, private-prefix export, and
+  fatal workflow upload contracts make pairing evidence available outside the
+  runner; focused preservation and release contracts are green
 - Performance: zero redundant construction asserted and observed; the warm
   install-image edge fell from 1m54s construction to a 1.2s validated hit
 - Missing/deferred: physical macOS and public Cloudflare boundaries remain final

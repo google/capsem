@@ -436,7 +436,11 @@ pub(crate) async fn handle_ipc_connection(
                                     &path,
                                     data.len(),
                                 );
-                                net_state.db.flush().await;
+                                // Acceptance into the DB-owned producer buffer
+                                // is the route boundary. Waiting for the whole
+                                // session ledger to flush here withholds the
+                                // guest reply behind unrelated telemetry and
+                                // can exhaust the service's IPC deadline.
                             }
                             info!(id, success, "Sending WriteFileResult back via IPC");
                             capsem_core::try_send!(

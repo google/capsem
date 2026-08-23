@@ -2377,7 +2377,7 @@ resumable = ["target/install-image"]
 
 # What must come back out before the prefix is reclaimed. A release publishes
 # from these, and without the export they die with the copy that made them.
-exports = ["dist", "packages", "assets", "target/config", "target/gate-runs"]
+exports = ["dist", "packages", "assets", "target/config", "target/gate-runs", "test-artifacts"]
 
 # Trees a run writes but nothing publishes. `exports` establishes provenance
 # for everything a release takes out of a prefix; this establishes it for

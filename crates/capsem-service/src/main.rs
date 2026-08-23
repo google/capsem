@@ -5015,7 +5015,14 @@ async fn handle_write_file(
         Some(30),
     )
     .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    .map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "VM {id} write_file failed while awaiting the guest completion response: {error}"
+            ),
+        )
+    })?;
 
     match res {
         ProcessToService::WriteFileResult { success, error, .. } => {

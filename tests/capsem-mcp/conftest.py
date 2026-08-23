@@ -220,7 +220,10 @@ def _start_capsem_service():
         if stderr_path.exists():
             print(f"\n--- SERVICE STDERR ---\n{stderr_path.read_text()}\n---", file=sys.stderr)
 
-        preserve_tmp_dir_on_failure(home_dir)
+        # This service spans the whole worker. Pytest leaves the last test in
+        # PYTEST_CURRENT_TEST during session teardown, so key preservation to
+        # any failure this worker saw rather than to whichever test ran last.
+        preserve_tmp_dir_on_failure(home_dir, any_worker_failure=True)
         shutil.rmtree(home_dir, ignore_errors=True)
 
     return uds_path, teardown
