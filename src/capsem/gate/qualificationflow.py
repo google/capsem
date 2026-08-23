@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import prefix, qualificationevidence
+from . import prefix, qualificationevidence, resume
 from .config import GateConfig
 from .errors import GateError
 from .plan import Plan
@@ -98,8 +98,11 @@ def decide(
     if complete is not None:
         return Decision(complete, None, frozenset(), None)
 
+    requested = resume.explicit(getattr(args, "resume_from", None))
+    if requested == resume.SCRATCH:
+        # The escape hatch: prove it cold, whatever lineage exists.
+        return Decision(None, None, frozenset(), None)
     partial = qualificationevidence.find_resume(history, commit, plan)
-    requested = getattr(args, "resume_from", None)
     named = getattr(args, "prefix", None)
     if requested is not None or named is not None:
         if partial is None or requested != partial.frontier or carried != partial.carried:

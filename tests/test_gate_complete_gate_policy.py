@@ -197,19 +197,24 @@ def test_complete_qualification_accepts_explicit_enforcement(
 
 
 @pytest.mark.parametrize("name", ["release-binaries", "release-profile"])
-def test_a_public_release_refuses_continuation_before_dispatch_state_exists(
+def test_a_public_release_still_refuses_a_step_its_plan_does_not_have(
     name: str,
 ) -> None:
-    """Publishing authority, not a later workflow environment, closes resume."""
+    """Resume is allowed here now; a nonexistent frontier still is not.
+
+    Publishing used to close resume outright, which conflated reusing proven
+    work with skipping work nobody did. What remains is the check that
+    actually protects anything: the named step has to be in this plan.
+    """
     command = _command(
         name,
         dry_run=True,
         prefix=None,
-        resume_from="precheck",
+        resume_from="no-such-step",
         **QUALIFIED_RELEASES[name],
     )
 
-    with pytest.raises(GateError, match="--from cannot be used while qualifying a release"):
+    with pytest.raises(GateError, match="no step named 'no-such-step'"):
         command.execute()
 
     assert command._runner.commands == []
@@ -431,3 +436,22 @@ def test_the_policy_is_stated_as_policy_not_as_one_command_name() -> None:
         f"{sorted(set(replacing) - set(COMPLETE_GATE))} replace themselves "
         "without containing the complete gate"
     )
+
+
+@pytest.mark.parametrize("name", ["release-binaries", "release-profile"])
+def test_a_public_release_may_carry_proven_work(name: str) -> None:
+    """The whole point of removing the refusal.
+
+    A release that had to repeat a proven prefix cost ~160 minutes per
+    attempt, which is what four consecutive re-qualifications of one 0.6.0
+    release actually cost. A carried step is still recorded as `carried`, so
+    nothing reads this as a clean run of the whole graph.
+    """
+    command = _command(
+        name,
+        dry_run=True,
+        prefix=None,
+        resume_from="source.publish-ref",
+        **QUALIFIED_RELEASES[name],
+    )
+    command.execute()  # must not raise

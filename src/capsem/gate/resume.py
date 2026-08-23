@@ -18,18 +18,29 @@ the same every time and can be checked before anything executes -- what comes
 before a step is a property of the plan, not of what happened to succeed last
 night.
 
-**This is an iteration tool and never a qualification.** `AGENTS.md` and
-`release-process` forbid a reduced gate, a skip flag, or an environment bypass
-on the release path, and a resumed run is all three if it is allowed to stand
-in for a clean one. Three things keep it honest:
+**Reusing proven work is not a reduced gate.** This used to refuse a resume
+outright whenever the run was qualifying a release, on the theory that
+carrying steps "this process did not execute" is the reduced gate the release
+process forbids. That conflates two different things: a *skipped* step is work
+nobody did, a *carried* step is work that ran, in this prefix, on this source.
+`find_complete` was already written to accept a resumed lineage -- it reads
+`attempt.resumed.parent` -- so the refusal contradicted the evidence machinery
+built to handle it, and cost four consecutive 160-minute qualifications where
+the justfile promises "a second commit cost minutes rather than an hour".
 
-  it is refused outright when the run is qualifying a release
+Two things keep it honest, and they are the ones that always did the work:
 
   every carried step is recorded as `carried`, never `ok`, so the run log says
   which steps this process actually ran
 
   the prefix must be one this gate made, under the configured root, so a
   mistyped path cannot have the gate build into somebody's working tree
+
+`--from` is never empty. `auto` -- the default -- leaves the frontier to the
+gate, which picks the deepest one a retained lineage proves. `scratch` carries
+nothing, for when a local pass has to mean a pass on a cold runner. A step
+name carries that step's ancestors. Resume has to be the default, or it is a
+flag people remember only after paying for not remembering it.
 """
 
 from __future__ import annotations
@@ -107,16 +118,31 @@ def stopped(plan, label: str | None, *, qualifying: bool) -> frozenset[str]:
     return descendants(plan, label)
 
 
+#: `--from` is never empty. These two are the values that are not step names.
+AUTO = "auto"
+SCRATCH = "scratch"
+
+
+def explicit(label: str | None) -> str | None:
+    """The frontier a caller actually named, or `None` for "you choose".
+
+    `auto` is the default, so every command resumes unless told otherwise;
+    reading it as "no request" is what lets the gate pick the deepest proven
+    frontier instead of running everything again.
+    """
+    return None if label in (None, AUTO) else label
+
+
 def carried(plan, config: GateConfig, label: str | None, *, qualifying: bool) -> frozenset[str]:
-    """The steps a `--from` run may skip, with the refusals that keep it honest."""
-    if label is None:
+    """The steps a `--from` run may skip.
+
+    `qualifying` is accepted and ignored: a carried step is proven work, and
+    the run log records it as `carried` rather than `ok` so nothing can read a
+    resumed run as a clean one. See the module docstring.
+    """
+    del qualifying
+    if label in (None, AUTO, SCRATCH):
         return frozenset()
-    if qualifying:
-        raise GateError(
-            "--from cannot be used while qualifying a release. It carries steps "
-            "this process did not execute, which is exactly the reduced gate "
-            "the release process forbids."
-        )
     del config
     return frozenset(
         step_label

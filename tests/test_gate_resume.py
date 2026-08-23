@@ -201,19 +201,52 @@ def test_carrying_nothing_is_the_default() -> None:
 # -- the refusals that keep it from being a skip flag ------------------------
 
 
-def test_a_release_run_cannot_carry_anything() -> None:
-    """The invariant this whole feature lives or dies on.
+def test_a_release_run_carries_proven_work_like_any_other() -> None:
+    """Reusing proven work is not a reduced gate.
 
-    Release consumes only a completed exact-source journal. It cannot choose a
-    frontier itself; partial lineage is resolved by `just test <commit>` and
-    becomes complete evidence only after recursive carried-step validation.
+    This used to refuse outright, on the theory that carrying steps "this
+    process did not execute" is the reduced gate the release process forbids.
+    That conflates two different things. A skipped step is work nobody did. A
+    carried step is work that ran, in this prefix, on this source, and is
+    recorded as `carried` rather than `ok` so the run log never claims
+    otherwise. `find_complete` was already written to accept a resumed
+    lineage -- it reads `attempt.resumed.parent` -- so the refusal contradicted
+    the evidence machinery built to handle it.
+
+    The cost was measured: four consecutive qualifying runs at ~160 minutes
+    each, where the justfile promises "a second commit cost minutes rather
+    than an hour".
     """
     from capsem.gate import resume
-    from capsem.gate.errors import GateError
 
     plan = _candidate_plan()
-    with pytest.raises(GateError, match="cannot be used while qualifying a release"):
-        resume.carried(plan, _config(), "artifacts.build-chain", qualifying=True)
+    carried = resume.carried(plan, _config(), "artifacts.build-chain", qualifying=True)
+    assert carried, "a qualifying run must be able to carry proven ancestors"
+    assert carried == resume.carried(plan, _config(), "artifacts.build-chain", qualifying=False)
+
+
+def test_scratch_carries_nothing_however_much_is_proven() -> None:
+    """The escape hatch, for when a local pass must mean a cold pass."""
+    from capsem.gate import resume
+
+    plan = _candidate_plan()
+    assert resume.carried(plan, _config(), resume.SCRATCH, qualifying=False) == frozenset()
+    assert resume.carried(plan, _config(), resume.SCRATCH, qualifying=True) == frozenset()
+
+
+def test_auto_leaves_the_frontier_to_the_gate() -> None:
+    """`--from` is never empty; `auto` means "you choose".
+
+    Resume has to be the default, or it is a flag people remember only after
+    paying for not remembering it.
+    """
+    from capsem.gate import resume
+
+    plan = _candidate_plan()
+    assert resume.carried(plan, _config(), resume.AUTO, qualifying=False) == frozenset()
+    assert resume.explicit(resume.AUTO) is None
+    assert resume.explicit(resume.SCRATCH) == resume.SCRATCH
+    assert resume.explicit("artifacts.build-chain") == "artifacts.build-chain"
 
 
 def test_a_prefix_outside_the_configured_root_is_refused(tmp_path: Path) -> None:

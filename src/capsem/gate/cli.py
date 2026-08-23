@@ -40,6 +40,7 @@ from . import (
     module_qualify,
     project_root,
     release,
+    resume,
     runs,
     sandbox,
     service,
@@ -118,9 +119,13 @@ def _inspection() -> argparse.ArgumentParser:
     shared.add_argument(
         "--from",
         dest="resume_from",
-        default=None,
-        metavar="STEP",
-        help="carry every step before STEP and start there (never in a release)",
+        default=resume.AUTO,
+        metavar="auto|scratch|STEP",
+        help=(
+            "carry every step before STEP and start there. `auto` (the "
+            "default) lets the gate pick the deepest frontier a retained "
+            "lineage proves; `scratch` carries nothing"
+        ),
     )
     shared.add_argument(
         "--until",
