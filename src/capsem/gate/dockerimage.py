@@ -155,10 +155,10 @@ class ImageOperations:
         raw = self._runner.capture(
             ["docker", "version", "--format", RUNTIME_IDENTITY_FORMAT]
         ).strip()
-        fields = raw.split("\t")
-        if len(fields) != 3 or any(not field or any(ch.isspace() for ch in field) for field in fields):
+        match = re.fullmatch(r"([^\s]+)[ \t]+([^\s]+)[ \t]+([^\s]+)", raw)
+        if match is None:
             raise GateError(f"docker returned malformed runtime identity {raw!r}")
-        return raw
+        return "\t".join(match.groups())
 
     def _repository_references(self, tag: str) -> tuple[str, list[object], set[str]]:
         raw = self._runner.capture(

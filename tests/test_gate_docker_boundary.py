@@ -254,6 +254,28 @@ def test_platform_image_identity_refuses_the_wrong_platform(tmp_path: Path) -> N
     assert all("--platform" not in command.argv for command in runner.commands)
 
 
+def test_runtime_identity_normalizes_docker_table_alignment(tmp_path: Path) -> None:
+    runner = RecordingRunner(
+        tmp_path,
+        replies={"{{.Server.Version}}": "29.1.3              linux               amd64"},
+    )
+
+    assert Docker(runner).runtime_identity() == "29.1.3\tlinux\tamd64"
+
+
+@pytest.mark.parametrize(
+    "reported",
+    ["29.1.3 linux", "29.1.3 linux amd64 extra", "29.1.3\nlinux amd64"],
+)
+def test_runtime_identity_refuses_an_ambiguous_shape(
+    tmp_path: Path, reported: str
+) -> None:
+    runner = RecordingRunner(tmp_path, replies={"{{.Server.Version}}": reported})
+
+    with pytest.raises(GateError, match="malformed runtime identity"):
+        Docker(runner).runtime_identity()
+
+
 @pytest.mark.parametrize("operation", ["read", "run_detached", "run_once", "probe", "create"])
 def test_every_container_adapter_rejects_a_buildkit_only_mode(
     tmp_path: Path, operation: str
