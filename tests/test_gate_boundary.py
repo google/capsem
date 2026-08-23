@@ -25,11 +25,13 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+from helpers import embedded_shell
 
 from capsem.gate import config as gate_config
 
@@ -105,17 +107,46 @@ def test_a_dispatching_recipe_stays_short_enough_to_read() -> None:
     )
 
 
+#: `just` substitutes `{{ ... }}` before a shell sees the line, so it is not
+#: shell and must not be read as any. `just doctor` is written
+#: `{{ if fix == "fix" { "--fix" } else { "" } }}`, which a keyword search
+#: reads as an `if` and flags on the approved public surface.
+_JUST_INTERPOLATION = re.compile(r"\{\{.*?\}\}", re.S)
+
+
+def _control_flow_in(lines: list[str]) -> list[str]:
+    """Recipe lines that open shell control flow, wherever it sits.
+
+    This was `line.lstrip().startswith(("if ", "for ", ...))`, which only ever
+    saw column zero -- so
+
+        test -f x && for f in *; do rm "$f"; done
+
+    read as a `test`, and the rule that a recipe is a dispatch or a single
+    command was enforced only against people who wrote their loop first on the
+    line. It also could not tell a keyword from the same letters inside a
+    string.
+
+    Tokenising answers both: a command is a verb and its words, and `echo "if
+    ..."` has one word.
+    """
+    keywords = {word.strip() for word in BOUNDARY.shell_control_flow}
+    found = []
+    for line in lines:
+        shell = _JUST_INTERPOLATION.sub(" ", line)
+        commands = embedded_shell.commands(shell)
+        if any(command and command[0] in keywords for command in commands):
+            found.append(line)
+    return found
+
+
 def test_no_recipe_hides_shell_logic_without_a_shebang() -> None:
     """A `for` loop across continuation lines is still an untested program."""
     offenders = {}
     for name, recipe in _recipes().items():
         if recipe["shebang"] or name in BOUNDARY.recipes_with_inline_control_flow:
             continue
-        opening = [
-            line
-            for line in _executable_lines(recipe)
-            if line.lstrip().startswith(tuple(BOUNDARY.shell_control_flow))
-        ]
+        opening = _control_flow_in(_executable_lines(recipe))
         if opening:
             offenders[name] = opening
 
@@ -333,3 +364,38 @@ def test_install_lifecycle_labels_flow_through_the_enum_converter() -> None:
         f"install steps in the plan {sorted(built)} are not the enum's "
         f"{sorted(expected)}; a label was spelled rather than derived"
     )
+
+
+def test_control_flow_is_found_wherever_it_sits_on_the_line() -> None:
+    """`startswith` only ever saw column zero.
+
+    A recipe body is shell, and shell does not care where a keyword sits:
+
+        test -f x && for f in *; do rm "$f"; done
+
+    is a loop, and a prefix check reads it as a `test`. The rule this guard
+    enforces -- a recipe is a dispatch or a single command -- was therefore
+    enforced only against people who wrote their loop at the start of a line.
+    """
+    body = ['test -f x && for f in *; do rm "$f"; done']
+    assert _control_flow_in(body) == body
+
+
+def test_just_interpolation_is_not_shell() -> None:
+    """`{{ if fix == "fix" { "--fix" } else { "" } }}` is `just`, not bash.
+
+    It is substituted before a shell ever sees the line, and `just doctor`
+    uses exactly this. A guard that reads it as an `if` would flag the
+    approved surface.
+    """
+    assert _control_flow_in(['@scripts/doctor-common.sh {{ if fix == "fix" { "--fix" } else { "" } }}']) == []
+
+
+def test_a_keyword_inside_a_string_is_not_control_flow() -> None:
+    """`echo "if you see this, the build worked"` is an echo."""
+    assert _control_flow_in(['echo "if you see this, the build worked"']) == []
+
+
+def test_a_leading_keyword_is_still_caught() -> None:
+    """What the prefix check did catch, it must keep catching."""
+    assert _control_flow_in(["for f in *; do rm $f; done"])

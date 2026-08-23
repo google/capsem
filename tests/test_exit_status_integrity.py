@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from helpers import embedded_shell
 from helpers.workflow_contract import (
     RequiredJustStep,
     assert_required_just_steps,
@@ -44,7 +45,74 @@ GATE_PIPED_TO_READER = re.compile(
 
 SHELL_SOURCES = ("*.sh",)
 WORKFLOW_DIR = PROJECT_ROOT / ".github" / "workflows"
-DOCKER_FAIL_OPEN = re.compile(r"\|\|\s*(?:true\b|:|echo\b)|;\s*true\b|\bset\s+\+e\b")
+#: `cmd || <this>` throws the verdict away: the fallback cannot fail, so the
+#: instruction cannot. `echo` counts -- reporting the failure is not handling
+#: it, which is the case the original pattern was written for.
+_SWALLOWS_FAILURE = frozenset({"true", "/bin/true", ":", "echo"})
+
+#: `cmd; <this>` is different. Sequencing is ordinary -- `make; echo done` is
+#: two commands -- and only a trailing always-true makes the *instruction*
+#: succeed regardless. Conflating the two is what turned `case ... ;; esac`
+#: and a retry loop's `; do` into fail-opens.
+_ALWAYS_TRUE = frozenset({"true", "/bin/true", ":"})
+
+
+def _discards_a_verdict(instruction: str) -> bool:
+    """Does this Docker instruction throw away an exit status?
+
+    Tokenised rather than pattern-matched. The regex this replaces read a
+    keyword inside a string or a comment as a discard -- `RUN echo "run make
+    || true if the cache is cold"` counted -- and missed `||true`, `|| :`,
+    `|| /bin/true` and `|| exit 0`, none of which anyone had thought to write
+    down. An inventory of reviewed exceptions is worth exactly what its
+    membership test is worth, in both directions.
+    """
+    body = instruction.split(None, 1)[1] if " " in instruction else ""
+    for command in embedded_shell.commands(body):
+        if not command:
+            continue
+        if command[0] == "set" and any(word.startswith("+") for word in command[1:]):
+            return True
+    for line in embedded_shell.logical_lines(body):
+        # Separate the operators from their neighbours before splitting.
+        # `|| true; fi` splits into `true;`, which matches nothing -- the same
+        # class of mistake as reading shell with a regex, one level down.
+        words = re.sub(r"(\|\||&&|;)", r" \1 ", _strip_shell_strings(line)).split()
+        for index, word in enumerate(words[:-1]):
+            following = words[index + 1]
+            if word == "||" and following in _SWALLOWS_FAILURE:
+                return True
+            if word == ";" and following in _ALWAYS_TRUE:
+                return True
+            # `|| exit 0` is the same discard written the long way. `exit 1`
+            # is the opposite and must not be confused with it.
+            if word == "||" and following == "exit" and words[index + 2 :][:1] == ["0"]:
+                return True
+    return False
+
+
+def _strip_shell_strings(line: str) -> str:
+    """Blank out quoted text and comments, so a mention is not a command.
+
+    `shlex` gives words but not their operators' positions; this is the
+    smallest thing that lets `||` be found without finding the one inside
+    `echo "... || true ..."`.
+    """
+    out, quote = [], ""
+    for character in line:
+        if quote:
+            out.append(" ")
+            if character == quote:
+                quote = ""
+            continue
+        if character in "\"'":
+            quote = character
+            out.append(" ")
+            continue
+        if character == "#":
+            break
+        out.append(character)
+    return "".join(out)
 
 REQUIRED_JUST_STEPS = (
     RequiredJustStep(
@@ -195,7 +263,7 @@ def test_dockerfile_fail_open_instructions_are_an_exact_reviewed_inventory() -> 
     for path in sources:
         relative = path.relative_to(PROJECT_ROOT).as_posix()
         for instruction in _docker_instructions(path):
-            if DOCKER_FAIL_OPEN.search(instruction):
+            if _discards_a_verdict(instruction):
                 found[relative].append(_docker_fail_open_kind(instruction))
 
     assert dict(found) == {
@@ -385,3 +453,70 @@ def test_required_workflow_pipeline_must_enable_pipefail_first() -> None:
         "        cargo test --locked 2>&1 | tee test.log\n"
     )
     assert_unmasked_step("fixture.yaml", protected, "build", "Build assets")
+
+
+# ---------------------------------------------------------------------------
+# The fail-open detector, exercised on the forms it has to survive.
+#
+# `DOCKER_FAIL_OPEN` is a regex over instruction text, so it reads a keyword
+# inside a string or a comment as a discarded verdict, and misses the spellings
+# nobody thought to write down. Both directions matter here: a false positive
+# forces an unreviewed entry into an inventory whose whole value is that every
+# entry was reviewed, and a false negative is a build step whose failure
+# nothing will ever see.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        "RUN make || true",
+        "RUN make ||true",
+        "RUN make || :",
+        "RUN make || /bin/true",
+        "RUN make || exit 0",
+        "RUN make; true",
+        "RUN set +e && make",
+    ],
+)
+def test_every_way_of_discarding_a_verdict_is_seen(instruction: str) -> None:
+    """The point is the discarded verdict, not how it was spelled."""
+    assert _discards_a_verdict(instruction), instruction
+
+
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        'RUN echo "run make || true if the cache is cold"',
+        "RUN make # || true was removed here, deliberately",
+        'RUN echo "set +e is not used in this image"',
+        "RUN make && echo done",
+    ],
+)
+def test_a_mention_is_not_a_discarded_verdict(instruction: str) -> None:
+    """An inventory of reviewed exceptions is worth nothing if it fills with
+    lines that were never exceptions."""
+    assert not _discards_a_verdict(instruction), instruction
+
+
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        "RUN make || exit 1",
+        "RUN make; echo done",
+        'RUN set -eux; case "$ARCH" in arm64) a=aarch64 ;; amd64) a=x64 ;; esac; build "$a"',
+        "RUN for attempt in 1 2 3; do cargo install thing && break; done",
+    ],
+)
+def test_ordinary_shell_is_not_a_discarded_verdict(instruction: str) -> None:
+    """`||` and `;` do not mean the same thing.
+
+    Sequencing is ordinary -- `make; echo done` is two commands -- and only a
+    trailing always-true makes the instruction succeed regardless. Treating
+    them alike flagged a `case` statement and a retry loop, which would have
+    forced two entries into an inventory whose only value is that everything
+    in it was reviewed.
+
+    `|| exit 1` is the opposite of `|| exit 0`, and one character apart.
+    """
+    assert not _discards_a_verdict(instruction), instruction
