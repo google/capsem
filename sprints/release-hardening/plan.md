@@ -40,6 +40,8 @@ is the checked-in durable summary required by the development-sprint contract.
   staging, and release CI; log substrings and elapsed time are not verdicts.
 - Deployment validates an immutable preview before activation and restores the
   exact prior distribution when activation verification fails.
+- Every fixed-port test fixture is lifecycle-bound to the process that owns its
+  exclusion lock, so launcher death cannot leave an unlocked socket owner.
 - Broad service decomposition and unrelated feature/performance work are outside
   the release-critical implementation path.
 
@@ -54,8 +56,9 @@ is the checked-in durable summary required by the development-sprint contract.
    hit cannot silently fall through to reconstruction, including against the
    real Docker runtime identity renderer.
 4. Restore portable benchmark CI and reliable early-failure evidence.
-5. Preserve retained-prefix diagnostics on every pairing failure, eliminate the
-   two-VM IPC timeout at its root cause, and repeat the co-work parallel cohort.
+5. Preserve retained-prefix diagnostics on every pairing failure, bind shared
+   mock fixtures to their launchers, eliminate the two-VM IPC timeout at its
+   root cause, and repeat the co-work parallel cohort.
 6. Unify channel-state resolution and exact CI install-content selection.
 7. Make nightly scheduling outcome-complete without nesting gate commands.
 8. Extract causal transition transport/evidence from the release-only glow-up

@@ -98,6 +98,9 @@ struct Args {
     addr: SocketAddr,
     #[arg(long)]
     request_log: Option<PathBuf>,
+    /// Launcher PID. When present, the server exits as soon as that parent dies.
+    #[arg(long)]
+    parent_pid: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -139,6 +142,10 @@ async fn main() -> Result<()> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let args = Args::parse();
+    if args.parent_pid.is_some() {
+        capsem_guard::watch_parent_or_exit(args.parent_pid)
+            .context("arm mock-server parent watch")?;
+    }
     let request_log = match &args.request_log {
         Some(path) => {
             if let Some(parent) = path.parent() {

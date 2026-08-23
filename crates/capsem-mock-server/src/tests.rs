@@ -1,6 +1,17 @@
 use super::*;
 
 #[test]
+fn parent_watch_is_optional_but_parsed_when_a_launcher_owns_the_server() {
+    let standalone = Args::try_parse_from(["capsem-mock-server"])
+        .expect("standalone mock server arguments");
+    assert_eq!(standalone.parent_pid, None);
+
+    let guarded = Args::try_parse_from(["capsem-mock-server", "--parent-pid", "4242"])
+        .expect("guarded mock server arguments");
+    assert_eq!(guarded.parent_pid, Some(4242));
+}
+
+#[test]
 fn deterministic_bytes_are_cached_and_correct() {
     let first = deterministic_bytes("10mb").expect("10mb fixture");
     let second = deterministic_bytes("10mb").expect("10mb fixture");

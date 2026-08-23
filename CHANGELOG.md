@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Doctor and test mock servers now exit when their launcher dies. A crashed
+  launcher previously released the shared flock while its child kept the fixed
+  fixture port bound, leaving later parallel qualification unable to start any
+  mock server despite correctly acquiring the lock.
+
 - Valid install and VM-image products are now mandatory warm-cache hits instead
   of optional rebuild shortcuts. Exact receipts bind source, config, helper,
   Docker runtime, platform, image identity, size, and retained bytes; VM assets

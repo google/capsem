@@ -965,6 +965,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "bytes",
+ "capsem-guard",
  "clap",
  "flate2",
  "futures",

@@ -17,6 +17,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 base64.workspace = true
 bytes.workspace = true
+capsem-guard = { path = "../capsem-guard" }
 clap.workspace = true
 flate2 = "1"
 futures.workspace = true

@@ -10,7 +10,6 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts.mock_server import (  # noqa: E402,F401
     MOCK_SERVER_ADDR,
     MOCK_SERVER_BINARY,
-    MOCK_SERVER_LOCK,
     local_fixture_env,
     read_ready_json,
     start_mock_server,

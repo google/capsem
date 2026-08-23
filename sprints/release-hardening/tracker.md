@@ -4,11 +4,12 @@
 
 - [x] S06-001 — keep publication fresh while resuming qualification
 - [x] S06-002 — verify every reused asset lane and reconcile contracts
-- [ ] S06-003 — reuse and bound VM image products and caches
-- [ ] S06-004 — normalize Docker runtime cache identity
+- [x] S06-003 — reuse and bound VM image products and caches
+- [x] S06-004 — normalize Docker runtime cache identity
 - [x] S02-001 — restore deterministic cross-platform CI
 - [ ] S02-002 — unify channel state and exact install inputs
 - [ ] S02-003 — eliminate the two-VM IPC qualification timeout and preserve evidence
+- [ ] S02-004 — bind every fixed-port mock server to its launcher lifecycle
 - [ ] S03-001 — run every nightly lane before the aggregate verdict
 - [ ] S04-001 — produce causal installed transition evidence
 - [ ] S05-001 — prove atomic channel activation and rollback
@@ -40,6 +41,10 @@
   tab-separated runtime fields with spaces. S06-004 normalizes one exact
   single-line three-field identity before hashing and rejects ambiguous shapes;
   the cold/warm S06-003 proof must be repeated after that fix.
+- The corrected cold run `20260823-150531-51b2e9-install-image` rebuilt and
+  smoked exact child `sha256:bf6dec688d2afcb09871517ded2b1d166add3a670d3f27a71b0fde2921e27031`;
+  the unchanged warm run `20260823-150806-92dd22-install-image` required and
+  reused that same child in 35.8 seconds with no reconstruction.
 - S02-001 removes the Linux-only collector paths that failed macOS ARM CI after
   nextest had run 728 of 1,644 tests. All 15 collector tests now launch through
   `PATH`, so the first failure cannot hide incompatible `true`, `sleep`, or
@@ -59,6 +64,12 @@
   searched only workspace evidence paths even though the gate had retained its
   exact qualification prefix, so it uploaded none. S02-003 owns evidence
   routing, root-cause repair, and repeated co-work parallel proof.
+- The exact four-worker co-work reproduction passed `test_two_vms_isolated`
+  but found a separate deterministic lifecycle defect: a two-day-old orphaned
+  `capsem-mock-server` retained port 3713 after its Python launcher died. The
+  launcher-owned flock had already been released, so all later locked users
+  acquired exclusion and then failed to bind. S02-004 binds the socket owner
+  to both Python and Rust Doctor launchers with `capsem-guard`.
 - Current install CI directly reads the explicitly retired stable graph.
 - Nightly scheduler currently short-circuits after the first failed profile.
 - Asset reuse initially never hit because preflight discarded
@@ -73,8 +84,8 @@
   contracts green (15 Rust collector tests, 132 install/evidence tests, and 48
   storage/Citadel tests)
 - Functional: mandatory zero-construction warm hit and prefix salvage/lend path
-  green through production functions; the real cold run exposed S06-004 before
-  smoke, so cold/warm proof remains pending
+  green through production functions; real cold/warm image reuse is green on
+  the identical exact child with a 2m30s cold and 35.8s warm run
 - Adversarial: public continuation; mutated/partial/extra/escaping asset output;
   corrupt, stale, non-finite, symlinked, over-bound, and partial-reclaim state green
 - E2E/VM: stable pairing reached the two-VM cohort and failed closed at the
@@ -82,6 +93,7 @@
 - Ironbank: pending
 - Telemetry/evidence: the failed pairing prefix was retained, but the workflow
   did not export or upload it; S02-003 must make failure evidence unavoidable
-- Performance: zero redundant construction asserted; wall-clock cold/warm proof pending
+- Performance: zero redundant construction asserted and observed; the warm
+  install-image edge fell from 1m54s construction to a 1.2s validated hit
 - Missing/deferred: physical macOS and public Cloudflare boundaries remain final
   owning gates; broad service-main decomposition is outside this sprint.

@@ -869,6 +869,24 @@ fn doctor_mock_server_lock_path_matches_shared_python_launcher() {
 }
 
 #[test]
+fn doctor_mock_server_is_bound_to_the_cli_parent() {
+    let command = doctor_mock_server_command(Path::new("/tmp/capsem-mock-server"));
+    let args: Vec<_> = command
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        args,
+        vec![
+            "--addr".to_string(),
+            DOCTOR_MOCK_SERVER_ADDR.to_string(),
+            "--parent-pid".to_string(),
+            std::process::id().to_string(),
+        ]
+    );
+}
+
+#[test]
 fn mock_server_binary_prefers_installed_sibling() {
     let fixture = tempfile::tempdir().unwrap();
     let installed_bin = fixture.path().join("installed/bin");

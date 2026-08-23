@@ -25,7 +25,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MOCK_SERVER_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-mock-server"
 MOCK_SERVER_CRATE = PROJECT_ROOT / "crates" / "capsem-mock-server"
 MOCK_SERVER_ADDR = "127.0.0.1:3713"
-MOCK_SERVER_LOCK = Path(tempfile.gettempdir()) / "capsem-mock-server-3713.lock"
 DEFAULT_LOCK_TIMEOUT_S = 600.0
 
 
@@ -146,6 +145,8 @@ def start_mock_server(
             str(MOCK_SERVER_BINARY),
             "--addr",
             addr,
+            "--parent-pid",
+            str(os.getpid()),
         ]
         if capture_requests:
             request_log_path = request_log or (

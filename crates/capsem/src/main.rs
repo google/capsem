@@ -142,13 +142,21 @@ fn mock_server_binary_path() -> Result<PathBuf> {
     })
 }
 
+fn doctor_mock_server_command(binary: &Path) -> StdCommand {
+    let mut command = StdCommand::new(binary);
+    command
+        .arg("--addr")
+        .arg(DOCTOR_MOCK_SERVER_ADDR)
+        .arg("--parent-pid")
+        .arg(std::process::id().to_string());
+    command
+}
+
 fn spawn_doctor_mock_server() -> Result<DoctorMockServer> {
     let lock =
         DoctorMockServerLock::acquire(DOCTOR_MOCK_SERVER_ADDR, DOCTOR_MOCK_SERVER_LOCK_TIMEOUT)?;
     let binary = mock_server_binary_path()?;
-    let mut child = StdCommand::new(&binary)
-        .arg("--addr")
-        .arg(DOCTOR_MOCK_SERVER_ADDR)
+    let mut child = doctor_mock_server_command(&binary)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()

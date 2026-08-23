@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import socket
 import ssl
 import struct
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -14,6 +17,55 @@ from helpers.mock_server import (
     start_mock_server,
     stop_process,
 )
+
+
+def test_mock_server_exits_when_its_launcher_dies() -> None:
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    holder.bind(("127.0.0.1", 0))
+    host, port = holder.getsockname()
+    holder.close()
+    addr = f"{host}:{port}"
+    seeded = None
+    try:
+        seeded, _ready = start_mock_server(addr=addr, timeout_s=5)
+    finally:
+        stop_process(seeded)
+    launcher_code = """
+import os
+import sys
+from scripts.mock_server import start_mock_server
+
+child, _ready = start_mock_server(addr=sys.argv[1], timeout_s=5)
+print(child.pid, flush=True)
+os._exit(0)
+"""
+    launcher = subprocess.Popen(
+        [sys.executable, "-c", launcher_code, addr],
+        cwd=Path(__file__).resolve().parents[1],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        stdout, stderr = launcher.communicate(timeout=30)
+    except subprocess.TimeoutExpired:
+        launcher.kill()
+        launcher.communicate()
+        raise
+    assert launcher.returncode == 0, stderr
+    orphan_pid = int(stdout.strip())
+
+    replacement = None
+    try:
+        replacement, ready = start_mock_server(
+            addr=addr,
+            timeout_s=5,
+            retry_interval_s=0.05,
+        )
+        assert replacement.pid != orphan_pid
+        assert ready["base_url"] == f"http://{addr}"
+    finally:
+        stop_process(replacement)
 
 
 def test_mock_server_launcher_waits_for_busy_address_then_starts() -> None:
@@ -43,6 +95,8 @@ def test_mock_server_serves_https_fixture() -> None:
     try:
         proc, ready = start_mock_server()
         assert ready["service"] == "capsem-mock-server"
+        parent_arg = proc.args.index("--parent-pid")
+        assert proc.args[parent_arg + 1] == str(os.getpid())
         assert ready["https_base_url"].startswith("https://127.0.0.1:")
         context = ssl._create_unverified_context()
         with urlopen(f"{ready['https_base_url']}/tiny", context=context, timeout=2) as response:
