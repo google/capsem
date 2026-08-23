@@ -137,10 +137,12 @@ def test_rejects_unapproved_allowlist_entry(tmp_path: Path) -> None:
 def test_project_skills_do_not_teach_retired_public_just_commands() -> None:
     retired = {
         "audit",
-        "bench",
+        # `bench` is not here: it was retired when nothing ran benchmarks, and
+        # is approved again now that `just bench` exists. A verb can come
+        # back, and `test_no_verb_is_both_retired_and_approved` is what stops
+        # the two lists disagreeing about it.
         "benchmark",
         "benchmark-compare",
-        "build-assets",
         "build-host-image",
         "build-kernel",
         "build-rootfs",
@@ -166,7 +168,6 @@ def test_project_skills_do_not_teach_retired_public_just_commands() -> None:
         "test-gateway-e2e",
         "test-host-package-sbom",
         "test-install",
-        "test-linux-rust",
         "ui",
         "update-deps",
         "update-fixture",
@@ -183,4 +184,27 @@ def test_project_skills_do_not_teach_retired_public_just_commands() -> None:
     assert not failures, (
         "project skills teach retired public Just commands; use the approved "
         "surface or the explicitly private owning primitive:\n" + "\n".join(failures)
+    )
+
+
+def test_no_verb_is_both_retired_and_approved() -> None:
+    """A verb cannot be on the approved surface and taught as retired.
+
+    `bench` was retired when nothing ran benchmarks. Reintroducing it as a
+    public verb left it in both lists, so the skill documenting it failed the
+    guard against teaching retired commands -- the guard was right that the
+    lists disagreed and wrong about which one to believe.
+    """
+    source = Path(__file__).read_text(encoding="utf-8")
+    block = source[source.index("    retired = {") :]
+    retired = set(re.findall(r'^\s+"([a-z][a-z0-9-]*)",', block[: block.index("\n    }")], re.M))
+    approved = set(
+        tomllib.loads((ROOT / "config" / "public-surface.toml").read_text(encoding="utf-8"))[
+            "just"
+        ]["approved"]
+    )
+    overlap = sorted(retired & approved)
+    assert not overlap, (
+        "these verbs are on the approved surface and also listed as retired, "
+        f"so a skill cannot mention them without failing a guard: {overlap}"
     )
