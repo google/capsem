@@ -1,5 +1,8 @@
+import ast
 import copy
 import importlib.util
+import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -221,3 +224,53 @@ def test_validate_capsem_bench_result_rejects_bad_result(path, value, message):
 
     with pytest.raises(AssertionError, match=message):
         validate_capsem_bench_result(data)
+
+
+def test_no_gross_regression_threshold_is_authored_in_python() -> None:
+    """The gate contract, applied to the one table that escaped it.
+
+    Eleven thresholds -- disk MB/s, IOPS, five per-runtime startup ceilings,
+    HTTP rps and p99, throughput bytes and MB/s, snapshot op latency -- lived
+    as literals in a test helper. Every other number the gate judges by lives
+    in `config/gate.toml`, and these were judged the same way while being
+    editable only by someone who knew the helper existed.
+    """
+    helper = PROJECT_ROOT / "tests" / "helpers" / "benchmark_gates.py"
+    tree = ast.parse(helper.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        # An index is structure, not a threshold: `parents[2]` says where the
+        # checkout root is.
+        if isinstance(node, ast.Subscript):
+            for inner in ast.walk(node.slice):
+                inner.__dict__["_is_index"] = True
+    authored = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, (int, float))
+        and not isinstance(node.value, bool)
+        and not node.__dict__.get("_is_index")
+        # `== 0` and `== 200` are correctness assertions -- no failed
+        # requests, an HTTP 200 -- rather than performance thresholds.
+        and node.value not in (0, 200)
+    ]
+    assert not authored, (
+        "these thresholds are authored in the helper rather than read from "
+        f"[benchmark.gates] in config/gate.toml: {authored}"
+    )
+
+
+def test_every_threshold_the_helper_uses_is_declared() -> None:
+    """A key the helper reads but config does not declare fails at import.
+
+    Which is the point: a threshold cannot go missing quietly and leave an
+    assertion comparing against `None`.
+    """
+    config = tomllib.loads(
+        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    )["benchmark"]["gates"]
+    source = (PROJECT_ROOT / "tests" / "helpers" / "benchmark_gates.py").read_text(
+        encoding="utf-8"
+    )
+    for key in re.findall(r'CAPSEM_BENCH_GATES\["(\w+)"\]', source):
+        assert key in config, f"[benchmark.gates] does not declare {key!r}"

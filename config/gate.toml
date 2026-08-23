@@ -2720,6 +2720,43 @@ unmeasured = [
     "/vms/{id}/timeline",
 ]
 
+# Gross-regression floors and ceilings for the in-guest benchmark. Not
+# evidence ratchets: these are authored, deliberately loose, and exist to catch
+# a collapse -- a disk doing 3 MB/s, a runtime taking thirty seconds to start.
+# They lived as eleven literals in `tests/helpers/benchmark_gates.py`, which is
+# the one place a number the gate judges by could be changed by someone who
+# knew the helper existed.
+[benchmark.gates]
+disk_seq_mbps = 50
+rootfs_seq_mbps = 100
+rootfs_rand_iops = 1000
+http_min_rps = 5
+http_p99_ms = 5000
+throughput_min_bytes = 1000000
+throughput_min_mbps = 1
+snapshot_op_ms = 5000
+# The storage split's floors are liveness, not speed: a read reporting 0 MB/s
+# or 0 IOPS means the measurement did not happen, which is the failure worth
+# catching there.
+storage_min_mbps = 1
+storage_min_iops = 1
+
+# Linux runs these on a shared CI disk where the same hardware measures very
+# differently, so the floor is per-platform rather than one number nobody can
+# satisfy everywhere.
+[benchmark.gates.disk_rand_iops]
+default = 1000
+linux = 400
+
+# Per runtime, because "slow to start" means something different for `python3`
+# and for an agent that loads a model client.
+[benchmark.gates.startup_mean_ms]
+python3 = 100
+node = 750
+claude = 2500
+gemini = 5000
+codex = 2500
+
 [benchmark.run]
 # What `just bench` invokes. The binary computes every derived number; a
 # collector under `collectors` prints raw samples and nothing else, which is

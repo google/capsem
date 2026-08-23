@@ -3,29 +3,25 @@
 from __future__ import annotations
 
 import sys
+import tomllib
+from pathlib import Path
 from typing import Any, cast
 
-CAPSEM_BENCH_GATES = {
-    "disk_seq_mbps": 50,
-    "disk_rand_iops": {
-        "default": 1_000,
-        "linux": 400,
-    },
-    "rootfs_seq_mbps": 100,
-    "rootfs_rand_iops": 1_000,
-    "startup_mean_ms": {
-        "python3": 100,
-        "node": 750,
-        "claude": 2_500,
-        "gemini": 5_000,
-        "codex": 2_500,
-    },
-    "http_min_rps": 5,
-    "http_p99_ms": 5_000,
-    "throughput_min_bytes": 1_000_000,
-    "throughput_min_mbps": 1,
-    "snapshot_op_ms": 5_000,
-}
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _thresholds() -> dict[str, Any]:
+    config = tomllib.loads(
+        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    )
+    return config["benchmark"]["gates"]
+
+#: Gross-regression floors and ceilings, read from `[benchmark.gates]` in
+#: `config/gate.toml`. They were eleven literals here, which made this the one
+#: place a number the gate judges by could be changed by someone who happened
+#: to know the helper existed. Nothing is defaulted: a key config stops
+#: declaring must fail loudly rather than compare against `None`.
+CAPSEM_BENCH_GATES = _thresholds()
 
 
 def validate_capsem_bench_result(data: dict[str, Any]) -> None:
@@ -140,12 +136,12 @@ def validate_storage_split_result(data: dict[str, Any]) -> None:
     for item in data["rootfs"]["seq_reads"]:
         _assert_gte(
             item["cold"]["throughput_mbps"],
-            1,
+            CAPSEM_BENCH_GATES["storage_min_mbps"],
             f"storage rootfs {item['label']} cold read",
         )
         _assert_gte(
             item["warm"]["throughput_mbps"],
-            1,
+            CAPSEM_BENCH_GATES["storage_min_mbps"],
             f"storage rootfs {item['label']} warm read",
         )
     assert "writable" in data, "storage writable section missing"
@@ -162,7 +158,11 @@ def validate_storage_split_result(data: dict[str, Any]) -> None:
             f"storage {path} random sync write missing"
         )
         for workload, stats in profile["random"].items():
-            _assert_gte(stats["iops"], 1, f"storage {path} {workload} IOPS")
+            _assert_gte(
+                stats["iops"],
+                CAPSEM_BENCH_GATES["storage_min_iops"],
+                f"storage {path} {workload} IOPS",
+            )
             assert "latency_ms" in stats, f"storage {path} {workload} latency missing"
 
 

@@ -45,6 +45,56 @@ class BenchmarkRunConfig(Strict):
     quick_timeout_secs: int
 
 
+class DiskIopsConfig(Strict):
+    """A floor that is not the same number on every platform.
+
+    Linux measures on a shared CI disk where the same hardware reads very
+    differently, so one value would either be unsatisfiable there or vacuous
+    everywhere else.
+    """
+
+    default: int
+    linux: int
+
+
+class StartupConfig(Strict):
+    """Per runtime, because "slow to start" is not one duration.
+
+    `python3` and an agent that loads a model client do not share a ceiling.
+    """
+
+    python3: int
+    node: int
+    claude: int
+    gemini: int
+    codex: int
+
+
+class BenchmarkGatesConfig(Strict):
+    """Gross-regression floors and ceilings for the in-guest benchmark.
+
+    Not evidence ratchets. These are authored and deliberately loose: they
+    catch a collapse -- a disk doing 3 MB/s, a runtime taking thirty seconds
+    to start -- rather than a drift, which is what recorded evidence is for.
+    """
+
+    disk_seq_mbps: int
+    disk_rand_iops: DiskIopsConfig
+    rootfs_seq_mbps: int
+    rootfs_rand_iops: int
+    startup_mean_ms: StartupConfig
+    http_min_rps: int
+    http_p99_ms: int
+    throughput_min_bytes: int
+    throughput_min_mbps: int
+    snapshot_op_ms: int
+    #: Liveness rather than speed: a read reporting zero means the measurement
+    #: did not happen.
+    storage_min_mbps: int
+    storage_min_iops: int
+
+
 class BenchmarkConfig(Strict):
     routes: RouteCoverageConfig
     run: BenchmarkRunConfig
+    gates: BenchmarkGatesConfig
