@@ -32,7 +32,10 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess
 from pathlib import Path
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SEARCH_ROOTS = (PROJECT_ROOT / "tests", PROJECT_ROOT / "scripts")
@@ -144,4 +147,213 @@ def test_no_script_builds_a_version_component_from_a_clock() -> None:
         "a version component came from a clock; semver components are chosen "
         "deliberately, and a timestamp cannot say whether a release is a fix "
         "or a feature:\n  " + "\n  ".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# The third half: a reader that can only recognise a retired format.
+#
+# The two guards above stop a retired version being *stated* or *constructed*.
+# Neither noticed a pattern that requires one. `prune-benchmark-history.py`
+# matched `<series>_<major>.<minor>.<timestamp>` with the timestamp written
+# `\d{6,}`, from the abolished `1.5.1783712334` scheme. Semver never has six
+# digits there, so from `0.6.0` onward every recording fell through to "a shape
+# we do not recognise" and became immortal. The policy the script documents had
+# quietly stopped applying to the tree it was written to bound, and its own
+# tests passed throughout, because they were written in the retired format too.
+#
+# A stranded reader is silent by construction: it does not fail, it stops
+# matching. So this checks the shape of the pattern rather than any output --
+# and reads it with the regex parser, because "does this require a long run of
+# digits" is a question about structure, not about the characters someone typed.
+# ---------------------------------------------------------------------------
+
+#: A version component this long cannot be semver. The retired scheme's Unix
+#: timestamp is ten digits and its date-plus-counter form is eight; a patch
+#: number reaching six digits is not a thing that happens.
+_TIMESTAMP_DIGITS = 6
+
+
+def _is_digit_class(body) -> bool:
+    """`\\d` or `[0-9]`, and nothing else in the class."""
+    if len(body) != 1:
+        return False
+    operator, argument = body[0]
+    if str(operator) != "IN":
+        return False
+    return all(
+        (str(kind) == "CATEGORY" and str(value) == "CATEGORY_DIGIT")
+        or (str(kind) == "RANGE" and value == (48, 57))
+        for kind, value in argument
+    )
+
+
+def _atoms(node, out: list[tuple[str, object]]) -> None:
+    """Flatten a parsed pattern into digit runs, literal characters, and rest.
+
+    Enough structure to ask where a run of digits sits, and no more.
+    """
+    for operator, argument in node:
+        name = str(operator)
+        if name in {"MAX_REPEAT", "MIN_REPEAT"}:
+            minimum, _, body = argument
+            if _is_digit_class(body):
+                out.append(("digits", minimum))
+            else:
+                _atoms(body, out)
+        elif name == "IN" and _is_digit_class([(operator, argument)]):
+            out.append(("digits", 1))
+        elif name == "LITERAL":
+            out.append(("literal", chr(argument)))
+        elif name == "SUBPATTERN":
+            _atoms(argument[3], out)
+        elif name == "BRANCH":
+            for branch in argument[1]:
+                _atoms(branch, out)
+        else:
+            out.append(("other", None))
+
+
+def _requires_a_long_digit_run(pattern: str) -> bool:
+    """Does this pattern require a six-digit *version component*?
+
+    Parsed with `re`'s own parser. Asking the question of the pattern's source
+    text means re-implementing regex syntax to answer it, which is the mistake
+    that produced most of the guards in this repository.
+
+    Position is half the question. `[0-9]{8}T[0-9]{6}Z` is an ISO timestamp
+    and is none of this guard's business; the same eight digits after two
+    dotted numbers is the retired scheme. The first version of this checked
+    only the length and flagged the timestamp -- which would have taught the
+    next person to widen the guard rather than fix a version.
+    """
+    import re as _re
+
+    try:
+        parsed = _re._parser.parse(pattern)
+    except _re.error:
+        return False
+
+    atoms: list[tuple[str, object]] = []
+    _atoms(parsed, atoms)
+    for index in range(len(atoms) - 4):
+        window = atoms[index : index + 5]
+        kinds = [kind for kind, _ in window]
+        if kinds != ["digits", "literal", "digits", "literal", "digits"]:
+            continue
+        if window[1][1] != "." or window[3][1] != ".":
+            continue
+        if window[4][1] >= _TIMESTAMP_DIGITS:
+            return True
+    return False
+
+
+def _compiled_patterns(tree: ast.AST) -> list[str]:
+    """Every literal pattern handed to `re.compile` in one module."""
+    found = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"compile", "match", "search", "fullmatch", "findall"}
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            found.append(node.args[0].value)
+    return found
+
+
+def test_no_reader_is_stranded_on_a_retired_version_format() -> None:
+    """A pattern requiring six consecutive digits can only read a dead scheme.
+
+    Not a style rule: such a pattern does not fail when the format moves, it
+    stops matching. `prune-benchmark-history.py` went on reporting a bounded
+    history while every new recording became permanent.
+    """
+    stranded = []
+    for path in _stamping_and_tool_sources():
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for pattern in _compiled_patterns(tree):
+            if _requires_a_long_digit_run(pattern):
+                stranded.append(f"{path.relative_to(PROJECT_ROOT)}: {pattern}")
+
+    assert not stranded, (
+        "these patterns require a run of six or more digits, which only the "
+        "retired timestamp and date-counter schemes have. Against semver they "
+        "match nothing and say nothing:\n  " + "\n  ".join(stranded)
+    )
+
+
+def _stamping_and_tool_sources() -> list[Path]:
+    listed = subprocess.run(
+        ["git", "ls-files", "-z", "--", "scripts", "src", "tests"],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout.split(b"\0")
+    return [
+        PROJECT_ROOT / raw.decode()
+        for raw in listed
+        if raw and raw.decode().endswith(".py") and Path(raw.decode()).name != Path(__file__).name
+    ]
+
+
+# The guard's own tests: it must fire on the pattern that shipped, and stay
+# quiet on the one that replaced it.
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        r"^(?P<series>.+?)_(?P<major>\d+)\.(?P<minor>\d+)\.(?P<ts>\d{6,})",
+        r"data_\d+\.\d+\.[0-9]{10}",
+        r"v\d+\.\d+\.(?:\d{8,})",
+    ],
+)
+def test_the_shipped_pattern_is_recognised_as_stranded(pattern: str) -> None:
+    assert _requires_a_long_digit_run(pattern)
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        r"^(?P<series>.+?)_(?P<major>\d+)\.(?P<minor>\d+)\.(?P<ts>\d+)",
+        r"\d+\.\d+\.\d+",
+        r"[0-9a-f]{40}",          # a git sha is not a version
+        r"\w{6,}",                # six of something else is not six digits
+    ],
+)
+def test_a_pattern_that_reads_semver_is_left_alone(pattern: str) -> None:
+    assert not _requires_a_long_digit_run(pattern)
+
+
+def test_a_timestamp_that_is_not_a_version_is_left_alone() -> None:
+    """`[0-9]{8}T[0-9]{6}Z` is an ISO instant and none of this guard's business.
+
+    The first version of this checked only the length of the digit run and
+    flagged it. A guard that fires on correct code teaches the next person to
+    widen the guard rather than fix the version, which is how a rule stops
+    being one.
+    """
+    assert not _requires_a_long_digit_run(r"[0-9]{8}T[0-9]{6}Z")
+
+
+def test_the_pruner_that_shipped_would_have_been_caught() -> None:
+    """The exact pattern, from the file it shipped in.
+
+    It required a six-digit patch, so under `0.6.0` it matched nothing and
+    every recording became permanent -- silently, because a stranded reader
+    does not fail, it stops matching.
+    """
+    shipped = r"^(?P<series>.+?)_(?P<major>\d+)\.(?P<minor>\d+)\.(?P<ts>\d{6,})(?:_(?P<arch>[\w-]+))?\.json$"
+    assert _requires_a_long_digit_run(shipped)
+
+    import re as _re
+
+    assert not _re.match(shipped, "data_0.6.0_x86_64.json"), (
+        "the shipped pattern must not match semver; that is the whole bug"
     )
