@@ -13,6 +13,7 @@
 - [x] S03-001 — run every nightly lane before the aggregate verdict
 - [x] S04-001 — produce causal installed transition evidence
 - [x] S05-001 — prove atomic channel activation and rollback
+- [x] S05-003 — repair exact-qualification cache and ledger blockers
 - [ ] S05-002 — qualify and verify stable, then nightly
 - [ ] Changelog entries at user-visible milestones
 - [ ] Exact-source complete qualification
@@ -132,6 +133,15 @@
   receipt lineage, while a separate positive regression proves that an active
   source-checkout receipt still pins its exact source and helper images. No
   release was attempted from the failed journal.
+- Exact qualification of `4d238418` advanced through 74 steps, including all
+  four profile/architecture image builds and VM boot/shell proof, then stopped
+  at two fail-closed blockers. The install-image controller found the current,
+  active-source, and retained-prefix generations all protected against a
+  two-generation cap. The broad suite also exposed a file-event test that saw
+  the deliberately flushed `import` boundary before the buffered `created`
+  row. S05-003 sizes both install-image caps to the three ordinary protected
+  lineages, retains count/age/byte refusal, and replaces sleep/conditional
+  visibility with clean-stop, reopen, and exact durable-row proof.
 
 ## Coverage Ledger
 
@@ -142,14 +152,17 @@
   direct tests, 413 affected release contracts, and 55 source/Citadel guards);
   nightly scheduling is green across all eight lane failure combinations,
   launch failure, input rejection, and workflow enforcement (108 direct tests,
-  79 source/Citadel guards, and 14 binary-release script contracts)
+  79 source/Citadel guards, and 14 binary-release script contracts); S05-003's
+  bounded generation-policy cohort is green (49 passed)
 - Functional: mandatory zero-construction warm hit and prefix salvage/lend path
   green through production functions; real cold/warm image reuse is green on
   the identical exact child with a 2m30s cold and 35.8s warm run
 - Adversarial: public continuation; mutated/partial/extra/escaping asset output;
   corrupt, stale, non-finite, symlinked, over-bound, and partial-reclaim state green
 - E2E/VM: exact four-worker co-work compatibility is green (340 passed, 52
-  skipped); two-VM writes complete without a 30-second IPC gap
+  skipped); two-VM writes complete without a 30-second IPC gap; the consolidated
+  file-event cohort is green (3 passed), including exact clean-stop durability
+  with no timing sleep or conditional assertion
 - Ironbank: every IronBank test selected by the co-work compatibility cohort is
   green, including Doctor, MCP, model/client, credential, HTTP, DNS, package,
   file/process/snapshot, plugin, and profile-mutation ledgers; the release,
@@ -169,4 +182,6 @@
 - Missing/deferred: the macOS transition implementation and host-side contracts
   are green on Linux, while execution on physical Apple Silicon and public
   stable/nightly activation remain owned by S05-002's exact release gate.
-  Broad service-main decomposition is outside this sprint.
+  Broad service-main decomposition is outside this sprint. Exact candidate run
+  `20260823-184918-8f5ad7-candidate` is not publishable: 74 steps passed, two
+  failed, and 49 downstream qualification/release steps were skipped.

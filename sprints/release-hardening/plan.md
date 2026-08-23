@@ -68,8 +68,12 @@ is the checked-in durable summary required by the development-sprint contract.
 8. Extract causal transition transport/evidence from the release-only glow-up
    script and run it through the shared modules.
 9. Add preview activation and byte-exact rollback proof.
-10. Require green CI, focused stability repetitions, staging fault injection,
-   one complete exact-source qualification, stable publication, then nightly.
+10. Repair exact-qualification blockers without weakening cache pinning or DB
+    ownership: match the install-image generation cap to the current,
+    active-source, and retained-prefix lineages, and make file-event proof cross
+    the clean-shutdown flush barrier before reading.
+11. Require green CI, focused stability repetitions, staging fault injection,
+    one complete exact-source qualification, stable publication, then nightly.
 
 ## Proof Matrix
 

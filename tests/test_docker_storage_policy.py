@@ -767,13 +767,15 @@ def test_install_image_reclaim_preserves_resumable_receipts_and_bounds_them(
     module = load_policy_module()
     repository = "capsem-install-test"
     current = f"{repository}:current"
-    pinned = f"{repository}:resumable"
+    source = f"{repository}:source"
+    resumable = f"{repository}:resumable"
     stale = f"{repository}:stale"
     daemon = _FakeDockerDaemon(
         module,
         {
             stale: ("2026-08-18T09:00:00Z", 10_000_000_000),
-            pinned: ("2026-08-22T09:00:00Z", 10_000_000_000),
+            resumable: ("2026-08-21T09:00:00Z", 10_000_000_000),
+            source: ("2026-08-22T09:00:00Z", 10_000_000_000),
             current: ("2026-08-23T09:00:00Z", 10_000_000_000),
         },
     )
@@ -785,12 +787,12 @@ def test_install_image_reclaim_preserves_resumable_receipts_and_bounds_them(
         tmp_path,
         keep=current,
         resource=repository,
-        protect=(pinned,),
+        protect=(source, resumable),
     )
 
     assert status == 0
     assert daemon.removed == [stale]
-    assert {current, pinned} <= daemon.tags.keys()
+    assert {current, source, resumable} <= daemon.tags.keys()
 
 
 def test_pinned_install_images_over_the_count_bound_fail_without_deletion(
@@ -798,7 +800,7 @@ def test_pinned_install_images_over_the_count_bound_fail_without_deletion(
 ) -> None:
     module = load_policy_module()
     repository = "capsem-install-test"
-    tags = {f"{repository}:{name}" for name in ("current", "one", "two")}
+    tags = {f"{repository}:{name}" for name in ("current", "one", "two", "three")}
     daemon = _FakeDockerDaemon(
         module,
         dict.fromkeys(tags, ("2026-08-23T09:00:00Z", 1_000_000_000)),
@@ -811,7 +813,11 @@ def test_pinned_install_images_over_the_count_bound_fail_without_deletion(
         tmp_path,
         keep=f"{repository}:current",
         resource=repository,
-        protect=(f"{repository}:one", f"{repository}:two"),
+        protect=(
+            f"{repository}:one",
+            f"{repository}:two",
+            f"{repository}:three",
+        ),
     )
 
     assert status != 0

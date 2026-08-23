@@ -213,10 +213,10 @@ docker_name = "capsem-install-test"
 retention = "generational"
 owner = "install"
 keep_previous = 0
-maximum_count = 2
+maximum_count = 3
 maximum_age_hours = 336
 maximum_total_gib = 96
-reason = "Only the current helper/source-keyed install qualification image has a consumer."
+reason = "The current run, active source checkout, and one retained resumable prefix may each pin an exact source image."
 
 [resources.capsem-install-builder]
 kind = "image"
@@ -224,10 +224,10 @@ docker_name = "capsem-install-builder"
 retention = "generational"
 owner = "install"
 keep_previous = 0
-maximum_count = 2
+maximum_count = 3
 maximum_age_hours = 336
 maximum_total_gib = 64
-reason = "Only the current lock/snapshot/parent-keyed install helper has a consumer."
+reason = "The current run, active source checkout, and one retained resumable prefix may each pin an exact helper image."
 
 [resources.capsem-cargo-registry]
 kind = "volume"

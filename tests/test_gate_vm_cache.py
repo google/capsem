@@ -502,7 +502,13 @@ def test_vm_and_asset_cache_bounds_are_declared() -> None:
     assert CONFIG.assets.cache.maximum_count > len(CONFIG.architectures)
     assert CONFIG.assets.cache.maximum_age_hours > 0
     assert CONFIG.assets.cache.maximum_bytes > 0
-    limits = Storage(RecordingRunner(PROJECT_ROOT)).image_limits("capsem-install-test")
-    assert limits.maximum_count == 2
-    assert limits.maximum_age_seconds == 336 * 3600
-    assert limits.maximum_bytes == 96 * 1024**3
+    storage = Storage(RecordingRunner(PROJECT_ROOT))
+    source_limits = storage.image_limits("capsem-install-test")
+    helper_limits = storage.image_limits("capsem-install-builder")
+    ordinary_receipt_lineages = CONFIG.prefix.keep + 2
+    assert source_limits.maximum_count == ordinary_receipt_lineages
+    assert helper_limits.maximum_count == ordinary_receipt_lineages
+    assert source_limits.maximum_age_seconds == 336 * 3600
+    assert source_limits.maximum_bytes == 96 * 1024**3
+    assert helper_limits.maximum_age_seconds > 0
+    assert helper_limits.maximum_bytes > 0
