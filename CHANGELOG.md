@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Warm VM asset lanes are now a verified cache rather than a matching stamp
+  that preflight deleted before use. The identity covers the builder/admin
+  implementation, full guest/profile/config inputs, Rust and Python locks,
+  toolchain, file modes, and symlink targets; a receipt binds that identity to
+  every output path, mode, size, and digest. Preflight retains only isolated
+  lane roots, while missing, extra, changed, partial, or semantically invalid
+  output rebuilds from a clean directory. Resumed lane and initrd-pack steps
+  revalidate their receipts before they can be carried.
+
 - Exact-source candidate qualification can still resume recursively proven
   work, but public release attempts and release CI now reject explicit
   `--from`, `--prefix`, and `--until`. The publication graph previously derived

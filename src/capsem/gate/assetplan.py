@@ -13,9 +13,11 @@ a thread pool the plan could not see, order against, or attribute a failure to.
 
 from __future__ import annotations
 
-from . import assetdependencies, initrd
+from dataclasses import replace
+
+from . import assetdependencies, assetreceipt, initrd
 from .actions import Call
-from .assetlanes import discover_profiles, lane_assets
+from .assetlanes import RequireLaneReceipts, SealPackedReceipts, discover_profiles, lane_assets
 from .assets import AssetGate
 from .command import GateCommand
 from .execution import Kind, Needs, Speed, step
@@ -32,7 +34,7 @@ from .plan import Plan
 
 #: One reason per phase of the asset gate. Hoisted so the plan below reads as
 #: a plan rather than as four paragraphs of justification.
-PREFLIGHT = "reads the daemon's capacity and clears the asset tree it is about to fill"
+PREFLIGHT = "reads daemon capacity and clears derived output while retaining isolated lane caches"
 LANE = "one architecture's build lane: several builder invocations that only mean anything together"
 SWEEP = "which containers the lanes left behind is only knowable once they have run"
 ASSEMBLE = "merge, publish, materialise and boot each profile, as one indivisible assembly"
@@ -60,7 +62,7 @@ def fragment(plan, config, *, after: tuple = ()):
             "preflight",
             Prefetch(rust_names=rust_builders, asset_tools=True),
             Call(
-                "run the container execution preflight, check capacity, and clear the asset tree",
+                "run container preflight, check capacity, and retain only isolated lane caches",
                 lambda ctx: AssetGate(ctx.runner).preflight(),
                 justification=_because(
                     OpaqueKind.RUNTIME_DERIVED,
@@ -103,6 +105,13 @@ def fragment(plan, config, *, after: tuple = ()):
                     ),
                 ),
                 contends=shared,
+                carry_checks=(
+                    RequireLaneReceipts(
+                        config,
+                        profiles,
+                        (config.arch(name),),
+                    ),
+                ),
                 kind=Kind.PACKAGE,
                 needs=frozenset({Needs.DOCKER, Needs.DISK}),
                 speed=Speed.SLOW,
@@ -138,7 +147,22 @@ def fragment(plan, config, *, after: tuple = ()):
         )
         for name in config.architectures
     }
-    packed = phase.add(initrd.repack_step(config, targets), after=(swept,))
+    packed_step = initrd.repack_step(config, targets)
+    packed = phase.add(
+        replace(
+            packed_step,
+            actions=(*packed_step.actions, SealPackedReceipts(config, profiles)),
+            carry_checks=(
+                RequireLaneReceipts(
+                    config,
+                    profiles,
+                    tuple(config.architectures.values()),
+                    stages=assetreceipt.PACKED_STAGES,
+                ),
+            ),
+        ),
+        after=(swept,),
+    )
     return phase.add(
         step(
             "assemble",

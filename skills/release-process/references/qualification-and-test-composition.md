@@ -79,6 +79,15 @@ file, or a title-matching CI run. Never type a guessed `--from`: explicit
 continuation is accepted only when it equals the journal-derived prefix,
 frontier, and carried set. Reuse-only journals cannot recursively qualify.
 
+Inside a step, a construction cache is a different mechanism. An asset or VM
+builder may no-op only after hashing every authoritative source/config/tool
+input and revalidating a live receipt over every retained output. The step
+still runs and downstream assembly, integrity, boot, install, and glow-up proof
+still executes. Do not describe that as a carried journal step, and do not let
+an existence-only stamp authorize it. Nightly profile release CI always
+rebuilds its selected profile; only a stable retry may reuse the workflow's
+immutable completed artifact cohort.
+
 The complete executor is also kernel-isolated for the entire candidate graph:
 Bubblewrap provides a loopback-only namespace on Linux and Seatbelt provides
 the macOS boundary. Network access is not restored process-wide for release.

@@ -535,14 +535,23 @@ smaller smoke-only or workflow-only approximation.
 complete construction, artifact, VM, functional, native-install, and glow-up
 proof required before either release command may dispatch.
 
-### 8.3 Local rebuilding is intentional
+### 8.3 Local construction proof is intentional
 
-Local asset rebuilding is not waste to optimize away. It is how local
-qualification proves that current source inputs still construct compatible
-binaries, profiles, assets, packages, and manifests.
+Local qualification MUST prove that current authoritative construction inputs
+produce compatible binaries, profiles, assets, packages, and manifests. It MAY
+avoid invoking an expensive builder when a prior local product has an exact
+identity over every authoritative source, config, lockfile, toolchain, mode,
+and symlink input and a live receipt revalidates every output path, mode, size,
+and digest. The owning step still runs, records the cache decision, and all
+downstream assembly, integrity, VM boot, functional, install, and glow-up proof
+still executes. A missing input, receipt, output, or digest match MUST rebuild
+or fail closed.
 
-This rule applies to local qualification. It MUST NOT be used as justification
-for rebuilding every profile inside a selective CI release lane.
+This product-level reuse is distinct from carrying a journal step and from
+release-lane artifact reuse. Nightly profile release CI still rebuilds its
+selected profile; a stable retry may reuse only the immutable completed cohort
+selected by the release workflow. None of these rules justify rebuilding every
+profile inside a selective CI release lane.
 
 ## 9. CI architecture
 

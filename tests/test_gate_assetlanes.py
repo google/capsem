@@ -9,6 +9,7 @@ that goes unread turns a failed build into a passing gate.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -43,7 +44,38 @@ def _checkout(tmp_path: Path, *, profiles: tuple[str, ...] = ("code", "co-work")
         directory = tmp_path / "config" / "profiles" / name
         directory.mkdir(parents=True)
         (directory / "profile.toml").write_text(f'id = "{name}"\n')
+    for relative in CONFIG.assets.identity_roots:
+        source = PROJECT_ROOT / relative
+        target = tmp_path / relative
+        if target.exists():
+            continue
+        if source.is_dir():
+            target.mkdir(parents=True)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(f"fixture for {relative}\n", encoding="utf-8")
     return tmp_path
+
+
+def _obom_payload(arch: str) -> str:
+    return json.dumps(
+        {
+            "bomFormat": "CycloneDX",
+            "metadata": {
+                "tools": {"components": [{"name": "cdxgen", "version": "12.7.0"}]},
+                "component": {
+                    "type": "operating-system",
+                    "name": f"capsem-rootfs-{arch}",
+                    "version": "guest-rootfs",
+                    "properties": [
+                        {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
+                        {"name": "capsem:guest:architecture", "value": arch},
+                    ],
+                },
+            },
+            "components": [{"purl": "pkg:deb/debian/base-files@1"}],
+        }
+    )
 
 
 class Building(RecordingRunner):
@@ -72,7 +104,8 @@ class Building(RecordingRunner):
             for name in (*config.artifacts.bootable, *config.assets.evidence_artifacts):
                 if name == self._omit:
                     continue
-                (produced / name).write_text("bytes")
+                payload = _obom_payload(arch) if name == config.assets.obom_artifact else "bytes"
+                (produced / name).write_text(payload)
         return completed
 
 
@@ -123,6 +156,21 @@ def test_every_profile_is_built_for_every_architecture(tmp_path: Path) -> None:
                 assert runner.matching(
                     rf"--profile \S*{profile}\S* .*--template {stage}.*--arch {arch.name}"
                 ), f"{profile}/{arch.name}/{stage} was never built"
+
+
+def test_a_second_lane_run_reuses_the_exact_receipted_output(tmp_path: Path) -> None:
+    root = _checkout(tmp_path, profiles=("code",))
+    arch = ARCHES[0]
+
+    first = Building(root)
+    _lanes(first, root).build(arch)
+    assert first.commands
+
+    second = Building(root)
+    _lanes(second, root).build(arch)
+
+    assert second.commands == []
+    assert any("is current" in note and "reusing it" in note for note in second.notes)
 
 
 def test_asset_plan_repacks_every_private_lane_before_assembly() -> None:

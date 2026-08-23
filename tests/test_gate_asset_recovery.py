@@ -323,11 +323,10 @@ def test_building_assets_is_still_skipped_on_a_warm_checkout() -> None:
 # architectures' assets from sources none of them had touched -- the last
 # three changed only test files and a shell function.
 #
-# The build cache does carry `assets/` between prefixes, and the lane ignores
-# it: the only thing that consults it is the `_when_missing` recovery path,
-# which is a different question. The lane's own output tree,
-# `target/ironbank-assets`, is not carried at all -- it is gone from a finished
-# prefix, so there is nothing to reuse even in principle.
+# The build cache used to carry only `assets/`, which this lane does not read;
+# `_when_missing` recovery answers a different question. The lane's own
+# `target/ironbank-assets` tree now travels between prefixes with a receipt, and
+# preflight must preserve those isolated roots long enough to validate them.
 # ---------------------------------------------------------------------------
 
 
@@ -342,12 +341,21 @@ def test_the_lane_identity_covers_everything_an_asset_is_built_from() -> None:
 
     covered = set(assetidentity.roots(gate_config.load(PROJECT_ROOT)))
     for required in (
-        "guest",                  # the guest artifact tree the initrd packs
-        "config/profiles",        # per-profile packages, rules and seeds
-        "config/docker",          # the image templates themselves
-        "crates/capsem-agent",    # the guest binaries
-        "Cargo.lock",             # what those binaries link
-        "rust-toolchain.toml",    # what compiles them
+        "guest",                  # guest scripts and files the images contain
+        "config",                 # profiles, packages, VM values, and templates
+        "src/capsem/builder",     # the image build implementation
+        "crates/capsem-admin",    # the profile-owned public build rail
+        "crates/capsem-core",     # profile/config semantics used by admin
+        "crates/capsem-logger",   # capsem-core's local dependency closure
+        "crates/capsem-agent",    # the guest agent binary
+        "crates/capsem-proto",    # the agent/core shared protocol
+        "crates/capsem-bench",    # the guest benchmark binary in rootfs
+        "Cargo.toml",             # workspace versions and dependency features
+        "Cargo.lock",             # exact Rust dependency graph
+        "pyproject.toml",         # Python builder dependency declaration
+        "uv.lock",                # exact Python dependency graph
+        ".cargo",                 # cross-target compiler/linker configuration
+        "rust-toolchain.toml",    # exact Rust compiler and components
     ):
         assert any(root == required or root.startswith(f"{required}/") for root in covered), (
             f"{required} can change what a VM boots and is not part of the lane "
@@ -385,6 +393,39 @@ def test_a_new_file_changes_the_identity(tmp_path: Path) -> None:
     assert assetidentity.digest_of(tmp_path, ("guest",)) != first
 
 
+def test_an_executable_mode_change_changes_the_identity(tmp_path: Path) -> None:
+    """Docker COPY preserves mode, so equal bytes can still build new output."""
+    from capsem.gate import assetidentity
+
+    script = tmp_path / "guest" / "build.sh"
+    script.parent.mkdir()
+    script.write_text("#!/bin/sh\n", encoding="utf-8")
+    script.chmod(0o644)
+    first = assetidentity.digest_of(tmp_path, ("guest",))
+
+    script.chmod(0o755)
+
+    assert assetidentity.digest_of(tmp_path, ("guest",)) != first
+
+
+def test_a_symlink_target_change_changes_the_identity(tmp_path: Path) -> None:
+    """The path a build context exposes is an input even when bytes match."""
+    from capsem.gate import assetidentity
+
+    guest = tmp_path / "guest"
+    guest.mkdir()
+    (guest / "one").write_text("same", encoding="utf-8")
+    (guest / "two").write_text("same", encoding="utf-8")
+    selected = guest / "selected"
+    selected.symlink_to("one")
+    first = assetidentity.digest_of(tmp_path, ("guest",))
+
+    selected.unlink()
+    selected.symlink_to("two")
+
+    assert assetidentity.digest_of(tmp_path, ("guest",)) != first
+
+
 def test_an_absent_root_is_refused_rather_than_hashed_as_empty(tmp_path: Path) -> None:
     """A typo in the declared list would otherwise read as "nothing here",
     silently shrinking the identity to the roots that happen to exist."""
@@ -395,32 +436,101 @@ def test_an_absent_root_is_refused_rather_than_hashed_as_empty(tmp_path: Path) -
         assetidentity.digest_of(tmp_path, ("ghost",))
 
 
-def test_the_lane_skips_a_build_whose_identity_already_matches(tmp_path: Path) -> None:
+def _seed_lane_receipt(tmp_path: Path, *, identity: str = "abc123"):
+    from capsem.gate import assetreceipt
+
+    base = gate_config.load(PROJECT_ROOT)
+    config = base.model_copy(update={"root": tmp_path})
+    arch = config.arch("x86_64")
+    output = config.path(config.assets.test_root) / "code" / f"build-{arch.name}"
+    produced = output / arch.name
+    produced.mkdir(parents=True)
+    for name in (*config.artifacts.bootable, *config.assets.evidence_artifacts):
+        payload = _obom_payload(arch.name) if name == config.assets.obom_artifact else b"bytes"
+        (produced / name).write_bytes(payload)
+    assetreceipt.record(
+        config,
+        output,
+        identity,
+        profile="code",
+        arch=arch,
+        stage="packed",
+    )
+    return config, arch, output, produced
+
+
+def test_the_lane_skips_a_build_only_when_its_receipt_and_bytes_match(tmp_path: Path) -> None:
     """The whole point: unchanged inputs cost nothing.
 
     Recorded beside the output rather than in a side table, so a reused tree
     and the identity that justifies reusing it cannot be separated -- a stamp
     that outlives its assets is how a cache starts lying.
     """
+    from capsem.gate import assetreceipt
+
+    config, arch, output, _produced = _seed_lane_receipt(tmp_path)
+
+    assert assetreceipt.validates(config, output, "abc123", profile="code", arch=arch)
+    assert not assetreceipt.validates(config, output, "def456", profile="code", arch=arch)
+    assert not assetreceipt.validates(config, output, "abc123", profile="co-work", arch=arch)
+
+
+@pytest.mark.parametrize("mutation", ["change", "delete", "add"])
+def test_a_receipt_never_accepts_mutated_or_partial_output(
+    tmp_path: Path, mutation: str
+) -> None:
+    """Existence plus a matching input stamp is not reusable authority."""
+    from capsem.gate import assetreceipt
+
+    config, arch, output, produced = _seed_lane_receipt(tmp_path)
+    target = produced / config.artifacts.rootfs
+    if mutation == "change":
+        target.write_bytes(b"different")
+    elif mutation == "delete":
+        target.unlink()
+    else:
+        (produced / "unrecorded").write_bytes(b"extra")
+
+    assert not assetreceipt.validates(config, output, "abc123", profile="code", arch=arch)
+
+
+def test_preflight_keeps_only_reusable_lane_roots(tmp_path: Path) -> None:
+    """The cache is not real if preflight deletes it before the hit check."""
     from capsem.gate import assetlanes
+    from capsem.gate.assetlanes import Profile
 
-    output = tmp_path / "build-x86_64"
-    output.mkdir()
-    assert not assetlanes.already_built(output, "abc123")
+    config, arch, output, _produced = _seed_lane_receipt(tmp_path)
+    profile_root = output.parent
+    (profile_root / config.assets.merged_assets_dir).mkdir()
+    (profile_root / config.assets.merged_config_dir).mkdir()
+    obsolete = config.path(config.assets.test_root) / "deleted-profile"
+    obsolete.mkdir()
+    log = config.path(config.assets.test_root) / f"build-{arch.name}.log"
+    log.write_text("old", encoding="utf-8")
 
-    assetlanes.record_identity(output, "abc123")
-    assert assetlanes.already_built(output, "abc123")
-    assert not assetlanes.already_built(output, "def456")
+    assetlanes.prepare_workspace(
+        config,
+        [Profile(name="code", manifest=tmp_path / "config/profiles/code/profile.toml")],
+    )
+
+    assert output.is_dir()
+    assert not (profile_root / config.assets.merged_assets_dir).exists()
+    assert not (profile_root / config.assets.merged_config_dir).exists()
+    assert not obsolete.exists()
+    assert not log.exists()
 
 
-def test_a_stamp_without_its_output_is_not_a_hit(tmp_path: Path) -> None:
-    """Reclaiming the tree must not leave a claim that it is current."""
-    from capsem.gate import assetlanes
+def test_asset_plan_seals_receipts_before_packing_can_be_carried() -> None:
+    """A journal may call packing complete only after its exact receipt exists."""
+    from capsem.gate.assetplan import fragment
 
-    output = tmp_path / "build-x86_64"
-    output.mkdir()
-    assetlanes.record_identity(output, "abc123")
-    for path in output.iterdir():
-        if path.name != assetlanes.IDENTITY_FILE:
-            path.unlink()
-    assert not assetlanes.already_built(tmp_path / "gone", "abc123")
+    config = gate_config.load(PROJECT_ROOT)
+    plan = Plan("asset-receipts")
+    fragment(plan, config)
+
+    for arch in config.architectures:
+        lane = plan.step_named(f"assets.build.{arch}")
+        assert [check.name for check in lane.carry_checks] == ["require-asset-lane-receipts"]
+    packed = plan.step_named("assets.pack-initrds")
+    assert packed.actions[-1].name == "seal-packed-asset-lane-receipts"
+    assert [check.name for check in packed.carry_checks] == ["require-asset-lane-receipts"]

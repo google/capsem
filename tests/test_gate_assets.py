@@ -12,6 +12,7 @@ stops being hermetic.
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -64,7 +65,38 @@ def _checkout(tmp_path: Path, *, profiles: tuple[str, ...] = ("code",)) -> Path:
         directory = tmp_path / "config" / "profiles" / name
         directory.mkdir(parents=True)
         (directory / "profile.toml").write_text(f'id = "{name}"\n')
+    for relative in CONFIG.assets.identity_roots:
+        source = PROJECT_ROOT / relative
+        destination = tmp_path / relative
+        if destination.exists():
+            continue
+        if source.is_dir():
+            destination.mkdir(parents=True)
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(f"fixture for {relative}\n", encoding="utf-8")
     return tmp_path
+
+
+def _obom_payload(arch: str) -> str:
+    return json.dumps(
+        {
+            "bomFormat": "CycloneDX",
+            "metadata": {
+                "tools": {"components": [{"name": "cdxgen", "version": "12.7.0"}]},
+                "component": {
+                    "type": "operating-system",
+                    "name": f"capsem-rootfs-{arch}",
+                    "version": "guest-rootfs",
+                    "properties": [
+                        {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
+                        {"name": "capsem:guest:architecture", "value": arch},
+                    ],
+                },
+            },
+            "components": [{"purl": "pkg:deb/debian/base-files@1"}],
+        }
+    )
 
 
 class Gating(RecordingRunner):
@@ -82,7 +114,8 @@ class Gating(RecordingRunner):
             produced.mkdir(parents=True, exist_ok=True)
             config = gate_config.for_root(self.root)
             for name in (*config.artifacts.bootable, *config.assets.evidence_artifacts):
-                (produced / name).write_text("bytes")
+                payload = _obom_payload(arch) if name == config.assets.obom_artifact else "bytes"
+                (produced / name).write_text(payload)
         if "manifest generate" in rendered:
             Path(command.argv[-1]).mkdir(parents=True, exist_ok=True)
             (Path(command.argv[-1]) / "manifest.json").write_text("{}")

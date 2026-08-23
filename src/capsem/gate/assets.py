@@ -28,7 +28,7 @@ from pathlib import Path
 
 from . import assetevidence, crossexec, imagebases, pidfiles
 from . import config as gate_config
-from .assetlanes import AssetLanes, Profile, discover_profiles
+from .assetlanes import AssetLanes, Profile, discover_profiles, prepare_workspace
 from .context import Context
 from .errors import GateError
 from .fileactions import (
@@ -241,14 +241,13 @@ class AssetGate:
         )
 
     def preflight(self) -> None:
-        """Refuse a build the daemon cannot finish, and clear the tree."""
+        """Refuse an impossible build and clear derived output, retaining lane caches."""
         crossexec.require(self._runner, self._config, self.host_arch)
         # Resolve the asset rail from the checked-in storage policy: the
         # dual-architecture BuildKit cohort survives unless the daemon falls
         # below its declared reserve.
         self._storage.ensure_space("assets")
-        discard(self.test_root)
-        make_dir(self.test_root)
+        prepare_workspace(self._config, discover_profiles(self._config))
 
     def prefetch(self) -> None:
         """Materialize exact bases through the Docker daemon's fetch edge."""

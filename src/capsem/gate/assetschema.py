@@ -31,6 +31,7 @@ class AssetsConfig(Strict):
     #: necessary on purpose: over-hashing costs a rebuild, under-hashing ships
     #: a stale rootfs in a run that stays green.
     identity_roots: tuple[str, ...]
+    lane_receipt: str
     evidence_artifacts: tuple[str, ...]
     obom_artifact: str
     failure_tail_lines: int

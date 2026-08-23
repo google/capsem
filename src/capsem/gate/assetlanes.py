@@ -22,11 +22,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import assetidentity, imagebuild
+from . import assetidentity, assetreceipt, imagebuild
 from . import config as gate_config
+from .actions import Action
 from .config import Arch
+from .context import Context
 from .errors import GateError
-from .filesystem import make_dir
+from .filesystem import make_dir, remove
 from .proc import Runner
 
 
@@ -54,28 +56,89 @@ def lane_assets(config: gate_config.GateConfig, profile: Profile, arch: Arch) ->
     return config.path(config.assets.test_root) / profile.name / f"build-{arch.name}"
 
 
-#: Written inside the lane's own output tree, never beside it. A stamp that
-#: can outlive the assets it describes is how a cache starts lying.
-IDENTITY_FILE = ".lane-identity"
+def prepare_workspace(config: gate_config.GateConfig, profiles: list[Profile]) -> None:
+    """Remove derived/obsolete output while retaining isolated lane caches."""
+    root = config.path(config.assets.test_root)
+    if root.is_symlink() or (root.exists() and not root.is_dir()):
+        remove(root)
+    make_dir(root)
+    expected = {profile.name: profile for profile in profiles}
+    for child in tuple(root.iterdir()):
+        if child.name not in expected or child.is_symlink() or not child.is_dir():
+            remove(child)
+    for profile in profiles:
+        profile_root = root / profile.name
+        make_dir(profile_root)
+        retained = {
+            lane_assets(config, profile, arch).name for arch in config.architectures.values()
+        }
+        for child in tuple(profile_root.iterdir()):
+            if child.name not in retained or child.is_symlink() or not child.is_dir():
+                remove(child)
 
 
-def record_identity(output: Path, identity: str) -> None:
-    """Claim this output was built from `identity`."""
-    output.mkdir(parents=True, exist_ok=True)
-    (output / IDENTITY_FILE).write_text(identity, encoding="utf-8")
+class RequireLaneReceipts(Action, name="require-asset-lane-receipts"):
+    """Carry only lane outputs whose exact source and bytes still validate."""
+
+    def __init__(
+        self,
+        config: gate_config.GateConfig,
+        profiles: list[Profile],
+        arches: tuple[Arch, ...],
+        *,
+        stages: frozenset[str] = assetreceipt.REUSABLE_STAGES,
+    ) -> None:
+        self._config = config
+        self._profiles = profiles
+        self._arches = arches
+        self._stages = stages
+
+    def render(self) -> str:
+        return "verify exact source-bound asset lane receipts"
+
+    def perform(self, context: Context) -> None:
+        del context
+        identity = assetidentity.lane_identity(self._config)
+        invalid = [
+            f"{profile.name}/{arch.name}"
+            for profile in self._profiles
+            for arch in self._arches
+            if not assetreceipt.validates(
+                self._config,
+                lane_assets(self._config, profile, arch),
+                identity,
+                profile=profile.name,
+                arch=arch,
+                stages=self._stages,
+            )
+        ]
+        if invalid:
+            raise GateError("cannot carry invalid asset lane receipts: " + ", ".join(invalid))
 
 
-def already_built(output: Path, identity: str) -> bool:
-    """Whether this lane's output is current for `identity`.
+class SealPackedReceipts(Action, name="seal-packed-asset-lane-receipts"):
+    """The terminal action of initrd packing, before the step may record OK."""
 
-    Absent output is never a hit, whatever any stamp says: the tree is
-    reclaimed on its own schedule, and a claim that survives its assets would
-    let a run skip work whose product is gone.
-    """
-    stamp = output / IDENTITY_FILE
-    if not output.is_dir() or not stamp.is_file():
-        return False
-    return stamp.read_text(encoding="utf-8").strip() == identity
+    def __init__(self, config: gate_config.GateConfig, profiles: list[Profile]) -> None:
+        self._config = config
+        self._profiles = profiles
+
+    def render(self) -> str:
+        return "record exact packed asset lane receipts"
+
+    def perform(self, context: Context) -> None:
+        del context
+        identity = assetidentity.lane_identity(self._config)
+        for profile in self._profiles:
+            for arch in self._config.architectures.values():
+                assetreceipt.record(
+                    self._config,
+                    lane_assets(self._config, profile, arch),
+                    identity,
+                    profile=profile.name,
+                    arch=arch,
+                    stage=assetreceipt.PACKED_STAGE,
+                )
 
 
 class AssetLanes:
@@ -97,13 +160,20 @@ class AssetLanes:
         identity = assetidentity.lane_identity(self._config)
         for profile in self._profiles:
             output = self.lane_assets(profile, arch)
-            if already_built(output, identity):
+            if assetreceipt.validates(
+                self._config,
+                output,
+                identity,
+                profile=profile.name,
+                arch=arch,
+            ):
                 self._runner.note(
                     f"Ironbank asset lane {profile.name} ({arch.name}) is current "
                     f"for {identity}; reusing it"
                 )
                 self._require_artifacts(output / arch.name)
                 continue
+            remove(output)
             self._runner.step(f"Ironbank asset build lane: {profile.name} ({arch.name})")
             for stage in self._config.imagebuild.lane_templates:
                 # Straight to the builder, with this lane's output. It used to
@@ -123,17 +193,22 @@ class AssetLanes:
                     log=log,
                 )
             self._require_artifacts(output / arch.name)
-            # After the artifacts are proven present, so a lane that produced
-            # nothing cannot stamp itself current.
-            record_identity(output, identity)
+            # This action is inside the lane step, so a journal may carry the
+            # output only after the source-bound byte receipt exists. Packing
+            # overwrites it with the terminal `packed` receipt later.
+            assetreceipt.record(
+                self._config,
+                output,
+                identity,
+                profile=profile.name,
+                arch=arch,
+                stage=assetreceipt.BUILD_STAGE,
+            )
 
     def _require_artifacts(self, produced: Path) -> None:
         missing = [
             name
-            for name in (
-                *self._config.artifacts.bootable,
-                *self._config.assets.evidence_artifacts,
-            )
+            for name in (*self._config.artifacts.bootable, *self._config.assets.evidence_artifacts)
             if not (produced / name).is_file() or (produced / name).stat().st_size == 0
         ]
         if missing:

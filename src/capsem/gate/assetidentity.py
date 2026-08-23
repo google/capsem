@@ -21,8 +21,12 @@ quietly shrinks an identity to whatever happened to be present.
 
 from __future__ import annotations
 
-import hashlib
+import os
+import stat
+from collections.abc import Iterator
 from pathlib import Path
+
+import blake3
 
 from .config import GateConfig
 from .errors import GateError
@@ -39,10 +43,11 @@ def digest_of(root: Path, relatives: tuple[str, ...]) -> str:
     Names are hashed alongside contents: a file that appears changes what the
     initrd packs, and content-only hashing would call that identical.
     """
-    digest = hashlib.blake2b(digest_size=16)
+    digest = blake3.blake3()
+    digest.update(b"capsem.asset-lane-input.v2\0")
     for relative in relatives:
         target = root / relative
-        if not target.exists():
+        if not target.exists() and not target.is_symlink():
             raise GateError(
                 f"asset identity root {relative!r} does not exist under {root}; "
                 "a root that is missing reads as 'nothing here' and silently "
@@ -51,19 +56,29 @@ def digest_of(root: Path, relatives: tuple[str, ...]) -> str:
         for path in sorted(_files(target)):
             digest.update(path.relative_to(root).as_posix().encode("utf-8"))
             digest.update(b"\0")
-            digest.update(path.read_bytes() if path.is_file() else b"")
+            mode = path.lstat().st_mode
+            digest.update(f"{stat.S_IMODE(mode):04o}".encode("ascii"))
+            digest.update(b"\0")
+            if stat.S_ISLNK(mode):
+                digest.update(b"symlink\0")
+                digest.update(os.readlink(path).encode("utf-8"))
+            elif stat.S_ISREG(mode):
+                digest.update(b"file\0")
+                digest.update(path.read_bytes())
+            else:
+                raise GateError(f"asset identity input {path} is not a file or symlink")
             digest.update(b"\0")
     return digest.hexdigest()
 
 
-def _files(target: Path):
-    if target.is_file():
+def _files(target: Path) -> Iterator[Path]:
+    if target.is_symlink() or target.is_file():
         yield target
         return
     for path in target.rglob("*"):
         # `__pycache__` is regenerated per interpreter run and belongs to no
         # asset; hashing it would make every identity unique by accident.
-        if path.is_file() and "__pycache__" not in path.parts:
+        if (path.is_symlink() or path.is_file()) and "__pycache__" not in path.parts:
             yield path
 
 
