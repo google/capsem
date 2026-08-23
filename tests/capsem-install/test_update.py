@@ -1848,18 +1848,27 @@ def test_linux_update_yes_applies_verified_deb_with_package_manager(
     )
     assert "Binary update applied." in result.stdout
     events = _read_update_log(capsem_home)
-    assert [event["event"] for event in events[-4:]] == [
+    assert [event["event"] for event in events[-6:]] == [
+        "release_candidate_fetched",
         "binary_update_start",
         "asset_update_start",
         "asset_update_complete",
+        "release_candidate_activated",
         "binary_update_complete",
     ]
-    asset_complete = events[-2]
+    asset_complete = events[-3]
     assert asset_complete["schema"] == "capsem.update_audit.v1"
     assert asset_complete["action"] == "asset_update"
     assert asset_complete["outcome"] == "success"
     assert asset_complete["source"] == health_url
     assert asset_complete["channel"] == "stable"
+    candidate = events[-2]
+    assert candidate["source"] == health_url
+    assert (
+        candidate["candidate_manifest_sha256"]
+        == events[-6]["candidate_manifest_sha256"]
+    )
+    assert candidate["current"]["manifest_sha256"] == candidate["candidate_manifest_sha256"]
     complete = events[-1]
     assert complete["schema"] == "capsem.update_audit.v1"
     assert complete["action"] == "binary_update"
@@ -1928,16 +1937,25 @@ def test_linux_update_yes_records_failed_installer_verification(
     assert "mismatch" in (result.stdout + result.stderr).lower()
     assert sudo_log.read_text(encoding="utf-8") == ""
     events = _read_update_log(capsem_home)
-    assert [event["event"] for event in events[-2:]] == [
+    assert [event["event"] for event in events[-4:]] == [
+        "release_candidate_fetched",
         "binary_update_start",
         "binary_update_failed",
+        "release_candidate_rejected",
     ]
-    failed = events[-1]
+    failed = events[-2]
     assert failed["schema"] == "capsem.update_audit.v1"
     assert failed["outcome"] == "failure"
     assert failed["package"]["name"] == installer_name
     assert failed["package"]["sha256"] == hashlib.sha256(declared_payload).hexdigest()
     assert "mismatch" in failed["error"].lower()
+    rejected = events[-1]
+    assert (
+        rejected["candidate_manifest_sha256"]
+        == events[-4]["candidate_manifest_sha256"]
+    )
+    assert rejected["previous"] == rejected["current"]
+    assert "mismatch" in rejected["error"].lower()
 
 
 @pytest.mark.live_system

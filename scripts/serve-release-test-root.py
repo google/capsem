@@ -11,21 +11,10 @@ import signal
 import threading
 from pathlib import Path
 
-
-class _LoopbackReleaseHandler(http.server.SimpleHTTPRequestHandler):
-    root: Path
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, directory=str(self.root), **kwargs)
-
-    def translate_path(self, path: str) -> str:
-        candidate = Path(super().translate_path(path)).resolve()
-        if not candidate.is_relative_to(self.root):
-            return str(self.root / ".capsem-forbidden")
-        return str(candidate)
-
-    def log_message(self, format: str, *args: object) -> None:
-        return
+try:
+    from release_fixture_server import handler_for_root
+except ModuleNotFoundError:
+    from scripts.release_fixture_server import handler_for_root
 
 
 def _write_ready(path: Path, root: Path, port: int) -> None:
@@ -49,18 +38,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--ready-file", required=True, type=Path)
+    parser.add_argument("--port", type=int, default=0)
     args = parser.parse_args()
 
     root = args.root.resolve()
     if not root.is_dir():
         parser.error(f"--root must be an existing directory: {root}")
     ready = args.ready_file.resolve()
-    handler = type(
-        "LoopbackReleaseHandler",
-        (_LoopbackReleaseHandler,),
-        {"root": root},
-    )
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    handler = handler_for_root(root)
+    if not 0 <= args.port <= 65535:
+        parser.error("--port must be between 0 and 65535")
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), handler)
     server.daemon_threads = True
 
     def stop_server(_signum: int, _frame: object) -> None:

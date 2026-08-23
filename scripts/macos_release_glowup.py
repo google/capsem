@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-import copy
+import hashlib
 import json
 import os
 import platform
@@ -14,7 +14,6 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import cast
 
 from macos_candidate_content import (
     hardlink_or_copy as hardlink_or_copy,
@@ -37,7 +36,6 @@ try:
         assert_manifest_artifact,
         build_report,
         build_transition_evidence,
-        tamper_profile_artifact_digest,
         validate_installed_evidence,
     )
 except ModuleNotFoundError:
@@ -48,8 +46,24 @@ except ModuleNotFoundError:
         assert_manifest_artifact,
         build_report,
         build_transition_evidence,
-        tamper_profile_artifact_digest,
         validate_installed_evidence,
+    )
+
+try:
+    from release_transition_candidates import (
+        TransitionCandidates,
+        require_object,
+        stage_transition_candidates,
+        validate_complete_verdicts,
+        validate_physical_evidence,
+    )
+except ModuleNotFoundError:
+    from scripts.release_transition_candidates import (
+        TransitionCandidates,
+        require_object,
+        stage_transition_candidates,
+        validate_complete_verdicts,
+        validate_physical_evidence,
     )
 
 
@@ -136,51 +150,21 @@ def prepare_candidate_manifest(
     return manifest_path, asset_share, dist
 
 
-def prepare_tampered_manifest(manifest_path: Path, destination: Path) -> Path:
-    """Stage a digest-invalid candidate without mutating the exact authority."""
-
-    authority = manifest_path.read_bytes()
-    manifest = json.loads(authority)
-    if not isinstance(manifest, dict):
-        raise RuntimeError("candidate release manifest must be an object")
-    tampered = copy.deepcopy(manifest)
-    tamper_profile_artifact_digest(tampered)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(
-        json.dumps(tampered, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    if manifest_path.read_bytes() != authority:
-        raise RuntimeError("tamper staging mutated the exact candidate manifest")
-    if destination.read_bytes() == authority:
-        raise RuntimeError("tamper staging did not change the candidate manifest")
-    return destination
-
-
-def _require_dict(value: object, field: str) -> dict[str, object]:
-    if not isinstance(value, dict):
-        raise RuntimeError(f"macOS glow-up report {field} must be an object")
-    return cast(dict[str, object], value)
-
-
 def finalize_native_report(
     *,
     report_path: Path,
     physical_report_path: Path,
     manifest_path: Path,
+    candidates: TransitionCandidates,
     package: Path,
     version: str,
     channel: str,
 ) -> dict[str, object]:
     """Merge Tart transitions with physical VZ probes under one contract."""
 
-    tart_report = _require_dict(
-        json.loads(report_path.read_text(encoding="utf-8")),
-        "root",
-    )
-    physical_report = _require_dict(
-        json.loads(physical_report_path.read_text(encoding="utf-8")),
-        "physical_vz",
+    tart_report = require_object(json.loads(report_path.read_text(encoding="utf-8")), "root")
+    physical_report = require_object(
+        json.loads(physical_report_path.read_text(encoding="utf-8")), "physical_vz"
     )
     artifact = ArtifactIdentity.from_path(
         package,
@@ -188,76 +172,80 @@ def finalize_native_report(
         platform="macos",
         architecture="arm64",
     )
-    if physical_report.get("package_sha256") != artifact.sha256:
-        raise RuntimeError("physical VZ proof did not use the Tart-tested package")
-    if physical_report.get("guest_vm_booted") is not True:
-        raise RuntimeError("physical VZ proof did not boot the package payload")
-    if physical_report.get("full_doctor") is not True:
-        raise RuntimeError("physical VZ proof did not pass full installed doctor")
-    if physical_report.get("installed_winterfell") is not True:
-        raise RuntimeError("physical VZ proof did not pass installed Winterfell")
+    validate_physical_evidence(physical_report, artifact.sha256)
 
-    installed = _require_dict(tart_report.get("installed"), "installed")
-    adapter_evidence = _require_dict(
-        tart_report.get("adapter_evidence"),
-        "adapter_evidence",
-    )
-    preserved_installed = _require_dict(
-        adapter_evidence.get("preserved_installed"),
-        "preserved_installed",
+    installed = require_object(tart_report.get("installed"), "installed")
+    adapter_evidence = require_object(tart_report.get("adapter_evidence"), "adapter_evidence")
+    preserved_installed = require_object(
+        adapter_evidence.get("preserved_installed"), "preserved_installed"
     )
     validate_installed_evidence(installed)
     validate_installed_evidence(preserved_installed)
     if preserved_installed != installed:
         raise RuntimeError("tamper rejection did not preserve the exact normalized installed state")
-    rejection = _require_dict(
-        adapter_evidence.get("tamper_rejection"),
-        "tamper_rejection",
+    fresh_verdict = require_object(adapter_evidence.get("fresh_transition"), "fresh_transition")
+    rejection = require_object(adapter_evidence.get("tamper_rejection"), "tamper_rejection")
+    update_verdict = require_object(adapter_evidence.get("update_transition"), "update_transition")
+    incompatible_rejection = require_object(
+        adapter_evidence.get("incompatible_rejection"), "incompatible_rejection"
     )
-    expected_rejection = {
-        "schema": "capsem.installed_rejection.v1",
-        "kind": "tampered_artifact",
-        "result": "rejected",
-        "preserved_previous": True,
-        "manifest_unchanged": True,
-        "manifest_metadata_unchanged": True,
-        "profiles_unchanged": True,
-        "package_unchanged": True,
-        "service": "ok",
-        "gateway": "ok",
-    }
-    for field, expected in expected_rejection.items():
-        if rejection.get(field) != expected:
-            raise RuntimeError(
-                f"macOS tamper rejection {field} is {rejection.get(field)!r}, expected {expected!r}"
-            )
 
     manifest_bytes = manifest_path.read_bytes()
-    pairing = PairingIdentity.from_manifest_bytes(
+    original_pairing = PairingIdentity.from_manifest_bytes(
         manifest_bytes,
         artifact=artifact,
         channel=channel,
+    )
+    updated_bytes = candidates.updated.read_bytes()
+    updated_pairing = PairingIdentity.from_manifest_bytes(
+        updated_bytes,
+        artifact=artifact,
+        channel=channel,
+    )
+    if original_pairing.profiles_sha256 == updated_pairing.profiles_sha256:
+        raise RuntimeError("macOS transition candidate did not change profile identity")
+    manifest_source = installed.get("manifest_url")
+    if not isinstance(manifest_source, str):
+        raise RuntimeError("macOS installed evidence omitted its manifest source")
+    validate_complete_verdicts(
+        fresh_verdict,
+        update_verdict,
+        rejection,
+        incompatible_rejection,
+        source=manifest_source,
+        original_sha256=original_pairing.manifest_sha256,
+        updated_sha256=updated_pairing.manifest_sha256,
+        tampered_sha256=hashlib.sha256(candidates.tampered.read_bytes()).hexdigest(),
+        incompatible_sha256=hashlib.sha256(candidates.incompatible.read_bytes()).hexdigest(),
     )
     transitions = [
         build_transition_evidence(
             kind=TransitionKind.FRESH_INSTALL,
             before=None,
-            after=pairing,
+            after=original_pairing,
+            result="activated",
+            doctor_passed=True,
+            winterfell_passed=True,
+        ),
+        build_transition_evidence(
+            kind=TransitionKind.PROFILE_ONLY,
+            before=original_pairing,
+            after=updated_pairing,
             result="activated",
             doctor_passed=True,
             winterfell_passed=True,
         ),
         build_transition_evidence(
             kind=TransitionKind.TAMPER_REJECTION,
-            before=pairing,
-            after=pairing,
+            before=updated_pairing,
+            after=updated_pairing,
             result="rejected",
             doctor_passed=True,
             winterfell_passed=True,
             preserved_previous=True,
         ),
     ]
-    capabilities = _require_dict(tart_report.get("capabilities"), "capabilities")
+    capabilities = require_object(tart_report.get("capabilities"), "capabilities")
     capabilities["physical_vz_boot"] = True
     capabilities["full_doctor"] = True
     capabilities["installed_winterfell"] = True
@@ -270,6 +258,7 @@ def finalize_native_report(
         transitions=transitions,
         expected_transitions=(
             TransitionKind.FRESH_INSTALL,
+            TransitionKind.PROFILE_ONLY,
             TransitionKind.TAMPER_REJECTION,
         ),
     )
@@ -338,9 +327,9 @@ def main() -> int:
         config=config,
         source_commit=source_commit_for_checkout(ROOT),
     )
-    tampered_manifest = prepare_tampered_manifest(
+    candidates = stage_transition_candidates(
         manifest_path,
-        manifest_path.parent / "tampered-manifest.json",
+        manifest_path.parent,
     )
     run(
         [
@@ -355,7 +344,11 @@ def main() -> int:
             "--manifest-file",
             str(manifest_path),
             "--tampered-manifest-file",
-            str(tampered_manifest),
+            str(candidates.tampered),
+            "--updated-manifest-file",
+            str(candidates.updated),
+            "--incompatible-manifest-file",
+            str(candidates.incompatible),
             "--sbom",
             str(sbom),
             "--asset-share",
@@ -384,6 +377,7 @@ def main() -> int:
         report_path=tart_report_path,
         physical_report_path=physical_report_path,
         manifest_path=manifest_path,
+        candidates=candidates,
         package=package,
         version=args.version,
         channel=args.channel,

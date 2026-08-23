@@ -1014,7 +1014,7 @@ def command_reclaim(args: argparse.Namespace, policy: dict[str, Any]) -> int:
     repository = str(resource.get("docker_name", args.resource))
     if args.keep.rsplit(":", 1)[0] != repository:
         raise ValueError(f"{args.keep!r} is not a tag of {repository!r}")
-    protected = set(getattr(args, "protect", ()))
+    protected = {str(tag) for tag in getattr(args, "protect", ())}
     invalid = sorted(tag for tag in protected if tag.rsplit(":", 1)[0] != repository)
     if invalid:
         raise ValueError(f"protected images are not tags of {repository!r}: {', '.join(invalid)}")

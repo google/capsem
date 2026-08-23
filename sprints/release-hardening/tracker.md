@@ -11,7 +11,7 @@
 - [x] S02-003 — eliminate the two-VM IPC qualification timeout and preserve evidence
 - [x] S02-004 — bind every fixed-port mock server to its launcher lifecycle
 - [x] S03-001 — run every nightly lane before the aggregate verdict
-- [ ] S04-001 — produce causal installed transition evidence
+- [x] S04-001 — produce causal installed transition evidence
 - [ ] S05-001 — prove atomic channel activation and rollback
 - [ ] S05-002 — qualify and verify stable, then nightly
 - [ ] Changelog entries at user-visible milestones
@@ -102,6 +102,22 @@
   `target/ironbank-assets`, and a matching identity checked only existence.
   Preflight now preserves isolated lane roots and exact byte receipts are
   required at build and packed-initrd boundaries.
+- Transition fixtures previously inherited HTTP conditional caching, so a
+  same-second manifest promotion could return stale bytes. One root-confined
+  handler now removes conditional validators, sends `Cache-Control: no-store`,
+  and is shared by Linux and Tart.
+- The updater now records exact candidate fetch, activation, and rejection
+  events with previous/current installed-manifest identities and causal errors.
+  The verifier ignores pre-marker rows and refuses unrelated errors, wrong
+  digests, reordered events, cause confusion, or a rejection that changed the
+  installed state.
+- The macOS rail originally stopped after fresh activation and tamper rejection.
+  It now activates a distinct valid profile-metadata graph through launchd,
+  rejects both a corrupt artifact and a profile requiring Capsem 9999.0.0, and
+  re-proves the same package, profile tree, manifest, metadata, service, and
+  binary cohort. The three oversized owning scripts shrank from 398/610/341 to
+  393/587/317 lines while the shared transition modules remain below the
+  300-line ceiling.
 
 ## Coverage Ledger
 
@@ -122,11 +138,16 @@
   skipped); two-VM writes complete without a 30-second IPC gap
 - Ironbank: every IronBank test selected by the co-work compatibility cohort is
   green, including Doctor, MCP, model/client, credential, HTTP, DNS, package,
-  file/process/snapshot, plugin, and profile-mutation ledgers
+  file/process/snapshot, plugin, and profile-mutation ledgers; the release,
+  update, and integrity slice is green (10 passed, 75 deselected)
 - Telemetry/evidence: worker-wide failure detection, private-prefix export, and
   fatal workflow upload contracts make pairing evidence available outside the
-  runner; focused preservation and release contracts are green
+  runner; focused preservation and release contracts are green; exact update
+  audit events correlate served, fetched, activated/rejected, and preserved
+  manifest identities across Linux and macOS adapters
 - Performance: zero redundant construction asserted and observed; the warm
   install-image edge fell from 1m54s construction to a 1.2s validated hit
-- Missing/deferred: physical macOS and public Cloudflare boundaries remain final
-  owning gates; broad service-main decomposition is outside this sprint.
+- Missing/deferred: the macOS transition implementation and host-side contracts
+  are green on Linux, while execution on physical Apple Silicon remains owned by
+  S05's release gate; public Cloudflare activation is also S05. Broad
+  service-main decomposition is outside this sprint.

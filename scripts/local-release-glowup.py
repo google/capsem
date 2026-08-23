@@ -4,22 +4,18 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import copy
 import errno
 import functools
 import hashlib
-import http.server
 import json
 import os
 import re
 import shlex
 import shutil
-import socketserver
 import subprocess
 import sys
 import tempfile
-import threading
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,6 +55,13 @@ except ModuleNotFoundError:
         validate_installed_evidence,
         validate_pairing_inputs,
     )
+
+try:
+    from release_fixture_server import serve_release_root
+    from release_transition import validate_transition_verdict
+except ModuleNotFoundError:
+    from scripts.release_fixture_server import serve_release_root
+    from scripts.release_transition import validate_transition_verdict
 
 try:
     from release_first_release import (
@@ -136,12 +139,14 @@ class ExactReleaseTransport:
 
 @dataclass(frozen=True)
 class ExactInstalledGlowupEvidence:
+    fresh_transition: Path
     fresh_installed: Path
     fresh_doctor: Path
     fresh_winterfell: Path
     candidate_installed: Path
     candidate_doctor: Path
     candidate_winterfell: Path
+    candidate_transition: Path
     tamper_rejection: Path
     incompatible_rejection: Path
     preserved_installed: Path
@@ -458,6 +463,7 @@ def main() -> int:
                 )
                 transitions = exact_installed_transition_rows(
                     exact_pairing,
+                    exact_transport,
                     exact_evidence,
                 )
                 expected_transitions = [TransitionKind.FRESH_INSTALL]
@@ -921,10 +927,13 @@ def promote_exact_manifest(manifest: Path, current_manifest: Path) -> None:
         pending.unlink(missing_ok=True)
 
 
-def promote_exact_candidate_transport(transport: ExactReleaseTransport) -> None:
-    """Atomically expose candidate-after bytes at the installed polling URL."""
+def promote_exact_transport_manifest(
+    transport: ExactReleaseTransport,
+    manifest: Path,
+) -> None:
+    """Atomically expose and catalog-select one exact manifest's current bytes."""
 
-    promote_exact_manifest(transport.after_manifest, transport.current_manifest)
+    promote_exact_manifest(manifest, transport.current_manifest)
     catalog = json.loads(transport.channel_catalog.read_text(encoding="utf-8"))
     channels = catalog.get("channels")
     if not isinstance(channels, dict):
@@ -940,11 +949,11 @@ def promote_exact_candidate_transport(transport: ExactReleaseTransport) -> None:
     ]
     if len(selected) != 1:
         raise SystemExit("exact transition channel catalog must select one current manifest")
-    contents = transport.after_manifest.read_bytes()
+    contents = manifest.read_bytes()
     selected[0]["version"] = json.loads(contents).get("version", selected[0].get("version"))
     selected[0]["digest"] = {
         "sha256": hashlib.sha256(contents).hexdigest(),
-        "blake3": file_blake3(transport.after_manifest),
+        "blake3": file_blake3(manifest),
     }
     pending = transport.channel_catalog.with_suffix(".next")
     try:
@@ -955,6 +964,12 @@ def promote_exact_candidate_transport(transport: ExactReleaseTransport) -> None:
         os.replace(pending, transport.channel_catalog)
     finally:
         pending.unlink(missing_ok=True)
+
+
+def promote_exact_candidate_transport(transport: ExactReleaseTransport) -> None:
+    """Atomically expose candidate-after bytes at the installed polling URL."""
+
+    promote_exact_transport_manifest(transport, transport.after_manifest)
 
 
 def _adversarial_profile(
@@ -1508,27 +1523,32 @@ probe_installed_transition() {{
     --profiles-dir "$CAPSEM_HOME_DIR/profiles" \
     --evidence-out "$EVIDENCE_DIR/$label-winterfell.json"
 }}
-wait_for_exact_transition() {{
-  expected_manifest_sha="$1"
-  expected_package_version="$2"
-  for attempt in $(seq 1 90); do
-    installed_manifest_sha=""
-    installed_package_version=""
-    if [ -f "$CAPSEM_HOME_DIR/assets/manifest.json" ]; then
-      installed_manifest_sha=$(sha256sum "$CAPSEM_HOME_DIR/assets/manifest.json" | cut -d' ' -f1)
-    fi
-    installed_package_version=$(dpkg-query -W -f='${{Version}}' capsem 2>/dev/null || true)
-    if [ "$installed_manifest_sha" = "$expected_manifest_sha" ] \
-      && [ "$installed_package_version" = "$expected_package_version" ]; then
-      return 0
-    fi
-    sleep 2
-  done
-  echo "automatic update did not activate exact candidate: expected manifest=$expected_manifest_sha package=$expected_package_version" >&2
-  cat "$CAPSEM_HOME_DIR/logs/update.log" >&2 || true
-  systemctl --user status capsem.service --no-pager -l >&2 || true
-  journalctl --user-unit capsem.service --no-pager -n 200 >&2 || true
-  return 1
+observe_update_transition() {{
+  kind="$1"
+  result="$2"
+  source="$3"
+  candidate_manifest_sha="$4"
+  after_line="$5"
+  evidence_out="$6"
+  previous_manifest_sha="${{7:-}}"
+  command=(
+    {shlex.quote(sys.executable)} scripts/release_transition.py
+    --audit-log "$CAPSEM_HOME_DIR/logs/update.log"
+    --after-line "$after_line"
+    --kind "$kind"
+    --result "$result"
+    --source "$source"
+    --candidate-manifest-sha256 "$candidate_manifest_sha"
+    --timeout-seconds 180
+    --evidence-out "$evidence_out"
+  )
+  if [ -n "$previous_manifest_sha" ]; then
+    command+=(--previous-manifest-sha256 "$previous_manifest_sha")
+  fi
+  "${{command[@]}}" || {{
+    dump_update_diagnostics "the audit marker at line $after_line" "$kind $result"
+    return 1
+  }}
 }}
 installed_profile_tree_digest() {{
   find "$CAPSEM_HOME_DIR/profiles" -type f -print0 \
@@ -1537,15 +1557,6 @@ installed_profile_tree_digest() {{
     | sha256sum \
     | cut -d' ' -f1
 }}
-# The service logs to `$CAPSEM_RUN_DIR/service.log` -- `telemetry::init` is
-# given `LogSink::File`, not stderr -- so `journalctl --user-unit` only ever
-# holds systemd's own start/stop lines. This waited on a message that could
-# never appear there, and its failure looked exactly like a service that had
-# refused to reject a tampered manifest.
-# `telemetry::init` is given `service.log` as a *pattern*, not a filename: the
-# appender rotates daily, so what exists on disk is `service.<date>.log`. The
-# first version of this waited on a path that never exists, which the
-# diagnostics below reported as "No such file or directory".
 # A rejection proof has two ways to fail and they mean opposite things: the
 # service saw the tampered manifest and installed it anyway, or it never saw
 # it. Attempt 37 waited three minutes on the second and reported the first.
@@ -1574,33 +1585,6 @@ service_logs() {{
   ls -1t "$CAPSEM_HOME_DIR/run/service.log" \
          "$CAPSEM_HOME_DIR/run"/service.*.log 2>/dev/null || true
 }}
-service_log_grep() {{
-  needle="$1"
-  logs=$(service_logs)
-  test -n "$logs" || return 1
-  # shellcheck disable=SC2086
-  grep -Fq "$needle" $logs 2>/dev/null
-}}
-# `automatic release update failed` is what the service logs for *any* failed
-# cycle, so waiting on it alone certifies the update loop's ability to fail
-# rather than the service's refusal to install forged bytes. It passed exactly
-# that way once: the loop was failing on a manifest URL the product would not
-# accept, no update ever ran, the tampered manifest was never fetched, and the
-# proof reported a pass. The tamper corrupts a digest, so the rejection must
-# also say a hash did not match.
-wait_for_automatic_rejection() {{
-  since="$1"
-  for attempt in $(seq 1 90); do
-    if service_log_grep "automatic release update failed" \
-      && service_log_grep "mismatch"; then
-      return 0
-    fi
-    sleep 2
-  done
-  dump_update_diagnostics "$since" "automatic rejection"
-  return 1
-}}
-
 # Everything a reader needs to tell the failure modes apart, printed once on
 # the way out: whether the polling loop started at all and on what schedule,
 # what it decided each cycle, whether systemd thinks the unit is up, and the
@@ -1626,21 +1610,16 @@ dump_update_diagnostics() {{
   echo "--- journal (systemd's own view) ---" >&2
   journalctl --user-unit capsem.service --since "$since" --no-pager -o cat >&2 2>&1 || true
 }}
-wait_for_incompatible_profile_rejection() {{
-  since="$1"
-  for attempt in $(seq 1 90); do
-    # The service's own log, for the same reason as above: its tracing goes to
-    # a file, and the journal holds only systemd's unit lines.
-    if service_log_grep "automatic release update failed" \
-      && service_log_grep "requires Capsem 9999.0.0 or newer"; then
-      return 0
-    fi
-    sleep 2
-  done
-  dump_update_diagnostics "$since" "incompatible-profile rejection"
-  return 1
-}}
 """
+
+
+def record_update_audit_marker(path: Path) -> None:
+    """Capture the last installed audit line before exposing new candidate bytes."""
+
+    audit = Path.home() / ".capsem" / "logs" / "update.log"
+    lines = len(audit.read_text(encoding="utf-8").splitlines()) if audit.is_file() else 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{lines}\n", encoding="utf-8")
 
 
 def run_exact_installed_glowup(
@@ -1683,6 +1662,10 @@ def run_exact_installed_glowup(
         fresh_artifact, fresh_package = before_artifact, pairing.before_package
     evidence_dir.mkdir(parents=True, exist_ok=True)
     probe_functions = _exact_installed_probe_shell(evidence_dir)
+    fresh_transition = evidence_dir / "fresh-install-transition.json"
+    fresh_manifest = (
+        transport.after_manifest if first_profile_activation else transport.before_manifest
+    )
     fresh_script = f"""
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -1696,6 +1679,10 @@ curl -fsSL {shlex.quote(install_script_url)} | \
 CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" \
   CAPSEM_RELEASE_CHANNELS_URL={shlex.quote(transport.channel_catalog_url)} \
   "$HOME/.capsem/bin/capsem" update --assets --channel {shlex.quote(pairing.channel)}
+observe_update_transition fresh_install activated \
+  {shlex.quote(transport.current_manifest_url)} \
+  {shlex.quote(file_sha256(fresh_manifest))} 0 \
+  {shlex.quote(str(fresh_transition))}
 systemctl --user set-environment \
   CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS=2 \
   CAPSEM_AUTOMATIC_UPDATE_POLL_SECS=2
@@ -1710,15 +1697,20 @@ probe_installed_transition fresh-install \
 """
     run(["bash", "-lc", fresh_script])
 
+    candidate_transition = evidence_dir / "candidate-after-transition.json"
     if not first_profile_activation:
+        candidate_marker = evidence_dir / "candidate-after-audit-line"
+        record_update_audit_marker(candidate_marker)
         promote_exact_candidate_transport(transport)
         after_script = f"""
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 {probe_functions}
-wait_for_exact_transition \
+observe_update_transition {shlex.quote(pairing.transition.value)} activated \
+  {shlex.quote(transport.current_manifest_url)} \
   {shlex.quote(file_sha256(transport.after_manifest))} \
-  {shlex.quote(after_artifact.version)}
+  "$(cat {shlex.quote(str(candidate_marker))})" \
+  {shlex.quote(str(candidate_transition))}
 probe_installed_transition candidate-after \
   {shlex.quote(transport.current_manifest_url)} \
   {shlex.quote(pairing.channel)} \
@@ -1735,10 +1727,9 @@ probe_installed_transition candidate-after \
         output_dir=evidence_dir / "adversarial",
     )
     tamper_evidence = evidence_dir / "tampered-rejection.json"
-    promote_exact_manifest(
-        adversarial.tampered_manifest,
-        transport.current_manifest,
-    )
+    tamper_marker = evidence_dir / "tampered-audit-line"
+    record_update_audit_marker(tamper_marker)
+    promote_exact_transport_manifest(transport, adversarial.tampered_manifest)
     tamper_script = f"""
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -1746,11 +1737,15 @@ export DEBIAN_FRONTEND=noninteractive
 cp "$CAPSEM_HOME_DIR/assets/manifest.json" \
   "$EVIDENCE_DIR/tampered-before-manifest.json"
 profile_digest_before=$(installed_profile_tree_digest)
+previous_manifest_sha=$(sha256sum "$EVIDENCE_DIR/tampered-before-manifest.json" | cut -d' ' -f1)
 assert_manifest_served {shlex.quote(transport.current_manifest_url)} \
   {shlex.quote(file_sha256(adversarial.tampered_manifest))} "the tampered manifest"
-rejection_since=$(date --iso-8601=seconds)
 systemctl --user restart capsem.service
-wait_for_automatic_rejection "$rejection_since"
+observe_update_transition tampered_artifact rejected \
+  {shlex.quote(transport.current_manifest_url)} \
+  {shlex.quote(file_sha256(adversarial.tampered_manifest))} \
+  "$(cat {shlex.quote(str(tamper_marker))})" \
+  {shlex.quote(str(tamper_evidence))} "$previous_manifest_sha"
 cmp "$EVIDENCE_DIR/tampered-before-manifest.json" \
   "$CAPSEM_HOME_DIR/assets/manifest.json"
 ! cmp -s {shlex.quote(str(transport.current_manifest))} \
@@ -1758,9 +1753,6 @@ cmp "$EVIDENCE_DIR/tampered-before-manifest.json" \
 test "$(installed_profile_tree_digest)" = "$profile_digest_before"
 dpkg-query -W -f='${{Version}}' capsem \
   | grep -Fx {shlex.quote(after_artifact.version)}
-printf '%s\n' \
-  '{{"schema":"capsem.installed_rejection.v1","kind":"tampered_artifact","result":"rejected","preserved_previous":true}}' \
-  > {shlex.quote(str(tamper_evidence))}
 """
     try:
         run(["bash", "-lc", tamper_script])
@@ -1768,10 +1760,9 @@ printf '%s\n' \
         promote_exact_candidate_transport(transport)
 
     incompatible_evidence = evidence_dir / "incompatible-rejection.json"
-    promote_exact_manifest(
-        adversarial.incompatible_manifest,
-        transport.current_manifest,
-    )
+    incompatible_marker = evidence_dir / "incompatible-audit-line"
+    record_update_audit_marker(incompatible_marker)
+    promote_exact_transport_manifest(transport, adversarial.incompatible_manifest)
     incompatible_script = f"""
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -1779,12 +1770,16 @@ export DEBIAN_FRONTEND=noninteractive
 cp "$CAPSEM_HOME_DIR/assets/manifest.json" \
   "$EVIDENCE_DIR/incompatible-before-manifest.json"
 profile_digest_before=$(installed_profile_tree_digest)
+previous_manifest_sha=$(sha256sum "$EVIDENCE_DIR/incompatible-before-manifest.json" | cut -d' ' -f1)
 assert_manifest_served {shlex.quote(transport.current_manifest_url)} \
   {shlex.quote(file_sha256(adversarial.incompatible_manifest))} \
   "the incompatible-profile manifest"
-rejection_since=$(date --iso-8601=seconds)
 systemctl --user restart capsem.service
-wait_for_incompatible_profile_rejection "$rejection_since"
+observe_update_transition incompatible_profile rejected \
+  {shlex.quote(transport.current_manifest_url)} \
+  {shlex.quote(file_sha256(adversarial.incompatible_manifest))} \
+  "$(cat {shlex.quote(str(incompatible_marker))})" \
+  {shlex.quote(str(incompatible_evidence))} "$previous_manifest_sha"
 cmp "$EVIDENCE_DIR/incompatible-before-manifest.json" \
   "$CAPSEM_HOME_DIR/assets/manifest.json"
 ! cmp -s {shlex.quote(str(transport.current_manifest))} \
@@ -1792,9 +1787,6 @@ cmp "$EVIDENCE_DIR/incompatible-before-manifest.json" \
 test "$(installed_profile_tree_digest)" = "$profile_digest_before"
 dpkg-query -W -f='${{Version}}' capsem \
   | grep -Fx {shlex.quote(after_artifact.version)}
-printf '%s\n' \
-  '{{"schema":"capsem.installed_rejection.v1","kind":"incompatible_profile","result":"rejected","blocked_reason":"requires Capsem 9999.0.0 or newer","preserved_previous":true}}' \
-  > {shlex.quote(str(incompatible_evidence))}
 """
     try:
         run(["bash", "-lc", incompatible_script])
@@ -1820,6 +1812,7 @@ probe_installed_transition rejection-preserved \
     fresh_doctor = evidence_dir / "fresh-install-doctor.json"
     fresh_winterfell = evidence_dir / "fresh-install-winterfell.json"
     return ExactInstalledGlowupEvidence(
+        fresh_transition=fresh_transition,
         fresh_installed=fresh_installed,
         fresh_doctor=fresh_doctor,
         fresh_winterfell=fresh_winterfell,
@@ -1837,6 +1830,9 @@ probe_installed_transition rejection-preserved \
             fresh_winterfell
             if first_profile_activation
             else evidence_dir / "candidate-after-winterfell.json"
+        ),
+        candidate_transition=(
+            fresh_transition if first_profile_activation else candidate_transition
         ),
         tamper_rejection=tamper_evidence,
         incompatible_rejection=incompatible_evidence,
@@ -1880,29 +1876,41 @@ def _validate_exact_installed_state(
         raise SystemExit(f"installed transition evidence has wrong package version: {path}")
 
 
-def _validate_installed_rejection(path: Path, expected_kind: str) -> None:
+def _load_transition_verdict(path: Path) -> dict[str, object]:
     try:
-        rejection = json.loads(path.read_text(encoding="utf-8"))
+        verdict = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise SystemExit(f"installed rejection evidence is unreadable: {path}: {error}") from error
-    if not isinstance(rejection, dict):
-        raise SystemExit(f"installed rejection evidence is not an object: {path}")
-    if (
-        rejection.get("schema") != "capsem.installed_rejection.v1"
-        or rejection.get("kind") != expected_kind
-        or rejection.get("result") != "rejected"
-        or rejection.get("preserved_previous") is not True
-    ):
-        raise SystemExit(f"installed rejection evidence failed: {path}: {rejection}")
-    if expected_kind == "incompatible_profile" and not isinstance(
-        rejection.get("blocked_reason"),
-        str,
-    ):
-        raise SystemExit(f"installed rejection evidence omitted blocked reason: {path}")
+        raise SystemExit(f"transition verdict is unreadable: {path}: {error}") from error
+    if not isinstance(verdict, dict):
+        raise SystemExit(f"transition verdict is not an object: {path}")
+    return cast(dict[str, object], verdict)
+
+
+def _validate_transition_verdict_file(
+    path: Path,
+    *,
+    kind: str,
+    result: str,
+    source: str,
+    candidate_manifest_sha256: str,
+    previous_manifest_sha256: str | None = None,
+) -> None:
+    try:
+        validate_transition_verdict(
+            _load_transition_verdict(path),
+            kind=kind,
+            result=result,
+            source=source,
+            candidate_manifest_sha256=candidate_manifest_sha256,
+            previous_manifest_sha256=previous_manifest_sha256,
+        )
+    except RuntimeError as error:
+        raise SystemExit(f"transition verdict failed: {path}: {error}") from error
 
 
 def exact_installed_transition_rows(
     pairing: ExactReleasePairing,
+    transport: ExactReleaseTransport,
     evidence: ExactInstalledGlowupEvidence,
 ) -> list[dict[str, object]]:
     fresh_pairing = pairing.after if evidence.fresh_uses_after else pairing.before
@@ -1912,8 +1920,41 @@ def exact_installed_transition_rows(
     if not evidence.fresh_uses_after:
         _validate_exact_installed_state(evidence.candidate_installed, pairing.after)
     _validate_exact_installed_state(evidence.preserved_installed, pairing.after)
-    _validate_installed_rejection(evidence.tamper_rejection, "tampered_artifact")
-    _validate_installed_rejection(evidence.incompatible_rejection, "incompatible_profile")
+    fresh_transport = (
+        transport.after_manifest if evidence.fresh_uses_after else transport.before_manifest
+    )
+    _validate_transition_verdict_file(
+        evidence.fresh_transition,
+        kind="fresh_install",
+        result="activated",
+        source=transport.current_manifest_url,
+        candidate_manifest_sha256=file_sha256(fresh_transport),
+    )
+    if not evidence.fresh_uses_after:
+        _validate_transition_verdict_file(
+            evidence.candidate_transition,
+            kind=pairing.transition.value,
+            result="activated",
+            source=transport.current_manifest_url,
+            candidate_manifest_sha256=file_sha256(transport.after_manifest),
+        )
+    installed_after_sha256 = file_sha256(transport.after_manifest)
+    for path, kind in (
+        (evidence.tamper_rejection, "tampered_artifact"),
+        (evidence.incompatible_rejection, "incompatible_profile"),
+    ):
+        verdict = _load_transition_verdict(path)
+        candidate_sha256 = verdict.get("candidate_manifest_sha256")
+        if not isinstance(candidate_sha256, str) or candidate_sha256 == installed_after_sha256:
+            raise SystemExit(f"{kind} verdict does not identify a distinct candidate: {path}")
+        _validate_transition_verdict_file(
+            path,
+            kind=kind,
+            result="rejected",
+            source=transport.current_manifest_url,
+            candidate_manifest_sha256=candidate_sha256,
+            previous_manifest_sha256=installed_after_sha256,
+        )
     fresh_doctor = _probe_report_passed(
         evidence.fresh_doctor,
         "capsem.installed_doctor.v1",
@@ -2154,52 +2195,7 @@ cp "$EVIDENCE_DIR/final-nightly-installed.json" {evidence_arg}
     run(["bash", "-lc", script])
 
 
-class _NoCacheHandler(http.server.SimpleHTTPRequestHandler):
-    """Serve the current bytes, never a 304.
-
-    Every rejection proof works by promoting a different manifest to one URL
-    and waiting for the service to react. `SimpleHTTPRequestHandler` answers a
-    conditional request from `Last-Modified`, which has one-second resolution,
-    so a manifest promoted in the same second as the previous fetch comes back
-    `304 Not Modified` and the service goes on believing what it already had.
-
-    That is indistinguishable from a service that examined the tampered
-    manifest and chose to keep the old one -- which is exactly what a tamper
-    proof is trying to tell apart. It waited three minutes and reported a
-    failure to reject.
-    """
-
-    def send_head(self):
-        # Drop the request's conditional headers rather than the response's:
-        # the 304 is decided from these, and a `Cache-Control` on the way out
-        # cannot un-decide it.
-        for header in ("If-Modified-Since", "If-None-Match"):
-            del self.headers[header]
-        return super().send_head()
-
-    def end_headers(self):
-        self.send_header("Cache-Control", "no-store")
-        super().end_headers()
-
-
-@contextlib.contextmanager
-def local_release_server(root: Path):
-    class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-        daemon_threads = True
-
-    handler = functools.partial(_NoCacheHandler, directory=str(root))
-    server = ThreadingServer(("127.0.0.1", 0), handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        address = server.server_address
-        host = address[0]
-        port = address[1]
-        yield f"http://{host}:{port}"
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+local_release_server = serve_release_root
 
 
 if __name__ == "__main__":

@@ -48,7 +48,7 @@ def materialize(config: GateConfig, profiles: tuple[str, ...], identity: str) ->
             local = _local_lane(config, profile=profile, arch=arch)
             cached = lane(config, identity, profile=profile, arch=arch)
             if local.is_dir() and not local.is_symlink() and not cached.exists():
-                cached.parent.mkdir(parents=True, exist_ok=True)
+                make_dir(cached.parent)
                 try:
                     local.rename(cached)
                 except OSError as error:
@@ -160,7 +160,7 @@ def _tree_size(path: Path) -> int:
 
 def _prune_empty(path: Path, *, stop: Path) -> None:
     while path != stop and path.is_dir() and not any(path.iterdir()):
-        path.rmdir()
+        remove(path)
         path = path.parent
 
 

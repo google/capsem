@@ -5,7 +5,6 @@ import hashlib
 import importlib.util
 import json
 import re
-import shlex
 import subprocess
 import sys
 import urllib.error
@@ -18,11 +17,20 @@ from helpers import embedded_shell
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = PROJECT_ROOT / "scripts" / "release_glowup.py"
+TRANSITION_PATH = PROJECT_ROOT / "scripts" / "release_transition.py"
 LOCAL_GLOWUP_PATH = PROJECT_ROOT / "scripts" / "local-release-glowup.py"
 
 
 def _load_module():
     spec = importlib.util.spec_from_file_location("release_glowup", MODULE_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_transition_module():
+    spec = importlib.util.spec_from_file_location("release_transition", TRANSITION_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -103,6 +111,34 @@ def _pairing(
         package_sha256=package_sha256,
         profiles_sha256=profiles_sha256,
     )
+
+
+def _transition_verdict(
+    *,
+    kind: str,
+    result: str,
+    source: str,
+    candidate_sha256: str,
+    installed_sha256: str,
+    previous_sha256: str | None = None,
+) -> dict[str, object]:
+    verdict: dict[str, object] = {
+        "schema": "capsem.release_transition_verdict.v1",
+        "kind": kind,
+        "result": result,
+        "source": source,
+        "candidate_manifest_sha256": candidate_sha256,
+        "fetched": True,
+        "installed_manifest_sha256": installed_sha256,
+        "preserved_previous": result == "rejected",
+        "fetch_event": "release_candidate_fetched",
+        "terminal_event": (
+            "release_candidate_activated" if result == "activated" else "release_candidate_rejected"
+        ),
+    }
+    if previous_sha256 is not None:
+        verdict["previous_manifest_sha256"] = previous_sha256
+    return verdict
 
 
 def _transition(
@@ -1324,9 +1360,7 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
         after_manifest=after_manifest,
         current_manifest=current_manifest,
         channel_catalog=channel_catalog,
-        current_manifest_url=(
-            "http://127.0.0.1:8765/transitions/assets/nightly/manifest.json"
-        ),
+        current_manifest_url=("http://127.0.0.1:8765/transitions/assets/nightly/manifest.json"),
         current_manifest_route="/transitions/assets/nightly/manifest.json",
         channel_catalog_url="http://127.0.0.1:8765/transitions/channels.json",
         before_package=before_package,
@@ -1363,14 +1397,14 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     assert "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS=2" in before_script
     assert "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS=2" in before_script
     assert "probe_installed_transition fresh-install" in before_script
-    assert "wait_for_exact_transition" in after_script
+    assert "observe_update_transition binary_only activated" in after_script
+    assert "release_transition.py" in after_script
     assert "probe_installed_transition candidate-after" in after_script
-    assert "wait_for_automatic_rejection" in tamper_script
-    assert "automatic release update failed" in tamper_script
+    assert "observe_update_transition tampered_artifact rejected" in tamper_script
+    assert "automatic release update failed" not in tamper_script
     assert "tampered-before-manifest.json" in tamper_script
     assert "tampered-rejection.json" in tamper_script
-    assert "wait_for_incompatible_profile_rejection" in incompatible_script
-    assert "requires Capsem 9999.0.0 or newer" in incompatible_script
+    assert "observe_update_transition incompatible_profile rejected" in incompatible_script
     assert "incompatible-before-manifest.json" in incompatible_script
     assert "incompatible-rejection.json" in incompatible_script
     assert "probe_installed_transition rejection-preserved" in preserved_script
@@ -1384,6 +1418,8 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     assert "update --yes" not in incompatible_script
     assert current_manifest.read_bytes() == after_manifest.read_bytes()
     assert evidence.fresh_installed.name == "fresh-install-installed.json"
+    assert evidence.fresh_transition.name == "fresh-install-transition.json"
+    assert evidence.candidate_transition.name == "candidate-after-transition.json"
     assert evidence.candidate_winterfell.name == "candidate-after-winterfell.json"
     assert evidence.tamper_rejection.name == "tampered-rejection.json"
     assert evidence.incompatible_rejection.name == "incompatible-rejection.json"
@@ -1495,9 +1531,7 @@ def test_first_profile_glowup_never_installs_empty_authoring_state(
         after_manifest=after_manifest,
         current_manifest=current_manifest,
         channel_catalog=channel_catalog,
-        current_manifest_url=(
-            "http://127.0.0.1:8765/transitions/assets/nightly/manifest.json"
-        ),
+        current_manifest_url=("http://127.0.0.1:8765/transitions/assets/nightly/manifest.json"),
         current_manifest_route="/transitions/assets/nightly/manifest.json",
         channel_catalog_url="http://127.0.0.1:8765/transitions/channels.json",
         before_package=package,
@@ -1548,27 +1582,39 @@ def test_first_profile_glowup_never_installs_empty_authoring_state(
         (evidence.preserved_winterfell, "capsem.installed_winterfell.v1"),
     ):
         path.write_text(json.dumps({"schema": schema, "passed": True}))
-    for path, kind in (
-        (evidence.tamper_rejection, "tampered_artifact"),
-        (evidence.incompatible_rejection, "incompatible_profile"),
+    after_sha256 = hashlib.sha256(transport.after_manifest.read_bytes()).hexdigest()
+    evidence.fresh_transition.write_text(
+        json.dumps(
+            _transition_verdict(
+                kind="fresh_install",
+                result="activated",
+                source=transport.current_manifest_url,
+                candidate_sha256=after_sha256,
+                installed_sha256=after_sha256,
+            )
+        )
+    )
+    for index, (path, kind) in enumerate(
+        (
+            (evidence.tamper_rejection, "tampered_artifact"),
+            (evidence.incompatible_rejection, "incompatible_profile"),
+        ),
+        start=3,
     ):
         path.write_text(
             json.dumps(
-                {
-                    "schema": "capsem.installed_rejection.v1",
-                    "kind": kind,
-                    "result": "rejected",
-                    "preserved_previous": True,
-                    "blocked_reason": (
-                        "requires Capsem 9999.0.0 or newer"
-                        if kind == "incompatible_profile"
-                        else None
-                    ),
-                }
+                _transition_verdict(
+                    kind=kind,
+                    result="rejected",
+                    source=transport.current_manifest_url,
+                    candidate_sha256=str(index) * 64,
+                    installed_sha256=after_sha256,
+                    previous_sha256=after_sha256,
+                )
             )
         )
 
-    rows = module.exact_installed_transition_rows(pairing, evidence)
+    rows = module.exact_installed_transition_rows(pairing, transport, evidence)
 
     assert [row["kind"] for row in rows] == ["fresh_install", "tamper_rejection"]
     assert rows[0]["after"] == after.as_report()
@@ -1598,13 +1644,25 @@ def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Pa
         before=before,
         after=after,
     )
+    before_manifest = tmp_path / "before-manifest.json"
+    after_manifest = tmp_path / "after-manifest.json"
+    before_manifest.write_text('{"state":"before"}')
+    after_manifest.write_text('{"state":"after"}')
+    source = "https://release.test/assets/nightly/manifest.json"
+    transport = SimpleNamespace(
+        before_manifest=before_manifest,
+        after_manifest=after_manifest,
+        current_manifest_url=source,
+    )
     evidence = module.ExactInstalledGlowupEvidence(
+        fresh_transition=tmp_path / "fresh-transition.json",
         fresh_installed=tmp_path / "fresh-installed.json",
         fresh_doctor=tmp_path / "fresh-doctor.json",
         fresh_winterfell=tmp_path / "fresh-winterfell.json",
         candidate_installed=tmp_path / "candidate-installed.json",
         candidate_doctor=tmp_path / "candidate-doctor.json",
         candidate_winterfell=tmp_path / "candidate-winterfell.json",
+        candidate_transition=tmp_path / "candidate-transition.json",
         tamper_rejection=tmp_path / "tampered-rejection.json",
         incompatible_rejection=tmp_path / "incompatible-rejection.json",
         preserved_installed=tmp_path / "preserved-installed.json",
@@ -1643,29 +1701,56 @@ def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Pa
         evidence.preserved_winterfell,
     ):
         path.write_text(json.dumps({"schema": "capsem.installed_winterfell.v1", "passed": True}))
+    before_sha256 = hashlib.sha256(before_manifest.read_bytes()).hexdigest()
+    after_sha256 = hashlib.sha256(after_manifest.read_bytes()).hexdigest()
+    evidence.fresh_transition.write_text(
+        json.dumps(
+            _transition_verdict(
+                kind="fresh_install",
+                result="activated",
+                source=source,
+                candidate_sha256=before_sha256,
+                installed_sha256=before_sha256,
+            )
+        )
+    )
+    evidence.candidate_transition.write_text(
+        json.dumps(
+            _transition_verdict(
+                kind="binary_only",
+                result="activated",
+                source=source,
+                candidate_sha256=after_sha256,
+                installed_sha256=after_sha256,
+            )
+        )
+    )
     evidence.tamper_rejection.write_text(
         json.dumps(
-            {
-                "schema": "capsem.installed_rejection.v1",
-                "kind": "tampered_artifact",
-                "result": "rejected",
-                "preserved_previous": True,
-            }
+            _transition_verdict(
+                kind="tampered_artifact",
+                result="rejected",
+                source=source,
+                candidate_sha256="3" * 64,
+                installed_sha256=after_sha256,
+                previous_sha256=after_sha256,
+            )
         )
     )
     evidence.incompatible_rejection.write_text(
         json.dumps(
-            {
-                "schema": "capsem.installed_rejection.v1",
-                "kind": "incompatible_profile",
-                "result": "rejected",
-                "blocked_reason": "requires Capsem 9999.0.0 or newer",
-                "preserved_previous": True,
-            }
+            _transition_verdict(
+                kind="incompatible_profile",
+                result="rejected",
+                source=source,
+                candidate_sha256="4" * 64,
+                installed_sha256=after_sha256,
+                previous_sha256=after_sha256,
+            )
         )
     )
 
-    rows = module.exact_installed_transition_rows(pairing, evidence)
+    rows = module.exact_installed_transition_rows(pairing, transport, evidence)
 
     assert [row["kind"] for row in rows] == [
         "fresh_install",
@@ -1678,31 +1763,34 @@ def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Pa
 
     evidence.tamper_rejection.write_text(
         json.dumps(
-            {
-                "schema": "capsem.installed_rejection.v1",
-                "kind": "tampered_artifact",
-                "result": "activated",
-                "preserved_previous": False,
-            }
+            _transition_verdict(
+                kind="tampered_artifact",
+                result="activated",
+                source=source,
+                candidate_sha256="3" * 64,
+                installed_sha256="3" * 64,
+            )
         )
     )
-    with pytest.raises(SystemExit, match="rejection evidence failed"):
-        module.exact_installed_transition_rows(pairing, evidence)
+    with pytest.raises(SystemExit, match="transition verdict failed"):
+        module.exact_installed_transition_rows(pairing, transport, evidence)
     evidence.tamper_rejection.write_text(
         json.dumps(
-            {
-                "schema": "capsem.installed_rejection.v1",
-                "kind": "tampered_artifact",
-                "result": "rejected",
-                "preserved_previous": True,
-            }
+            _transition_verdict(
+                kind="tampered_artifact",
+                result="rejected",
+                source=source,
+                candidate_sha256="3" * 64,
+                installed_sha256=after_sha256,
+                previous_sha256=after_sha256,
+            )
         )
     )
     evidence.candidate_doctor.write_text(
         json.dumps({"schema": "capsem.installed_doctor.v1", "passed": False})
     )
     with pytest.raises(SystemExit, match="probe failed"):
-        module.exact_installed_transition_rows(pairing, evidence)
+        module.exact_installed_transition_rows(pairing, transport, evidence)
 
 
 def _first_release_manifests(tmp_path: Path, module):
@@ -1933,9 +2021,7 @@ def test_installed_status_is_read_from_the_installed_home() -> None:
     The glow-up script's own readiness loop passed moments earlier precisely
     because it sets both variables before calling the same binary.
     """
-    source = (PROJECT_ROOT / "scripts" / "verify-installed-release.py").read_text(
-        encoding="utf-8"
-    )
+    source = (PROJECT_ROOT / "scripts" / "verify-installed-release.py").read_text(encoding="utf-8")
     start = source.index('[str(args.capsem), "status"]')
     # To the end of the `subprocess.run(...)` call: a naive cut at the first
     # `)` lands inside `str(args.capsem)` and reads none of the arguments.
@@ -1947,32 +2033,15 @@ def test_installed_status_is_read_from_the_installed_home() -> None:
     )
 
 
-def test_update_rejection_is_read_from_the_log_the_service_writes() -> None:
-    """The proof must look where the service's tracing actually goes.
+def test_transition_verdict_uses_the_structured_product_audit() -> None:
+    shell = embedded_shell.shell_of(PROJECT_ROOT / "scripts" / "local-release-glowup.py")
+    body = embedded_shell.function_bodies(shell)["observe_update_transition"]
 
-    `capsem-service` initialises telemetry with `LogSink::File` pointing at
-    `$CAPSEM_RUN_DIR/service.log`, so `journalctl --user-unit capsem.service`
-    holds systemd's start/stop lines and nothing the service itself wrote. The
-    tamper proof waited ninety times for `automatic release update failed` to
-    appear in that journal, where it can never appear, and the timeout was
-    indistinguishable from a service that had accepted a tampered manifest.
-    """
-    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(
-        encoding="utf-8"
-    )
-    waiters = [
-        source[source.index(f"{name}() {{{{") : source.index(f"{name}() {{{{") + 900]
-        for name in ("wait_for_automatic_rejection", "wait_for_incompatible_profile_rejection")
-    ]
-    for waiter in waiters:
-        body = waiter[: waiter.index("\n}}")]
-        assert "service_log_grep" in body, (
-            "the rejection wait does not read the service's own log:\n" + body
-        )
-        assert "journalctl" not in body, (
-            "the rejection wait polls journalctl, which never carries the "
-            "service's tracing:\n" + body
-        )
+    assert '"$CAPSEM_HOME_DIR/logs/update.log"' in body
+    assert "release_transition.py" in body
+    assert "candidate-manifest-sha256" in body
+    assert "service_log_grep" not in body
+    assert "journalctl" not in body
 
 
 def test_a_failed_rejection_wait_says_why() -> None:
@@ -1982,18 +2051,16 @@ def test_a_failed_rejection_wait_says_why() -> None:
     where it logs, checking the unit for `--parent-pid`, and finding the poll
     interval -- none of which the failure output contained.
     """
-    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(
-        encoding="utf-8"
-    )
+    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(encoding="utf-8")
     dump = source[source.index("dump_update_diagnostics() {{") :]
     dump = dump[: dump.index("\n}}")]
     for evidence in (
-        "automatic release",       # did the polling loop start, and decide what
-        "service_log",             # the service's own tracing
-        "update.log",              # what the updater recorded
-        "systemctl --user status", # does systemd think the unit is up
-        "show-environment",        # was the poll interval override applied
-        "journalctl",              # systemd's own view, for contrast
+        "automatic release",  # did the polling loop start, and decide what
+        "service_log",  # the service's own tracing
+        "update.log",  # what the updater recorded
+        "systemctl --user status",  # does systemd think the unit is up
+        "show-environment",  # was the poll interval override applied
+        "journalctl",  # systemd's own view, for contrast
     ):
         assert evidence in dump, f"the diagnostic dump never shows {evidence}"
 
@@ -2006,133 +2073,12 @@ def test_the_service_log_is_matched_by_pattern_not_by_a_fixed_name() -> None:
     path that never exists -- reported by the diagnostics as "No such file or
     directory" after three minutes of waiting.
     """
-    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(
-        encoding="utf-8"
-    )
+    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(encoding="utf-8")
     listing = source[source.index("service_logs() {{") :]
     listing = listing[: listing.index("\n}}")]
     assert "service*.log" in listing, (
-        "the glow-up looks for a fixed log name; rotation means it must glob:\n"
-        + listing
+        "the glow-up looks for a fixed log name; rotation means it must glob:\n" + listing
     )
-
-
-# ---------------------------------------------------------------------------
-# The rejection wait, executed rather than read.
-#
-# Every guard above this line inspects the script as text: does the body
-# mention `service_log_grep`, does it avoid `journalctl`, does the listing
-# contain a `*`. Each was written after a failure, and each would have passed
-# on a script that spelled the right words and still read the wrong file --
-# which is most of the ways this can be wrong. The bug that cost three CI
-# attempts was not a missing word. It was a path that does not exist on a
-# machine where the service has rotated its log, and only running the helper
-# against such a machine can see that.
-# ---------------------------------------------------------------------------
-
-
-def _shell_helpers() -> str:
-    """The log-reading helpers, as the shell receives them.
-
-    `ast` rather than `source.index("...{{")`: the script is emitted from
-    f-strings, so its Python source and the program that runs differ exactly
-    where shell syntax is densest. Matching on `{{` matches the escaping, and
-    stops matching the day a fragment moves into a plain string or is built by
-    concatenation -- a guard that silently reads nothing, which is the same
-    failure this whole section is about.
-    """
-    shell = embedded_shell.shell_of(PROJECT_ROOT / "scripts" / "local-release-glowup.py")
-    bodies = embedded_shell.function_bodies(shell)
-    missing = {"service_logs", "service_log_grep"} - set(bodies)
-    assert not missing, f"the glow-up no longer defines {missing}"
-    return "\n".join(bodies[name] for name in ("service_logs", "service_log_grep"))
-
-
-def _run_helper(home: Path, needle: str) -> int:
-    script = _shell_helpers() + f'\nservice_log_grep {shlex.quote(needle)}\n'
-    return subprocess.run(
-        ["bash", "-c", script],
-        env={"PATH": "/usr/bin:/bin", "CAPSEM_HOME_DIR": str(home)},
-        capture_output=True,
-    ).returncode
-
-
-def test_the_rejection_wait_reads_a_rotated_log(tmp_path: Path) -> None:
-    """The machine the proof actually runs on.
-
-    `telemetry::init` is handed `<run>/service.log` and rotates daily, so what
-    the service has written is `service.<date>.log`. The shipped version
-    grepped the configured name, found nothing for three minutes, and reported
-    a service that had rejected the tampered manifest as one that had not.
-    """
-    run = tmp_path / "run"
-    run.mkdir(parents=True)
-    (run / "service.2026-08-22.log").write_text(
-        "INFO automatic release update failed: manifest digest mismatch\n",
-        encoding="utf-8",
-    )
-    assert not (run / "service.log").exists(), "the fixture must be the rotated case"
-
-    assert _run_helper(tmp_path, "automatic release update failed") == 0, (
-        "the rejection wait cannot see a message the service wrote, because "
-        "it is in `service.<date>.log` and the wait reads `service.log`"
-    )
-
-
-def test_the_unrotated_log_an_older_install_left_is_still_read(tmp_path: Path) -> None:
-    """Rotation is not retroactive, and raw stderr lands in the bare name.
-
-    `telemetry.rs` says so: a panic, or death before `init` returns, is
-    written to the unrotated file. Globbing must not lose it.
-    """
-    run = tmp_path / "run"
-    run.mkdir(parents=True)
-    (run / "service.log").write_text("automatic release update failed\n", encoding="utf-8")
-
-    assert _run_helper(tmp_path, "automatic release update failed") == 0
-
-
-def test_both_halves_of_a_split_stream_are_searched(tmp_path: Path) -> None:
-    """A message may be in yesterday's file when the wait starts today."""
-    run = tmp_path / "run"
-    run.mkdir(parents=True)
-    (run / "service.2026-08-21.log").write_text("automatic release update failed\n")
-    (run / "service.2026-08-22.log").write_text("nothing of interest\n")
-
-    assert _run_helper(tmp_path, "automatic release update failed") == 0
-
-
-def test_a_message_that_is_absent_still_reports_absent(tmp_path: Path) -> None:
-    """The other half: globbing must not turn every wait into a pass.
-
-    A proof that cannot fail proves nothing, and widening a search is exactly
-    the change that can accidentally do that.
-    """
-    run = tmp_path / "run"
-    run.mkdir(parents=True)
-    (run / "service.2026-08-22.log").write_text("the service is fine\n", encoding="utf-8")
-
-    assert _run_helper(tmp_path, "automatic release update failed") != 0
-
-
-def test_an_empty_run_directory_reports_absent_rather_than_erroring(tmp_path: Path) -> None:
-    """Before the service has written anything, the wait must simply keep
-    waiting -- not abort the proof on a shell error."""
-    (tmp_path / "run").mkdir(parents=True)
-    assert _run_helper(tmp_path, "automatic release update failed") != 0
-
-
-def test_a_neighbouring_stream_is_not_searched(tmp_path: Path) -> None:
-    """`services.log` and `service-old.log` are different files.
-
-    A glob is a blunt instrument; this pins that it did not become `service*`
-    matching anything that starts with those seven letters.
-    """
-    run = tmp_path / "run"
-    run.mkdir(parents=True)
-    (run / "services.log").write_text("automatic release update failed\n", encoding="utf-8")
-
-    assert _run_helper(tmp_path, "automatic release update failed") != 0
 
 
 # ---------------------------------------------------------------------------
@@ -2153,44 +2099,149 @@ def test_a_neighbouring_stream_is_not_searched(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _wait_body(name: str) -> str:
-    shell = embedded_shell.shell_of(PROJECT_ROOT / "scripts" / "local-release-glowup.py")
-    bodies = embedded_shell.function_bodies(shell)
-    assert name in bodies, f"the glow-up no longer defines {name}"
-    return bodies[name]
-
-
 def test_the_tamper_wait_requires_a_tamper_specific_message() -> None:
-    """`automatic release update failed` alone is any failure at all.
+    module = _load_transition_module()
+    source = "https://release.test/assets/nightly/manifest.json"
+    candidate = "3" * 64
+    previous = "2" * 64
+    rows = [
+        {
+            "schema": module.UPDATE_AUDIT_SCHEMA,
+            "event": "release_candidate_fetched",
+            "source": source,
+            "candidate_manifest_sha256": candidate,
+        },
+        {
+            "schema": module.UPDATE_AUDIT_SCHEMA,
+            "event": "release_candidate_rejected",
+            "source": source,
+            "candidate_manifest_sha256": candidate,
+            "previous": {"manifest_sha256": previous},
+            "current": {"manifest_sha256": previous},
+            "error": "network unavailable",
+        },
+    ]
 
-    The wait must name something only the tamper produces, or it certifies
-    the update loop's ability to fail rather than the service's ability to
-    refuse a forged manifest.
-    """
-    body = _wait_body("wait_for_automatic_rejection")
-    needles = re.findall(r'service_log_grep\s+"([^"]+)"', body)
-    assert needles, f"the wait greps for nothing:\n{body}"
-    assert any(needle != "automatic release update failed" for needle in needles), (
-        "the tamper wait accepts any failed update cycle, so it passes when "
-        "the update fails for an unrelated reason -- which is what it did:\n"
-        + body
-    )
+    with pytest.raises(module.TransitionEvidenceError, match="exact rejection cause"):
+        module.build_transition_verdict(
+            rows,
+            kind="tampered_artifact",
+            result="rejected",
+            source=source,
+            candidate_manifest_sha256=candidate,
+            previous_manifest_sha256=previous,
+        )
 
 
 def test_neither_rejection_wait_can_be_satisfied_by_the_other() -> None:
-    """Two proofs, two distinct causes.
+    module = _load_transition_module()
+    source = "https://release.test/assets/nightly/manifest.json"
+    candidate = "4" * 64
+    previous = "2" * 64
+    rows = [
+        {
+            "schema": module.UPDATE_AUDIT_SCHEMA,
+            "event": "release_candidate_fetched",
+            "source": source,
+            "candidate_manifest_sha256": candidate,
+        },
+        {
+            "schema": module.UPDATE_AUDIT_SCHEMA,
+            "event": "release_candidate_rejected",
+            "source": source,
+            "candidate_manifest_sha256": candidate,
+            "previous": {"manifest_sha256": previous},
+            "current": {"manifest_sha256": previous},
+            "error": "profile requires Capsem 9999.0.0 or newer",
+        },
+    ]
 
-    They ran against one shared message, so a single unrelated failure could
-    satisfy one of them while the other -- which does name its own cause --
-    timed out. That asymmetry is exactly what the last run showed.
-    """
-    needles = {
-        name: set(re.findall(r'service_log_grep\s+"([^"]+)"', _wait_body(name)))
-        for name in ("wait_for_automatic_rejection", "wait_for_incompatible_profile_rejection")
-    }
-    tamper, incompatible = needles.values()
-    assert tamper - incompatible, f"the tamper wait names nothing of its own: {needles}"
-    assert incompatible - tamper, f"the incompatible wait names nothing of its own: {needles}"
+    verdict = module.build_transition_verdict(
+        rows,
+        kind="incompatible_profile",
+        result="rejected",
+        source=source,
+        candidate_manifest_sha256=candidate,
+        previous_manifest_sha256=previous,
+    )
+    assert verdict["preserved_previous"] is True
+    with pytest.raises(module.TransitionEvidenceError, match="exact rejection cause"):
+        module.build_transition_verdict(
+            rows,
+            kind="tampered_artifact",
+            result="rejected",
+            source=source,
+            candidate_manifest_sha256=candidate,
+            previous_manifest_sha256=previous,
+        )
+
+
+def test_transition_verdict_requires_fetch_and_terminal_for_the_same_digest() -> None:
+    module = _load_transition_module()
+    source = "https://release.test/assets/nightly/manifest.json"
+    candidate = "5" * 64
+    rows = [
+        {
+            "schema": module.UPDATE_AUDIT_SCHEMA,
+            "event": "release_candidate_fetched",
+            "source": source,
+            "candidate_manifest_sha256": candidate,
+        },
+        {
+            "schema": module.UPDATE_AUDIT_SCHEMA,
+            "event": "release_candidate_activated",
+            "source": source,
+            "candidate_manifest_sha256": "6" * 64,
+            "current": {"manifest_sha256": candidate},
+        },
+    ]
+
+    with pytest.raises(module.TransitionEvidenceError, match="no exact-candidate activated"):
+        module.build_transition_verdict(
+            rows,
+            kind="binary_only",
+            result="activated",
+            source=source,
+            candidate_manifest_sha256=candidate,
+        )
+
+
+def test_update_audit_marker_excludes_an_old_matching_transition(tmp_path: Path) -> None:
+    module = _load_transition_module()
+    source = "https://release.test/assets/nightly/manifest.json"
+    candidate = "7" * 64
+    audit = tmp_path / "update.log"
+    audit.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {
+                    "schema": module.UPDATE_AUDIT_SCHEMA,
+                    "event": "release_candidate_fetched",
+                    "source": source,
+                    "candidate_manifest_sha256": candidate,
+                },
+                {
+                    "schema": module.UPDATE_AUDIT_SCHEMA,
+                    "event": "release_candidate_activated",
+                    "source": source,
+                    "candidate_manifest_sha256": candidate,
+                    "current": {"manifest_sha256": candidate},
+                },
+            )
+        )
+        + "\n"
+    )
+
+    assert module.load_update_audit(audit, after_line=2) == []
+    with pytest.raises(module.TransitionEvidenceError, match=r"does not prove.*fetched"):
+        module.build_transition_verdict(
+            module.load_update_audit(audit, after_line=2),
+            kind="binary_only",
+            result="activated",
+            source=source,
+            candidate_manifest_sha256=candidate,
+        )
 
 
 def test_the_polling_url_is_shaped_like_a_channel_manifest() -> None:
@@ -2206,9 +2257,7 @@ def test_the_polling_url_is_shaped_like_a_channel_manifest() -> None:
     accepted any failed cycle -- and the incompatible-profile proof, which
     names its own cause, timed out. Neither had exercised an update.
     """
-    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(
-        encoding="utf-8"
-    )
+    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(encoding="utf-8")
     routes = re.findall(r'current_route = f?"([^"]+)"', source)
     assert routes, "no polling route found; this guard is reading the wrong thing"
 

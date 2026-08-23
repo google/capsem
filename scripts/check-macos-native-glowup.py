@@ -59,9 +59,7 @@ def validate_report(report_path: Path, cargo_toml: Path) -> Mapping[str, object]
     artifact = require_mapping(report.get("artifact"), "artifact")
     expected_version = cargo["workspace"]["package"]["version"]
     if artifact.get("version") != expected_version:
-        raise NativeGlowupError(
-            "macOS glow-up package version does not match Cargo.toml"
-        )
+        raise NativeGlowupError("macOS glow-up package version does not match Cargo.toml")
     package_sha256 = artifact.get("sha256")
     if not isinstance(package_sha256, str) or len(package_sha256) != 64:
         raise NativeGlowupError("macOS glow-up package digest is missing")
@@ -73,30 +71,23 @@ def validate_report(report_path: Path, cargo_toml: Path) -> Mapping[str, object]
         if capabilities.get(capability) is not True
     ]
     if missing:
-        raise NativeGlowupError(
-            f"macOS glow-up report lacks required capabilities: {missing}"
-        )
+        raise NativeGlowupError(f"macOS glow-up report lacks required capabilities: {missing}")
 
-    adapter_evidence = require_mapping(
-        report.get("adapter_evidence"), "adapter_evidence"
-    )
+    adapter_evidence = require_mapping(report.get("adapter_evidence"), "adapter_evidence")
     physical = require_mapping(adapter_evidence.get("physical_vz"), "physical_vz")
     if physical.get("package_sha256") != package_sha256:
-        raise NativeGlowupError(
-            "physical VZ proof did not use the Tart-installed package"
-        )
+        raise NativeGlowupError("physical VZ proof did not use the Tart-installed package")
     for field in ("guest_vm_booted", "full_doctor", "installed_winterfell"):
         if physical.get(field) is not True:
             raise NativeGlowupError(f"physical VZ proof did not pass {field}")
     expected_transitions = (
         TransitionKind.FRESH_INSTALL,
+        TransitionKind.PROFILE_ONLY,
         TransitionKind.TAMPER_REJECTION,
     )
     expected_scope = [kind.value for kind in expected_transitions]
     if report.get("transition_scope") != expected_scope:
-        raise NativeGlowupError(
-            f"macOS glow-up transition scope must be exactly {expected_scope}"
-        )
+        raise NativeGlowupError(f"macOS glow-up transition scope must be exactly {expected_scope}")
     transitions = report.get("transitions")
     if not isinstance(transitions, list) or not all(
         isinstance(transition, Mapping) for transition in transitions

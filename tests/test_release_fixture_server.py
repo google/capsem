@@ -6,7 +6,7 @@ import sys
 import time
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "scripts" / "serve-release-test-root.py"
@@ -18,9 +18,8 @@ def _wait_for_ready(path: Path, process: subprocess.Popen[str]) -> dict[str, str
         if path.is_file():
             return json.loads(path.read_text(encoding="utf-8"))
         if process.poll() is not None:
-            raise AssertionError(
-                f"release fixture server exited early: {process.stderr.read()}"
-            )
+            assert process.stderr is not None
+            raise AssertionError(f"release fixture server exited early: {process.stderr.read()}")
         time.sleep(0.02)
     raise AssertionError("release fixture server did not publish readiness")
 
@@ -53,6 +52,15 @@ def test_release_fixture_server_exposes_only_its_root_and_cleans_readiness(
         assert state["base_url"].startswith("http://127.0.0.1:")
         with urlopen(f"{state['base_url']}/manifest.json", timeout=2) as response:
             assert response.read() == b'{"channel":"local"}'
+            last_modified = response.headers["Last-Modified"]
+            assert response.headers["Cache-Control"] == "no-store"
+        root.joinpath("manifest.json").write_bytes(b'{"channel":"promoted"}')
+        conditional = Request(f"{state['base_url']}/manifest.json")
+        conditional.add_header("If-Modified-Since", last_modified)
+        conditional.add_header("If-None-Match", '"stale"')
+        with urlopen(conditional, timeout=2) as response:
+            assert response.status == 200
+            assert response.read() == b'{"channel":"promoted"}'
         try:
             urlopen(f"{state['base_url']}/../outside.txt", timeout=2)
         except HTTPError as error:

@@ -25,7 +25,6 @@ try:
         assert_manifest_artifact,
         build_report,
         load_manifest_bytes,
-        validate_installed_evidence,
     )
 except ModuleNotFoundError:
     from scripts.release_glowup import (
@@ -34,8 +33,12 @@ except ModuleNotFoundError:
         assert_manifest_artifact,
         build_report,
         load_manifest_bytes,
-        validate_installed_evidence,
     )
+
+try:
+    from release_transition_candidates import validate_macos_guest_report
+except ModuleNotFoundError:
+    from scripts.release_transition_candidates import validate_macos_guest_report
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -233,9 +236,7 @@ def run_authenticated_guest(
 ) -> subprocess.CompletedProcess[str]:
     """Retry only SSH attempts that fail before the guest command starts."""
 
-    authenticated_remote = (
-        f"printf '%s\\n' {shlex.quote(AUTHENTICATED_SENTINEL)}; exec {remote}"
-    )
+    authenticated_remote = f"printf '%s\\n' {shlex.quote(AUTHENTICATED_SENTINEL)}; exec {remote}"
     command = ssh_command(ip, [authenticated_remote])
     deadline = time.monotonic() + readiness_timeout
     last_error = ""
@@ -251,9 +252,7 @@ def run_authenticated_guest(
         stdout = result.stdout or ""
         stderr = result.stderr or ""
         lines = stdout.splitlines(keepends=True)
-        authenticated = bool(
-            lines and lines[0].rstrip("\r\n") == AUTHENTICATED_SENTINEL
-        )
+        authenticated = bool(lines and lines[0].rstrip("\r\n") == AUTHENTICATED_SENTINEL)
         if authenticated:
             guest_stdout = "".join(lines[1:])
             if guest_stdout:
@@ -330,52 +329,6 @@ def validate_host() -> None:
             )
 
 
-def validate_report(
-    report_path: Path,
-    *,
-    artifact: ArtifactIdentity,
-) -> dict[str, object]:
-    if not report_path.is_file():
-        raise RuntimeError(f"Tart guest did not write its report: {report_path}")
-    report = json.loads(report_path.read_text())
-    if report.get("schema") != "capsem.release_glowup.guest.v1":
-        raise RuntimeError("Tart guest wrote an unsupported glow-up evidence schema")
-    if report.get("artifact_sha256") != artifact.sha256:
-        raise RuntimeError("Tart guest package SHA does not match the host candidate")
-    installed = report.get("installed")
-    if not isinstance(installed, dict):
-        raise RuntimeError("Tart guest report has no normalized installed evidence")
-    validate_installed_evidence(installed)
-    preserved = report.get("preserved_installed")
-    if not isinstance(preserved, dict):
-        raise RuntimeError("Tart guest report has no preserved installed evidence")
-    validate_installed_evidence(preserved)
-    if preserved != installed:
-        raise RuntimeError("Tart guest did not preserve the exact installed state")
-    rejection = report.get("tamper_rejection")
-    if not isinstance(rejection, dict):
-        raise RuntimeError("Tart guest report has no tamper rejection evidence")
-    expected = {
-        "schema": "capsem.installed_rejection.v1",
-        "kind": "tampered_artifact",
-        "result": "rejected",
-        "preserved_previous": True,
-        "manifest_unchanged": True,
-        "manifest_metadata_unchanged": True,
-        "profiles_unchanged": True,
-        "package_unchanged": True,
-        "service": "ok",
-        "gateway": "ok",
-    }
-    for field, value in expected.items():
-        if rejection.get(field) != value:
-            raise RuntimeError(
-                f"Tart guest tamper rejection {field} is "
-                f"{rejection.get(field)!r}, expected {value!r}"
-            )
-    return report
-
-
 def local_tart_capabilities() -> dict[str, bool]:
     """Describe only the evidence produced by the unsigned local Tart rail."""
 
@@ -437,9 +390,7 @@ sudo log show --last 15m --style compact \
             text=True,
             timeout=120,
         )
-        contents = (
-            f"diagnostic_status={result.returncode}\n{result.stdout}\n{result.stderr}"
-        )
+        contents = f"diagnostic_status={result.returncode}\n{result.stdout}\n{result.stderr}"
     except (OSError, subprocess.SubprocessError) as error:
         contents = f"diagnostic_capture_failed={error}\n"
     (work_dir / "guest-diagnostics.log").write_text(contents, encoding="utf-8")
@@ -451,7 +402,9 @@ def main() -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--manifest-url", required=True)
     parser.add_argument("--manifest-file", required=True, type=Path)
+    parser.add_argument("--updated-manifest-file", required=True, type=Path)
     parser.add_argument("--tampered-manifest-file", required=True, type=Path)
+    parser.add_argument("--incompatible-manifest-file", required=True, type=Path)
     parser.add_argument("--sbom", required=True, type=Path)
     parser.add_argument("--asset-share", required=True, type=Path)
     parser.add_argument("--profile-share", required=True, type=Path)
@@ -487,12 +440,16 @@ def main() -> int:
         raise RuntimeError(f"candidate profile share is missing: {profile_share}")
     manifest = load_manifest_bytes(manifest_file.read_bytes())
     assert_manifest_artifact(manifest, artifact)
-    tampered_manifest_file = args.tampered_manifest_file.resolve()
-    tampered_bytes = tampered_manifest_file.read_bytes()
-    if tampered_bytes == manifest_file.read_bytes():
-        raise RuntimeError("tampered manifest must differ from the exact candidate")
-    tampered_manifest = load_manifest_bytes(tampered_bytes)
-    assert_manifest_artifact(tampered_manifest, artifact)
+    candidate_files = (
+        args.updated_manifest_file.resolve(),
+        args.tampered_manifest_file.resolve(),
+        args.incompatible_manifest_file.resolve(),
+    )
+    candidate_bytes = (manifest_file.read_bytes(), *(path.read_bytes() for path in candidate_files))
+    if len(candidate_bytes) != len(set(candidate_bytes)):
+        raise RuntimeError("Tart transition manifests must contain four distinct payloads")
+    for path in candidate_files:
+        assert_manifest_artifact(load_manifest_bytes(path.read_bytes()), artifact)
 
     work_dir = args.work_dir.resolve()
     share = work_dir / "share"
@@ -506,13 +463,7 @@ def main() -> int:
     candidate_dir = share / "candidate"
     if candidate_dir.exists():
         shutil.rmtree(candidate_dir)
-    release_dir = (
-        candidate_dir
-        / "releases"
-        / "download"
-        / args.channel
-        / f"v{args.version}"
-    )
+    release_dir = candidate_dir / "releases" / "download" / args.channel / f"v{args.version}"
     guest_package = release_dir / package.name
     stage_file(package, guest_package)
     stage_file(args.sbom.resolve(), release_dir / "capsem-sbom.spdx.json")
@@ -521,21 +472,23 @@ def main() -> int:
         candidate_dir / "assets" / args.channel / "manifest.json",
     )
     stage_file(manifest_file, share / "original-manifest.json")
-    stage_file(tampered_manifest_file, share / "tampered-manifest.json")
+    for source, name in zip(
+        candidate_files,
+        ("updated-manifest.json", "tampered-manifest.json", "incompatible-manifest.json"),
+        strict=True,
+    ):
+        stage_file(source, share / name)
     stage_file(PROJECT_ROOT / "scripts" / "macos_tart_guest.sh", share / "guest.sh")
-    stage_file(
-        PROJECT_ROOT / "scripts" / "verify-installed-release.py",
-        share / "verify-installed-release.py",
-    )
-    stage_file(
-        PROJECT_ROOT / "scripts" / "macos-install-user-request.sh",
-        share / "macos-install-user-request.sh",
-    )
-    stage_file(PROJECT_ROOT / "scripts" / "install-manifest-request.sh", share / "install-manifest-request.sh")
-    stage_file(
-        PROJECT_ROOT / "scripts" / "release_glowup.py",
-        share / "release_glowup.py",
-    )
+    for name in (
+        "verify-installed-release.py",
+        "macos-install-user-request.sh",
+        "install-manifest-request.sh",
+        "release_fixture_server.py",
+        "release_transition.py",
+        "macos_tart_transition_support.py",
+        "serve-release-test-root.py",
+    ):
+        stage_file(PROJECT_ROOT / "scripts" / name, share / name)
     vm_name = f"{OWNED_VM_PREFIX}{os.getpid()}-{int(time.time())}"
     require_owned_vm(vm_name)
     runner: subprocess.Popen[str] | None = None
@@ -578,7 +531,15 @@ def main() -> int:
             ]
         )
         run_authenticated_guest(ip, remote, timeout=1800)
-        guest_report = validate_report(report_path, artifact=artifact)
+        guest_report = validate_macos_guest_report(
+            report_path,
+            artifact_sha256=artifact.sha256,
+            manifest_source=args.manifest_url,
+            original_sha256=hashlib.sha256(candidate_bytes[0]).hexdigest(),
+            updated_sha256=hashlib.sha256(candidate_bytes[1]).hexdigest(),
+            tampered_sha256=hashlib.sha256(candidate_bytes[2]).hexdigest(),
+            incompatible_sha256=hashlib.sha256(candidate_bytes[3]).hexdigest(),
+        )
         installed = cast(dict[str, object], guest_report["installed"])
         report = build_report(
             adapter="macos-tart-launchd",
@@ -590,8 +551,12 @@ def main() -> int:
             "tart_image": args.image,
             "tart_vm": vm_name,
             "guest": guest_report.get("guest", {}),
+            "fresh_installed": guest_report["fresh_installed"],
             "preserved_installed": guest_report["preserved_installed"],
+            "fresh_transition": guest_report["fresh_transition"],
+            "update_transition": guest_report["update_transition"],
             "tamper_rejection": guest_report["tamper_rejection"],
+            "incompatible_rejection": guest_report["incompatible_rejection"],
         }
         rendered_report = json.dumps(report, indent=2, sort_keys=True) + "\n"
         report_path.write_text(rendered_report)

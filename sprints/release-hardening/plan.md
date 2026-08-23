@@ -38,6 +38,10 @@ is the checked-in durable summary required by the development-sprint contract.
   aggregating the verdict.
 - Transition proof is causal structured evidence shared by local qualification,
   staging, and release CI; log substrings and elapsed time are not verdicts.
+- macOS uses a distinct valid profile-metadata candidate to exercise automatic
+  activation without inventing a second package. Tamper and incompatibility
+  candidates derive from that activated graph, so both rejections must preserve
+  the same exact post-update manifest and installed product.
 - Deployment validates an immutable preview before activation and restores the
   exact prior distribution when activation verification fails.
 - Every fixed-port test fixture is lifecycle-bound to the process that owns its

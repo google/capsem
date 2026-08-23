@@ -16,6 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 HARNESS = PROJECT_ROOT / "scripts" / "macos_tart_glowup.py"
 GLOWUP = PROJECT_ROOT / "scripts" / "macos_release_glowup.py"
 GUEST = PROJECT_ROOT / "scripts" / "macos_tart_guest.sh"
+GUEST_SUPPORT = PROJECT_ROOT / "scripts" / "macos_tart_transition_support.py"
 HOST_BOOT = PROJECT_ROOT / "scripts" / "prove-macos-package-boot.sh"
 INSTALLED_WINTERFELL = PROJECT_ROOT / "scripts" / "run-installed-winterfell.py"
 NATIVE_REPORT_CHECK = PROJECT_ROOT / "scripts" / "check-macos-native-glowup.py"
@@ -26,6 +27,7 @@ PINNED_TART_IMAGE = (
     "ghcr.io/cirruslabs/macos-sequoia-base"
     "@sha256:fdd8b72a6ee46fc8ad35dc1b9f3b1f162b6607b82a584947d20bb28d3dcb99ed"
 )
+
 
 def _gate_labels(name: str = "candidate") -> tuple[str, ...]:
     """Every step of a command's plan, in graph order. See `helpers.gate`."""
@@ -45,7 +47,6 @@ def _gate_issues(name: str | None = None) -> str:
     from helpers.gate import gate_issues
 
     return gate_issues(name)
-
 
 
 def _load_script(path: Path, name: str):
@@ -328,7 +329,7 @@ def test_guest_installs_and_verifies_the_exact_shared_package() -> None:
     assert "--artifact" in source
     assert "--platform macos" in source
     assert "--architecture arm64" in source
-    assert "capsem.release_glowup.guest.v1" in source
+    assert "capsem.release_glowup.guest.v1" in GUEST_SUPPORT.read_text()
     assert "macos-install-user-request.sh" in source
     assert "capsem status" in source
     for binary in (
@@ -347,15 +348,17 @@ def test_guest_installs_and_verifies_the_exact_shared_package() -> None:
         assert binary in source
 
 
-def test_guest_rejects_tampered_poll_and_reproves_preserved_install() -> None:
+def test_guest_activates_update_then_rejects_both_adversarial_candidates() -> None:
     source = GUEST.read_text()
     glowup = GLOWUP.read_text()
 
     assert 'TAMPERED_MANIFEST="$SHARE/tampered-manifest.json"' in source
+    assert 'UPDATED_MANIFEST="$SHARE/updated-manifest.json"' in source
+    assert 'INCOMPATIBLE_MANIFEST="$SHARE/incompatible-manifest.json"' in source
     assert 'ORIGINAL_MANIFEST="$SHARE/original-manifest.json"' in source
     assert 'GUEST_RELEASE_ROOT = "http://127.0.0.1:' in glowup
     assert "file:///Volumes/My%20Shared%20Files/capsem-release/candidate" not in glowup
-    assert "python3 -m http.server" in source
+    assert "serve-release-test-root.py" in source
     assert source.index("start_release_http_server") < source.index(
         "=== Installing exact shared package ==="
     )
@@ -365,37 +368,38 @@ def test_guest_rejects_tampered_poll_and_reproves_preserved_install() -> None:
     assert 'launchctl bootout "gui/$(id -u)" "$SERVICE_PLIST"' in source
     assert 'launchctl bootstrap "gui/$(id -u)" "$SERVICE_PLIST"' in source
     assert "launchctl kickstart -k" in source
-    assert "automatic release update failed" in source
-    # The rejection is proved from the rotated stream, never from the bare
-    # `service.log`. Pinning that exact name is what let the proof poll an empty
-    # file for three minutes and report a service that had rejected the tampered
-    # manifest as one that had not.
-    assert 'SERVICE_LOG_DIR="$CAPSEM_HOME/run"' in source
-    assert 'cat "$SERVICE_LOG_DIR"/service*.log' in source
-    assert 'service_log_stream | tail -n "+$first_line"' in source
-    assert '"$CAPSEM_HOME/run/service.log"' not in source
+    assert 'release_transition.py"' in source
+    assert "candidate-manifest-sha256" in source
+    assert "automatic release update failed" not in source
+    assert "profile_only activated" in source
+    assert "incompatible_profile" in source
     assert "manifest-before-rejection.json" in source
     assert "manifest-metadata-before-rejection.json" in source
     assert "profile_tree_digest" in source
-    assert "polled manifest URL did not expose the tampered candidate" in source
+    assert "assert-url" in source
     assert 'STATUS_OUTPUT=$("$CAPSEM" status 2>/dev/null || true)' in source
     assert "preserved-installed-evidence.json" in source
-    assert '"schema": "capsem.installed_rejection.v1"' in source
-    assert '"kind": "tampered_artifact"' in source
-    assert '"preserved_previous": True' in source
+    assert "tamper-rejection-evidence.json" in source
+    assert "incompatible-rejection-evidence.json" in source
+    assert "fresh-transition-evidence.json" in source
+    assert "update-transition-evidence.json" in source
 
 
 def test_tart_harness_requires_preserved_rejection_evidence() -> None:
     source = HARNESS.read_text()
 
     assert '"--tampered-manifest-file"' in source
+    assert '"--updated-manifest-file"' in source
+    assert '"--incompatible-manifest-file"' in source
     assert '"tampered-manifest.json"' in source
     assert '"original-manifest.json"' in source
     assert 'guest_report["preserved_installed"]' in source
     assert 'guest_report["tamper_rejection"]' in source
+    assert 'guest_report["update_transition"]' in source
+    assert 'guest_report["incompatible_rejection"]' in source
 
 
-def test_macos_glowup_stages_tamper_without_mutating_candidate(
+def test_macos_glowup_stages_complete_candidates_without_mutating_authority(
     tmp_path: Path,
 ) -> None:
     module = _load_glowup()
@@ -418,6 +422,7 @@ def test_macos_glowup_stages_tamper_without_mutating_candidate(
         ],
         "profiles": {
             "code": {
+                "description": "Code profile",
                 "architectures": [
                     {
                         "architecture": "arm64",
@@ -429,23 +434,25 @@ def test_macos_glowup_stages_tamper_without_mutating_candidate(
                             }
                         ],
                     }
-                ]
+                ],
             }
         },
     }
     original = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
     manifest_path.write_text(original)
-    tampered_path = tmp_path / "tampered.json"
-
-    module.prepare_tampered_manifest(manifest_path, tampered_path)
+    candidates = module.stage_transition_candidates(manifest_path, tmp_path / "transitions")
 
     assert manifest_path.read_text() == original
-    tampered = json.loads(tampered_path.read_text())
+    updated = json.loads(candidates.updated.read_text())
+    tampered = json.loads(candidates.tampered.read_text())
+    incompatible = json.loads(candidates.incompatible.read_text())
     assert tampered["packages"] == manifest["packages"]
+    assert updated["profiles"]["code"]["description"].endswith("[installed transition proof]")
     assert (
         tampered["profiles"]["code"]["architectures"][0]["images"][0]["digest"]["sha256"]
         != "a" * 64
     )
+    assert incompatible["profiles"]["code"]["min_capsem_version"] == "9999.0.0"
 
 
 def test_macos_glowup_finalizes_shared_transition_report(tmp_path: Path) -> None:
@@ -470,7 +477,23 @@ def test_macos_glowup_finalizes_shared_transition_report(tmp_path: Path) -> None
                         "digest": {"sha256": artifact.sha256},
                     }
                 ],
-                "profiles": {"code": {"revision": "code-1"}},
+                "profiles": {
+                    "code": {
+                        "revision": "code-1",
+                        "description": "Code profile",
+                        "architectures": [
+                            {
+                                "architecture": "arm64",
+                                "images": [
+                                    {
+                                        "kind": "rootfs",
+                                        "digest": {"sha256": "a" * 64},
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                },
             },
             sort_keys=True,
         )
@@ -489,6 +512,39 @@ def test_macos_glowup_finalizes_shared_transition_report(tmp_path: Path) -> None
         "profiles_total": 1,
     }
     report_path = tmp_path / "report.json"
+    candidates = module.stage_transition_candidates(manifest_path, tmp_path / "transitions")
+    manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    updated_sha256 = hashlib.sha256(candidates.updated.read_bytes()).hexdigest()
+
+    def verdict(kind: str, result: str, digest: str) -> dict[str, object]:
+        row: dict[str, object] = {
+            "schema": "capsem.release_transition_verdict.v1",
+            "kind": kind,
+            "result": result,
+            "source": installed["manifest_url"],
+            "candidate_manifest_sha256": digest,
+            "fetched": True,
+            "installed_manifest_sha256": digest if result == "activated" else updated_sha256,
+            "preserved_previous": result == "rejected",
+            "fetch_event": "release_candidate_fetched",
+            "terminal_event": f"release_candidate_{result}",
+        }
+        if result == "rejected":
+            row["previous_manifest_sha256"] = updated_sha256
+        return row
+
+    fresh_verdict = verdict("fresh_install", "activated", manifest_sha256)
+    update_verdict = verdict("profile_only", "activated", updated_sha256)
+    tamper_verdict = verdict(
+        "tampered_artifact",
+        "rejected",
+        hashlib.sha256(candidates.tampered.read_bytes()).hexdigest(),
+    )
+    incompatible_verdict = verdict(
+        "incompatible_profile",
+        "rejected",
+        hashlib.sha256(candidates.incompatible.read_bytes()).hexdigest(),
+    )
     report_path.write_text(
         json.dumps(
             {
@@ -504,18 +560,10 @@ def test_macos_glowup_finalizes_shared_transition_report(tmp_path: Path) -> None
                 "adapter_evidence": {
                     "guest": {},
                     "preserved_installed": installed,
-                    "tamper_rejection": {
-                        "schema": "capsem.installed_rejection.v1",
-                        "kind": "tampered_artifact",
-                        "result": "rejected",
-                        "preserved_previous": True,
-                        "manifest_unchanged": True,
-                        "manifest_metadata_unchanged": True,
-                        "profiles_unchanged": True,
-                        "package_unchanged": True,
-                        "service": "ok",
-                        "gateway": "ok",
-                    },
+                    "fresh_transition": fresh_verdict,
+                    "update_transition": update_verdict,
+                    "tamper_rejection": tamper_verdict,
+                    "incompatible_rejection": incompatible_verdict,
                 },
             }
         )
@@ -536,12 +584,13 @@ def test_macos_glowup_finalizes_shared_transition_report(tmp_path: Path) -> None
         report_path=report_path,
         physical_report_path=physical_path,
         manifest_path=manifest_path,
+        candidates=candidates,
         package=package,
         version="1.2.3",
         channel="nightly",
     )
 
-    assert report["transition_scope"] == ["fresh_install", "tamper_rejection"]
+    assert report["transition_scope"] == ["fresh_install", "profile_only", "tamper_rejection"]
     assert [row["kind"] for row in report["transitions"]] == report["transition_scope"]
     assert report["transitions"][-1]["preserved_previous"] is True
 
@@ -577,8 +626,7 @@ def test_physical_mac_preserves_doctor_and_winterfell_failures() -> None:
 def test_macos_glowup_requires_physical_doctor_and_winterfell_evidence() -> None:
     source = GLOWUP.read_text()
 
-    assert 'physical_report.get("full_doctor") is not True' in source
-    assert 'physical_report.get("installed_winterfell") is not True' in source
+    assert "validate_physical_evidence(physical_report, artifact.sha256)" in source
     assert 'capabilities["full_doctor"] = True' in source
     assert 'capabilities["installed_winterfell"] = True' in source
 
@@ -601,7 +649,7 @@ def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> N
                 "installed_winterfell": True,
             }
         },
-        "transition_scope": ["fresh_install", "tamper_rejection"],
+        "transition_scope": ["fresh_install", "profile_only", "tamper_rejection"],
         "transitions": [
             {
                 "kind": "fresh_install",
@@ -618,8 +666,8 @@ def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> N
                 "preserved_previous": False,
             },
             {
-                "kind": "tamper_rejection",
-                "result": "rejected",
+                "kind": "profile_only",
+                "result": "activated",
                 "before": {
                     "channel": "stable",
                     "manifest_sha256": "b" * 64,
@@ -629,10 +677,30 @@ def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> N
                 },
                 "after": {
                     "channel": "stable",
-                    "manifest_sha256": "b" * 64,
+                    "manifest_sha256": "d" * 64,
                     "package_version": "1.2.3",
                     "package_sha256": "a" * 64,
-                    "profiles_sha256": "c" * 64,
+                    "profiles_sha256": "e" * 64,
+                },
+                "probes": {"doctor": True, "winterfell": True},
+                "preserved_previous": False,
+            },
+            {
+                "kind": "tamper_rejection",
+                "result": "rejected",
+                "before": {
+                    "channel": "stable",
+                    "manifest_sha256": "d" * 64,
+                    "package_version": "1.2.3",
+                    "package_sha256": "a" * 64,
+                    "profiles_sha256": "e" * 64,
+                },
+                "after": {
+                    "channel": "stable",
+                    "manifest_sha256": "d" * 64,
+                    "package_version": "1.2.3",
+                    "package_sha256": "a" * 64,
+                    "profiles_sha256": "e" * 64,
                 },
                 "probes": {"doctor": True, "winterfell": True},
                 "preserved_previous": True,

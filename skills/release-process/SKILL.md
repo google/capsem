@@ -76,14 +76,6 @@ use only its deepest proven frontier; the child records carried steps and a
 content-addressed parent. Manual continuation must match the derived prefix,
 frontier, and carried set. Reuse-only success cannot extend the chain.
 
-Product reuse inside a step is mandatory after exact validation, not permission
-to carry the step. VM assets use content-addressed generations and install
-images use strict source/config/helper/runtime/product receipts. Every hit is
-revalidated, then downstream assembly, boot, install, IronBank, and glow-up
-still run. Config owns count, age, and byte bounds; deterministic LRU may remove
-only unpinned products. Active and resumable lineages retain their selectors and
-receipts, and impossible pinned pressure fails closed instead of deleting proof.
-
 The complete candidate remains inside the host-kernel network boundary.
 Bubblewrap on Linux and Seatbelt on macOS provide loopback only; the one-time
 authenticated egress helper serves only marked advisory queries, fresh

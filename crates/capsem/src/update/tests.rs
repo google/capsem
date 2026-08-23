@@ -2578,6 +2578,10 @@ fn staged_channel_switch_records_correlated_asset_audit() {
     );
     let complete = rows.last().unwrap();
     assert_eq!(complete["source"], next_source);
+    assert_eq!(
+        complete["candidate_manifest_sha256"],
+        check.channel_hash.unwrap()
+    );
     assert_eq!(complete["channel"], "nightly");
     assert_eq!(complete["previous"]["source"], previous_source);
     assert_eq!(complete["current"]["source"], next_source);
@@ -2641,6 +2645,10 @@ fn failed_staged_channel_switch_never_records_asset_completion() {
         .iter()
         .all(|row| row["event"] != "asset_update_complete"));
     assert_eq!(rows.last().unwrap()["source"], source);
+    assert_eq!(
+        rows.last().unwrap()["candidate_manifest_sha256"],
+        "f".repeat(64)
+    );
 }
 
 #[test]

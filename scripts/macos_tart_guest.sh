@@ -10,31 +10,32 @@ CAPSEM_HOME="$HOME/.capsem"
 CAPSEM_BIN_DIR="$CAPSEM_HOME/bin"
 CAPSEM="$CAPSEM_BIN_DIR/capsem"
 VERIFY="$SHARE/verify-installed-release.py"
+TRANSITION_SUPPORT="$SHARE/macos_tart_transition_support.py"
 INSTALL_USER_REQUEST="$SHARE/macos-install-user-request.sh"
 INSTALL_MANIFEST_REQUEST="$SHARE/install-manifest-request.sh"
 REPORT="$SHARE/report.json"
 INSTALLED_EVIDENCE="$SHARE/installed-evidence.json"
+FRESH_INSTALLED_EVIDENCE="$SHARE/fresh-installed-evidence.json"
 PRESERVED_INSTALLED_EVIDENCE="$SHARE/preserved-installed-evidence.json"
+FRESH_TRANSITION_EVIDENCE="$SHARE/fresh-transition-evidence.json"
+UPDATE_TRANSITION_EVIDENCE="$SHARE/update-transition-evidence.json"
+TAMPER_REJECTION_EVIDENCE="$SHARE/tamper-rejection-evidence.json"
+INCOMPATIBLE_REJECTION_EVIDENCE="$SHARE/incompatible-rejection-evidence.json"
 ORIGINAL_MANIFEST="$SHARE/original-manifest.json"
+UPDATED_MANIFEST="$SHARE/updated-manifest.json"
 TAMPERED_MANIFEST="$SHARE/tampered-manifest.json"
+INCOMPATIBLE_MANIFEST="$SHARE/incompatible-manifest.json"
 REMOTE_MANIFEST="$SHARE/candidate/assets/$CHANNEL/manifest.json"
 INSTALLED_MANIFEST="$CAPSEM_HOME/assets/manifest.json"
 INSTALLED_METADATA="$CAPSEM_HOME/assets/manifest-metadata.json"
 MANIFEST_BEFORE_REJECTION="$SHARE/manifest-before-rejection.json"
 METADATA_BEFORE_REJECTION="$SHARE/manifest-metadata-before-rejection.json"
 SERVICE_LOG_DIR="$CAPSEM_HOME/run"
-# `service.log` names a daily-rotated stream, so the bare name is an empty
-# file the moment the service has rotated. Reading it directly polled
-# nothing for three minutes while the rejection this proof waits for sat in
-# `service.<date>.log`, and reported a service that had not rejected the
-# tampered manifest when it had.
-service_log_stream() {
-    cat "$SERVICE_LOG_DIR"/service*.log 2>/dev/null || true
-}
 SERVICE_PLIST="$HOME/Library/LaunchAgents/com.capsem.service.plist"
 SERVICE_PLIST_BACKUP="$SHARE/com.capsem.service.plist.before-glowup"
 RELEASE_HTTP_PORT=18765
 RELEASE_HTTP_LOG="$SHARE/release-http.log"
+RELEASE_HTTP_READY="$SHARE/release-http-ready.json"
 RELEASE_HTTP_PID=""
 BINARIES=(
     capsem
@@ -59,19 +60,23 @@ esac
 
 test -s "$PKG"
 test -f "$VERIFY"
+test -f "$TRANSITION_SUPPORT"
 test -f "$INSTALL_USER_REQUEST"
 test -f "$INSTALL_MANIFEST_REQUEST"
 test -s "$ORIGINAL_MANIFEST"
+test -s "$UPDATED_MANIFEST"
 test -s "$TAMPERED_MANIFEST"
+test -s "$INCOMPATIBLE_MANIFEST"
 test -s "$REMOTE_MANIFEST"
 cmp -s "$ORIGINAL_MANIFEST" "$REMOTE_MANIFEST"
-if cmp -s "$ORIGINAL_MANIFEST" "$TAMPERED_MANIFEST"; then
-    echo "ERROR: tampered manifest is byte-identical to the original" >&2
-    exit 1
-fi
+test "$(python3 "$TRANSITION_SUPPORT" sha256 "$ORIGINAL_MANIFEST")" != \
+    "$(python3 "$TRANSITION_SUPPORT" sha256 "$UPDATED_MANIFEST")"
 rm -f "$REPORT"
 rm -f "$INSTALLED_EVIDENCE"
+rm -f "$FRESH_INSTALLED_EVIDENCE"
 rm -f "$PRESERVED_INSTALLED_EVIDENCE"
+rm -f "$FRESH_TRANSITION_EVIDENCE" "$UPDATE_TRANSITION_EVIDENCE"
+rm -f "$TAMPER_REJECTION_EVIDENCE" "$INCOMPATIBLE_REJECTION_EVIDENCE"
 
 echo "=== Verifying clean guest precondition ==="
 if /usr/sbin/pkgutil --pkg-info com.capsem.pkg >/dev/null 2>&1; then
@@ -108,25 +113,17 @@ start_release_http_server() {
         echo "ERROR: manifest polling URL must be $expected_url (got: $MANIFEST_URL)" >&2
         exit 1
     fi
-    python3 -m http.server "$RELEASE_HTTP_PORT" \
-        --bind 127.0.0.1 \
-        --directory "$SHARE" \
+    rm -f "$RELEASE_HTTP_READY"
+    python3 "$SHARE/serve-release-test-root.py" \
+        --root "$SHARE" \
+        --ready-file "$RELEASE_HTTP_READY" \
+        --port "$RELEASE_HTTP_PORT" \
         >"$RELEASE_HTTP_LOG" 2>&1 &
     RELEASE_HTTP_PID=$!
     for attempt in $(seq 1 30); do
-        if python3 - "$MANIFEST_URL" "$ORIGINAL_MANIFEST" <<'PY'
-from pathlib import Path
-import sys
-import urllib.request
-
-try:
-    with urllib.request.urlopen(sys.argv[1], timeout=2) as response:
-        fetched = response.read()
-except OSError:
-    raise SystemExit(1)
-if fetched != Path(sys.argv[2]).read_bytes():
-    raise SystemExit(1)
-PY
+        if test -s "$RELEASE_HTTP_READY" && \
+            python3 "$TRANSITION_SUPPORT" assert-url \
+                "$MANIFEST_URL" "$ORIGINAL_MANIFEST"
         then
             return 0
         fi
@@ -136,6 +133,22 @@ PY
     return 1
 }
 
+observe_update_transition() {
+    local kind="$1" result="$2" candidate_manifest_sha="$3"
+    local after_line="$4" evidence_out="$5"
+    local previous_manifest_sha="${6:-}"
+    local command=(
+        python3 "$SHARE/release_transition.py"
+        --audit-log "$CAPSEM_HOME/logs/update.log" --after-line "$after_line"
+        --kind "$kind" --result "$result" --source "$MANIFEST_URL"
+        --candidate-manifest-sha256 "$candidate_manifest_sha" --timeout-seconds 180
+        --evidence-out "$evidence_out"
+    )
+    if test -n "$previous_manifest_sha"; then
+        command+=(--previous-manifest-sha256 "$previous_manifest_sha")
+    fi
+    "${command[@]}"
+}
 start_release_http_server
 
 echo "=== Installing exact shared package ==="
@@ -185,37 +198,23 @@ verify_channel() {
         --evidence-out "$evidence_out"
 }
 echo "=== Verifying initially installed channel ==="
-verify_channel "$PACKAGE_CHANNEL" "$MANIFEST_URL" "$INSTALLED_EVIDENCE"
+verify_channel "$PACKAGE_CHANNEL" "$MANIFEST_URL" "$FRESH_INSTALLED_EVIDENCE"
+ORIGINAL_MANIFEST_SHA=$(shasum -a 256 "$ORIGINAL_MANIFEST" | cut -d' ' -f1)
+observe_update_transition fresh_install activated "$ORIGINAL_MANIFEST_SHA" 0 \
+    "$FRESH_TRANSITION_EVIDENCE"
 
 profile_tree_digest() {
-    python3 - "$CAPSEM_HOME/profiles" <<'PY'
-import hashlib
-from pathlib import Path
-import sys
-
-root = Path(sys.argv[1])
-digest = hashlib.sha256()
-for path in sorted(candidate for candidate in root.rglob("*") if candidate.is_file()):
-    digest.update(path.relative_to(root).as_posix().encode())
-    digest.update(b"\0")
-    digest.update(hashlib.sha256(path.read_bytes()).digest())
-print(digest.hexdigest())
-PY
+    python3 "$TRANSITION_SUPPORT" tree-digest "$CAPSEM_HOME/profiles"
 }
 
-wait_for_automatic_rejection() {
-    local first_line="$1"
-    local attempt
-    for attempt in $(seq 1 90); do
-        if service_log_stream | tail -n "+$first_line" \
-            | grep -Fq "automatic release update failed"; then
-            return 0
-        fi
-        sleep 2
-    done
-    service_log_stream | tail -n "+$first_line" >&2 || true
-    launchctl print "gui/$(id -u)/com.capsem.service" >&2 || true
-    return 1
+audit_line() {
+    test -f "$CAPSEM_HOME/logs/update.log" \
+        && wc -l < "$CAPSEM_HOME/logs/update.log" || printf '0\n'
+}
+
+promote_candidate() {
+    python3 "$TRANSITION_SUPPORT" promote "$1" "$REMOTE_MANIFEST"
+    python3 "$TRANSITION_SUPPORT" assert-url "$MANIFEST_URL" "$1"
 }
 
 configure_fast_service_polling() {
@@ -242,41 +241,50 @@ configure_fast_service_polling() {
         | grep -F "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS"
 }
 
-echo "=== Rejecting a tampered manifest through automatic polling ==="
+echo "=== Activating a distinct valid update through automatic polling ==="
+configure_fast_service_polling
+UPDATE_AUDIT_FIRST_LINE=$(audit_line)
+promote_candidate "$UPDATED_MANIFEST"
+launchctl kickstart -k "gui/$(id -u)/com.capsem.service"
+UPDATED_MANIFEST_SHA=$(python3 "$TRANSITION_SUPPORT" sha256 "$UPDATED_MANIFEST")
+observe_update_transition profile_only activated "$UPDATED_MANIFEST_SHA" \
+    "$UPDATE_AUDIT_FIRST_LINE" "$UPDATE_TRANSITION_EVIDENCE"
+verify_channel "$CHANNEL" "$MANIFEST_URL" "$INSTALLED_EVIDENCE"
+
+echo "=== Capturing the activated state before rejection candidates ==="
 cp "$INSTALLED_MANIFEST" "$MANIFEST_BEFORE_REJECTION"
 cp "$INSTALLED_METADATA" "$METADATA_BEFORE_REJECTION"
 PROFILE_DIGEST_BEFORE=$(profile_tree_digest)
 mkdir -p "$SERVICE_LOG_DIR"
-SERVICE_LOG_FIRST_LINE=$(( $(service_log_stream | wc -l) + 1 ))
-cp "$TAMPERED_MANIFEST" "$REMOTE_MANIFEST"
-cmp -s "$TAMPERED_MANIFEST" "$REMOTE_MANIFEST"
-python3 - "$MANIFEST_URL" "$TAMPERED_MANIFEST" <<'PY'
-from pathlib import Path
-import sys
-import urllib.request
+PREVIOUS_MANIFEST_SHA=$(python3 "$TRANSITION_SUPPORT" sha256 "$MANIFEST_BEFORE_REJECTION")
 
-with urllib.request.urlopen(sys.argv[1], timeout=30) as response:
-    fetched = response.read()
-expected = Path(sys.argv[2]).read_bytes()
-if fetched != expected:
-    raise SystemExit("polled manifest URL did not expose the tampered candidate")
-PY
-configure_fast_service_polling
-wait_for_automatic_rejection "$SERVICE_LOG_FIRST_LINE"
+assert_activated_state_preserved() {
+    cmp -s "$MANIFEST_BEFORE_REJECTION" "$INSTALLED_MANIFEST"
+    cmp -s "$METADATA_BEFORE_REJECTION" "$INSTALLED_METADATA"
+    test "$(profile_tree_digest)" = "$PROFILE_DIGEST_BEFORE"
+    /usr/sbin/pkgutil --pkg-info com.capsem.pkg | grep -Fx "version: $VERSION"
+    verify_binary_cohort
+}
 
-echo "=== Proving the exact installed state survived rejection ==="
-cmp -s "$MANIFEST_BEFORE_REJECTION" "$INSTALLED_MANIFEST"
-cmp -s "$METADATA_BEFORE_REJECTION" "$INSTALLED_METADATA"
-test "$(profile_tree_digest)" = "$PROFILE_DIGEST_BEFORE"
-RECEIPT_AFTER=$(/usr/sbin/pkgutil --pkg-info com.capsem.pkg)
-printf '%s\n' "$RECEIPT_AFTER" | grep -Fx "version: $VERSION"
-test "$(/usr/libexec/PlistBuddy \
-    -c 'Print :CFBundleShortVersionString' \
-    "/Applications/Capsem.app/Contents/Info.plist")" = "$VERSION"
-verify_binary_cohort
+reject_candidate() {
+    local kind="$1" candidate="$2" evidence="$3"
+    local marker candidate_sha
+    marker=$(audit_line)
+    promote_candidate "$candidate"
+    launchctl kickstart -k "gui/$(id -u)/com.capsem.service"
+    candidate_sha=$(python3 "$TRANSITION_SUPPORT" sha256 "$candidate")
+    observe_update_transition "$kind" rejected "$candidate_sha" \
+        "$marker" "$evidence" "$PREVIOUS_MANIFEST_SHA"
+    assert_activated_state_preserved
+}
+
+echo "=== Rejecting tampered and incompatible candidates ==="
+reject_candidate tampered_artifact "$TAMPERED_MANIFEST" "$TAMPER_REJECTION_EVIDENCE"
+reject_candidate incompatible_profile "$INCOMPATIBLE_MANIFEST" \
+    "$INCOMPATIBLE_REJECTION_EVIDENCE"
 
 echo "=== Restoring the exact source and reproving the installed product ==="
-cp "$ORIGINAL_MANIFEST" "$REMOTE_MANIFEST"
+promote_candidate "$UPDATED_MANIFEST"
 launchctl kickstart -k "gui/$(id -u)/com.capsem.service"
 for attempt in $(seq 1 60); do
     STATUS_OUTPUT=$("$CAPSEM" status 2>/dev/null || true)
@@ -295,47 +303,15 @@ echo "=== Final installed-product status ==="
 STATUS=$(capsem status)
 printf '%s\n' "$STATUS"
 
-python3 - "$REPORT" "$INSTALLED_EVIDENCE" "$PRESERVED_INSTALLED_EVIDENCE" \
-    "$PKG" "$APP_VERSION" "$(uname -r)" "$(uname -m)" <<'PY'
-import hashlib
-import json
-from pathlib import Path
-import sys
-
-installed = json.loads(Path(sys.argv[2]).read_text())
-installed["package_receipt"] = True
-installed["binary_cohort"] = True
-preserved = json.loads(Path(sys.argv[3]).read_text())
-preserved["package_receipt"] = True
-preserved["binary_cohort"] = True
-package_sha256 = hashlib.sha256(Path(sys.argv[4]).read_bytes()).hexdigest()
-report = {
-    "schema": "capsem.release_glowup.guest.v1",
-    "artifact_sha256": package_sha256,
-    "installed": installed,
-    "preserved_installed": preserved,
-    "tamper_rejection": {
-        "schema": "capsem.installed_rejection.v1",
-        "kind": "tampered_artifact",
-        "result": "rejected",
-        "preserved_previous": True,
-        "manifest_unchanged": True,
-        "manifest_metadata_unchanged": True,
-        "profiles_unchanged": True,
-        "package_unchanged": True,
-        "service": "ok",
-        "gateway": "ok",
-    },
-    "guest": {
-        "app_version": sys.argv[5],
-        "kernel": sys.argv[6],
-        "architecture": sys.argv[7],
-        "clean_precondition": True,
-        "app_bundle": True,
-        "installed_binary_signature": "ad-hoc",
-    },
-}
-Path(sys.argv[1]).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-PY
+python3 "$TRANSITION_SUPPORT" write-report \
+    --output "$REPORT" --installed "$INSTALLED_EVIDENCE" \
+    --fresh-installed "$FRESH_INSTALLED_EVIDENCE" \
+    --preserved "$PRESERVED_INSTALLED_EVIDENCE" \
+    --fresh-transition "$FRESH_TRANSITION_EVIDENCE" \
+    --update-transition "$UPDATE_TRANSITION_EVIDENCE" \
+    --tamper-rejection "$TAMPER_REJECTION_EVIDENCE" \
+    --incompatible-rejection "$INCOMPATIBLE_REJECTION_EVIDENCE" \
+    --package "$PKG" --app-version "$APP_VERSION" \
+    --kernel "$(uname -r)" --architecture "$(uname -m)"
 
 echo "Tart macOS installed-package glow-up passed"

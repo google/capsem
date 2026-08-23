@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import cast
 from urllib.request import Request, urlopen
 
 from helpers.mock_server import (
@@ -95,8 +96,11 @@ def test_mock_server_serves_https_fixture() -> None:
     try:
         proc, ready = start_mock_server()
         assert ready["service"] == "capsem-mock-server"
-        parent_arg = proc.args.index("--parent-pid")
-        assert proc.args[parent_arg + 1] == str(os.getpid())
+        args = proc.args
+        assert isinstance(args, list)
+        argv = cast(list[str], args)
+        parent_arg = argv.index("--parent-pid")
+        assert argv[parent_arg + 1] == str(os.getpid())
         assert ready["https_base_url"].startswith("https://127.0.0.1:")
         context = ssl._create_unverified_context()
         with urlopen(f"{ready['https_base_url']}/tiny", context=context, timeout=2) as response:

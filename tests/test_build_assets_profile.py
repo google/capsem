@@ -93,7 +93,7 @@ def test_every_asset_build_rail_materializes_exact_bases_before_building() -> No
         rendered = _planned(command, **args)
         assert "materialize exact guest base images" in rendered
         assert "materialize locked guest Rust builders" in rendered
-        following = "image build" if command == "build-assets" else "container execution preflight"
+        following = "image build" if command == "build-assets" else "run container preflight"
         assert rendered.index("materialize exact guest base images") < rendered.index(following)
         if command == "build-assets":
             assert "prove Docker can execute arm64 containers" in rendered

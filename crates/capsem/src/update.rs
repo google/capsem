@@ -981,6 +981,10 @@ fn activate_staged_update_with_asset_audit(
         .source
         .as_deref()
         .context("staged update audit is missing its manifest source")?;
+    let candidate_manifest_sha256 = check
+        .channel_hash
+        .as_deref()
+        .context("staged update audit is missing its manifest SHA-256")?;
     let previous_state = installed_asset_audit_state(installed_assets);
     append_update_audit(serde_json::json!({
         "event": "asset_update_start",
@@ -988,6 +992,7 @@ fn activate_staged_update_with_asset_audit(
         "outcome": "started",
         "source": source,
         "channel": channel_from_source(source),
+        "candidate_manifest_sha256": candidate_manifest_sha256,
         "previous": previous_state
     }));
 
@@ -1000,6 +1005,7 @@ fn activate_staged_update_with_asset_audit(
             "outcome": "failure",
             "source": source,
             "channel": channel_from_source(source),
+            "candidate_manifest_sha256": candidate_manifest_sha256,
             "previous": previous_state,
             "current": installed_asset_audit_state(installed_assets),
             "error": format!("{error:#}")
@@ -1014,6 +1020,7 @@ fn activate_staged_update_with_asset_audit(
         "outcome": "success",
         "source": source,
         "channel": channel_from_source(source),
+        "candidate_manifest_sha256": candidate_manifest_sha256,
         "previous": previous_state,
         "current": current_state,
         "changed_fields": changed_asset_audit_fields(&previous_state, &current_state)
@@ -2413,7 +2420,24 @@ async fn fetch_selected_channel_update_check(
     let body = release_http_get_bytes(url, Some("application/json"), &selection.url)
         .await
         .with_context(|| format!("read release manifest from {}", selection.url))?;
-    verify_selected_channel_manifest(selection, &body)?;
+    if let Err(error) = verify_selected_channel_manifest(selection, &body) {
+        let current = capsem_core::asset_manager::default_assets_dir()
+            .map(|path| installed_asset_audit_state(&path))
+            .unwrap_or(serde_json::Value::Null);
+        append_update_audit(serde_json::json!({
+            "event": "release_candidate_rejected",
+            "action": "release_candidate",
+            "outcome": "failure",
+            "source": selection.url,
+            "channel": selection.channel,
+            "candidate_manifest_sha256": sha256_hex(&body),
+            "expected_manifest_sha256": selection.sha256,
+            "previous": current,
+            "current": current,
+            "error": format!("{error:#}")
+        }));
+        return Err(error);
+    }
     let channel_hash = channel_payload_hash(&body);
     let mut check =
         update_check_from_release_payload(&body, layout, &selection.url, Some(channel_hash))?;
@@ -2830,9 +2854,42 @@ pub async fn run_update(
         return Ok(());
     }
 
+    let candidate_source = check
+        .source
+        .as_deref()
+        .context("verified update is missing its manifest source")?;
+    let candidate_manifest_sha256 = sha256_hex(&manifest_bytes);
+    let candidate_assets_dir = capsem_core::asset_manager::default_assets_dir()
+        .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
+    let candidate_previous_state = installed_asset_audit_state(&candidate_assets_dir);
     let staged_update = if yes {
-        let plan = plan_verified_update(&check, &manifest_bytes, &current)
-            .context("release manifest does not describe a complete compatible update")?;
+        append_update_audit(serde_json::json!({
+            "event": "release_candidate_fetched",
+            "action": "release_candidate",
+            "outcome": "fetched",
+            "source": candidate_source,
+            "channel": channel_from_source(candidate_source),
+            "candidate_manifest_sha256": candidate_manifest_sha256,
+            "previous": candidate_previous_state
+        }));
+        let plan = match plan_verified_update(&check, &manifest_bytes, &current) {
+            Ok(plan) => plan,
+            Err(error) => {
+                append_update_audit(serde_json::json!({
+                    "event": "release_candidate_rejected",
+                    "action": "release_candidate",
+                    "outcome": "failure",
+                    "source": candidate_source,
+                    "channel": channel_from_source(candidate_source),
+                    "candidate_manifest_sha256": candidate_manifest_sha256,
+                    "previous": candidate_previous_state,
+                    "current": installed_asset_audit_state(&candidate_assets_dir),
+                    "error": format!("{error:#}")
+                }));
+                return Err(error)
+                    .context("release manifest does not describe a complete compatible update");
+            }
+        };
         if plan.steps.is_empty() && selected_channel.is_none() {
             None
         } else {
@@ -2892,6 +2949,17 @@ pub async fn run_update(
                             "error": format!("{error:#}")
                         }));
                     }
+                    append_update_audit(serde_json::json!({
+                        "event": "release_candidate_rejected",
+                        "action": "release_candidate",
+                        "outcome": "failure",
+                        "source": candidate_source,
+                        "channel": channel_from_source(candidate_source),
+                        "candidate_manifest_sha256": candidate_manifest_sha256,
+                        "previous": candidate_previous_state,
+                        "current": installed_asset_audit_state(&candidate_assets_dir),
+                        "error": format!("{error:#}")
+                    }));
                     return Err(error);
                 }
             };
@@ -3025,8 +3093,29 @@ pub async fn run_update(
                         }));
                     }
                 }
+                append_update_audit(serde_json::json!({
+                    "event": "release_candidate_rejected",
+                    "action": "release_candidate",
+                    "outcome": "failure",
+                    "source": candidate_source,
+                    "channel": channel_from_source(candidate_source),
+                    "candidate_manifest_sha256": candidate_manifest_sha256,
+                    "previous": candidate_previous_state,
+                    "current": installed_asset_audit_state(&installed_assets),
+                    "error": format!("{error:#}")
+                }));
                 return Err(error);
             }
+            append_update_audit(serde_json::json!({
+                "event": "release_candidate_activated",
+                "action": "release_candidate",
+                "outcome": "success",
+                "source": candidate_source,
+                "channel": channel_from_source(candidate_source),
+                "candidate_manifest_sha256": candidate_manifest_sha256,
+                "previous": candidate_previous_state,
+                "current": installed_asset_audit_state(&installed_assets)
+            }));
             did_update = true;
 
             if binary_applied {
@@ -3376,6 +3465,9 @@ async fn refresh_assets(
         remote_manifest_asset_source(&assets_dir)?
     };
     if let Some(source) = refresh_source {
+        let candidate_manifest_sha256 = selected_payload
+            .or_else(|| explicit_manifest.and_then(|input| input.payload.as_deref()))
+            .map(sha256_hex);
         let previous = InstalledManifestSnapshot::capture(&assets_dir)?;
         let previous_state = installed_asset_audit_state(&assets_dir);
         append_update_audit(serde_json::json!({
@@ -3384,6 +3476,7 @@ async fn refresh_assets(
             "outcome": "started",
             "source": source,
             "channel": channel_from_source(&source),
+            "candidate_manifest_sha256": candidate_manifest_sha256.as_deref(),
             "previous": previous_state
         }));
         let refresh_result: Result<()> = async {
@@ -3441,6 +3534,7 @@ async fn refresh_assets(
                 "outcome": "failure",
                 "source": source,
                 "channel": channel_from_source(&source),
+                "candidate_manifest_sha256": candidate_manifest_sha256.as_deref(),
                 "previous": previous_state,
                 "current": installed_asset_audit_state(&assets_dir),
                 "error": format!("{error:#}")
@@ -3455,6 +3549,7 @@ async fn refresh_assets(
             "outcome": "success",
             "source": source,
             "channel": channel_from_source(&source),
+            "candidate_manifest_sha256": candidate_manifest_sha256.as_deref(),
             "previous": previous_state,
             "current": current_state,
             "changed_fields": changed_asset_audit_fields(&previous_state, &current_state)
