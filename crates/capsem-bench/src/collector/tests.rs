@@ -84,14 +84,14 @@ fn a_sidecar_is_carried_when_present() {
 
 #[test]
 fn a_collector_that_fails_is_reported_with_its_status() {
-    let error = run(Path::new("/bin/false"), &[], Duration::from_secs(5))
+    let error = run(Path::new("false"), &[], Duration::from_secs(5))
         .expect_err("must refuse");
     assert!(error.to_string().contains("exited with"), "{error}");
 }
 
 #[test]
 fn a_collector_that_prints_nothing_is_refused() {
-    let error = run(Path::new("/bin/true"), &[], Duration::from_secs(5))
+    let error = run(Path::new("true"), &[], Duration::from_secs(5))
         .expect_err("must refuse");
     assert!(
         format!("{error:#}").contains("no JSON document"),
@@ -104,7 +104,7 @@ fn a_collector_that_hangs_is_killed() {
     // A collector that never exits would otherwise hold the machine lock the
     // whole gate runs under.
     let error = run(
-        Path::new("/bin/sleep"),
+        Path::new("sleep"),
         &["30".to_string()],
         Duration::from_millis(200),
     )
@@ -126,7 +126,7 @@ fn a_missing_collector_is_reported_by_name() {
 #[test]
 fn a_real_collector_round_trips() {
     let error = run(
-        Path::new("/bin/echo"),
+        Path::new("echo"),
         &[SAMPLE.to_string()],
         Duration::from_secs(5),
     );

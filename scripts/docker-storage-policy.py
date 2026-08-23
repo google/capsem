@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from capsem.storagepolicyretention import (
     cache_violations,
     protect_generations,
@@ -1016,9 +1017,7 @@ def command_reclaim(args: argparse.Namespace, policy: dict[str, Any]) -> int:
     protected = set(getattr(args, "protect", ()))
     invalid = sorted(tag for tag in protected if tag.rsplit(":", 1)[0] != repository)
     if invalid:
-        raise ValueError(
-            f"protected images are not tags of {repository!r}: {', '.join(invalid)}"
-        )
+        raise ValueError(f"protected images are not tags of {repository!r}: {', '.join(invalid)}")
 
     generations = image_generations(repository)
     if not any(row["ref"] == args.keep for row in generations):

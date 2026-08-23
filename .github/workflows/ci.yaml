@@ -431,6 +431,7 @@ jobs:
             --defer-proof
 
       - name: Run install e2e tests
+        id: install_e2e
         run: |
           uv run capsem-gate install \
             --selected-content-root target/ci-install-content
@@ -444,7 +445,10 @@ jobs:
             target/gate-runs/
             target/local-release-glowup-evidence/
           retention-days: 7
-          if-no-files-found: error
+          # Input resolution can fail before a gate exists. Preserve that
+          # primary failure without adding a misleading upload failure, while
+          # keeping missing evidence fatal when the install gate itself ran.
+          if-no-files-found: ${{ steps.install_e2e.outcome == 'failure' && 'error' || 'warn' }}
 
   # ---------------------------------------------------------------------------
   # Web: build docs and marketing before pr-gate can pass

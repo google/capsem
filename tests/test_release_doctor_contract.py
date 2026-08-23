@@ -5354,13 +5354,17 @@ def test_hosted_install_failure_uploads_exact_gate_and_glowup_evidence() -> None
     )
     evidence = gate_config.load(PROJECT_ROOT).install.layout.glowup_evidence
 
+    install = next(row for row in job["steps"] if row.get("name") == "Run install e2e tests")
+    assert install["id"] == "install_e2e"
     assert step["if"] == "failure()"
     assert step["uses"] == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
     assert set(step["with"]["path"].splitlines()) == {
         "target/gate-runs/",
         f"{evidence}/",
     }
-    assert step["with"]["if-no-files-found"] == "error"
+    assert step["with"]["if-no-files-found"] == (
+        "${{ steps.install_e2e.outcome == 'failure' && 'error' || 'warn' }}"
+    )
 
 
 def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:

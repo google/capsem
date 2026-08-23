@@ -3074,7 +3074,9 @@ def test_ci_install_job_uploads_glowup_evidence_on_failure() -> None:
         "target/gate-runs/",
         "target/local-release-glowup-evidence/",
     }
-    assert upload["with"]["if-no-files-found"] == "error"
+    assert upload["with"]["if-no-files-found"] == (
+        "${{ steps.install_e2e.outcome == 'failure' && 'error' || 'warn' }}"
+    )
 
 
 def test_asset_build_recipes_skip_kvm_only_for_build_prereq_doctor() -> None:

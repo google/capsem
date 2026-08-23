@@ -324,6 +324,30 @@ exec "$@"
     ]
 
 
+def test_policy_controller_resolves_shared_code_without_project_environment() -> None:
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--no-project",
+            "--python",
+            "3.12",
+            "python",
+            str(POLICY_SCRIPT),
+            "shell",
+            "--rail",
+            "default",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "CAPSEM_DOCKER_MINIMUM_DISK_GIB=" in result.stdout
+
+
 def test_size_parser_and_system_df_are_byte_exact() -> None:
     policy_module = load_policy_module()
     rows = policy_module.parse_system_df(
