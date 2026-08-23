@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Exact-source candidate qualification can still resume recursively proven
+  work, but public release attempts and release CI now reject explicit
+  `--from`, `--prefix`, and `--until`. The publication graph previously derived
+  carried steps from graph shape alone, so a named frontier could skip fresh
+  qualification acceptance, remote-main validation, preflight, or mutable
+  channel resolution without any prior-attempt journal proving that work.
+
 - `pip` moves to 26.2.1. PYSEC-2026-3721 was published against 26.1.2, which
   the lock pinned transitively through `pip-api` under `pip-audit` -- the audit
   tool's own dependency tripping the audit. Only that one package changed.

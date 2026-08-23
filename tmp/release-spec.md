@@ -504,7 +504,11 @@ by that full commit. The mutable outer checkout and branch are not
 qualification inputs and MAY advance while it runs. Each release command MUST
 require and revalidate that complete exact-commit journal before any source
 publication or dispatch. It MUST NOT repeat the local candidate, edit tracked
-source, create a preparation commit, or push `main` after the proof.
+source, create a preparation commit, or push `main` after the proof. It MUST
+NOT accept a continuation frontier or retained prefix for its short
+publication graph: qualification acceptance, remote-main validation, mutable
+channel resolution, immutable source publication, and dispatch MUST run fresh
+on every release attempt.
 
 The runner MUST archive each exact-source attempt journal independently of
 ordinary run rotation. A repeated `just test <source-commit>` MUST return

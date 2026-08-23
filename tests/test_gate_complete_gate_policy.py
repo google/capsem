@@ -196,22 +196,13 @@ def test_complete_qualification_accepts_explicit_enforcement(
     assert command._runner.commands == []
 
 
-@pytest.mark.parametrize("name", ["release-binaries", "release-profile"])
-def test_a_public_release_still_refuses_a_step_its_plan_does_not_have(
-    name: str,
-) -> None:
-    """Resume is allowed here now; a nonexistent frontier still is not.
-
-    Publishing used to close resume outright, which conflated reusing proven
-    work with skipping work nobody did. What remains is the check that
-    actually protects anything: the named step has to be in this plan.
-    """
+def test_a_local_resume_still_refuses_a_step_its_plan_does_not_have() -> None:
+    """A diagnostic continuation names the bad frontier and its plan."""
     command = _command(
-        name,
+        "candidate",
         dry_run=True,
         prefix=None,
         resume_from="no-such-step",
-        **QUALIFIED_RELEASES[name],
     )
 
     with pytest.raises(GateError, match="no step named 'no-such-step'"):
@@ -439,13 +430,13 @@ def test_the_policy_is_stated_as_policy_not_as_one_command_name() -> None:
 
 
 @pytest.mark.parametrize("name", ["release-binaries", "release-profile"])
-def test_a_public_release_may_carry_proven_work(name: str) -> None:
-    """The whole point of removing the refusal.
+def test_a_public_release_cannot_carry_its_publication_prerequisites(name: str) -> None:
+    """Only candidate qualification has recursively verified resume evidence.
 
-    A release that had to repeat a proven prefix cost ~160 minutes per
-    attempt, which is what four consecutive re-qualifications of one 0.6.0
-    release actually cost. A carried step is still recorded as `carried`, so
-    nothing reads this as a clean run of the whole graph.
+    A public release plan is a short, fresh consumer. Allowing ``--from`` here
+    derived authority from graph shape alone and could carry
+    ``qualification.accept``, ``source.remote-main``, ``precheck`` and the
+    mutable ``channel-source`` fetch without any prior-attempt evidence.
     """
     command = _command(
         name,
@@ -454,4 +445,7 @@ def test_a_public_release_may_carry_proven_work(name: str) -> None:
         resume_from="source.publish-ref",
         **QUALIFIED_RELEASES[name],
     )
-    command.execute()  # must not raise
+    with pytest.raises(GateError, match="--from cannot be used while qualifying a release"):
+        command.execute()
+
+    assert command._runner.commands == []

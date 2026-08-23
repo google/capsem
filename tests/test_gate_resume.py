@@ -201,37 +201,36 @@ def test_carrying_nothing_is_the_default() -> None:
 # -- the refusals that keep it from being a skip flag ------------------------
 
 
-def test_a_release_run_carries_proven_work_like_any_other() -> None:
-    """Reusing proven work is not a reduced gate.
+def test_release_qualification_refuses_a_frontier_derived_only_from_graph_shape() -> None:
+    """A release attempt has no recursively verified continuation lineage.
 
-    This used to refuse outright, on the theory that carrying steps "this
-    process did not execute" is the reduced gate the release process forbids.
-    That conflates two different things. A skipped step is work nobody did. A
-    carried step is work that ran, in this prefix, on this source, and is
-    recorded as `carried` rather than `ok` so the run log never claims
-    otherwise. `find_complete` was already written to accept a resumed
-    lineage -- it reads `attempt.resumed.parent` -- so the refusal contradicted
-    the evidence machinery built to handle it.
-
-    The cost was measured: four consecutive qualifying runs at ~160 minutes
-    each, where the justfile promises "a second commit cost minutes rather
-    than an hour".
+    Candidate qualification validates its requested frontier against archived
+    exact-source evidence in ``qualificationflow.decide``. Public dispatch and
+    release CI cannot make that claim: deriving their carried work from graph
+    shape alone could skip qualification acceptance or a fresh mutable channel
+    fetch. They must run every release-attempt edge.
     """
     from capsem.gate import resume
+    from capsem.gate.errors import GateError
 
     plan = _candidate_plan()
-    carried = resume.carried(plan, _config(), "artifacts.build-chain", qualifying=True)
-    assert carried, "a qualifying run must be able to carry proven ancestors"
-    assert carried == resume.carried(plan, _config(), "artifacts.build-chain", qualifying=False)
+    with pytest.raises(GateError, match="--from cannot be used while qualifying a release"):
+        resume.carried(plan, _config(), "artifacts.build-chain", qualifying=True)
+
+    assert resume.carried(
+        plan, _config(), "artifacts.build-chain", qualifying=False
+    ), "local candidate qualification validates this carry against its journal later"
 
 
 def test_scratch_carries_nothing_however_much_is_proven() -> None:
     """The escape hatch, for when a local pass must mean a cold pass."""
     from capsem.gate import resume
+    from capsem.gate.errors import GateError
 
     plan = _candidate_plan()
     assert resume.carried(plan, _config(), resume.SCRATCH, qualifying=False) == frozenset()
-    assert resume.carried(plan, _config(), resume.SCRATCH, qualifying=True) == frozenset()
+    with pytest.raises(GateError, match="--from cannot be used while qualifying a release"):
+        resume.carried(plan, _config(), resume.SCRATCH, qualifying=True)
 
 
 def test_auto_leaves_the_frontier_to_the_gate() -> None:
@@ -244,6 +243,7 @@ def test_auto_leaves_the_frontier_to_the_gate() -> None:
 
     plan = _candidate_plan()
     assert resume.carried(plan, _config(), resume.AUTO, qualifying=False) == frozenset()
+    assert resume.carried(plan, _config(), resume.AUTO, qualifying=True) == frozenset()
     assert resume.explicit(resume.AUTO) is None
     assert resume.explicit(resume.SCRATCH) == resume.SCRATCH
     assert resume.explicit("artifacts.build-chain") == "artifacts.build-chain"
@@ -476,6 +476,25 @@ def test_a_release_refuses_until_for_the_reason_it_refuses_from() -> None:
             gate_plan("candidate"),
             gate_config.load(PROJECT_ROOT),
             Namespace(stop_before="glowup.install"),
+            qualifying=True,
+        )
+
+
+def test_a_release_refuses_a_named_prefix_even_with_the_default_frontier() -> None:
+    """A retained directory is continuation authority only for candidate evidence."""
+    from argparse import Namespace
+
+    from helpers.gate import gate_plan
+
+    from capsem.gate import config as gate_config
+    from capsem.gate import resume
+    from capsem.gate.errors import GateError
+
+    with pytest.raises(GateError, match="--prefix cannot be used while qualifying a release"):
+        resume.resolve(
+            gate_plan("candidate"),
+            gate_config.load(PROJECT_ROOT),
+            Namespace(prefix="/tmp/not-evidence", resume_from=resume.AUTO),
             qualifying=True,
         )
 

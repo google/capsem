@@ -122,11 +122,18 @@ After that gate succeeds, both commands create or verify the lightweight
 that tag while also passing `source_commit`. A different existing target,
 malformed run identity, or workflow whose head SHA/ref changes is fatal.
 
-Reusing proven work is not on this list. `--from` resumes a release the same
-way it resumes any other run, and `auto` is the default -- a carried step ran,
-in this prefix, on this source, and the run log records it as `carried` rather
-than `ok`. Refusing that cost four consecutive 160-minute qualifications of one
-release. What stays forbidden is work nobody did.
+Reusing recursively proven candidate work is not on this list. `auto` is the
+candidate default: a carried step ran in the retained full-SHA prefix on this
+source, its archived parent journal proves the ancestry, and the child records
+it as `carried` rather than `ok`. Refusing that reuse cost four consecutive
+160-minute qualifications of one release.
+
+Do not extend candidate continuation authority to release attempts. Release CI
+and the two public dispatch commands have no recursively verified journal for
+their short release graph, so explicit `--from`, `--prefix`, and `--until` are
+refused. Qualification acceptance, remote-main validation, mutable channel
+resolution, immutable source publication, and final dispatch run fresh on
+every public attempt.
 
 Do not introduce a skip flag, release-only reduced gate, preparation recipe,
 environment-variable bypass, or direct checked-in caller of:

@@ -18,15 +18,18 @@ the same every time and can be checked before anything executes -- what comes
 before a step is a property of the plan, not of what happened to succeed last
 night.
 
-**Reusing proven work is not a reduced gate.** This used to refuse a resume
-outright whenever the run was qualifying a release, on the theory that
-carrying steps "this process did not execute" is the reduced gate the release
-process forbids. That conflates two different things: a *skipped* step is work
-nobody did, a *carried* step is work that ran, in this prefix, on this source.
-`find_complete` was already written to accept a resumed lineage -- it reads
-`attempt.resumed.parent` -- so the refusal contradicted the evidence machinery
-built to handle it, and cost four consecutive 160-minute qualifications where
-the justfile promises "a second commit cost minutes rather than an hour".
+**Reusing proven work is not a reduced candidate gate.** A *skipped* step is
+work nobody did; a *carried* step is work recursively proven by archived
+exact-source journals in this retained prefix. `find_complete` accepts that
+lineage through `attempt.resumed.parent`, so a local candidate may resume
+without pretending the child process ran every ancestor.
+
+That authority does not extend to release attempts. Release CI and the two
+public dispatch commands have no recursively verified continuation journal for
+their short release graph. Deriving carry from graph shape alone would let a
+caller skip fresh qualification acceptance, remote-main validation, or mutable
+channel resolution. Those runs therefore reject `--from`, `--prefix`, and
+`--until`; their release-attempt edges always execute.
 
 Two things keep it honest, and they are the ones that always did the work:
 
@@ -136,12 +139,18 @@ def explicit(label: str | None) -> str | None:
 def carried(plan, config: GateConfig, label: str | None, *, qualifying: bool) -> frozenset[str]:
     """The steps a `--from` run may skip.
 
-    `qualifying` is accepted and ignored: a carried step is proven work, and
-    the run log records it as `carried` rather than `ok` so nothing can read a
-    resumed run as a clean one. See the module docstring.
+    A local candidate validates the derived set against its exact-source
+    journal later in ``qualificationflow.decide``. A release attempt has no
+    such lineage for its release graph, so it cannot name a frontier at all.
     """
-    del qualifying
-    if label in (None, AUTO, SCRATCH):
+    if label in (None, AUTO):
+        return frozenset()
+    if qualifying:
+        raise GateError(
+            "--from cannot be used while qualifying a release. Release attempts "
+            "must freshly revalidate qualification and mutable channel state."
+        )
+    if label == SCRATCH:
         return frozenset()
     del config
     return frozenset(
@@ -185,4 +194,9 @@ def resolve(
     # process will not execute, and a release refuses either.
     carried_steps |= stopped(plan, getattr(args, "stop_before", None), qualifying=qualifying)
     named = getattr(args, "prefix", None)
+    if qualifying and named is not None:
+        raise GateError(
+            "--prefix cannot be used while qualifying a release. Release attempts "
+            "have no retained continuation prefix authority."
+        )
     return carried_steps, existing(config, named) if named else None
