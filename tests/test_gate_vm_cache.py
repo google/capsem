@@ -374,10 +374,13 @@ def test_equal_inputs_in_two_prefixes_select_one_vm_image_generation(tmp_path: P
     ).resolve()
 
 
-def test_retained_prefix_receipts_pin_both_source_and_helper_images(tmp_path: Path) -> None:
+def test_retained_prefix_receipts_pin_both_source_and_helper_images(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from capsem.gate import imagecache
 
     config = _config(tmp_path)
+    monkeypatch.delenv(config.environment.source_checkout, raising=False)
     retained = Path(config.prefix.parent) / "deadbeef"
     receipt = retained / config.install.builder.source_identity_file
     receipt.parent.mkdir(parents=True)
@@ -410,10 +413,52 @@ def test_retained_prefix_receipts_pin_both_source_and_helper_images(tmp_path: Pa
     ) == ("capsem-install-builder:helper",)
 
 
-def test_a_partial_or_malformed_receipt_cannot_pin_a_docker_image(tmp_path: Path) -> None:
+def test_the_active_source_checkout_receipt_pins_its_docker_images(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from capsem.gate import imagecache
 
     config = _config(tmp_path)
+    source = tmp_path / "active-source"
+    receipt = source / config.install.builder.source_identity_file
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        json.dumps(
+            {
+                "schema": imagecache.RECEIPT_SCHEMA,
+                "input_key": "capsem-install-test:source",
+                "input_digest": "a" * 64,
+                "image_id": RECORDED_IMAGE_ID,
+                "image_reference": "capsem-install-test:source",
+                "helper_input_key": "capsem-install-builder:helper",
+                "helper_image_id": RECORDED_IMAGE_ID,
+                "source_digest": "b" * 64,
+                "runtime_digest": "c" * 64,
+                "platform": "linux/amd64",
+                "image_size_bytes": 1,
+                "created_at": 1,
+                "last_used_at": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(config.environment.source_checkout, str(source))
+
+    assert imagecache.protected_tags(
+        config, "capsem-install-test", field="input_key"
+    ) == ("capsem-install-test:source",)
+    assert imagecache.protected_tags(
+        config, "capsem-install-builder", field="helper_input_key"
+    ) == ("capsem-install-builder:helper",)
+
+
+def test_a_partial_or_malformed_receipt_cannot_pin_a_docker_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from capsem.gate import imagecache
+
+    config = _config(tmp_path)
+    monkeypatch.delenv(config.environment.source_checkout, raising=False)
     receipt = (
         Path(config.prefix.parent)
         / "deadbeef"

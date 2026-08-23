@@ -126,6 +126,12 @@
   and revalidates the prior catalog/member graph; a failed preview never
   touches production. The reusable staging caller explicitly disables
   production activation.
+- Exact qualification of `f57ff8e0` stopped before artifact and VM work after
+  5,143 release contracts passed and two VM-cache tests inherited the gate's
+  real `CAPSEM_GATE_SOURCE_CHECKOUT`. Those tests now isolate their temporary
+  receipt lineage, while a separate positive regression proves that an active
+  source-checkout receipt still pins its exact source and helper images. No
+  release was attempted from the failed journal.
 
 ## Coverage Ledger
 
