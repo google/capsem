@@ -15,6 +15,7 @@
 - [x] S05-001 — prove atomic channel activation and rollback
 - [x] S05-003 — repair exact-qualification cache and ledger blockers
 - [x] S05-004 — repair concurrent exact-source inspection
+- [x] S05-005 — restore the hard gate-module shape bound
 - [ ] S05-002 — qualify and verify stable, then nightly
 - [ ] Changelog entries at user-visible milestones
 - [ ] Exact-source complete qualification
@@ -152,6 +153,12 @@
   existing digest-verified `source.record` snapshot, while ordinary dirty-tree
   development continues to inspect the current working tree. A failed digest
   now includes its captured child diagnostic instead of only an exit status.
+- Exact qualification of `40e03cfa` passed 5,147 release contracts and failed
+  only the hard gate-module shape guard: `snapshot.py` reached 303 lines against
+  the existing 300-line ceiling. Run `20260823-202150-f78f61-candidate` retained
+  the diagnostic and correctly skipped all 93 downstream steps. S05-005 owns a
+  source-only reduction that preserves the new diagnostic and snapshot
+  ownership without raising the architectural limit.
 
 ## Coverage Ledger
 
@@ -165,7 +172,10 @@
   79 source/Citadel guards, and 14 binary-release script contracts); S05-003's
   bounded generation-policy cohort is green (49 passed); S05-004's focused
   ownership/error regressions are green (3 passed) and the affected bootstrap,
-  candidate, and prefix cohort is green (98 passed)
+  candidate, and prefix cohort is green (98 passed); S05-005 restores the hard
+  module boundary at 300 lines with focused proof (2 passed), lint, and the
+  corrected affected boundary/prefix/bootstrap/candidate cohort (286 passed,
+  2 platform skips)
 - Functional: mandatory zero-construction warm hit and prefix salvage/lend path
   green through production functions; real cold/warm image reuse is green on
   the identical exact child with a 2m30s cold and 35.8s warm run
@@ -195,6 +205,7 @@
   are green on Linux, while execution on physical Apple Silicon and public
   stable/nightly activation remain owned by S05-002's exact release gate.
   Broad service-main decomposition is outside this sprint. Exact candidate run
-  `20260823-195535-da3a79-candidate` is not publishable: 31 steps passed, the
-  release-contract step failed, and 93 downstream qualification/release steps
-  were skipped. A new exact qualification remains mandatory.
+  `20260823-202150-f78f61-candidate` is not publishable: 31 steps passed, 5,147
+  release contracts passed, the module-shape contract failed, and 93 downstream
+  qualification/release steps were skipped. A new exact qualification remains
+  mandatory.

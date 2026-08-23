@@ -75,7 +75,10 @@ is the checked-in durable summary required by the development-sprint contract.
 11. Make exact-run contract introspection derive from `source.record`'s one
     immutable verified snapshot instead of resnapshotting the active gate root
     under xdist, and preserve the child digest diagnostic on failure.
-12. Require green CI, focused stability repetitions, staging fault injection,
+12. Restore the hard 300-line gate-module boundary exposed by exact
+    qualification while retaining source-digest diagnostics and snapshot
+    ownership; do not raise the ceiling or add a debt ratchet.
+13. Require green CI, focused stability repetitions, staging fault injection,
     one complete exact-source qualification, stable publication, then nightly.
 
 ## Proof Matrix

@@ -103,9 +103,7 @@ def _copy_files(source: Path, target: Path, relatives: list[Path]) -> None:
     for relative in links:
         destination = target / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        # Cleared first, because this runs a second time on every resume: `cp`
-        # overwrites a regular file and `os.symlink` refuses an existing one,
-        # so a reused prefix died on `FileExistsError` before any step ran.
+        # A resumed prefix may replace a file with a symlink, so clear it first.
         destination.unlink(missing_ok=True)
         destination.symlink_to(os.readlink(source / relative))
 
@@ -119,9 +117,8 @@ def digest(tree: Path, config: GateConfig) -> str:
     hour later -- a copy that satisfies a private definition and fails the
     shared one has proved nothing.
 
-    Always the script belonging to the tree this process is running in, aimed
-    at whichever tree is being asked about, so both answers come from one
-    implementation and one environment.
+    Use the running tree's script so both answers share one implementation and
+    environment.
     """
     completed = subprocess.run(
         [
