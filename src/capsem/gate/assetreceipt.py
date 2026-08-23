@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import stat
+import time
 from pathlib import Path
+from typing import cast
 
 from capsem.obom import validate_exported_rootfs_obom
 
@@ -13,7 +16,7 @@ from .config import Arch, GateConfig
 from .errors import GateError
 from .filesystem import digest_of, write_text
 
-SCHEMA = "capsem.asset-lane-receipt.v1"
+SCHEMA = "capsem.asset-lane-receipt.v2"
 BUILD_STAGE = "build"
 PACKED_STAGE = "packed"
 REUSABLE_STAGES = frozenset({BUILD_STAGE, PACKED_STAGE})
@@ -22,6 +25,31 @@ PACKED_STAGES = frozenset({PACKED_STAGE})
 
 def _path(config: GateConfig, output: Path) -> Path:
     return output / config.assets.lane_receipt
+
+
+def _location_matches(
+    config: GateConfig,
+    output: Path,
+    identity: str,
+    *,
+    profile: str,
+    architecture: str,
+) -> bool:
+    if len(identity) != 64 or identity.strip("0123456789abcdef") or not profile or Path(profile).name != profile:
+        return False
+    cached = (
+        Path(config.prefix.vm_image_cache.format(parent=config.prefix.parent)).expanduser()
+        / identity
+        / profile
+        / f"build-{architecture}"
+    )
+    local = config.path(config.assets.test_root) / profile / f"build-{architecture}"
+    resolved = output.resolve()
+    if resolved == cached.resolve():
+        return True
+    # Resolving `local` again would bless a malicious selector outside both roots.
+    local_output = Path(os.path.abspath(local))
+    return not output.is_symlink() and Path(os.path.abspath(output)) == local_output
 
 
 def _required(config: GateConfig) -> tuple[str, ...]:
@@ -63,6 +91,14 @@ def _document(
 ) -> dict[str, object]:
     if stage not in REUSABLE_STAGES:
         raise GateError(f"unknown asset lane receipt stage {stage!r}")
+    if not _location_matches(
+        config,
+        output,
+        identity,
+        profile=profile,
+        architecture=arch.name,
+    ):
+        raise GateError(f"asset lane output {output} is outside its content-addressed cache path")
     produced = output / arch.name
     missing = [
         name
@@ -96,6 +132,66 @@ def _document(
     }
 
 
+def _size(document: dict[str, object]) -> int:
+    files = document["files"]
+    if not isinstance(files, dict):
+        raise GateError("asset lane receipt files must be an object")
+    total = 0
+    for entry in files.values():
+        if not isinstance(entry, dict):
+            continue
+        fields = cast(dict[str, object], entry)
+        size = fields.get("size")
+        if (
+            fields.get("kind") == "file"
+            and isinstance(size, int)
+            and not isinstance(size, bool)
+        ):
+            total += size
+    return total
+
+
+def _with_cache_metadata(document: dict[str, object], *, now: float) -> dict[str, object]:
+    return {
+        **document,
+        "created_at": now,
+        "last_used_at": now,
+        "size_bytes": _size(document),
+    }
+
+
+def _split(document: object) -> tuple[dict[str, object], float, float, int]:
+    if not isinstance(document, dict):
+        raise GateError("asset lane receipt must be an object")
+    stable = dict(document)
+    try:
+        created = stable.pop("created_at")
+        last_used = stable.pop("last_used_at")
+        size = stable.pop("size_bytes")
+    except KeyError as error:
+        raise GateError("asset lane receipt omits cache metadata") from error
+    if (
+        not isinstance(created, (int, float))
+        or isinstance(created, bool)
+        or not isinstance(last_used, (int, float))
+        or isinstance(last_used, bool)
+        or not isinstance(size, int)
+        or isinstance(size, bool)
+        or created < 0
+        or last_used < created
+        or size < 0
+    ):
+        raise GateError("asset lane receipt cache metadata is invalid")
+    try:
+        created_at = float(created)
+        used_at = float(last_used)
+    except OverflowError as error:
+        raise GateError("asset lane receipt cache timestamps overflow") from error
+    if not math.isfinite(created_at) or not math.isfinite(used_at):
+        raise GateError("asset lane receipt cache timestamps must be finite")
+    return stable, created_at, used_at, size
+
+
 def record(
     config: GateConfig,
     output: Path,
@@ -106,7 +202,10 @@ def record(
     stage: str,
 ) -> None:
     """Atomically bind exact output bytes to their source identity and stage."""
-    document = _document(config, output, identity, profile=profile, arch=arch, stage=stage)
+    document = _with_cache_metadata(
+        _document(config, output, identity, profile=profile, arch=arch, stage=stage),
+        now=time.time(),
+    )
     write_text(
         _path(config, output),
         json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
@@ -121,17 +220,19 @@ def validates(
     profile: str,
     arch: Arch,
     stages: frozenset[str] = REUSABLE_STAGES,
+    touch: bool = False,
 ) -> bool:
     """Whether exact receipt, identity, stage, and every output node agree."""
     receipt = _path(config, output)
-    if output.is_symlink() or not output.is_dir() or receipt.is_symlink() or not receipt.is_file():
+    if not output.is_dir() or receipt.is_symlink() or not receipt.is_file():
         return False
     try:
         document = json.loads(receipt.read_text(encoding="utf-8"))
-        stage = document.get("stage") if isinstance(document, dict) else None
+        stable, created, last_used, size = _split(document)
+        stage = stable.get("stage")
         if not isinstance(stage, str) or stage not in stages:
             return False
-        return document == _document(
+        expected = _document(
             config,
             output,
             identity,
@@ -139,5 +240,61 @@ def validates(
             arch=arch,
             stage=stage,
         )
+        now = time.time()
+        if (
+            stable != expected
+            or created > now
+            or last_used > now
+            or size != _size(expected)
+            or size > config.assets.cache.maximum_bytes
+            or now - created > config.assets.cache.maximum_age_hours * 3600
+        ):
+            return False
+        if touch:
+            document["last_used_at"] = now
+            write_text(
+                receipt,
+                json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
+            )
+        return True
     except (OSError, UnicodeError, json.JSONDecodeError, GateError):
         return False
+
+
+def cache_metadata(config: GateConfig, output: Path) -> tuple[float, float, int] | None:
+    """Return trustworthy timing plus measured bytes for retention planning."""
+    receipt = _path(config, output)
+    if receipt.is_symlink() or not receipt.is_file():
+        return None
+    try:
+        document = json.loads(receipt.read_text(encoding="utf-8"))
+        stable, created, last_used, recorded_size = _split(document)
+        now = time.time()
+        if stable.get("schema") != SCHEMA or created > now or last_used > now:
+            return None
+        architecture = stable.get("architecture")
+        identity = stable.get("input_digest")
+        profile = stable.get("profile")
+        if (
+            not isinstance(architecture, str)
+            or not isinstance(identity, str)
+            or not isinstance(profile, str)
+            or not _location_matches(
+                config,
+                output,
+                identity,
+                profile=profile,
+                architecture=architecture,
+            )
+        ):
+            return None
+        measured = sum(
+            path.lstat().st_size
+            for path in (output / architecture).rglob("*")
+            if path.is_file() and not path.is_symlink()
+        )
+        if recorded_size != measured:
+            return None
+        return created, last_used, measured
+    except (OSError, UnicodeError, json.JSONDecodeError, GateError):
+        return None

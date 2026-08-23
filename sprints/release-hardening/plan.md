@@ -14,9 +14,12 @@ is the checked-in durable summary required by the development-sprint contract.
 ## Decisions
 
 - No production publication through a known red required gate.
-- Complete candidate qualification may reuse work that actually ran for the
+- Complete candidate qualification must reuse work that actually ran for the
   exact source lineage; reuse is recorded as `carried`, never converted to a
-  new `ok`. Public release dispatch never carries its short publication graph:
+  new `ok`. A valid retained product is a required warm hit, not an optional
+  optimization; rebuilding is allowed only after identity/receipt validation
+  rejects it or an explicit release rule requires a fresh build. Public release
+  dispatch never carries its short publication graph:
   qualification acceptance, remote-main validation, mutable channel fetch,
   immutable source publication, and dispatch are fresh on every attempt.
 - Reuse covers journals, asset lanes, install images, and real VM-backed products.
@@ -45,7 +48,8 @@ is the checked-in durable summary required by the development-sprint contract.
 2. Make asset identities input-complete, verify every reused output, and
    reconcile the normative local/nightly rebuild rules.
 3. Add VM-backed reuse receipts and bounded cache retention with adversarial
-   corruption, reclaim, and pressure coverage.
+   corruption, reclaim, and pressure coverage. Prove that a valid warm VM-image
+   hit cannot silently fall through to reconstruction.
 4. Restore portable benchmark CI and reliable early-failure evidence.
 5. Unify channel-state resolution and exact CI install-content selection.
 6. Make nightly scheduling outcome-complete without nesting gate commands.

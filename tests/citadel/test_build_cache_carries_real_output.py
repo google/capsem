@@ -337,6 +337,12 @@ def test_the_cache_never_holds_a_link_where_a_tree_should_be(tmp_path: Path) -> 
         real.mkdir(parents=True)
         (real / "rootfs.erofs").write_bytes(PAYLOAD)
         link = finished / relative
+        if relative in config.prefix.resumable:
+            # A resumable receipt is an authority, not a selector. It is copied
+            # so the prefix and cache both retain it, and a symlink is refused.
+            (link / "x86_64").mkdir(parents=True)
+            (link / "x86_64" / "rootfs.erofs").write_bytes(PAYLOAD)
+            continue
         # A lent path may be nested -- `target/ironbank-assets` is -- so the
         # link needs its parent to exist, and a target that resolves from
         # where the link actually sits rather than from the prefix root.

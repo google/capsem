@@ -25,9 +25,14 @@
   from graph shape alone. Fixed in `023e43ac`: public release
   dispatch rejects it; only recursively verified candidate qualification may
   auto-resume.
-- The normative release spec still says local assets always rebuild, while the
-  new implementation carries identity-verified asset work. The contract must be
-  reconciled before the reuse milestone can close.
+- The local/nightly asset-rebuild contract was reconciled in `d7241933`: local
+  construction must reuse exact identity-and-receipt hits while downstream
+  assembly and release proof still run; nightly profile publication rebuilds.
+- S06-003 treats a valid warm VM-image hit as mandatory. Its proof must detect a
+  fallback rebuild, not merely accept either reuse or reconstruction.
+- S06-003 also keeps the install receipt in every retained prefix while copying
+  it into the shared warm cache. Moving that authority away would let Docker
+  reclamation erase the exact source/helper images a resumable journal needs.
 - Current macOS CI failure is the Linux-only absolute collector command paths.
 - Current install CI directly reads the explicitly retired stable graph.
 - Nightly scheduler currently short-circuits after the first failed profile.
@@ -38,12 +43,15 @@
 
 ## Coverage Ledger
 
-- Unit/contract: qualification/release and asset receipt cohorts green
-- Functional: pending
-- Adversarial: public continuation and mutated/partial/extra asset output green
-- E2E/VM: pending
+- Unit/contract: S06 reuse/cache cohort plus install, asset, prefix, storage,
+  config, and Citadel contracts green (484 passed, 2 platform skips)
+- Functional: mandatory zero-construction warm hit and prefix salvage/lend path
+  green through production functions; real gate cold/warm run pending
+- Adversarial: public continuation; mutated/partial/extra/escaping asset output;
+  corrupt, stale, non-finite, symlinked, over-bound, and partial-reclaim state green
+- E2E/VM: queued behind the pre-existing stable binary release machine lock
 - Ironbank: pending
 - Telemetry/evidence: pending
-- Performance: pending
+- Performance: zero redundant construction asserted; wall-clock cold/warm proof pending
 - Missing/deferred: physical macOS and public Cloudflare boundaries remain final
   owning gates; broad service-main decomposition is outside this sprint.

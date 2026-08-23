@@ -16,6 +16,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from capsem.storagepolicyretention import (
+    cache_violations,
+    protect_generations,
+    resource_decision,
+    superseded_generations,
+    validate_bounds,
+)
+
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_POLICY = ROOT / "config" / "storage-policy.toml"
 POSITIVE_FIELDS = ("minimum_free_gib", "buildkit_keep_gib", "linked_keep_gib")
@@ -98,6 +106,7 @@ def load_policy(path: Path) -> dict[str, Any]:
                 raise ValueError(
                     f"generational resource {name!r} requires an integer keep_previous >= 0"
                 )
+            validate_bounds(name, resource)
         if not resource.get("reason"):
             raise ValueError(f"resource {name!r} requires a retention reason")
     return policy
@@ -188,21 +197,6 @@ def parse_volume_sizes(output: str) -> dict[str, dict[str, int]]:
     return rows
 
 
-def resource_decision(resource: dict[str, Any]) -> str:
-    retention = resource["retention"]
-    if retention == "cache":
-        return "retain-cache"
-    if retention == "obsolete":
-        return "delete-obsolete"
-    if retention == "generational":
-        return f"retain-current-and-{int(resource['keep_previous'])}-previous"
-    boundary = resource.get("release_boundary")
-    if boundary:
-        return f"release-{boundary}"
-    boundaries = resource.get("release_boundaries", [])
-    return "release-" + ",".join(str(value) for value in boundaries)
-
-
 def image_generations(repository: str) -> list[dict[str, Any]]:
     """Every tag of a repository, newest first, with exact bytes.
 
@@ -252,22 +246,6 @@ def image_generations(repository: str) -> list[dict[str, Any]]:
             }
         )
     return sorted(generations, key=lambda row: (row["created"], row["ref"]), reverse=True)
-
-
-def superseded_generations(
-    generations: list[dict[str, Any]], *, keep: str, keep_previous: int
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Split a repository's tags into what survives and what is retired.
-
-    Newest first among the superseded, so `keep_previous` retains the most
-    recent generations rather than whatever order Docker happened to list.
-    """
-    superseded = sorted(
-        (row for row in generations if row["ref"] != keep),
-        key=lambda row: (row["created"], row["ref"]),
-        reverse=True,
-    )
-    return superseded[:keep_previous], superseded[keep_previous:]
 
 
 def docker_capacity() -> dict[str, Any]:
@@ -1035,6 +1013,12 @@ def command_reclaim(args: argparse.Namespace, policy: dict[str, Any]) -> int:
     repository = str(resource.get("docker_name", args.resource))
     if args.keep.rsplit(":", 1)[0] != repository:
         raise ValueError(f"{args.keep!r} is not a tag of {repository!r}")
+    protected = set(getattr(args, "protect", ()))
+    invalid = sorted(tag for tag in protected if tag.rsplit(":", 1)[0] != repository)
+    if invalid:
+        raise ValueError(
+            f"protected images are not tags of {repository!r}: {', '.join(invalid)}"
+        )
 
     generations = image_generations(repository)
     if not any(row["ref"] == args.keep for row in generations):
@@ -1054,12 +1038,17 @@ def command_reclaim(args: argparse.Namespace, policy: dict[str, Any]) -> int:
     retained, removable = superseded_generations(
         generations, keep=args.keep, keep_previous=int(resource["keep_previous"])
     )
+    retained, removable = protect_generations(retained, removable, protected)
     actions: list[dict[str, Any]] = [
         {
             "target": row["ref"],
             "kind": "image",
             "status": "retained-generation",
-            "reason": "kept as a previous generation, so a revert does not rebuild",
+            "reason": (
+                "pinned by an active or resumable product receipt"
+                if row["ref"] in protected
+                else "kept as a previous generation, so a revert does not rebuild"
+            ),
             "image_size_bytes": row["size_bytes"],
             "reclaimed_bytes": 0,
         }
@@ -1069,6 +1058,19 @@ def command_reclaim(args: argparse.Namespace, policy: dict[str, Any]) -> int:
         removable,
         reason=f"superseded by {args.keep}, which is what the current lockfiles resolve to",
     )
+    survivors = [row for row in generations if row["ref"] == args.keep or row in retained]
+    violations = cache_violations(resource, survivors, keep=args.keep)
+    if violations:
+        actions.append(
+            {
+                "target": args.resource,
+                "kind": "image-cache",
+                "status": "error",
+                "reason": "cannot satisfy cache policy without deleting pinned images: "
+                + "; ".join(violations),
+                "reclaimed_bytes": 0,
+            }
+        )
     report = finish_operation(
         policy,
         args.rail,
@@ -1078,14 +1080,11 @@ def command_reclaim(args: argparse.Namespace, policy: dict[str, Any]) -> int:
         actions=actions,
         do_trim=any(action["status"] == "deleted" for action in actions),
     )
-    # A refusal is a byte not returned, not a broken gate, so unlike `release`
-    # this does not fail on one. Gate locks live in `target/` and are therefore
-    # per-checkout: a second worktree can legitimately be holding a generation
-    # that Docker will not let go of, and failing the warm command over it
-    # would make warming flaky for the reason warming exists to avoid. What
-    # was and was not returned is in the ledger, and `enforce` is the step that
-    # fails when the disk floor is actually breached.
-    return 0 if report["after"]["available"] else 1
+    return (
+        1
+        if any(action["status"] in {"error", "retained-active"} for action in actions)
+        else (0 if report["after"]["available"] else 1)
+    )
 
 
 def remove_obsolete(policy: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1494,6 +1493,7 @@ def build_parser() -> argparse.ArgumentParser:
     reclaim.add_argument("--rail", default="default")
     reclaim.add_argument("--resource", required=True)
     reclaim.add_argument("--keep", required=True)
+    reclaim.add_argument("--protect", action="append", default=[])
 
     gc = subparsers.add_parser("gc")
     gc.add_argument("--rail", default="default")

@@ -3,25 +3,21 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
-
-from pydantic import Field, StringConstraints, ValidationError
 
 from . import config as gate_config
-from . import installbuilder, sourcecapture
+from . import imagecache, installbuilder, installreceipt, sourcecapture
 from .actions import Action
 from .config import GateConfig
-from .configschema import Strict
 from .context import Context
 from .docker import Docker
 from .errors import GateError
-from .filesystem import remove, write_text
+from .filesystem import remove
 from .imageidentity import (
     exact_image_id,
     exact_image_reference,
-    require_exact_image,
     require_input_key,
 )
 from .invocation import ConsoleMode
@@ -45,19 +41,7 @@ def _step_label(value: InstallImageStep) -> str:
     return value.value
 
 
-CanonicalDigest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-ExactImageId = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
-
-
-class InstallImageIdentity(Strict):
-    """The complete exact-image receipt persisted between build and use."""
-
-    input_key: str = Field(min_length=1)
-    image_id: ExactImageId
-    image_reference: str = Field(min_length=1)
-    helper_input_key: str = Field(min_length=1)
-    helper_image_id: ExactImageId
-    source_digest: CanonicalDigest
+InstallImageIdentity = installreceipt.InstallImageIdentity
 
 
 def source_image_tag(
@@ -125,15 +109,11 @@ def _receipt_path(config: GateConfig) -> Path:
 
 
 def _write_receipt(config: GateConfig, identity: InstallImageIdentity) -> None:
-    write_text(_receipt_path(config), identity.model_dump_json())
+    installreceipt.write(_receipt_path(config), identity)
 
 
 def _read_receipt(config: GateConfig) -> InstallImageIdentity:
-    path = _receipt_path(config)
-    try:
-        return InstallImageIdentity.model_validate_json(path.read_text(encoding="utf-8"))
-    except (OSError, ValidationError) as error:
-        raise GateError(f"install image receipt {path} is missing or invalid") from error
+    return installreceipt.read(_receipt_path(config))
 
 
 def build_source_image(
@@ -145,6 +125,27 @@ def build_source_image(
 ) -> InstallImageIdentity:
     """Build the recorded source on the exact helper with networking denied."""
     sourcecapture.require_snapshot(config, source)
+    try:
+        receipt = installreceipt.validate(
+            runner,
+            config,
+            path=_receipt_path(config),
+            receipt=_read_receipt(config),
+            helper=identity,
+            source=source,
+            tag=source_image_tag(config, helper_id=identity.image_id, source=source),
+            resource=_source_repository(config),
+            input_key_label=INPUT_KEY_LABEL,
+            touch=True,
+        )
+    except GateError as error:
+        runner.note(f"Install image cache miss: {error}; rebuilding")
+    else:
+        runner.note(
+            f"Install image cache hit is mandatory: reusing {receipt.input_key}, "
+            f"exact child {receipt.image_id}"
+        )
+        return receipt
     remove(_receipt_path(config))
     docker = Docker(runner)
     helper = installbuilder.require_local_image(runner, config, expected=identity)
@@ -184,19 +185,45 @@ def build_source_image(
         expected_id=image_id,
         subject="install qualification image",
     )
+    runtime_digest = installreceipt.digest(docker.runtime_identity())
+    image_size = docker.image_size(tag)
+    limits = Storage(runner).image_limits(_source_repository(config))
+    if image_size > limits.maximum_bytes:
+        raise GateError(
+            f"install qualification image is {image_size} bytes, above the configured "
+            f"{limits.maximum_bytes}-byte cache bound"
+        )
+    now = time.time()
     found = InstallImageIdentity(
+        schema_version=imagecache.RECEIPT_SCHEMA,
         input_key=tag,
+        input_digest=installreceipt.digest(
+            tag,
+            identity.input_key,
+            identity.image_id,
+            source.digest,
+            runtime_digest,
+        ),
         image_id=image_id,
         image_reference=reference,
         helper_input_key=identity.input_key,
         helper_image_id=identity.image_id,
         source_digest=source.digest,
+        runtime_digest=runtime_digest,
+        platform=platform,
+        image_size_bytes=image_size,
+        created_at=now,
+        last_used_at=now,
     )
     runner.note(
         f"Install image: input key {tag}; exact image {image_id}; build reference {reference}"
     )
-    Storage(runner).reclaim(_source_repository(config), keep=tag)
     _write_receipt(config, found)
+    Storage(runner).reclaim(
+        _source_repository(config),
+        keep=tag,
+        protect=imagecache.protected_tags(config, _source_repository(config), field="input_key"),
+    )
     return found
 
 
@@ -214,47 +241,23 @@ def require_local_image(runner: Runner, config: GateConfig) -> str:
     """Return the runnable input-key tag only after binding it to the exact ID."""
     receipt = _read_receipt(config)
     source = sourcecapture.require_recorded(config)
-    if receipt.source_digest != source.digest:
-        raise GateError(
-            "install image receipt names source digest "
-            f"{receipt.source_digest}, but source.record captured {source.digest}"
-        )
-    docker = Docker(runner)
     helper = installbuilder.require_current(runner, config)
-    platform = config.host_arch().docker_platform
-    if receipt.helper_input_key != helper.input_key or receipt.helper_image_id != helper.image_id:
-        raise GateError("install image receipt no longer matches the exact dependency helper")
-    tag = source_image_tag(config, helper_id=helper.image_id, source=source)
-    if receipt.input_key != tag:
-        raise GateError(f"install image receipt selects {receipt.input_key}, expected {tag}")
-    if not docker.image_exists(tag, platform=platform):
-        raise GateError(f"install qualification image {tag} is missing")
-    require_input_key(
-        docker,
-        tag,
-        label=INPUT_KEY_LABEL,
-        subject="install qualification image",
+    found = installreceipt.validate(
+        runner,
+        config,
+        path=_receipt_path(config),
+        receipt=receipt,
+        helper=helper,
+        source=source,
+        tag=source_image_tag(config, helper_id=helper.image_id, source=source),
+        resource=_source_repository(config),
+        input_key_label=INPUT_KEY_LABEL,
+        touch=True,
     )
-    image_id = exact_image_id(
-        docker,
-        tag,
-        platform=platform,
-        subject="install qualification image",
+    runner.note(
+        f"Using install qualification image {found.input_key}, exact child {found.image_id}"
     )
-    if image_id != receipt.image_id:
-        raise GateError(
-            f"install qualification image {tag} moved: "
-            f"expected {receipt.image_id}, found {image_id}"
-        )
-    require_exact_image(
-        docker,
-        receipt.image_reference,
-        platform=platform,
-        expected_id=receipt.image_id,
-        subject="install qualification image build reference",
-    )
-    runner.note(f"Using install qualification image {tag}, exact child {image_id}")
-    return tag
+    return found.input_key
 
 
 class RequireInstallImage(Action, name="require-install-image"):

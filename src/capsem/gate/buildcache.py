@@ -19,11 +19,14 @@ prefix owns. It is a
 property of the *machine* -- one gate runs at a time, enforced by `flock`, so
 there is exactly one writer and no contention to arbitrate. The cache lends the
 outputs to whichever prefix is about to run and takes them back when it ends,
-by `rename`, so nothing is ever copied and no two trees ever alias the same
-inode. A hardlinked or reflinked seed was considered first and is worse on both
-counts: this filesystem is ext4, so there is no reflink to fall back on, and a
-hardlinked `target/` lets an in-place write inside one prefix silently rewrite
-the retained tree another run is meant to resume into.
+by `rename`, so expensive trees are never copied and no two trees ever alias
+the same inode. The one exception is a config-declared tiny receipt: it is
+copied into the cache so a retained prefix keeps the authority that pins its
+exact Docker products while a newer run borrows the warm copy. A hardlinked or
+reflinked seed was considered first and is worse on both counts: this
+filesystem is ext4, so there is no reflink to fall back on, and a hardlinked
+`target/` lets an in-place write inside one prefix silently rewrite the retained
+tree another run is meant to resume into.
 
 Two rules keep it honest, and both are guarded:
 
@@ -148,12 +151,27 @@ def salvage(config: GateConfig, prefix_path: Path) -> list[str]:
     A cache entry that is already there wins. It is the one this machine lent
     out and has not been given back, so the prefix's copy is either the same
     tree or an older one from a run that never returned it.
+
+    Config-declared resumable authorities are copied, not moved. They are tiny
+    receipts rather than build products, and the retained prefix must keep its
+    exact receipt so storage reclamation cannot delete images needed to resume
+    it after the shared copy has moved into a newer prefix.
     """
     cache = root(config)
     taken: list[str] = []
     for relative in config.prefix.lent:
         origin, destination = prefix_path / relative, cache / relative
         if not origin.exists() or destination.exists():
+            continue
+        if relative in config.prefix.resumable:
+            if origin.is_symlink():
+                raise GateError(f"resumable cache authority {origin} must not be a symlink")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if origin.is_dir():
+                copy_tree(origin, destination)
+            else:
+                shutil.copy2(origin, destination)
+            taken.append(relative)
             continue
         # What the link points at, never the link. A prefix reaches its assets
         # through links -- `target/ironbank-assets/<profile>/assets` is one, and

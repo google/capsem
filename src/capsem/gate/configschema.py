@@ -60,6 +60,7 @@ class StoragePhase(Strict):
 
 
 class StorageConfig(Strict):
+    policy_file: str
     policy_script: str
     ensure_space_script: str
     phases: dict[str, StoragePhase]
@@ -204,5 +205,4 @@ class VersionsConfig(Strict):
 
 
 class DoctorConfig(Strict):
-    storage_policy: str
     common_script: str

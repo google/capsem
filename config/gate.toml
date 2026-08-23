@@ -47,6 +47,7 @@ aliases = ["x86_64", "amd64"]
 # ---------------------------------------------------------------------------
 
 [storage]
+policy_file = "config/storage-policy.toml"
 policy_script = "scripts/docker-storage-policy.py"
 ensure_space_script = "scripts/ensure-docker-space.sh"
 
@@ -65,7 +66,6 @@ after-install = { boundary = "after-install", rail = "install" }
 # ---------------------------------------------------------------------------
 
 [doctor]
-storage_policy = "config/storage-policy.toml"
 # The host-tooling half of `just doctor`. The gate command checks its own
 # wiring; this checks the machine, and reads the skip variables an image
 # build sets so the asset and KVM checks do not fail on the very thing that
@@ -303,7 +303,7 @@ package_runtime_packages = [
 dockerfile = "docker/Dockerfile.install-builder"
 tag_template = "capsem-install-builder:{digest}"
 source_tag_template = "capsem-install-test:{digest}"
-source_identity_file = "target/install-image-identity.json"
+source_identity_file = "target/install-image/receipt.json"
 identity_inputs = [
     "Cargo.toml",
     "Cargo.lock",
@@ -724,6 +724,16 @@ evidence_prune_dirs = ["guest", "auto_snapshots"]
 # AF_UNIX paths must stay under macOS SUN_LEN once the gateway appends its
 # session path, and target/ironbank-assets is already too long.
 run_dir_template = "/tmp/capsem-a.XXXXXX"
+
+[assets.cache]
+# Two profiles by two architectures are live today. Ten slots retain one
+# complete resumable matrix beside the current four lanes and still leave two
+# rotation slots for a renamed profile or architecture.
+maximum_count = 10
+maximum_age_hours = 336
+# Rootfs images dominate this cache. This is a hard retained-byte ceiling,
+# independent of the filesystem free-space floor in `[disk]`.
+maximum_bytes = 17179869184
 
 # ---------------------------------------------------------------------------
 # The candidate gate
@@ -2245,6 +2255,12 @@ lease_template = ".{identity}.lock"
 # that had nothing to do with what they were testing.
 build_cache = "{parent}-build"
 
+# Content-addressed VM boot products live at a stable path while private
+# prefixes come and go. Prefixes point their lane paths at one input-identity
+# generation, so a retained resumable prefix pins its exact images and a new
+# source can use or evict other generations without stealing those bytes.
+vm_image_cache = "{parent}-vm-images"
+
 # Where cargo writes, for every run, at one absolute path.
 #
 # Lending a build directory between prefixes cannot work: cargo records
@@ -2343,12 +2359,21 @@ carried = ["private"]
 # mechanism: a uv venv records its own absolute path in `pyvenv.cfg` and in
 # every console-script shebang, and both are already fast from warm global
 # stores.
-# `assets` is the selected payload; `target/ironbank-assets` contains the
-# isolated per-profile/architecture build products and their source-bound byte
-# receipts. Lending only the selected payload meant the lane rebuilt both
-# architectures every run -- about twenty-five minutes -- with nothing it
-# could safely compare against.
-lent = ["assets", "target/ironbank-assets"]
+# `assets` is the selected payload. Isolated VM products live in the stable
+# content-addressed `vm_image_cache`; each prefix keeps only symlinks selecting
+# its exact input generation, so a resumable source continues to pin its bytes.
+# `target/install-image` carries the live source/helper/runtime/product receipt
+# for the sealed Docker image. Without it a successful prefix kept the image in
+# Docker, deleted the authority to reuse it, and forced the next prefix to run
+# the same construction again.
+lent = ["assets", "target/install-image"]
+
+# Tiny lent authorities that stay in a failed/explicitly retained prefix when
+# they are also copied into the shared cache. This is deliberately narrower
+# than `lent`: duplicating VM images would defeat the cache bound, but deleting
+# this receipt from a resumable prefix lets Docker reclamation erase the exact
+# source and helper images that its journal still needs.
+resumable = ["target/install-image"]
 
 # What must come back out before the prefix is reclaimed. A release publishes
 # from these, and without the export they die with the copy that made them.
@@ -2359,7 +2384,7 @@ exports = ["dist", "packages", "assets", "target/config", "target/gate-runs"]
 # build scaffolding, which is worth carrying between runs and has no business
 # being copied back into the checkout. A lent path must appear in one list or
 # the other, so nothing can be lent that no run is known to write.
-produced = ["target/ironbank-assets"]
+produced = ["target/install-image"]
 
 # ---------------------------------------------------------------------------
 # The host-kernel sandbox

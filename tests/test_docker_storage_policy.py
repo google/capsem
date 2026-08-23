@@ -591,10 +591,13 @@ class _FakeDockerDaemon:
     the test reads back is the `docker image rm` it really issued.
     """
 
-    def __init__(self, module, tags: dict[str, tuple[str, int]]) -> None:
+    def __init__(
+        self, module, tags: dict[str, tuple[str, int]], *, fail_remove: tuple[str, ...] = ()
+    ) -> None:
         self._module = module
         self.tags = dict(tags)
         self.removed: list[str] = []
+        self.fail_remove = frozenset(fail_remove)
 
     def _result(self, command: list[str], stdout: str = "", code: int = 0):
         return self._module.CommandResult(command, code, stdout, "")
@@ -628,6 +631,8 @@ class _FakeDockerDaemon:
             return self._result(command, f"sha256:{reference}\t{created}\t{size}")
         if head == ["docker", "image", "rm"]:
             reference = command[3]
+            if reference in self.fail_remove:
+                return self._result(command, "image is busy", 1)
             self.removed.append(reference)
             self.tags.pop(reference, None)
             return self._result(command)
@@ -638,7 +643,16 @@ class _FakeDockerDaemon:
         return self._result(command)
 
 
-def _reclaim(module, daemon, monkeypatch, tmp_path: Path, *, keep: str, resource: str):
+def _reclaim(
+    module,
+    daemon,
+    monkeypatch,
+    tmp_path: Path,
+    *,
+    keep: str,
+    resource: str,
+    protect: tuple[str, ...] = (),
+):
     import argparse
     import shutil as _shutil
 
@@ -648,7 +662,7 @@ def _reclaim(module, daemon, monkeypatch, tmp_path: Path, *, keep: str, resource
     monkeypatch.setattr(_shutil, "which", lambda _name: None)
     monkeypatch.setenv("CAPSEM_STORAGE_REPORT_PATH", str(tmp_path / "docker-storage.jsonl"))
     return module.command_reclaim(
-        argparse.Namespace(resource=resource, keep=keep, rail="default"),
+        argparse.Namespace(resource=resource, keep=keep, protect=list(protect), rail="default"),
         load_policy(),
     )
 
@@ -721,6 +735,86 @@ def test_reclaim_refuses_when_the_tag_it_was_told_to_keep_is_absent(
 
     assert status != 0
     assert daemon.removed == [], "a reclaim that could not find its anchor deleted anyway"
+
+
+def test_install_image_reclaim_preserves_resumable_receipts_and_bounds_them(
+    monkeypatch, tmp_path: Path
+) -> None:
+    module = load_policy_module()
+    repository = "capsem-install-test"
+    current = f"{repository}:current"
+    pinned = f"{repository}:resumable"
+    stale = f"{repository}:stale"
+    daemon = _FakeDockerDaemon(
+        module,
+        {
+            stale: ("2026-08-18T09:00:00Z", 10_000_000_000),
+            pinned: ("2026-08-22T09:00:00Z", 10_000_000_000),
+            current: ("2026-08-23T09:00:00Z", 10_000_000_000),
+        },
+    )
+
+    status = _reclaim(
+        module,
+        daemon,
+        monkeypatch,
+        tmp_path,
+        keep=current,
+        resource=repository,
+        protect=(pinned,),
+    )
+
+    assert status == 0
+    assert daemon.removed == [stale]
+    assert {current, pinned} <= daemon.tags.keys()
+
+
+def test_pinned_install_images_over_the_count_bound_fail_without_deletion(
+    monkeypatch, tmp_path: Path
+) -> None:
+    module = load_policy_module()
+    repository = "capsem-install-test"
+    tags = {f"{repository}:{name}" for name in ("current", "one", "two")}
+    daemon = _FakeDockerDaemon(
+        module,
+        dict.fromkeys(tags, ("2026-08-23T09:00:00Z", 1_000_000_000)),
+    )
+
+    status = _reclaim(
+        module,
+        daemon,
+        monkeypatch,
+        tmp_path,
+        keep=f"{repository}:current",
+        resource=repository,
+        protect=(f"{repository}:one", f"{repository}:two"),
+    )
+
+    assert status != 0
+    assert daemon.removed == []
+    assert tags == daemon.tags.keys()
+
+
+def test_partial_image_reclaim_is_a_failure(tmp_path: Path, monkeypatch) -> None:
+    module = load_policy_module()
+    repository = "capsem-install-test"
+    current = f"{repository}:current"
+    stale = f"{repository}:stale"
+    daemon = _FakeDockerDaemon(
+        module,
+        {
+            stale: ("2026-08-18T09:00:00Z", 1_000_000_000),
+            current: ("2026-08-23T09:00:00Z", 1_000_000_000),
+        },
+        fail_remove=(stale,),
+    )
+
+    status = _reclaim(
+        module, daemon, monkeypatch, tmp_path, keep=current, resource=repository
+    )
+
+    assert status != 0
+    assert stale in daemon.tags
 
 
 def test_generations_are_retired_oldest_first_so_keep_previous_keeps_the_newest() -> None:

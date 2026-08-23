@@ -19,10 +19,11 @@ either result is read.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import assetidentity, assetreceipt, imagebuild
+from . import assetcache, assetidentity, assetreceipt, imagebuild
 from . import config as gate_config
 from .actions import Action
 from .config import Arch
@@ -73,8 +74,23 @@ def prepare_workspace(config: gate_config.GateConfig, profiles: list[Profile]) -
             lane_assets(config, profile, arch).name for arch in config.architectures.values()
         }
         for child in tuple(profile_root.iterdir()):
-            if child.name not in retained or child.is_symlink() or not child.is_dir():
+            if child.name not in retained or (not child.is_symlink() and not child.is_dir()):
                 remove(child)
+    identity = assetidentity.lane_identity(config)
+    assetcache.materialize(config, tuple(expected), identity)
+    expected_lanes = frozenset(
+        lane_assets(config, profile, arch)
+        for profile in profiles
+        for arch in config.architectures.values()
+    )
+    now = time.time()
+    fresh = frozenset(
+        path
+        for path in expected_lanes
+        if (metadata := assetreceipt.cache_metadata(config, path)) is not None
+        and now - metadata[0] <= config.assets.cache.maximum_age_hours * 3600
+    )
+    assetcache.enforce(config, protected=fresh)
 
 
 class RequireLaneReceipts(Action, name="require-asset-lane-receipts"):
@@ -110,6 +126,7 @@ class RequireLaneReceipts(Action, name="require-asset-lane-receipts"):
                 profile=profile.name,
                 arch=arch,
                 stages=self._stages,
+                touch=True,
             )
         ]
         if invalid:
@@ -139,6 +156,14 @@ class SealPackedReceipts(Action, name="seal-packed-asset-lane-receipts"):
                     arch=arch,
                     stage=assetreceipt.PACKED_STAGE,
                 )
+        assetcache.enforce(
+            self._config,
+            protected=frozenset(
+                lane_assets(self._config, profile, arch)
+                for profile in self._profiles
+                for arch in self._config.architectures.values()
+            ),
+        )
 
 
 class AssetLanes:
@@ -166,6 +191,7 @@ class AssetLanes:
                 identity,
                 profile=profile.name,
                 arch=arch,
+                touch=True,
             ):
                 self._runner.note(
                     f"Ironbank asset lane {profile.name} ({arch.name}) is current "
@@ -173,7 +199,13 @@ class AssetLanes:
                 )
                 self._require_artifacts(output / arch.name)
                 continue
-            remove(output)
+            assetcache.reset_lane(
+                self._config,
+                output,
+                identity,
+                profile=profile.name,
+                arch=arch,
+            )
             self._runner.step(f"Ironbank asset build lane: {profile.name} ({arch.name})")
             for stage in self._config.imagebuild.lane_templates:
                 # Straight to the builder, with this lane's output. It used to

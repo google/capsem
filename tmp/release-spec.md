@@ -542,10 +542,23 @@ produce compatible binaries, profiles, assets, packages, and manifests. It MAY
 avoid invoking an expensive builder when a prior local product has an exact
 identity over every authoritative source, config, lockfile, toolchain, mode,
 and symlink input and a live receipt revalidates every output path, mode, size,
-and digest. The owning step still runs, records the cache decision, and all
+and digest. When that complete validation succeeds, reuse is REQUIRED: a warm
+proof that reconstructs the same product has failed the reuse contract. The
+owning step still runs, records the cache decision, and all
 downstream assembly, integrity, VM boot, functional, install, and glow-up proof
 still executes. A missing input, receipt, output, or digest match MUST rebuild
 or fail closed.
+
+Reusable VM asset and install-image products MUST live under exact content or
+input identities and MUST have config-owned maximum count, age, and retained
+bytes. Retention MUST be deterministic least-recently-used after expiry.
+Products selected by the active qualification or a retained structurally
+resumable prefix MUST NOT be evicted; their selectors and strict receipts remain
+the pin authority. If those pinned products make any bound impossible, the gate
+MUST refuse rather than delete resume evidence. Corrupt, partial, future-dated,
+escaping, or unreceipted state MUST NOT authorize reuse or pin arbitrary Docker
+images. Explicit aggressive cleanup remains the operator's cold-build escape
+hatch, not an automatic response to cache pressure.
 
 This product-level reuse is distinct from carrying a journal step and from
 release-lane artifact reuse. Nightly profile release CI still rebuilds its

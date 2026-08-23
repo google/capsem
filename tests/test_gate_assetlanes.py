@@ -37,8 +37,9 @@ def _build_all(lanes) -> None:
 
 def _checkout(tmp_path: Path, *, profiles: tuple[str, ...] = ("code", "co-work")) -> Path:
     (tmp_path / "config").mkdir()
+    gate = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     (tmp_path / "config" / "gate.toml").write_text(
-        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+        gate.replace('parent = "~/.cg"', f'parent = "{tmp_path / "prefixes"}"')
     )
     for name in profiles:
         directory = tmp_path / "config" / "profiles" / name

@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Valid install and VM-image products are now mandatory warm-cache hits instead
+  of optional rebuild shortcuts. Exact receipts bind source, config, helper,
+  Docker runtime, platform, image identity, size, and retained bytes; VM assets
+  use content-addressed generations. Config-owned count, age, and byte limits
+  evict unpinned products deterministically while preserving active/resumable
+  qualifications, and impossible pinned pressure now fails closed. Retained
+  prefixes keep their own install receipt when the shared cache is lent onward,
+  so Docker cleanup cannot erase the exact images needed to resume them.
+
 - Warm VM asset lanes are now a verified cache rather than a matching stamp
   that preflight deleted before use. The identity covers the builder/admin
   implementation, full guest/profile/config inputs, Rust and Python locks,

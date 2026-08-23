@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import imagecache
 from .config import GateConfig
 from .docker import Docker
 from .errors import GateError
@@ -172,7 +173,15 @@ def materialize(runner: Runner, config: GateConfig) -> InstallBuilderIdentity:
         f"Install helper {host_arch.name}: input key {tag}; exact image {exact_id}; "
         f"build reference {reference}"
     )
-    Storage(runner).reclaim(image_repository(config), keep=tag)
+    Storage(runner).reclaim(
+        image_repository(config),
+        keep=tag,
+        protect=imagecache.protected_tags(
+            config,
+            image_repository(config),
+            field="helper_input_key",
+        ),
+    )
     return InstallBuilderIdentity(tag, exact_id, reference)
 
 

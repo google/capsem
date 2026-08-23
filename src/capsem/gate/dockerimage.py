@@ -27,6 +27,8 @@ from .invocation import ConsoleMode
 from .proc import Runner
 
 IMAGE_IDENTITY_FORMAT = "{{.Os}}/{{.Architecture}}\t{{.Id}}"
+IMAGE_SIZE_FORMAT = "{{.Size}}"
+RUNTIME_IDENTITY_FORMAT = "{{.Server.Version}}\t{{.Server.Os}}\t{{.Server.Arch}}"
 
 
 class ImageOperations:
@@ -138,6 +140,25 @@ class ImageOperations:
         found_platform, image_id = identity
         self._require_platform(tag, platform, found_platform)
         return image_id
+
+    def image_size(self, tag: str) -> int:
+        """Return Docker's exact unpacked byte accounting for one image."""
+        raw = self._runner.capture(
+            ["docker", "image", "inspect", "--format", IMAGE_SIZE_FORMAT, tag]
+        ).strip()
+        if not raw.isdigit() or int(raw) <= 0:
+            raise GateError(f"docker image {tag} returned invalid size {raw!r}")
+        return int(raw)
+
+    def runtime_identity(self) -> str:
+        """Return the Docker server identity that constructed and runs products."""
+        raw = self._runner.capture(
+            ["docker", "version", "--format", RUNTIME_IDENTITY_FORMAT]
+        ).strip()
+        fields = raw.split("\t")
+        if len(fields) != 3 or any(not field or any(ch.isspace() for ch in field) for field in fields):
+            raise GateError(f"docker returned malformed runtime identity {raw!r}")
+        return raw
 
     def _repository_references(self, tag: str) -> tuple[str, list[object], set[str]]:
         raw = self._runner.capture(

@@ -4,11 +4,26 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 
 from capsem.dockerpolicy import ContainerNetwork
 
 from .configschema import Strict
+
+
+class AssetCacheConfig(Strict):
+    """Bounds for the content-receipted VM image matrix."""
+
+    maximum_count: int
+    maximum_age_hours: int
+    maximum_bytes: int
+
+    @field_validator("maximum_count", "maximum_age_hours", "maximum_bytes")
+    @classmethod
+    def _positive(cls, value: int) -> int:
+        if isinstance(value, bool) or value <= 0:
+            raise ValueError("asset cache bounds must be positive integers")
+        return value
 
 
 class ArtifactsConfig(Strict):
@@ -32,6 +47,7 @@ class AssetsConfig(Strict):
     #: a stale rootfs in a run that stays green.
     identity_roots: tuple[str, ...]
     lane_receipt: str
+    cache: AssetCacheConfig
     evidence_artifacts: tuple[str, ...]
     obom_artifact: str
     failure_tail_lines: int

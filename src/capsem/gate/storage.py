@@ -13,6 +13,10 @@ phase now fails by name, before any storage is touched.
 
 from __future__ import annotations
 
+import tomllib
+
+from capsem.cachepolicy import CacheLimits
+
 from . import config as gate_config
 from .actions import Call
 from .command import GateCommand
@@ -29,7 +33,8 @@ class Storage:
 
     def __init__(self, runner: Runner) -> None:
         self._runner = runner
-        self._config = gate_config.for_root(runner.root).storage
+        self._gate_config = gate_config.for_root(runner.root)
+        self._config = self._gate_config.storage
 
     def release(self, phase: str, *, best_effort: bool = False) -> None:
         """Release storage held for a rail that has finished."""
@@ -50,7 +55,23 @@ class Storage:
             check=not best_effort,
         )
 
-    def reclaim(self, resource: str, *, keep: str) -> None:
+    def image_limits(self, resource: str) -> CacheLimits:
+        """Read the one storage authority for a content-keyed image cache."""
+        path = self._gate_config.path(self._config.policy_file)
+        try:
+            entry = tomllib.loads(path.read_text(encoding="utf-8"))["resources"][resource]
+            count = entry["maximum_count"]
+            age = entry["maximum_age_hours"]
+            gib = entry["maximum_total_gib"]
+            if any(isinstance(value, bool) or not isinstance(value, int) for value in (count, age, gib)):
+                raise TypeError("image cache bounds must be integers")
+            return CacheLimits(count, age * 3600, gib * 1024**3)
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            raise GateError(
+                f"storage policy {path} has no valid count/age/byte bounds for {resource}"
+            ) from error
+
+    def reclaim(self, resource: str, *, keep: str, protect: tuple[str, ...] = ()) -> None:
         """Retire the superseded tags of a repository keyed by content.
 
         `keep` is passed in rather than derived downstream: the caller is what
@@ -58,8 +79,15 @@ class Storage:
         inside the policy script could disagree with it while holding the
         delete button.
         """
+        protected = [part for tag in sorted(set(protect) - {keep}) for part in ("--protect", tag)]
         self._runner.script(
-            self._config.policy_script, "reclaim", "--resource", resource, "--keep", keep
+            self._config.policy_script,
+            "reclaim",
+            "--resource",
+            resource,
+            "--keep",
+            keep,
+            *protected,
         )
 
     def gc(self, *, rail: str | None = None, best_effort: bool = False) -> None:

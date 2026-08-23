@@ -84,9 +84,14 @@ builder may no-op only after hashing every authoritative source/config/tool
 input and revalidating a live receipt over every retained output. The step
 still runs and downstream assembly, integrity, boot, install, and glow-up proof
 still executes. Do not describe that as a carried journal step, and do not let
-an existence-only stamp authorize it. Nightly profile release CI always
-rebuilds its selected profile; only a stable retry may reuse the workflow's
-immutable completed artifact cohort.
+an existence-only stamp authorize it. A valid warm receipt is a required hit;
+running construction anyway is a failed reuse proof. VM assets are stored by
+content identity and install-image receipts bind exact source, helper, Docker
+runtime, platform, image ID/reference, size, and lifetime. Count, age, and byte
+bounds use deterministic LRU, keep active/resumable selectors and receipts
+pinned, and fail closed when those pins make a bound impossible. Nightly
+profile release CI always rebuilds its selected profile; only a stable retry
+may reuse the workflow's immutable completed artifact cohort.
 
 The complete executor is also kernel-isolated for the entire candidate graph:
 Bubblewrap provides a loopback-only namespace on Linux and Seatbelt provides

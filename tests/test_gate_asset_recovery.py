@@ -436,11 +436,12 @@ def test_an_absent_root_is_refused_rather_than_hashed_as_empty(tmp_path: Path) -
         assetidentity.digest_of(tmp_path, ("ghost",))
 
 
-def _seed_lane_receipt(tmp_path: Path, *, identity: str = "abc123"):
+def _seed_lane_receipt(tmp_path: Path, *, identity: str = "a" * 64):
     from capsem.gate import assetreceipt
 
     base = gate_config.load(PROJECT_ROOT)
-    config = base.model_copy(update={"root": tmp_path})
+    prefix = base.prefix.model_copy(update={"parent": str(tmp_path / "prefixes")})
+    config = base.model_copy(update={"root": tmp_path, "prefix": prefix})
     arch = config.arch("x86_64")
     output = config.path(config.assets.test_root) / "code" / f"build-{arch.name}"
     produced = output / arch.name
@@ -470,9 +471,9 @@ def test_the_lane_skips_a_build_only_when_its_receipt_and_bytes_match(tmp_path: 
 
     config, arch, output, _produced = _seed_lane_receipt(tmp_path)
 
-    assert assetreceipt.validates(config, output, "abc123", profile="code", arch=arch)
-    assert not assetreceipt.validates(config, output, "def456", profile="code", arch=arch)
-    assert not assetreceipt.validates(config, output, "abc123", profile="co-work", arch=arch)
+    assert assetreceipt.validates(config, output, "a" * 64, profile="code", arch=arch)
+    assert not assetreceipt.validates(config, output, "b" * 64, profile="code", arch=arch)
+    assert not assetreceipt.validates(config, output, "a" * 64, profile="co-work", arch=arch)
 
 
 @pytest.mark.parametrize("mutation", ["change", "delete", "add"])
@@ -491,10 +492,12 @@ def test_a_receipt_never_accepts_mutated_or_partial_output(
     else:
         (produced / "unrecorded").write_bytes(b"extra")
 
-    assert not assetreceipt.validates(config, output, "abc123", profile="code", arch=arch)
+    assert not assetreceipt.validates(config, output, "a" * 64, profile="code", arch=arch)
 
 
-def test_preflight_keeps_only_reusable_lane_roots(tmp_path: Path) -> None:
+def test_preflight_keeps_only_reusable_lane_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The cache is not real if preflight deletes it before the hit check."""
     from capsem.gate import assetlanes
     from capsem.gate.assetlanes import Profile
@@ -507,6 +510,7 @@ def test_preflight_keeps_only_reusable_lane_roots(tmp_path: Path) -> None:
     obsolete.mkdir()
     log = config.path(config.assets.test_root) / f"build-{arch.name}.log"
     log.write_text("old", encoding="utf-8")
+    monkeypatch.setattr("capsem.gate.assetidentity.lane_identity", lambda _config: "a" * 64)
 
     assetlanes.prepare_workspace(
         config,

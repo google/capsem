@@ -47,8 +47,9 @@ def _run_all(gate) -> None:
 
 def _checkout(tmp_path: Path, *, profiles: tuple[str, ...] = ("code",)) -> Path:
     (tmp_path / "config").mkdir(parents=True)
+    gate = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     (tmp_path / "config" / "gate.toml").write_text(
-        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+        gate.replace('parent = "~/.cg"', f'parent = "{tmp_path / "prefixes"}"')
     )
     image_config = tmp_path / "config" / "docker" / "image"
     image_config.mkdir(parents=True)

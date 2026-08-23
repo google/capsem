@@ -213,6 +213,9 @@ docker_name = "capsem-install-test"
 retention = "generational"
 owner = "install"
 keep_previous = 0
+maximum_count = 2
+maximum_age_hours = 336
+maximum_total_gib = 96
 reason = "Only the current helper/source-keyed install qualification image has a consumer."
 
 [resources.capsem-install-builder]
@@ -221,6 +224,9 @@ docker_name = "capsem-install-builder"
 retention = "generational"
 owner = "install"
 keep_previous = 0
+maximum_count = 2
+maximum_age_hours = 336
+maximum_total_gib = 64
 reason = "Only the current lock/snapshot/parent-keyed install helper has a consumer."
 
 [resources.capsem-cargo-registry]

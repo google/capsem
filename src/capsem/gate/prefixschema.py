@@ -22,6 +22,7 @@ class PrefixConfig(Strict):
 
     parent: str
     build_cache: str
+    vm_image_cache: str
     cargo_target: str
     cargo_profiles: tuple[str, ...]
     cargo_target_max_gb: float
@@ -30,6 +31,9 @@ class PrefixConfig(Strict):
     keep: int
     carried: tuple[str, ...]
     lent: tuple[str, ...]
+    #: Small lent authorities that a retained prefix must also keep so its
+    #: exact products remain pinned while the shared cache serves a new run.
+    resumable: tuple[str, ...]
     exports: tuple[str, ...]
     #: Trees a run writes but nothing publishes. Provenance for build
     #: scaffolding that is worth carrying between runs and must never be
@@ -51,7 +55,7 @@ class PrefixConfig(Strict):
         entry would write outside the prefix on export, which is the one
         direction a private copy must never reach.
         """
-        for group in (self.carried, self.lent, self.exports):
+        for group in (self.carried, self.lent, self.resumable, self.exports):
             for path in group:
                 parts = PurePosixPath(path)
                 if parts.is_absolute() or ".." in parts.parts:
@@ -62,9 +66,18 @@ class PrefixConfig(Strict):
                 f"{sorted(overlap)} is both carried from the checkout and lent "
                 "between runs; the copy would overwrite the lent tree"
             )
+        resumable = set(self.resumable)
+        if not resumable <= set(self.lent):
+            raise ValueError(
+                f"{sorted(resumable - set(self.lent))} is resumable but not lent"
+            )
+        if not resumable <= set(self.produced):
+            raise ValueError(
+                f"{sorted(resumable - set(self.produced))} is resumable but not produced"
+            )
         return self
 
-    @field_validator("build_cache", "cargo_target")
+    @field_validator("build_cache", "cargo_target", "vm_image_cache")
     @classmethod
     def _cache_is_positioned_against_the_prefix_root(cls, template: str) -> str:
         """One `{parent}`, so the cache cannot be relocated independently.
@@ -89,8 +102,14 @@ class PrefixConfig(Strict):
         for name, template in (
             ("build_cache", self.build_cache),
             ("cargo_target", self.cargo_target),
+            ("vm_image_cache", self.vm_image_cache),
         ):
             retained = PurePosixPath(template.format(parent=self.parent))
+            if ".." in retained.parts or retained.parent != parent.parent:
+                raise ValueError(
+                    f"{name} {template!r} must resolve as a direct sibling of "
+                    f"the prefix root {self.parent!r}"
+                )
             if retained == parent or parent in retained.parents:
                 raise ValueError(
                     f"{name} {template!r} is inside the prefix root "

@@ -59,6 +59,8 @@ IMAGE_ID_PROBE = "{{.Id}}"
 IMAGE_PLATFORM_ID_PROBE = "{{.Os}}/{{.Architecture}}"
 IMAGE_LABEL_PROBE = "index .Config.Labels"
 IMAGE_REPOSITORY_DIGEST_PROBE = "{{json .RepoDigests}}"
+IMAGE_SIZE_PROBE = "{{.Size}}"
+RUNTIME_IDENTITY_PROBE = "{{.Server.Version}}"
 RECORDED_IMAGE_ID = "sha256:" + "0" * 64
 
 
@@ -186,6 +188,10 @@ class RecordingRunner(Runner):
                 stdout = _git_common_dir(self.root)
             elif IMAGE_PLATFORM_ID_PROBE in rendered:
                 stdout = recorded_image_identity(self.root, command.argv[-1])
+            elif RUNTIME_IDENTITY_PROBE in rendered:
+                stdout = "27.1.1\tlinux\tamd64"
+            elif IMAGE_SIZE_PROBE in rendered:
+                stdout = "1048576"
             elif IMAGE_ID_PROBE in rendered:
                 stdout = RECORDED_IMAGE_ID
             elif IMAGE_LABEL_PROBE in rendered:

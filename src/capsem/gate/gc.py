@@ -12,6 +12,7 @@ and therefore not something to discard by accident.
 
 from __future__ import annotations
 
+from . import assetcache
 from .actions import Action, Call
 from .command import GateCommand
 from .context import Context
@@ -120,6 +121,8 @@ class _Survey(Action, name="survey"):
 
 def _measure(config) -> str:
     measured = footprint(config)
+    if vm_images := assetcache.footprint(config):
+        measured[str(assetcache.root(config))] = vm_images
     if not measured:
         return "nothing to reclaim"
     lines = [
@@ -145,6 +148,7 @@ def _trees(context: Context) -> None:
 
 
 def _rails(context: Context) -> None:
+    assetcache.clean(context.config)
     storage = Storage(context.runner)
     storage.clean(scope="all")
     context.runner.note(f"{free_gb(context.config.root):.1f} GB free after the rails")
