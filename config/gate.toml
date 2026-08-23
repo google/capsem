@@ -649,6 +649,23 @@ status_requires = [
 test_root = "target/ironbank-assets"
 profiles_glob = "config/profiles/*/profile.toml"
 
+# Everything a built VM asset is a function of. A lane whose identity matches
+# the one recorded beside its output is reused; anything else rebuilds.
+#
+# Deliberately wider than it strictly needs to be. Over-hashing costs a
+# rebuild nobody notices; under-hashing ships a stale rootfs into a release in
+# a run that stays green. Add a path here whenever it can change what a VM
+# boots -- and never remove one to make a rebuild go away.
+identity_roots = [
+    "guest",
+    "config/profiles",
+    "config/docker",
+    "crates/capsem-agent",
+    "crates/capsem-proto",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+]
+
 # A build that exits zero having produced none of these is the failure worth
 # naming here rather than much later, inside a VM boot.
 # Derived from `[artifacts]`: the three bootable files plus this build's own
@@ -2317,11 +2334,23 @@ carried = ["private"]
 # mechanism: a uv venv records its own absolute path in `pyvenv.cfg` and in
 # every console-script shebang, and both are already fast from warm global
 # stores.
-lent = ["assets"]
+# `assets` is the payload; `target/ironbank-assets` is the lane scaffolding
+# that reaches it through links, and it carries the identity stamp that says
+# which sources produced it. Lending only the payload meant the lane rebuilt
+# both architectures every run -- about twenty-five minutes -- with nothing to
+# compare against.
+lent = ["assets", "target/ironbank-assets"]
 
 # What must come back out before the prefix is reclaimed. A release publishes
 # from these, and without the export they die with the copy that made them.
 exports = ["dist", "packages", "assets", "target/config", "target/gate-runs"]
+
+# Trees a run writes but nothing publishes. `exports` establishes provenance
+# for everything a release takes out of a prefix; this establishes it for
+# build scaffolding, which is worth carrying between runs and has no business
+# being copied back into the checkout. A lent path must appear in one list or
+# the other, so nothing can be lent that no run is known to write.
+produced = ["target/ironbank-assets"]
 
 # ---------------------------------------------------------------------------
 # The host-kernel sandbox

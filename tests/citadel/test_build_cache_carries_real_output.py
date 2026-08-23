@@ -78,18 +78,36 @@ def test_the_next_run_reads_back_what_the_last_run_built(tmp_path: Path) -> None
 def test_a_lent_tree_is_one_the_gate_is_known_to_produce(tmp_path: Path) -> None:
     """A path no run writes is a cache that stays empty and a suite that stays green.
 
-    `[prefix] exports` is the list of trees the gate already knows a run
-    produces -- it is what must be brought back out before a prefix is
-    reclaimed. Lending something outside that set means lending something
-    nothing is known to write, which is exactly how this was nearly configured.
+    Two lists establish that a run writes a tree. `[prefix] exports` is what
+    must come back out before a prefix is reclaimed, which a release publishes
+    from. `[prefix] produced` is build scaffolding a run writes and nothing
+    publishes -- worth carrying between runs, and with no business being
+    copied back into the checkout.
+
+    Lending something in neither means lending something nothing is known to
+    write, which is exactly how this was nearly configured.
     """
     settings = gate_config.load(ROOT).prefix
 
-    unproduced = sorted(set(settings.lent) - set(settings.exports))
+    known = set(settings.exports) | set(settings.produced)
+    unproduced = sorted(set(settings.lent) - known)
     assert not unproduced, (
-        f"{unproduced} is lent between runs but is not something the gate "
-        "exports, so nothing establishes that any run writes it"
+        f"{unproduced} is lent between runs but appears in neither "
+        "`[prefix] exports` nor `[prefix] produced`, so nothing establishes "
+        "that any run writes it"
     )
+
+
+def test_scaffolding_is_never_copied_back_into_the_checkout() -> None:
+    """The two provenance lists mean different things and must not overlap.
+
+    An export lands in the developer's tree. Scaffolding that arrived there
+    would be build output masquerading as source, which is the failure
+    `[prefix] exports` is narrow to avoid.
+    """
+    settings = gate_config.load(ROOT).prefix
+    both = sorted(set(settings.exports) & set(settings.produced))
+    assert not both, f"{both} is declared as both published output and scaffolding"
 
 
 def test_a_tree_reached_through_a_link_is_carried_as_its_contents(tmp_path: Path) -> None:
@@ -318,7 +336,12 @@ def test_the_cache_never_holds_a_link_where_a_tree_should_be(tmp_path: Path) -> 
         real = finished / "built" / relative / "x86_64"
         real.mkdir(parents=True)
         (real / "rootfs.erofs").write_bytes(PAYLOAD)
-        (finished / relative).symlink_to(Path("built") / relative)
+        link = finished / relative
+        # A lent path may be nested -- `target/ironbank-assets` is -- so the
+        # link needs its parent to exist, and a target that resolves from
+        # where the link actually sits rather than from the prefix root.
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(real.parent)
 
     prefix.reclaim(config, finished)
 

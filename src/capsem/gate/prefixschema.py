@@ -31,6 +31,10 @@ class PrefixConfig(Strict):
     carried: tuple[str, ...]
     lent: tuple[str, ...]
     exports: tuple[str, ...]
+    #: Trees a run writes but nothing publishes. Provenance for build
+    #: scaffolding that is worth carrying between runs and must never be
+    #: copied back into the checkout.
+    produced: tuple[str, ...]
 
     @field_validator("lease_template")
     @classmethod

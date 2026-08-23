@@ -22,8 +22,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import assetidentity, imagebuild
 from . import config as gate_config
-from . import imagebuild
 from .config import Arch
 from .errors import GateError
 from .filesystem import make_dir
@@ -54,6 +54,30 @@ def lane_assets(config: gate_config.GateConfig, profile: Profile, arch: Arch) ->
     return config.path(config.assets.test_root) / profile.name / f"build-{arch.name}"
 
 
+#: Written inside the lane's own output tree, never beside it. A stamp that
+#: can outlive the assets it describes is how a cache starts lying.
+IDENTITY_FILE = ".lane-identity"
+
+
+def record_identity(output: Path, identity: str) -> None:
+    """Claim this output was built from `identity`."""
+    output.mkdir(parents=True, exist_ok=True)
+    (output / IDENTITY_FILE).write_text(identity, encoding="utf-8")
+
+
+def already_built(output: Path, identity: str) -> bool:
+    """Whether this lane's output is current for `identity`.
+
+    Absent output is never a hit, whatever any stamp says: the tree is
+    reclaimed on its own schedule, and a claim that survives its assets would
+    let a run skip work whose product is gone.
+    """
+    stamp = output / IDENTITY_FILE
+    if not output.is_dir() or not stamp.is_file():
+        return False
+    return stamp.read_text(encoding="utf-8").strip() == identity
+
+
 class AssetLanes:
     """One build lane per architecture, run concurrently and reported together."""
 
@@ -70,8 +94,16 @@ class AssetLanes:
 
     def _build(self, arch: Arch) -> None:
         log = self._root / f"build-{arch.name}.log"
+        identity = assetidentity.lane_identity(self._config)
         for profile in self._profiles:
             output = self.lane_assets(profile, arch)
+            if already_built(output, identity):
+                self._runner.note(
+                    f"Ironbank asset lane {profile.name} ({arch.name}) is current "
+                    f"for {identity}; reusing it"
+                )
+                self._require_artifacts(output / arch.name)
+                continue
             self._runner.step(f"Ironbank asset build lane: {profile.name} ({arch.name})")
             for stage in self._config.imagebuild.lane_templates:
                 # Straight to the builder, with this lane's output. It used to
@@ -91,6 +123,9 @@ class AssetLanes:
                     log=log,
                 )
             self._require_artifacts(output / arch.name)
+            # After the artifacts are proven present, so a lane that produced
+            # nothing cannot stamp itself current.
+            record_identity(output, identity)
 
     def _require_artifacts(self, produced: Path) -> None:
         missing = [

@@ -27,6 +27,10 @@ class ArtifactsConfig(Strict):
 class AssetsConfig(Strict):
     test_root: str
     profiles_glob: str
+    #: Every checkout path a built asset can depend on. Wider than strictly
+    #: necessary on purpose: over-hashing costs a rebuild, under-hashing ships
+    #: a stale rootfs in a run that stays green.
+    identity_roots: tuple[str, ...]
     evidence_artifacts: tuple[str, ...]
     obom_artifact: str
     failure_tail_lines: int

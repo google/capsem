@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import blake3
+import pytest
 from helpers.gate import RecordingJournal, RecordingRunner
 
 from capsem.gate import config as gate_config
@@ -311,3 +312,115 @@ def test_building_assets_is_still_skipped_on_a_warm_checkout() -> None:
         subject = steps.get(label)
         assert subject is not None, sorted(steps)
         assert _is_conditional(subject), f"{label} lost the warm-asset shortcut"
+
+
+# ---------------------------------------------------------------------------
+# Rebuilding assets nothing changed.
+#
+# `AssetLanes._build` shells into `capsem-admin image build` for every profile
+# and every stage, every run, with no check of any kind. Four consecutive
+# qualifications of one release spent about 25 minutes each rebuilding both
+# architectures' assets from sources none of them had touched -- the last
+# three changed only test files and a shell function.
+#
+# The build cache does carry `assets/` between prefixes, and the lane ignores
+# it: the only thing that consults it is the `_when_missing` recovery path,
+# which is a different question. The lane's own output tree,
+# `target/ironbank-assets`, is not carried at all -- it is gone from a finished
+# prefix, so there is nothing to reuse even in principle.
+# ---------------------------------------------------------------------------
+
+
+def test_the_lane_identity_covers_everything_an_asset_is_built_from() -> None:
+    """Over-hashing costs a rebuild; under-hashing ships a stale asset.
+
+    So the list is declared, reviewable, and deliberately wider than it
+    strictly needs to be. A path that can change what lands in a VM and is
+    absent here is the bug this guard exists to catch.
+    """
+    from capsem.gate import assetidentity
+
+    covered = set(assetidentity.roots(gate_config.load(PROJECT_ROOT)))
+    for required in (
+        "guest",                  # the guest artifact tree the initrd packs
+        "config/profiles",        # per-profile packages, rules and seeds
+        "config/docker",          # the image templates themselves
+        "crates/capsem-agent",    # the guest binaries
+        "Cargo.lock",             # what those binaries link
+        "rust-toolchain.toml",    # what compiles them
+    ):
+        assert any(root == required or root.startswith(f"{required}/") for root in covered), (
+            f"{required} can change what a VM boots and is not part of the lane "
+            f"identity, so a change there would reuse a stale asset: {sorted(covered)}"
+        )
+
+
+def test_a_lane_whose_inputs_are_unchanged_is_reused(tmp_path: Path) -> None:
+    from capsem.gate import assetidentity
+
+    (tmp_path / "guest").mkdir()
+    (tmp_path / "guest" / "init").write_text("one", encoding="utf-8")
+    first = assetidentity.digest_of(tmp_path, ("guest",))
+    assert assetidentity.digest_of(tmp_path, ("guest",)) == first
+
+
+def test_a_lane_whose_inputs_moved_is_rebuilt(tmp_path: Path) -> None:
+    from capsem.gate import assetidentity
+
+    (tmp_path / "guest").mkdir()
+    (tmp_path / "guest" / "init").write_text("one", encoding="utf-8")
+    first = assetidentity.digest_of(tmp_path, ("guest",))
+    (tmp_path / "guest" / "init").write_text("two", encoding="utf-8")
+    assert assetidentity.digest_of(tmp_path, ("guest",)) != first
+
+
+def test_a_new_file_changes_the_identity(tmp_path: Path) -> None:
+    """Addition is a change. Hashing contents alone would miss it."""
+    from capsem.gate import assetidentity
+
+    (tmp_path / "guest").mkdir()
+    (tmp_path / "guest" / "init").write_text("one", encoding="utf-8")
+    first = assetidentity.digest_of(tmp_path, ("guest",))
+    (tmp_path / "guest" / "extra").write_text("", encoding="utf-8")
+    assert assetidentity.digest_of(tmp_path, ("guest",)) != first
+
+
+def test_an_absent_root_is_refused_rather_than_hashed_as_empty(tmp_path: Path) -> None:
+    """A typo in the declared list would otherwise read as "nothing here",
+    silently shrinking the identity to the roots that happen to exist."""
+    from capsem.gate import assetidentity
+    from capsem.gate.errors import GateError
+
+    with pytest.raises(GateError, match="ghost"):
+        assetidentity.digest_of(tmp_path, ("ghost",))
+
+
+def test_the_lane_skips_a_build_whose_identity_already_matches(tmp_path: Path) -> None:
+    """The whole point: unchanged inputs cost nothing.
+
+    Recorded beside the output rather than in a side table, so a reused tree
+    and the identity that justifies reusing it cannot be separated -- a stamp
+    that outlives its assets is how a cache starts lying.
+    """
+    from capsem.gate import assetlanes
+
+    output = tmp_path / "build-x86_64"
+    output.mkdir()
+    assert not assetlanes.already_built(output, "abc123")
+
+    assetlanes.record_identity(output, "abc123")
+    assert assetlanes.already_built(output, "abc123")
+    assert not assetlanes.already_built(output, "def456")
+
+
+def test_a_stamp_without_its_output_is_not_a_hit(tmp_path: Path) -> None:
+    """Reclaiming the tree must not leave a claim that it is current."""
+    from capsem.gate import assetlanes
+
+    output = tmp_path / "build-x86_64"
+    output.mkdir()
+    assetlanes.record_identity(output, "abc123")
+    for path in output.iterdir():
+        if path.name != assetlanes.IDENTITY_FILE:
+            path.unlink()
+    assert not assetlanes.already_built(tmp_path / "gone", "abc123")
