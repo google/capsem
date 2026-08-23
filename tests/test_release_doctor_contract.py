@@ -882,25 +882,36 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
         "RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}"
         in workflow
     )
-    assert "Validate deployed asset channel content" in workflow
+    assert "Deploy immutable preview" in workflow
+    assert "Validate preview distribution" in workflow
+    assert "Activate verified production distribution" in workflow
+    assert "Validate activated production bytes" in workflow
+    assert "Restore prior production deployment" in workflow
+    assert "Verify restored production bytes" in workflow
     assert "uv run python scripts/check-release-site-contract.py" in workflow
     assert '--base-url "$RELEASE_SITE_URL"' in workflow
     assert "--channel stable" in workflow
     assert "--channel nightly" in workflow
     assert "--attempts 30" in workflow
     assert "--delay-seconds 20" in workflow
-    assert workflow.index("cloudflare/wrangler-action@") < workflow.index(
-        "Validate deployed asset channel content"
+    assert workflow.index("Deploy immutable preview") < workflow.index(
+        "Validate preview distribution"
+    )
+    assert workflow.index("Validate preview distribution") < workflow.index(
+        "Activate verified production distribution"
+    )
+    assert workflow.index("Activate verified production distribution") < workflow.index(
+        "Validate activated production bytes"
     )
 
 
 def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_deploy() -> None:
     workflow = _workflow_text("release-channel.yaml")
-    validator_step = workflow.split("- name: Validate deployed asset channel content", maxsplit=1)[
+    validator_step = workflow.split("- name: Validate activated production bytes", maxsplit=1)[
         1
     ].split("\n      - name:", maxsplit=1)[0]
 
-    assert "Validate deployed asset channel content" in workflow
+    assert "Validate activated production bytes" in workflow
     assert "uv run python scripts/check-release-site-contract.py" in validator_step
     assert '--base-url "$RELEASE_SITE_URL"' in validator_step
     assert "--channel stable" in validator_step
@@ -909,8 +920,11 @@ def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_
     assert '"${CHANNEL_ARGS[@]}"' in validator_step
     assert "--attempts 30" in validator_step
     assert "--delay-seconds 20" in validator_step
-    assert workflow.index("cloudflare/wrangler-action@") < workflow.index(
-        "Validate deployed asset channel content"
+    assert "--expect-snapshot target/release-channel-deployment/candidate-release.json" in (
+        validator_step
+    )
+    assert workflow.index("Activate verified production distribution") < workflow.index(
+        "Validate activated production bytes"
     )
 
 
@@ -942,9 +956,10 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
     assert "dist_artifact: asset-channel-staging-preview" in workflow
     assert "deploy_branch: ${{ inputs.deploy_branch }}" in workflow
     assert "release_site_url: ${{ inputs.release_site_url }}" in workflow
+    assert "activate_production: false" in workflow
     assert (
         "pages deploy target/release-channel/ --project-name=release "
-        "--branch=${{ inputs.deploy_branch || 'main' }}"
+        "--branch=${{ inputs.activate_production && format('capsem-preview-{0}-{1}', github.run_id, github.run_attempt) || inputs.deploy_branch }}"
     ) in reusable
 
     for text in (docs, release_skill, asset_skill):
@@ -2947,6 +2962,7 @@ def test_asset_skill_documents_custom_manifest_url_contract() -> None:
 
 def test_ci_docs_describes_three_independent_publication_rails() -> None:
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    normalized_docs = " ".join(docs.split())
 
     assert (
         "| `release-nightly.yaml` | Daily schedule or manual dispatch | Freeze `${{ github.sha }}`, qualify it once with `just test`, then run both profile commands and the binary command against that one journal |"
@@ -2977,7 +2993,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
         in docs
     )
     assert (
-        "| `release-channel.yaml` | Called by binary or asset release | Deploy release.capsem.org from the generated release-channel site artifact |"
+        "| `release-channel.yaml` | Called by binary or asset release | Validate the generated distribution on an immutable preview, activate it on release.capsem.org, and restore the prior production deployment on any activation-verification failure |"
         in docs
     )
     assert "release.yaml` | Tag push (`v*`) | Build assets" not in docs
@@ -2986,10 +3002,10 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     assert "`fast-gate`, `test-linux`, `test`, `test-install`, `docs-build`, `site-build`," in docs
     assert "`release-site-build`, runs even" in docs
     assert "fails unless every dependency job reports" in docs
-    assert "After Cloudflare deploys, `release-channel.yaml` smoke" in docs
+    assert "After Cloudflare activates production, `release-channel.yaml` checks" in normalized_docs
     assert "`https://release.capsem.org/` index" in docs
     assert "`/channels.json`, and" in docs
-    assert "`/assets/<channel>/manifest.json` before the workflow can pass" in docs
+    assert "`/assets/<channel>/manifest.json` before the workflow can pass" in normalized_docs
     assert (
         "`docs.yaml` and `site.yaml` are independent from binary and profile image release" in docs
     )
@@ -3278,6 +3294,7 @@ def test_release_channel_deploy_validates_the_deployed_channel_shape() -> None:
     assert "CHANNEL_ARGS=(--channel stable --channel nightly)" in deploy
     assert '"${CHANNEL_ARGS[@]}"' in deploy
     assert "validate_complete_public_channels: false" in staging
+    assert "activate_production: false" in staging
 
 
 def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -> None:
@@ -4369,9 +4386,9 @@ def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
     # And that the set it selects actually carries b3sum. Spelling the pin here
     # is what let the binary pairing gate go without it: this guard covered
     # every tool in one job, while its sibling covered one tool in every job.
-    sets = tomllib.loads(
-        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
-    )["toolchain"]["sets"]
+    sets = tomllib.loads((PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))[
+        "toolchain"
+    ]["sets"]
     members: set[str] = set()
     for match in re.findall(r"--sets ([a-z,]+)", workflow):
         for label in match.split(","):
@@ -5346,9 +5363,7 @@ def test_linux_release_always_retains_full_per_arch_gate_evidence() -> None:
 def test_binary_pairing_failure_uploads_exported_prefix_evidence() -> None:
     job = _workflow_job("test-binary-pairing", "release.yaml")
     step = next(
-        row
-        for row in job["steps"]
-        if row.get("name") == "Upload pairing evidence on failure"
+        row for row in job["steps"] if row.get("name") == "Upload pairing evidence on failure"
     )
 
     assert step["if"] == "failure()"

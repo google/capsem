@@ -23,6 +23,7 @@ import tarfile
 import threading
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlparse
 
@@ -45,11 +46,25 @@ DEPLOY_FRESHNESS_SPEC = importlib.util.spec_from_file_location(
 assert DEPLOY_FRESHNESS_SPEC is not None and DEPLOY_FRESHNESS_SPEC.loader is not None
 DEPLOY_FRESHNESS = importlib.util.module_from_spec(DEPLOY_FRESHNESS_SPEC)
 DEPLOY_FRESHNESS_SPEC.loader.exec_module(DEPLOY_FRESHNESS)
+SNAPSHOT_SPEC = importlib.util.spec_from_file_location(
+    "release_site_snapshot",
+    PROJECT_ROOT / "scripts" / "release_site_snapshot.py",
+)
+assert SNAPSHOT_SPEC is not None and SNAPSHOT_SPEC.loader is not None
+SNAPSHOT = importlib.util.module_from_spec(SNAPSHOT_SPEC)
+SNAPSHOT_SPEC.loader.exec_module(SNAPSHOT)
+ROLLBACK_SPEC = importlib.util.spec_from_file_location(
+    "cloudflare_pages_rollback",
+    PROJECT_ROOT / "scripts" / "cloudflare_pages_rollback.py",
+)
+assert ROLLBACK_SPEC is not None and ROLLBACK_SPEC.loader is not None
+ROLLBACK = importlib.util.module_from_spec(ROLLBACK_SPEC)
+ROLLBACK_SPEC.loader.exec_module(ROLLBACK)
 
 pytestmark = pytest.mark.build_chain
 
 
-def test_deploy_workflow_runs_authoritative_live_validator_for_both_channels() -> None:
+def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_production() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release-channel.yaml").read_text(
         encoding="utf-8"
     )
@@ -62,9 +77,317 @@ def test_deploy_workflow_runs_authoritative_live_validator_for_both_channels() -
     assert "--attempts 30" in workflow
     assert "group: capsem-public-channel-deploy" in workflow
     assert "cancel-in-progress: false" in workflow
-    assert workflow.index("check-channel-deploy-freshness.py") < workflow.index(
-        "      - name: Deploy"
+    freshness = workflow.index("check-channel-deploy-freshness.py")
+    capture = workflow.index("      - name: Capture current production deployment")
+    prior_snapshot = workflow.index("      - name: Snapshot current production distribution")
+    preview = workflow.index("      - name: Deploy immutable preview")
+    preview_check = workflow.index("      - name: Validate preview distribution")
+    activation = workflow.index("      - name: Activate verified production distribution")
+    activation_check = workflow.index("      - name: Validate activated production bytes")
+    decision = workflow.index("      - name: Decide production recovery")
+    rollback = workflow.index("      - name: Restore prior production deployment")
+    rollback_check = workflow.index("      - name: Verify restored production bytes")
+    verdict = workflow.index("      - name: Require successful production activation")
+    assert (
+        freshness
+        < capture
+        < prior_snapshot
+        < preview
+        < preview_check
+        < activation
+        < activation_check
+        < decision
+        < rollback
+        < rollback_check
+        < verdict
     )
+    assert "activate_production:" in workflow
+    assert "format('capsem-preview-{0}-{1}', github.run_id, github.run_attempt)" in workflow
+    assert (
+        "PREVIEW_URL: ${{ inputs.activate_production && steps.preview.outputs.deployment-url || inputs.release_site_url }}"
+        in workflow
+    )
+    assert "--snapshot-out target/release-channel-deployment/candidate-release.json" in workflow
+    assert "--expect-snapshot target/release-channel-deployment/candidate-release.json" in workflow
+    assert "--expect-snapshot target/release-channel-deployment/prior-release.json" in workflow
+    assert (
+        "PRODUCTION_DEPLOYMENT_ID: ${{ steps.production.outputs.pages-deployment-id }}" in workflow
+    )
+    assert '--deployment-id "$PRODUCTION_DEPLOYMENT_ID"' in workflow
+    assert "steps.recovery.outputs.restore == 'true'" in workflow
+    assert "continue-on-error: true" in workflow[activation:decision]
+
+    staging = (PROJECT_ROOT / ".github" / "workflows" / "release-channel-staging.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "activate_production: false" in staging
+
+
+@pytest.mark.parametrize(
+    ("production", "validation", "restore", "success"),
+    [
+        ("skipped", "skipped", False, False),
+        ("failure", "skipped", True, False),
+        ("failure", "failure", True, False),
+        ("success", "skipped", True, False),
+        ("success", "failure", True, False),
+        ("success", "success", False, True),
+    ],
+)
+def test_activation_failure_at_every_edge_has_one_safe_decision(
+    production: str,
+    validation: str,
+    restore: bool,
+    success: bool,
+) -> None:
+    assert ROLLBACK.activation_decision(production, validation) == {
+        "restore": restore,
+        "activation_success": success,
+    }
+
+
+def test_activation_decision_rejects_unknown_workflow_state() -> None:
+    with pytest.raises(ROLLBACK.RollbackError, match="unsupported production"):
+        ROLLBACK.activation_decision("cancelled", "skipped")
+
+
+def _snapshot_checker(site: str, *, manifest: bytes = b'{"version":"1"}\n') -> Any:
+    site = site.rstrip("/")
+    return SimpleNamespace(
+        _FETCH_BYTES_CACHE={
+            f"{site}/channels.json": SimpleNamespace(
+                data=b'{"channels":{"stable":{}}}\n', error=None
+            ),
+            f"{site}/assets/stable/manifest.json": SimpleNamespace(data=manifest, error=None),
+            "https://github.example.test/release/immutable.pkg": SimpleNamespace(
+                data=b"immutable package", error=None
+            ),
+        }
+    )
+
+
+def test_release_snapshot_is_location_independent_and_includes_external_artifacts() -> None:
+    preview = SNAPSHOT.release_fetch_snapshot(
+        _snapshot_checker("https://preview.release.pages.dev"),
+        "https://preview.release.pages.dev",
+    )
+    production = SNAPSHOT.release_fetch_snapshot(
+        _snapshot_checker("https://release.capsem.org"),
+        "https://release.capsem.org",
+    )
+
+    assert preview == production
+    assert set(preview["entries"]) == {
+        "/assets/stable/manifest.json",
+        "/channels.json",
+        "https://github.example.test/release/immutable.pkg",
+    }
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [b'{"version":"2"}\n', b"tampered manifest", b""],
+)
+def test_release_snapshot_rejects_any_changed_served_byte(tmp_path: Path, manifest: bytes) -> None:
+    expected = SNAPSHOT.release_fetch_snapshot(
+        _snapshot_checker("https://preview.release.pages.dev"),
+        "https://preview.release.pages.dev",
+    )
+    snapshot_path = tmp_path / "candidate.json"
+    SNAPSHOT.write_snapshot(snapshot_path, expected)
+    actual = SNAPSHOT.release_fetch_snapshot(
+        _snapshot_checker("https://release.capsem.org", manifest=manifest),
+        "https://release.capsem.org",
+    )
+
+    with pytest.raises(RuntimeError, match=r"changed=.*manifest\.json"):
+        SNAPSHOT.require_snapshot(snapshot_path, actual)
+
+
+def test_release_snapshot_requires_catalog_and_manifest_evidence() -> None:
+    checker = SimpleNamespace(
+        _FETCH_BYTES_CACHE={
+            "https://release.capsem.org/health.json": SimpleNamespace(data=b"{}", error=None)
+        }
+    )
+    with pytest.raises(RuntimeError, match=r"channels\.json"):
+        SNAPSHOT.release_fetch_snapshot(checker, "https://release.capsem.org")
+
+
+def test_release_snapshot_fetches_every_public_deploy_file(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    manifest = dist / "assets" / "stable" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    (dist / "channels.json").write_bytes(b'{"channels":{}}\n')
+    (dist / "index.html").write_bytes(b"candidate index")
+    (dist / "_headers").write_bytes(b"/*\n  Cache-Control: no-cache\n")
+    manifest.write_bytes(b'{"version":"1"}\n')
+    site = "https://preview.release.pages.dev"
+    served = {
+        f"{site}/channels.json": (dist / "channels.json").read_bytes(),
+        f"{site}/index.html": (dist / "index.html").read_bytes(),
+        f"{site}/assets/stable/manifest.json": manifest.read_bytes(),
+    }
+    cache: dict[str, Any] = {}
+
+    def fetch(url: str) -> Any:
+        result = SimpleNamespace(data=served[url], error=None)
+        cache[url] = result
+        return result
+
+    checker = SimpleNamespace(_FETCH_BYTES_CACHE=cache, fetch_bytes=fetch)
+    snapshot = SNAPSHOT.release_fetch_snapshot(checker, site, dist=dist)
+
+    assert "/index.html" in snapshot["entries"]
+    assert "/_headers" not in snapshot["entries"]
+
+    served[f"{site}/index.html"] = b"wrong deployment"
+    with pytest.raises(RuntimeError, match=r"served bytes differ.*index\.html"):
+        SNAPSHOT.release_fetch_snapshot(checker, site, dist=dist)
+
+
+def _cloudflare_project(
+    deployment_id: str,
+    *,
+    status: str = "success",
+    environment: str = "production",
+) -> dict[str, object]:
+    return {
+        "success": True,
+        "result": {
+            "name": "release",
+            "canonical_deployment": {
+                "id": deployment_id,
+                "url": f"https://{deployment_id}.release.pages.dev",
+                "environment": environment,
+                "latest_stage": {"status": status},
+            },
+        },
+    }
+
+
+def test_cloudflare_capture_records_exact_successful_canonical_production() -> None:
+    calls: list[tuple[str, str]] = []
+
+    def request(method: str, path: str) -> dict[str, object]:
+        calls.append((method, path))
+        return _cloudflare_project("prior-id")
+
+    assert ROLLBACK.capture_production(request, "release") == {
+        "schema": ROLLBACK.STATE_SCHEMA,
+        "project": "release",
+        "deployment_id": "prior-id",
+        "deployment_url": "https://prior-id.release.pages.dev",
+    }
+    assert calls == [("GET", "/pages/projects/release")]
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (_cloudflare_project("prior", status="failure"), "not a successful build"),
+        (_cloudflare_project("prior", environment="preview"), "not a production"),
+        (
+            {"success": True, "result": {"name": "release"}},
+            "has no production deployment",
+        ),
+    ],
+)
+def test_cloudflare_capture_refuses_unrestorable_state(
+    payload: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ROLLBACK.RollbackError, match=message):
+        ROLLBACK.capture_production(lambda _method, _path: payload, "release")
+
+
+def test_cloudflare_restore_targets_prior_id_and_waits_for_canonical_proof() -> None:
+    calls: list[tuple[str, str]] = []
+    project_reads = iter([_cloudflare_project("candidate-id"), _cloudflare_project("prior-id")])
+
+    def request(method: str, path: str) -> dict[str, object]:
+        calls.append((method, path))
+        if method == "POST":
+            return {"success": True, "result": {"id": "prior-id"}}
+        return next(project_reads)
+
+    restored = ROLLBACK.restore_production(
+        request,
+        {
+            "schema": ROLLBACK.STATE_SCHEMA,
+            "project": "release",
+            "deployment_id": "prior-id",
+        },
+        attempts=2,
+        delay_seconds=0,
+        sleep=lambda _delay: None,
+    )
+
+    assert restored["deployment_id"] == "prior-id"
+    assert calls == [
+        ("POST", "/pages/projects/release/deployments/prior-id/rollback"),
+        ("GET", "/pages/projects/release"),
+        ("GET", "/pages/projects/release"),
+    ]
+
+
+def test_cloudflare_restore_retries_a_transient_rollback_request() -> None:
+    posts = 0
+
+    def request(method: str, _path: str) -> dict[str, object]:
+        nonlocal posts
+        if method == "POST":
+            posts += 1
+            if posts == 1:
+                raise ROLLBACK.RollbackError("temporary Cloudflare failure")
+            return {"success": True, "result": {"id": "prior-id"}}
+        return _cloudflare_project("candidate-id" if posts == 1 else "prior-id")
+
+    restored = ROLLBACK.restore_production(
+        request,
+        {
+            "schema": ROLLBACK.STATE_SCHEMA,
+            "project": "release",
+            "deployment_id": "prior-id",
+        },
+        attempts=2,
+        delay_seconds=0,
+        sleep=lambda _delay: None,
+    )
+
+    assert restored["deployment_id"] == "prior-id"
+    assert posts == 2
+
+
+def test_cloudflare_restore_fails_when_canonical_never_returns_to_prior() -> None:
+    def request(method: str, _path: str) -> dict[str, object]:
+        if method == "POST":
+            return {"success": True, "result": {"id": "prior-id"}}
+        return _cloudflare_project("candidate-id")
+
+    with pytest.raises(ROLLBACK.RollbackError, match="remained 'candidate-id'"):
+        ROLLBACK.restore_production(
+            request,
+            {
+                "schema": ROLLBACK.STATE_SCHEMA,
+                "project": "release",
+                "deployment_id": "prior-id",
+            },
+            attempts=2,
+            delay_seconds=0,
+            sleep=lambda _delay: None,
+        )
+
+
+def test_cloudflare_activation_identity_refuses_a_different_canonical_deployment() -> None:
+    with pytest.raises(ROLLBACK.RollbackError, match="expected canonical 'candidate-id'"):
+        ROLLBACK.wait_for_canonical(
+            lambda _method, _path: _cloudflare_project("other-id"),
+            "release",
+            "candidate-id",
+            attempts=1,
+            delay_seconds=0,
+            sleep=lambda _delay: None,
+        )
 
 
 def test_complete_dist_preserves_untouched_channel_manifest_version() -> None:
@@ -445,9 +768,7 @@ def _build_release_channel(
     _run_admin("assets", "channel", "check", "--channel", CHANNEL, "--dist", str(dist))
 
 
-def _record_test_binary_metadata(
-    manifest_path: Path, artifacts_dir: Path, *, version: str
-) -> None:
+def _record_test_binary_metadata(manifest_path: Path, artifacts_dir: Path, *, version: str) -> None:
     app_executable = b"capsem app install-test executable\n"
     tray_executable = b"capsem tray install-test executable\n"
     artifacts_dir.mkdir(parents=True, exist_ok=True)

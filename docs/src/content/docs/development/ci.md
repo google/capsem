@@ -20,7 +20,7 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 | `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove profile image metadata is unchanged without creating a GitHub release or deploying release.capsem.org |
 | `docs.yaml` | Push to main | Deploy docs.capsem.org on each main merge, then smoke the live docs site |
 | `site.yaml` | Push to main | Deploy capsem.org on each main merge, then smoke the live marketing site |
-| `release-channel.yaml` | Called by binary or asset release | Deploy release.capsem.org from the generated release-channel site artifact |
+| `release-channel.yaml` | Called by binary or asset release | Validate the generated distribution on an immutable preview, activate it on release.capsem.org, and restore the prior production deployment on any activation-verification failure |
 
 Installers carry host binaries and the selected manifest URL provenance, plus
 materialized profiles. They do not carry a manifest snapshot or VM image blobs.
@@ -373,17 +373,26 @@ Cloudflare Pages project serving `release.capsem.org`, attach the
 | Secret | Purpose |
 |--------|---------|
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account that owns the Pages project serving `release.capsem.org` |
-| `CLOUDFLARE_API_TOKEN` | API token allowed to deploy the Pages project serving `release.capsem.org` |
+| `CLOUDFLARE_API_TOKEN` | API token with Pages Write permission to deploy and roll back the Pages project serving `release.capsem.org` |
 
 `release-channel.yaml` fails before deploy if either secret is missing or
 `scripts/check-cloudflare-pages-project.py` cannot see the Pages project serving
-`release.capsem.org` through the configured account/token. After Cloudflare
-publishes the generated site, it runs `scripts/check-release-site-contract.py` against
-`https://release.capsem.org`. That Python validator reuses the remote release
-readiness contract, so it checks the index, `channels.json`, selected channel
-manifest records, package-owned binaries, profile-owned evidence documents,
-BLAKE3/SHA-256 content, attestation references, and cache headers rather than
-only checking that files exist.
+`release.capsem.org` through the configured account/token. It captures the
+exact canonical production deployment and a byte snapshot of the current
+catalog, then deploys the complete generated distribution to an immutable
+preview. `scripts/check-release-site-contract.py` validates that preview's
+index, `channels.json`, selected channel manifest records, package-owned
+binaries, profile-owned evidence documents, BLAKE3/SHA-256 content,
+attestation references, and cache headers rather than only checking that files
+exist.
+
+Production activation uploads the same generated directory and must serve the
+same path-keyed sizes and SHA-256 identities observed on the preview. A failed
+activation or any post-activation mismatch invokes Cloudflare Pages rollback
+for the captured production deployment ID, then requires the restored public
+catalog, manifests, artifacts, and evidence to match their prior byte snapshot.
+The workflow still fails after a successful restoration: rollback preserves
+the last good release but never converts a failed candidate into success.
 
 VM asset hashing is owned by the asset build boundary. One streaming pass
 records BLAKE3 and SHA-256 in `manifest.json`; stable/nightly graph assembly
@@ -452,11 +461,11 @@ initial site can bootstrap. Later publications still compare against the live
 previous manifest and skip deployment only when current profile image hashes,
 asset release metadata, and manifest policy are all unchanged. Manifest policy
 includes channel-visible fields such as `refresh_policy`.
-Neither rail is complete until `release.capsem.org` reflects the new channel
-state. After Cloudflare deploys, `release-channel.yaml` smoke-checks the public
-`https://release.capsem.org/` index, `/channels.json`, and
-`/assets/<channel>/manifest.json` before the workflow can pass, using
-`scripts/check-release-site-contract.py`. The checks also
+Neither rail is complete until `release.capsem.org` reflects the exact
+preview-verified channel state. After Cloudflare activates production,
+`release-channel.yaml` checks the public `https://release.capsem.org/` index,
+`/channels.json`, and `/assets/<channel>/manifest.json` before the workflow can
+pass, using `scripts/check-release-site-contract.py`. The checks also
 reject stale public HTML: the human index must show the same generated
 timestamp, channel list, manifest URL, manifest version, package inventory,
 per-binary inventory, profile revision, image artifact URLs, and evidence URLs

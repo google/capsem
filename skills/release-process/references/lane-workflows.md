@@ -32,6 +32,30 @@ Consequences:
 deployer. It renders a deterministic generated distribution and deploys a
 non-production branch without invoking VM asset builds or host package builds.
 
+## Atomic public channel activation
+
+`release-channel.yaml` is a fail-closed production transaction:
+
+1. capture the exact successful canonical Cloudflare Pages production
+   deployment and snapshot every body validated from the current public graph;
+2. deploy the complete generated directory to an immutable non-production
+   branch and validate its catalog, manifests, referenced artifacts, evidence,
+   cache headers, sizes, and digests;
+3. snapshot the preview's fetched bytes by release-relative path, preserving
+   absolute identity only for external immutable artifacts;
+4. activate the same generated directory on the configured production branch;
+5. require the public custom domain to serve exactly the preview snapshot;
+6. if production upload or validation fails, roll back to the captured
+   deployment ID and require the prior public byte snapshot again;
+7. fail the candidate even when rollback succeeds.
+
+A preview failure skips activation and therefore never requests rollback. Once
+activation is attempted, anything short of successful exact-byte validation
+requires restoration. The Cloudflare token needs Pages Write permission, and
+rollback state is transient workflow coordination rather than a second release
+ledger: immutable manifests, attestations, and GitHub logs remain the release
+evidence.
+
 The selected channel source manifest is the sole mutable release authority. Do
 not add a release result file, pending ledger, last-known-good graph, manual
 diff approval record, or parallel authoring path.

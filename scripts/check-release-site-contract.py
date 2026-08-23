@@ -11,7 +11,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from release_site_snapshot import release_fetch_snapshot, require_snapshot, write_snapshot
 
 from capsem import runtime_preflight_manifest as channel_resolver
 
@@ -50,21 +53,55 @@ def main() -> int:
         default=10.0,
         help="Delay between failed validation attempts.",
     )
+    snapshots = parser.add_mutually_exclusive_group()
+    snapshots.add_argument(
+        "--snapshot-out",
+        type=Path,
+        help="Write exact SHA-256/size identities for every validated response.",
+    )
+    snapshots.add_argument(
+        "--expect-snapshot",
+        type=Path,
+        help="Require every validated response to match a prior snapshot.",
+    )
+    parser.add_argument(
+        "--dist",
+        type=Path,
+        help="Fetch every public deploy-root file and require its exact local bytes.",
+    )
     args = parser.parse_args()
+    checker = load_readiness_checker()
     if args.catalog_members:
         if args.channels:
             parser.error("--catalog-members cannot be combined with --channel")
-        return validate_catalog_members(
+        result = validate_catalog_members(
             release_site=args.release_site,
             attempts=args.attempts,
             delay_seconds=args.delay_seconds,
+            checker=checker,
         )
-    return validate_release_channels(
-        release_site=args.release_site,
-        channels=args.channels or ["stable"],
-        attempts=args.attempts,
-        delay_seconds=args.delay_seconds,
-    )
+    else:
+        result = validate_release_channels(
+            release_site=args.release_site,
+            channels=args.channels or ["stable"],
+            attempts=args.attempts,
+            delay_seconds=args.delay_seconds,
+            checker=checker,
+        )
+    if result != 0:
+        return result
+    if args.snapshot_out is None and args.expect_snapshot is None and args.dist is None:
+        return 0
+    try:
+        snapshot = release_fetch_snapshot(checker, args.release_site, dist=args.dist)
+        if args.snapshot_out is not None:
+            write_snapshot(args.snapshot_out, snapshot)
+        elif args.expect_snapshot is not None:
+            require_snapshot(args.expect_snapshot, snapshot)
+    except (OSError, RuntimeError, ValueError) as error:
+        print(f"release-channel byte snapshot failed: {error}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def validate_catalog_members(

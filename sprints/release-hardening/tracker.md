@@ -12,7 +12,7 @@
 - [x] S02-004 — bind every fixed-port mock server to its launcher lifecycle
 - [x] S03-001 — run every nightly lane before the aggregate verdict
 - [x] S04-001 — produce causal installed transition evidence
-- [ ] S05-001 — prove atomic channel activation and rollback
+- [x] S05-001 — prove atomic channel activation and rollback
 - [ ] S05-002 — qualify and verify stable, then nightly
 - [ ] Changelog entries at user-visible milestones
 - [ ] Exact-source complete qualification
@@ -118,6 +118,14 @@
   binary cohort. The three oversized owning scripts shrank from 398/610/341 to
   393/587/317 lines while the shared transition modules remain below the
   300-line ceiling.
+- Channel publication now captures the exact canonical production deployment
+  and prior public byte graph, validates every deploy-root public file on an
+  immutable preview, and binds activation to both that snapshot and the
+  Cloudflare action's deployment ID. Any attempted activation without a
+  successful exact-byte verdict retries restoration of the prior deployment
+  and revalidates the prior catalog/member graph; a failed preview never
+  touches production. The reusable staging caller explicitly disables
+  production activation.
 
 ## Coverage Ledger
 
@@ -145,9 +153,14 @@
   runner; focused preservation and release contracts are green; exact update
   audit events correlate served, fetched, activated/rejected, and preserved
   manifest identities across Linux and macOS adapters
+- Deployment: preview/production snapshots are location-independent but
+  byte-exact; the failure matrix distinguishes skipped activation from every
+  upload/validation failure, while API errors, wrong canonical IDs, incomplete
+  restoration, changed bodies, extra/missing paths, and transient rollback
+  requests fail closed
 - Performance: zero redundant construction asserted and observed; the warm
   install-image edge fell from 1m54s construction to a 1.2s validated hit
 - Missing/deferred: the macOS transition implementation and host-side contracts
-  are green on Linux, while execution on physical Apple Silicon remains owned by
-  S05's release gate; public Cloudflare activation is also S05. Broad
-  service-main decomposition is outside this sprint.
+  are green on Linux, while execution on physical Apple Silicon and public
+  stable/nightly activation remain owned by S05-002's exact release gate.
+  Broad service-main decomposition is outside this sprint.

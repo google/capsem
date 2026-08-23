@@ -13,6 +13,11 @@ on:
         type: string
         required: false
         default: main
+      activate_production:
+        description: Activate and rollback production after preview verification.
+        type: boolean
+        required: false
+        default: true
       release_site_url:
         type: string
         required: false
@@ -124,7 +129,53 @@ jobs:
           python scripts/check-cloudflare-pages-project.py \
             --project "$RELEASE_CHANNEL_PROJECT"
 
-      - name: Deploy
+      - name: Capture current production deployment
+        if: ${{ inputs.activate_production }}
+        run: |
+          python scripts/cloudflare_pages_rollback.py capture \
+            --project release \
+            --state target/release-channel-deployment/prior-cloudflare.json
+
+      - name: Snapshot current production distribution
+        if: ${{ inputs.activate_production }}
+        env:
+          RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
+        run: |
+          uv run python scripts/check-release-site-contract.py \
+            --base-url "$RELEASE_SITE_URL" \
+            --catalog-members \
+            --snapshot-out target/release-channel-deployment/prior-release.json
+
+      - name: Deploy immutable preview
+        id: preview
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy target/release-channel/ --project-name=release --branch=${{ inputs.activate_production && format('capsem-preview-{0}-{1}', github.run_id, github.run_attempt) || inputs.deploy_branch }}
+
+      - name: Validate preview distribution
+        env:
+          PREVIEW_URL: ${{ inputs.activate_production && steps.preview.outputs.deployment-url || inputs.release_site_url }}
+          VALIDATE_COMPLETE_PUBLIC_CHANNELS: ${{ inputs.validate_complete_public_channels }}
+        run: |
+          CHANNEL_ARGS=(--channel "$CHANNEL")
+          if [ "$VALIDATE_COMPLETE_PUBLIC_CHANNELS" = "true" ]; then
+            CHANNEL_ARGS=(--channel stable --channel nightly)
+          fi
+          uv run python scripts/check-release-site-contract.py \
+            --base-url "$PREVIEW_URL" \
+            "${CHANNEL_ARGS[@]}" \
+            --dist "$DIST_DIR" \
+            --snapshot-out target/release-channel-deployment/candidate-release.json
+
+      - name: Activate verified production distribution
+        id: production
+        if: ${{ inputs.activate_production }}
+        continue-on-error: true
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -134,10 +185,14 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy target/release-channel/ --project-name=release --branch=${{ inputs.deploy_branch || 'main' }}
 
-      - name: Validate deployed asset channel content
+      - name: Validate activated production bytes
+        id: production_check
+        if: ${{ inputs.activate_production && steps.production.outcome == 'success' }}
+        continue-on-error: true
         env:
           RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
           VALIDATE_COMPLETE_PUBLIC_CHANNELS: ${{ inputs.validate_complete_public_channels }}
+          PRODUCTION_DEPLOYMENT_ID: ${{ steps.production.outputs.pages-deployment-id }}
         run: |
           CHANNEL_ARGS=(--channel "$CHANNEL")
           if [ "$VALIDATE_COMPLETE_PUBLIC_CHANNELS" = "true" ]; then
@@ -146,5 +201,57 @@ jobs:
           uv run python scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
             "${CHANNEL_ARGS[@]}" \
+            --dist "$DIST_DIR" \
             --attempts 30 \
-            --delay-seconds 20
+            --delay-seconds 20 \
+            --expect-snapshot target/release-channel-deployment/candidate-release.json
+          python scripts/cloudflare_pages_rollback.py verify \
+            --project release \
+            --deployment-id "$PRODUCTION_DEPLOYMENT_ID" \
+            --attempts 30 \
+            --delay-seconds 10
+
+      - name: Decide production recovery
+        id: recovery
+        if: ${{ !cancelled() && inputs.activate_production }}
+        env:
+          PRODUCTION_OUTCOME: ${{ steps.production.outcome }}
+          PRODUCTION_CHECK_OUTCOME: ${{ steps.production_check.outcome }}
+        run: |
+          python scripts/cloudflare_pages_rollback.py decision \
+            --production-outcome "$PRODUCTION_OUTCOME" \
+            --validation-outcome "$PRODUCTION_CHECK_OUTCOME" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Restore prior production deployment
+        id: rollback
+        if: ${{ !cancelled() && steps.recovery.outputs.restore == 'true' }}
+        run: |
+          python scripts/cloudflare_pages_rollback.py restore \
+            --project release \
+            --state target/release-channel-deployment/prior-cloudflare.json \
+            --attempts 30 \
+            --delay-seconds 10
+
+      - name: Verify restored production bytes
+        id: rollback_check
+        if: ${{ !cancelled() && steps.rollback.outcome == 'success' }}
+        env:
+          RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
+        run: |
+          uv run python scripts/check-release-site-contract.py \
+            --base-url "$RELEASE_SITE_URL" \
+            --catalog-members \
+            --attempts 30 \
+            --delay-seconds 20 \
+            --expect-snapshot target/release-channel-deployment/prior-release.json
+
+      - name: Require successful production activation
+        if: ${{ !cancelled() && inputs.activate_production }}
+        env:
+          ACTIVATION_SUCCESS: ${{ steps.recovery.outputs.activation-success }}
+        run: |
+          if [ "$ACTIVATION_SUCCESS" != "true" ]; then
+            echo "::error::production activation failed; prior distribution rollback was required"
+            exit 1
+          fi

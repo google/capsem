@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Release-channel publication now captures the exact prior Cloudflare Pages
+  production deployment, validates every generated public file on an immutable
+  preview, and requires production to match both that byte snapshot and the
+  action's canonical deployment ID. A failed upload or post-activation check
+  restores the prior deployment and revalidates its catalog and manifest
+  bytes, while the preview-only staging workflow is structurally unable to
+  touch production.
+
 - Installed release qualification now binds every transition verdict to the
   exact manifest bytes fetched and handled by the product. The shared fixture
   transport is explicitly non-cacheable, and Linux plus macOS proofs cover

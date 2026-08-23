@@ -772,8 +772,12 @@ def test_production_deploy_has_no_unserialized_direct_entrypoint() -> None:
         if name == "release-channel-staging.yaml":
             assert "deploy_branch: ${{ inputs.deploy_branch }}" in workflow
             assert "validate_complete_public_channels: false" in workflow
+            assert "activate_production: false" in workflow
             continue
         assert CHANNEL_GROUP in workflow, f"{name} deploys production without the channel lock"
+        assert "activate_production: false" not in workflow, (
+            f"{name} bypasses preview-verified production activation"
+        )
 
 
 def test_retired_independent_release_authority_is_absent() -> None:

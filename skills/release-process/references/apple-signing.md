@@ -63,7 +63,7 @@ paused until `notarytool history` succeeds locally.
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for Tauri key |
 | `CODECOV_TOKEN` | Codecov upload token |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account that owns the Pages project serving `release.capsem.org` |
-| `CLOUDFLARE_API_TOKEN` | API token allowed to deploy the Pages project serving `release.capsem.org` |
+| `CLOUDFLARE_API_TOKEN` | API token with Pages Write permission to deploy and roll back the Pages project serving `release.capsem.org` |
 
 CI secrets are the source of truth for release signing. Local backups in
 `private/apple-certificate/` and `private/tauri/` are useful for local preflight
