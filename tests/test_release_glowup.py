@@ -8,6 +8,8 @@ import re
 import shlex
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -2215,3 +2217,120 @@ def test_the_polling_url_is_shaped_like_a_channel_manifest() -> None:
         "these polling routes have no `assets` segment, so `channel_manifest_url` "
         "rejects them before a single byte is fetched:\n  " + "\n  ".join(unshaped)
     )
+
+
+# ---------------------------------------------------------------------------
+# Does a promoted manifest actually reach the service?
+#
+# Attempt 37 finally got the update loop running -- and then accepted the
+# tampered manifest. The update audit says why:
+#
+#     previous.manifest_sha256: 496137015cc134453f...
+#     current.manifest_sha256:  496137015cc134453f...   (identical)
+#     changed_fields: ["source", "origin"]
+#
+# Only the URL changed. The service fetched the *before* manifest for three
+# minutes, so there was nothing to reject and the proof timed out having
+# proved nothing -- the same vacuity as before, one layer deeper.
+#
+# Promotion is an `os.replace` into a directory a `SimpleHTTPRequestHandler`
+# serves, and that handler answers conditional requests with 304. This asks
+# the question directly, in a second, instead of over a two-hour release lane.
+# ---------------------------------------------------------------------------
+
+
+def test_a_promoted_manifest_is_what_the_server_serves(tmp_path: Path) -> None:
+    """The one step between staging a tamper and the service seeing it."""
+    glowup = _load_local_glowup()
+    served = tmp_path / "dist" / "transitions" / "assets" / "stable"
+    served.mkdir(parents=True)
+    current = served / "manifest.json"
+    current.write_text('{"schema":"before"}', encoding="utf-8")
+
+    tampered = tmp_path / "tampered.json"
+    tampered.write_text('{"schema":"tampered"}', encoding="utf-8")
+
+    with glowup.local_release_server(tmp_path / "dist") as base_url:
+        url = f"{base_url}/transitions/assets/stable/manifest.json"
+        first = urllib.request.urlopen(url, timeout=10).read().decode()
+        assert json.loads(first)["schema"] == "before"
+
+        glowup.promote_exact_manifest(tampered, current)
+
+        second = urllib.request.urlopen(url, timeout=10).read().decode()
+        assert json.loads(second)["schema"] == "tampered", (
+            "the promoted manifest is not what the server hands out, so a "
+            "tamper proof waits on bytes the service will never see"
+        )
+
+
+def test_a_promotion_within_one_second_is_still_served(tmp_path: Path) -> None:
+    """`Last-Modified` has one-second resolution.
+
+    The glow-up stages and promotes in quick succession, and an HTTP cache
+    keyed on a timestamp that has not ticked cannot tell the two apart.
+    """
+    glowup = _load_local_glowup()
+    served = tmp_path / "dist"
+    served.mkdir()
+    current = served / "manifest.json"
+    current.write_text('{"schema":"before"}', encoding="utf-8")
+    tampered = tmp_path / "tampered.json"
+    tampered.write_text('{"schema":"tampered"}', encoding="utf-8")
+
+    with glowup.local_release_server(served) as base_url:
+        url = f"{base_url}/manifest.json"
+        request = urllib.request.Request(url)
+        with urllib.request.urlopen(request, timeout=10) as response:
+            last_modified = response.headers.get("Last-Modified")
+        glowup.promote_exact_manifest(tampered, current)
+
+        conditional = urllib.request.Request(url)
+        if last_modified:
+            conditional.add_header("If-Modified-Since", last_modified)
+        try:
+            body = urllib.request.urlopen(conditional, timeout=10).read().decode()
+        except urllib.error.HTTPError as error:  # 304 has no body
+            raise AssertionError(
+                "the server answered a conditional request with "
+                f"{error.code}; a client that caches never sees the promotion"
+            ) from error
+        assert json.loads(body)["schema"] == "tampered", body
+
+
+def test_the_tamper_proof_checks_the_wire_before_it_waits() -> None:
+    """Prove the tamper is being served, then wait for the reaction.
+
+    Attempt 37 waited three minutes and reported "automatic rejection did not
+    happen". The service had in fact seen no new manifest at all -- zero
+    update-audit entries in those three minutes -- so the question was never
+    whether it rejected the tamper, but whether the tamper reached it. The
+    proof could not tell those apart, and neither could I without a CI cycle.
+
+    A staging failure and a security failure are different failures. One of
+    them means the product is broken.
+    """
+    staging = _shell_of_local_glowup()
+    checks = staging.count("assert_manifest_served ")
+    assert checks >= 2, (
+        "nothing proves the staged manifest is what the URL returns, so a "
+        f"timeout cannot distinguish 'did not reject' from 'never saw it' "
+        f"({checks} call sites; both rejection proofs need one)"
+    )
+
+
+def test_the_wire_check_names_which_kind_of_failure_it_found() -> None:
+    """A staging failure and a security failure are different failures.
+
+    The message has to say which, because the next reader will be looking at
+    a three-minute timeout with no other clue -- which is the situation this
+    whole sequence of fixes keeps arriving at.
+    """
+    staging = _shell_of_local_glowup()
+    body = staging[staging.index("assert_manifest_served() {") :]
+    body = body[: body.index("\n}")]
+    assert "staging failure" in body, body
+
+
+def _shell_of_local_glowup() -> str:
+    return embedded_shell.shell_of(PROJECT_ROOT / "scripts" / "local-release-glowup.py")

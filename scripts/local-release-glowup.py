@@ -1546,6 +1546,26 @@ installed_profile_tree_digest() {{
 # appender rotates daily, so what exists on disk is `service.<date>.log`. The
 # first version of this waited on a path that never exists, which the
 # diagnostics below reported as "No such file or directory".
+# A rejection proof has two ways to fail and they mean opposite things: the
+# service saw the tampered manifest and installed it anyway, or it never saw
+# it. Attempt 37 waited three minutes on the second and reported the first.
+# Checking the wire first makes the timeout say which.
+assert_manifest_served() {{
+  url="$1"
+  expected="$2"
+  what="$3"
+  actual=$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1) || {{
+    echo "FATAL: $what: cannot fetch $url" >&2
+    return 1
+  }}
+  if [ "$actual" != "$expected" ]; then
+    echo "FATAL: $what was never served." >&2
+    echo "  $url returns sha256=$actual" >&2
+    echo "  the staged candidate is    sha256=$expected" >&2
+    echo "  So this is a staging failure, not a refusal to reject." >&2
+    return 1
+  fi
+}}
 service_logs() {{
   # `service.log` and `service.<date>.log`, never `services.log` -- the same
   # membership test `capsem_core::telemetry::log_stream_files` applies. A bare
@@ -1726,6 +1746,8 @@ export DEBIAN_FRONTEND=noninteractive
 cp "$CAPSEM_HOME_DIR/assets/manifest.json" \
   "$EVIDENCE_DIR/tampered-before-manifest.json"
 profile_digest_before=$(installed_profile_tree_digest)
+assert_manifest_served {shlex.quote(transport.current_manifest_url)} \
+  {shlex.quote(file_sha256(adversarial.tampered_manifest))} "the tampered manifest"
 rejection_since=$(date --iso-8601=seconds)
 systemctl --user restart capsem.service
 wait_for_automatic_rejection "$rejection_since"
@@ -1757,6 +1779,9 @@ export DEBIAN_FRONTEND=noninteractive
 cp "$CAPSEM_HOME_DIR/assets/manifest.json" \
   "$EVIDENCE_DIR/incompatible-before-manifest.json"
 profile_digest_before=$(installed_profile_tree_digest)
+assert_manifest_served {shlex.quote(transport.current_manifest_url)} \
+  {shlex.quote(file_sha256(adversarial.incompatible_manifest))} \
+  "the incompatible-profile manifest"
 rejection_since=$(date --iso-8601=seconds)
 systemctl --user restart capsem.service
 wait_for_incompatible_profile_rejection "$rejection_since"
@@ -2129,12 +2154,40 @@ cp "$EVIDENCE_DIR/final-nightly-installed.json" {evidence_arg}
     run(["bash", "-lc", script])
 
 
+class _NoCacheHandler(http.server.SimpleHTTPRequestHandler):
+    """Serve the current bytes, never a 304.
+
+    Every rejection proof works by promoting a different manifest to one URL
+    and waiting for the service to react. `SimpleHTTPRequestHandler` answers a
+    conditional request from `Last-Modified`, which has one-second resolution,
+    so a manifest promoted in the same second as the previous fetch comes back
+    `304 Not Modified` and the service goes on believing what it already had.
+
+    That is indistinguishable from a service that examined the tampered
+    manifest and chose to keep the old one -- which is exactly what a tamper
+    proof is trying to tell apart. It waited three minutes and reported a
+    failure to reject.
+    """
+
+    def send_head(self):
+        # Drop the request's conditional headers rather than the response's:
+        # the 304 is decided from these, and a `Cache-Control` on the way out
+        # cannot un-decide it.
+        for header in ("If-Modified-Since", "If-None-Match"):
+            del self.headers[header]
+        return super().send_head()
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+
 @contextlib.contextmanager
 def local_release_server(root: Path):
     class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         daemon_threads = True
 
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
+    handler = functools.partial(_NoCacheHandler, directory=str(root))
     server = ThreadingServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
