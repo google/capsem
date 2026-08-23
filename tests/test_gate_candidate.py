@@ -479,6 +479,56 @@ def test_interrogating_the_gate_plan_leaves_the_checkout_alone() -> None:
         recorded.unlink(missing_ok=True)
 
 
+def test_exact_plan_inspection_derives_from_the_recorded_source_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parallel contracts must not resnapshot the active exact-run root.
+
+    ``source.record`` has already frozen and verified the only source subject
+    an exact qualification may derive products from.  Re-reading the live
+    root here made plan inspection vulnerable to transient runtime entries
+    created by another xdist worker and failed one otherwise-green exact gate.
+    Synthetic checkouts created by tests remain their own subjects even though
+    they inherit the parent gate's run marker.
+    """
+    from helpers import gate as gate_helpers
+
+    from capsem.gate import snapshot, sourcecapture
+
+    frozen = tmp_path / "frozen-source"
+    frozen.mkdir()
+    selected = sourcecapture.SourceSnapshot(
+        frozen,
+        sourcecapture.SourceDigest("a" * 64),
+    )
+    copied_from: list[Path] = []
+
+    monkeypatch.setenv(CONFIG.locks.gate.run_marker, "capsem-gate candidate")
+    monkeypatch.setattr(sourcecapture, "require_recorded", lambda _config: selected)
+    monkeypatch.setattr(
+        gate_config,
+        "load",
+        lambda root: CONFIG.model_copy(update={"root": root}),
+    )
+
+    def populate_subject(source: Path, target: Path, _config: object) -> None:
+        copied_from.append(source)
+        target.mkdir(parents=True)
+
+    monkeypatch.setattr(snapshot, "populate_subject", populate_subject)
+    monkeypatch.setattr(gate_helpers, "_seed_observed_source", lambda _checkout: None)
+
+    with gate_helpers._inspection_checkout(PROJECT_ROOT):
+        pass
+
+    synthetic = tmp_path / "synthetic-checkout"
+    synthetic.mkdir()
+    with gate_helpers._inspection_checkout(synthetic):
+        pass
+
+    assert copied_from == [frozen, synthetic]
+
+
 def test_issued_command_introspection_cannot_clear_live_asset_outputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

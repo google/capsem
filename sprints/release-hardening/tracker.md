@@ -14,6 +14,7 @@
 - [x] S04-001 — produce causal installed transition evidence
 - [x] S05-001 — prove atomic channel activation and rollback
 - [x] S05-003 — repair exact-qualification cache and ledger blockers
+- [x] S05-004 — repair concurrent exact-source inspection
 - [ ] S05-002 — qualify and verify stable, then nightly
 - [ ] Changelog entries at user-visible milestones
 - [ ] Exact-source complete qualification
@@ -142,6 +143,15 @@
   row. S05-003 sizes both install-image caps to the three ordinary protected
   lineages, retains count/age/byte refusal, and replaces sleep/conditional
   visibility with clean-stop, reopen, and exact durable-row proof.
+- Exact qualification of `3edbd6ac` passed 5,145 release contracts and failed
+  one while a plan-inspection helper attempted to create a second source
+  subject from the active exact-run root. The same test passes alone, the
+  retained prefix is clean, and a four-worker 291-test reproduction plus five
+  minutes of continuous source hashing found no persistent mutation. S05-004
+  therefore closes the ownership gap: exact inspection derives from the
+  existing digest-verified `source.record` snapshot, while ordinary dirty-tree
+  development continues to inspect the current working tree. A failed digest
+  now includes its captured child diagnostic instead of only an exit status.
 
 ## Coverage Ledger
 
@@ -153,7 +163,9 @@
   nightly scheduling is green across all eight lane failure combinations,
   launch failure, input rejection, and workflow enforcement (108 direct tests,
   79 source/Citadel guards, and 14 binary-release script contracts); S05-003's
-  bounded generation-policy cohort is green (49 passed)
+  bounded generation-policy cohort is green (49 passed); S05-004's focused
+  ownership/error regressions are green (3 passed) and the affected bootstrap,
+  candidate, and prefix cohort is green (98 passed)
 - Functional: mandatory zero-construction warm hit and prefix salvage/lend path
   green through production functions; real cold/warm image reuse is green on
   the identical exact child with a 2m30s cold and 35.8s warm run
@@ -183,5 +195,6 @@
   are green on Linux, while execution on physical Apple Silicon and public
   stable/nightly activation remain owned by S05-002's exact release gate.
   Broad service-main decomposition is outside this sprint. Exact candidate run
-  `20260823-184918-8f5ad7-candidate` is not publishable: 74 steps passed, two
-  failed, and 49 downstream qualification/release steps were skipped.
+  `20260823-195535-da3a79-candidate` is not publishable: 31 steps passed, the
+  release-contract step failed, and 93 downstream qualification/release steps
+  were skipped. A new exact qualification remains mandatory.

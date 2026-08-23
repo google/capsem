@@ -282,6 +282,24 @@ def test_the_copy_is_the_source_at_one_instant(source: Path) -> None:
     assert snapshot.digest(target, config) == snapshot.digest(source, config)
 
 
+def test_a_source_digest_failure_keeps_its_diagnostic(monkeypatch) -> None:
+    """A failed hash must name its cause, not only its child exit status."""
+    from capsem.gate import snapshot
+    from capsem.gate.errors import GateError
+
+    config = _config()
+    failed = subprocess.CompletedProcess(
+        args=["source-state-digest"],
+        returncode=1,
+        stdout="",
+        stderr="tracked path vanished while it was hashed",
+    )
+    monkeypatch.setattr(snapshot.subprocess, "run", lambda *_args, **_kwargs: failed)
+
+    with pytest.raises(GateError, match="tracked path vanished while it was hashed"):
+        snapshot.digest(PROJECT_ROOT, config)
+
+
 def test_a_copy_taken_while_the_source_moved_is_refused(source: Path, monkeypatch) -> None:
     """The race, injected at a real seam rather than described.
 

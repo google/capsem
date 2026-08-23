@@ -13,6 +13,7 @@ precede B" into an assertion.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -504,11 +505,25 @@ def _inspection_checkout(source: Path) -> Iterator[Path]:
     Python in-process and may legitimately clear or rebuild output.  Plan
     introspection therefore needs the same source isolation as a real gate,
     not the live tree whose outputs a concurrent test may be consuming.
+
+    A parent gate already owns one immutable, digest-verified source snapshot.
+    Derive inspection copies from that snapshot rather than re-reading the
+    active gate root while four contract workers are running.
+    Reading the active root again creates a second source-stability failure
+    surface after ``source.record`` has already closed that question.
     """
     from unittest.mock import patch
 
     from capsem.gate import config as gate_config
-    from capsem.gate import host, snapshot
+    from capsem.gate import host, snapshot, sourcecapture
+
+    config = gate_config.load(source)
+    subject = source
+    if (
+        os.environ.get(config.locks.gate.run_marker) is not None
+        and source.resolve() == PROJECT_ROOT.resolve()
+    ):
+        subject = sourcecapture.require_recorded(config).root
 
     with tempfile.TemporaryDirectory(
         prefix=".capsem-gate-inspect-", dir=source.parent
@@ -523,7 +538,7 @@ def _inspection_checkout(source: Path) -> Iterator[Path]:
             # release proof is actively writing while this copy is taken --
             # so the faithfulness check saw the tree in two states and refused
             # a copy that "holds files from more than one state of it".
-            snapshot.populate_subject(source, checkout, gate_config.load(source))
+            snapshot.populate_subject(subject, checkout, gate_config.load(subject))
             # The frozen-source copy is infrastructure too.  Keep both copy
             # stages on the real host even when the contract is rendering a
             # mocked Darwin plan on Linux; otherwise snapshotting selects

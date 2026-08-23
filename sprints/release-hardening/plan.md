@@ -72,7 +72,10 @@ is the checked-in durable summary required by the development-sprint contract.
     ownership: match the install-image generation cap to the current,
     active-source, and retained-prefix lineages, and make file-event proof cross
     the clean-shutdown flush barrier before reading.
-11. Require green CI, focused stability repetitions, staging fault injection,
+11. Make exact-run contract introspection derive from `source.record`'s one
+    immutable verified snapshot instead of resnapshotting the active gate root
+    under xdist, and preserve the child digest diagnostic on failure.
+12. Require green CI, focused stability repetitions, staging fault injection,
     one complete exact-source qualification, stable publication, then nightly.
 
 ## Proof Matrix

@@ -123,7 +123,7 @@ def digest(tree: Path, config: GateConfig) -> str:
     at whichever tree is being asked about, so both answers come from one
     implementation and one environment.
     """
-    return subprocess.run(
+    completed = subprocess.run(
         [
             sys.executable,
             str(config.path(config.candidate.source_digest_script)),
@@ -131,10 +131,14 @@ def digest(tree: Path, config: GateConfig) -> str:
             str(tree),
         ],
         cwd=config.root,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
-    ).stdout.strip()
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or "the digest command wrote no diagnostic"
+        raise GateError(f"source digest failed for {tree}: {detail}")
+    return completed.stdout.strip()
 
 
 def _require_faithful(source: Path, target: Path, config: GateConfig) -> None:
