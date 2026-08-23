@@ -321,12 +321,12 @@ vm-smoke: _prepared-runtime
 # ran them, and a release once failed on a gateway CPU figure that no run had
 # ever recorded.
 bench *dimensions: _prepared-runtime
-    @uv run capsem-gate bench {{ dimensions }}
+    @uv run capsem-gate bench {{ quote(dimensions) }}
 
 # The dev loop: only the dimensions that need no guest, bounded so it stays a
 # dev loop. Records like any other run; never evidence.
 bench-quick *dimensions:
-    @uv run capsem-gate bench --quick {{ dimensions }}
+    @uv run capsem-gate bench --quick {{ quote(dimensions) }}
 
 # What every measured subject reads, and how it has moved.
 bench-report:

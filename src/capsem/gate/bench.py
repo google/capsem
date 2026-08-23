@@ -76,12 +76,21 @@ def _measure(config: GateConfig, *, quick: bool, dimensions: tuple[str, ...], co
 
 
 class BenchCommand(GateCommand, name="bench", help="measure performance and record it"):
+    #: It builds the harness and writes the store, so it takes the machine
+    #: lock like anything else that writes. Doubly so here: a benchmark
+    #: sharing a machine with a second gate measures the sharing.
+    exclusive = True
+
     @classmethod
     def add_arguments(cls, parser) -> None:
+        # One argument, not `nargs="*"`: the recipe interpolates through
+        # `{{quote(...)}}`, because double quotes still expand `$(...)` and
+        # backticks. `just bench "x; echo pwned"` was a shell injection.
         parser.add_argument(
             "dimensions",
-            nargs="*",
-            help="dimensions to measure; every one with a collector when omitted",
+            nargs="?",
+            default="",
+            help="space-separated dimensions; every one with a collector when omitted",
         )
         parser.add_argument(
             "--quick",
@@ -97,7 +106,7 @@ class BenchCommand(GateCommand, name="bench", help="measure performance and reco
             _measure(
                 self._config,
                 quick=bool(self._args.quick),
-                dimensions=tuple(self._args.dimensions),
+                dimensions=tuple(self._args.dimensions.split()),
                 commit=self._args.commit,
             ),
             after=(built,),
@@ -110,6 +119,9 @@ class BenchReportCommand(
     name="bench-report",
     help="what every measured subject reads, and how it has moved",
 ):
+    #: Reading the store, but it builds the harness to do it.
+    exclusive = True
+
     """Reading the store, which is the whole reason it is a store.
 
     The report it replaces was hand-written SVG bars in the docs citing two

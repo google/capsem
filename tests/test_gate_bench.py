@@ -2,7 +2,7 @@
 
 There was no entry point at all. Nine Criterion bench targets existed and
 nothing ran them; the guest modules were reachable only from inside a VM
-suite; and 0.6.0 qualification failed on a gateway CPU figure -- 0.160s
+suite; and a release qualification failed on a gateway CPU figure -- 0.160s
 against a 0.140s budget -- that no run had ever recorded, so the number could
 not be argued with. A rerun showed it was a one-off.
 
@@ -32,7 +32,7 @@ def _plan(cls, **overrides):
         dry_run=False,
         graph=False,
         timing=False,
-        dimensions=[],
+        dimensions="",
         quick=False,
         commit="unknown",
     )
@@ -105,8 +105,23 @@ def test_a_collector_is_always_bounded() -> None:
 
 
 def test_named_dimensions_reach_the_harness() -> None:
-    argv = _argv(_plan(bench.BenchCommand, dimensions=["routes", "criterion"]), "bench.run")
+    """One quoted argument in, separate dimensions out.
+
+    The recipe interpolates through `{{quote(...)}}` because double quotes
+    still expand `$(...)` and backticks -- `just bench "x; echo pwned"` ran
+    the echo. So the payload arrives joined and is split here, where no shell
+    is involved.
+    """
+    argv = _argv(_plan(bench.BenchCommand, dimensions="routes criterion"), "bench.run")
     assert argv[-2:] == ["routes", "criterion"]
+
+
+def test_a_dimension_name_cannot_reach_a_shell() -> None:
+    """The payload is words to the plan, never a command line."""
+    hostile = "routes; echo pwned"
+    argv = _argv(_plan(bench.BenchCommand, dimensions=hostile), "bench.run")
+    assert argv[-3:] == ["routes;", "echo", "pwned"]
+    assert "bench" not in argv[-3:]
 
 
 @pytest.mark.parametrize(

@@ -34,6 +34,7 @@ import ast
 import re
 import subprocess
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -157,7 +158,8 @@ def test_no_script_builds_a_version_component_from_a_clock() -> None:
 # Neither noticed a pattern that requires one. `prune-benchmark-history.py`
 # matched `<series>_<major>.<minor>.<timestamp>` with the timestamp written
 # `\d{6,}`, from the abolished `1.5.1783712334` scheme. Semver never has six
-# digits there, so from `0.6.0` onward every recording fell through to "a shape
+# digits there, so from the first semver release onward every recording fell
+# through to "a shape
 # we do not recognise" and became immortal. The policy the script documents had
 # quietly stopped applying to the tree it was written to bound, and its own
 # tests passed throughout, because they were written in the retired format too.
@@ -188,7 +190,20 @@ def _is_digit_class(body) -> bool:
     )
 
 
-def _atoms(node, out: list[tuple[str, object]]) -> None:
+class _Atom(NamedTuple):
+    """One element of a flattened pattern.
+
+    A named tuple rather than `tuple[str, object]`: the second field was read
+    as both a repeat count and a literal character, so every use had to be
+    narrowed and `>=` on it was a type error.
+    """
+
+    kind: str
+    digits: int = 0
+    literal: str = ""
+
+
+def _atoms(node, out: list[_Atom]) -> None:
     """Flatten a parsed pattern into digit runs, literal characters, and rest.
 
     Enough structure to ask where a run of digits sits, and no more.
@@ -198,20 +213,20 @@ def _atoms(node, out: list[tuple[str, object]]) -> None:
         if name in {"MAX_REPEAT", "MIN_REPEAT"}:
             minimum, _, body = argument
             if _is_digit_class(body):
-                out.append(("digits", minimum))
+                out.append(_Atom("digits", digits=minimum))
             else:
                 _atoms(body, out)
         elif name == "IN" and _is_digit_class([(operator, argument)]):
-            out.append(("digits", 1))
+            out.append(_Atom("digits", digits=1))
         elif name == "LITERAL":
-            out.append(("literal", chr(argument)))
+            out.append(_Atom("literal", literal=chr(argument)))
         elif name == "SUBPATTERN":
             _atoms(argument[3], out)
         elif name == "BRANCH":
             for branch in argument[1]:
                 _atoms(branch, out)
         else:
-            out.append(("other", None))
+            out.append(_Atom("other"))
 
 
 def _requires_a_long_digit_run(pattern: str) -> bool:
@@ -234,16 +249,21 @@ def _requires_a_long_digit_run(pattern: str) -> bool:
     except _re.error:
         return False
 
-    atoms: list[tuple[str, object]] = []
+    atoms: list[_Atom] = []
     _atoms(parsed, atoms)
     for index in range(len(atoms) - 4):
         window = atoms[index : index + 5]
-        kinds = [kind for kind, _ in window]
-        if kinds != ["digits", "literal", "digits", "literal", "digits"]:
+        if [atom.kind for atom in window] != [
+            "digits",
+            "literal",
+            "digits",
+            "literal",
+            "digits",
+        ]:
             continue
-        if window[1][1] != "." or window[3][1] != ".":
+        if window[1].literal != "." or window[3].literal != ".":
             continue
-        if window[4][1] >= _TIMESTAMP_DIGITS:
+        if window[4].digits >= _TIMESTAMP_DIGITS:
             return True
     return False
 
@@ -345,7 +365,7 @@ def test_a_timestamp_that_is_not_a_version_is_left_alone() -> None:
 def test_the_pruner_that_shipped_would_have_been_caught() -> None:
     """The exact pattern, from the file it shipped in.
 
-    It required a six-digit patch, so under `0.6.0` it matched nothing and
+    It required a six-digit patch, so under semver it matched nothing and
     every recording became permanent -- silently, because a stranded reader
     does not fail, it stops matching.
     """
@@ -354,6 +374,6 @@ def test_the_pruner_that_shipped_would_have_been_caught() -> None:
 
     import re as _re
 
-    assert not _re.match(shipped, "data_0.6.0_x86_64.json"), (
+    assert not _re.match(shipped, "data_1.2.3_x86_64.json"), (
         "the shipped pattern must not match semver; that is the whole bug"
     )
