@@ -114,6 +114,7 @@ def _strip_shell_strings(line: str) -> str:
         out.append(character)
     return "".join(out)
 
+
 REQUIRED_JUST_STEPS = (
     RequiredJustStep(
         "ci.yaml",
@@ -143,24 +144,6 @@ REQUIRED_JUST_STEPS = (
             '"$PWD" '
             '"${{ needs.author-profile-release.outputs.activation_ready }}"',
         ),
-    ),
-    RequiredJustStep(
-        "release-nightly.yaml",
-        "nightly-release",
-        "Release nightly code profile",
-        ("just release-profile nightly code ${{ github.sha }}",),
-    ),
-    RequiredJustStep(
-        "release-nightly.yaml",
-        "nightly-release",
-        "Release nightly co-work profile",
-        ("just release-profile nightly co-work ${{ github.sha }}",),
-    ),
-    RequiredJustStep(
-        "release-nightly.yaml",
-        "nightly-release",
-        "Release nightly binaries",
-        ("just release-binaries nightly ${{ github.sha }}",),
     ),
     RequiredJustStep(
         "release.yaml",

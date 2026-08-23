@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The daily nightly scheduler now runs both profile lanes and the binary lane
+  before returning one aggregate verdict. A failed or unlaunchable profile no
+  longer prevents the other profile or binaries from producing their own
+  result; structured logs identify every lane against the one frozen source
+  commit while the public release commands retain their existing locks,
+  journals, workflow waits, and teardown ownership.
+
 - Release preflight, install CI, and Live Channel Watch now share one typed,
   fail-closed interpretation of published, absent, retired, unreachable, and
   invalid channels. Catalog-selected manifests are fetched, SHA-256 verified,

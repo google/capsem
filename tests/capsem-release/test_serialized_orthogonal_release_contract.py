@@ -6,7 +6,10 @@ Artifact correctness remains covered by the executable lane and glow-up suites.
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
+from itertools import product
 from pathlib import Path
 
 import pytest
@@ -15,6 +18,7 @@ from helpers.workflow_contract import workflow_reachable_text
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 CHANNEL_GROUP = "group: capsem-release-${{ inputs.channel }}"
+SOURCE_COMMIT = "a" * 40
 
 
 def _read(path: str | Path) -> str:
@@ -23,6 +27,16 @@ def _read(path: str | Path) -> str:
 
 def _workflow(name: str) -> str:
     return (WORKFLOWS / name).read_text(encoding="utf-8")
+
+
+def _nightly_scheduler():
+    path = ROOT / "scripts" / "nightly_release_scheduler.py"
+    spec = importlib.util.spec_from_file_location("nightly_release_scheduler", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _recipe_block(justfile: str, recipe: str) -> str:
@@ -290,15 +304,11 @@ def test_daily_scheduler_runs_unattended_with_no_local_qualification() -> None:
     assert workflow.count("cron:") == 1
     assert "push:" not in workflow
 
-    commands = [
-        "just release-profile nightly code ${{ github.sha }}",
-        "just release-profile nightly co-work ${{ github.sha }}",
-        "just release-binaries nightly ${{ github.sha }}",
-    ]
-    for command in commands:
-        assert command in release, f"nightly scheduler must run {command!r}"
-    offsets = [release.index(command) for command in commands]
-    assert offsets == sorted(offsets), "profiles before binaries"
+    assert "scripts/nightly_release_scheduler.py" in release
+    assert "--channel nightly" in release
+    assert release.index("--profile code") < release.index("--profile co-work")
+    assert ' --source-commit "${{ github.sha }}"' in release
+    assert "just release-" not in release
 
     # It qualifies nothing, and it builds nothing: it dispatches and waits.
     assert "just test" not in workflow
@@ -311,6 +321,86 @@ def test_daily_scheduler_runs_unattended_with_no_local_qualification() -> None:
     assert workflow.count("ref: ${{ github.sha }}") == 1
     assert "release.yaml" not in workflow
     assert "release-assets.yaml" not in workflow
+    assert "timeout-minutes: 360" in release
+
+
+@pytest.mark.parametrize("exit_codes", tuple(product((0, 19), repeat=3)))
+def test_nightly_scheduler_runs_every_lane_before_aggregate_verdict(
+    exit_codes: tuple[int, int, int],
+) -> None:
+    scheduler = _nightly_scheduler()
+
+    class Runner:
+        def __init__(self) -> None:
+            self.remaining = list(exit_codes)
+            self.calls: list[tuple[str, ...]] = []
+
+        def run(self, argv) -> int:
+            self.calls.append(tuple(argv))
+            return self.remaining.pop(0)
+
+    runner = Runner()
+    result = scheduler.run_schedule("nightly", ("code", "co-work"), SOURCE_COMMIT, runner)
+
+    assert runner.calls == [
+        ("just", "release-profile", "nightly", "code", SOURCE_COMMIT),
+        ("just", "release-profile", "nightly", "co-work", SOURCE_COMMIT),
+        ("just", "release-binaries", "nightly", SOURCE_COMMIT),
+    ]
+    assert [outcome.lane for outcome in result.lanes] == [
+        "profile/code",
+        "profile/co-work",
+        "binaries",
+    ]
+    assert [outcome.exit_code for outcome in result.lanes] == list(exit_codes)
+    assert result.ok is all(exit_code == 0 for exit_code in exit_codes)
+    assert result.as_dict()["status"] == ("success" if result.ok else "failed")
+
+
+def test_nightly_scheduler_records_launch_error_and_continues() -> None:
+    scheduler = _nightly_scheduler()
+
+    class Runner:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, _argv) -> int:
+            self.calls += 1
+            if self.calls == 1:
+                raise OSError("just is unavailable")
+            return 0
+
+    runner = Runner()
+    result = scheduler.run_schedule("nightly", ("code", "co-work"), SOURCE_COMMIT, runner)
+
+    assert runner.calls == 3
+    assert [outcome.status for outcome in result.lanes] == [
+        "launch-error",
+        "success",
+        "success",
+    ]
+    assert result.ok is False
+
+
+@pytest.mark.parametrize(
+    ("channel", "profiles", "source_commit"),
+    [
+        ("stable", ("code",), SOURCE_COMMIT),
+        ("nightly", (), SOURCE_COMMIT),
+        ("nightly", ("code", "code"), SOURCE_COMMIT),
+        ("nightly", ("../code",), SOURCE_COMMIT),
+        ("nightly", ("code",), "main"),
+    ],
+)
+def test_nightly_scheduler_rejects_ambiguous_or_mutable_inputs(
+    channel: str,
+    profiles: tuple[str, ...],
+    source_commit: str,
+) -> None:
+    scheduler = _nightly_scheduler()
+
+    with pytest.raises(ValueError):
+        scheduler.schedule(channel, profiles, source_commit)
 
 
 def test_the_scheduler_meets_every_precondition_its_release_commands_check() -> None:
@@ -341,7 +431,7 @@ def test_the_scheduler_meets_every_precondition_its_release_commands_check() -> 
 
     local_main = release.find("git branch -f main")
     credentials = release.find("insteadOf")
-    first_release = release.find("just release-")
+    first_release = release.find("scripts/nightly_release_scheduler.py")
 
     assert local_main != -1, (
         "the scheduler must give require_local_main a local branch to read; "

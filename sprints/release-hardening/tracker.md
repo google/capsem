@@ -10,7 +10,7 @@
 - [x] S02-002 — unify channel state and exact install inputs
 - [x] S02-003 — eliminate the two-VM IPC qualification timeout and preserve evidence
 - [x] S02-004 — bind every fixed-port mock server to its launcher lifecycle
-- [ ] S03-001 — run every nightly lane before the aggregate verdict
+- [x] S03-001 — run every nightly lane before the aggregate verdict
 - [ ] S04-001 — produce causal installed transition evidence
 - [ ] S05-001 — prove atomic channel activation and rollback
 - [ ] S05-002 — qualify and verify stable, then nightly
@@ -92,7 +92,12 @@
   and nightly as absent. The retired CI path resolves immutable GitHub asset
   `517678454`: stable/current, both `code` and `co-work` 0.6.0 profiles for
   arm64 and x86_64, and no package cohort before the local binary build.
-- Nightly scheduler currently short-circuits after the first failed profile.
+- Nightly orchestration now invokes one checked-in scheduler for the frozen
+  commit. It runs `code`, `co-work`, then binaries serially through the public
+  release commands, records structured start/completion and final aggregate
+  events, and returns failure only after every lane has an outcome. The
+  workflow's six-hour job timeout is the outer time bound; release commands
+  retain ownership of their gate journals, channel locks, waits, and teardown.
 - Asset reuse initially never hit because preflight discarded
   `target/ironbank-assets`, and a matching identity checked only existence.
   Preflight now preserves isolated lane roots and exact byte receipts are
@@ -104,7 +109,10 @@
   config, and Citadel contracts green (484 passed, 2 platform skips); S02 CI
   contracts green (15 Rust collector tests, 132 install/evidence tests, and 48
   storage/Citadel tests); typed channel/install/watch gates are green (92
-  direct tests, 413 affected release contracts, and 55 source/Citadel guards)
+  direct tests, 413 affected release contracts, and 55 source/Citadel guards);
+  nightly scheduling is green across all eight lane failure combinations,
+  launch failure, input rejection, and workflow enforcement (108 direct tests,
+  79 source/Citadel guards, and 14 binary-release script contracts)
 - Functional: mandatory zero-construction warm hit and prefix salvage/lend path
   green through production functions; real cold/warm image reuse is green on
   the identical exact child with a 2m30s cold and 35.8s warm run

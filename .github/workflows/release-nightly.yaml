@@ -65,18 +65,16 @@ jobs:
 
       # Profiles first, then binaries: a profile needing new code is published
       # immutably but stays inactive until the following binary release
-      # activates the compatible graph.
-      - name: Release nightly code profile
+      # activates the compatible graph. The scheduler records each result and
+      # runs all three lanes before it returns their aggregate verdict. The job
+      # timeout is the outer wall-clock bound; each release command retains
+      # ownership of its gate journal, workflow wait, and resource teardown.
+      - name: Run every nightly lane and aggregate outcomes
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: just release-profile nightly code ${{ github.sha }}
-
-      - name: Release nightly co-work profile
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: just release-profile nightly co-work ${{ github.sha }}
-
-      - name: Release nightly binaries
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: just release-binaries nightly ${{ github.sha }}
+        run: |
+          uv run python scripts/nightly_release_scheduler.py \
+            --channel nightly \
+            --profile code \
+            --profile co-work \
+            --source-commit "${{ github.sha }}"
