@@ -1540,7 +1540,12 @@ installed_profile_tree_digest() {{
 # first version of this waited on a path that never exists, which the
 # diagnostics below reported as "No such file or directory".
 service_logs() {{
-  ls -1t "$CAPSEM_HOME_DIR/run"/service*.log 2>/dev/null || true
+  # `service.log` and `service.<date>.log`, never `services.log` -- the same
+  # membership test `capsem_core::telemetry::log_stream_files` applies. A bare
+  # `service*.log` also matches a neighbouring stream, which would let an
+  # unrelated file satisfy a rejection proof.
+  ls -1t "$CAPSEM_HOME_DIR/run/service.log" \
+         "$CAPSEM_HOME_DIR/run"/service.*.log 2>/dev/null || true
 }}
 service_log_grep() {{
   needle="$1"

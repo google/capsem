@@ -20,10 +20,12 @@ A wrapper nobody is obliged to use is a suggestion. These make it the only way.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
 import pytest
+from helpers import embedded_shell
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CRATES = PROJECT_ROOT / "crates"
@@ -149,57 +151,149 @@ def test_log_streams_are_read_through_the_stream_reader() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
 # Python and shell read the same rotated streams as Rust, and were not covered
 # until an ironbank ledger test asserted on an empty `service.log`.
-PY_STREAM_READ = re.compile(
-    r"""\(\s*[\w.]+\s*/\s*["'](?:service|gateway|mcp|tray)\.log["']\s*\)\s*\.read_text"""
+#
+# This half used to be five regexes. Each was written after a failure, and
+# each had a hole found by shipping the bug it was meant to catch: `grep` was
+# absent from the read verbs; a function returning the path was not a binding;
+# `[^\n|]*?` meant a command wrapped for line length was invisible. Regexes
+# fail this way because shell syntax -- quoting, spacing, continuation,
+# comments -- is exactly what they have to re-describe every time.
+#
+# So the shell is tokenised and the Python is parsed. A command is a verb and
+# its words however it was written, and a name that denotes a stream path is
+# followed whether it was bound by `=`, by a function, or by an assignment
+# statement.
+# ---------------------------------------------------------------------------
+
+#: Reading is reading. The point is not which tool performs it, which is what
+#: a hand-listed set of three verbs kept getting wrong.
+READ_VERBS = frozenset(
+    {"tail", "cat", "head", "grep", "egrep", "fgrep", "awk", "sed", "less", "more", "wc"}
 )
 
-# The same read, one variable removed. `self._log_path` was bound to the
-# gateway stream in the constructor and read two hundred lines away, so the
-# single-expression pattern above never saw it -- the helper returned "" for a
-# gateway that had logged normally, and an ironbank test asserted against the
-# empty string. The Rust half has tracked bindings from the start; this is the
-# Python equivalent.
-PY_STREAM_BINDING = re.compile(
-    r"""(\w+(?:\.\w+)*)\s*=\s*[^\n=]*?/\s*["'](?:service|gateway|mcp|tray)\.log["']"""
-)
-#: `grep` was missing from this list while being present in the
-#: binding-follow list below -- one inconsistency, and it is the verb the
-#: Linux glow-up used. Every way of reading a file belongs here, because the
-#: point is the read, not which tool performs it.
-SH_STREAM_VERBS = r"tail|cat|head|grep|awk|sed|less|wc"
-SH_STREAM_READ = re.compile(
-    rf"""(?:{SH_STREAM_VERBS})\s+[^\n|]*?/(?:service|gateway|mcp|tray)\.log["']?\s"""
-)
 
-# Shell hides the same read behind a variable. `SERVICE_LOG=".../service.log"`
-# was tailed for three minutes in the macOS glow-up while the line it waited for
-# sat in `service.<date>.log`, so a working tamper rejection was reported as a
-# failure to reject.
-SH_STREAM_BINDING = re.compile(
-    r"""^\s*(\w+)=["']?[^\n]*?/(?:service|gateway|mcp|tray)\.log["']?\s*$""",
-    re.M,
-)
+def _is_stream_path(word: str) -> bool:
+    """A word naming a rotated stream file, rather than mentioning its name.
 
-# ...and behind a function, which is the shape that got through. The Linux
-# glow-up wrote
-#
-#     service_log() { echo "$CAPSEM_HOME_DIR/run/service.log"; }
-#     grep -Fq "..." "$(service_log)"
-#
-# to fix the macOS bug this guard was written for, and reproduced it exactly:
-# not a variable, so `SH_STREAM_BINDING` saw nothing, and `grep`, which
-# `SH_STREAM_READ` did not list. Three minutes waiting on a file that never
-# existed, in a proof of the same behaviour, two commits after the same lesson.
-#
-# A function returning the path is a binding. Modelling it here rather than
-# adding a second guard beside this one is the whole point: the hole was in the
-# mechanism, not in the coverage.
-SH_STREAM_FUNCTION = re.compile(
-    r"""^\s*(\w+)\s*\(\)\s*\{[^}]*?/(?:service|gateway|mcp|tray)\.log""",
-    re.M | re.S,
-)
+    A separator is what distinguishes the two: `assert "service.log" in spawn`
+    checks how the service is *configured*, which is right and must keep the
+    bare name.
+    """
+    if "*" in word:
+        return False  # globbed: this is reading the stream, which is the ask
+    return any(f"/{name}.log" in word for name in ROTATING_STREAMS)
+
+
+def _denoting_names(shell: str) -> set[str]:
+    """Names that stand for a stream path: variables and functions alike.
+
+    A function returning the path is a binding. Not modelling that is what let
+    `service_log() {{ echo ".../service.log"; }}` through.
+    """
+    names = set()
+    for command in embedded_shell.commands(shell):
+        for word in command:
+            # `SERVICE_LOG=$HOME/.capsem/run/service.log`
+            if "=" in word:
+                name, _, value = word.partition("=")
+                if name.isidentifier() and _is_stream_path(value):
+                    names.add(name)
+    for name, body in embedded_shell.function_bodies(shell).items():
+        if any(_is_stream_path(word) for command in embedded_shell.commands(body) for word in command):
+            names.add(name)
+    return names
+
+
+def _references(word: str, names: set[str]) -> bool:
+    """`$NAME`, `${NAME}` or `$(name)` -- the three ways to spell the read."""
+    return any(
+        spelling in word
+        for name in names
+        for spelling in (f"${name}", f"${{{name}}}", f"$({name})")
+    )
+
+
+#: Words that precede a command without being one. `if grep ...` is a grep,
+#: and a verb-position check that does not know this sees `if`.
+SHELL_KEYWORDS = frozenset({"if", "elif", "while", "until", "then", "do", "else", "!", "time"})
+
+
+def _verb(command: list[str]) -> str | None:
+    for word in command:
+        if word not in SHELL_KEYWORDS:
+            return word
+    return None
+
+
+def _shell_offenders(shell: str, label: str) -> list[str]:
+    names = _denoting_names(shell)
+    found = []
+    for command in embedded_shell.commands(shell):
+        if _verb(command) not in READ_VERBS:
+            continue
+        for word in command[1:]:
+            if _is_stream_path(word):
+                found.append(f"{label}: `{' '.join(command)}` reads a rotated stream by name")
+                break
+            if _references(word, names):
+                found.append(f"{label}: `{' '.join(command)}` reads a stream path indirectly")
+                break
+    return found
+
+
+class _PythonStreamReads(ast.NodeVisitor):
+    """Which expressions open a stream path, following simple bindings.
+
+    `ast` rather than a regex because the read and the binding are routinely
+    two hundred lines apart -- `self._log_path` was set in a constructor and
+    read in a method, and the single-expression pattern never saw it.
+    """
+
+    def __init__(self) -> None:
+        self.bound: set[str] = set()
+        self.authored: frozenset[str] = frozenset()
+        self.reads: list[tuple[frozenset[str], str]] = []
+
+    @staticmethod
+    def _streams_named(node: ast.AST) -> frozenset[str]:
+        """Which rotated streams this path expression names, if any."""
+        return frozenset(
+            name
+            for inner in ast.walk(node)
+            if isinstance(inner, ast.Constant) and isinstance(inner.value, str)
+            for name in ROTATING_STREAMS
+            if inner.value == f"{name}.log"
+        )
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        if self._streams_named(node.value):
+            for target in node.targets:
+                self.bound.add(ast.unparse(target))
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        method = node.func
+        if isinstance(method, ast.Attribute):
+            owner = ast.unparse(method.value)
+            if method.attr in {"write_text", "write_bytes"}:
+                # A stream this module wrote is a fixture: it knows exactly
+                # what is in it. Keyed on the stream rather than the
+                # expression, because the write and the read are routinely
+                # different paths -- one test writes `run_dir/vm/serial.log`
+                # and reads back the copy under `preserved/`.
+                self.authored |= self._streams_named(method.value)
+            elif method.attr in {"read_text", "read_bytes", "open"}:
+                named = self._streams_named(method.value)
+                if named or owner in self.bound:
+                    self.reads.append((named, ast.unparse(node)))
+        self.generic_visit(node)
+
+    @property
+    def offenders(self) -> list[str]:
+        return [read for named, read in self.reads if not named or not (named <= self.authored)]
 
 
 def stream_offenders(text: str, label: str = "<text>") -> list[str]:
@@ -211,45 +305,16 @@ def stream_offenders(text: str, label: str = "<text>") -> list[str]:
     watched fail.
     """
     offenders: list[str] = []
-    for pattern, how in ((PY_STREAM_READ, "read_text"), (SH_STREAM_READ, "shell")):
-        for match in pattern.finditer(text):
-            line = text[: match.start()].count("\n") + 1
-            offenders.append(
-                f"{label}:{line} reads a rotated "
-                f"stream by name ({how})"
-            )
-    for binding in SH_STREAM_BINDING.finditer(text):
-        name = binding.group(1)
-        for read in re.finditer(
-            rf"""(?:{SH_STREAM_VERBS})\b[^\n|]*?["']?\$\{{?{re.escape(name)}\b""",
-            text,
-        ):
-            line = text[: read.start()].count("\n") + 1
-            offenders.append(
-                f"{label}:{line} reads log path "
-                f"`${name}` directly (shell)"
-            )
-    for function in SH_STREAM_FUNCTION.finditer(text):
-        name = function.group(1)
-        for read in re.finditer(
-            rf"""(?:{SH_STREAM_VERBS})\b[^\n|]*?\$\(\s*{re.escape(name)}\s*\)""",
-            text,
-        ):
-            line = text[: read.start()].count("\n") + 1
-            offenders.append(
-                f"{label}:{line} reads log path "
-                f"`$({name})` directly (shell function)"
-            )
-    for binding in PY_STREAM_BINDING.finditer(text):
-        name = binding.group(1)
-        for read in re.finditer(
-            rf"{re.escape(name)}\.read_text\b", text
-        ):
-            line = text[: read.start()].count("\n") + 1
-            offenders.append(
-                f"{label}:{line} reads log path "
-                f"`{name}` directly"
-            )
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        tree = None                      # a shell script, not Python
+    if tree is not None:
+        reads = _PythonStreamReads()
+        reads.visit(tree)
+        offenders.extend(f"{label}: {entry} opens a rotated stream" for entry in reads.offenders)
+    shell = embedded_shell.emitted_shell(text) if tree is not None else text
+    offenders.extend(_shell_offenders(shell, label))
     return offenders
 
 
@@ -318,7 +383,8 @@ def test_the_guard_catches_the_shape_that_got_through_it() -> None:
         "the guard still does not see the shape that got past it; widening it "
         "is the fix, not adding a second guard beside it"
     )
-    assert any("shell function" in entry for entry in found), found
+    assert len(found) == 2, f"both the grep and the tail must be seen: {found}"
+    assert all("indirectly" in entry for entry in found), found
 
 
 def test_the_fix_for_that_shape_passes() -> None:
@@ -348,3 +414,94 @@ def test_the_shipped_macos_shape_is_still_caught() -> None:
 def test_writing_to_the_stream_name_is_not_a_read() -> None:
     """Writers pass the stream name -- that is what the appender expects."""
     assert stream_offenders('capsem-service --log "$HOME/.capsem/run/service.log"\n') == []
+
+
+# ---------------------------------------------------------------------------
+# What parsing buys over the five regexes this replaced. Each case below is a
+# way of writing the same read that a pattern had to be told about separately,
+# and three of them are ways it was never told.
+# ---------------------------------------------------------------------------
+
+
+def test_a_command_wrapped_for_line_length_is_still_a_command() -> None:
+    """Every regex here carried `[^\\n|]*?`, so a wrapped read was invisible.
+
+    Shell joins continuations before it runs anything; a guard that does not
+    is reading a different program from the one that executes.
+    """
+    assert stream_offenders(
+        'grep -Fq "needle" \\\n  "$HOME/.capsem/run/service.log"\n'
+    )
+
+
+def test_a_shell_keyword_does_not_hide_the_verb() -> None:
+    """`if grep ...` is a grep. A verb-position check that does not know the
+    keywords sees `if` and moves on -- and every wait in the glow-up is
+    written `if grep ...; then`."""
+    for prefix in ("if", "while", "until", "!"):
+        assert stream_offenders(f'{prefix} grep -q x "$HOME/.capsem/run/service.log"\n'), prefix
+
+
+def test_quoting_and_spacing_stop_mattering() -> None:
+    """One command, four spellings, one verdict."""
+    spellings = [
+        'tail -f "$HOME/.capsem/run/service.log"\n',
+        "tail -f '$HOME/.capsem/run/service.log'\n",
+        "tail    -f     $HOME/.capsem/run/service.log\n",
+        'tail -f "${HOME}/.capsem/run/service.log"\n',
+    ]
+    assert all(stream_offenders(text) for text in spellings)
+
+
+def test_a_comment_naming_the_stream_is_not_a_read() -> None:
+    """Explaining the bug must not trip the guard against it.
+
+    Half the lines in this repository that mention `service.log` are comments
+    saying why you must not read it that way.
+    """
+    assert stream_offenders('# tail "$HOME/.capsem/run/service.log" is wrong\n') == []
+
+
+def test_a_function_body_containing_a_brace_is_read_whole() -> None:
+    """`${VAR}` inside a body ended the regex that matched function bodies.
+
+    It would have read `f() {{ echo "${{HOME}}/x.log"; }}` as ending after
+    `${{HOME`, and missed everything after it.
+    """
+    text = (
+        'service_log() {\n  echo "${HOME}/.capsem/run/service.log"\n}\n'
+        'grep -q needle "$(service_log)"\n'
+    )
+    assert stream_offenders(text)
+
+
+def test_a_stream_a_module_wrote_itself_is_a_fixture() -> None:
+    """A test that authored the file knows what is in it.
+
+    Not an exemption by filename: the write and the read are different paths
+    in the case that motivated this -- one writes `run_dir/vm/serial.log` and
+    reads back the copy under `preserved/`.
+    """
+    text = (
+        "(workspace.run_dir / 'vm' / 'serial.log').write_text('panic')\n"
+        "assert (workspace.preserved / 'vm' / 'serial.log').read_text() == 'panic'\n"
+    )
+    assert stream_offenders(text) == []
+
+
+def test_reading_a_stream_nothing_wrote_is_still_caught() -> None:
+    """The other half of the fixture rule, or it becomes a way out."""
+    assert stream_offenders("(run_dir / 'service.log').read_text()\n")
+
+
+def test_a_binding_two_hundred_lines_from_its_read_is_followed() -> None:
+    """`self._log_path` was set in a constructor and read in a method."""
+    text = (
+        "class Gateway:\n"
+        "    def __init__(self, run):\n"
+        "        self._log_path = run / 'gateway.log'\n"
+        "\n"
+        "    def logs(self):\n"
+        "        return self._log_path.read_text()\n"
+    )
+    assert stream_offenders(text)

@@ -4,12 +4,14 @@ import ast
 import hashlib
 import importlib.util
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from helpers import embedded_shell
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = PROJECT_ROOT / "scripts" / "release_glowup.py"
@@ -2003,3 +2005,121 @@ def test_the_service_log_is_matched_by_pattern_not_by_a_fixed_name() -> None:
         "the glow-up looks for a fixed log name; rotation means it must glob:\n"
         + listing
     )
+
+
+# ---------------------------------------------------------------------------
+# The rejection wait, executed rather than read.
+#
+# Every guard above this line inspects the script as text: does the body
+# mention `service_log_grep`, does it avoid `journalctl`, does the listing
+# contain a `*`. Each was written after a failure, and each would have passed
+# on a script that spelled the right words and still read the wrong file --
+# which is most of the ways this can be wrong. The bug that cost three CI
+# attempts was not a missing word. It was a path that does not exist on a
+# machine where the service has rotated its log, and only running the helper
+# against such a machine can see that.
+# ---------------------------------------------------------------------------
+
+
+def _shell_helpers() -> str:
+    """The log-reading helpers, as the shell receives them.
+
+    `ast` rather than `source.index("...{{")`: the script is emitted from
+    f-strings, so its Python source and the program that runs differ exactly
+    where shell syntax is densest. Matching on `{{` matches the escaping, and
+    stops matching the day a fragment moves into a plain string or is built by
+    concatenation -- a guard that silently reads nothing, which is the same
+    failure this whole section is about.
+    """
+    shell = embedded_shell.shell_of(PROJECT_ROOT / "scripts" / "local-release-glowup.py")
+    bodies = embedded_shell.function_bodies(shell)
+    missing = {"service_logs", "service_log_grep"} - set(bodies)
+    assert not missing, f"the glow-up no longer defines {missing}"
+    return "\n".join(bodies[name] for name in ("service_logs", "service_log_grep"))
+
+
+def _run_helper(home: Path, needle: str) -> int:
+    script = _shell_helpers() + f'\nservice_log_grep {shlex.quote(needle)}\n'
+    return subprocess.run(
+        ["bash", "-c", script],
+        env={"PATH": "/usr/bin:/bin", "CAPSEM_HOME_DIR": str(home)},
+        capture_output=True,
+    ).returncode
+
+
+def test_the_rejection_wait_reads_a_rotated_log(tmp_path: Path) -> None:
+    """The machine the proof actually runs on.
+
+    `telemetry::init` is handed `<run>/service.log` and rotates daily, so what
+    the service has written is `service.<date>.log`. The shipped version
+    grepped the configured name, found nothing for three minutes, and reported
+    a service that had rejected the tampered manifest as one that had not.
+    """
+    run = tmp_path / "run"
+    run.mkdir(parents=True)
+    (run / "service.2026-08-22.log").write_text(
+        "INFO automatic release update failed: manifest digest mismatch\n",
+        encoding="utf-8",
+    )
+    assert not (run / "service.log").exists(), "the fixture must be the rotated case"
+
+    assert _run_helper(tmp_path, "automatic release update failed") == 0, (
+        "the rejection wait cannot see a message the service wrote, because "
+        "it is in `service.<date>.log` and the wait reads `service.log`"
+    )
+
+
+def test_the_unrotated_log_an_older_install_left_is_still_read(tmp_path: Path) -> None:
+    """Rotation is not retroactive, and raw stderr lands in the bare name.
+
+    `telemetry.rs` says so: a panic, or death before `init` returns, is
+    written to the unrotated file. Globbing must not lose it.
+    """
+    run = tmp_path / "run"
+    run.mkdir(parents=True)
+    (run / "service.log").write_text("automatic release update failed\n", encoding="utf-8")
+
+    assert _run_helper(tmp_path, "automatic release update failed") == 0
+
+
+def test_both_halves_of_a_split_stream_are_searched(tmp_path: Path) -> None:
+    """A message may be in yesterday's file when the wait starts today."""
+    run = tmp_path / "run"
+    run.mkdir(parents=True)
+    (run / "service.2026-08-21.log").write_text("automatic release update failed\n")
+    (run / "service.2026-08-22.log").write_text("nothing of interest\n")
+
+    assert _run_helper(tmp_path, "automatic release update failed") == 0
+
+
+def test_a_message_that_is_absent_still_reports_absent(tmp_path: Path) -> None:
+    """The other half: globbing must not turn every wait into a pass.
+
+    A proof that cannot fail proves nothing, and widening a search is exactly
+    the change that can accidentally do that.
+    """
+    run = tmp_path / "run"
+    run.mkdir(parents=True)
+    (run / "service.2026-08-22.log").write_text("the service is fine\n", encoding="utf-8")
+
+    assert _run_helper(tmp_path, "automatic release update failed") != 0
+
+
+def test_an_empty_run_directory_reports_absent_rather_than_erroring(tmp_path: Path) -> None:
+    """Before the service has written anything, the wait must simply keep
+    waiting -- not abort the proof on a shell error."""
+    (tmp_path / "run").mkdir(parents=True)
+    assert _run_helper(tmp_path, "automatic release update failed") != 0
+
+
+def test_a_neighbouring_stream_is_not_searched(tmp_path: Path) -> None:
+    """`services.log` and `service-old.log` are different files.
+
+    A glob is a blunt instrument; this pins that it did not become `service*`
+    matching anything that starts with those seven letters.
+    """
+    run = tmp_path / "run"
+    run.mkdir(parents=True)
+    (run / "services.log").write_text("automatic release update failed\n", encoding="utf-8")
+
+    assert _run_helper(tmp_path, "automatic release update failed") != 0
