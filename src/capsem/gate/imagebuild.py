@@ -226,16 +226,27 @@ def check_assets(
         after=(checked,),
     )
     if rust_builders:
+        # Not `_when_missing`. The warm-asset shortcut is about not rebuilding
+        # assets; this builds the *tool* that builds them, and
+        # `initrd.guest-agents` runs `capsem-builder agent` without asking
+        # whether any asset is present. The builder also goes stale on its own
+        # schedule -- it is keyed on `Cargo.lock`, so one added dependency
+        # invalidates it while every asset on disk stays valid, which is the
+        # case the condition cannot see. A run then skipped materialising it
+        # and failed four steps later with "locked guest Rust builder is
+        # missing".
+        #
+        # Unconditional costs nothing warm: `materialize_rust_builders` checks
+        # `image_exists` and notes that it is already there.
         ready = phase.add(
-            _when_missing(
-                recovery,
-                step(
-                    "guest-builders",
-                    imagebases.MaterializeRustBuilders(rust_builders),
-                    contends=(config.exclusive("docker_daemon"),),
-                    carry_checks=(imagebases.RequireRustBuilders(rust_builders),),
-        kind=Kind.PACKAGE, needs=BUILDS, speed=Speed.SLOW,
-                ),
+            step(
+                "guest-builders",
+                imagebases.MaterializeRustBuilders(rust_builders),
+                contends=(config.exclusive("docker_daemon"),),
+                carry_checks=(imagebases.RequireRustBuilders(rust_builders),),
+                kind=Kind.PACKAGE,
+                needs=BUILDS,
+                speed=Speed.SLOW,
             ),
             after=(ready,),
         )

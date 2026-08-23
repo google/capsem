@@ -234,3 +234,80 @@ def test_profile_recovery_builds_are_ordered_and_invalidate_completion_first(
     manifest = config.path(config.imagebuild.output) / config.install.manifest_name
     assert first.actions[0].render() == f"when host assets are missing: rm -rf {manifest}"
     assert "capsem-admin" in first.actions[1].render()
+
+
+# ---------------------------------------------------------------------------
+# What the shortcut may skip.
+#
+# The recovery fragment is conditioned on "this host's assets are missing",
+# which is right for building assets and wrong for building the *tool* that
+# builds them. `assets.guest-builders` materialises the locked guest Rust
+# builder image, and `initrd.guest-agents` -- which is not conditioned on
+# anything -- runs `capsem-builder agent` and needs that image.
+#
+# So on a machine with warm assets and a stale builder, the gate skipped
+# materialising the builder and then failed four steps later with
+#
+#     locked guest Rust builder is missing: capsem-guest-rust-x86_64:97972c5e...
+#
+# The builder goes stale on its own schedule: it is keyed on `Cargo.lock`, so
+# adding one dependency invalidates it while every asset on disk stays valid.
+# That is precisely the case the condition cannot see.
+# ---------------------------------------------------------------------------
+
+
+def _candidate_steps() -> dict:
+    from capsem.gate import candidateplan
+    from capsem.gate.qualification import LocalQualification
+
+    config = gate_config.load(PROJECT_ROOT)
+    plan = Plan("candidate")
+    candidateplan.compose(
+        plan,
+        config,
+        qualification=LocalQualification(bin_dir=config.modules.default_bin_dir),
+    )
+    return {step.label: step for step in plan.steps}
+
+
+def _is_conditional(step) -> bool:
+    return any(action.name == "when-assets-missing" for action in step.actions)
+
+
+def test_the_guest_rust_builder_is_materialised_whatever_the_assets_look_like() -> None:
+    """A later step needs it, and that step asks no questions.
+
+    Making it unconditional costs nothing on a warm machine:
+    `materialize_rust_builders` checks `image_exists` and notes that the image
+    is already present. What it buys is that "my assets are warm" stops
+    meaning "my toolchain is current".
+    """
+    steps = _candidate_steps()
+    builders = steps.get("assets.guest-builders")
+    assert builders is not None, sorted(steps)
+    assert not _is_conditional(builders), (
+        "the guest Rust builder is built only when host assets are missing, "
+        "but `initrd.guest-agents` needs it unconditionally -- so a warm "
+        "checkout with a stale builder fails four steps later"
+    )
+
+
+def test_the_step_that_needs_the_builder_still_asks_no_questions() -> None:
+    """If this ever becomes conditional, the guard above stops being needed.
+
+    Pinning it means the two cannot quietly diverge again in the other
+    direction.
+    """
+    steps = _candidate_steps()
+    agents = steps.get("initrd.guest-agents")
+    assert agents is not None, sorted(steps)
+    assert not _is_conditional(agents)
+
+
+def test_building_assets_is_still_skipped_on_a_warm_checkout() -> None:
+    """The shortcut is the point; only the tool leaves it."""
+    steps = _candidate_steps()
+    for label in ("assets.image.code.all.x86_64", "assets.recovery-dependencies"):
+        subject = steps.get(label)
+        assert subject is not None, sorted(steps)
+        assert _is_conditional(subject), f"{label} lost the warm-asset shortcut"
