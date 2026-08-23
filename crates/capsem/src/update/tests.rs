@@ -477,21 +477,14 @@ fn cache_ttl_constant() {
 #[test]
 fn update_does_not_fetch_health_for_manifest_url() {
     assert_eq!(
-        release_manifest_url_from_manifest_url(
-            "https://release.capsem.org/assets/stable/manifest.json"
-        ),
-        Some("https://release.capsem.org/assets/stable/manifest.json".to_string())
+        channel_manifest_url("https://release.capsem.org/assets/stable/manifest.json").unwrap(),
+        "https://release.capsem.org/assets/stable/manifest.json"
     );
     assert_eq!(
-        release_manifest_url_from_manifest_url(
-            "https://corp.example/capsem/assets/internal/manifest.json"
-        ),
-        Some("https://corp.example/capsem/assets/internal/manifest.json".to_string())
+        channel_manifest_url("https://corp.example/capsem/assets/internal/manifest.json").unwrap(),
+        "https://corp.example/capsem/assets/internal/manifest.json"
     );
-    assert_eq!(
-        release_manifest_url_from_manifest_url("file:///tmp/assets/stable/manifest.json"),
-        None
-    );
+    assert!(channel_manifest_url("file:///tmp/assets/stable/manifest.json").is_err());
 }
 
 #[test]
@@ -588,7 +581,11 @@ fn installed_update_source_does_not_replace_file_manifest_with_stable() {
         .expect_err("local manifest provenance must not silently become stable");
 
     let message = format!("{error:#}");
-    assert!(message.contains("http(s)"), "{message}");
+    // This asserted on the literal string "http(s)", which was the wording of
+    // a message that blamed the scheme of URLs whose scheme was fine. What it
+    // is actually about is that a `file://` provenance must fail loudly
+    // rather than quietly become the public stable channel.
+    assert!(message.contains("file"), "the rejection must name the scheme: {message}");
     assert!(!message.contains(DEFAULT_RELEASE_MANIFEST_URL), "{message}");
 }
 
@@ -2895,4 +2892,60 @@ fn relative_and_absolute_artifact_references_are_unchanged() {
             .expect("absolute"),
         "https://example.test/a.img"
     );
+}
+
+// ---------------------------------------------------------------------------
+// What a rejected manifest URL says.
+//
+// A release glow-up served `http://127.0.0.1:33029/transitions/current/manifest.json`
+// and the service reported
+//
+//     manifest_url must be an http(s) channel manifest URL, got http://...
+//
+// of a URL that is plainly http. The requirement it actually enforces -- a
+// path with an `assets` segment, a channel after it, ending in
+// `manifest.json` -- appeared nowhere, so diagnosing it cost a full CI cycle
+// and a read of this file. A rejection that does not name what it wanted is a
+// rejection that has to be reverse-engineered.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_url_that_is_not_channel_shaped_says_what_was_expected() {
+    let error = channel_manifest_url("http://127.0.0.1:33029/transitions/current/manifest.json")
+        .expect_err("a path with no assets segment is not a channel manifest");
+    let message = error.to_string();
+    assert!(
+        message.contains("assets"),
+        "the rejection must name the segment it wanted: {message}"
+    );
+    assert!(
+        !message.contains("http(s)"),
+        "the URL is http; blaming the scheme sends the reader to the wrong \
+         end of the problem: {message}"
+    );
+}
+
+#[test]
+fn a_url_with_the_wrong_scheme_blames_the_scheme() {
+    let error = channel_manifest_url("file:///tmp/assets/stable/manifest.json")
+        .expect_err("file:// is not fetchable");
+    assert!(error.to_string().contains("file"), "{error}");
+}
+
+#[test]
+fn a_url_not_ending_in_the_manifest_says_so() {
+    let error = channel_manifest_url("https://release.capsem.org/assets/stable/")
+        .expect_err("a directory is not a manifest");
+    assert!(error.to_string().contains("manifest.json"), "{error}");
+}
+
+#[test]
+fn a_channel_shaped_url_is_accepted_unchanged() {
+    for url in [
+        "https://release.capsem.org/assets/stable/manifest.json",
+        "https://corp.example/capsem/assets/internal/manifest.json",
+        "http://127.0.0.1:33029/assets/current/manifest.json",
+    ] {
+        assert_eq!(channel_manifest_url(url).expect("channel shaped"), url);
+    }
 }

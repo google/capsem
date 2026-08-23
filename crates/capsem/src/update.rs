@@ -1720,31 +1720,51 @@ fn release_manifest_url_from_manifest_metadata() -> Result<Option<String>> {
         .get("manifest_url")
         .and_then(serde_json::Value::as_str)
         .context("manifest-metadata.json must contain string field manifest_url")?;
-    let source = release_manifest_url_from_manifest_url(source).with_context(|| {
-        format!(
-            "manifest-metadata.json manifest_url must be an http(s) channel manifest URL, got {source}"
-        )
-    })?;
+    let source = channel_manifest_url(source)
+        .context("manifest-metadata.json manifest_url is not a channel manifest URL")?;
     Ok(Some(source))
 }
 
-fn release_manifest_url_from_manifest_url(manifest_url: &str) -> Option<String> {
-    let url = reqwest::Url::parse(manifest_url).ok()?;
+/// A channel manifest URL, or why this one is not.
+///
+/// Every branch used to be `None`, so the caller could say only that the URL
+/// was not a channel manifest -- and it said it as "must be an http(s)
+/// channel manifest URL", which of an `http://` URL sends the reader to the
+/// wrong end of the problem entirely. A glow-up served
+/// `http://127.0.0.1:33029/transitions/current/manifest.json`; diagnosing
+/// that rejection cost a CI cycle and a read of this function, because the
+/// requirement it enforces -- `assets`, a channel, `manifest.json` -- was
+/// written down nowhere else.
+fn channel_manifest_url(manifest_url: &str) -> Result<String> {
+    let url = reqwest::Url::parse(manifest_url)
+        .with_context(|| format!("{manifest_url} is not a URL"))?;
     if !matches!(url.scheme(), "https" | "http") {
-        return None;
+        anyhow::bail!(
+            "{manifest_url} has scheme {}: a channel manifest must be fetched over https or http",
+            url.scheme()
+        );
     }
-    let segments = url.path_segments().map(|segments| {
-        segments
-            .map(std::string::ToString::to_string)
-            .collect::<Vec<_>>()
-    })?;
-    let assets_pos = segments.iter().position(|segment| *segment == "assets")?;
-    if segments.last().map(String::as_str) != Some("manifest.json")
-        || segments.len() < assets_pos + 3
-    {
-        return None;
+    let segments = url
+        .path_segments()
+        .map(|segments| segments.map(str::to_string).collect::<Vec<_>>())
+        .with_context(|| format!("{manifest_url} has no path"))?;
+
+    let Some(assets_pos) = segments.iter().position(|segment| *segment == "assets") else {
+        anyhow::bail!(
+            "{manifest_url} has no `assets` path segment: a channel manifest lives at \
+             <base>/assets/<channel>/manifest.json"
+        );
+    };
+    if segments.last().map(String::as_str) != Some("manifest.json") {
+        anyhow::bail!("{manifest_url} does not end in manifest.json");
     }
-    Some(url.to_string())
+    if segments.len() < assets_pos + 3 {
+        anyhow::bail!(
+            "{manifest_url} names no channel between `assets` and manifest.json: \
+             a channel manifest lives at <base>/assets/<channel>/manifest.json"
+        );
+    }
+    Ok(url.to_string())
 }
 
 fn local_current_asset_version() -> Option<String> {

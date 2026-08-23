@@ -124,9 +124,10 @@ class ExactReleaseTransport:
     after_manifest: Path
     current_manifest: Path
     channel_catalog: Path
-    before_manifest_url: str
-    after_manifest_url: str
     current_manifest_url: str
+    #: The polling URL's path, so the channel catalog and the check that reads
+    #: it back cannot disagree about where the manifest is served.
+    current_manifest_route: str
     channel_catalog_url: str
     #: Absent for a first release, whose public-before graph serves no package.
     before_package: Path | None
@@ -856,7 +857,14 @@ def stage_exact_release_transport(
     )
     if after_package is None:
         raise SystemExit("exact candidate-after transport must stage its native package")
-    current_manifest = dist / "transitions" / "current" / "manifest.json"
+    # `<base>/assets/<channel>/manifest.json`, because that is the only shape
+    # the product will fetch: `channel_manifest_url` requires an `assets`
+    # segment with a channel after it. Served from `/transitions/current/...`,
+    # every automatic-update cycle in this proof failed with "release channel
+    # check failed" before fetching a byte -- and the tamper wait, which
+    # accepted any failed cycle, reported a pass.
+    current_route = f"/transitions/assets/{pairing.channel}/manifest.json"
+    current_manifest = dist / Path(current_route.lstrip("/"))
     copy_artifact_tree(before_manifest, current_manifest)
     current_contents = current_manifest.read_bytes()
     channel_catalog = dist / "transitions" / "channels.json"
@@ -873,7 +881,7 @@ def stage_exact_release_transport(
                             {
                                 "version": json.loads(current_contents).get("version", "1.0.0"),
                                 "status": "current",
-                                "url": "/transitions/current/manifest.json",
+                                "url": current_route,
                                 "digest": {
                                     "sha256": hashlib.sha256(current_contents).hexdigest(),
                                     "blake3": file_blake3(current_manifest),
@@ -894,9 +902,8 @@ def stage_exact_release_transport(
         after_manifest=after_manifest,
         current_manifest=current_manifest,
         channel_catalog=channel_catalog,
-        before_manifest_url=f"{base_url}/transitions/before/manifest.json",
-        after_manifest_url=f"{base_url}/transitions/after/manifest.json",
-        current_manifest_url=f"{base_url}/transitions/current/manifest.json",
+        current_manifest_url=f"{base_url}{current_route}",
+        current_manifest_route=current_route,
         channel_catalog_url=f"{base_url}/transitions/channels.json",
         before_package=before_package,
         after_package=after_package,
@@ -928,7 +935,7 @@ def promote_exact_candidate_transport(transport: ExactReleaseTransport) -> None:
         if isinstance(channel, dict)
         for manifest in channel.get("manifests", [])
         if isinstance(manifest, dict)
-        and manifest.get("url") == "/transitions/current/manifest.json"
+        and manifest.get("url") == transport.current_manifest_route
         and manifest.get("status") == "current"
     ]
     if len(selected) != 1:
@@ -1554,10 +1561,18 @@ service_log_grep() {{
   # shellcheck disable=SC2086
   grep -Fq "$needle" $logs 2>/dev/null
 }}
+# `automatic release update failed` is what the service logs for *any* failed
+# cycle, so waiting on it alone certifies the update loop's ability to fail
+# rather than the service's refusal to install forged bytes. It passed exactly
+# that way once: the loop was failing on a manifest URL the product would not
+# accept, no update ever ran, the tampered manifest was never fetched, and the
+# proof reported a pass. The tamper corrupts a digest, so the rejection must
+# also say a hash did not match.
 wait_for_automatic_rejection() {{
   since="$1"
   for attempt in $(seq 1 90); do
-    if service_log_grep "automatic release update failed"; then
+    if service_log_grep "automatic release update failed" \
+      && service_log_grep "mismatch"; then
       return 0
     fi
     sleep 2

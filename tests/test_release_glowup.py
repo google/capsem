@@ -4,6 +4,7 @@ import ast
 import hashlib
 import importlib.util
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -1153,13 +1154,13 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
 
     assert transport.current_manifest.read_bytes() == transport.before_manifest.read_bytes()
     assert transport.current_manifest_url == (
-        "http://127.0.0.1:8765/transitions/current/manifest.json"
+        "http://127.0.0.1:8765/transitions/assets/nightly/manifest.json"
     )
     channel_catalog = json.loads(transport.channel_catalog.read_text())
     selected = channel_catalog["channels"]["nightly"]["manifests"]
     assert len(selected) == 1
     assert selected[0]["status"] == "current"
-    assert selected[0]["url"] == "/transitions/current/manifest.json"
+    assert selected[0]["url"] == "/transitions/assets/nightly/manifest.json"
     assert (
         selected[0]["digest"]["sha256"]
         == hashlib.sha256(transport.before_manifest.read_bytes()).hexdigest()
@@ -1279,7 +1280,7 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
                             {
                                 "version": "1.5.100",
                                 "status": "current",
-                                "url": "/transitions/current/manifest.json",
+                                "url": "/transitions/assets/nightly/manifest.json",
                                 "digest": {
                                     "sha256": hashlib.sha256(
                                         before_manifest.read_bytes()
@@ -1321,9 +1322,10 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
         after_manifest=after_manifest,
         current_manifest=current_manifest,
         channel_catalog=channel_catalog,
-        before_manifest_url="http://127.0.0.1:8765/transitions/before/manifest.json",
-        after_manifest_url="http://127.0.0.1:8765/transitions/after/manifest.json",
-        current_manifest_url="http://127.0.0.1:8765/transitions/current/manifest.json",
+        current_manifest_url=(
+            "http://127.0.0.1:8765/transitions/assets/nightly/manifest.json"
+        ),
+        current_manifest_route="/transitions/assets/nightly/manifest.json",
         channel_catalog_url="http://127.0.0.1:8765/transitions/channels.json",
         before_package=before_package,
         after_package=after_package,
@@ -1448,7 +1450,7 @@ def test_first_profile_glowup_never_installs_empty_authoring_state(
                             {
                                 "version": "1.5.100",
                                 "status": "current",
-                                "url": "/transitions/current/manifest.json",
+                                "url": "/transitions/assets/nightly/manifest.json",
                                 "digest": {
                                     "sha256": hashlib.sha256(
                                         before_manifest.read_bytes()
@@ -1491,9 +1493,10 @@ def test_first_profile_glowup_never_installs_empty_authoring_state(
         after_manifest=after_manifest,
         current_manifest=current_manifest,
         channel_catalog=channel_catalog,
-        before_manifest_url="http://127.0.0.1:8765/transitions/before/manifest.json",
-        after_manifest_url="http://127.0.0.1:8765/transitions/after/manifest.json",
-        current_manifest_url="http://127.0.0.1:8765/transitions/current/manifest.json",
+        current_manifest_url=(
+            "http://127.0.0.1:8765/transitions/assets/nightly/manifest.json"
+        ),
+        current_manifest_route="/transitions/assets/nightly/manifest.json",
         channel_catalog_url="http://127.0.0.1:8765/transitions/channels.json",
         before_package=package,
         after_package=package,
@@ -1513,7 +1516,12 @@ def test_first_profile_glowup_never_installs_empty_authoring_state(
     fresh_script = calls[0][-1]
     assert "probe_installed_transition fresh-install" in fresh_script
     assert "probe_installed_transition candidate-after" not in fresh_script
-    assert transport.before_manifest_url not in fresh_script
+    # This asserted that `transport.before_manifest_url` was absent. That field
+    # was never read anywhere -- the manifests are promoted by copying files,
+    # not by switching URLs -- so the assertion checked that a string appearing
+    # nowhere appeared nowhere. What it meant to pin is that the fresh install
+    # polls the one URL the service is configured with.
+    assert transport.current_manifest_url in fresh_script
     assert fresh_script.index("CAPSEM_MANIFEST_URL=") < fresh_script.index(
         "probe_installed_transition fresh-install"
     )
@@ -2123,3 +2131,87 @@ def test_a_neighbouring_stream_is_not_searched(tmp_path: Path) -> None:
     (run / "services.log").write_text("automatic release update failed\n", encoding="utf-8")
 
     assert _run_helper(tmp_path, "automatic release update failed") != 0
+
+
+# ---------------------------------------------------------------------------
+# A proof that passes for the wrong reason.
+#
+# `wait_for_automatic_rejection` waited for `automatic release update failed`
+# and nothing more. That message is what the service logs for *any* failed
+# update cycle, so the tamper proof passed on run 32605810523 while the
+# service was failing for an entirely unrelated reason -- a manifest URL the
+# product would not accept, logged as
+#
+#     automatic release update failed ... release channel check failed
+#     ... manifest_url must be an http(s) channel manifest URL
+#
+# The tampered manifest was never reached, let alone rejected. A green tamper
+# proof over an update that never ran is worse than no proof: it is a report
+# that the security property holds, issued by a check that did not test it.
+# ---------------------------------------------------------------------------
+
+
+def _wait_body(name: str) -> str:
+    shell = embedded_shell.shell_of(PROJECT_ROOT / "scripts" / "local-release-glowup.py")
+    bodies = embedded_shell.function_bodies(shell)
+    assert name in bodies, f"the glow-up no longer defines {name}"
+    return bodies[name]
+
+
+def test_the_tamper_wait_requires_a_tamper_specific_message() -> None:
+    """`automatic release update failed` alone is any failure at all.
+
+    The wait must name something only the tamper produces, or it certifies
+    the update loop's ability to fail rather than the service's ability to
+    refuse a forged manifest.
+    """
+    body = _wait_body("wait_for_automatic_rejection")
+    needles = re.findall(r'service_log_grep\s+"([^"]+)"', body)
+    assert needles, f"the wait greps for nothing:\n{body}"
+    assert any(needle != "automatic release update failed" for needle in needles), (
+        "the tamper wait accepts any failed update cycle, so it passes when "
+        "the update fails for an unrelated reason -- which is what it did:\n"
+        + body
+    )
+
+
+def test_neither_rejection_wait_can_be_satisfied_by_the_other() -> None:
+    """Two proofs, two distinct causes.
+
+    They ran against one shared message, so a single unrelated failure could
+    satisfy one of them while the other -- which does name its own cause --
+    timed out. That asymmetry is exactly what the last run showed.
+    """
+    needles = {
+        name: set(re.findall(r'service_log_grep\s+"([^"]+)"', _wait_body(name)))
+        for name in ("wait_for_automatic_rejection", "wait_for_incompatible_profile_rejection")
+    }
+    tamper, incompatible = needles.values()
+    assert tamper - incompatible, f"the tamper wait names nothing of its own: {needles}"
+    assert incompatible - tamper, f"the incompatible wait names nothing of its own: {needles}"
+
+
+def test_the_polling_url_is_shaped_like_a_channel_manifest() -> None:
+    """The product will not fetch a manifest from any other path.
+
+    `channel_manifest_url` requires `<base>/assets/<channel>/manifest.json`:
+    an `assets` segment, a channel after it, ending in the manifest. That is
+    deliberate and is what the real release site serves.
+
+    The glow-up served `/transitions/current/manifest.json`, so every
+    automatic-update cycle in the proof died before fetching anything, with
+    "release channel check failed". The tamper proof passed anyway -- it
+    accepted any failed cycle -- and the incompatible-profile proof, which
+    names its own cause, timed out. Neither had exercised an update.
+    """
+    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(
+        encoding="utf-8"
+    )
+    routes = re.findall(r'current_route = f?"([^"]+)"', source)
+    assert routes, "no polling route found; this guard is reading the wrong thing"
+
+    unshaped = [route for route in routes if "/assets/" not in route]
+    assert not unshaped, (
+        "these polling routes have no `assets` segment, so `channel_manifest_url` "
+        "rejects them before a single byte is fetched:\n  " + "\n  ".join(unshaped)
+    )
