@@ -3008,7 +3008,7 @@ def test_ci_install_job_sets_up_uv_before_the_shared_install_gate() -> None:
     assert setup_pos < install_pos, "test-install sets up uv after the shared install gate"
 
 
-def test_ci_install_job_pulls_existing_profiles_before_building_packages() -> None:
+def test_ci_install_job_selects_exact_profiles_before_building_packages() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     install_job = _workflow_job_blocks(workflow)["test-install"]
     fetch_action = (
@@ -3016,20 +3016,29 @@ def test_ci_install_job_pulls_existing_profiles_before_building_packages() -> No
     ).read_text()
 
     fetch_pos = install_job.index("./.github/actions/fetch-release-inputs")
+    resolve_pos = install_job.index("scripts/select-runtime-preflight-manifest.py")
+    source_pos = install_job.index("scripts/fetch-channel-source-manifest.py")
     stage_pos = install_job.index("scripts/stage-release-test-inputs.py")
     materialize_pos = install_job.index("bash scripts/materialize-config.sh")
     package_pos = install_job.index("uv run capsem-gate cross-compile x86_64")
     gate_pos = install_job.index("uv run capsem-gate install")
-    assert fetch_pos < stage_pos < materialize_pos < package_pos < gate_pos
+    assert (
+        resolve_pos < source_pos < fetch_pos < stage_pos < materialize_pos < package_pos < gate_pos
+    )
     assert "bash scripts/materialize-config.sh --pair-content" in install_job
     assert "kind: profiles" in install_job
     assert "architecture: x86_64" in install_job
     assert "output: target/ci-install-content/inputs" in install_job
     assert "--input-dir target/ci-install-content/inputs" in install_job
     assert "Build exact native release package" in install_job
-    assert (
-        "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json"
-        in (install_job)
+    assert install_job.count("steps.install-manifest.outputs.manifest-url") == 2
+    assert "--classify-only" in install_job
+    assert "published)" in install_job
+    assert "retired)" in install_job
+    assert "--require-profile-membership" in install_job
+    assert "file://$output" in install_job
+    assert "CAPSEM_INSTALL_MANIFEST_URL: ${{ steps.install-manifest.outputs.manifest-url }}" in (
+        install_job
     )
     assert "CAPSEM_INSTALL_CHANNEL: stable" in install_job
     assert "just _build-host-image" not in install_job

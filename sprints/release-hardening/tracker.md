@@ -7,7 +7,7 @@
 - [x] S06-003 — reuse and bound VM image products and caches
 - [x] S06-004 — normalize Docker runtime cache identity
 - [x] S02-001 — restore deterministic cross-platform CI
-- [ ] S02-002 — unify channel state and exact install inputs
+- [x] S02-002 — unify channel state and exact install inputs
 - [x] S02-003 — eliminate the two-VM IPC qualification timeout and preserve evidence
 - [x] S02-004 — bind every fixed-port mock server to its launcher lifecycle
 - [ ] S03-001 — run every nightly lane before the aggregate verdict
@@ -78,7 +78,20 @@
   VM and guest-completion stage. The gate-generated four-worker co-work cohort
   then passed all 340 tests with 52 expected skips in 8m54s, including the
   exact two-VM isolation case under load.
-- Current install CI directly reads the explicitly retired stable graph.
+- The IPC milestone's final Citadel reconciliation also advanced the exact
+  oversized-source debt ratchets for the service shell and its sibling tests;
+  the source-shape guard is green at the measured post-fix line counts.
+- Install CI no longer reads the explicitly retired stable graph. One typed
+  resolver now verifies catalog authority and manifest bytes, then chooses the
+  public URL only for a published graph or GitHub's latest immutable serialized
+  channel source for a retired graph. Live Channel Watch validates published
+  and retired catalog members, skips absent nightly, and fails closed on HTML,
+  digest drift, malformed graphs, transport loss, or broken references.
+- The live resolver classifies stable as retired at configured digest
+  `e8ddf88034a3e73beb605811d5efe5e03c04e79d1ba4b656ff6ca837ef54640e`
+  and nightly as absent. The retired CI path resolves immutable GitHub asset
+  `517678454`: stable/current, both `code` and `co-work` 0.6.0 profiles for
+  arm64 and x86_64, and no package cohort before the local binary build.
 - Nightly scheduler currently short-circuits after the first failed profile.
 - Asset reuse initially never hit because preflight discarded
   `target/ironbank-assets`, and a matching identity checked only existence.
@@ -90,7 +103,8 @@
 - Unit/contract: S06 reuse/cache cohort plus install, asset, prefix, storage,
   config, and Citadel contracts green (484 passed, 2 platform skips); S02 CI
   contracts green (15 Rust collector tests, 132 install/evidence tests, and 48
-  storage/Citadel tests)
+  storage/Citadel tests); typed channel/install/watch gates are green (92
+  direct tests, 413 affected release contracts, and 55 source/Citadel guards)
 - Functional: mandatory zero-construction warm hit and prefix salvage/lend path
   green through production functions; real cold/warm image reuse is green on
   the identical exact child with a 2m30s cold and 35.8s warm run

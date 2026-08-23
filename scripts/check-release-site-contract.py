@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from capsem import runtime_preflight_manifest as channel_resolver
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -30,6 +34,11 @@ def main() -> int:
         help="Asset channel to validate. Repeat to validate multiple channels.",
     )
     parser.add_argument(
+        "--catalog-members",
+        action="store_true",
+        help="Validate each published or retired first-party catalog member.",
+    )
+    parser.add_argument(
         "--attempts",
         type=int,
         default=6,
@@ -42,11 +51,63 @@ def main() -> int:
         help="Delay between failed validation attempts.",
     )
     args = parser.parse_args()
+    if args.catalog_members:
+        if args.channels:
+            parser.error("--catalog-members cannot be combined with --channel")
+        return validate_catalog_members(
+            release_site=args.release_site,
+            attempts=args.attempts,
+            delay_seconds=args.delay_seconds,
+        )
     return validate_release_channels(
         release_site=args.release_site,
         channels=args.channels or ["stable"],
         attempts=args.attempts,
         delay_seconds=args.delay_seconds,
+    )
+
+
+def validate_catalog_members(
+    *,
+    release_site: str,
+    attempts: int,
+    delay_seconds: float,
+    checker: Any | None = None,
+    resolver: Any = channel_resolver.resolve_remote_channel,
+) -> int:
+    """Resolve typed public state, then deeply validate only catalog members."""
+    retired = channel_resolver.retirement.load_retired_public_graphs()
+    channels: list[str] = []
+    for channel in channel_resolver.retirement.FirstPartyChannel:
+        resolution = resolver(
+            release_site=release_site,
+            channel=channel,
+            retired_public_graphs=retired,
+        )
+        if resolution.state is channel_resolver.ChannelState.ABSENT:
+            print(f"{channel.value}: absent from the public catalog; skipped.")
+            continue
+        if resolution.state in {
+            channel_resolver.ChannelState.PUBLISHED,
+            channel_resolver.ChannelState.RETIRED,
+        }:
+            print(f"{channel.value}: {resolution.state.value}; validating references.")
+            channels.append(channel.value)
+            continue
+        print(
+            f"FAIL: {channel.value}: {resolution.state.value}: {resolution.detail}",
+            file=sys.stderr,
+        )
+        return 1
+    if not channels:
+        print(f"{release_site.rstrip('/')} has no first-party catalog members.")
+        return 0
+    return validate_release_channels(
+        release_site=release_site,
+        channels=channels,
+        attempts=attempts,
+        delay_seconds=delay_seconds,
+        checker=checker,
     )
 
 
@@ -101,9 +162,7 @@ def validate_release_channels(
                     failures.append((channel, contract))
         if not failures:
             for channel in channels:
-                print(
-                    f"{release_site.rstrip('/')} {channel} release-channel contract passed."
-                )
+                print(f"{release_site.rstrip('/')} {channel} release-channel contract passed.")
             return 0
         last_failures = failures
         for channel, failure in failures:

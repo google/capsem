@@ -88,16 +88,30 @@ def is_exact_retired_public_graph(
     read_manifest: Callable[[str], bytes],
 ) -> bool:
     """Return true only when catalog authority and fetched bytes match config."""
-    configured = retired.get(channel)
+    configured = retired_public_graph_for_digest(
+        channel=channel,
+        sha256=_catalog_digest(catalog, channel),
+        retired=retired,
+    )
     if configured is None:
-        return False
-    catalog_sha256 = _catalog_digest(catalog, channel)
-    if catalog_sha256 != configured.sha256:
         return False
     actual = hashlib.sha256(read_manifest(manifest_url)).hexdigest()
     if actual != configured.sha256:
         raise ValueError("retired public graph payload digest does not match its catalog authority")
     return True
+
+
+def retired_public_graph_for_digest(
+    *,
+    channel: FirstPartyChannel,
+    sha256: str | None,
+    retired: Mapping[FirstPartyChannel, RetiredPublicGraph],
+) -> RetiredPublicGraph | None:
+    """Return config authority only for its exact catalog-selected digest."""
+    configured = retired.get(channel)
+    if configured is None or configured.sha256 != sha256:
+        return None
+    return configured
 
 
 def release_site_catalog_url(manifest_url: str) -> str:

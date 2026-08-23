@@ -399,10 +399,45 @@ jobs:
           test -r /dev/kvm -a -w /dev/kvm
           test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
 
-      - name: Pull existing stable profile assets
+      - name: Classify the stable install graph
+        id: install-channel
+        run: |
+          python3 scripts/select-runtime-preflight-manifest.py \
+            --channel stable \
+            --classify-only \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Select exact stable install inputs
+        id: install-manifest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PUBLIC_MANIFEST_URL: ${{ steps.install-channel.outputs.manifest-url }}
+          PUBLIC_STATE: ${{ steps.install-channel.outputs.state }}
+        run: |
+          set -euo pipefail
+          case "$PUBLIC_STATE" in
+            published)
+              echo "manifest-url=$PUBLIC_MANIFEST_URL" >> "$GITHUB_OUTPUT"
+              ;;
+            retired)
+              output="$PWD/target/ci-install-selection/manifest.json"
+              python3 scripts/fetch-channel-source-manifest.py \
+                --channel stable \
+                --repository "$GITHUB_REPOSITORY" \
+                --require-profile-membership \
+                --output "$output"
+              echo "manifest-url=file://$output" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "stable install graph is $PUBLIC_STATE; no exact install input exists" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Pull exact stable profile assets
         uses: ./.github/actions/fetch-release-inputs
         with:
-          manifest-url: https://release.capsem.org/assets/stable/manifest.json
+          manifest-url: ${{ steps.install-manifest.outputs.manifest-url }}
           kind: profiles
           architecture: x86_64
           output: target/ci-install-content/inputs
@@ -423,7 +458,7 @@ jobs:
 
       - name: Build exact native release package
         env:
-          CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json
+          CAPSEM_INSTALL_MANIFEST_URL: ${{ steps.install-manifest.outputs.manifest-url }}
           CAPSEM_INSTALL_CHANNEL: stable
         run: |
           uv run capsem-gate cross-compile x86_64 \

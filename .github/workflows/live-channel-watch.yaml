@@ -44,7 +44,7 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --frozen
 
-      - name: Validate stable and nightly resolve end to end
+      - name: Validate every catalog member resolves end to end
         env:
           RELEASE_SITE_URL: ${{ inputs.base_url || 'https://release.capsem.org' }}
         run: |
@@ -53,7 +53,6 @@ jobs:
           # retries to answer is already failing its users.
           uv run python scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
-            --channel stable \
-            --channel nightly \
+            --catalog-members \
             --attempts 3 \
             --delay-seconds 10

@@ -18,13 +18,49 @@ gate stayed green because no gate was looking.
 
 from __future__ import annotations
 
+import importlib.util
+import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
+
+from capsem import runtime_preflight_manifest as channel_resolver
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = PROJECT_ROOT / ".github" / "workflows"
 VALIDATOR = "check-release-site-contract.py"
+
+
+def _validator_module() -> Any:
+    path = PROJECT_ROOT / "scripts" / VALIDATOR
+    spec = importlib.util.spec_from_file_location("live_channel_validator", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@dataclass(frozen=True)
+class _Check:
+    name: str
+    ok: bool
+    detail: str
+
+
+class _Checker:
+    BLAKE3_IMPORT_ERROR = None
+
+    def __init__(self, broken: set[str] | None = None) -> None:
+        self.broken = broken or set()
+        self.checked: list[str] = []
+
+    def check_release_site_contract(self, _site: str, channel: str) -> _Check:
+        self.checked.append(channel)
+        ok = channel not in self.broken
+        return _Check("release contract", ok, "resolved" if ok else "broken reference")
 
 
 def _workflows() -> dict[str, dict]:
@@ -59,7 +95,7 @@ def test_a_scheduled_workflow_validates_the_live_channels() -> None:
 
 
 def test_the_live_channel_watch_covers_every_channel() -> None:
-    """Checking only stable leaves nightly to rot unobserved."""
+    """The typed catalog decides which first-party channels are published."""
     watchers = [
         WORKFLOWS / name
         for name, workflow in _workflows().items()
@@ -68,8 +104,83 @@ def test_the_live_channel_watch_covers_every_channel() -> None:
     assert watchers, "no live channel watch to inspect"
 
     covered = " ".join(path.read_text(encoding="utf-8") for path in watchers)
-    for channel in ("stable", "nightly"):
-        assert channel in covered, f"live channel watch does not cover {channel}"
+    assert "--catalog-members" in covered
+    assert "--channel stable" not in covered
+    assert "--channel nightly" not in covered
+
+
+def test_catalog_watch_skips_absent_and_checks_published_members() -> None:
+    validator = _validator_module()
+    checker = _Checker()
+
+    def resolve(**kwargs: Any) -> channel_resolver.ChannelResolution:
+        channel = kwargs["channel"]
+        state = (
+            channel_resolver.ChannelState.PUBLISHED
+            if channel is channel_resolver.retirement.FirstPartyChannel.STABLE
+            else channel_resolver.ChannelState.ABSENT
+        )
+        return channel_resolver.ChannelResolution(channel, state, state.value)
+
+    result = validator.validate_catalog_members(
+        release_site="file:///release-site",
+        attempts=1,
+        delay_seconds=0,
+        checker=checker,
+        resolver=resolve,
+    )
+
+    assert result == 0
+    assert checker.checked == ["stable"]
+
+
+def test_catalog_watch_fails_closed_on_invalid_state() -> None:
+    validator = _validator_module()
+    checker = _Checker()
+
+    def resolve(**kwargs: Any) -> channel_resolver.ChannelResolution:
+        channel = kwargs["channel"]
+        return channel_resolver.ChannelResolution(
+            channel,
+            channel_resolver.ChannelState.INVALID,
+            "HTML fallback",
+        )
+
+    result = validator.validate_catalog_members(
+        release_site="file:///release-site",
+        attempts=1,
+        delay_seconds=0,
+        checker=checker,
+        resolver=resolve,
+    )
+
+    assert result == 1
+    assert checker.checked == []
+
+
+def test_catalog_watch_still_exposes_broken_retired_references() -> None:
+    validator = _validator_module()
+    checker = _Checker({"stable"})
+
+    def resolve(**kwargs: Any) -> channel_resolver.ChannelResolution:
+        channel = kwargs["channel"]
+        state = (
+            channel_resolver.ChannelState.RETIRED
+            if channel is channel_resolver.retirement.FirstPartyChannel.STABLE
+            else channel_resolver.ChannelState.ABSENT
+        )
+        return channel_resolver.ChannelResolution(channel, state, state.value)
+
+    result = validator.validate_catalog_members(
+        release_site="file:///release-site",
+        attempts=1,
+        delay_seconds=0,
+        checker=checker,
+        resolver=resolve,
+    )
+
+    assert result == 1
+    assert checker.checked == ["stable"]
 
 
 def test_the_watch_can_be_run_on_demand() -> None:

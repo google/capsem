@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Release preflight, install CI, and Live Channel Watch now share one typed,
+  fail-closed interpretation of published, absent, retired, unreachable, and
+  invalid channels. Catalog-selected manifests are fetched, SHA-256 verified,
+  and structurally validated, so an HTML fallback cannot masquerade as a live
+  graph. Install CI uses the exact public graph after activation and the latest
+  immutable staged profile cohort while stable is explicitly retired; the
+  watcher skips genuinely absent channels but still reports broken references
+  from retired catalog members.
+
 - Guest file-write responses no longer wait for an unrelated full session-DB
   flush after their ledger rows have been accepted. A busy ledger could hold a
   successful VM write past the service's 30-second IPC deadline; failures now

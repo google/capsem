@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 from email.message import Message
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,27 @@ def _retired(
     }
 
 
+def _manifest(channel: str, *, status: str = "current") -> bytes:
+    return json.dumps(
+        {
+            "channel": channel,
+            "packages": [],
+            "profiles": {},
+            "status": status,
+        },
+        sort_keys=True,
+    ).encode()
+
+
+def _manifest_digest(channel: str) -> str:
+    return hashlib.sha256(_manifest(channel)).hexdigest()
+
+
+def _read_manifest(url: str) -> bytes:
+    channel = url.removesuffix("/manifest.json").rsplit("/", maxsplit=1)[-1]
+    return _manifest(channel)
+
+
 def _catalog(*channels: str, sha256: str | None = None) -> dict[str, Any]:
     return {
         "version": 1,
@@ -34,7 +56,7 @@ def _catalog(*channels: str, sha256: str | None = None) -> dict[str, Any]:
                     {
                         "status": "current",
                         "url": f"/assets/{channel}/manifest.json",
-                        **({"digest": {"sha256": sha256}} if sha256 is not None else {}),
+                        "digest": {"sha256": sha256 or _manifest_digest(channel)},
                     }
                 ]
             }
@@ -49,12 +71,15 @@ def test_existing_channel_always_selects_its_public_manifest() -> None:
         release_site="https://release.capsem.org",
         channel="nightly",
         bootstrap_missing_first_party=True,
+        read_manifest=_read_manifest,
     )
 
     assert selection == {
         "channel": "nightly",
+        "state": "published",
         "manifest_channel": "nightly",
         "manifest_url": "https://release.capsem.org/assets/nightly/manifest.json",
+        "manifest_sha256": _manifest_digest("nightly"),
         "bootstrap": False,
         "retired": False,
     }
@@ -66,12 +91,15 @@ def test_absent_first_party_profile_channel_uses_existing_donor_graph() -> None:
         release_site="https://release.capsem.org",
         channel="nightly",
         bootstrap_missing_first_party=True,
+        read_manifest=_read_manifest,
     )
 
     assert selection == {
         "channel": "nightly",
+        "state": "absent",
         "manifest_channel": "stable",
         "manifest_url": "https://release.capsem.org/assets/stable/manifest.json",
+        "manifest_sha256": _manifest_digest("stable"),
         "bootstrap": True,
         "retired": False,
     }
@@ -83,6 +111,7 @@ def test_absent_first_party_binary_channel_uses_the_same_existing_donor_graph() 
         release_site="https://release.capsem.org",
         channel="nightly",
         bootstrap_missing_first_party=True,
+        read_manifest=_read_manifest,
     )
 
     assert selection["manifest_channel"] == "stable"
@@ -92,7 +121,7 @@ def test_absent_first_party_binary_channel_uses_the_same_existing_donor_graph() 
 
 
 def test_exact_configured_retired_graph_becomes_an_inactive_bootstrap() -> None:
-    payload = b'{"channel":"stable","packages":[],"profiles":{}}\n'
+    payload = _manifest("stable")
     digest = hashlib.sha256(payload).hexdigest()
     catalog = _catalog("stable", sha256=digest)
     catalog["channels"]["stable"]["manifests"][0]["digest"]["blake3"] = "b" * 64
@@ -108,8 +137,10 @@ def test_exact_configured_retired_graph_becomes_an_inactive_bootstrap() -> None:
 
     assert selection == {
         "channel": "stable",
+        "state": "retired",
         "manifest_channel": "stable",
         "manifest_url": "https://release.capsem.org/assets/stable/manifest.json",
+        "manifest_sha256": digest,
         "bootstrap": True,
         "retired": True,
     }
@@ -118,7 +149,7 @@ def test_exact_configured_retired_graph_becomes_an_inactive_bootstrap() -> None:
 def test_retired_catalog_digest_must_match_the_fetched_payload() -> None:
     configured = "a" * 64
 
-    with pytest.raises(ValueError, match="retired public graph payload digest"):
+    with pytest.raises(ValueError, match="payload digest"):
         SELECTOR.select_runtime_preflight_manifest(
             _catalog("stable", sha256=configured),
             release_site="https://release.capsem.org",
@@ -131,16 +162,95 @@ def test_retired_catalog_digest_must_match_the_fetched_payload() -> None:
 
 def test_a_different_current_graph_is_not_retired() -> None:
     selection = SELECTOR.select_runtime_preflight_manifest(
-        _catalog("stable", sha256="b" * 64),
+        _catalog("stable"),
         release_site="https://release.capsem.org",
         channel="stable",
         bootstrap_missing_first_party=True,
         retired_public_graphs=_retired("a" * 64),
-        read_manifest=lambda _url: pytest.fail("normal graph must not be fetched here"),
+        read_manifest=lambda _url: _manifest("stable"),
     )
 
     assert selection["bootstrap"] is False
     assert selection["retired"] is False
+
+
+def test_typed_resolver_distinguishes_every_channel_state() -> None:
+    published = SELECTOR.resolve_channel_state(
+        _catalog("stable"),
+        release_site="https://release.capsem.org",
+        channel=SELECTOR.retirement.FirstPartyChannel.STABLE,
+        retired_public_graphs={},
+        read_manifest=_read_manifest,
+    )
+    absent = SELECTOR.resolve_channel_state(
+        _catalog("stable"),
+        release_site="https://release.capsem.org",
+        channel=SELECTOR.retirement.FirstPartyChannel.NIGHTLY,
+        retired_public_graphs={},
+        read_manifest=_read_manifest,
+    )
+    retired = SELECTOR.resolve_channel_state(
+        _catalog("stable"),
+        release_site="https://release.capsem.org",
+        channel=SELECTOR.retirement.FirstPartyChannel.STABLE,
+        retired_public_graphs=_retired(_manifest_digest("stable")),
+        read_manifest=_read_manifest,
+    )
+    unreachable = SELECTOR.resolve_channel_state(
+        _catalog("stable"),
+        release_site="https://release.capsem.org",
+        channel=SELECTOR.retirement.FirstPartyChannel.STABLE,
+        retired_public_graphs={},
+        read_manifest=lambda _url: (_ for _ in ()).throw(ConnectionResetError()),
+    )
+
+    assert published.state is SELECTOR.ChannelState.PUBLISHED
+    assert absent.state is SELECTOR.ChannelState.ABSENT
+    assert retired.state is SELECTOR.ChannelState.RETIRED
+    assert unreachable.state is SELECTOR.ChannelState.UNREACHABLE
+
+
+def test_html_fallback_is_invalid_even_when_its_catalog_digest_matches() -> None:
+    payload = b"<!doctype html><title>missing</title>"
+    digest = hashlib.sha256(payload).hexdigest()
+
+    resolution = SELECTOR.resolve_channel_state(
+        _catalog("stable", sha256=digest),
+        release_site="https://release.capsem.org",
+        channel=SELECTOR.retirement.FirstPartyChannel.STABLE,
+        retired_public_graphs={},
+        read_manifest=lambda _url: payload,
+    )
+
+    assert resolution.state is SELECTOR.ChannelState.INVALID
+    assert "manifest is invalid" in resolution.detail
+
+
+def test_manifest_digest_drift_is_invalid() -> None:
+    resolution = SELECTOR.resolve_channel_state(
+        _catalog("stable", sha256="a" * 64),
+        release_site="https://release.capsem.org",
+        channel=SELECTOR.retirement.FirstPartyChannel.STABLE,
+        retired_public_graphs={},
+        read_manifest=_read_manifest,
+    )
+
+    assert resolution.state is SELECTOR.ChannelState.INVALID
+    assert "digest does not match" in resolution.detail
+
+
+def test_absent_channel_cannot_bootstrap_from_a_retired_donor() -> None:
+    digest = _manifest_digest("stable")
+
+    with pytest.raises(ValueError, match="donor stable is retired"):
+        SELECTOR.select_runtime_preflight_manifest(
+            _catalog("stable", sha256=digest),
+            release_site="https://release.capsem.org",
+            channel="nightly",
+            bootstrap_missing_first_party=True,
+            retired_public_graphs=_retired(digest),
+            read_manifest=_read_manifest,
+        )
 
 
 def test_checked_in_retirement_authority_loads_as_typed_data() -> None:
@@ -202,7 +312,46 @@ def test_missing_or_non_first_party_channels_fail_closed(
             release_site="https://release.capsem.org",
             channel=channel,
             bootstrap_missing_first_party=bootstrap,
+            read_manifest=_read_manifest,
         )
+
+
+def test_remote_catalog_transport_and_shape_fail_into_typed_states() -> None:
+    channel = SELECTOR.retirement.FirstPartyChannel.STABLE
+    unreachable = SELECTOR.resolve_remote_channel(
+        release_site="https://release.capsem.org",
+        channel=channel,
+        read_catalog=lambda _site: (_ for _ in ()).throw(ConnectionResetError()),
+    )
+    invalid = SELECTOR.resolve_remote_channel(
+        release_site="https://release.capsem.org",
+        channel=channel,
+        read_catalog=lambda _site: {"channels": []},
+    )
+
+    assert unreachable.state is SELECTOR.ChannelState.UNREACHABLE
+    assert invalid.state is SELECTOR.ChannelState.INVALID
+
+
+def test_github_output_exposes_typed_state_and_exact_authority(tmp_path: Path) -> None:
+    output = tmp_path / "github-output"
+
+    SELECTOR._write_github_output(
+        output,
+        SELECTOR.ChannelResolution(
+            SELECTOR.retirement.FirstPartyChannel.STABLE,
+            SELECTOR.ChannelState.PUBLISHED,
+            "verified",
+            "https://release.capsem.org/assets/stable/manifest.json",
+            "a" * 64,
+        ).as_dict(),
+    )
+
+    assert output.read_text(encoding="utf-8").splitlines() == [
+        "state=published",
+        "manifest-url=https://release.capsem.org/assets/stable/manifest.json",
+        f"manifest-sha256={'a' * 64}",
+    ]
 
 
 class _FakeResponse:
@@ -293,4 +442,5 @@ def test_catalog_cannot_redirect_manifest_off_the_release_site() -> None:
             release_site="https://release.capsem.org",
             channel="nightly",
             bootstrap_missing_first_party=False,
+            read_manifest=_read_manifest,
         )
