@@ -45,6 +45,10 @@ BUILD_SURFACES = ("frontend-build", "docs", "site", "release-site-build")
 # asserting on a command is not spawning one.
 PNPM_ARGV = re.compile(r'\[\s*"pnpm"')
 
+# A direct install mutates the same release-site/node_modules tree every Astro
+# build reads. The shared helper owns that transaction with the build lock.
+PNPM_INSTALL_ARGV = re.compile(r'\[\s*"pnpm"[^\]]*"install"', re.DOTALL)
+
 # Builds `release-site` either by naming it in the argv or by running there.
 RELEASE_SITE_BUILD = re.compile(r'"--dir",\s*"release-site"|cwd=\w+\s*/\s*"release-site"')
 
@@ -73,6 +77,20 @@ def test_release_site_builds_take_the_shared_lock() -> None:
         "these modules spawn a release-site build without reaching the shared "
         "lock in helpers.release_site, so they race every other build on the "
         f"host: {[str(path) for path in offenders]}"
+    )
+
+
+def test_only_the_helper_installs_release_site_dependencies() -> None:
+    offenders = []
+    for path in _test_sources():
+        source = path.read_text(encoding="utf-8")
+        if PNPM_INSTALL_ARGV.search(source) and RELEASE_SITE_BUILD.search(source):
+            offenders.append(path.relative_to(PROJECT_ROOT))
+
+    assert not offenders, (
+        "these modules mutate release-site/node_modules outside the shared "
+        "workspace lock; move install and build into helpers.release_site: "
+        f"{[str(path) for path in offenders]}"
     )
 
 

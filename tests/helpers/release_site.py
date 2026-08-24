@@ -1,4 +1,4 @@
-"""Serialized release-site builds with per-caller output snapshots.
+"""Serialized release-site workspace mutations with output snapshots.
 
 Astro cannot isolate two concurrent builds of the same project. It stages
 prerendered chunks in `<outDir>/.prerender/` when outDir is inside the project
@@ -19,6 +19,10 @@ only that snapshot. Nothing outside this module reads `release-site/dist`.
 Snapshots are keyed by graph content, so the many gates that render the
 checked-in fixture graph share a single build per process, while a mutated
 graph always gets its own build in its own directory.
+
+`pnpm install` mutates the same workspace a build reads. It therefore belongs
+inside this lock too: serializing only Astro still permits another pytest
+worker to tear down `node_modules/.bin` while Astro is starting.
 """
 
 from __future__ import annotations
@@ -65,7 +69,7 @@ _BUILT: set[Path] = set()
 
 @contextmanager
 def release_site_build_lock() -> Iterator[None]:
-    """Serialize a release-site Astro build against every other one on the host.
+    """Serialize a release-site workspace mutation against every other one.
 
     For callers that run `build:channel` themselves: that script renders through
     the shared `release-site/dist` before overlaying into its own output
@@ -75,6 +79,44 @@ def release_site_build_lock() -> Iterator[None]:
     with _LOCK_PATH.open("w", encoding="utf-8") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         yield
+
+
+def build_release_channel_site(graph_path: Path, *, timeout: int = 180) -> None:
+    """Install and render one channel graph as an indivisible transaction."""
+    with release_site_build_lock():
+        install = subprocess.run(
+            ["pnpm", "--dir", "release-site", "install", "--frozen-lockfile"],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+        if install.returncode != 0:
+            raise AssertionError(
+                "release-site pnpm install failed\n"
+                f"stdout:\n{install.stdout}\n"
+                f"stderr:\n{install.stderr}"
+            )
+        build = subprocess.run(
+            ["pnpm", "--dir", "release-site", "run", "build:channel"],
+            cwd=PROJECT_ROOT,
+            env={
+                **os.environ,
+                "CAPSEM_RELEASE_GRAPH": str(graph_path),
+                "CAPSEM_RELEASE_CHANNEL_DIST": str(graph_path),
+            },
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+        if build.returncode != 0:
+            raise AssertionError(
+                "release-site Astro build failed\n"
+                f"stdout:\n{build.stdout}\n"
+                f"stderr:\n{build.stderr}"
+            )
 
 
 def release_site_dist(graph_path: Path) -> Path:

@@ -6,14 +6,13 @@ import gzip
 import hashlib
 import io
 import json
-import os
 import subprocess
 import sys
 import tarfile
 from pathlib import Path
 
 from blake3 import blake3
-from helpers.release_site import release_site_build_lock
+from helpers.release_site import build_release_channel_site
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_COMMIT = "0" * 40
@@ -77,35 +76,7 @@ def _run_admin(*args: str, check: bool = True) -> subprocess.CompletedProcess[st
 
 
 def _build_release_site(dist: Path) -> None:
-    install = subprocess.run(
-        ["pnpm", "install", "--frozen-lockfile"],
-        cwd=PROJECT_ROOT / "release-site",
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert install.returncode == 0, (
-        f"release-site pnpm install failed\nstdout:\n{install.stdout}\nstderr:\n{install.stderr}"
-    )
-    # build:channel renders through the shared release-site/dist before
-    # overlaying into `dist`, so it has to serialize with every other build.
-    with release_site_build_lock():
-        build = subprocess.run(
-            ["pnpm", "run", "build:channel"],
-            cwd=PROJECT_ROOT / "release-site",
-            env={
-                **os.environ,
-                # Render from this graph, overlay into this dist.
-                "CAPSEM_RELEASE_GRAPH": str(dist),
-                "CAPSEM_RELEASE_CHANNEL_DIST": str(dist),
-            },
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    assert build.returncode == 0, (
-        f"release-site Astro build failed\nstdout:\n{build.stdout}\nstderr:\n{build.stderr}"
-    )
+    build_release_channel_site(dist)
 
 
 def _write_asset(path: Path, data: bytes) -> dict[str, object]:

@@ -28,7 +28,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import pytest
-from helpers.release_site import release_site_build_lock
+from helpers.release_site import build_release_channel_site
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL = "stable"
@@ -747,24 +747,7 @@ def _build_release_channel(
         dist / "profiles" / "releases",
         dirs_exist_ok=True,
     )
-    _run(
-        ["pnpm", "--dir", "release-site", "install", "--frozen-lockfile"],
-        timeout=180,
-        env={},
-    )
-    # build:channel renders through the shared release-site/dist before
-    # overlaying into `dist`, so it has to serialize with every other build.
-    with release_site_build_lock():
-        _run(
-            ["pnpm", "--dir", "release-site", "run", "build:channel"],
-            timeout=180,
-            env={
-                # The graph to render from and the dist to overlay into --
-                # one directory here, two meanings.
-                "CAPSEM_RELEASE_GRAPH": str(dist),
-                "CAPSEM_RELEASE_CHANNEL_DIST": str(dist),
-            },
-        )
+    build_release_channel_site(dist)
     _run_admin("assets", "channel", "check", "--channel", CHANNEL, "--dist", str(dist))
 
 

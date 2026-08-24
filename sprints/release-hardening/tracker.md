@@ -17,6 +17,7 @@
 - [x] S05-004 — repair concurrent exact-source inspection
 - [x] S05-005 — restore the hard gate-module shape bound
 - [x] S05-006 — retain public identity for the retired stable CI install fixture
+- [x] S05-007 — serialize release-site dependency mutation with Astro builds
 - [ ] S05-002 — qualify and verify stable, then nightly
 - [ ] Changelog entries at user-visible milestones
 - [ ] Exact-source complete qualification
@@ -168,6 +169,12 @@
   corporate channel and postinstall correctly rejected the install gate's
   local manifest handoff. S05-006 preserves canonical stable identity without
   weakening the corporate lock.
+- Exact qualification of `211ae6df` preserved 31 green steps, then run
+  `20260824-001658-09175a` failed when one contract worker ran `pnpm install`
+  outside the repository-scoped release-site build lock while another started
+  Astro. The install rewrote the shared `node_modules/.bin` tree and Astro lost
+  its executable. S05-007 makes install plus build one locked transaction and
+  adds a source guard against another direct test-owned installer.
 
 ## Coverage Ledger
 
@@ -185,7 +192,9 @@
   module boundary at 300 lines with focused proof (2 passed), lint, and the
   corrected affected boundary/prefix/bootstrap/candidate cohort (286 passed,
   2 platform skips); S05-006's packaging and CI-install cohort is green (122
-  passed), including a real local canonical stable URL metadata check
+  passed), including a real local canonical stable URL metadata check; S05-007
+  proves the two formerly colliding release-site files on separate workers (69
+  passed) and guards shared dependency-mutation ownership
 - Functional: mandatory zero-construction warm hit and prefix salvage/lend path
   green through production functions; real cold/warm image reuse is green on
   the identical exact child with a 2m30s cold and 35.8s warm run

@@ -81,7 +81,10 @@ is the checked-in durable summary required by the development-sprint contract.
 13. Preserve public stable channel identity when ordinary CI consumes the
     catalog-approved retired graph through a local immutable source snapshot;
     do not relax corporate-channel locking.
-14. Require green CI, focused stability repetitions, staging fault injection,
+14. Serialize release-site dependency installation with Astro builds under the
+    existing repository lock so parallel contract workers cannot tear the
+    shared workspace.
+15. Require green CI, focused stability repetitions, staging fault injection,
     one complete exact-source qualification, stable publication, then nightly.
 
 ## Proof Matrix
