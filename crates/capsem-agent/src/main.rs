@@ -480,8 +480,12 @@ fn main() {
             setsid().expect("setsid failed");
 
             // Set the slave as the controlling terminal.
+            #[cfg(target_os = "macos")]
+            let tiocsctty = libc::c_ulong::from(libc::TIOCSCTTY);
+            #[cfg(not(target_os = "macos"))]
+            let tiocsctty = libc::TIOCSCTTY;
             unsafe {
-                libc::ioctl(slave_fd, libc::TIOCSCTTY as _, 0);
+                libc::ioctl(slave_fd, tiocsctty, 0);
             }
 
             // Redirect stdio to the slave PTY.
