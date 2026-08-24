@@ -3039,6 +3039,10 @@ def test_ci_install_job_selects_exact_profiles_before_building_packages() -> Non
     assert "published)" in install_job
     assert "retired)" in install_job
     assert "--require-profile-membership" in install_job
+    assert (
+        'output="$PWD/target/ci-install-selection/assets/stable/manifest.json"'
+        in install_job
+    ), "the retired first-party fixture must retain public stable channel identity"
     assert "file://$output" in install_job
     assert "CAPSEM_INSTALL_MANIFEST_URL: ${{ steps.install-manifest.outputs.manifest-url }}" in (
         install_job

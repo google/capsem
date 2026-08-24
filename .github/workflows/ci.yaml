@@ -420,7 +420,10 @@ jobs:
               echo "manifest-url=$PUBLIC_MANIFEST_URL" >> "$GITHUB_OUTPUT"
               ;;
             retired)
-              output="$PWD/target/ci-install-selection/manifest.json"
+              # The package derives public/corporate lock policy from this
+              # canonical URL shape. Keep a retired first-party fixture public
+              # so the install gate may hand it its generated local manifest.
+              output="$PWD/target/ci-install-selection/assets/stable/manifest.json"
               python3 scripts/fetch-channel-source-manifest.py \
                 --channel stable \
                 --repository "$GITHUB_REPOSITORY" \

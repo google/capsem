@@ -487,6 +487,45 @@ def test_explicit_manifest_url_is_packaged_without_manifest_payload(tmp_path):
     assert sorted(path.name for path in assets_dir.iterdir()) == ["manifest-metadata.json"]
 
 
+def test_local_first_party_manifest_url_retains_public_channel_identity(tmp_path):
+    """A canonical local stable mirror stays switchable during install proof."""
+    fixture = _build_fixture_deb(tmp_path)
+    bin_dir = tmp_path / "bin"
+    config_dir = tmp_path / "target-config"
+    manifest = tmp_path / "selection" / "assets" / "stable" / "manifest.json"
+    _seed_binaries(bin_dir)
+    _seed_config(config_dir)
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{}\n")
+    output = tmp_path / "out.deb"
+
+    res = subprocess.run(
+        [
+            str(SCRIPT),
+            "--manifest",
+            manifest.resolve().as_uri(),
+            str(fixture),
+            str(bin_dir),
+            str(config_dir),
+            "",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert res.returncode == 0, f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
+
+    extracted = _deb_contents(output, tmp_path / "extracted-local-stable")
+    metadata = json.loads(
+        (extracted / "usr" / "share" / "capsem" / "assets" / "manifest-metadata.json").read_text()
+    )
+    assert metadata["manifest_url"] == manifest.resolve().as_uri()
+    assert metadata["channel"] == "stable"
+    assert metadata["channel_kind"] == "public"
+    assert metadata["channel_locked"] is False
+
+
 def test_explicit_remote_manifest_url_is_packaged_with_origin_provenance(tmp_path):
     """Remote corp/release manifest URLs are recorded without package-time fetching."""
     fixture = _build_fixture_deb(tmp_path)
