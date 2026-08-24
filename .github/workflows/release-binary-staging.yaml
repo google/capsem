@@ -7,10 +7,6 @@ on:
         description: Dry-run binary version to record in the staged channel.
         required: true
         default: 1.4.9999999999
-      channel:
-        description: Staged binary channel name.
-        required: true
-        default: binary-staging
       asset_channel:
         description: Existing VM asset channel to use as the staging source.
         required: true
@@ -28,7 +24,6 @@ permissions:
 
 env:
   ASSET_CHANNEL: ${{ inputs.asset_channel }}
-  ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.asset_channel }}/manifest.json
 
 jobs:
   assemble-binary-channel:
@@ -58,6 +53,10 @@ jobs:
         with:
           key: release-channel-binary-staging
 
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - name: Install locked Python dependencies
+        run: uv sync --frozen
+
       - name: Write deterministic host release artifacts
         run: |
           set -euo pipefail
@@ -66,11 +65,16 @@ jobs:
             "$VERSION" release-artifacts target/binary-staging-packages
           ls -lh release-artifacts/
 
-      - name: Fetch current asset channel manifest
+      - name: Resolve serialized channel source manifest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           case "$ASSET_CHANNEL" in stable|nightly) ;; *) exit 1 ;; esac
-          mkdir -p target/binary-channel-dry-run
-          curl -fsSL "$ASSET_MANIFEST_URL" -o target/binary-channel-dry-run/manifest.json
+          uv run python scripts/fetch-channel-source-manifest.py \
+            --channel "$ASSET_CHANNEL" \
+            --source-commit "${{ github.sha }}" \
+            --require-profile-membership \
+            --output target/binary-channel-dry-run/manifest.json
           cp target/binary-channel-dry-run/manifest.json \
             target/binary-channel-dry-run/manifest.before.json
 
@@ -126,28 +130,17 @@ jobs:
           (root / "proof.json").write_text(json.dumps(proof, indent=2) + "\n")
           PY
 
-      - name: Build binary channel preview with existing VM assets
+      - name: Build complete binary channel preview with existing VM assets
         run: |
-          cargo run -p capsem-admin -- assets channel build \
-            --manifest "file://$PWD/target/binary-channel-dry-run/manifest.json" \
+          set -euo pipefail
+          generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          uv run python scripts/build-complete-release-channel.py \
+            --channel-source "$ASSET_CHANNEL=file://$PWD/target/binary-channel-dry-run/manifest.json" \
+            --primary-channel "$ASSET_CHANNEL" \
             --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
-            --channel "${{ inputs.channel }}" \
             --manifest-version "${{ inputs.manifest_version }}" \
+            --generated-at "$generated_at" \
             --out-dir target/release-channel
-
-      - name: Build release site pages
-        env:
-          # The graph to render, and where the render is overlaid. One path,
-          # two roles -- and two names, so neither can be mistaken for the other.
-          CAPSEM_RELEASE_GRAPH: ${{ github.workspace }}/target/release-channel
-          CAPSEM_RELEASE_CHANNEL_DIST: ${{ github.workspace }}/target/release-channel
-        run: bash scripts/check-web-surface.sh release-site-build
-
-      - name: Check binary channel preview
-        run: |
-          cargo run -p capsem-admin -- assets channel check \
-            --channel "${{ inputs.channel }}" \
-            --dist target/release-channel
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

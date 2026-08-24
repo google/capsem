@@ -137,6 +137,12 @@ def test_binary_staging_builds_parseable_packages_with_production_sbom() -> None
     )
 
     assert "scripts/write-binary-staging-artifacts.sh" in workflow
+    assert "scripts/fetch-channel-source-manifest.py" in workflow
+    assert "scripts/build-complete-release-channel.py" in workflow
+    assert "uv sync --frozen" in workflow
+    assert 'curl -fsSL "$ASSET_MANIFEST_URL"' not in workflow
+    assert '--primary-channel "$ASSET_CHANNEL"' in workflow
+    assert "inputs.channel" not in workflow
     assert "dpkg-deb --build" not in workflow
     assert "dry-run deb" not in workflow
     assert "capsem-binary-dry-run" not in workflow
@@ -220,6 +226,29 @@ def test_binary_staging_artifacts_are_deterministic_and_recordable(tmp_path: Pat
     assert {binary["name"] for package in packages for binary in package["binaries"]} == {
         "capsem-app",
         "capsem-tray",
+    }
+
+    dist = tmp_path / "dist"
+    _run_admin(
+        "assets",
+        "channel",
+        "build",
+        "--manifest",
+        manifest.resolve().as_uri(),
+        "--asset-source-base",
+        "https://github.example.test/assets-v{asset_version}",
+        "--channel",
+        "stable",
+        "--manifest-version",
+        "1.0.2",
+        "--out-dir",
+        str(dist),
+    )
+    built = json.loads((dist / "assets" / "stable" / "manifest.json").read_text())
+    assert built["channel"] == "stable"
+    assert {package["kind"] for package in built["packages"]} == {
+        "debian_package",
+        "macos_pkg",
     }
 
 
