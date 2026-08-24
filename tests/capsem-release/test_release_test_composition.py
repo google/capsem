@@ -302,7 +302,7 @@ def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() ->
     that `_test-candidate` is a command. The module order is edges, so it
     holds however the source is arranged.
     """
-    assert "capsem-gate candidate" in _recipe("test")
+    assert "capsem-gate candidate" in _recipe("test-clean")
 
     # The fast phase precedes every expensive one, and Colima is given back on
     # every path. Both used to be read out of `candidate.py` as source text --
@@ -365,7 +365,7 @@ def test_private_release_modules_select_one_shared_runner() -> None:
 
 
 def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -> None:
-    public = _recipe("test")
+    public = _recipe("test-clean")
     fast = _recipe("_test-source-checks")
     planned = _planned("test-fast")
 
