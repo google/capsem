@@ -145,10 +145,15 @@ def test_no_caller_sets_the_output_name_where_a_graph_fixture_goes() -> None:
 
 
 @pytest.mark.parametrize(
-    "workflow",
-    ["release-binary-staging.yaml", "release-channel-staging.yaml"],
+    ("workflow", "driver"),
+    [
+        ("release-binary-staging.yaml", "scripts/build-complete-release-channel.py"),
+        ("release-channel-staging.yaml", "scripts/rehearse-asset-channel-staging.sh"),
+    ],
 )
-def test_the_published_workflows_name_both_roles(workflow: str) -> None:
+def test_the_published_workflows_reach_a_driver_that_names_both_roles(
+    workflow: str, driver: str
+) -> None:
     """One path, two roles -- and now two names.
 
     For a generated distribution the graph being rendered and the directory
@@ -156,13 +161,17 @@ def test_the_published_workflows_name_both_roles(workflow: str) -> None:
     survived this long. Setting both is what makes that a coincidence rather
     than a contract.
 
-    Both workflows are in this repository, which is what makes a hard rename
-    safe: there is no window in which a shim would protect anything.
+    Both workflows and their drivers are in this repository. Following that
+    exact edge keeps a shared driver from hiding a missing role while still
+    allowing the workflow to delegate the whole operation instead of copying it.
     """
-    text = (PROJECT_ROOT / ".github/workflows" / workflow).read_text(encoding="utf-8")
+    workflow_text = (PROJECT_ROOT / ".github/workflows" / workflow).read_text(encoding="utf-8")
+    driver_text = _code(PROJECT_ROOT / driver)
 
-    assert f"{INPUT}:" in text, f"{workflow} never says which graph to render"
-    assert f"{OUTPUT}:" in text, f"{workflow} never says where the render goes"
+    assert driver in workflow_text, f"{workflow} bypasses its shared release-site driver"
+    assert INPUT in driver_text, f"{driver} never says which graph to render"
+    assert OUTPUT in driver_text, f"{driver} never says where the render goes"
+    assert "release-site-build" in driver_text, f"{driver} does not drive the shared web build"
 
 
 def test_the_split_is_complete_across_the_repository() -> None:

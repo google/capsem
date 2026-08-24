@@ -54,34 +54,14 @@ jobs:
         with:
           key: release-channel-staging
 
-      - name: Write staging release channel fixture
+      - name: Assemble and validate staging release channel
         run: |
-          uv run python scripts/write-release-site-ci-fixture.py \
-            --without-binary-files \
-            target/release-channel-staging-fixture
-
-      - name: Generate staging release channel data
-        run: |
-          cargo run -p capsem-admin -- assets channel build \
-            --manifest "file://$PWD/target/release-channel-staging-fixture/assets/manifest.json" \
-            --assets-dir target/release-channel-staging-fixture/assets \
-            --channel "${{ inputs.channel }}" \
-            --manifest-version "${{ inputs.manifest_version }}" \
-            --out-dir target/release-channel
-
-      - name: Build release site pages
-        env:
-          # The graph to render, and where the render is overlaid. One path,
-          # two roles -- and two names, so neither can be mistaken for the other.
-          CAPSEM_RELEASE_GRAPH: ${{ github.workspace }}/target/release-channel
-          CAPSEM_RELEASE_CHANNEL_DIST: ${{ github.workspace }}/target/release-channel
-        run: bash scripts/check-web-surface.sh release-site-build
-
-      - name: Check staging release channel
-        run: |
-          cargo run -p capsem-admin -- assets channel check \
-            --channel "${{ inputs.channel }}" \
-            --dist target/release-channel
+          bash scripts/rehearse-asset-channel-staging.sh \
+            "${{ inputs.channel }}" \
+            "${{ inputs.manifest_version }}" \
+            target/release-channel-staging-fixture \
+            target/release-channel \
+            target/release-channel-staging-validation
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

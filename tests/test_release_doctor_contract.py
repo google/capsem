@@ -945,12 +945,14 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
     assert "build-app-linux:" not in workflow
     assert "just _build-kernel" not in workflow
     assert "just _build-rootfs" not in workflow
-    assert "scripts/write-release-site-ci-fixture.py" in workflow
-    assert "--without-binary-files" in workflow
-    assert "--assets-dir target/release-channel-staging-fixture/assets" in workflow
+    assert "scripts/rehearse-asset-channel-staging.sh" in workflow
+    assert "--without-binary-files" not in workflow
+    assert "target/release-channel-staging-fixture" in workflow
+    assert "target/release-channel-staging-validation" in workflow
     assert "--asset-source-base" not in workflow
-    assert "bash scripts/check-web-surface.sh release-site-build" in workflow
-    assert "cargo run -p capsem-admin -- assets channel check" in workflow
+    assert "scripts/write-release-site-ci-fixture.py" not in workflow
+    assert "bash scripts/check-web-surface.sh release-site-build" not in workflow
+    assert "cargo run -p capsem-admin -- assets channel check" not in workflow
     assert "name: asset-channel-staging-preview" in workflow
     assert "uses: ./.github/workflows/release-channel.yaml" in workflow
     assert "dist_artifact: asset-channel-staging-preview" in workflow
@@ -1726,6 +1728,9 @@ def test_binary_release_channel_assembly_preflights_canonical_artifacts() -> Non
 def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     workflow = _workflow_text("release-binary-staging.yaml")
     real_release = _workflow_text("release.yaml")
+    artifact_builder = _source_text("scripts/write-binary-staging-artifacts.sh")
+    complete_builder = _source_text("scripts/build-complete-release-channel.py")
+    compact_complete_builder = " ".join(complete_builder.split())
     assemble_channel = _workflow_job_block(
         "assemble-binary-channel",
         "release-binary-staging.yaml",
@@ -1764,14 +1769,15 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
         assert f"release-artifacts/{logical_name}" not in workflow
         assert f"release-artifacts/*{logical_name}" not in workflow
 
-    assert (
-        "ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.asset_channel }}/manifest.json"
-        in workflow
-    )
+    assert "ASSET_MANIFEST_URL:" not in workflow
     assert 'case "$ASSET_CHANNEL" in stable|nightly)' in assemble_channel
-    assert "release-artifacts/Capsem-${VERSION}.pkg" in assemble_channel
-    assert "release-artifacts/Capsem_${VERSION}_arm64.deb" in assemble_channel
-    assert "release-artifacts/capsem-sbom.spdx.json" in assemble_channel
+    assert "scripts/fetch-channel-source-manifest.py" in assemble_channel
+    assert '--channel "$ASSET_CHANNEL"' in assemble_channel
+    assert "--require-profile-membership" in assemble_channel
+    assert "scripts/write-binary-staging-artifacts.sh" in assemble_channel
+    assert 'Capsem-${VERSION}.pkg' in artifact_builder
+    assert 'Capsem_${VERSION}_arm64.deb' in artifact_builder
+    assert 'capsem-sbom.spdx.json' in artifact_builder
     assert "Record binary release metadata in channel manifest" in assemble_channel
     assert "assets channel record-binary" in assemble_channel
     assert "ref: ${{ github.sha }}" in assemble_channel
@@ -1780,9 +1786,12 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     assert "binary dry-run changed VM asset metadata" in assemble_channel
     assert '"vm_asset_jobs": "not_run"' in assemble_channel
     assert '"vm_assets_unchanged": True' in assemble_channel
-    assert "Build binary channel preview with existing VM assets" in assemble_channel
-    assert "assets channel build" in assemble_channel
-    assert "assets channel check" in assemble_channel
+    assert "Build complete binary channel preview with existing VM assets" in assemble_channel
+    assert "scripts/build-complete-release-channel.py" in assemble_channel
+    assert "assets channel build" not in assemble_channel
+    assert "assets channel check" not in assemble_channel
+    assert '"assets", "channel", "build",' in compact_complete_builder
+    assert '"assets", "channel", "check",' in compact_complete_builder
     assert "name: binary-channel-dry-run-bundle" in assemble_channel
     assert "target/binary-channel-dry-run/" in assemble_channel
     assert "target/release-channel/" in assemble_channel
@@ -3165,6 +3174,8 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     release_assets = _workflow_text("release-assets.yaml")
     binary_staging = _workflow_text("release-binary-staging.yaml")
     channel_staging = _workflow_text("release-channel-staging.yaml")
+    binary_staging_builder = _source_text("scripts/build-complete-release-channel.py")
+    channel_staging_rehearsal = _source_text("scripts/rehearse-asset-channel-staging.sh")
 
     for surface in (
         "frontend-verify",
@@ -3190,8 +3201,10 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     assert "bash scripts/check-web-surface.sh frontend-build" in _source_text(
         "scripts/build-linux-package.sh"
     )
-    for workflow in (binary_staging, channel_staging):
-        assert "bash scripts/check-web-surface.sh release-site-build" in workflow
+    assert "scripts/build-complete-release-channel.py" in binary_staging
+    assert '"scripts/check-web-surface.sh", "release-site-build"' in binary_staging_builder
+    assert "bash scripts/rehearse-asset-channel-staging.sh" in channel_staging
+    assert "bash scripts/check-web-surface.sh release-site-build" in channel_staging_rehearsal
     assert "scripts/build-complete-release-channel.py" in release
     assert "scripts/build-complete-release-channel.py" in release_assets
 
@@ -3211,6 +3224,8 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
         release_assets,
         binary_staging,
         channel_staging,
+        binary_staging_builder,
+        channel_staging_rehearsal,
     ):
         for bypass in bypasses:
             assert bypass not in text

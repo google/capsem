@@ -126,8 +126,40 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     assert "activate_production: false" in staging
     assert "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86" in staging
     assert "uv sync --frozen" in staging
-    assert "uv run python scripts/write-release-site-ci-fixture.py" in staging
-    assert "python3 scripts/write-release-site-ci-fixture.py" not in staging
+    assert "bash scripts/rehearse-asset-channel-staging.sh" in staging
+    assert "scripts/write-release-site-ci-fixture.py" not in staging
+    assert "--without-binary-files" not in staging
+
+
+def test_asset_staging_rehearsal_builds_a_complete_public_shape(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    dist = tmp_path / "dist"
+    evidence = tmp_path / "evidence"
+    command = [
+        "bash",
+        "scripts/rehearse-asset-channel-staging.sh",
+        "staging",
+        "1.0.2",
+        str(fixture),
+        str(dist),
+        str(evidence),
+    ]
+    _run(command)
+
+    manifest = json.loads((dist / "assets" / "staging" / "manifest.json").read_text())
+    assert manifest["packages"]
+    assert manifest["profiles"]
+    assert (evidence / "candidate-release.json").is_file()
+
+    replay = subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert replay.returncode != 0
+    assert "refusing stale asset staging path" in replay.stderr
 
 
 def test_binary_staging_builds_parseable_packages_with_production_sbom() -> None:
