@@ -46,13 +46,17 @@ jobs:
         with:
           toolchain: 1.97.1
 
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - name: Install locked Python dependencies
+        run: uv sync --frozen
+
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           key: release-channel-staging
 
       - name: Write staging release channel fixture
         run: |
-          python3 scripts/write-release-site-ci-fixture.py \
+          uv run python scripts/write-release-site-ci-fixture.py \
             --without-binary-files \
             target/release-channel-staging-fixture
 
