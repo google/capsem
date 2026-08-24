@@ -164,3 +164,28 @@ def test_missing_targets_are_installed_into_the_checked_in_toolchain(monkeypatch
     assert f"rustup target add --toolchain {PIN} aarch64-unknown-linux-musl" in issued
     assert f"rustup target add --toolchain {PIN} x86_64-unknown-linux-musl" in issued
     assert f"rustup component add --toolchain {PIN} llvm-tools" in issued
+
+
+def test_missing_rust_items_materialize_through_the_narrow_egress(monkeypatch) -> None:
+    ordinary = RecordingRunner(
+        PROJECT_ROOT,
+        replies=_rust_replies(targets="", components=""),
+    )
+    capability = RecordingRunner(PROJECT_ROOT)
+    monkeypatch.setattr(toolchain.shutil, "which", lambda _name: None)
+
+    toolchain.rust(CONFIG).run(Context(ordinary, CONFIG, outside_runner=capability))
+
+    ordinary_commands = "\n".join(ordinary.rendered)
+    materializers = "\n".join(capability.rendered)
+    assert "rustup target list" in ordinary_commands
+    assert "rustup component list" in ordinary_commands
+    assert "rustup target add" not in ordinary_commands
+    assert "rustup component add" not in ordinary_commands
+    assert "cargo install" not in ordinary_commands
+    for target in CONFIG.toolchain.rust_targets:
+        assert f"rustup target add --toolchain {PIN} {target}" in materializers
+    for component in CONFIG.toolchain.rust_components:
+        assert f"rustup component add --toolchain {PIN} {component}" in materializers
+    for crate in CONFIG.toolchain.crates:
+        assert " ".join(crate.install) in materializers

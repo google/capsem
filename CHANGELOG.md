@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cold macOS qualification now queues concurrent advisory queries through its
+  deliberately single-command egress broker, and materializes only missing,
+  exactly pinned Rust targets, components, and Cargo tools through that same
+  narrow capability. A fresh Mac no longer fails before artifact work while
+  compilation remains inside the loopback-only kernel sandbox.
+
 - Release-channel publication now captures the exact prior Cloudflare Pages
   production deployment, validates every generated public file on an immutable
   preview, and requires production to match both that byte snapshot and the

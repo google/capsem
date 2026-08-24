@@ -20,6 +20,7 @@ from .actions import Action, Run, Script
 from .config import GateConfig
 from .context import Context
 from .errors import GateError
+from .escape import escaping_runner
 from .execution import Kind, Needs, Speed, Step, step
 from .packageinputs import pinned_toolchain
 
@@ -143,7 +144,7 @@ def rust(config: GateConfig) -> Step:
         "toolchain.rust",
         _EnsureRust(),
         kind=Kind.COMPILE,
-        needs=frozenset({Needs.DISK}),
+        needs=frozenset({Needs.NETWORK, Needs.DISK}),
         speed=Speed.FAST,
     )
 
@@ -151,26 +152,32 @@ def rust(config: GateConfig) -> Step:
 class _EnsureRust(Action, name="ensure-rust"):
     """Probe-then-install, driven by the configured tables."""
 
+    outside_sandbox = True
+
     def render(self) -> str:
-        return "rustup targets/components and the cargo tools, if any are missing"
+        return (
+            "probe rustup targets/components and cargo tools; materialize missing "
+            "pinned items [outside kernel sandbox]"
+        )
 
     def perform(self, context: Context) -> None:
         settings = context.config.toolchain
         toolchain = pinned_toolchain(context.config.root)
+        installer = escaping_runner(context, "materialize the pinned Rust toolchain")
 
         installed = context.runner.capture(
             ["rustup", "target", "list", "--toolchain", toolchain, "--installed"]
         )
         for target in settings.rust_targets:
             if target not in installed:
-                context.runner.run(["rustup", "target", "add", "--toolchain", toolchain, target])
+                installer.run(["rustup", "target", "add", "--toolchain", toolchain, target])
 
         components = context.runner.capture(
             ["rustup", "component", "list", "--toolchain", toolchain, "--installed"]
         )
         for component in settings.rust_components:
             if component not in components:
-                context.runner.run(
+                installer.run(
                     ["rustup", "component", "add", "--toolchain", toolchain, component]
                 )
 
@@ -182,7 +189,7 @@ class _EnsureRust(Action, name="ensure-rust"):
             if shutil.which(crate.name) is not None:
                 actual = context.runner.capture(crate.probe, check=False)
             if not actual.startswith(crate.expected):
-                context.runner.run(crate.install)
+                installer.run(crate.install)
                 actual = context.runner.capture(crate.probe, check=False)
                 if not actual.startswith(crate.expected):
                     raise GateError(

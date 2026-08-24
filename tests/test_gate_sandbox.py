@@ -73,6 +73,7 @@ ONLINE_FAST = {
     "fast.audit.pnpm",
     "fast.audit.python-lock",
     "fast.toolchain.ort",
+    "fast.toolchain.rust",
 }
 
 
@@ -710,6 +711,66 @@ def test_an_outside_wrapper_moves_an_opaque_materializer_only() -> None:
     assert [command.argv for command in capability.commands] == [
         ("docker", "pull", "example@sha256:" + "0" * 64)
     ]
+
+
+def test_parallel_egress_callers_queue_before_the_single_command_broker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = b'{"ok":true}'
+    state_lock = threading.Lock()
+    active = 0
+    maximum_active = 0
+
+    class FakeSocket:
+        def __init__(self, *_args) -> None:
+            self._parts = [len(response).to_bytes(8, "big"), response]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            nonlocal active
+            with state_lock:
+                active -= 1
+
+        def connect(self, _endpoint: str) -> None:
+            nonlocal active, maximum_active
+            with state_lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            time.sleep(0.02)
+
+        def sendall(self, _payload: bytes) -> None:
+            pass
+
+        def recv(self, _length: int) -> bytes:
+            return self._parts.pop(0)
+
+    monkeypatch.setattr(egress.socket, "socket", FakeSocket)
+    runner = egress.EgressRunner(
+        PROJECT_ROOT,
+        endpoint=Path("/unused/egress.sock"),
+        token="test-token",
+        maximum=1024,
+    )
+    start = threading.Barrier(6)
+    failures: list[Exception] = []
+
+    def request() -> None:
+        try:
+            start.wait()
+            runner._request({"op": "probe"})
+        except Exception as error:  # pragma: no cover - asserted below
+            failures.append(error)
+
+    threads = [threading.Thread(target=request) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert failures == []
+    assert maximum_active == 1
 
 
 @pytest.mark.parametrize(

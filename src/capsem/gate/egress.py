@@ -25,6 +25,7 @@ import socket
 import stat
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,16 +75,22 @@ class EgressRunner(Runner):
         self._endpoint = endpoint
         self._token = token
         self._maximum = maximum
+        # The broker deliberately executes one authenticated command at a
+        # time. Fast-gate advisory steps are independent and may arrive here
+        # concurrently, so serialize the client side instead of depending on
+        # the Unix socket's tiny listen backlog as an accidental queue.
+        self._request_lock = threading.Lock()
 
     def _request(self, payload: dict) -> dict:
-        payload["token"] = self._token
-        try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-                connection.connect(str(self._endpoint))
-                _send(connection, payload, self._maximum)
-                response = _receive(connection, self._maximum)
-        except OSError as error:
-            raise GateError(f"release egress broker is unavailable: {error}") from error
+        with self._request_lock:
+            payload["token"] = self._token
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+                    connection.connect(str(self._endpoint))
+                    _send(connection, payload, self._maximum)
+                    response = _receive(connection, self._maximum)
+            except OSError as error:
+                raise GateError(f"release egress broker is unavailable: {error}") from error
         if response.get("ok") is not True:
             raise GateError(str(response.get("error") or "release egress broker refused command"))
         return response
