@@ -130,7 +130,8 @@ def test_release_lanes_consume_evidence_without_rebuilding_producers(command: st
     )._describe()
 
     assert not _producers(plan)
-    assert "qualification.accept" in plan.labels
+    assert "qualification.accept" not in plan.labels
+    assert "release" in plan.labels
     assert "source.record" not in plan.labels
 
 

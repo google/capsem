@@ -1,12 +1,12 @@
 """Continuing a failed run instead of replaying it.
 
-Six consecutive `just test` runs were spent proving the same twenty minutes of
+Six consecutive `just test-clean` runs were spent proving the same twenty minutes of
 work to reach a new failure one step further on. The private checkout made that
 worse, not better: a fresh copy per run starts with no `target/`, so every
 replay is cold.
 
 Working-tree `--prefix <tree> --from <step>` is diagnostic continuation and
-never qualification. Exact-commit `just test` instead selects its retained
+never qualification. Exact-commit `just test-clean` instead selects its retained
 full-SHA prefix and deepest frontier from archived event evidence; a resumed
 journal names its content-addressed parent. Both modes record carried steps as
 `carried`, and release commands still reject continuation flags outright.

@@ -92,7 +92,7 @@ def decide(
                 return Decision(None, None, carried, reuse_path)
             raise GateError(
                 f"source commit {commit} has no complete exact qualification run log; "
-                f"run `just test {commit}` first"
+                f"run `just test-clean {commit}` first"
             )
         return Decision(complete, None, carried, reuse_path)
     if complete is not None:

@@ -142,7 +142,7 @@ Do not batch changelog entries at the end. Each commit carries its own entry.
 Every sprint ends with testing. No exceptions.
 
 ```bash
-just test                           # ALL tests: unit + integration + cross-compile + frontend + bench
+just test-clean                           # ALL tests: unit + integration + cross-compile + frontend + bench
 just exec "capsem-doctor"            # VM smoke test
 ```
 

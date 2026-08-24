@@ -55,21 +55,16 @@ just release-binaries <channel> <source-commit>
 just release-profile <channel> <profile> <source-commit>
 ```
 
-They consume a prior `just test <source-commit>` qualification; they never
-repeat the candidate or accept prose, skills, or operator receipts as proof.
-Do not add combined/reduced/skip commands or dispatch the workflows directly.
+They freeze and validate a committed full lowercase commit on local `main`,
+publish its immutable `capsem-source-<commit>` ref, and dispatch the hosted
+lane that qualifies its owned artifact family before publication. They do not
+consume a developer-machine candidate journal. Do not add a third release
+command or dispatch the workflows directly.
 
-The full lowercase commit is committed on `main` before qualification.
-`just test <commit>` runs in a detached full-SHA directory. Success archives
-the event journal under that commit; repeats return success with the original
-run ID, absolute path, and digest. Release revalidates it at its first edge,
-then dispatches through `capsem-source-<commit>` without editing or pushing main.
-
-This separation is deliberate. Qualification is a reusable fact about source
-bytes, not a side effect of asking to publish them. Advancing `main` cannot
-invalidate an already-running detached proof, and publishing later cannot
-force an identical two-hour rerun. The structured event journal is the only
-authority: the skill explains the contract but can never satisfy it.
+`just test-clean <commit>` remains the exceptional cold complete diagnostic.
+Its resumable journal is useful for reproducing stale-cache and physical Mac
+defects, but it is not publication authority and agents must not run it after
+each source edit.
 
 A failed run archives its journal and retains the full-SHA prefix. A repeat may
 use only its deepest proven frontier; the child records carried steps and a
@@ -88,7 +83,7 @@ Candidate and both release commands accept only the enforcing sandbox mode;
 `off` and `report` are diagnostic modes for incomplete modules and can never
 produce complete qualification evidence.
 
-Local `just test` rebuilds every package/profile and runs the six release
+Exceptional local `just test-clean` rebuilds every package/profile and runs the six release
 modules: `_test-fast`, `_test-static`, `_test-artifacts`, `_test-functional`,
 `_test-glowup`, and `_test-release-contracts`.
 
@@ -130,7 +125,7 @@ pair survives every failure.
 Native installation proves function, not existence. macOS CI owns signing,
 notarization, stapling, exact-package installation, and structural checks;
 Linux owns exact native `.deb` installation and the guest shell where KVM is
-available. Local Apple Silicon `just test` owns that VZ proof. Neither platform
+available. Local Apple Silicon `just test-clean` owns that VZ proof. Neither platform
 boundary substitutes for another, and skipped or inspect-only checks do not
 count.
 
@@ -139,12 +134,11 @@ byte-for-byte. `assets/manifest-metadata.json` is its only metadata sidecar;
 runtime may derive an in-memory boot view. CLI and UI consume the same
 `GET /system/status` contract and must not synthesize publication state.
 
-A red gate stops publication. Fix forward without moving tags or history. For
-an exact commit, invoke `just test <commit>` again: the gate either returns its
-complete journal or derives the only supported partial continuation. Carried
-steps become qualification only through the recursively verified journal
-chain. Working-tree diagnostic continuation remains non-qualification. Both
-release commands reject continuation flags and require a complete journal.
+A red release lane stops publication. Fix forward without moving tags or
+history, then invoke the owning release command for the corrected commit.
+`just test-clean <commit>` may reuse its diagnostic journal when reproducing a
+local-only defect; release commands reject continuation flags and qualify in
+their hosted lanes.
 
 ## Version and commit essentials
 

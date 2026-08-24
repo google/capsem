@@ -19,6 +19,8 @@ approved = [
   "doctor",
   "exec",
   "fast-test",
+  "focus-test",
+  "install",
   "logs",
   "qualify-assets",
   "qualify-binaries",
@@ -29,10 +31,8 @@ approved = [
   "replay-release-lane",
   "run-service",
   "shell",
-  "test",
   "test-clean",
   "test-linux-rust",
-  "vm-smoke",
 ]
 
 [capsem_cli]

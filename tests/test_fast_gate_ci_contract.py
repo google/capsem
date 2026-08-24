@@ -80,7 +80,7 @@ def test_python_tests_use_the_tracked_lowercase_justfile_name() -> None:
 
 
 def test_the_public_fast_gate_is_the_shared_module_itself() -> None:
-    """`fast-test` and `test` cannot drift, because they are the same module.
+    """`fast-test` is incomplete feedback and dispatches its module directly.
 
     The public name has to be the whole shared gate, not a reduced copy. It
     was a reduced copy: `fast-test` ran only the source-checks module while
@@ -89,21 +89,16 @@ def test_the_public_fast_gate_is_the_shared_module_itself() -> None:
     name. It now runs both, and CI calls this recipe rather than the internals.
     """
     fast_test = variables.block(variables.FAST_TEST)
-    fast = _recipe("_test-source-checks")
     planned = _planned("test-fast")
 
-    assert "just _test-source-checks" in fast_test
-    assert "just _test-compiled-checks" in fast_test
+    assert "uv run capsem-gate test-fast" in fast_test
+    assert "incomplete" in fast_test
+    assert "just focus-test" in fast_test
+    assert "just release-profile" in fast_test
+    assert "just release-binaries" in fast_test
     assert fast_test.strip().count("\n") == 1, (
-        f"{variables.FAST_TEST} is the two shared modules the fast gate runs "
-        f"and nothing else: {fast_test!r}"
+        f"{variables.FAST_TEST} is one message plus one fast-gate dispatch: {fast_test!r}"
     )
-    assert "_prepared-runtime" in variables.header(variables.VM_SMOKE), (
-        "the VM half stopped preparing a bootable runtime"
-    )
-    assert "_check-assets" in _recipe("_prepared-runtime").splitlines()[0]
-    assert "just _test-release-contracts" in fast
-
     for required in (
         "scripts/check-source-syntax.py",
         "scripts/check-cargo-audit.py",

@@ -11,7 +11,7 @@ description: Python test infrastructure for capsem-builder. Use when running Pyt
 uv run python -m pytest tests/                                    # All tests
 uv run python -m pytest tests/ --cov=src/capsem --cov-fail-under=85  # With coverage
 uv run python -m pytest tests/test_validate.py -k "test_E001"     # Single test
-just test                                                          # Full suite (Rust + Python + frontend)
+just test-clean                                                          # Full suite (Rust + Python + frontend)
 just schema                                                        # Regenerate JSON schema + defaults
 ```
 
@@ -40,7 +40,7 @@ just schema                                                        # Regenerate 
 
 ## Coverage
 
-- Floor: 85% enforced by `--cov-fail-under=85` in `just test`
+- Floor: 85% enforced by `--cov-fail-under=85` in `just test-clean`
 - Report: `codecov-python.xml` (XML for CI upload)
 - codecov.yml: builder component at `src/capsem/**`, included in `unit` flag
 - Current: ~97% (as of Phase 7 completion)

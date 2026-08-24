@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import variables
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -59,7 +57,7 @@ def _recipe_block(name: str) -> str:
             end = i
             break
     block = "\n".join(lines[start:end])
-    if name == "test:":
+    if name == "test-clean:":
         block = f"{block}\n{_recipe_block('_test-candidate:')}"
     return block
 
@@ -198,7 +196,7 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
 
     Read out of the recipe text when this was shell. The steps are now asserted
     against the commands the gate issues, in tests/test_gate_assets.py; what
-    stays here is that `just test` still owns the gate and that the gate still
+    stays here is that `just test-clean` still owns the gate and that the gate still
     does each of these things at all.
     """
     from capsem.gate import config as gate_config
@@ -207,7 +205,7 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
     assets = _source_text("src/capsem/gate/assets.py")
     lanes = _source_text("src/capsem/gate/assetlanes.py")
 
-    # `just test` still owns the gate -- as a composed phase now rather than a
+    # `just test-clean` still owns the gate -- as a composed phase now rather than a
     # recipe that dispatched to another recipe, so it is read from the plan.
     assert "assets.preflight" in _planned("candidate")
 
@@ -434,7 +432,7 @@ def test_runtime_recipes_materialize_generated_config_before_service() -> None:
     assert "_materialize-config" in prepared
     assert prepared.index("_pack-initrd") < prepared.index("_materialize-config")
 
-    for recipe in ["shell:", "run-service:", f"{variables.VM_SMOKE}:"]:
+    for recipe in ["shell:", "run-service:"]:
         assert "_prepared-runtime" in _recipe_block(recipe)
 
 

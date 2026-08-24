@@ -235,7 +235,7 @@ def advice(analysis: Analysis, settings: DigestConfig) -> list[str]:
     """
     lines: list[str] = []
     if analysis.latest is None:
-        return ["No runs recorded yet. The first `just test` seeds the ledger."]
+        return ["No runs recorded yet. The first `just test-clean` seeds the ledger."]
 
     if analysis.failing:
         broken = sorted(

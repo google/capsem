@@ -122,8 +122,10 @@ def test_qualification_acceptance_stays_in_the_copy(name, args, checkout) -> Non
 
 
 @pytest.mark.parametrize(("name", "args"), RELEASES)
-def test_release_revalidates_evidence_without_rerunning_the_gate(name, args, checkout) -> None:
-    """The release plan consumes the prior proof and invokes no nested gate."""
+def test_release_dispatches_qualification_without_rerunning_a_local_gate(
+    name, args, checkout
+) -> None:
+    """The release plan freezes source and invokes no nested local gate."""
     plan = _plan(name, **args)
     # Whole words: `--bin capsem-gateway` is a binary this gate builds, and a
     # substring match reads it as a nested gate invocation.
@@ -131,17 +133,17 @@ def test_release_revalidates_evidence_without_rerunning_the_gate(name, args, che
 
     for launcher in ("capsem-gate", "just"):
         assert launcher not in words, (
-            f"a release step launches {launcher!r}; qualification is a journal "
-            "input, not another gate process"
+            f"a release step launches {launcher!r}; qualification belongs to "
+            "the hosted lane, not another local gate process"
         )
 
-    # The clean-tree refusal precedes it: releasing the wrong bytes is worse
-    # than releasing unqualified ones, because it looks like it worked.
+    # The clean-tree refusal is first: the hosted lane must receive exactly the
+    # committed source the operator named.
     assert plan.labels[0] == "source.worktree-clean"
-    assert plan.labels[1] == "qualification.accept"
+    assert "qualification.accept" not in plan.labels
     for phase in ("fast.", "static.", "artifacts.", "functional.", "glowup."):
         assert not any(step.label.startswith(phase) for step in plan.steps), (
-            f"the release repeats the {phase} phase already proven by its journal"
+            f"the release runs local {phase} work owned by the hosted lane"
         )
 
 
@@ -177,19 +179,8 @@ def test_only_networked_release_edges_cross_the_kernel_boundary(name, args) -> N
     )
 
 
-def test_force_waives_the_journal_and_says_so_in_the_run_log() -> None:
-    """`--force` is the escape hatch for a commit that is not the product.
-
-    The qualification proves the product, and not every commit changes it. A
-    gate or CI policy change costs two and a half hours to re-prove artifacts
-    byte-identical to ones already proven, and paying that repeatedly is how a
-    release stops happening.
-
-    It stays a step rather than becoming an absence: a release that skipped its
-    proof and left no trace of skipping is afterwards indistinguishable from
-    one that never needed it, and the journal is the evidence this contract
-    runs on.
-    """
+def test_force_does_not_invent_a_local_qualification_waiver() -> None:
+    """`--force` adds source guards; hosted qualification remains mandatory."""
     from helpers.gate import built_command
 
     commit = "f" * 40
@@ -200,11 +191,8 @@ def test_force_waives_the_journal_and_says_so_in_the_run_log() -> None:
         None,
     )._describe()
     assert "qualification.accept" not in forced.labels
-    assert forced.labels[0] == "qualification.waived"
-    rendered = " ".join(
-        action.render() for stepped in forced.steps for action in stepped.actions
-    )
-    assert "without an exact journal" in rendered
+    assert "qualification.waived" not in forced.labels
+    assert "source.worktree-clean" not in forced.labels
 
 
 def test_a_forced_release_still_proves_its_source() -> None:
@@ -238,8 +226,8 @@ def test_a_forced_release_still_proves_its_source() -> None:
         )
 
 
-def test_an_unforced_release_repeats_no_local_suite() -> None:
-    """The other half: a real release consumes its journal and repeats nothing.
+def test_an_unforced_release_runs_no_local_qualification_suite() -> None:
+    """A real release leaves qualification to the hosted lane.
 
     Adding the forced proof must not turn every release into a second gate --
     that is the reduced-versus-doubled gate the release contract refuses in
@@ -256,4 +244,4 @@ def test_an_unforced_release_repeats_no_local_suite() -> None:
 
     assert "citadel" not in ordinary.labels
     assert "contracts.release" not in ordinary.labels
-    assert "qualification.accept" in ordinary.labels
+    assert "qualification.accept" not in ordinary.labels

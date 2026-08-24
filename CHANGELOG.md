@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Developer verification now has explicit cost boundaries: `just fast-test`
+  prints that it is incomplete, `just focus-test <group>` reruns one existing
+  owner (`assets`, `binaries`, `benchmark`, `install`, `release-system`, or
+  `functional`), and `just install` builds and installs the complete local
+  macOS package for hands-on testing. The duplicate public `test` and
+  `vm-smoke` spellings are gone; `just test-clean` remains the exceptional
+  cold whole-system diagnostic. Release qualification belongs to the hosted
+  `release-profile` and `release-binaries` lanes, which reuse immutable inputs
+  and do not require a developer-machine journal.
+
 - `scripts/write-release-notes.py`: the GitHub release notes are rendered by a
   program with tests instead of a shell heredoc. The heredoc's tag was
   unquoted, which makes backticks command substitution -- so the line meant to
@@ -53,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer prevents the other profile or binaries from producing their own
   result; structured logs identify every lane against the one frozen source
   commit while the public release commands retain their existing locks,
-  journals, workflow waits, and teardown ownership.
+  workflow waits, and teardown ownership.
 
 - Release preflight, install CI, and Live Channel Watch now share one typed,
   fail-closed interpretation of published, absent, retired, unreachable, and
@@ -138,18 +148,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   difference is deliberate.
 
 - CI no longer reaches into private `just` recipes, and the nightly rebuild can
-  finally run unattended. Each release lane now calls one public verb --
+  finally run unattended. Each release lane calls one public verb --
   `qualify-assets` or `qualify-binaries` -- instead of assembling three or four
   `_test-*` steps in YAML, which is how the asset lane grew a deferred-profile
-  branch the binary lane never had. `fast-test` now runs both modules the CI
-  fast gate runs, making true its claim to be "the fast gate itself"; the two
-  internals are renamed for what they do rather than a fast/static split that
-  described neither, since both take about six minutes and the real difference
-  is whether a module builds anything. A Citadel guard refuses any workflow
-  that calls a private recipe or one absent from the locked public surface.
-  `[release].locally_qualified_channels` makes the qualification journal a
-  stable-only requirement: nightly rebuilds current `main` daily with no human
-  involved, and the lanes it dispatches prove themselves before publishing.
+  branch the binary lane never had. `fast-test` calls the canonical source
+  module shared with CI and release lanes but is explicitly incomplete; named
+  focus groups expose existing functional owners without creating another test
+  graph. A Citadel guard refuses any workflow that calls a private recipe or
+  one absent from the locked public surface. Both release lanes qualify the
+  frozen source and immutable selected inputs they publish, without a
+  developer-machine journal prerequisite.
 
 - A private release prefix no longer parses the outer checkout's
   `config/gate.toml`. The prefix runs the selected commit's gate code, so
@@ -196,12 +204,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the GUI libraries, so apt refuses an unusable install instead of completing a
   broken one.
 
-- The nightly release schedule now qualifies its commit before releasing it.
-  The release commands consume an exact-commit journal and never produce one;
-  the scheduler split its lanes across three runners with no `just test`
-  anywhere, so every run since 2026-08-05 failed -- first on a detached
-  checkout having no local `main`, and behind that on there being no journal to
-  accept. Qualification and all three releases now share one runner.
+- The nightly release schedule now freezes one commit and dispatches all three
+  hosted qualifying lanes against it. The previous scheduler required a
+  machine-local candidate journal that a fresh runner could not possess, so
+  every run since 2026-08-05 failed before artifact qualification began.
+  Profile and binary lanes now qualify the exact immutable inputs they may
+  publish and need no developer-machine journal.
 
 - Supervisor SIGTERM now unwinds the gate through its ordinary cancellation
   and run-log lifecycle instead of terminating Python in place. Interrupted

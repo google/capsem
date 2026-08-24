@@ -1,6 +1,6 @@
 """The complete local qualification, as one graph.
 
-`just test` used to be a tree of processes: `candidate` ran `just _test-fast`,
+`just test-clean` used to be a tree of processes: `candidate` ran `just _test-fast`,
 which ran `capsem-gate test-fast`; then a Colima wrapper around `just
 _test-candidate`, which ran `capsem-gate test-candidate`, which ran four more
 gate commands, each of which ran several more. Every one of those is exclusive
@@ -82,7 +82,7 @@ def compose(
     Composed by `candidate` and, unchanged, by both release commands -- which
     is the point: a release runs the complete local proof rather than a
     reduced one, and now it runs it in the same process rather than launching
-    `just test` and hoping.
+    `just test-clean` and hoping.
     """
     recorded = plan.shared(record_step(config), after=after)
 

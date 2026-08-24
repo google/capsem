@@ -299,12 +299,12 @@ def test_daily_nightly_schedule_freezes_one_scheduler_commit() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-nightly.yaml").read_text(encoding="utf-8")
 
     assert workflow.count("cron:") == 1
-    # One job, so one checkout: the qualification journal `just test` writes is
+    # One job, so one checkout: the qualification journal `just test-clean` writes is
     # machine-local, and every release command in this workflow reads it back.
     assert workflow.count("ref: ${{ github.sha }}") == 1
     # The scheduler qualifies nothing: spec 13.2 rebuilds current `main`, and
     # the dispatched lanes prove themselves before publishing.
-    assert "just test" not in workflow
+    assert "just test-clean" not in workflow
     assert workflow.count("scripts/nightly_release_scheduler.py") == 1
     assert workflow.count('--source-commit "${{ github.sha }}"') == 1
     assert "just release-" not in workflow

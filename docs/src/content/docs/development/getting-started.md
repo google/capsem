@@ -24,7 +24,7 @@ sidebar:
 | **x86_64 or arm64** | Both architectures supported |
 | **KVM + vhost-vsock** | `/dev/kvm` and `/dev/vhost-vsock` must be accessible. Bootstrap loads and provisions both. |
 | **Docker** | Installed/started by bootstrap; needed for `just build-assets code` |
-| **Bubblewrap** | Installed/proved by bootstrap; gives `just test` a loopback-only host network namespace |
+| **Bubblewrap** | Installed/proved by bootstrap; gives `just test-clean` a loopback-only host network namespace |
 | **QEMU user/binfmt** | Installed and registration-proved by bootstrap; executes the non-host asset architecture |
 
 ## Clone and bootstrap
@@ -82,7 +82,7 @@ if you need to retune Colima resources.
 The build is profile-derived. `code` is the default coding-agent profile, and
 the runtime profile for the current local build is generated under
 `target/config/` by `capsem-admin profile materialize` during `just shell`,
-`just exec`, `just fast-test`, `just test`, and release packaging.
+`just exec`, `just fast-test`, `just test-clean`, and release packaging.
 
 ## Verify
 
@@ -97,7 +97,8 @@ If this prints "hello from capsem" and exits cleanly, you're set. See [Life of a
 ```bash
 just shell            # Build + boot VM interactively (~10s)
 just exec "CMD"        # Boot + run command + exit
-just test             # Unit tests + cross-compile + frontend check
+just fast-test        # Incomplete source feedback
+just focus-test functional # Targeted VM/function proof when needed
 just dev              # Hot-reloading Tauri app (frontend + Rust)
 just ui               # Frontend-only dev server (mock mode, no VM)
 ```

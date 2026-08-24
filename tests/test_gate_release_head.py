@@ -24,7 +24,7 @@ def _plan(name: str, **args):
         ("release-profile", {"channel": "stable", "profile": "code"}),
     ],
 )
-def test_release_plan_accepts_qualification_then_publishes_source_ref(
+def test_release_plan_freezes_source_then_dispatches_hosted_qualification(
     name: str, args: dict
 ) -> None:
     plan = _plan(name, **args)
@@ -32,7 +32,7 @@ def test_release_plan_accepts_qualification_then_publishes_source_ref(
 
     assert {"source.remote-main", "source.publish-ref", "release"} <= labels
     assert plan.after_of("source.publish-ref")
-    assert "qualification.accept" in resume.ancestors(plan, "source.publish-ref")
+    assert "qualification.accept" not in labels
     assert "source.remote-main" in resume.ancestors(plan, "source.publish-ref")
     assert "source.publish-ref" in resume.ancestors(plan, "release")
 

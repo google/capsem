@@ -50,4 +50,4 @@ Reference for /dev-testing: per-crate Rust CI matrix and the Python integration 
 | capsem-recipes | `recipe` | No | Run | No | Yes |
 | capsem-install | `install` | No | Yes (Docker) | No | Yes |
 
-"Run" = tests execute in PR CI. "Collect" = imports verified (`--collect-only`) but tests do not execute in that PR lane. Artifact-dependent no-VM suites still execute in the full `just test` gate after their build/sign prerequisites exist. "Yes (Docker)" = runs in dedicated Docker+systemd CI job.
+"Run" = tests execute in PR CI. "Collect" = imports verified (`--collect-only`) but tests do not execute in that PR lane. Artifact-dependent no-VM suites still execute in the full `just test-clean` gate after their build/sign prerequisites exist. "Yes (Docker)" = runs in dedicated Docker+systemd CI job.

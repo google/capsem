@@ -104,7 +104,7 @@ def sync(config: GateConfig) -> Step:
 def node(config: GateConfig, workspaces: tuple[str, ...] | None = None) -> Step:
     """Every Node workspace a local gate exercises, or the named subset.
 
-    CI has separate jobs for docs, site and release-site; a local `just test`
+    CI has separate jobs for docs, site and release-site; a local `just test-clean`
     builds all of them in this one checkout, so all of them are installed here.
 
     A caller that needs one workspace says so. `pnpm install` reaches the

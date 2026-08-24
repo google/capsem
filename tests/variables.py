@@ -56,36 +56,32 @@ def recipe(name: str) -> str:
     return name
 
 
-#: The fast gate, run alone. Identical to the modules `test` and
-#: both release lanes run, which is the whole reason it is public.
+#: The explicitly incomplete fast feedback gate. Qualification belongs to the
+#: release lanes; targeted functional proof belongs to `focus-test`.
 FAST_TEST = recipe("fast-test")
 
-#: A short VM round-trip: boot, exercise, tear down. Runtime liveness only.
-VM_SMOKE = recipe("vm-smoke")
+#: One closed, named gate-module alias for targeted functional proof.
+FOCUS_TEST = recipe("focus-test")
 
 #: The per-lane verbs CI calls, and the asset builder beside them.
 QUALIFY_ASSETS = recipe("qualify-assets")
 QUALIFY_BINARIES = recipe("qualify-binaries")
 BUILD_ASSETS = recipe("build-assets")
 
-#: The complete local proof, and the only release qualification.
-TEST = recipe("test")
-
 #: What each public recipe dispatches to inside `capsem-gate`, where it does.
 #: Deliberately partial: most recipes are not one gate command, and inventing
 #: an entry for them would assert a structure that is not there.
 GATE_COMMAND_FOR_RECIPE: dict[str, str] = {
-    VM_SMOKE: "smoke",
-    TEST: "candidate",
+    FAST_TEST: "test-fast",
+    FOCUS_TEST: "focus-test",
 }
 
 
 def header(name: str) -> str:
     """The recipe's declaration line, which is where its dependencies live.
 
-    `vm-smoke: _prepared-runtime` states an ordering that never appears in the
-    body, so a contract reading only `block` concludes the preparation is
-    missing when it is simply declared the other way.
+    Recipe dependencies state ordering that never appears in the body, so a
+    contract reading only `block` can otherwise conclude preparation is absent.
     """
     lines = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8").splitlines()
     pattern = re.compile(rf"^{re.escape(recipe(name))}(\s|:)")

@@ -16,12 +16,13 @@ comparing them.
 just doctor        # Check tools (first time)
 just doctor fix    # Install prerequisites and materialize missing VM assets
 just shell         # Build + boot VM (~10s)
-just fast-test     # The fast gate itself -- same module the release lanes run
-just vm-smoke      # Short VM round-trip; runtime liveness, not qualification
+just fast-test     # Incomplete source feedback; prints the next supported rails
+just focus-test functional # Rerun one named functional owner
+just install       # Build and install the complete local product for hands-on testing
 source_commit=$(git rev-parse HEAD)
-just test "$source_commit" # Qualify this committed source once; exact repeats reuse its journal.
 just release-binaries nightly "$source_commit"
 just release-profile nightly code "$source_commit"
+# Exceptional cold full diagnostic only: just test-clean "$source_commit"
 ```
 
 See `/dev-just` for the full recipe reference and dependency chains.
@@ -185,7 +186,7 @@ python3 scripts/run-bounded-command.py --timeout-seconds <finite> -- <command>
 
 The wrapper closes stdin and owns a process group so timeout or interruption
 cannot leave a Docker client, compiler, test runner, or helper behind. Do not
-use it around `just test` or either release command: the gate's config-owned
+use it around `just test-clean` or either release command: the gate's config-owned
 timeouts, journal, resource teardown, and resumable graph remain authoritative.
 
 ## Serialized Orthogonal Releases
@@ -198,22 +199,17 @@ just release-binaries <channel> <source-commit>
 just release-profile <channel> <profile> <source-commit>
 ```
 
-- `just test <source-commit>` qualifies one full lowercase commit already
-  prepared, committed, and reachable from local `main`. It runs from a
-  detached private repository named by that exact commit, so the outer
-  checkout and `main` may advance without changing the subject. A repeat
-  returns the archived complete journal immediately, or resumes only the
-  graph ancestry proven by a content-addressed partial journal and retained
-  exact prefix. Each release command revalidates that journal at its first
-  edge, then creates or verifies `capsem-source-<commit>` and dispatches. It
-  never repeats the local gate, edits tracked source, or pushes `main`.
-- Local `just test` remains the complete all-artifact proof. It rebuilds
+- Each release command freezes and validates the exact lowercase commit,
+  creates or verifies `capsem-source-<commit>`, and dispatches the hosted lane
+  that qualifies its artifact family before publication. No channel consumes
+  a developer-machine candidate journal.
+- `just test-clean` is the exceptional cold complete diagnostic. It rebuilds
   packages and every configured profile, then runs audits, lint, frontend,
   Rust/Python coverage, all VM suites, Winterfell/MCP lifecycle, IronBank,
   injection, integration, benchmarks, full `capsem-doctor`, native install,
   and glow-up.
 - The private `_test-fast` module runs before Docker/Colima or artifact work
-  and is reused whole by `just fast-test`, `just test`, ordinary CI, and both
+  and is reused whole by `just fast-test`, `just test-clean`, ordinary CI, and both
   release lanes. It owns YAML/source syntax, source contracts, Clippy,
   Python/JavaScript checks, web builds, and all dependency audits.
 - Release CI calls the same checked-in private test modules but builds only the
@@ -305,10 +301,10 @@ only inventories Git-tracked program sources under the configured first-party
 roots, so generated outputs and vendored dependencies are outside its scope by
 rule.
 
-`just test` is **one process, one machine lock, one workspace, one plan**.
+`just test-clean` is **one process, one machine lock, one workspace, one plan**.
 Its dry run reports the current totals; conditional asset staging makes a
-checked-in count depend on machine state. Release consumes its exact-commit
-journal rather than launching or composing that plan a second time.
+checked-in count depend on machine state. It is diagnostic evidence, not a
+prerequisite consumed by either release dispatcher.
 
 Six rules, each with a guard:
 
@@ -349,9 +345,9 @@ Read `/dev-gate` before changing any of it.
 
 ## Vocabulary and gotchas
 
-- **glowup** = installed-package release proof owned by `just test`: Linux runs `scripts/local-release-glowup.py` in Docker/systemd; macOS installs the signed exact package in Tart and boots it through physical Apple VZ.
+- **glowup** = installed-package release proof owned by `just test-clean`: Linux runs `scripts/local-release-glowup.py` in Docker/systemd; macOS installs the signed exact package in Tart and boots it through physical Apple VZ.
 - **winterfell** = service session-ledger lifecycle fixtures in `crates/capsem-service/src/tests.rs`; AGENTS.md's gate list refers to these.
-- `just test` writes benchmark recordings under `target/test-benchmarks/`; intentional historical publication uses the owning benchmark command and explicit review.
+- `just test-clean` writes benchmark recordings under `target/test-benchmarks/`; intentional historical publication uses the owning benchmark command and explicit review.
 - Rust is pinned to 1.97.1 in `rust-toolchain.toml`, bootstrap, CI, and Docker. Bump every surface together in a deliberate monthly toolchain PR and handle new-lint fallout there.
 
 ## Commits

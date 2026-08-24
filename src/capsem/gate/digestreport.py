@@ -34,7 +34,7 @@ def render(analysis: Analysis, settings: DigestConfig, *, ledger_rows: int) -> s
         return "\n".join(
             [
                 *lines,
-                "No completed gate runs recorded yet. `just test` seeds this.",
+                "No completed gate runs recorded yet. `just test-clean` seeds this.",
                 "",
             ]
         )

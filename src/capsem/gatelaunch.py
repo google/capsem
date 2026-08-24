@@ -7,11 +7,11 @@ package that produced 74 identical false failures from a reference the source
 no longer contained; an isolated cache made them vanish without a source
 change.
 
-That is not merely bad local feedback. `just test` and both release commands
-begin with `uv run capsem-gate`. Qualification records the commit and source
-digest, while release accepts that journal before dispatch. A stale module
-could otherwise construct a plan or accept evidence that does not correspond
-to the source being qualified or published.
+That is not merely bad local feedback. `just test-clean` and both release
+commands begin with `uv run capsem-gate`. The local diagnostic records its
+commit and source digest, while each release freezes and dispatches that exact
+source to a hosted qualifying lane. A stale module could otherwise construct a
+plan that does not correspond to the source being diagnosed or published.
 
 So the entry point is this file rather than `capsem.gate.cli`: it re-execs with
 a per-invocation `pycache_prefix` before anything from `capsem.gate` is

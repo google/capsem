@@ -24,8 +24,8 @@ def test_public_surfaces_match_the_approved_exact_allowlists() -> None:
     _load_checker().check_policy()
 
 
-def test_the_fast_gate_is_public_and_is_not_a_release_shortcut() -> None:
-    """`fast-test` is the fast gate; `vm-smoke` is a runtime liveness check.
+def test_fast_feedback_is_explicitly_incomplete_and_release_owns_qualification() -> None:
+    """`fast-test` is feedback; release rails own qualification.
 
     Reimplemented from a version that asserted on `smoke`, a single recipe
     which ran *both* -- so its name undersold the gate and oversold the loop,
@@ -38,18 +38,18 @@ def test_the_fast_gate_is_public_and_is_not_a_release_shortcut() -> None:
     policy = tomllib.loads((ROOT / "config" / "public-surface.toml").read_text(encoding="utf-8"))[
         "just"
     ]
-    assert "test" in public_just
-    for recipe in (variables.FAST_TEST, variables.VM_SMOKE):
+    for recipe in (variables.FAST_TEST, variables.FOCUS_TEST):
         assert recipe in public_just, f"{recipe} is not a public recipe"
         assert recipe in policy["approved"], f"{recipe} is not approved"
+    assert "test" not in public_just
+    assert "test-clean" in public_just
+    assert "vm-smoke" not in public_just
     assert "smoke" not in public_just, (
         "the old bundled recipe is back; it named neither of the two jobs it ran"
     )
 
-    # Qualification is produced only by the complete candidate. A release
-    # consumes its exact-commit journal instead of repeating either the full
-    # gate or reduced developer feedback, and revalidates that evidence at the
-    # first graph edge before any publication work.
+    # Release CI owns qualification. The local dispatcher does not require a
+    # machine-specific journal from the developer feedback command.
     import argparse
 
     from helpers.gate import RecordingRunner
@@ -75,8 +75,8 @@ def test_the_fast_gate_is_public_and_is_not_a_release_shortcut() -> None:
         order = list(plan.labels)
 
         assert order[0] == "source.worktree-clean"
-        assert order.index("qualification.accept") < order.index("source.publish-ref")
-        assert order.index("qualification.accept") < order.index("release")
+        assert "qualification.accept" not in order
+        assert order.index("source.publish-ref") < order.index("release")
         assert not [
             label
             for label in order
@@ -154,7 +154,6 @@ def test_project_skills_do_not_teach_retired_public_just_commands() -> None:
         "dev-tui",
         "docs",
         "inspect-session",
-        "install",
         "list-sessions",
         "prepare-release",
         "query-session",

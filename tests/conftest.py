@@ -167,7 +167,7 @@ threading.excepthook = _thread_exception_hook
 # CI pre-flight. Tests that depend on built artifacts (manifest.json,
 # initrd.img, cross-compiled agent binaries) use pytest.skip() when the
 # artifact is absent so local dev runs don't fail on a fresh checkout.
-# In CI those artifacts are expected to be built by earlier `just test`
+# In CI those artifacts are expected to be built by earlier `just test-clean`
 # stages, so a skip there means the suite shipped a silently-weaker
 # signal than the author intended. Gate with `CAPSEM_REQUIRE_ARTIFACTS=1`
 # (CI sets this explicitly) rather than the ambient `CI` env, which is
@@ -236,7 +236,7 @@ def _required_artifacts_for_run(
 ) -> dict[str, Path]:
     """Return the artifacts that this exact test composition must prove.
 
-    Local ``just test`` owns source-build intermediates such as
+    Local ``just test-clean`` owns source-build intermediates such as
     ``target/linux-agent``. A release functional lane instead consumes an
     already-verified package and profile input cohort. Requiring the source
     intermediate there would force an unrelated rebuild and would not prove
@@ -633,7 +633,7 @@ _RUN_IDENTITY = (_ROOT / "target/gate-source-state.json",)
 def _the_running_gate_keeps_its_own_source_state(request):
     """Fail the test that writes it, by name, in seconds.
 
-    A suite runs inside `just test`, and several read a real plan by *running*
+    A suite runs inside `just test-clean`, and several read a real plan by *running*
     it against a recording runner. A plan that runs does what its actions say,
     so one of them wrote the recorder's empty output over the state file
     naming the HEAD the gate was qualifying. The gate then failed in

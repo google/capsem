@@ -122,6 +122,9 @@ class InstallConfig(Strict):
     channel: str
     profile_revision_policy: ProfileRevisionPolicy
     manifest_version: str
+    local_macos_package_script: str
+    local_macos_installer: tuple[str, ...]
+    local_macos_target: str
     systemd_ready_attempts: int
     systemd_ready_interval_seconds: float
     serve_ready_file: str

@@ -8,7 +8,7 @@ face.
 `qualify-binaries` isolates itself into a private prefix holding tracked files
 and nothing else, while the workflow stages the cohort it is meant to prove --
 assets, materialized config, the package, the binaries -- into the workspace.
-A local `just test` cannot tell the two apart, because there the checkout *is*
+A local `just test-clean` cannot tell the two apart, because there the checkout *is*
 the workspace: every path resolves, so a lane that silently read the wrong root
 passed here and failed there.
 

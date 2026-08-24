@@ -1,7 +1,7 @@
 """`just doctor` reports on the machine, and this proves it in two halves.
 
 This launched `just doctor` as a subprocess. That works from a shell and
-cannot work from inside `just test`, because the recipe depends on
+cannot work from inside `just test-clean`, because the recipe depends on
 `_pnpm-install`, which dispatches to `capsem-gate install-node`, which takes
 the machine lock -- the lock the gate running this suite is holding. The child
 would wait out its full timeout for a lock that cannot be released until its
@@ -64,7 +64,7 @@ def test_launching_a_recipe_that_takes_the_machine_lock_is_refused(
 ) -> None:
     """Stated, because this file used to do exactly that.
 
-    A suite running inside `just test` cannot shell out to a recipe whose
+    A suite running inside `just test-clean` cannot shell out to a recipe whose
     graph reaches an exclusive command. The refusal is what keeps a
     forty-minute run from becoming a two-hour timeout, so it is worth a test
     rather than a comment.

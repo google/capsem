@@ -337,16 +337,15 @@ def test_hosted_macos_never_claims_the_local_apple_vz_proof() -> None:
 
     assert "test-profile-arm64-boot:" not in workflow
     assert "scripts/prove-release-profile-assets.py" not in workflow
-    assert "Local Apple Silicon `just test` owns that VZ proof" in release_skill
+    assert "Local Apple Silicon `just test-clean` owns that VZ proof" in release_skill
     assert "_gate-assets" in local_gate
 
-    # The local Apple VZ proof lives in the complete candidate journal, and a
-    # stable release revalidates that journal before dispatching hosted work.
-    # Nightly has no journal by design -- it rebuilds current `main` unattended
-    # -- so the proof it consumes is its own lane's, not an operator's.
+    # Local Apple VZ remains a deliberate pre-release diagnostic; the hosted
+    # lane is the publication authority and never claims nested VZ support.
     order = list(_release_plan("release-profile", "stable", "code").labels)
     assert order[0] == "source.worktree-clean"
-    assert order.index("qualification.accept") < order.index("release")
+    assert "qualification.accept" not in order
+    assert order.index("source.publish-ref") < order.index("release")
 
     nightly = list(_release_plan("release-profile", "nightly", "code").labels)
     assert "qualification.accept" not in nightly

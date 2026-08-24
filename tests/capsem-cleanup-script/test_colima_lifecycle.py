@@ -3,7 +3,7 @@
 These drove `scripts/with-gate-colima.sh`, a wrapper whose EXIT trap stopped a
 Colima the gate had started. The trap was correct, and correct only for the
 commands that happened to sit inside the wrapper -- which was the expensive
-half of `just test` and nothing else.
+half of `just test-clean` and nothing else.
 
 "Give back what I found on the way in" is the resource abstraction exactly, so
 it is `Colima(Resource)` now and `held` guarantees the release on every path,

@@ -11,9 +11,10 @@
 #   run-service            idempotent local daemon
 #   logs [sandbox|failure] service, VM, or failure evidence
 #   doctor                 host, Docker/Colima, Tart, and asset readiness
-#   fast-test              the fast gate, same module the release lanes run
-#   vm-smoke               short VM round-trip; runtime liveness only
-#   test                   complete local all-artifact proof
+#   fast-test              incomplete source feedback; never qualification
+#   focus-test             one named functional group, optionally cold
+#   install                build and install the complete local macOS product
+#   test-clean             exceptional cold complete diagnostic
 #   release-binaries       publish packages for one channel
 #   release-profile        publish one channel/profile
 #
@@ -169,16 +170,11 @@ _gate-assets: _bootstrap _install-tools _generate-settings _sign
 _bootstrap:
     sh {{quote(justfile_directory() / "bootstrap.sh")}} -y
 
-# With no argument, bind the complete gate to the working-tree bytes and return
-# them unchanged. With a full commit already on main, reuse its complete
-# journal, resume its structurally proven retained prefix, or qualify it once.
-test source_commit="":
-    @uv run capsem-gate candidate {{quote(source_commit)}}
-
 # Build output is reused between runs by default, which is what makes a second
 # commit cost minutes rather than an hour; `buildcache` explains how. This is
 # the escape hatch, for when a local pass has to mean a pass on a cold runner:
-# qualify with nothing reused, compiling every artifact from nothing.
+# diagnose with nothing reused, compiling every artifact from nothing. Release
+# qualification belongs to the release rails; agents must not run this by habit.
 test-clean source_commit="":
     @uv run capsem-gate candidate {{quote(source_commit)}} --clean-build
 
@@ -295,23 +291,26 @@ _check-generated-settings:
     bash scripts/check-generated-settings.sh {{quote(justfile_directory())}}
 
 
-# The fast gate, and nothing else. This is the *same* `_test-source-checks` module that
-# `test` and both release lanes run -- not a reduced developer variant of it --
-# so a green here means exactly what it means there and the two cannot drift.
+# Incomplete source feedback, and nothing else. The gate command owns the plan;
+# this public recipe only makes its scope and the next supported commands clear.
 #
-# It was called `smoke`, which described neither half of what it did: it ran
-# this gate *and* a VM loop, so the name undersold the gate and oversold the
-# loop. The VM loop is now `vm-smoke`, which is what a smoke test actually is.
+# It was called `smoke`, which described neither half of what it did. Focused
+# runtime proof now belongs to `focus-test functional`; there is no second
+# public VM-smoke spelling for agents to stack beside it.
 fast-test:
-    just _test-source-checks
-    just _test-compiled-checks
+    @echo "Agent: incomplete feedback only; use 'just focus-test <group>' for targeted proof, or 'just release-profile ...' / 'just release-binaries ...' for qualification."
+    uv run capsem-gate test-fast
 
 
-# A short VM round-trip: boot, exercise, tear down. Genuinely a smoke test --
-# it answers "is the runtime alive", not "is this releasable". Never release
-# qualification, and no substitute for `fast-test` before pushing.
-vm-smoke: _prepared-runtime
-    uv run capsem-gate smoke
+# One existing gate owner, selected by a closed group name. `clean` discards
+# reusable build output for the exceptional stale-cache reproduction.
+focus-test group mode="reuse":
+    @uv run capsem-gate focus-test {{quote(group)}} {{quote(mode)}}
+
+# Build the complete installable product and install that exact local package
+# onto this Mac for hands-on testing. This is not release qualification.
+install:
+    @uv run capsem-gate local-install
 
 
 # Measure performance and record it. `just bench` takes every dimension that

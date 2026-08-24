@@ -13,7 +13,7 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 |----------|---------|-------------|
 | `ci.yaml` | Pull requests and pushes to `main` | Quality gate: the shared fast/static module, Rust unit/integration, frontend, Python contracts, install checks, explicit runner substitutions, and a post-merge main signal |
 | `security-audit.yaml` | Weekly schedule or manual dispatch | Blocking RustSec and dependency advisories across every JavaScript web workspace |
-| `release-nightly.yaml` | Daily schedule or manual dispatch | Freeze `${{ github.sha }}`, qualify it once with `just test`, then run both profile commands and the binary command against that one journal |
+| `release-nightly.yaml` | Daily schedule or manual dispatch | Freeze `${{ github.sha }}`, then dispatch both profile commands and the binary command; each hosted lane qualifies the exact artifacts it may publish |
 | `release.yaml` | Correlated dispatch from `release-binaries` with `{tag, channel, publish, dispatch_id, source_commit}` | Build and install-test exact native packages from the selected immutable commit; publish and advance only a new immutable identity, or finish as a rebuild-only proof when that identity already exists |
 | `release-assets.yaml` | Correlated dispatch from `capsem-admin release` with `source_commit` | Build exactly one channel/profile's images, config, and evidence from that commit against the existing channel package; the public command watches that exact run through success |
 | `release-channel-staging.yaml` | Manual | Build a deterministic staging asset channel fixture, deploy it to a Cloudflare Pages preview branch, and validate the same release-channel contract without invoking `build-assets`, `build-app-macos`, or `build-app-linux` |
@@ -154,17 +154,12 @@ bytes, runs the complete pairing proof, and activates the channel. Neither
 artifact family is rebuilt twice.
 
 Nightly rebuild runs once daily through `release-nightly.yaml`. The scheduler
-freezes its event `${{ github.sha }}`, places it on a local `main`, qualifies it
-with `just test`, then calls the public profile command for `code` and
-`co-work` and the separate public binary command with that same SHA.
-
-All four run in **one job on one runner**, because the release commands declare
-`QualificationPolicy.REQUIRE`: they consume the exact-commit journal and never
-produce one. Only `just test` writes it, under
-`target/gate-runs/source-runs/<commit>/`, and that archive is machine-local --
-a second runner cannot see the first runner's proof. The scheduler previously
-split the lanes across three jobs with no qualification step anywhere, so every
-run failed before doing any work.
+freezes its event `${{ github.sha }}`, places it on a local `main`, then calls
+the public profile command for `code` and `co-work` and the separate public
+binary command with that same SHA. The release commands validate and publish
+one immutable source ref; their hosted lanes build, install, and qualify the
+exact artifact family they may publish. They do not consume a machine-local
+`just test-clean` journal.
 
 It contains no release implementation and never dispatches `release.yaml` or
 `release-assets.yaml` directly. Its `capsem-nightly-release-scheduler` lock
@@ -179,26 +174,25 @@ signing/notarization changes bytes and immutable release assets cannot be
 overwritten. A new version identity publishes and activates normally. Stable
 has no schedule and is started explicitly through the same two public commands.
 
-## PR gate compared with `just test`
+## PR gate compared with `just test-clean`
 
-The Ironbank parity rule is that every portable release gate is owned by
-`just test`. Local testing rebuilds both artifact families and calls the six
-private test modules. Release CI calls the same modules while pulling the
-unchanged family. GitHub-hosted PR CI may split feedback across jobs, but those
-jobs do not replace the canonical gate. Unavoidable runner substitutions are
-named below.
+The Ironbank parity rule is that every portable release gate has the same
+checked-in owner locally and in release CI. `just test-clean` is the exceptional
+cold whole-system diagnostic; release CI calls the same modules while pulling
+the unchanged family and is the publication authority. GitHub-hosted PR CI may
+split feedback across jobs. Unavoidable runner substitutions are named below.
 
-| `just test` stage | PR CI proof | Difference |
+| `just test-clean` stage | PR CI proof | Difference |
 |-------------------|-------------|------------|
-| YAML/source syntax, source contracts, audits, lint, and all web surfaces | `fast-gate` calls the same `_test-fast` module used first by `just test` and run alone by `just fast-test`; dedicated web jobs retain platform/deployment evidence | One independently executable fast module, including blocking vulnerability audits across all locked ecosystems |
+| YAML/source syntax, source contracts, audits, lint, and all web surfaces | `fast-gate` calls the same `_test-fast` module used first by `just test-clean` and run alone by `just fast-test`; dedicated web jobs retain platform/deployment evidence | One independently executable fast module, including blocking vulnerability audits across all locked ecosystems |
 | Cross-compile agent (both arches) | `test` job: musl target check for `capsem-agent`; `test-linux` covers Linux host crates | Hosted PR substitution for Docker release cross-compile |
 | Rust workspace coverage | `test` and `test-linux` jobs run `cargo llvm-cov nextest` on macOS and Linux crate sets | Same coverage rail with runner-specific package sets |
 | Host binary signing prerequisites | `test` job builds and ad-hoc signs host binaries before non-VM integration suites | Same PR prerequisite for artifact-dependent Python suites |
 | Python schema and no-VM integration suites | `test` job runs schema coverage plus bootstrap, codesign, rootfs artifact, and release-channel suites | Same no-VM suites, scoped to generated artifacts available in CI |
-| Docs, marketing, and release-channel site builds | `docs-build`, `site-build`, and `release-site-build` call the same web-surface entrypoint as `just test` before `pr-gate` can pass | Merge-blocking duplicate execution of the canonical local gate; deploy happens only after merge or explicit release-channel publication |
+| Docs, marketing, and release-channel site builds | `docs-build`, `site-build`, and `release-site-build` call the same web-surface entrypoint as `just test-clean` before `pr-gate` can pass | Merge-blocking duplicate execution of the canonical local gate; deploy happens only after merge or explicit release-channel publication |
 | VM-heavy Python suites (`pytest tests/ -n 4`) | Import collection only on hosted PR runners | Runner substitution: full execution remains a local/release gate until PR runners can host Apple VZ reliably |
-| Serial timing, build-chain, release-channel, and route-health suites | Import collection only on hosted PR runners | Runner substitution: local `just test` and release gates remain authoritative |
-| Legacy injection/integration scripts and benchmark recording | Not run in hosted PR CI | Runner substitution: still required by local `just test` before release work is claimed |
+| Serial timing, build-chain, release-channel, and route-health suites | Import collection only on hosted PR runners | Runner substitution: local `just test-clean` and release gates remain authoritative |
+| Legacy injection/integration scripts and benchmark recording | Not run in hosted PR CI | Run through the owning focus group during diagnosis and by hosted release qualification before publication |
 | Docker cross-compile and install e2e | `test-install` runs install e2e in Docker; release workflow owns full package matrix | Split by runner capability |
 
 ## Site deploy workflows
@@ -310,7 +304,7 @@ packaged `assets/manifest.json`, checks `manifest-metadata.json` points at the
 selected channel manifest URL, then runs Docker install, stable/nightly asset
 switching, and the binary updater path against the public channel.
 
-Before deployment, `just test` owns both native install boundaries. Linux uses
+Before deployment, `just test-clean` owns both native install boundaries. Linux uses
 `just test-install`: the gate serves generated stable and nightly release
 channels from package and manifest artifacts built in Docker, then proves
 `install.sh`, `capsem update --assets --manifest`, and `capsem update --yes`.
@@ -319,7 +313,7 @@ that exact file into a disposable Tart Mac, installs it, verifies the receipt,
 app bundle, binary cohort, and service/gateway status. Tart macOS guests cannot
 expose nested virtualization, so the recipe then extracts the same package on
 the physical Mac and boots a real Capsem guest from its exact binary/profile
-payload to a shell marker. Tart stays out of `just vm-smoke`, which is developer
+payload to a shell marker. Tart stays out of `just focus-test functional`, which is developer
 feedback rather than release qualification.
 
 Release packaging materializes runtime profiles through the same profile-derived build rail as
@@ -492,7 +486,7 @@ Before pushing a PR, run the same checks CI will:
 
 ```bash
 # Full test suite (what CI runs)
-just test
+just test-clean
 
 # The fast gate alone; never release qualification
 just fast-test

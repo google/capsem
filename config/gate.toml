@@ -216,6 +216,12 @@ channel = "local"
 # authoring rule; release authoring never selects this policy and remains strict.
 profile_revision_policy = "selected-input"
 manifest_version = "1.0.0"
+# The hands-on developer-machine path. It builds the same complete unsigned
+# candidate package the macOS qualification adapter consumes, then installs it
+# synchronously. Qualification itself remains in the release lane.
+local_macos_package_script = "scripts/build-test-macos-package.sh"
+local_macos_installer = ["sudo", "/usr/sbin/installer", "-pkg"]
+local_macos_target = "/"
 
 # Build output the install proof reads, which the image cannot carry because
 # it is produced *after* the image is built. ProfileContent supplies its exact
@@ -1326,12 +1332,8 @@ install = ["cargo", "install", "tauri-cli", "--version", "2.11.1", "--locked"]
 # The selected commit is prepared and committed before release. Qualification
 # may create immutable Git refs afterward; it may never edit tracked source.
 line = "0.6"
-# Channels that may only be released from a commit an operator qualified with
-# `just test`. Nightly is deliberately absent: spec 13.2 rebuilds current main
-# every day with no human involved, and the dispatched lanes prove themselves
-# through qualify-assets and qualify-binaries. Requiring a machine-local
-# journal there made the scheduled rebuild impossible to satisfy.
-locally_qualified_channels = ["stable"]
+# Release lanes qualify the artifact family they publish. There is no separate
+# machine-local candidate-journal prerequisite to invalidate after each fix.
 # A release publishes a commit, not the working tree, so uncommitted edits are
 # silently excluded. Refuse before anything is accepted or published.
 clean_worktree = "scripts/require-clean-worktree.py"
@@ -2562,6 +2564,16 @@ Idempotent, and a no-op against a warm tree. Each module that renders a web
 surface installs its own node_modules so it can run alone; the alternative is a
 module whose independence depends on having been run after another one, which
 is more expensive to reason about than a second install that does nothing.
+"""
+
+[[boundary.repeated_actions]]
+subject = "codesign --sign - --entitlements"
+reason = """
+macOS host binaries are signed before the prepared runtime, again after Rust
+coverage rebuilds them, and again after artifact materialization may run
+capsem-admin through Cargo. Each signature follows a producer that can replace
+the Mach-O bytes; Linux renders these signing steps as actionless ordering
+edges, which is why the duplication is visible only on macOS.
 """
 
 # ---------------------------------------------------------------------------

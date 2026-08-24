@@ -242,7 +242,7 @@ def _workflow_job_names(path: str) -> tuple[str, ...]:
 
 
 def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
-    """Local `just test` runs where every tool is already on PATH, so it cannot
+    """Local `just test-clean` runs where every tool is already on PATH, so it cannot
     observe that a CI job never installed one. That blind spot is what let
     `test` lose `just` and `test-install` lose `pnpm` while every local gate
     stayed green. This test moves CI tool provisioning into the checked-in
@@ -606,7 +606,7 @@ def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
     """Cheap failures come back before anything starts a container.
 
     Asserted across modules now: the audits and clippy live in the fast plan,
-    the Docker preflight lives in the static one, and `just test` runs fast
+    the Docker preflight lives in the static one, and `just test-clean` runs fast
     before static. In shell all three were regions of one file and the order
     was where the lines sat.
     """

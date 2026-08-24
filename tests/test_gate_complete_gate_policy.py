@@ -32,10 +32,8 @@ SOURCE_COMMIT = SourceCommit("0" * 40)
 COMPLETE_GATE = {
     "candidate": {},
 }
-#: Stable, because these are the releases that consume an operator's journal.
-#: Nightly deliberately does not -- it rebuilds current `main` unattended --
-#: which `test_an_unqualified_channel_still_publishes_under_enforcement` covers.
-QUALIFIED_RELEASES = {
+#: Both release commands dispatch self-qualifying hosted lanes.
+RELEASES = {
     "release-binaries": {"channel": "stable", "source_commit": SOURCE_COMMIT},
     "release-profile": {
         "channel": "stable",
@@ -43,7 +41,7 @@ QUALIFIED_RELEASES = {
         "source_commit": SOURCE_COMMIT,
     },
 }
-ENFORCED = {**COMPLETE_GATE, **QUALIFIED_RELEASES}
+ENFORCED = {**COMPLETE_GATE, **RELEASES}
 
 #: (recipe, gate command). The recipe names describe what a module does --
 #: source checks versus compiled checks -- while the command names are the
@@ -77,15 +75,15 @@ def test_every_complete_gate_keeps_the_enforcing_policy(name: str) -> None:
     assert command.sandboxed is sandbox.ENFORCE
 
 
-@pytest.mark.parametrize("name", sorted(QUALIFIED_RELEASES))
-def test_every_qualified_release_requires_evidence_and_enforcement(name: str) -> None:
+@pytest.mark.parametrize("name", sorted(RELEASES))
+def test_every_release_dispatches_qualification_under_enforcement(name: str) -> None:
     from capsem.gate.qualificationevidence import QualificationPolicy
 
     command = GateCommand.registry[name]
 
     assert not issubclass(command, candidate.CompleteGate)
     assert command.complete_qualification is False
-    assert command.qualification_policy is QualificationPolicy.REQUIRE
+    assert command.qualification_policy is QualificationPolicy.NONE
     assert command.sandboxed is sandbox.ENFORCE
 
 
@@ -162,15 +160,15 @@ def test_timing_ratcheting_precedes_every_publication_boundary(name: str) -> Non
     assert ratchet == len(ordered) - 1
 
 
-@pytest.mark.parametrize("name", sorted(QUALIFIED_RELEASES))
-def test_release_consumes_evidence_instead_of_composing_the_gate(name: str) -> None:
-    plan = _command(name, **QUALIFIED_RELEASES[name])._describe()
+@pytest.mark.parametrize("name", sorted(RELEASES))
+def test_release_dispatches_lanes_instead_of_composing_a_local_gate(name: str) -> None:
+    plan = _command(name, **RELEASES[name])._describe()
     ordered = list(plan.labels)
 
     assert ordered[0] == "source.worktree-clean"
     assert "source.record" not in ordered
     assert TimingBoundary.QUALIFICATION.value not in ordered
-    assert ordered.index("qualification.accept") < ordered.index("source.publish-ref")
+    assert "qualification.accept" not in ordered
     assert ordered.index("source.publish-ref") < ordered.index("release")
 
 
@@ -283,7 +281,7 @@ def test_ci_module_entrypoints_do_not_override_the_sandbox() -> None:
     assert inspected, "no workflow module entrypoints were inspected"
 
 
-@pytest.mark.parametrize("name", sorted(QUALIFIED_RELEASES))
+@pytest.mark.parametrize("name", sorted(RELEASES))
 def test_an_unqualified_channel_still_publishes_under_enforcement(name: str) -> None:
     """Nightly consumes no journal, and must still be sandbox-enforced.
 
@@ -292,7 +290,7 @@ def test_an_unqualified_channel_still_publishes_under_enforcement(name: str) -> 
     """
     from capsem.gate.qualificationevidence import QualificationPolicy
 
-    arguments = {**QUALIFIED_RELEASES[name], "channel": "nightly"}
+    arguments = {**RELEASES[name], "channel": "nightly"}
     command = _command(name, **arguments)
 
     assert command.publishes is True
@@ -390,13 +388,13 @@ def test_linux_candidate_gets_the_kernel_enforced_network_wrapper(monkeypatch) -
 
 
 @pytest.mark.parametrize("name", ["release-binaries", "release-profile"])
-def test_linux_release_qualification_gets_the_kernel_wrapper(name, monkeypatch) -> None:
+def test_linux_release_dispatch_gets_the_kernel_wrapper(name, monkeypatch) -> None:
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/bwrap")
     monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: False)
     monkeypatch.setattr("capsem.gate.sandbox.prepare_egress", lambda *_args: None)
 
-    replacement = _command(name, **QUALIFIED_RELEASES[name]).reexec()
+    replacement = _command(name, **RELEASES[name]).reexec()
 
     assert replacement is not None
     assert replacement[0] == CONFIG.sandbox.linux_command
@@ -435,15 +433,15 @@ def test_a_public_release_cannot_carry_its_publication_prerequisites(name: str) 
 
     A public release plan is a short, fresh consumer. Allowing ``--from`` here
     derived authority from graph shape alone and could carry
-    ``qualification.accept``, ``source.remote-main``, ``precheck`` and the
-    mutable ``channel-source`` fetch without any prior-attempt evidence.
+    ``source.remote-main``, ``precheck`` and the mutable ``channel-source``
+    fetch without any prior-attempt evidence.
     """
     command = _command(
         name,
         dry_run=True,
         prefix=None,
         resume_from="source.publish-ref",
-        **QUALIFIED_RELEASES[name],
+        **RELEASES[name],
     )
     with pytest.raises(GateError, match="--from cannot be used while qualifying a release"):
         command.execute()

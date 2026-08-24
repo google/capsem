@@ -111,7 +111,7 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
     """Each owns one artifact family, and neither rebuilds the other's.
 
     The recipes dispatch, so this asks the plans. That is the stronger
-    question: a recipe body could stop *containing* `just test` while still
+    question: a recipe body could stop *containing* `just test-clean` while still
     running it, and could contain it while running it too late.
     """
     justfile = "\n" + _read("justfile")
@@ -146,14 +146,15 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
         ("release-profile", ("stable", "code"), "release"),
     ],
 )
-def test_nothing_is_published_before_the_complete_gate_passes(
+def test_nothing_is_published_before_release_preflight_passes(
     command: str, arguments: tuple[str, ...], publication: str
 ) -> None:
-    """Nothing publishes before exact qualification is revalidated."""
+    """The dispatcher validates source before self-qualifying hosted lanes run."""
     order = _release_order(command, *arguments)
 
     assert order[0] == "source.worktree-clean"
-    assert order.index("qualification.accept") < order.index("source.remote-main")
+    assert "qualification.accept" not in order
+    assert order.index("source.worktree-clean") < order.index("source.remote-main")
     if command == "release-binaries":
         assert order.index("source.remote-main") < order.index("precheck")
         assert order.index("precheck") < order.index("source.publish-ref")
@@ -179,18 +180,18 @@ def test_nothing_is_published_before_the_complete_gate_passes(
         ),
     ),
 )
-def test_public_release_command_accepts_journal_then_runs_preflight_before_mutation(
+def test_public_release_command_runs_preflight_before_dispatching_qualification(
     tmp_path: Path,
     recipe: str,
     arguments: tuple[str, ...],
     release_trace: str,
 ) -> None:
-    """The graph orders journal acceptance, preflight, then publication."""
+    """The graph orders source preflight before the qualifying lane dispatch."""
     plan = _release_plan(recipe, *arguments)
     order = list(plan.labels)
 
     rendered = plan.describe()
-    assert "require complete qualification journal" in rendered
+    assert "require complete qualification journal" not in rendered
     assert "publish-release-source.py" in rendered
     assert "--check" in rendered
     if recipe == "release-binaries":
@@ -200,7 +201,7 @@ def test_public_release_command_accepts_journal_then_runs_preflight_before_mutat
     assert order[0] == "source.worktree-clean"
     if recipe == "release-binaries":
         assert order.index("source.remote-main") < order.index("precheck")
-    assert order.index("qualification.accept") < order.index("source.publish-ref")
+    assert "qualification.accept" not in order
     assert order.index("source.publish-ref") < order.index("release")
 
     # And the publishing step is the one the trace names.
@@ -218,36 +219,18 @@ def test_public_release_command_accepts_journal_then_runs_preflight_before_mutat
         ("release-profile", ("stable", "code")),
     ),
 )
-def test_missing_qualification_prevents_every_release_side_effect(
+def test_release_dispatch_plan_has_no_machine_local_qualification_action(
     tmp_path: Path,
     recipe: str,
     arguments: tuple[str, ...],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A missing exact journal fails the first edge and skips publication."""
-    from helpers.gate import RecordingRunner
-
-    from capsem.gate.errors import GateError
-
-    del tmp_path, monkeypatch
-    runner = RecordingRunner(ROOT)
+    """A hosted lane, not a developer-machine journal, qualifies publication."""
+    del tmp_path
     plan = _release_plan(recipe, *arguments)
-
-    with pytest.raises(GateError):
-        plan.run(_context(runner))
-
-    issued = "\n".join(runner.rendered)
-    for mutation in (
-        "scripts/release-binaries.py stable 0000000000000000000000000000000000000000",
-        "capsem-admin -- release",
-    ):
-        assert mutation not in issued, f"{mutation} ran after a failing gate"
-    assert "publish-release-source.py" not in issued
-
-    outcomes = plan.outcomes
-    assert outcomes["qualification.accept"].status == "failed"
-    assert outcomes["source.publish-ref"].status == "skipped"
-    assert outcomes["release"].status == "skipped"
+    assert "qualification.accept" not in plan.labels
+    assert "qualification.waived" not in plan.labels
+    assert next(iter(plan.labels)) == "source.worktree-clean"
+    assert list(plan.labels).index("source.publish-ref") < list(plan.labels).index("release")
 
 
 def test_binary_and_profile_workflows_share_channel_transaction_lock() -> None:
@@ -292,11 +275,9 @@ def test_daily_scheduler_runs_unattended_with_no_local_qualification() -> None:
     qualifies anything -- the lanes it dispatches prove themselves, publishing
     only when their pairing job succeeded.
 
-    That is only possible because `[release].locally_qualified_channels` omits
-    nightly. A qualification journal is written solely by `just test` and
-    archived per machine, so requiring one would require a human at a
-    particular keyboard every morning. Every nightly run from 2026-08-05 failed
-    for want of a journal a hosted runner cannot produce.
+    Both channels use the same model: the dispatcher freezes source and the
+    hosted artifact lanes qualify before publishing. No machine-local journal
+    or human keyboard is part of that authority.
     """
     workflow = _workflow("release-nightly.yaml")
     release = _job_block(workflow, "nightly-release")
@@ -311,7 +292,7 @@ def test_daily_scheduler_runs_unattended_with_no_local_qualification() -> None:
     assert "just release-" not in release
 
     # It qualifies nothing, and it builds nothing: it dispatches and waits.
-    assert "just test" not in workflow
+    assert "just test-clean" not in workflow
     assert "/dev/kvm" not in workflow
     assert "musl" not in workflow
 
@@ -406,7 +387,7 @@ def test_nightly_scheduler_rejects_ambiguous_or_mutable_inputs(
 def test_the_scheduler_meets_every_precondition_its_release_commands_check() -> None:
     """The runner builds nothing, but it is not therefore setup-free.
 
-    Its sibling above pins what this job must *not* do -- no `just test`, no
+    Its sibling above pins what this job must *not* do -- no `just test-clean`, no
     KVM, no musl -- because it dispatches rather than builds. Nothing pinned
     what it must still provide, and a refactor that stripped it down to a
     dispatcher removed a fourth step along with those three. It looked like
@@ -446,21 +427,16 @@ def test_the_scheduler_meets_every_precondition_its_release_commands_check() -> 
     assert credentials < first_release, "authenticate before releasing"
 
 
-def test_nightly_releases_without_a_journal_while_stable_still_demands_one() -> None:
-    """The one asymmetry that lets an unattended rebuild exist at all."""
-    from capsem.gate import config as gate_config
-
-    qualified = gate_config.load(ROOT).release.locally_qualified_channels
-    assert "stable" in qualified
-    assert "nightly" not in qualified
-
+def test_every_channel_dispatches_without_a_machine_local_journal() -> None:
     for command, arguments in (
+        ("release-binaries", ("stable",)),
+        ("release-profile", ("stable", "code")),
         ("release-binaries", ("nightly",)),
         ("release-profile", ("nightly", "code")),
     ):
         order = _release_order(command, *arguments)
         assert "qualification.accept" not in order, (
-            f"{command} nightly plans a journal step it can never satisfy unattended"
+            f"{command} plans a machine-local journal instead of its hosted qualification"
         )
         assert "source.remote-main" in order
         assert order.index("source.publish-ref") < order.index("release")

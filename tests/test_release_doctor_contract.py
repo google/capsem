@@ -17,7 +17,6 @@ from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
-import variables
 import yaml
 from helpers.workflow_contract import assert_unmasked_step, workflow_reachable_text
 
@@ -44,7 +43,7 @@ REQUIRED_PR_GATE_JOBS = frozenset(
     }
 )
 
-# The Rust line-coverage floor `just test` enforces. Named once because two
+# The Rust line-coverage floor `just test-clean` enforces. Named once because two
 # separate contracts assert it, and a floor that disagrees with itself is worse
 # than no floor. It tracks the real measured surface: adding previously
 # unmonitored crates to the measurement lowered the percentage without
@@ -156,12 +155,8 @@ def _doctor_runtimes_module():
 #: now. These contracts are about what the gate *does*; when the doing moved
 #: from a shell body into a plan, the place to read it moved with it.
 _DISPATCHED = {
-    "test:": ("candidate", {}),
     "_test-candidate:": ("test-candidate", {}),
     "_test-fast:": ("test-fast", {}),
-    # Recipe name -> gate command name. Only the recipe was renamed; the
-    # gate command it dispatches to is still `capsem-gate smoke`.
-    f"{variables.VM_SMOKE}:": ("smoke", {}),
     "_gate-assets:": ("assets", {}),
     "_gate-install:": ("install", {}),
     "_gate-linux-rust:": ("linux-rust", {}),
@@ -185,7 +180,8 @@ def _issued(command: str, args: tuple) -> str:
     return gate_issued(command, args)
 
 
-#: `test:` is the whole gate, and running its plan against a recording runner
+#: `test-clean:` is the whole local diagnostic, and running its plan against a
+#: recording runner
 #: stops at the first step that needs a real machine. So the text for it is the
 #: union of what each phase issues, gathered by running each module command --
 #: which is the same work, reached without one failure hiding the rest.
@@ -200,7 +196,7 @@ def _whole_gate() -> tuple[tuple[str, dict], ...]:
 
 @functools.cache
 def _dispatched_text(name: str) -> str:
-    if name in {"test:", "_test-candidate:"}:
+    if name in {"test-clean:", "_test-candidate:"}:
         return "\n".join(
             _issued(command, tuple(sorted(args.items()))) for command, args in _whole_gate()
         )
@@ -334,16 +330,6 @@ def _command_attribute_prefix(source: str, struct_name: str = "Args") -> str:
     marker = f"struct {struct_name}"
     assert marker in source
     return source[: source.index(marker)]
-
-
-def test_vm_smoke_runs_full_doctor_without_fast_escape_hatch() -> None:
-    block = _recipe_block(f"{variables.VM_SMOKE}:")
-
-    from capsem.gate import config as gate_config
-
-    assert " ".join(gate_config.load(PROJECT_ROOT).smoke.doctor) in block
-    assert FAST_DOCTOR_FLAG not in block
-    assert f"{{{{cli_binary}}}} {FAST_DOCTOR_FLAG}" not in block
 
 
 def test_doctor_fix_builds_assets_for_each_checked_in_profile() -> None:
@@ -523,7 +509,7 @@ fi
 
 
 def test_canonical_gate_builds_both_linux_release_architectures() -> None:
-    canonical_gate = _recipe_block("test:")
+    canonical_gate = _dispatched_text("test-clean:")
 
     arm64 = canonical_gate.index("package.arm64")
     x86_64 = canonical_gate.index("package.x86_64")
@@ -717,7 +703,7 @@ def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
 
 def test_release_channel_contract_suite_is_in_pr_and_local_gates() -> None:
     workflow = _workflow_job_block("test")
-    just_test = _recipe_block("test:")
+    just_test = _dispatched_text("test-clean:")
     local_suite = _source_text("tests/capsem-release/test_release_channel_contract.py")
 
     assert "tests/capsem-release/" in workflow
@@ -1617,7 +1603,7 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "vm-assets-" not in workflow
     assert "assets/current" not in workflow
     assert """echo '{"releases":{}}'""" not in workflow
-    assert "run: just test" not in workflow
+    assert "run: just test-clean" not in workflow
     assert "Fetch latest selected channel source manifest" in workflow
     assert "kind: profiles" in workflow
     assert "output: target/binary-public-before/profiles" in workflow
@@ -1889,7 +1875,7 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
     assert "workflow_dispatch:" not in runtime_preflight
     assert "inputs.sha" not in runtime_preflight
     assert "EXPECTED_SHA" not in runtime_preflight
-    assert "Local `just test` is the whole-world proof" in release_skill
+    assert "Local `just test-clean` is the whole-world proof" in release_skill
     assert "Release CI reuses the same checked-in private modules" in testing_skill
     assert "Serialized Orthogonal Releases" in agents
 
@@ -1981,7 +1967,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "--session-name release-exact-shell-x86_64" in linux
     assert "CAPSEM_EXACT_PACKAGE_SHELL_OK" in linux
     assert "/usr/bin/capsem run" not in linux
-    assert "run: just test" not in workflow
+    assert "run: just test-clean" not in workflow
     assert (
         "needs: [test-native-macos-package, test-native-linux-package, test-binary-pairing]"
         in create_release
@@ -2059,7 +2045,7 @@ def test_release_skill_requires_ci_and_local_mac_installer_outcome_proof() -> No
     assert "Native installation and platform gates" in release_skill
     assert "macOS CI builds the publishable `.pkg`" in release_skill
     assert "Linux CI builds every required `.deb`" in release_skill
-    assert "Local Apple Silicon `just test` owns that VZ proof" in release_skill
+    assert "Local Apple Silicon `just test-clean` owns that VZ proof" in release_skill
     assert "Hosted macOS owns signing, notarization" in normalized_release_skill
     assert "publication depends on both platform rails" in release_skill
     assert "Fix forward with a normal commit" in release_skill
@@ -2989,7 +2975,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     normalized_docs = " ".join(docs.split())
 
     assert (
-        "| `release-nightly.yaml` | Daily schedule or manual dispatch | Freeze `${{ github.sha }}`, qualify it once with `just test`, then run both profile commands and the binary command against that one journal |"
+        "| `release-nightly.yaml` | Daily schedule or manual dispatch | Freeze `${{ github.sha }}`, then dispatch both profile commands and the binary command; each hosted lane qualifies the exact artifacts it may publish |"
         in docs
     )
     assert (
@@ -3060,9 +3046,9 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
             f"{marker!r} exists in the gate"
         )
 
-    assert "## PR gate compared with `just test`" in docs
+    assert "## PR gate compared with `just test-clean`" in docs
     assert (
-        "| YAML/source syntax, source contracts, audits, lint, and all web surfaces | `fast-gate` calls the same `_test-fast` module used first by `just test` and run alone by `just fast-test`; dedicated web jobs retain platform/deployment evidence | One independently executable fast module, including blocking vulnerability audits across all locked ecosystems |"
+        "| YAML/source syntax, source contracts, audits, lint, and all web surfaces | `fast-gate` calls the same `_test-fast` module used first by `just test-clean` and run alone by `just fast-test`; dedicated web jobs retain platform/deployment evidence | One independently executable fast module, including blocking vulnerability audits across all locked ecosystems |"
         in docs
     )
     assert (
@@ -3070,11 +3056,11 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
         in docs
     )
     assert (
-        "| Legacy injection/integration scripts and benchmark recording | Not run in hosted PR CI | Runner substitution: still required by local `just test` before release work is claimed |"
+        "| Legacy injection/integration scripts and benchmark recording | Not run in hosted PR CI | Run through the owning focus group during diagnosis and by hosted release qualification before publication |"
         in docs
     )
     assert (
-        "| Docs, marketing, and release-channel site builds | `docs-build`, `site-build`, and `release-site-build` call the same web-surface entrypoint as `just test` before `pr-gate` can pass | Merge-blocking duplicate execution of the canonical local gate; deploy happens only after merge or explicit release-channel publication |"
+        "| Docs, marketing, and release-channel site builds | `docs-build`, `site-build`, and `release-site-build` call the same web-surface entrypoint as `just test-clean` before `pr-gate` can pass | Merge-blocking duplicate execution of the canonical local gate; deploy happens only after merge or explicit release-channel publication |"
         in docs
     )
     assert "`pr-gate` is the only status that should be required by branch protection" in docs
@@ -3112,7 +3098,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     fast_gate = _workflow_text("fast-gate.yaml")
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
-    assert "test:" in just
+    assert "test-clean" in just
     assert "run: just fast-test" in fast_gate
     assert "uses: ./.github/workflows/fast-gate.yaml" in assets
     assert "uses: ./.github/workflows/fast-gate.yaml" in release
@@ -3175,7 +3161,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     ):
         assert unavoidable_boundary in release_skill
     assert "Apple VZ is owned by the complete" in release_skill
-    assert "Local Apple Silicon `just test` owns that VZ proof" in release_skill
+    assert "Local Apple Silicon `just test-clean` owns that VZ proof" in release_skill
 
 
 def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
@@ -3202,7 +3188,7 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     ):
         assert arm_named(shell, surface) is not None
 
-    fast = _dispatched_text("test:")
+    fast = _dispatched_text("test-clean:")
     for surface in ("frontend-verify", "docs", "site", "release-site"):
         assert f"check-web-surface.sh {surface}" in fast
 
@@ -3292,14 +3278,14 @@ def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
     for document in (testing, ironbank, release):
         assert "Ironbank parity rule" in document
         assert "every portable release gate" in document
-        assert "`just test`" in document
+        assert "`just test-clean`" in document
 
     assert "run: just fast-test" in fast_gate
     for workflow in (binary, profile):
         assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
         assert "just qualify-binaries" in workflow or "just qualify-assets" in workflow
         assert "just _test-release-contracts" not in workflow
-    gate = _dispatched_text("test:")
+    gate = _dispatched_text("test-clean:")
     assert "cargo llvm-cov" in gate
     assert RUST_LINE_COVERAGE_FLOOR.replace(" ", "=") in gate
     # The Python floor is `fail_under` in pyproject's [tool.coverage.report], so
@@ -4594,7 +4580,7 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert "uses: ./.github/workflows/fast-gate.yaml" in binary_release
     assert "uses: ./.github/workflows/fast-gate.yaml" in profile_release
     assert "run: just fast-test" in fast_gate
-    gate = _dispatched_text("test:")
+    gate = _dispatched_text("test-clean:")
     assert "bootstrap.sh" in gate
     assert "check-web-surface.sh frontend" in gate
     assert "pnpm --dir frontend run check" in web_gate
@@ -5141,7 +5127,7 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
     from capsem.gate import config as gate_config
     from capsem.gate.hostimage import cargo_tool
 
-    canonical_gate = _recipe_block("test:")
+    canonical_gate = _dispatched_text("test-clean:")
     linux_rust_recipe = _recipe_body("_gate-linux-rust:")
     linux_ci = _workflow_job_block("test-linux")
     runner = _source_text("scripts/test-linux-rust.sh")
@@ -5267,7 +5253,7 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
 
 
 def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
-    canonical_gate = _recipe_block("test:")
+    canonical_gate = _dispatched_text("test-clean:")
     mac_glowup = _source_text("scripts/macos_release_glowup.py")
     host_sbom = _recipe_block("_gate-host-package-sbom:")
     release = _source_text(".github/workflows/release.yaml")
@@ -5449,7 +5435,7 @@ def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
 
 
 def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> None:
-    canonical_gate = _recipe_block("test:")
+    canonical_gate = _dispatched_text("test-clean:")
     guard = _source_text("scripts/check-hardcoded-release-selections.sh") + _source_text(
         "scripts/check-hardcoded-release-selections.py"
     )

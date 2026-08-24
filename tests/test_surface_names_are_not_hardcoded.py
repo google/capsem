@@ -36,7 +36,7 @@ _ALLOWED = {"variables.py", Path(__file__).name}
 #: are ordinary English and appear constantly in unrelated prose, so matching
 #: them would produce noise rather than a guard -- and a rename of those is
 #: not the change this exists to survive.
-_POLICED = (variables.FAST_TEST, variables.VM_SMOKE)
+_POLICED = (variables.FAST_TEST, variables.FOCUS_TEST)
 
 
 def _test_sources() -> list[Path]:
@@ -60,7 +60,7 @@ def test_no_test_hardcodes_a_public_recipe_name() -> None:
     assert not offenders, (
         "these spell a public recipe name as a literal, so renaming it breaks "
         f"them for no behavioural reason: {offenders}. Use "
-        "`variables.FAST_TEST`, `variables.VM_SMOKE`, or `variables.block(...)`."
+        "`variables.FAST_TEST`, `variables.FOCUS_TEST`, or `variables.block(...)`."
     )
 
 

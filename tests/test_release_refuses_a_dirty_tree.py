@@ -105,28 +105,25 @@ def test_the_refusal_names_what_is_dirty(repository: Path) -> None:
 
 
 @pytest.mark.parametrize("name", sorted(RELEASES))
-def test_the_check_gates_qualification_and_force_removes_it(name: str) -> None:
+def test_the_check_gates_publication_and_force_replaces_it_with_source_proof(name: str) -> None:
     """It is first, and everything that publishes waits behind it."""
     guarded = list(_plan(name, force="false").labels)
     forced = list(_plan(name, force="true").labels)
 
     assert guarded[0] == "source.worktree-clean"
-    assert guarded.index("source.worktree-clean") < guarded.index("qualification.accept")
     assert guarded.index("source.worktree-clean") < guarded.index("source.publish-ref")
+    assert "qualification.accept" not in guarded
 
     assert "source.worktree-clean" not in forced
 
-    # Force waives the artifacts, not every check. It drops the clean-tree
-    # refusal and swaps the exact-journal requirement for a recorded waiver,
-    # then proves the source it is about to publish -- the citadel guards and
-    # the release contracts, which are the suites that judge the gate and CI
-    # changes worth forcing in the first place. Counting steps asserted the
-    # old shape, where force meant "one fewer".
+    # Force drops the clean-tree refusal, not every check. It proves the source
+    # it is about to publish with the Citadel and release contracts before the
+    # release lanes perform their artifact qualification.
     assert "qualification.accept" not in forced
-    assert "qualification.waived" in forced
+    assert "qualification.waived" not in forced
     for proof in ("citadel", "contracts.release"):
         assert proof in forced, f"a forced release skips {proof}"
         assert forced.index(proof) < forced.index("source.publish-ref"), (
             f"{proof} must run before anything is published"
         )
-    assert set(guarded) - set(forced) == {"source.worktree-clean", "qualification.accept"}
+    assert set(guarded) - set(forced) == {"source.worktree-clean"}

@@ -3,7 +3,7 @@
 Two shapes of the same mistake, both of which report success while the thing
 being measured failed:
 
-1. `$?` after a pipe is the *pipe's* status. `just test | tail` reports what
+1. `$?` after a pipe is the *pipe's* status. `just test-clean | tail` reports what
    `tail` did. Under `set -o pipefail` the pipeline adopts the first non-zero
    status, which is why every bash recipe here sets it.
 

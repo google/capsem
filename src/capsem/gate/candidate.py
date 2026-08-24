@@ -1,4 +1,4 @@
-"""`just test`: the complete local proof, as one process holding one lock.
+"""`just test-clean`: the exceptional complete local diagnostic.
 
 Two of this command's three guarantees cannot be steps, and understanding why
 is most of the design.
@@ -57,7 +57,7 @@ def keep_awake(runner: Runner) -> list[str] | None:
     command = settings.keep_awake_command[0]
     if shutil.which(command) is None:
         raise GateError(
-            f"macOS just test requires {command} to prevent an unattended "
+            f"macOS just test-clean requires {command} to prevent an unattended "
             "release gate from sleeping"
         )
     return [*settings.keep_awake_command, "env", f"{settings.keep_awake_marker}=1"]
@@ -73,9 +73,9 @@ class CompleteGate:
     """What a command that *contains* the whole gate owes the machine.
 
     A mixin, not a base command: a base would have to register a runnable
-    name, and there is nothing here to run. Only `candidate` owns complete
-    qualification; release commands consume its exact-commit journal instead
-    of inheriting this lifecycle and spending the same proof again.
+    name, and there is nothing here to run. Only `candidate` owns the complete
+    cold diagnostic; release commands dispatch hosted qualifying lanes instead
+    of inheriting this multi-hour local lifecycle.
     """
 
     _config: gate_config.GateConfig
@@ -105,8 +105,8 @@ class CompleteGate:
     the price of a qualification whose subject cannot move while it runs, and
     only a command that already costs an hour should pay it.
 
-    Publication has its own short detached prefix and first revalidates this
-    command's archived event journal through `qualification.accept`.
+    Publication has its own short detached prefix and does not consume this
+    machine-local diagnostic journal.
     """
 
     def resources(self, runner: Runner) -> tuple[Resource, ...]:
@@ -183,7 +183,7 @@ class CandidateCommand(
     in report mode to measure a rule without creating qualification evidence.
     """
 
-    # The run this whole mechanism was built for. `just test` is this command,
+    # The run this whole mechanism was built for. `just test-clean` is this command,
     # and it composes the modules' plan *fragments* in-process rather than
     # invoking their commands -- so declaring `private_checkout` on the modules
     # protects `capsem-gate test-fast` typed by hand and does nothing for the

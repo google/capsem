@@ -38,7 +38,7 @@ def _skill_text(skill_path: Path) -> str:
 #: it. These contracts are about what the gate *does*; when the doing moved
 #: from a shell body into a plan, the place to read it moved with it.
 DISPATCHED = {
-    "test:": ("candidate", {}),
+    "test-clean:": ("candidate", {}),
     "_test-candidate:": ("test-candidate", {}),
     "_gate-assets:": ("assets", {}),
     "_gate-install:": ("install", {}),
@@ -2926,7 +2926,7 @@ def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -
     assert "vm-assets-" not in workflow
     assert "assets/current" not in workflow
     assert """echo '{"releases":{}}'""" not in workflow
-    assert "run: just test" not in workflow
+    assert "run: just test-clean" not in workflow
     assert "Fetch latest selected channel source manifest" in workflow
     assert "kind: profiles" in workflow
     assert "output: target/binary-public-before/profiles" in workflow

@@ -1,6 +1,6 @@
 """Citadel guard: build output must outlive the prefix that produced it.
 
-Every commit used to qualify cold. `just test` works in a private copy named
+Every commit used to qualify cold. `just test-clean` works in a private copy named
 for the commit, so a fix on top of a qualified tree shares nothing with the run
 before it -- three consecutive runs carried zero steps while a 42 GiB `target/`
 from the previous one sat on the same disk waiting for the next sweep to delete

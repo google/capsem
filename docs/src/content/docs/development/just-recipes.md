@@ -26,13 +26,16 @@ quick checks. After frontend changes intended for the desktop app, use
 
 | Recipe | What it does | Boots VM? |
 |--------|-------------|-----------|
-| `just fast-test` | The fast gate itself: the same `_test-fast` module `test` and both release lanes run | No |
-| `just vm-smoke` | Short VM round-trip: doctor, injection, service/CLI/MCP/gateway tests | Yes |
-| `just test` | Full gate: unit/coverage, VM suites, cross-compile, both Linux packages, Docker install, and a clean-Tart exact `.pkg` install/glow-up on macOS | Yes |
+| `just fast-test` | Incomplete source feedback from the canonical `_test-fast` module | No |
+| `just focus-test <group>` | Run one existing owner: `assets`, `binaries`, `benchmark`, `install`, `release-system`, or `functional` | Depends on group |
+| `just install` | Build the complete local macOS package and install that exact package for hands-on testing | No |
+| `just test-clean [commit]` | Exceptional cold whole-system diagnostic: rebuild and exercise every configured artifact and VM path | Yes |
 
-`just fast-test` and `just vm-smoke` are for developer feedback only. `just test` is the release source
-of truth, and both public release commands execute it before any release work.
-Targeted commands are for diagnosis and iteration, not release readiness.
+Use `fast-test` once for cheap source feedback and the smallest `focus-test`
+group for a specific regression. Use `test-clean` only when stale reuse is
+suspected or a release candidate is ready for one cold Mac diagnostic. The
+hosted `release-profile` and `release-binaries` lanes are the publication
+qualification authority; they do not consume the local diagnostic journal.
 
 ## Policy Verification
 
@@ -46,10 +49,10 @@ and telemetry. Use this sequence for focused iteration:
 | Frontend policy UI/model | `pnpm -C frontend test -- settings-model settings-export api settings-store` |
 | Frontend type/check gate | `pnpm -C frontend run check` |
 | Docs gate | `cd docs && pnpm run build` |
-| Focused VM feedback | `just vm-smoke` |
+| Focused VM feedback | `just focus-test functional` |
 | Session integrity | `just inspect-session [id]` |
 | Session SQL proof | `just query-session "SQL" [id]` |
-| Final gate | `just test` |
+| Final gate | `just test-clean` |
 
 Useful policy audit queries:
 
@@ -125,7 +128,7 @@ the current-build runtime profile under `target/config/` from checked-in
 | `just doctor fix` | Doctor + auto-fix all fixable issues in dependency order |
 
 Rust and JavaScript vulnerability audits are mandatory parts of `just fast-test`
-and `just test`; there is no separate public audit recipe that can drift from
+and `just test-clean`; there is no separate public audit recipe that can drift from
 the tested composition.
 
 ## Release

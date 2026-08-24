@@ -24,11 +24,12 @@ allowlist update in the same change.
 | `just run-service` | Materialize assets/config and start the local daemon idempotently. |
 | `just logs [sandbox-id\|failure]` | Tail service logs, show a sandbox log, or list the latest preserved failure evidence. |
 | `just doctor [fix]` | Validate host tools, Docker/Colima, Tart cache/boot/SSH, signing, and assets. |
-| `just fast-test` | The fast gate itself -- the same `_test-fast` module `test` and both release lanes run, so it cannot drift from them. |
-| `just vm-smoke` | Short VM round-trip: boot, exercise, tear down. Runtime liveness, never release qualification. |
-| `just test [source-commit]` | Complete local proof; an exact commit reuses or structurally resumes its archived journal. |
-| `just release-binaries <channel> <source-commit>` | Require exact qualification, then release only packages for one channel against pulled profiles. |
-| `just release-profile <channel> <profile> <source-commit>` | Require exact qualification, then call `capsem-admin release` for one profile against the pulled package. |
+| `just fast-test` | Explicitly incomplete source feedback; it prints the targeted and release rails. |
+| `just focus-test <group> [reuse\|clean]` | Rerun one existing owner: assets, binaries, benchmark, install, release-system, or functional. |
+| `just install` | Build the complete installable product and install that exact package on macOS for hands-on testing. |
+| `just test-clean [source-commit]` | Exceptional cold complete diagnostic; never the routine edit loop. |
+| `just release-binaries <channel> <source-commit>` | Dispatch qualification and publication of packages against pulled profiles. |
+| `just release-profile <channel> <profile> <source-commit>` | Dispatch qualification and publication of one profile against the pulled package. |
 
 `just --summary` must print exactly the names in `[just].approved` and nothing
 else. The count is not repeated here on purpose: this line used to say "those
@@ -40,7 +41,7 @@ live recipe list against it.
 ## The Python system replaced shell orchestration
 
 Treat the Justfile as a stable user interface, not as the implementation of a
-command. For `test`, `release-binaries`, and `release-profile`, one recipe line
+command. For `focus-test`, `install`, `release-binaries`, and `release-profile`, one recipe line
 crosses one exact argv boundary into `capsem-gate`. From there:
 
 | Concern | Owner |
@@ -93,25 +94,20 @@ exchange for no decision made.
 
 ## What does not belong in Just
 
-- Nothing may bundle the fast gate with other work again. `fast-test` is
-  exactly `_test-fast` and `vm-smoke` is exactly the VM round-trip, because
-  the single `smoke` recipe that ran both described neither: it made the gate
-  look like optional developer feedback and the VM loop look like a
-  release-adjacent proof. A recipe that runs two different jobs cannot be
-  named honestly, so it does not get to exist.
-- Neither is ever sufficient for release. A release requires a complete
-  archived `just test <source-commit>` journal -- never `fast-test` or
-  `vm-smoke`.
+- `fast-test` is exactly the incomplete `test-fast` module. It may not bundle
+  compiled, VM, install, or release work.
+- `focus-test` aliases an existing owning gate command; it must not copy or
+  compose a second test graph. Neither feedback command is release authority.
 - No generic or combined release recipe. The two approved release commands
   revalidate exact qualification before delegating to one checked-in
   implementation, and the two workflows share the per-channel lock.
-- No dependency-update, fixture-update, audit-only, coverage-only, benchmark,
-  cleanup, session-SQL, or package-install convenience recipes. Call the owning
+- No dependency-update, fixture-update, audit-only, coverage-only,
+  cleanup, session-SQL, or extra package-install convenience recipes. Call the owning
   script/tool directly.
 - No separate UI aliases. Use `just dev <surface>` or `just build`.
 - No public build primitives for kernel, rootfs, Docker images, architectures,
   or package rails.
-- No public continuation recipe. Exact-commit `just test` derives a partial
+- No public continuation recipe. Exact-commit `just test-clean` derives a partial
   frontier only from its archived event graph and retained full-SHA prefix;
   working-tree diagnostic continuation is not qualification. Both release
   commands refuse continuation flags.
@@ -124,7 +120,7 @@ branching, reporting, cleanup, or resource ownership.
 
 ## Canonical testing
 
-`just test` owns the complete graph:
+`just test-clean` owns the complete graph:
 
 - fail-fast bootstrap and clean install-harness proof;
 - audits, lint, frontend, Rust and Python coverage;
@@ -140,7 +136,7 @@ branching, reporting, cleanup, or resource ownership.
 Release CI calls the checked-in `_test-fast`, `_test-static`,
 `_test-artifacts`, `_test-functional`, `_test-glowup`, and
 `_test-release-contracts` modules. `_test-fast` is also the first phase of
-`just test` and `just fast-test`; it owns YAML/source syntax, source contracts,
+`just test-clean` and `just fast-test`; it owns YAML/source syntax, source contracts,
 Clippy, Python and JavaScript checks, and every locked-ecosystem vulnerability
 audit. Callers must reuse it whole rather than duplicating a subset.
 Binary CI builds packages and pulls profiles; profile CI builds one profile and

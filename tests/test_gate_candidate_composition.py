@@ -1,4 +1,4 @@
-"""`just test` is one process, one lock, one workspace, one plan.
+"""`just test-clean` is one process, one lock, one workspace, one plan.
 
 It used to be a tree of processes. `candidate` ran `just _test-fast`, which ran
 `capsem-gate test-fast`; then a Colima wrapper around `just _test-candidate`,

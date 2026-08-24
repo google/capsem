@@ -1,6 +1,6 @@
 """One gate per machine, proven by the kernel.
 
-A second `just test` on the same machine is not a queueing inconvenience. The
+A second `just test-clean` on the same machine is not a queueing inconvenience. The
 first thing a run does is remove `$CAPSEM_HOME` and stop the service inside it,
 so two runs means one deletes the other's home mid-flight and both report
 failures that belong to neither.

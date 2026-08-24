@@ -309,7 +309,7 @@ def test_the_candidate_gate_only_reexecs_once() -> None:
 def test_a_reexec_becomes_the_same_command_it_replaced(monkeypatch, tmp_path) -> None:
     """The keep-awake wrapper wraps this command, it does not redirect.
 
-    It returned `caffeinate ... just test`, which is a different thing that
+    It returned `caffeinate ... just test-clean`, which is a different thing that
     merely usually ends up here. Two consequences, both bad: the flags the
     operator actually passed were dropped, and the replacement went back
     through `just` -- so a command that had already decided it was running

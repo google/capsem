@@ -3,7 +3,7 @@
 `AGENTS.md` says a release lane "does not run a different gate". It ran the
 same one for fifteen of its twenty steps. The other five -- verifying a
 digest-selected cohort, and the four that prove the publishable package against
-it -- had no local counterpart at all, because `just test` filled those slots by
+it -- had no local counterpart at all, because `just test-clean` filled those slots by
 building instead.
 
 Seven binary-release dispatches were spent finding defects in them, forty
@@ -62,7 +62,7 @@ def _plans() -> tuple[tuple[str, ...], tuple[str, ...]]:
 
 
 def test_every_release_step_has_a_local_counterpart() -> None:
-    """The whole point: a green `just test` has to mean something about CI."""
+    """The whole point: a green `just test-clean` has to mean something about CI."""
     local, pulled = _plans()
     covered = set(local)
 
@@ -136,7 +136,7 @@ def test_only_the_rehearsal_skips_the_installed_transition() -> None:
 
     The install half purges the host `capsem`, deletes `~/.capsem`, and installs
     from the channel under test. That is correct on a disposable runner and not
-    something `just test` may do to a machine somebody is working on -- so the
+    something `just test-clean` may do to a machine somebody is working on -- so the
     rehearsal skips it and the release must not, which is exactly the pair of
     claims worth pinning in one place.
     """
@@ -194,7 +194,7 @@ def test_the_rehearsal_publishes_nothing_and_fetches_nothing() -> None:
 
     Not a stylistic rule. The rehearsal exists to run the release lane's steps,
     and the steps around it in a real lane do publish -- so a rehearsal that
-    grew a fetch or an upload would be a `just test` that touches a channel.
+    grew a fetch or an upload would be a `just test-clean` that touches a channel.
     """
     local_plan = built_command(ROOT, "candidate", (), None)._describe()
     reaching = [

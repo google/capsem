@@ -18,7 +18,7 @@ npx vitest run --coverage   # Unit tests with coverage
 pnpm run build              # Production build (catches bundling issues dev misses)
 ```
 
-All three run as part of `just test`. The production build is important -- Tailwind v4's Vite plugin can miss `client:only` components in the SSR module graph, so `@source` directives in `global.css` must explicitly include `.svelte` and `.ts` files.
+All three run as part of `just test-clean`. The production build is important -- Tailwind v4's Vite plugin can miss `client:only` components in the SSR module graph, so `@source` directives in `global.css` must explicitly include `.svelte` and `.ts` files.
 
 ## Test files
 
@@ -34,7 +34,7 @@ When `window.__TAURI_INTERNALS__` is absent (browser via `just dev ui`), `api.ts
 
 This means you can test the full UI without a VM by running `just dev ui`.
 
-**Generated mock data**: `mock-settings.generated.ts` is produced by `scripts/generate_schema.py` from `config/settings/ui-metadata.generated.json`. It runs as part of `just exec` and `just test` via the `_generate-settings` recipe. Never hand-edit this file.
+**Generated mock data**: `mock-settings.generated.ts` is produced by `scripts/generate_schema.py` from `config/settings/ui-metadata.generated.json`. It runs as part of `just exec` and `just test-clean` via the `_generate-settings` recipe. Never hand-edit this file.
 
 ## Visual verification with Chrome DevTools MCP
 
@@ -65,7 +65,7 @@ Click through every section (AI Providers, Repositories, Security, VM, Appearanc
 ### After changing TOML configs or generated mock data
 
 When modifying `config/settings/ui-metadata.generated.json` or regenerating `mock-settings.generated.ts`:
-1. Run `just _generate-settings` (or let `just exec`/`just test` do it)
+1. Run `just _generate-settings` (or let `just exec`/`just test-clean` do it)
 2. Start `just dev ui`
 3. Navigate to Settings view
 4. Screenshot and verify new/changed settings appear correctly
