@@ -93,43 +93,9 @@ jobs:
             --json | tee "$RUNNER_TEMP/binary-channel-dry-run/record-binary.json"
 
       - name: Prove VM asset metadata did not change
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          root = Path(os.environ["RUNNER_TEMP"]) / "binary-channel-dry-run"
-          before = json.loads((root / "manifest.before.json").read_text())
-          after = json.loads((root / "manifest.json").read_text())
-          if "profiles" in before and "profiles" in after:
-              if after["profiles"] != before["profiles"]:
-                  raise SystemExit("binary dry-run changed profile image metadata")
-              binary_version = next(
-                  iter({pkg.get("version") for pkg in after.get("packages", []) if pkg.get("version")}),
-                  "not_published",
-              )
-              asset_version = next(
-                  iter({profile.get("revision") for profile in after["profiles"].values() if profile.get("revision")}),
-                  "mixed",
-              )
-          else:
-              if after["assets"] != before["assets"]:
-                  raise SystemExit("binary dry-run changed VM asset metadata")
-              binary_version = after["binaries"]["current"]
-              asset_version = after["assets"]["current"]
-          proof = {
-              "schema": "capsem.binary_channel_dry_run.v1",
-              "vm_asset_jobs": "not_run",
-              "vm_assets_unchanged": True,
-              "binary_version": binary_version,
-              "asset_version": asset_version,
-              "manifest_before": "manifest.before.json",
-              "manifest_after": "manifest.json",
-              "record_binary_report": "record-binary.json",
-          }
-          (root / "proof.json").write_text(json.dumps(proof, indent=2) + "\n")
-          PY
+        run: >-
+          uv run python scripts/write-binary-channel-staging-proof.py
+          "$RUNNER_TEMP/binary-channel-dry-run"
 
       - name: Build complete binary channel preview with existing VM assets
         run: |

@@ -195,6 +195,71 @@ def test_binary_staging_builds_parseable_packages_with_production_sbom() -> None
     assert "capsem-binary-dry-run" not in workflow
 
 
+def test_binary_staging_proof_rejects_vm_asset_drift(tmp_path: Path) -> None:
+    root = tmp_path / "binary-channel"
+    root.mkdir()
+    before = {
+        "profiles": {"code": {"revision": "1.2.3"}},
+        "packages": [{"version": "1.3.0"}],
+    }
+    after = {
+        "profiles": before["profiles"],
+        "packages": [{"version": "1.4.0"}],
+    }
+    (root / "manifest.before.json").write_text(json.dumps(before), encoding="utf-8")
+    (root / "manifest.json").write_text(json.dumps(after), encoding="utf-8")
+    command = [
+        sys.executable,
+        "scripts/write-binary-channel-staging-proof.py",
+        str(root),
+    ]
+    _run(command)
+
+    proof = json.loads((root / "proof.json").read_text(encoding="utf-8"))
+    assert proof["vm_assets_unchanged"] is True
+    assert proof["binary_version"] == "1.4.0"
+    assert proof["asset_version"] == "1.2.3"
+
+    after["profiles"]["code"]["revision"] = "9.9.9"
+    (root / "manifest.json").write_text(json.dumps(after), encoding="utf-8")
+    drift = subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert drift.returncode != 0
+    assert "binary dry-run changed profile image metadata" in drift.stderr
+
+    legacy_before = {
+        "assets": {"current": "1.2.3"},
+        "binaries": {"current": "1.3.0"},
+    }
+    legacy_after = {
+        "assets": legacy_before["assets"],
+        "binaries": {"current": "1.4.0"},
+    }
+    (root / "manifest.before.json").write_text(json.dumps(legacy_before), encoding="utf-8")
+    (root / "manifest.json").write_text(json.dumps(legacy_after), encoding="utf-8")
+    _run(command)
+    legacy_proof = json.loads((root / "proof.json").read_text(encoding="utf-8"))
+    assert legacy_proof["binary_version"] == "1.4.0"
+    assert legacy_proof["asset_version"] == "1.2.3"
+
+    legacy_after["assets"]["current"] = "9.9.9"
+    (root / "manifest.json").write_text(json.dumps(legacy_after), encoding="utf-8")
+    legacy_drift = subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert legacy_drift.returncode != 0
+    assert "binary dry-run changed VM asset metadata" in legacy_drift.stderr
+
+
 def test_binary_staging_artifacts_are_deterministic_and_recordable(tmp_path: Path) -> None:
     version = "1.4.9999999999"
     runs = []

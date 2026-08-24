@@ -1783,9 +1783,12 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     assert "ref: ${{ github.sha }}" in assemble_channel
     assert '--source-commit "${{ github.sha }}"' in assemble_channel
     assert "manifest.before.json" in assemble_channel
-    assert "binary dry-run changed VM asset metadata" in assemble_channel
-    assert '"vm_asset_jobs": "not_run"' in assemble_channel
-    assert '"vm_assets_unchanged": True' in assemble_channel
+    assert "scripts/write-binary-channel-staging-proof.py" in assemble_channel
+    staging_proof = _source_text("scripts/write-binary-channel-staging-proof.py")
+    assert "binary dry-run changed profile image metadata" in staging_proof
+    assert "binary dry-run changed VM asset metadata" in staging_proof
+    assert '"vm_asset_jobs": "not_run"' in staging_proof
+    assert '"vm_assets_unchanged": True' in staging_proof
     assert "Build complete binary channel preview with existing VM assets" in assemble_channel
     assert "scripts/build-complete-release-channel.py" in assemble_channel
     assert "assets channel build" not in assemble_channel
