@@ -162,6 +162,22 @@ def test_asset_staging_rehearsal_builds_a_complete_public_shape(tmp_path: Path) 
     assert "refusing stale asset staging path" in replay.stderr
 
 
+def test_staging_workflows_keep_mutable_outputs_outside_cargo_cache() -> None:
+    workflows = {
+        name: (PROJECT_ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+        for name in ("release-channel-staging.yaml", "release-binary-staging.yaml")
+    }
+
+    for name, workflow in workflows.items():
+        assert "Swatinem/rust-cache" in workflow
+        assert "$RUNNER_TEMP/" in workflow
+        assert "target/release-channel" not in workflow, f"{name} stages into Cargo's cache"
+
+    binary = workflows["release-binary-staging.yaml"]
+    assert "target/binary-staging-packages" not in binary
+    assert "target/binary-channel-dry-run" not in binary
+
+
 def test_binary_staging_builds_parseable_packages_with_production_sbom() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release-binary-staging.yaml").read_text(
         encoding="utf-8"

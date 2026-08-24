@@ -947,8 +947,8 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
     assert "just _build-rootfs" not in workflow
     assert "scripts/rehearse-asset-channel-staging.sh" in workflow
     assert "--without-binary-files" not in workflow
-    assert "target/release-channel-staging-fixture" in workflow
-    assert "target/release-channel-staging-validation" in workflow
+    assert '"$RUNNER_TEMP/release-channel-staging-fixture"' in workflow
+    assert '"$RUNNER_TEMP/release-channel-staging-validation"' in workflow
     assert "--asset-source-base" not in workflow
     assert "scripts/write-release-site-ci-fixture.py" not in workflow
     assert "bash scripts/check-web-surface.sh release-site-build" not in workflow
@@ -1793,8 +1793,8 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     assert '"assets", "channel", "build",' in compact_complete_builder
     assert '"assets", "channel", "check",' in compact_complete_builder
     assert "name: binary-channel-dry-run-bundle" in assemble_channel
-    assert "target/binary-channel-dry-run/" in assemble_channel
-    assert "target/release-channel/" in assemble_channel
+    assert "${{ runner.temp }}/binary-channel-dry-run/" in assemble_channel
+    assert "${{ runner.temp }}/release-channel/" in assemble_channel
 
 
 def test_binary_release_summary_names_pkg_and_deb_sbom_coverage() -> None:

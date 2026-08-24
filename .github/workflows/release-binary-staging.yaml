@@ -62,7 +62,7 @@ jobs:
           set -euo pipefail
           VERSION="${{ inputs.version }}"
           bash scripts/write-binary-staging-artifacts.sh \
-            "$VERSION" release-artifacts target/binary-staging-packages
+            "$VERSION" release-artifacts "$RUNNER_TEMP/binary-staging-packages"
           ls -lh release-artifacts/
 
       - name: Resolve serialized channel source manifest
@@ -74,9 +74,9 @@ jobs:
             --channel "$ASSET_CHANNEL" \
             --source-commit "${{ github.sha }}" \
             --require-profile-membership \
-            --output target/binary-channel-dry-run/manifest.json
-          cp target/binary-channel-dry-run/manifest.json \
-            target/binary-channel-dry-run/manifest.before.json
+            --output "$RUNNER_TEMP/binary-channel-dry-run/manifest.json"
+          cp "$RUNNER_TEMP/binary-channel-dry-run/manifest.json" \
+            "$RUNNER_TEMP/binary-channel-dry-run/manifest.before.json"
 
       - name: Record binary release metadata in channel manifest
         run: |
@@ -86,19 +86,20 @@ jobs:
             [ -f "$file" ] && ARTIFACT_ARGS+=(--artifact "$file")
           done
           cargo run -p capsem-admin -- assets channel record-binary \
-            --manifest-path target/binary-channel-dry-run/manifest.json \
+            --manifest-path "$RUNNER_TEMP/binary-channel-dry-run/manifest.json" \
             --version "${{ inputs.version }}" \
             --source-commit "${{ github.sha }}" \
             "${ARTIFACT_ARGS[@]}" \
-            --json | tee target/binary-channel-dry-run/record-binary.json
+            --json | tee "$RUNNER_TEMP/binary-channel-dry-run/record-binary.json"
 
       - name: Prove VM asset metadata did not change
         run: |
           python3 - <<'PY'
           import json
+          import os
           from pathlib import Path
 
-          root = Path("target/binary-channel-dry-run")
+          root = Path(os.environ["RUNNER_TEMP"]) / "binary-channel-dry-run"
           before = json.loads((root / "manifest.before.json").read_text())
           after = json.loads((root / "manifest.json").read_text())
           if "profiles" in before and "profiles" in after:
@@ -135,17 +136,17 @@ jobs:
           set -euo pipefail
           generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           uv run python scripts/build-complete-release-channel.py \
-            --channel-source "$ASSET_CHANNEL=file://$PWD/target/binary-channel-dry-run/manifest.json" \
+            --channel-source "$ASSET_CHANNEL=file://$RUNNER_TEMP/binary-channel-dry-run/manifest.json" \
             --primary-channel "$ASSET_CHANNEL" \
             --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
             --manifest-version "${{ inputs.manifest_version }}" \
             --generated-at "$generated_at" \
-            --out-dir target/release-channel
+            --out-dir "$RUNNER_TEMP/release-channel"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-dry-run-bundle
           path: |
             release-artifacts/
-            target/binary-channel-dry-run/
-            target/release-channel/
+            ${{ runner.temp }}/binary-channel-dry-run/
+            ${{ runner.temp }}/release-channel/

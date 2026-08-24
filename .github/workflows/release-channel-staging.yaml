@@ -59,14 +59,14 @@ jobs:
           bash scripts/rehearse-asset-channel-staging.sh \
             "${{ inputs.channel }}" \
             "${{ inputs.manifest_version }}" \
-            target/release-channel-staging-fixture \
-            target/release-channel \
-            target/release-channel-staging-validation
+            "$RUNNER_TEMP/release-channel-staging-fixture" \
+            "$RUNNER_TEMP/release-channel" \
+            "$RUNNER_TEMP/release-channel-staging-validation"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: asset-channel-staging-preview
-          path: target/release-channel/
+          path: ${{ runner.temp }}/release-channel/
 
   deploy-staging-channel:
     needs: assemble-staging-channel
