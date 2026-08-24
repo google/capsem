@@ -107,10 +107,9 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     )
     assert "activate_production:" in workflow
     assert "format('capsem-preview-{0}-{1}', github.run_id, github.run_attempt)" in workflow
-    assert (
-        "PREVIEW_URL: ${{ inputs.activate_production && steps.preview.outputs.deployment-url || inputs.release_site_url }}"
-        in workflow
-    )
+    assert "PREVIEW_URL: ${{ steps.preview.outputs.deployment-url }}" in workflow
+    assert "PREVIEW_URL: ${{ inputs.release_site_url }}" not in workflow
+    assert "inputs.activate_production && steps.preview.outputs.deployment-url" not in workflow
     assert "--snapshot-out target/release-channel-deployment/candidate-release.json" in workflow
     assert "--expect-snapshot target/release-channel-deployment/candidate-release.json" in workflow
     assert "--expect-snapshot target/release-channel-deployment/prior-release.json" in workflow

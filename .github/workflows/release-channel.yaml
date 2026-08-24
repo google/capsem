@@ -160,7 +160,7 @@ jobs:
 
       - name: Validate preview distribution
         env:
-          PREVIEW_URL: ${{ inputs.activate_production && steps.preview.outputs.deployment-url || inputs.release_site_url }}
+          PREVIEW_URL: ${{ steps.preview.outputs.deployment-url }}
           VALIDATE_COMPLETE_PUBLIC_CHANNELS: ${{ inputs.validate_complete_public_channels }}
         run: |
           CHANNEL_ARGS=(--channel "$CHANNEL")
