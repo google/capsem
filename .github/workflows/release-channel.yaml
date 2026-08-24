@@ -103,6 +103,7 @@ jobs:
           PY
 
       - name: Prove untouched public channels remain unchanged
+        if: ${{ inputs.activate_production }}
         env:
           RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
         run: |

@@ -77,6 +77,10 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     assert "--attempts 30" in workflow
     assert "group: capsem-public-channel-deploy" in workflow
     assert "cancel-in-progress: false" in workflow
+    assert (
+        "- name: Prove untouched public channels remain unchanged\n"
+        "        if: ${{ inputs.activate_production }}"
+    ) in workflow
     freshness = workflow.index("check-channel-deploy-freshness.py")
     capture = workflow.index("      - name: Capture current production deployment")
     prior_snapshot = workflow.index("      - name: Snapshot current production distribution")
@@ -125,6 +129,98 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     assert "uv sync --frozen" in staging
     assert "uv run python scripts/write-release-site-ci-fixture.py" in staging
     assert "python3 scripts/write-release-site-ci-fixture.py" not in staging
+
+
+def test_binary_staging_builds_parseable_packages_with_production_sbom() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "release-binary-staging.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "scripts/write-binary-staging-artifacts.sh" in workflow
+    assert "dpkg-deb --build" not in workflow
+    assert "dry-run deb" not in workflow
+    assert "capsem-binary-dry-run" not in workflow
+
+
+def test_binary_staging_artifacts_are_deterministic_and_recordable(tmp_path: Path) -> None:
+    version = "1.4.9999999999"
+    runs = []
+    for name in ("first", "second"):
+        root = tmp_path / name
+        artifacts = root / "artifacts"
+        _run(
+            [
+                "bash",
+                "scripts/write-binary-staging-artifacts.sh",
+                version,
+                str(artifacts),
+                str(root / "work"),
+            ]
+        )
+        runs.append(artifacts)
+
+    stale = subprocess.run(
+        [
+            "bash",
+            "scripts/write-binary-staging-artifacts.sh",
+            version,
+            str(runs[0]),
+            str(tmp_path / "first" / "work"),
+        ],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert stale.returncode == 1
+    assert "refusing stale binary staging path" in stale.stderr
+
+    artifact_names = {
+        f"Capsem-{version}.pkg",
+        f"Capsem_{version}_arm64.deb",
+        "capsem-sbom.spdx.json",
+    }
+    assert {path.name for path in runs[0].iterdir()} == artifact_names
+    assert {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in runs[0].iterdir()
+    } == {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in runs[1].iterdir()}
+
+    fixture = json.loads(
+        (
+            PROJECT_ROOT
+            / "tests"
+            / "capsem-release"
+            / "fixtures"
+            / "release-graph-stable-nightly.json"
+        ).read_text(encoding="utf-8")
+    )
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(fixture["manifests"]["stable"]["1.0.2"], indent=2) + "\n",
+        encoding="utf-8",
+    )
+    _run_admin(
+        "assets",
+        "channel",
+        "record-binary",
+        "--manifest-path",
+        str(manifest),
+        "--version",
+        version,
+        "--source-commit",
+        "0" * 40,
+        *(
+            argument
+            for name in sorted(artifact_names)
+            for argument in ("--artifact", str(runs[0] / name))
+        ),
+    )
+    packages = json.loads(manifest.read_text(encoding="utf-8"))["packages"]
+    assert {package["kind"] for package in packages} == {"debian_package", "macos_pkg"}
+    assert {binary["name"] for package in packages for binary in package["binaries"]} == {
+        "capsem-app",
+        "capsem-tray",
+    }
 
 
 @pytest.mark.parametrize(

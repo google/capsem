@@ -62,12 +62,8 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ inputs.version }}"
-          mkdir -p release-artifacts
-          printf 'dry-run pkg for %s\n' "$VERSION" > "release-artifacts/Capsem-${VERSION}.pkg"
-          printf 'dry-run deb for %s\n' "$VERSION" > "release-artifacts/Capsem_${VERSION}_arm64.deb"
-          cat > release-artifacts/capsem-sbom.spdx.json <<'JSON'
-          {"spdxVersion":"SPDX-2.3","name":"capsem-binary-dry-run"}
-          JSON
+          bash scripts/write-binary-staging-artifacts.sh \
+            "$VERSION" release-artifacts target/binary-staging-packages
           ls -lh release-artifacts/
 
       - name: Fetch current asset channel manifest
