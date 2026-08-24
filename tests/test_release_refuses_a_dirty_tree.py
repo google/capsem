@@ -60,6 +60,7 @@ def repository(tmp_path: Path) -> Path:
         ("git", "init", "-q", "."),
         ("git", "config", "user.email", "gate@capsem.test"),
         ("git", "config", "user.name", "gate"),
+        ("git", "config", "commit.gpgsign", "false"),
     ):
         subprocess.run(argv, cwd=root, check=True, capture_output=True)
     (root / "tracked.txt").write_text("committed\n", encoding="utf-8")

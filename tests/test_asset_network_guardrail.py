@@ -11,10 +11,12 @@ from __future__ import annotations
 import ast
 import inspect
 import json
+import os
 import re
 import shlex
 import stat
 import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -29,6 +31,10 @@ from capsem.builder.config import load_guest_config
 from capsem.gate import config as gate_config
 from capsem.gate import imagebases
 from capsem.gate.errors import GateError
+
+SEALED_MACOS = (
+    sys.platform == "darwin" and os.environ.get("CAPSEM_GATE_COMMAND_SANDBOX_MODE") == "enforce"
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BUILD = load_guest_config(PROJECT_ROOT / "config/docker/image").build
@@ -173,6 +179,10 @@ def test_rootfs_privilege_hardening_rejects_later_acquisition() -> None:
         _rootfs_privilege_hardening(source + "\nRUN npm install late-package\n")
 
 
+@pytest.mark.skipif(
+    SEALED_MACOS,
+    reason="Seatbelt strips synthetic Linux privilege bits; Linux CI executes this proof",
+)
 def test_rootfs_privilege_hardening_strips_a_synthetic_file(tmp_path: Path) -> None:
     source = (PROJECT_ROOT / "config/docker/Dockerfile.rootfs.j2").read_text(encoding="utf-8")
     instruction = _rootfs_privilege_hardening(source)

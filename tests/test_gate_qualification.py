@@ -351,6 +351,7 @@ def test_the_capability_is_declared_rather_than_guessed() -> None:
 
     assert qualifying == {
         "candidate",
+        "focus-test",
         "test-candidate",
         "test-artifacts",
         "test-functional",

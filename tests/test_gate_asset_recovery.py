@@ -308,7 +308,8 @@ def test_the_step_that_needs_the_builder_still_asks_no_questions() -> None:
 def test_building_assets_is_still_skipped_on_a_warm_checkout() -> None:
     """The shortcut is the point; only the tool leaves it."""
     steps = _candidate_steps()
-    for label in ("assets.image.code.all.x86_64", "assets.recovery-dependencies"):
+    arch = gate_config.load(PROJECT_ROOT).host_arch().name
+    for label in (f"assets.image.code.all.{arch}", "assets.recovery-dependencies"):
         subject = steps.get(label)
         assert subject is not None, sorted(steps)
         assert _is_conditional(subject), f"{label} lost the warm-asset shortcut"

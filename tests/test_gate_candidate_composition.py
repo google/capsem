@@ -80,8 +80,13 @@ def test_the_whole_gate_is_one_plan() -> None:
         _at(labels, phase)
 
 
-def test_linux_signing_steps_preserve_the_graph_without_launching_apple_tools() -> None:
+def test_linux_signing_steps_preserve_the_graph_without_launching_apple_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Linux still follows the same dependencies, but never execs codesign."""
+    from capsem.gate import host
+
+    monkeypatch.setattr(host, "on_macos", lambda: False)
     signing = [step for step in _plan().steps if step.label.endswith(".sign")]
 
     assert signing

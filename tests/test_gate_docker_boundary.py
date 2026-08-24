@@ -216,7 +216,13 @@ def test_exact_build_reference_accepts_a_locally_built_image_without_repo_digest
 ) -> None:
     from capsem.gate.imageidentity import exact_image_reference
 
-    runner = RecordingRunner(tmp_path, replies={"{{json .RepoDigests}}": "[]"})
+    runner = RecordingRunner(
+        tmp_path,
+        replies={
+            "{{json .RepoDigests}}": "[]",
+            "{{.Os}}/{{.Architecture}}": f"linux/amd64\tsha256:{'0' * 64}",
+        },
+    )
 
     assert (
         exact_image_reference(

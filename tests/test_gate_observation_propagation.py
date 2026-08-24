@@ -48,6 +48,7 @@ def _checkout(tmp_path: Path):
         ("init", "--quiet"),
         ("config", "user.email", "gate@example.test"),
         ("config", "user.name", "Gate"),
+        ("config", "commit.gpgsign", "false"),
         ("add", "src/tracked.txt"),
         ("commit", "--quiet", "-m", "tracked source"),
     ):

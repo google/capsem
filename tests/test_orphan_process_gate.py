@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import json
+import os
 import shutil
 import signal
 import subprocess
@@ -30,6 +31,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "check-orphan-processes.py"
 BOUNDED = ROOT / "scripts" / "run-bounded-command.py"
 JUSTFILE = ROOT / "justfile"
+SEALED_MACOS = (
+    sys.platform == "darwin" and os.environ.get("CAPSEM_GATE_COMMAND_SANDBOX_MODE") == "enforce"
+)
 
 SPEC = importlib.util.spec_from_file_location("check_orphan_processes_guard", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
@@ -68,6 +72,10 @@ def test_direct_development_commands_cannot_wait_on_terminal_stdin() -> None:
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.skipif(
+    SEALED_MACOS,
+    reason="Seatbelt denies ps process inspection; Linux CI executes this proof",
+)
 def test_direct_development_timeout_reaps_the_complete_process_group(tmp_path: Path) -> None:
     pids = tmp_path / "pids"
     child = (
@@ -104,6 +112,10 @@ def test_direct_development_timeout_reaps_the_complete_process_group(tmp_path: P
     assert not _pid_is_alive(child_pid)
 
 
+@pytest.mark.skipif(
+    SEALED_MACOS,
+    reason="Seatbelt denies ps process inspection; Linux CI executes this proof",
+)
 def test_direct_development_wrapper_reaps_a_helper_after_its_leader_exits(
     tmp_path: Path,
 ) -> None:
@@ -137,6 +149,10 @@ def test_direct_development_wrapper_reaps_a_helper_after_its_leader_exits(
     assert not _pid_is_alive(int(child_pid_file.read_text()))
 
 
+@pytest.mark.skipif(
+    SEALED_MACOS,
+    reason="Seatbelt denies ps process inspection; Linux CI executes this proof",
+)
 def test_interrupting_the_wrapper_reaps_its_complete_process_group(tmp_path: Path) -> None:
     pids = tmp_path / "interrupted-pids"
     child = (

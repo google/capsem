@@ -168,12 +168,14 @@ def _materialize_repository(source: Path, target: Path) -> None:
     an isolated tree in the first place, so the isolation machinery was
     refusing to run for exactly the people it was built for.
 
-    Cloning answers both cases with one mechanism and no special case. On one
-    filesystem `--local` hardlinks the object store; across filesystems
-    `--no-local` copies it without network access. Neither uses an `alternates`
-    file, so the original may be garbage-collected without pulling bytes out
-    from under a running gate. The clone owns its `HEAD` and refs, so a commit
-    in the source cannot move it.
+    Cloning answers both cases with one mechanism and no special case.
+    `--no-hardlinks` copies the object store without network access. This is
+    required even on one filesystem: macOS Seatbelt permits reading the source
+    repository but correctly refuses creating a hardlink to its live object
+    store from the sealed prefix. The copy uses no `alternates` file, so the
+    original may be garbage-collected without pulling bytes out from under a
+    running gate. The clone owns its `HEAD` and refs, so a commit in the source
+    cannot move it.
 
     `--no-checkout` because the working tree arrives separately and writing it
     twice would be the expensive half. That leaves the index empty, so
@@ -192,15 +194,16 @@ def _materialize_repository(source: Path, target: Path) -> None:
     scratch = target.parent / f"{target.name}.gitclone"
     remove(scratch)
     remove(target / ".git")
-    common = Path(
-        subprocess.check_output(
-            ["git", "-C", str(source), "rev-parse", "--git-common-dir"], text=True
-        ).strip()
-    )
-    common = common if common.is_absolute() else source / common
-    locality = "--local" if common.stat().st_dev == target.parent.stat().st_dev else "--no-local"
     subprocess.run(
-        ["git", "clone", "--quiet", locality, "--no-checkout", str(source), str(scratch)],
+        [
+            "git",
+            "clone",
+            "--quiet",
+            "--no-hardlinks",
+            "--no-checkout",
+            str(source),
+            str(scratch),
+        ],
         check=True,
     )
     (scratch / ".git").rename(target / ".git")

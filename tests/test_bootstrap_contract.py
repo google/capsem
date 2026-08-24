@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+LINUX_RUNTIME_ONLY = pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="executes Linux bootstrap behavior; macOS proves the source contracts only",
+)
 
 
 def _gate_labels(name: str = "candidate") -> tuple[str, ...]:
@@ -191,6 +198,7 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert "CAPSEM_DOCKER_ACCESS_WAIT" in linux
 
 
+@LINUX_RUNTIME_ONLY
 def test_linux_bootstrap_does_not_replace_a_working_hosted_docker_stack(
     tmp_path: Path,
 ) -> None:
@@ -292,6 +300,7 @@ def test_linux_bootstrap_owns_distro_binfmt_setup_before_the_gate() -> None:
     assert "update-binfmts" in linux
 
 
+@LINUX_RUNTIME_ONLY
 def test_linux_binfmt_verifier_requires_enabled_fix_binary_registration(
     tmp_path: Path,
 ) -> None:
@@ -375,6 +384,7 @@ capsem_linux_prepare_bubblewrap "$3"
     assert marker.read_text(encoding="utf-8") == "called\n"
 
 
+@LINUX_RUNTIME_ONLY
 def test_linux_bootstrap_verifies_in_gate_and_provisions_only_on_host(
     tmp_path: Path,
 ) -> None:
@@ -759,6 +769,7 @@ def test_managed_tool_exposure_requires_a_regular_executable(tmp_path: Path) -> 
     assert not (home / ".local" / "bin" / "cargo-broken").exists()
 
 
+@LINUX_RUNTIME_ONLY
 def test_linux_managed_tool_exposure_is_idempotent_with_only_local_bin_on_path(
     tmp_path: Path,
 ) -> None:

@@ -39,6 +39,8 @@ def _source(tmp_path: Path):
             "user.name=Gate Test",
             "-c",
             "user.email=gate@example.test",
+            "-c",
+            "commit.gpgsign=false",
             "commit",
             "-qm",
             "subject",

@@ -70,6 +70,6 @@ def test_all_shared_rust_audit_callers_use_the_strict_wrapper() -> None:
     ).read_text(encoding="utf-8")
 
     assert _gate_issues().count("check-cargo-audit.py") >= 1
-    assert "just _test-source-checks" in justfile
     assert "cargo audit &" not in justfile
+    assert "capsem-gate test-fast" in justfile
     assert "run: python3 scripts/check-cargo-audit.py" in security

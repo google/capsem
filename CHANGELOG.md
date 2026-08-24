@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- macOS qualification now keeps Linux-only bootstrap/process fixture mechanics
+  on the Linux lane, makes temporary Git repositories independent of developer
+  identity and signing configuration, and copies private-prefix Git objects
+  instead of hardlinking through Seatbelt. Focused groups also carry their
+  owning machine lock and remain safe for generic gate introspection.
+
 - Cold macOS qualification now queues concurrent advisory queries through its
   deliberately single-command egress broker, and materializes only missing,
   exactly pinned Rust targets, components, and Cargo tools through that same

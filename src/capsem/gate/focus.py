@@ -1,10 +1,9 @@
 """One memorable spelling for the gate modules developers rerun directly.
 
 This command is intentionally an alias, not another test plan.  Each focus
-group becomes the existing command that already owns its plan, resources,
-sandbox, journal, and reusable products.  The alias process exits before the
-target takes the machine lock, so it cannot create the nested-lock failure the
-gate forbids inside plan actions.
+group adopts the existing command that already owns its plan, resources,
+sandbox, journal, machine lock, and reusable products.  It never invokes a
+second gate from inside a plan action.
 """
 
 from __future__ import annotations
@@ -35,6 +34,7 @@ class FocusTestCommand(
 ):
     """Validate a group, show its exact plan, then become its owning command."""
 
+    exclusive = True
     uses_qualification = True
 
     def __init__(
@@ -45,7 +45,10 @@ class FocusTestCommand(
         qualification: Qualification | None = None,
         invocation: tuple[str, ...] = (),
     ) -> None:
-        args.clean_build = args.mode == "clean" or args.clean_build
+        if not hasattr(args, "group"):
+            raise TypeError("focus-test requires a group")
+        mode = getattr(args, "mode", "reuse")
+        args.clean_build = mode == "clean" or getattr(args, "clean_build", False)
         super().__init__(
             runner,
             args,
@@ -75,7 +78,8 @@ class FocusTestCommand(
 
     def _target(self) -> GateCommand:
         values = vars(self._args) | {
-            "clean_build": self._args.mode == "clean" or self._args.clean_build,
+            "clean_build": getattr(self._args, "mode", "reuse") == "clean"
+            or getattr(self._args, "clean_build", False),
             # The benchmark command owns these arguments; a focus run means
             # its complete default dimension set rather than invented knobs.
             "quick": False,

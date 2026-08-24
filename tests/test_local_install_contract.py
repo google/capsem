@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 from pathlib import Path
 
 from helpers.gate import RecordingRunner
 
-from capsem.gate import cli  # noqa: F401 - registers every command
 from capsem.gate.command import GateCommand
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _plan():
+    importlib.import_module("capsem.gate.cli")
     return GateCommand.registry["local-install"](
         RecordingRunner(ROOT),
         argparse.Namespace(dry_run=False, graph=False, timing=False),

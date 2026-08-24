@@ -496,12 +496,18 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     assert '"buildkit-pressure-prune"' in controller
 
 
-def test_native_install_is_owned_by_glowup_not_a_forked_just_recipe() -> None:
+def test_native_install_reuses_the_release_package_builder() -> None:
+    from capsem.gate import config as gate_config
+
     justfile = (PROJECT_ROOT / "justfile").read_text()
     macos_glowup = (PROJECT_ROOT / "scripts" / "macos_release_glowup.py").read_text()
+    local_install = (PROJECT_ROOT / "src/capsem/gate/localinstall.py").read_text()
+    package_script = gate_config.load(PROJECT_ROOT).install.local_macos_package_script
 
-    assert "\ninstall:" not in justfile
-    assert "build-test-macos-package.sh" in macos_glowup
+    assert "\ninstall:" in justfile
+    assert "capsem-gate local-install" in justfile
+    assert "config.install.local_macos_package_script" in local_install
+    assert package_script in macos_glowup
     assert "macos_tart_glowup.py" in macos_glowup
     assert "prove-macos-package-boot.sh" in macos_glowup
 
