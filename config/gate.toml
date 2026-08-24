@@ -1725,7 +1725,7 @@ max_lines = 20
 # Exact ratchets, as everywhere else: an entry may not grow, and a body that
 # shrinks updates or removes its entry in the same change.
 [boundary.shell_bodies.oversized_line_counts]
-"ci.yaml:test:21:Python schema tests with coverage" = 25
+"ci.yaml:test:22:Python schema tests with coverage" = 25
 "release-assets.yaml:author-profile-release:17:Author selected channel profile in the source manifest" = 32
 "release-assets.yaml:publish-profile-release:16:Publish immutable GitHub profile release" = 33
 "release.yaml:build-app-macos:22:Verify macOS package installation path policy" = 31

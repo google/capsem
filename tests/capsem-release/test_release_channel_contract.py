@@ -263,11 +263,16 @@ def test_binary_staging_proof_rejects_vm_asset_drift(tmp_path: Path) -> None:
 def test_binary_staging_artifacts_are_deterministic_and_recordable(tmp_path: Path) -> None:
     version = "1.4.9999999999"
     runs = []
-    for name in ("first", "second"):
+    for name, umask in (("first", "022"), ("second", "077")):
         root = tmp_path / name
         artifacts = root / "artifacts"
         _run(
             [
+                "bash",
+                "-c",
+                'umask "$1"; shift; exec "$@"',
+                "binary-staging",
+                umask,
                 "bash",
                 "scripts/write-binary-staging-artifacts.sh",
                 version,
@@ -317,6 +322,14 @@ def test_binary_staging_artifacts_are_deterministic_and_recordable(tmp_path: Pat
         json.dumps(fixture["manifests"]["stable"]["1.0.2"], indent=2) + "\n",
         encoding="utf-8",
     )
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_pkgutil = fake_bin / "pkgutil"
+    fake_pkgutil.write_text(
+        "#!/bin/sh\necho 'synthetic package reached pkgutil' >&2\nexit 99\n",
+        encoding="utf-8",
+    )
+    fake_pkgutil.chmod(0o755)
     _run_admin(
         "assets",
         "channel",
@@ -332,6 +345,7 @@ def test_binary_staging_artifacts_are_deterministic_and_recordable(tmp_path: Pat
             for name in sorted(artifact_names)
             for argument in ("--artifact", str(runs[0] / name))
         ),
+        env={"PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"},
     )
     packages = json.loads(manifest.read_text(encoding="utf-8"))["packages"]
     assert {package["kind"] for package in packages} == {"debian_package", "macos_pkg"}

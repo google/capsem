@@ -170,6 +170,11 @@ jobs:
             release-site/pnpm-lock.yaml
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync --frozen
+      - name: macOS release portability preflight
+        run: >-
+          uv run python -m pytest
+          tests/capsem-release/test_release_channel_contract.py::test_binary_staging_artifacts_are_deterministic_and_recordable
+          -q
       - run: bash scripts/generate-settings.sh
       - run: bash scripts/prepare-install-test-assets.sh
       - run: bash scripts/materialize-config.sh

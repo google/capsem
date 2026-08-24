@@ -1728,6 +1728,7 @@ def test_binary_release_channel_assembly_preflights_canonical_artifacts() -> Non
 def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     workflow = _workflow_text("release-binary-staging.yaml")
     real_release = _workflow_text("release.yaml")
+    macos_ci = _workflow_job_block("test", "ci.yaml")
     artifact_builder = _source_text("scripts/write-binary-staging-artifacts.sh")
     complete_builder = _source_text("scripts/build-complete-release-channel.py")
     compact_complete_builder = " ".join(complete_builder.split())
@@ -1748,6 +1749,17 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     assert "default: stable" not in workflow.split("\npermissions:", maxsplit=1)[0]
     assert "push:" not in workflow
     assert "tags:" not in workflow
+    assert "finalize-binary-staging-fixtures.py" in artifact_builder
+    assert "touch -h -d" not in artifact_builder
+    assert "tar --sort" not in artifact_builder
+    assert "dpkg-deb" not in artifact_builder
+    assert "macOS release portability preflight" in macos_ci
+    assert (
+        "test_binary_staging_artifacts_are_deterministic_and_recordable" in macos_ci
+    )
+    assert macos_ci.index("macOS release portability preflight") < macos_ci.index(
+        "Unit tests with coverage"
+    )
     assert "contents: read" in workflow
     assert "deployments: write" not in workflow
     assert "secrets: inherit" not in workflow

@@ -49,10 +49,8 @@ for binary in capsem-app capsem-tray; do
         "$DEB_ROOT/usr/bin/$binary" \
         "$PKG_ROOT/Capsem.pkg/Payload/Applications/Capsem.app/Contents/MacOS/$binary"
 done
-find "$WORK_ROOT" -exec touch -h -d @0 {} +
-
-SOURCE_DATE_EPOCH=0 dpkg-deb --build --root-owner-group "$DEB_ROOT" "$DEB"
-tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
-    -czf "$PKG" -C "$PKG_ROOT" .
 SCRIPT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+python3 "$SCRIPT_ROOT/finalize-binary-staging-fixtures.py" \
+    "$WORK_ROOT" "$DEB_ROOT" "$DEB" "$PKG_ROOT" "$PKG"
+
 python3 "$SCRIPT_ROOT/generate-host-binary-sbom.py" --output "$SBOM" "$DEB"

@@ -2937,13 +2937,16 @@ fn packaged_executable_inventory(path: &Path, bytes: &[u8]) -> Result<Vec<Binary
             .with_context(|| format!("extract executable inventory from {}", path.display()));
     }
     if name.ends_with(".pkg") {
-        return pkg_executable_inventory(path)
+        return pkg_executable_inventory(path, bytes)
             .with_context(|| format!("extract executable inventory from {}", path.display()));
     }
     Ok(Vec::new())
 }
 
-fn pkg_executable_inventory(path: &Path) -> Result<Vec<BinaryExecutable>> {
+fn pkg_executable_inventory(path: &Path, bytes: &[u8]) -> Result<Vec<BinaryExecutable>> {
+    if bytes.starts_with(&[0x1f, 0x8b]) {
+        return pkg_payload_tar_executable_inventory(path);
+    }
     let temp = std::env::temp_dir().join(format!(
         "capsem-admin-pkg-expand-{}-{}",
         std::process::id(),
