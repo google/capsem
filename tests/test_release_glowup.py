@@ -11,6 +11,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from helpers import embedded_shell
@@ -93,6 +94,96 @@ def _manifest(artifact) -> dict[str, object]:
         ],
         "profiles": {"work": {}},
     }
+
+
+def test_tamper_candidate_targets_the_installed_architecture() -> None:
+    module = _load_module()
+    manifest = {
+        "profiles": {
+            "code": {
+                "architectures": [
+                    {
+                        "architecture": "arm64",
+                        "images": [
+                            {
+                                "status": "current",
+                                "digest": {
+                                    "sha256": "a" * 64,
+                                    "blake3": "b" * 64,
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "architecture": "x86_64",
+                        "images": [
+                            {
+                                "status": "current",
+                                "digest": {
+                                    "sha256": "c" * 64,
+                                    "blake3": "d" * 64,
+                                },
+                            }
+                        ],
+                    },
+                ]
+            }
+        }
+    }
+
+    module.tamper_profile_artifact_digest(
+        manifest,
+        profile_ids=("code",),
+        architecture="x86_64",
+    )
+
+    architectures = cast(list[dict[str, Any]], manifest["profiles"]["code"]["architectures"])
+    assert architectures[0]["images"][0]["digest"] == {
+        "sha256": "a" * 64,
+        "blake3": "b" * 64,
+    }
+    assert architectures[1]["images"][0]["digest"] == {
+        "sha256": "0" * 64,
+        "blake3": "0" * 64,
+    }
+
+
+def test_tamper_candidate_refuses_non_consumed_evidence() -> None:
+    module = _load_module()
+    manifest = {
+        "profiles": {
+            "code": {
+                "architectures": [
+                    {
+                        "architecture": "x86_64",
+                        "evidence": [
+                            {
+                                "status": "current",
+                                "digest": {
+                                    "sha256": "a" * 64,
+                                    "blake3": "b" * 64,
+                                },
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+    }
+
+    with pytest.raises(
+        module.GlowupContractError,
+        match="no consumed current profile artifact",
+    ):
+        module.tamper_profile_artifact_digest(
+            manifest,
+            profile_ids=("code",),
+            architecture="x86_64",
+        )
+
+    assert manifest["profiles"]["code"]["architectures"][0]["evidence"][0][
+        "digest"
+    ] == {"sha256": "a" * 64, "blake3": "b" * 64}
 
 
 def _pairing(
@@ -1231,6 +1322,7 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
         pairing,
         transport,
         output_dir=tmp_path / "adversarial",
+        architecture="arm64",
     )
 
     assert after_manifest.read_bytes() == after_authority_bytes
@@ -2063,6 +2155,10 @@ def test_a_failed_rejection_wait_says_why() -> None:
         "journalctl",  # systemd's own view, for contrast
     ):
         assert evidence in dump, f"the diagnostic dump never shows {evidence}"
+    assert "--since" not in dump, (
+        "the audit marker is a line number, not a journal timestamp; passing it "
+        "to journalctl --since hides the systemd evidence behind a parse error"
+    )
 
 
 def test_the_service_log_is_matched_by_pattern_not_by_a_fixed_name() -> None:

@@ -91,7 +91,11 @@ def stage_transition_candidates(
     profile["description"] = f"{description} [installed transition proof]".strip()
 
     tampered = copy.deepcopy(updated)
-    tamper_profile_artifact_digest(tampered, profile_ids=(profile_id,))
+    tamper_profile_artifact_digest(
+        tampered,
+        profile_ids=(profile_id,),
+        architecture="arm64",
+    )
     incompatible = copy.deepcopy(updated)
     _, incompatible_profile = _selected_profile(incompatible)
     incompatible_profile["min_capsem_version"] = "9999.0.0"

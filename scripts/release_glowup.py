@@ -295,32 +295,34 @@ def tamper_profile_artifact_digest(
     manifest: dict[str, object],
     *,
     profile_ids: Sequence[str] = (),
+    architecture: str,
 ) -> str:
-    """Corrupt one current profile artifact digest for a rejection proof.
+    """Corrupt one consumed profile artifact digest for a rejection proof.
 
-    The caller must pass a private copy of the manifest.  Returning the selected
-    profile id lets adapters record which profile supplied the adversarial
-    candidate without inventing a second mutation contract.
+    The caller passes a private copy; the returned id records its source.  The
+    architecture is mandatory because clients verify only artifacts they consume.
     """
 
     profiles = manifest.get("profiles")
     if not isinstance(profiles, dict) or not profiles:
         raise GlowupContractError("adversarial candidate manifest has no profiles")
-    profile_map = cast(dict[str, object], profiles)
-    selected = tuple(profile_ids) or tuple(sorted(profile_map))
+    selected = tuple(profile_ids) or tuple(sorted(profiles))
+    alias = {"amd64": "x86_64", "x86_64": "amd64"}.get(architecture)
+    accepted_architectures = {architecture, alias} if alias else {architecture}
     for profile_id in selected:
-        profile = profile_map.get(profile_id)
+        profile = cast(dict[str, object], profiles).get(profile_id)
         if not isinstance(profile_id, str) or not isinstance(profile, dict):
             continue
-        profile_fields = cast(dict[str, object], profile)
-        architectures = profile_fields.get("architectures")
+        architectures = cast(dict[str, object], profile).get("architectures")
         if not isinstance(architectures, list):
             continue
-        for architecture in architectures:
-            if not isinstance(architecture, dict):
+        for architecture_record in architectures:
+            if not isinstance(architecture_record, dict):
                 continue
-            architecture_fields = cast(dict[str, object], architecture)
-            for section in ("config", "images", "evidence"):
+            architecture_fields = cast(dict[str, object], architecture_record)
+            if architecture_fields.get("architecture") not in accepted_architectures:
+                continue
+            for section in ("config", "images"):
                 rows = architecture_fields.get(section)
                 if not isinstance(rows, list):
                     continue
@@ -342,9 +344,7 @@ def tamper_profile_artifact_digest(
                     if isinstance(blake3, str):
                         digest_fields["blake3"] = "1" * 64 if blake3 == "0" * 64 else "0" * 64
                     return profile_id
-    raise GlowupContractError(
-        "adversarial candidate has no current digest-bearing profile artifact"
-    )
+    raise GlowupContractError(f"no consumed current profile artifact for {architecture}")
 
 
 def artifact_identity_from_manifest_package(

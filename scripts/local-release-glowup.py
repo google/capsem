@@ -989,13 +989,11 @@ def _adversarial_profile(
 
 
 def _tamper_selected_profile_digest(
-    manifest: dict[str, object],
-    pairing: ExactReleasePairing,
+    manifest: dict[str, object], pairing: ExactReleasePairing, architecture: str
 ) -> None:
     try:
         tamper_profile_artifact_digest(
-            manifest,
-            profile_ids=pairing.changed_profiles,
+            manifest, profile_ids=pairing.changed_profiles, architecture=architecture
         )
     except RuntimeError as error:
         raise SystemExit(f"cannot stage exact adversarial profile: {error}") from error
@@ -1006,6 +1004,7 @@ def stage_adversarial_exact_candidates(
     transport: ExactReleaseTransport,
     *,
     output_dir: Path,
+    architecture: str,
 ) -> AdversarialExactCandidates:
     """Derive local rejection candidates without changing authoritative release inputs."""
 
@@ -1019,7 +1018,7 @@ def stage_adversarial_exact_candidates(
         raise SystemExit("exact projected candidate manifest must be an object")
 
     tampered = copy.deepcopy(projected)
-    _tamper_selected_profile_digest(tampered, pairing)
+    _tamper_selected_profile_digest(tampered, pairing, architecture)
     incompatible = copy.deepcopy(projected)
     _, incompatible_profile = _adversarial_profile(incompatible, pairing)
     incompatible_profile["min_capsem_version"] = "9999.0.0"
@@ -1546,7 +1545,7 @@ observe_update_transition() {{
     command+=(--previous-manifest-sha256 "$previous_manifest_sha")
   fi
   "${{command[@]}}" || {{
-    dump_update_diagnostics "the audit marker at line $after_line" "$kind $result"
+    dump_update_diagnostics "$kind $result"
     return 1
   }}
 }}
@@ -1591,8 +1590,7 @@ service_logs() {{
 # service's own log. Not knowing which of these was true is what made the
 # last failure unreadable.
 dump_update_diagnostics() {{
-  since="$1"
-  what="$2"
+  what="$1"
   echo "=== $what did not happen; diagnostics follow ===" >&2
   echo "--- automatic update loop decisions ---" >&2
   # shellcheck disable=SC2046
@@ -1608,7 +1606,7 @@ dump_update_diagnostics() {{
   echo "--- unit environment ---" >&2
   systemctl --user show-environment >&2 2>&1 || true
   echo "--- journal (systemd's own view) ---" >&2
-  journalctl --user-unit capsem.service --since "$since" --no-pager -o cat >&2 2>&1 || true
+  journalctl --user-unit capsem.service --no-pager -n 200 -o cat >&2 2>&1 || true
 }}
 """
 
@@ -1725,6 +1723,7 @@ probe_installed_transition candidate-after \
         pairing,
         transport,
         output_dir=evidence_dir / "adversarial",
+        architecture=after_artifact.architecture.value,
     )
     tamper_evidence = evidence_dir / "tampered-rejection.json"
     tamper_marker = evidence_dir / "tampered-audit-line"

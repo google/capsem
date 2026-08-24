@@ -43,7 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transport is explicitly non-cacheable, and Linux plus macOS proofs cover
   fresh activation, a real update, tampered-artifact rejection,
   incompatibility rejection, and exact preservation of the last activated
-  state instead of inferring success from log text or elapsed time.
+  state instead of inferring success from log text or elapsed time. Tamper
+  candidates now target a config or VM image consumed by the exact installed
+  architecture, so an unrelated architecture or evidence-only mutation cannot
+  create a vacuous rejection test.
 
 - The daily nightly scheduler now runs both profile lanes and the binary lane
   before returning one aggregate verdict. A failed or unlaunchable profile no
