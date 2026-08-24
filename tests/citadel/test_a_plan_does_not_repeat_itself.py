@@ -29,6 +29,7 @@ from pathlib import Path
 from helpers.gate import gate_plan
 
 from capsem.gate import config as gate_config
+from capsem.gate import host
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -38,6 +39,13 @@ ROOT = Path(__file__).resolve().parents[2]
 #: architectures read identically while doing entirely different work -- and a
 #: guard that counted those would report eight repetitions that are not.
 COMMANDS = frozenset({"script", "run"})
+
+
+def _active_exclusions():
+    entries = gate_config.load(ROOT).boundary.repeated_actions
+    return tuple(
+        entry for entry in entries if not entry.platforms or host.system() in entry.platforms
+    )
 
 
 def _repeated(name: str) -> dict[str, list[str]]:
@@ -52,8 +60,7 @@ def _repeated(name: str) -> dict[str, list[str]]:
 
 def test_the_candidate_plan_repeats_only_what_it_declares() -> None:
     """The whole gate, which is where composition makes repetition invisible."""
-    settings = gate_config.load(ROOT).boundary
-    allowed = {exclusion.subject for exclusion in settings.repeated_actions}
+    allowed = {exclusion.subject for exclusion in _active_exclusions()}
 
     undeclared = {
         rendered: labels
@@ -75,10 +82,22 @@ def test_every_declared_repetition_still_happens() -> None:
     repetition is gone the entry is a claim about a plan that no longer exists,
     and the next reader believes it.
     """
-    settings = gate_config.load(ROOT).boundary
     rendered = " ".join(_repeated("candidate"))
 
     stale = [
-        exclusion.subject for exclusion in settings.repeated_actions if exclusion.subject not in rendered
+        exclusion.subject
+        for exclusion in _active_exclusions()
+        if exclusion.subject not in rendered
     ]
     assert not stale, f"{stale} no longer repeats in the candidate plan; drop the entry"
+
+
+def test_platform_scoped_repetitions_are_active_only_on_their_host(monkeypatch) -> None:
+    entries = gate_config.load(ROOT).boundary.repeated_actions
+    scoped = tuple(entry for entry in entries if entry.platforms)
+    assert scoped, "this guard has no platform-scoped ledger entry to prove"
+
+    for system in ("Darwin", "Linux"):
+        monkeypatch.setattr(host, "system", lambda system=system: system)
+        active = _active_exclusions()
+        assert all((system in entry.platforms) == (entry in active) for entry in scoped)

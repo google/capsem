@@ -33,7 +33,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field
 
@@ -56,6 +56,12 @@ class Exclusion(Strict):
 
     subject: str
     reason: Reason
+
+
+class PlatformExclusion(Exclusion):
+    """An exclusion that exists only where the underlying action can exist."""
+
+    platforms: tuple[Literal["Darwin", "Linux"], ...] = ()
 
 
 class HashedExclusion(Exclusion):

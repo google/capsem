@@ -2568,6 +2568,7 @@ is more expensive to reason about than a second install that does nothing.
 
 [[boundary.repeated_actions]]
 subject = "codesign --sign - --entitlements"
+platforms = ["Darwin"]
 reason = """
 macOS host binaries are signed before the prepared runtime, again after Rust
 coverage rebuilds them, and again after artifact materialization may run

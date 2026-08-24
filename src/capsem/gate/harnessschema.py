@@ -28,7 +28,7 @@ from pydantic import (
 
 from .configschema import Strict
 from .digestschema import DigestConfig, LedgerConfig
-from .exclusions import Exclusion, HashedExclusion
+from .exclusions import Exclusion, HashedExclusion, PlatformExclusion
 from .prefixschema import PrefixConfig as PrefixConfig
 from .sandboxschema import SandboxConfig as SandboxConfig
 from .sourcecontractschema import ScriptSizeConfig
@@ -105,7 +105,7 @@ class BoundaryConfig(Strict):
     #: Composition is where repetition hides: every module owns its
     #: prerequisites so it can run alone, and nothing noticed that three of
     #: them then generate the same file in one run.
-    repeated_actions: tuple[Exclusion, ...]
+    repeated_actions: tuple[PlatformExclusion, ...]
     shell_control_flow: tuple[str, ...]
     recipes_with_inline_control_flow: tuple[str, ...]
     direct_machine_access: tuple[str, ...]
