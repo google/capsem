@@ -23,10 +23,13 @@ a lock its own parent holds. This is an operator tool, run deliberately.
 Needs a tree that has already built its assets and packages -- the same
 precondition `capsem-gate test-rehearsal` states, and for the same reason.
 
-`just replay-release-lane [binaries|assets]` covers the common case. The rarer
-flags -- resuming at a step, or running the installed-package proof -- are
-typed at this script directly, because a recipe may only hand a variadic over
-as one quoted argument and splitting it back is how injection gets in.
+`just replay-release-lane binaries` covers the complete binary pairing. The
+assets form covers the cold-channel, profile-only proof; an activation-ready
+profile needs a real public-before package cohort and is refused rather than
+quietly fabricating one. The rarer flags -- resuming at a step, or running the
+installed-package proof -- are typed at this script directly, because a recipe
+may only hand a variadic over as one quoted argument and splitting it back is
+how injection gets in.
 """
 
 from __future__ import annotations
@@ -51,6 +54,12 @@ DESTRUCTIVE_STEP = "glowup.package"
 #: Where the fabricated cohort lands. Distinct from the rehearsal's own paths so
 #: a replay never consumes or clobbers what a running `just test` staged.
 WORK = "target/replay-lane"
+
+_TEST_SELECTION_ENV = (
+    "CAPSEM_TEST_BINARY",
+    "CAPSEM_TEST_ASSETS_DIR",
+    "CAPSEM_TEST_CONFIG_ROOT",
+)
 
 
 def _config() -> dict:
@@ -87,26 +96,67 @@ def fabricate(channel: str, profile: str, version: str) -> dict:
     return json.loads(result.stdout[result.stdout.index("{") :])
 
 
+def clean_environment() -> dict[str, str]:
+    """Approximate a fresh runner instead of inheriting another lane's state."""
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("CAPSEM_RELEASE_") and key not in _TEST_SELECTION_ENV
+    }
+
+
 def released_environment(cohort: dict, channel: str) -> dict[str, str]:
     """The variables the workflow exports before it calls the lane.
 
     Kept beside the workflow that sets them, because a replay that exports a
     different set proves a lane nobody runs.
     """
-    workspace = str(ROOT)
+    workspace = Path(cohort["content_root"])
+    if not workspace.is_absolute():
+        raise ValueError("the replay content root must be absolute")
+    workspace_text = str(workspace)
     return {
-        **os.environ,
+        **clean_environment(),
         "CAPSEM_RELEASE_PACKAGE": cohort["package"],
-        "CAPSEM_RELEASE_BIN_DIR": f"{workspace}/target/debug",
-        "CAPSEM_TEST_BINARY": f"{workspace}/target/debug/capsem",
+        "CAPSEM_RELEASE_BIN_DIR": f"{ROOT}/target/debug",
+        "CAPSEM_TEST_BINARY": f"{ROOT}/target/debug/capsem",
         "CAPSEM_RELEASE_INPUT_DIR": cohort["inputs"],
         "CAPSEM_RELEASE_CHANNEL": channel,
         "CAPSEM_RELEASE_TRANSITION": "auto",
         "CAPSEM_RELEASE_BEFORE_MANIFEST": cohort["before_manifest"],
         "CAPSEM_RELEASE_AFTER_MANIFEST": cohort["manifest"],
+        # A fresh-channel replay has no public-before package. Export the empty
+        # value deliberately, as the workflow does, so a developer shell's
+        # stale transition cannot leak into the replay.
+        "CAPSEM_RELEASE_BEFORE_PACKAGE": "",
         "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS": cohort["before_profile_inputs"],
         "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS": cohort["inputs"],
+        "CAPSEM_TEST_ASSETS_DIR": f"{workspace_text}/assets",
+        "CAPSEM_TEST_CONFIG_ROOT": f"{workspace_text}/target/config",
     }
+
+
+def qualification_command(args, cohort: dict) -> tuple[list[str], dict[str, str]]:
+    """Return the exact command and fresh-runner environment for this replay."""
+    workspace = cohort["content_root"]
+    if args.lane == "binaries":
+        return ["just", "qualify-binaries", workspace], released_environment(
+            cohort, args.channel
+        )
+    if args.activation_ready != "false":
+        raise SystemExit(
+            "an activation-ready asset replay needs a real public-before package "
+            "cohort; use --activation-ready=false for the exact cold-channel "
+            "profile proof instead of fabricating a binary pairing"
+        )
+    return [
+        "just",
+        "qualify-assets",
+        cohort["inputs"],
+        args.profile,
+        workspace,
+        "false",
+    ], clean_environment()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -117,8 +167,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--profile", default=config["suites"]["pytest"]["base_profile"])
     parser.add_argument(
         "--activation-ready",
-        default="true",
-        help="assets lane only: whether the profile may activate",
+        choices=("true", "false"),
+        default="false",
+        help="assets lane only: only the exact cold-channel false shape is locally fabricable",
     )
     parser.add_argument("--from", dest="resume", help="resume the lane at this step")
     parser.add_argument(
@@ -143,15 +194,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"fabricating a {args.channel} cohort for {version} ...", flush=True)
     cohort = fabricate(args.channel, args.profile, version)
-    env = released_environment(cohort, args.channel)
-
-    if args.lane == "binaries":
-        command = ["just", "qualify-binaries", str(ROOT)]
-    else:
-        command = [
-            "just", "qualify-assets", cohort["inputs"], args.profile,
-            str(ROOT), args.activation_ready,
-        ]
+    command, env = qualification_command(args, cohort)
     if args.resume:
         command += ["--from", args.resume]
     if args.install_on_this_machine:
