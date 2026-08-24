@@ -37,7 +37,7 @@ from .execution import Kind, Needs, Speed, Step, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .qualification import Qualification
-from .sourcestate import RequireSourceUnchanged, record_step
+from .sourcestate import record_step, verify_step
 from .storage import Storage
 from .timingratchet import EnforceTimingRegression, TimingBoundary
 
@@ -100,14 +100,7 @@ def compose(
     modules = compose_modules(plan, config, qualification=qualification, after=(contracts,))
 
     return plan.add(
-        step(
-            TimingBoundary.QUALIFICATION.value,
-            RequireSourceUnchanged(),
-            EnforceTimingRegression(TimingBoundary.QUALIFICATION),
-            kind=Kind.STATIC_TEST,
-            needs=frozenset({Needs.DISK}),
-            speed=Speed.FAST,
-        ),
+        verify_step(EnforceTimingRegression(TimingBoundary.QUALIFICATION)),
         after=(modules,),
     )
 

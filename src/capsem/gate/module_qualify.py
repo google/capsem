@@ -29,6 +29,7 @@ from .module_functional import functional
 from .module_glowup import glowup
 from .plan import Plan
 from .qualification import Qualification
+from .sourcestate import record_step, verify_step
 from .testmodules import InWorkspace
 
 
@@ -44,7 +45,8 @@ def _pairing(
     The order is the dependency: the functional suites boot what the artifact
     module produced, and the glow-up installs the package those suites proved.
     """
-    built = artifacts(plan, config, qualification=qualification)
+    recorded = plan.shared(record_step(config))
+    built = artifacts(plan, config, qualification=qualification, after=(recorded,))
     proved = functional(
         plan,
         config,
@@ -52,13 +54,14 @@ def _pairing(
         after=(built,),
         staged=staged,
     )
-    glowup(
+    completed = glowup(
         plan,
         config,
         qualification=qualification,
         after=(proved,),
         staged=staged,
     )
+    plan.add(verify_step(), after=(completed,))
     return plan
 
 
@@ -139,12 +142,15 @@ class QualifyAssetsModule(
     def plan(self) -> Plan:
         plan = Plan(self.name)
         if self._args.activation_ready != "true":
-            pulled_artifacts(
+            recorded = plan.shared(record_step(self._config))
+            proved = pulled_artifacts(
                 plan,
                 self._config,
                 input_dir=self._args.input_dir,
                 profile=self._args.profile,
+                after=(recorded,),
             )
+            plan.add(verify_step(), after=(proved,))
             return plan
         # The activation-ready pairing stages into the workspace exactly as the
         # binary lane does, and qualifies from the same kind of private prefix,

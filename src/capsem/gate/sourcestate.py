@@ -242,3 +242,15 @@ def record_step(config: GateConfig) -> Step:
         needs=frozenset({Needs.DISK}),
         speed=Speed.FAST,
     )
+
+
+def verify_step(*extra: Action) -> Step:
+    """The one terminal source-identity check shared by complete proofs."""
+    return step(
+        "source.verify",
+        RequireSourceUnchanged(),
+        *extra,
+        kind=Kind.STATIC_TEST,
+        needs=frozenset({Needs.DISK}),
+        speed=Speed.FAST,
+    )

@@ -57,8 +57,56 @@ def _release_plan():
     return config, command._describe()
 
 
+def _profile_release_plan(*, activation_ready: str):
+    """One profile lane in the same private-prefix shape CI executes."""
+    config = gate_config.load(ROOT)
+    settings = config.modules
+    qualification = from_environment(
+        config,
+        {
+            settings.release_input_dir: str(STAGED / "target/profile-release-inputs"),
+            settings.release_package: str(STAGED / "release-test-package/capsem.deb"),
+            settings.release_bin_dir: str(STAGED / "target/debug"),
+            settings.release_profile: "code",
+        },
+    )
+    return built_command(
+        ROOT,
+        "qualify-assets",
+        (
+            ("input_dir", STAGED / "target/profile-release-inputs"),
+            ("profile", "code"),
+            ("workspace_root", STAGED),
+            ("activation_ready", activation_ready),
+        ),
+        qualification,
+    )._describe()
+
+
 def _rendered(plan) -> list[tuple[str, str]]:
     return [(step.label, action.render()) for step in plan.steps for action in step.actions]
+
+
+def test_every_release_qualification_owns_one_source_boundary() -> None:
+    """A private prefix still has to record the exact source it qualifies.
+
+    The binary lane once reached broad pytest without ``source.record``. Five
+    plan-contract tests asked for the parent's frozen snapshot and failed on a
+    missing ``target/gate-source-state.json`` after every package had already
+    been built and installed. The profile lane uses the same prefix machinery,
+    so both of its branches carry the same invariant before either can regress.
+    """
+    _, binary = _release_plan()
+    plans = {
+        "binaries": binary,
+        "active profile": _profile_release_plan(activation_ready="true"),
+        "deferred profile": _profile_release_plan(activation_ready="false"),
+    }
+
+    for name, plan in plans.items():
+        labels = list(plan.labels)
+        assert labels[0] == "source.record", f"{name} has no initial source receipt"
+        assert labels[-1] == "source.verify", f"{name} never revalidates its source"
 
 
 def test_no_step_reads_a_staged_input_from_the_checkout() -> None:
@@ -189,8 +237,7 @@ def test_what_a_suite_needs_is_built_before_it_runs() -> None:
     ):
         index = first(lambda label, produced=produced: label == produced)
         assert 0 <= index < suite, (
-            f"{needed} is produced by {produced!r}, which does not run before "
-            f"{labels[suite]!r}"
+            f"{needed} is produced by {produced!r}, which does not run before {labels[suite]!r}"
         )
 
 
@@ -262,8 +309,7 @@ def test_the_binaries_are_staged_where_the_lane_is_told_to_find_them() -> None:
     for directory in exported:
         relative = directory.removeprefix("$PWD/")
         assert relative in staged, (
-            f"the lane reads binaries from {directory!r} and the job stages "
-            f"them into {staged!r}"
+            f"the lane reads binaries from {directory!r} and the job stages them into {staged!r}"
         )
 
 
@@ -289,8 +335,7 @@ def test_only_the_rehearsal_may_build_a_release_state_in_code() -> None:
     ]
     assert not offenders, (
         "these build a release qualification directly instead of going "
-        "through `from_environment` or `qualification.rehearsal`:\n  "
-        + "\n  ".join(offenders)
+        "through `from_environment` or `qualification.rehearsal`:\n  " + "\n  ".join(offenders)
     )
 
 
