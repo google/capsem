@@ -30,6 +30,7 @@ from capsem.gate import (
 from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
 from capsem.gate.content import ProfileContent
+from capsem.gate.execution import Requires
 from capsem.gate.installimage import InstallImageStep
 from capsem.gate.plan import Plan
 
@@ -72,6 +73,23 @@ def test_everything_that_needs_the_builder_waits_for_it(name, args) -> None:
         order.index(label) > built
         for label in order
         if label in INSTALL_IMAGE_STEPS or label.startswith("package.")
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "args", "consumers"),
+    [
+        ("install-image", {}, ("install.materialize",)),
+        ("cross-compile", {"arch": "arm64"}, ("package.arm64.materialize",)),
+    ],
+)
+def test_builder_consumers_declare_that_they_need_its_artifact(name, args, consumers) -> None:
+    """Resume can distinguish a live helper from mere later ordering."""
+    plan = _plan(name, **args)
+
+    assert all(
+        plan.requires_of(hostimage.STEP, consumer) is Requires.ARTIFACT
+        for consumer in consumers
     )
 
 

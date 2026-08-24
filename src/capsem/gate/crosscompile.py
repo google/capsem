@@ -15,7 +15,7 @@ from . import hostimage, installplan
 from .actions import Call
 from .command import GateCommand
 from .content import ProfileContent
-from .execution import Kind, Needs, Speed, step
+from .execution import Kind, Needs, Requires, Speed, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .packagerail import PackageRail
 from .plan import Plan
@@ -152,23 +152,26 @@ def fragment(
 
     previous: tuple = (built, *after)
     for label, description, method, justification in phases:
-        previous = (
-            phase.add(
-                step(
-                    label,
-                    Call(
-                        description,
-                        _phase(target, method, content),
-                        justification=justification,
-                    ),
-                    contends=docker,
-                    kind=Kind.COMPILE,
-                    needs=frozenset({Needs.DOCKER, Needs.DISK}),
-                    speed=Speed.SLOW,
+        current = phase.add(
+            step(
+                label,
+                Call(
+                    description,
+                    _phase(target, method, content),
+                    justification=justification,
                 ),
-                after=previous,
+                contends=docker,
+                kind=Kind.COMPILE,
+                needs=frozenset({Needs.DOCKER, Needs.DISK}),
+                speed=Speed.SLOW,
             ),
+            after=previous,
         )
+        if method == "materialize":
+            # The preceding rail steps only order capacity and content checks.
+            # This is where the package helper derives from the host builder.
+            plan.edge(before=built, after=current, requires=Requires.ARTIFACT)
+        previous = (current,)
     return previous[0]
 
 

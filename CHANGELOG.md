@@ -1058,7 +1058,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Diagnostic continuation now validates carried Docker authorities before any
   resumed work. If storage reclamation removed an exact helper image, the gate
   refuses immediately and names its owning `--from` step instead of rebuilding
-  kernels or profiles before failing at the first hidden consumer.
+  kernels or profiles before failing at the first hidden consumer. Producers
+  now declare their real artifact consumers separately from mere ordering, so
+  bounded cleanup may reclaim the working host-builder after every package and
+  install helper has consumed it without invalidating a later exact-source
+  resume whose remaining work cannot use that image.
 
 - The snapshot-pinned asset-tools image now proves `mkfs.erofs` through its
   portable help contract instead of the unsupported `-V` flag used by Debian's

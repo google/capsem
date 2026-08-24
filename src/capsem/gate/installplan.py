@@ -12,7 +12,7 @@ from . import hostimage, installbuilder
 from .actions import Call
 from .command import GateCommand
 from .config import GateConfig
-from .execution import Kind, Needs, Speed, Step, step
+from .execution import Kind, Needs, Requires, Speed, Step, step
 from .installimage import (
     InstallImageStep,
     RequireInstallImage,
@@ -90,6 +90,10 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
         ),
         after=(capacity,),
     )
+    # This is the host builder's real byte consumer. The capacity step merely
+    # orders disk reservation. Once materialization is carried, bounded GC may
+    # have reclaimed the working parent without invalidating a later resume.
+    plan.edge(before=built, after=materialized, requires=Requires.ARTIFACT)
 
     def build(context) -> None:
         helper = installbuilder.require_current(context.runner, context.config)

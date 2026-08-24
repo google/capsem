@@ -361,7 +361,7 @@ def test_a_carried_runtime_dependency_is_checked_before_any_plan_work() -> None:
     from capsem.gate.actions import Action
     from capsem.gate.context import Context
     from capsem.gate.errors import GateError
-    from capsem.gate.execution import step
+    from capsem.gate.execution import Requires, step
     from capsem.gate.plan import Plan
 
     ran: list[str] = []
@@ -384,7 +384,11 @@ def test_a_carried_runtime_dependency_is_checked_before_any_plan_work() -> None:
 
     plan = Plan("resume-product")
     materialized = plan.add(step("materialize", carry_checks=(Missing(),)))
-    plan.add(step("consume", Work()), after=(materialized,))
+    plan.add(
+        step("consume", Work()),
+        after=(materialized,),
+        requires=Requires.ARTIFACT,
+    )
     context = Context(
         RecordingRunner(PROJECT_ROOT),
         _config(),
@@ -399,6 +403,93 @@ def test_a_carried_runtime_dependency_is_checked_before_any_plan_work() -> None:
         plan.run(context)
 
     assert ran == []
+
+
+def test_a_carried_runtime_dependency_released_after_its_consumers_is_not_checked() -> None:
+    """Bounded cleanup may reclaim an intermediate after its last real use.
+
+    A late diagnostic frontier still descends from that producer through the
+    plan's ordering graph, but it does not consume the producer's bytes.  If
+    the one declared artifact consumer was carried, requiring the deliberately
+    reclaimed product makes an otherwise valid retained prefix impossible to
+    resume.
+    """
+    from helpers.gate import RecordingJournal, RecordingRunner
+
+    from capsem.gate.actions import Action
+    from capsem.gate.context import Context
+    from capsem.gate.execution import Requires, step
+    from capsem.gate.plan import Plan
+
+    checked: list[str] = []
+    ran: list[str] = []
+
+    class Reclaimed(Action, name="reclaimed-carried-product"):
+        def render(self) -> str:
+            return "require a deliberately reclaimed helper image"
+
+        def perform(self, context: Context) -> None:
+            del context
+            checked.append("checked")
+
+    class Work(Action, name="work-after-reclaimed-product"):
+        def render(self) -> str:
+            return "run work unrelated to the reclaimed helper image"
+
+        def perform(self, context: Context) -> None:
+            del context
+            ran.append("ran")
+
+    plan = Plan("resume-after-product-lifetime")
+    materialized = plan.add(step("materialize", carry_checks=(Reclaimed(),)))
+    consumed = plan.add(
+        step("consume"),
+        after=(materialized,),
+        requires=Requires.ARTIFACT,
+    )
+    plan.add(step("later", Work()), after=(consumed,))
+    context = Context(
+        RecordingRunner(PROJECT_ROOT),
+        _config(),
+        journal=RecordingJournal(),
+        carried=frozenset({"materialize", "consume"}),
+    )
+
+    plan.run(context)
+
+    assert checked == []
+    assert ran == ["ran"]
+
+
+def test_a_carried_check_without_artifact_consumers_remains_fail_closed() -> None:
+    """Durable evidence checks are never inferred to have expired."""
+    from helpers.gate import RecordingJournal, RecordingRunner
+
+    from capsem.gate.actions import Action
+    from capsem.gate.context import Context
+    from capsem.gate.errors import GateError
+    from capsem.gate.execution import step
+    from capsem.gate.plan import Plan
+
+    class Missing(Action, name="missing-durable-evidence"):
+        def render(self) -> str:
+            return "require durable evidence"
+
+        def perform(self, context: Context) -> None:
+            del context
+            raise GateError("durable evidence is missing")
+
+    plan = Plan("resume-durable-evidence")
+    plan.add(step("evidence", carry_checks=(Missing(),)))
+    context = Context(
+        RecordingRunner(PROJECT_ROOT),
+        _config(),
+        journal=RecordingJournal(),
+        carried=frozenset({"evidence"}),
+    )
+
+    with pytest.raises(GateError, match="durable evidence is missing"):
+        plan.run(context)
 
 
 def test_every_command_can_be_told_to_resume() -> None:
