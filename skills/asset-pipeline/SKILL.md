@@ -82,6 +82,15 @@ rerun the failing recipe.
 Existing VM pins are preserved by the VM pinning rail; deprecation blocks new
 selection rather than rewriting running VMs.
 
+Persistent resume has its own immutable authority: the registry's profile and
+asset pins plus the session's saved validated `vm/active_profile.toml`. Never
+materialize today's profile over that file before deciding whether the old VM
+may boot. A normal profile/image advance and a deprecated pin preserve the VM;
+an explicit installed-manifest revocation, a corrupt saved profile, a missing
+pinned asset, or invalid rootfs geometry blocks it. Any cached resume verdict
+must fingerprint the saved profile, installed manifest, rootfs metadata, and
+pinned asset metadata so a revocation or repair is visible immediately.
+
 ## Common Issues
 
 **Hash mismatch at boot**: Assets on disk don't match the hashes baked into the binary. Fix: `just shell` (repacks initrd, regenerates manifest, touches build.rs to force recompile).

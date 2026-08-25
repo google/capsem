@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Persistent named VMs now resume from their saved validated runtime profile,
+  rootfs geometry, and immutable asset pins instead of being invalidated or
+  overwritten when the currently selected profile advances. Deprecated pins
+  remain usable by existing VMs; missing/corrupt saved state and explicit
+  profile or image revocation still fail closed.
+
 - The terminal UI now keeps immutable session UUIDs behind the routing boundary
   and consistently shows human session names in tabs, lifecycle prompts,
   confirmations, and action results. Its deterministic Ratatui interaction

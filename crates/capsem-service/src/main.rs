@@ -1993,18 +1993,11 @@ impl ServiceState {
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
 
-        let runtime_profile = self.profile_for_runtime(&entry.profile_id)?;
-        let active_profile_path =
-            self.materialize_active_profile(&runtime_profile, &entry.session_dir)?;
-        let profile = runtime_profile.config();
-        let scratch_disk_size_gb = profile.vm.scratch_disk_size_gb;
-        self.validate_profile_pins(
-            profile,
-            &entry.profile_revision,
-            &entry.profile_payload_hash,
-            &entry.asset_pins,
-        )?;
-        let resolved = self.resolve_profile_asset_paths(profile)?;
+        self.validate_persistent_profile_authority(&entry)?;
+        let active_profile_path = self.persistent_active_profile_path(&entry)?;
+        let scratch_disk_size_gb = self.persistent_scratch_disk_size_gb(&entry)?;
+        let resolved = self.resolve_pinned_asset_paths(&entry.asset_pins)?;
+        self.validate_pinned_asset_files(&resolved, &entry.asset_pins)?;
 
         let process_log_path = entry.session_dir.join("process.log");
         let process_log_file = std::fs::OpenOptions::new()
@@ -2570,6 +2563,95 @@ impl ServiceState {
         Ok(())
     }
 
+    fn persistent_active_profile_path(&self, entry: &PersistentVmEntry) -> Result<PathBuf> {
+        let active_profile_path = entry
+            .session_dir
+            .join(ACTIVE_PROFILE_DIR)
+            .join(ACTIVE_PROFILE_FILE);
+        if active_profile_path.exists() {
+            validate_saved_active_profile(&active_profile_path, entry)?;
+            return Ok(active_profile_path);
+        }
+
+        let current = self.profile_for_runtime(&entry.profile_id)?;
+        self.validate_profile_identity_and_pins(
+            current.config(),
+            &entry.profile_revision,
+            &entry.profile_payload_hash,
+            &entry.asset_pins,
+        )?;
+        self.materialize_active_profile(&current, &entry.session_dir)
+    }
+
+    fn validate_persistent_profile_authority(&self, entry: &PersistentVmEntry) -> Result<()> {
+        reject_revoked_persistent_pins(&self.assets_dir, entry)?;
+        let active_profile_path = entry
+            .session_dir
+            .join(ACTIVE_PROFILE_DIR)
+            .join(ACTIVE_PROFILE_FILE);
+        if active_profile_path.exists() {
+            validate_saved_active_profile(&active_profile_path, entry)?;
+            return Ok(());
+        }
+
+        let current = self.profile_config(&entry.profile_id)?;
+        self.validate_profile_identity_and_pins(
+            &current,
+            &entry.profile_revision,
+            &entry.profile_payload_hash,
+            &entry.asset_pins,
+        )
+    }
+
+    fn persistent_scratch_disk_size_gb(&self, entry: &PersistentVmEntry) -> Result<u32> {
+        let actual = session_rootfs_size_gb(entry)?;
+        let Ok(current) = self.profile_config(&entry.profile_id) else {
+            return Ok(actual);
+        };
+        if self
+            .validate_profile_identity_and_pins(
+                &current,
+                &entry.profile_revision,
+                &entry.profile_payload_hash,
+                &entry.asset_pins,
+            )
+            .is_ok()
+            && actual != current.vm.scratch_disk_size_gb
+        {
+            return Err(anyhow!(
+                "VM '{}' rootfs.img logical size mismatch: current {} GiB, pinned profile '{}' requires {} GiB",
+                entry.name,
+                actual,
+                current.id,
+                current.vm.scratch_disk_size_gb
+            ));
+        }
+        Ok(actual)
+    }
+
+    fn resolve_pinned_asset_paths(
+        &self,
+        pins: &BootAssetPins,
+    ) -> Result<capsem_core::asset_manager::ResolvedAssets> {
+        let arch = capsem_core::net::policy_config::current_profile_arch();
+        Ok(capsem_core::asset_manager::ResolvedAssets {
+            kernel: boot_asset_pin_path(&self.assets_dir, arch, &pins.kernel),
+            initrd: boot_asset_pin_path(&self.assets_dir, arch, &pins.initrd),
+            rootfs: boot_asset_pin_path(&self.assets_dir, arch, &pins.rootfs),
+            asset_version: "persistent-pins".to_string(),
+        })
+    }
+
+    fn validate_pinned_asset_files(
+        &self,
+        resolved: &capsem_core::asset_manager::ResolvedAssets,
+        pins: &BootAssetPins,
+    ) -> Result<()> {
+        validate_asset_file_pin("kernel", &resolved.kernel, &pins.kernel)?;
+        validate_asset_file_pin("initrd", &resolved.initrd, &pins.initrd)?;
+        validate_asset_file_pin("rootfs", &resolved.rootfs, &pins.rootfs)
+    }
+
     fn persistent_entry_resume_state(
         &self,
         entry: &PersistentVmEntry,
@@ -2578,29 +2660,10 @@ impl ServiceState {
             return (VmLifecycleState::Defunct, false, entry.last_error.clone());
         }
 
-        let profile = match self.profile_config(&entry.profile_id) {
-            Ok(profile) => profile,
-            Err(err) => {
-                return (
-                    VmLifecycleState::Incompatible,
-                    false,
-                    Some(format!(
-                        "profile '{}' unavailable for VM '{}': {err}",
-                        entry.profile_id, entry.name
-                    )),
-                );
-            }
-        };
-
-        if let Err(err) = self.validate_profile_identity_and_pins(
-            &profile,
-            &entry.profile_revision,
-            &entry.profile_payload_hash,
-            &entry.asset_pins,
-        ) {
+        if let Err(err) = self.validate_persistent_profile_authority(entry) {
             return (VmLifecycleState::Incompatible, false, Some(err.to_string()));
         }
-        if let Err(err) = validate_session_rootfs_size(&profile, entry) {
+        if let Err(err) = self.persistent_scratch_disk_size_gb(entry) {
             return (VmLifecycleState::Incompatible, false, Some(err.to_string()));
         }
 
@@ -2610,7 +2673,11 @@ impl ServiceState {
             VmLifecycleState::Stopped
         };
 
-        match self.validate_profile_asset_files(&profile, &entry.asset_pins) {
+        let resolved = match self.resolve_pinned_asset_paths(&entry.asset_pins) {
+            Ok(resolved) => resolved,
+            Err(err) => return (status, false, Some(err.to_string())),
+        };
+        match self.validate_pinned_asset_files(&resolved, &entry.asset_pins) {
             Ok(()) => (status, true, None),
             Err(err) => (status, false, Some(err.to_string())),
         }
@@ -2621,7 +2688,7 @@ impl ServiceState {
         entry: &PersistentVmEntry,
     ) -> (VmLifecycleState, bool, Option<String>) {
         let vm_id = persistent_entry_vm_id(entry);
-        let fingerprint = persistent_resume_state_fingerprint(entry);
+        let fingerprint = persistent_resume_state_fingerprint(self, entry);
         if let Some(cached) = self
             .persistent_resume_state_cache
             .lock()
@@ -2658,11 +2725,7 @@ fn gib(bytes: u64) -> u64 {
     bytes / 1024 / 1024 / 1024
 }
 
-fn validate_session_rootfs_size(
-    profile: &ProfileConfigFile,
-    entry: &PersistentVmEntry,
-) -> Result<()> {
-    let expected_bytes = u64::from(profile.vm.scratch_disk_size_gb) * 1024 * 1024 * 1024;
+fn session_rootfs_size_gb(entry: &PersistentVmEntry) -> Result<u32> {
     let rootfs = capsem_core::guest_share_dir(&entry.session_dir).join("system/rootfs.img");
     let metadata = std::fs::metadata(&rootfs).with_context(|| {
         format!(
@@ -2671,13 +2734,125 @@ fn validate_session_rootfs_size(
             rootfs.display()
         )
     })?;
-    if metadata.len() != expected_bytes {
+    let gib_bytes = 1024_u64 * 1024 * 1024;
+    if metadata.len() == 0 || metadata.len() % gib_bytes != 0 {
         return Err(anyhow!(
-            "VM '{}' rootfs.img logical size mismatch: current {} GiB, profile '{}' requires {} GiB",
+            "VM '{}' rootfs.img logical size is not a positive whole GiB: {} bytes",
             entry.name,
-            gib(metadata.len()),
-            profile.id,
-            profile.vm.scratch_disk_size_gb
+            metadata.len()
+        ));
+    }
+    u32::try_from(gib(metadata.len())).map_err(|_| {
+        anyhow!(
+            "VM '{}' rootfs.img logical size is too large: {} GiB",
+            entry.name,
+            gib(metadata.len())
+        )
+    })
+}
+
+fn validate_saved_active_profile(path: &StdPath, entry: &PersistentVmEntry) -> Result<()> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("read saved active profile {}", path.display()))?;
+    let active: ActiveProfileFile = toml::from_str(&text)
+        .with_context(|| format!("parse saved active profile {}", path.display()))?;
+    active
+        .validate()
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("validate saved active profile {}", path.display()))?;
+    if active.id != entry.profile_id {
+        return Err(anyhow!(
+            "saved profile id mismatch for VM '{}': pinned '{}', saved '{}'",
+            entry.name,
+            entry.profile_id,
+            active.id
+        ));
+    }
+    if active.revision != entry.profile_revision {
+        return Err(anyhow!(
+            "saved profile revision mismatch for VM '{}': pinned '{}', saved '{}'",
+            entry.name,
+            entry.profile_revision,
+            active.revision
+        ));
+    }
+    Ok(())
+}
+
+fn boot_asset_pin_path(assets_dir: &StdPath, arch: &str, pin: &BootAssetPin) -> PathBuf {
+    let bases = [assets_dir.join(arch), assets_dir.to_path_buf()];
+    let hash_name = boot_asset_pin_hash_name(pin);
+    for base in &bases {
+        let path = base.join(&hash_name);
+        if path.exists() {
+            return path;
+        }
+    }
+    for base in &bases {
+        let path = base.join(&pin.name);
+        if path.exists() {
+            return path;
+        }
+    }
+    bases[0].join(hash_name)
+}
+
+fn reject_revoked_persistent_pins(assets_dir: &StdPath, entry: &PersistentVmEntry) -> Result<()> {
+    let manifest_path = assets_dir.join("manifest.json");
+    let Ok(bytes) = std::fs::read(&manifest_path) else {
+        return Ok(());
+    };
+    let manifest: serde_json::Value = serde_json::from_slice(&bytes)
+        .with_context(|| format!("parse installed manifest {}", manifest_path.display()))?;
+    let Some(profile) = manifest
+        .get("profiles")
+        .and_then(|profiles| profiles.get(&entry.profile_id))
+    else {
+        return Ok(());
+    };
+    if profile
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|status| status.eq_ignore_ascii_case("revoked"))
+    {
+        return Err(anyhow!(
+            "profile '{}' is explicitly revoked for persistent VM '{}'",
+            entry.profile_id,
+            entry.name
+        ));
+    }
+
+    let pinned_hashes = [
+        &entry.asset_pins.kernel,
+        &entry.asset_pins.initrd,
+        &entry.asset_pins.rootfs,
+    ]
+    .into_iter()
+    .map(|pin| pin.hash.strip_prefix("blake3:").unwrap_or(&pin.hash))
+    .collect::<HashSet<_>>();
+    let revoked_hash = profile
+        .get("architectures")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|architecture| architecture.get("images"))
+        .filter_map(serde_json::Value::as_array)
+        .flatten()
+        .find_map(|image| {
+            let revoked = image
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|status| status.eq_ignore_ascii_case("revoked"));
+            let hash = image
+                .pointer("/digest/blake3")
+                .and_then(serde_json::Value::as_str)?;
+            (revoked && pinned_hashes.contains(hash)).then_some(hash)
+        });
+    if let Some(hash) = revoked_hash {
+        return Err(anyhow!(
+            "persistent VM '{}' pins explicitly revoked image blake3:{}",
+            entry.name,
+            hash
         ));
     }
     Ok(())
@@ -3996,7 +4171,7 @@ fn list_response_fingerprint(state: &ServiceState) -> String {
                 entry.suspended,
                 entry.defunct,
                 entry.session_dir.display(),
-                persistent_resume_state_fingerprint(entry)
+                persistent_resume_state_fingerprint(state, entry)
             );
         }
     }
@@ -11194,7 +11369,13 @@ fn persistent_entry_vm_id(entry: &PersistentVmEntry) -> String {
         .to_string()
 }
 
-fn persistent_resume_state_fingerprint(entry: &PersistentVmEntry) -> String {
+fn persistent_resume_state_fingerprint(state: &ServiceState, entry: &PersistentVmEntry) -> String {
+    let arch = capsem_core::net::policy_config::current_profile_arch();
+    let active_profile = entry
+        .session_dir
+        .join(ACTIVE_PROFILE_DIR)
+        .join(ACTIVE_PROFILE_FILE);
+    let rootfs = capsem_core::guest_share_dir(&entry.session_dir).join("system/rootfs.img");
     json!({
         "id": persistent_entry_vm_id(entry),
         "profile_id": entry.profile_id,
@@ -11205,8 +11386,31 @@ fn persistent_resume_state_fingerprint(entry: &PersistentVmEntry) -> String {
         "suspended": entry.suspended,
         "defunct": entry.defunct,
         "last_error": entry.last_error,
+        "active_profile": small_file_fingerprint(&active_profile),
+        "installed_manifest": small_file_fingerprint(&state.assets_dir.join("manifest.json")),
+        "rootfs": file_metadata_fingerprint(&rootfs),
+        "kernel": file_metadata_fingerprint(&boot_asset_pin_path(&state.assets_dir, arch, &entry.asset_pins.kernel)),
+        "initrd": file_metadata_fingerprint(&boot_asset_pin_path(&state.assets_dir, arch, &entry.asset_pins.initrd)),
+        "rootfs_asset": file_metadata_fingerprint(&boot_asset_pin_path(&state.assets_dir, arch, &entry.asset_pins.rootfs)),
     })
     .to_string()
+}
+
+fn small_file_fingerprint(path: &StdPath) -> Option<String> {
+    std::fs::read(path)
+        .ok()
+        .map(|bytes| blake3::hash(&bytes).to_hex().to_string())
+}
+
+fn file_metadata_fingerprint(path: &StdPath) -> Option<(u64, u128)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    let modified = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some((metadata.len(), modified))
 }
 
 fn find_persistent_entry_by_route_id(state: &ServiceState, id: &str) -> Option<PersistentVmEntry> {

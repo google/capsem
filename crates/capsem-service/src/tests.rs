@@ -8528,6 +8528,125 @@ fn resume_rejects_profile_revision_drift() {
 }
 
 #[test]
+fn persistent_resume_uses_saved_profile_when_current_profile_revision_advances() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let session_dir = state.run_dir.join("persistent/older-profile");
+    let runtime_profile = state.profile_for_runtime("code").unwrap();
+    let active_profile_path = state
+        .materialize_active_profile(&runtime_profile, &session_dir)
+        .unwrap();
+    let mut active_profile: ActiveProfileFile =
+        toml::from_str(&std::fs::read_to_string(&active_profile_path).unwrap()).unwrap();
+    active_profile.revision = "older-supported-revision".to_string();
+    std::fs::write(
+        &active_profile_path,
+        toml::to_string_pretty(&active_profile).unwrap(),
+    )
+    .unwrap();
+    let rootfs = capsem_core::guest_share_dir(&session_dir).join("system/rootfs.img");
+    std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
+    std::fs::File::create(rootfs)
+        .unwrap()
+        .set_len(u64::from(runtime_profile.config().vm.scratch_disk_size_gb) * 1024 * 1024 * 1024)
+        .unwrap();
+
+    let mut entry = test_persistent_entry("older-profile", session_dir);
+    entry.profile_revision = active_profile.revision;
+
+    assert_eq!(
+        state.persistent_entry_resume_state_cached(&entry),
+        (VmLifecycleState::Stopped, true, None),
+        "a newer current profile must not invalidate a verified persistent VM pin"
+    );
+}
+
+#[test]
+fn persistent_resume_rejects_a_corrupt_saved_active_profile() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let session_dir = state.run_dir.join("persistent/corrupt-saved-profile");
+    let active_profile = session_dir
+        .join(ACTIVE_PROFILE_DIR)
+        .join(ACTIVE_PROFILE_FILE);
+    std::fs::create_dir_all(active_profile.parent().unwrap()).unwrap();
+    std::fs::write(&active_profile, "not = [valid toml").unwrap();
+    let entry = test_persistent_entry("corrupt-saved-profile", session_dir);
+
+    let (status, can_resume, reason) = state.persistent_entry_resume_state_cached(&entry);
+    assert_eq!(status, VmLifecycleState::Incompatible);
+    assert!(!can_resume);
+    assert!(
+        reason.unwrap().contains("parse saved active profile"),
+        "corrupt saved policy must fail closed"
+    );
+}
+
+#[test]
+fn persistent_resume_allows_deprecated_pins_but_blocks_explicit_revocation() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_profile_assets(&state);
+    let session_dir = state.run_dir.join("persistent/deprecated-pin");
+    let runtime_profile = state.profile_for_runtime("code").unwrap();
+    state
+        .materialize_active_profile(&runtime_profile, &session_dir)
+        .unwrap();
+    let rootfs = capsem_core::guest_share_dir(&session_dir).join("system/rootfs.img");
+    std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
+    std::fs::File::create(rootfs)
+        .unwrap()
+        .set_len(u64::from(runtime_profile.config().vm.scratch_disk_size_gb) * 1024 * 1024 * 1024)
+        .unwrap();
+    let entry = test_persistent_entry("deprecated-pin", session_dir);
+    let hash = entry
+        .asset_pins
+        .rootfs
+        .hash
+        .strip_prefix("blake3:")
+        .unwrap();
+    let manifest_path = state.assets_dir.join("manifest.json");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "profiles": {
+                "code": {
+                    "status": "supported",
+                    "architectures": [{
+                        "images": [{
+                            "kind": "rootfs",
+                            "status": "deprecated",
+                            "digest": {"blake3": hash}
+                        }]
+                    }]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        state.persistent_entry_resume_state_cached(&entry),
+        (VmLifecycleState::Stopped, true, None),
+        "deprecation blocks new selection, not an existing VM pin"
+    );
+
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["profiles"]["code"]["architectures"][0]["images"][0]["status"] =
+        serde_json::json!("revoked");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    let (status, can_resume, reason) = state.persistent_entry_resume_state_cached(&entry);
+    assert_eq!(status, VmLifecycleState::Incompatible);
+    assert!(!can_resume);
+    assert!(reason.unwrap().contains("explicitly revoked image"));
+}
+
+#[test]
 fn resume_rejects_profile_payload_hash_drift() {
     let (state, _dir) = make_test_state_with_tempdir();
     install_test_profile_assets(&state);
@@ -10121,6 +10240,14 @@ async fn resume_sandbox_passes_profile_scratch_disk_size_to_process() {
     let vm_id = new_persistent_vm_id();
     let session_dir = state.run_dir.join("persistent").join(&vm_id);
     std::fs::create_dir_all(&session_dir).unwrap();
+    let rootfs = capsem_core::guest_share_dir(&session_dir).join("system/rootfs.img");
+    std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
+    std::fs::File::create(rootfs)
+        .unwrap()
+        .set_len(
+            u64::from(materialized_test_profile().vm.scratch_disk_size_gb) * 1024 * 1024 * 1024,
+        )
+        .unwrap();
     let mut entry = test_persistent_entry("resume-size", session_dir);
     entry.id = vm_id.clone();
     state
