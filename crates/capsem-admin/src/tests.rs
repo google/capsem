@@ -2355,6 +2355,8 @@ fn assets_channel_headers_split_mutable_and_immutable_paths() {
 
     assert!(headers.contains("/\n  Cache-Control: no-cache, must-revalidate"));
     assert!(headers.contains("/index.html\n  Cache-Control: no-cache, must-revalidate"));
+    assert!(headers.contains("/404\n  Cache-Control: no-cache, must-revalidate"));
+    assert!(headers.contains("/404.html\n  Cache-Control: no-cache, must-revalidate"));
     assert!(headers.contains("/health.json\n  Cache-Control: no-cache, must-revalidate"));
     assert!(headers.contains("/assets/stable/*\n  Cache-Control: no-cache, must-revalidate"));
     assert!(!headers.contains("/profiles/stable/*\n  Cache-Control: no-cache"));

@@ -3593,6 +3593,12 @@ fn validate_assets_channel_headers(headers: &str, channel: &str) -> Result<()> {
     if !headers.contains("/channels.json\n  Cache-Control: no-cache, must-revalidate") {
         return Err(anyhow!("_headers must keep channels.json fresh"));
     }
+    for path in ["/404", "/404.html"] {
+        let rule = format!("{path}\n  Cache-Control: no-cache, must-revalidate");
+        if !headers.contains(&rule) {
+            return Err(anyhow!("_headers must keep {path} fresh"));
+        }
+    }
     if !headers.contains("/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable")
     {
         return Err(anyhow!("_headers must cache immutable asset releases"));
@@ -6738,6 +6744,10 @@ fn render_assets_channel_headers_for_channels(channels: &[String]) -> String {
         "/".to_string(),
         "  Cache-Control: no-cache, must-revalidate".to_string(),
         "/index.html".to_string(),
+        "  Cache-Control: no-cache, must-revalidate".to_string(),
+        "/404".to_string(),
+        "  Cache-Control: no-cache, must-revalidate".to_string(),
+        "/404.html".to_string(),
         "  Cache-Control: no-cache, must-revalidate".to_string(),
         "/channels.json".to_string(),
         "  Cache-Control: no-cache, must-revalidate".to_string(),
