@@ -86,7 +86,6 @@ class LocalInstallCommand(
                     [
                         *config.install.local_macos_installer,
                         str(package),
-                        "-target",
                         config.install.local_macos_target,
                     ],
                     outside_sandbox=True,

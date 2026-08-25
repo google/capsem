@@ -42,7 +42,14 @@ def test_local_install_builds_content_package_then_installs_that_exact_package(
     assert labels.index("local-install.content") < labels.index("local-install.package")
     assert labels.index("local-install.package") < labels.index("local-install.install")
     assert "scripts/build-test-macos-package.sh" in rendered
-    assert "sudo /usr/sbin/installer -pkg" in rendered
+    assert "scripts/install-local-macos-package.applescript" in rendered
+    assert "sudo /usr/sbin/installer" not in rendered
+    authorization = (ROOT / "scripts/install-local-macos-package.applescript").read_text(
+        encoding="utf-8"
+    )
+    assert "quoted form of packagePath" in authorization
+    assert "quoted form of targetPath" in authorization
+    assert "with administrator privileges" in authorization
     version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))[
         "workspace"
     ]["package"]["version"]

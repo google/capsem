@@ -220,7 +220,7 @@ manifest_version = "1.0.0"
 # candidate package the macOS qualification adapter consumes, then installs it
 # synchronously. Qualification itself remains in the release lane.
 local_macos_package_script = "scripts/build-test-macos-package.sh"
-local_macos_installer = ["sudo", "/usr/sbin/installer", "-pkg"]
+local_macos_installer = ["/usr/bin/osascript", "scripts/install-local-macos-package.applescript"]
 local_macos_target = "/"
 
 # Build output the install proof reads, which the image cannot carry because

@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `just install` now opens the native macOS administrator authorization dialog
+  for the exact package install instead of depending on terminal `sudo` state,
+  so bounded agent runs can complete without an interactive TTY.
+
 - `just install` now packages the exact base-profile asset/config pair that
   Ironbank built and verified, instead of reopening the checkout's canonical
   `assets` symlink. A cold macOS install can therefore reuse the assembled
