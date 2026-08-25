@@ -107,7 +107,7 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
         < verdict
     )
     assert "activate_production:" in workflow
-    assert "workflow_dispatch:" in workflow
+    assert "workflow_dispatch:" not in workflow
     assert "artifact_run_id:" in workflow
     assert "scripts/verify-release-recovery-run.py" in workflow
     assert 'test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"' in workflow

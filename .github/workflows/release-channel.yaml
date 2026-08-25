@@ -1,40 +1,6 @@
 name: Publish Generated Channel
 
 on:
-  workflow_dispatch:
-    inputs:
-      channel:
-        type: choice
-        required: true
-        options: [stable, nightly]
-      dist_artifact:
-        type: string
-        required: false
-        default: binary-channel-preview
-      artifact_run_id:
-        description: Failed release run containing the verified channel artifact.
-        type: string
-        required: true
-      source_commit:
-        description: Exact source commit qualified by the failed release run.
-        type: string
-        required: true
-      deploy_branch:
-        type: string
-        required: false
-        default: main
-      activate_production:
-        type: boolean
-        required: false
-        default: true
-      release_site_url:
-        type: string
-        required: false
-        default: https://release.capsem.org
-      validate_complete_public_channels:
-        type: boolean
-        required: false
-        default: true
   workflow_call:
     inputs:
       channel:
