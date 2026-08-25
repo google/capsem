@@ -8,7 +8,7 @@ id = "code"
 name = "Code"
 description = "Optimized for coding and long-running agents."
 icon_svg = "<svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M5.5 3 1.5 8l4 5 1.2-1-3.2-4 3.2-4L5.5 3Zm5 0-1.2 1 3.2 4-3.2 4 1.2 1 4-5-4-5Z\"/></svg>"
-revision = "0.6.0"
+revision = "0.6.1"
 refresh_policy = "24h"
 
 [availability]
