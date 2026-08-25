@@ -41,6 +41,12 @@ ORPHANS = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = ORPHANS
 SPEC.loader.exec_module(ORPHANS)
 
+BOUNDED_SPEC = importlib.util.spec_from_file_location("run_bounded_command_guard", BOUNDED)
+assert BOUNDED_SPEC is not None and BOUNDED_SPEC.loader is not None
+BOUNDED_MODULE = importlib.util.module_from_spec(BOUNDED_SPEC)
+sys.modules[BOUNDED_SPEC.name] = BOUNDED_MODULE
+BOUNDED_SPEC.loader.exec_module(BOUNDED_MODULE)
+
 
 def _pid_is_alive(pid: int) -> bool:
     result = subprocess.run(
@@ -70,6 +76,29 @@ def test_direct_development_commands_cannot_wait_on_terminal_stdin() -> None:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_bounded_cleanup_tolerates_macos_permission_denied_after_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def killpg(_pid: int, _signal: int) -> None:
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise PermissionError(1, "Operation not permitted")
+
+    class FinishedProcess:
+        pid = 42
+
+        @staticmethod
+        def poll() -> int:
+            return 0
+
+    monkeypatch.setattr(BOUNDED_MODULE.os, "killpg", killpg)
+
+    BOUNDED_MODULE._terminate_group(FinishedProcess(), grace_seconds=0)
 
 
 @pytest.mark.skipif(

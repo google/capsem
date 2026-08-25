@@ -45,7 +45,7 @@ def _terminate_group(process: subprocess.Popen[bytes], grace_seconds: float) -> 
     """Terminate every descendant in the command's dedicated process group."""
     try:
         os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         return
 
     deadline = time.monotonic() + grace_seconds
@@ -53,7 +53,7 @@ def _terminate_group(process: subprocess.Popen[bytes], grace_seconds: float) -> 
         process.poll()  # reap the process-group leader as soon as it exits
         try:
             os.killpg(process.pid, 0)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             return
         if time.monotonic() >= deadline:
             break
@@ -61,7 +61,7 @@ def _terminate_group(process: subprocess.Popen[bytes], grace_seconds: float) -> 
 
     try:
         os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         return
     if process.poll() is None:
         process.wait()
