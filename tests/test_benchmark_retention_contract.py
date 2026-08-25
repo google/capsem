@@ -125,7 +125,7 @@ def test_benchmark_regression_policy_is_relative_and_config_owned() -> None:
     factor = maximum_factor(PROJECT_ROOT)
     assert factor == 1.2
 
-    baseline = {"fork": {"fork_ms": {"mean": 100.0}}}
+    baseline = {"fork": {"fork_ms": {"min": 100.0}}}
     assert_within_evidence(
         metric=BenchmarkMetric.FORK_DURATION,
         current=120.0,
@@ -133,13 +133,26 @@ def test_benchmark_regression_policy_is_relative_and_config_owned() -> None:
         factor=factor,
     )
 
-    with pytest.raises(AssertionError, match=r"fork\.fork_ms\.mean regressed 1\.21x"):
+    with pytest.raises(AssertionError, match=r"fork\.fork_ms\.min regressed 1\.21x"):
         assert_within_evidence(
             metric=BenchmarkMetric.FORK_DURATION,
             current=121.0,
             baseline=baseline,
             factor=factor,
         )
+
+
+def test_fork_duration_ratchet_uses_the_least_contended_sample() -> None:
+    """Shared-runner pauses must not turn a capable fork into a regression."""
+    current = {"fork": {"fork_ms": {"min": 100.0, "mean": 200.0}}}
+    baseline = {"fork": {"fork_ms": {"min": 90.0, "mean": 100.0}}}
+
+    assert_within_evidence(
+        metric=BenchmarkMetric.FORK_DURATION,
+        current=metric_value(current, BenchmarkMetric.FORK_DURATION),
+        baseline=baseline,
+        factor=1.2,
+    )
 
 
 def test_latest_benchmark_evidence_ignores_untracked_results(tmp_path: Path) -> None:

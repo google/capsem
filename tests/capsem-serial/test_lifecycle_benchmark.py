@@ -24,6 +24,7 @@ from helpers.benchmark_ratchet import (
     latest_checked_in_benchmark,
     maximum_factor,
     measuring_profile,
+    metric_value,
 )
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.package_probe import (
@@ -295,15 +296,15 @@ def test_lifecycle_benchmark():
             "ratcheting against another profile's numbers"
         )
         return
-    for metric, op in [
-        (BenchmarkMetric.LIFECYCLE_PROVISION, "provision_ms"),
-        (BenchmarkMetric.LIFECYCLE_READY, "exec_ready_ms"),
-        (BenchmarkMetric.LIFECYCLE_EXEC, "exec_ms"),
-        (BenchmarkMetric.LIFECYCLE_DELETE, "delete_ms"),
-    ]:
+    for metric in (
+        BenchmarkMetric.LIFECYCLE_PROVISION,
+        BenchmarkMetric.LIFECYCLE_READY,
+        BenchmarkMetric.LIFECYCLE_EXEC,
+        BenchmarkMetric.LIFECYCLE_DELETE,
+    ):
         assert_within_evidence(
             metric=metric,
-            current=summary["operations"][op]["mean"],
+            current=metric_value(summary, metric),
             baseline=baseline,
             factor=factor,
         )
@@ -386,15 +387,15 @@ def test_fork_benchmark():
 
 
 def _ratchet_fork(summary, baseline, factor):
-    for metric, op, statistic in [
-        (BenchmarkMetric.FORK_DURATION, "fork_ms", "mean"),
-        (BenchmarkMetric.FORK_IMAGE_SIZE, "image_size_mb", "max"),
-        (BenchmarkMetric.FORK_BOOT_PROVISION, "boot_provision_ms", "mean"),
-        (BenchmarkMetric.FORK_BOOT_READY, "boot_ready_ms", "mean"),
-    ]:
+    for metric in (
+        BenchmarkMetric.FORK_DURATION,
+        BenchmarkMetric.FORK_IMAGE_SIZE,
+        BenchmarkMetric.FORK_BOOT_PROVISION,
+        BenchmarkMetric.FORK_BOOT_READY,
+    ):
         assert_within_evidence(
             metric=metric,
-            current=summary["fork"][op][statistic],
+            current=metric_value(summary, metric),
             baseline=baseline,
             factor=factor,
         )
