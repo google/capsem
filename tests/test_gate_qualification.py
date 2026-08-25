@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import variables
 from helpers.workflow_contract import workflow_reachable_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -351,7 +352,7 @@ def test_the_capability_is_declared_rather_than_guessed() -> None:
 
     assert qualifying == {
         "candidate",
-        "focus-test",
+        variables.FOCUS_TEST,
         "test-candidate",
         "test-artifacts",
         "test-functional",

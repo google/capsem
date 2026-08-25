@@ -195,15 +195,7 @@ def _materialize_repository(source: Path, target: Path) -> None:
     remove(scratch)
     remove(target / ".git")
     subprocess.run(
-        [
-            "git",
-            "clone",
-            "--quiet",
-            "--no-hardlinks",
-            "--no-checkout",
-            str(source),
-            str(scratch),
-        ],
+        ["git", "clone", "--quiet", "--no-hardlinks", "--no-checkout", str(source), str(scratch)],
         check=True,
     )
     (scratch / ".git").rename(target / ".git")
