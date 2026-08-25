@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Binary release monitoring now reattaches to the same authoritative GitHub
+  Actions run after a transient `gh run watch` API failure. A temporary 5xx no
+  longer reports a false release failure, deletes the newly claimed version
+  tag, or tempts a duplicate dispatch; a completed red workflow still fails
+  closed.
+
 - Destructive VM delete and purge no longer query the per-session ledger they
   are erasing. An interrupted or partially initialized ledger can no longer
   make `purge --all` fail after process teardown and leave the VM registered.

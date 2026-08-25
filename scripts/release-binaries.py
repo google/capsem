@@ -12,6 +12,7 @@ import sys
 import time
 import tomllib
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,6 +40,7 @@ VERSION_COHORT_PATHS = (
 )
 
 SOURCE_COMMIT = re.compile(r"[0-9a-f]{40}\Z")
+RUN_FIELDS = "databaseId,displayTitle,headSha,headBranch,status,conclusion"
 
 
 @dataclass(frozen=True)
@@ -299,35 +301,33 @@ def _dispatch_release(
 def _complete_run(
     runner: Runner, run: ReleaseRun, tag: str, channel: str, source_commit: str, ref: str
 ) -> str:
-    if run.status == "completed":
-        if run.conclusion != "success":
-            raise RuntimeError(
-                f"{channel}/{tag} release run {run.database_id} completed with "
-                f"{run.conclusion or 'an unknown conclusion'}; diagnose that run "
-                "before retrying changed code"
-            )
-    else:
-        runner.run(("gh", "run", "watch", run.database_id, "--exit-status"))
-    viewed = json.loads(
-        _capture(
-            runner,
-            "gh",
-            "run",
-            "view",
-            run.database_id,
-            "--json",
-            "databaseId,displayTitle,headSha,headBranch,status,conclusion",
+    while True:
+        if run.status != "completed":
+            # A transient API 5xx kills the watcher, not the authoritative run.
+            with suppress(subprocess.CalledProcessError):
+                runner.run(("gh", "run", "watch", run.database_id, "--exit-status"))
+        viewed = json.loads(
+            _capture(runner, "gh", "run", "view", run.database_id, "--json", RUN_FIELDS)
         )
-    )
-    if (
-        str(viewed.get("databaseId")) != run.database_id
-        or viewed.get("displayTitle") != run.display_title
-        or viewed.get("headSha") != source_commit
-        or viewed.get("headBranch") != ref
-        or viewed.get("status") != "completed"
-        or viewed.get("conclusion") != "success"
-    ):
-        raise RuntimeError(f"completed release run identity changed: {viewed}")
+        status = viewed.get("status")
+        conclusion = viewed.get("conclusion")
+        identity_changed = (
+            str(viewed.get("databaseId")) != run.database_id
+            or viewed.get("displayTitle") != run.display_title,
+            viewed.get("headSha") != source_commit,
+            viewed.get("headBranch") != ref,
+        )
+        if any(identity_changed) or not isinstance(status, str) or not isinstance(conclusion, str):
+            raise RuntimeError(f"release run identity changed: {viewed}")
+        if status == "completed":
+            break
+        run = ReleaseRun(run.database_id, run.display_title, source_commit, ref, status, conclusion)
+    if conclusion != "success":
+        raise RuntimeError(
+            f"{channel}/{tag} release run {run.database_id} completed with "
+            f"{conclusion or 'an unknown conclusion'}; diagnose that run "
+            "before retrying changed code"
+        )
     return run.database_id
 
 

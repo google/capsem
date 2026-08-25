@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -279,6 +280,115 @@ def test_successful_resume_rechecks_the_exact_run_identity() -> None:
     assert run_id == "42"
     assert runner.calls[-1][:4] == ("gh", "run", "view", "42")
     assert not any(call[:3] == ("gh", "workflow", "run") for call in runner.calls)
+
+
+def test_transient_watch_failure_reattaches_to_the_same_run() -> None:
+    class TransientWatch(FakeRunner):
+        def __init__(self) -> None:
+            super().__init__(version_target=SOURCE)
+            self.watch_count = 0
+            self.view_count = 0
+
+        def run(self, argv, **kwargs):
+            command = tuple(argv)
+            if command[:4] == ("gh", "run", "list", "--workflow"):
+                self.calls.append(command)
+                return RELEASE.CommandResult(
+                    json.dumps(
+                        [
+                            {
+                                "databaseId": 42,
+                                "displayTitle": f"Release nightly {TAG}",
+                                "headSha": SOURCE,
+                                "headBranch": f"capsem-source-{SOURCE}",
+                                "status": "in_progress",
+                                "conclusion": "",
+                            }
+                        ]
+                    )
+                )
+            if command == ("gh", "run", "watch", "42", "--exit-status"):
+                self.calls.append(command)
+                self.watch_count += 1
+                if self.watch_count == 1:
+                    raise subprocess.CalledProcessError(1, command)
+                return RELEASE.CommandResult("")
+            if command[:4] == ("gh", "run", "view", "42"):
+                self.calls.append(command)
+                self.view_count += 1
+                completed = self.view_count > 1
+                return RELEASE.CommandResult(
+                    json.dumps(
+                        {
+                            "databaseId": 42,
+                            "displayTitle": f"Release nightly {TAG}",
+                            "headSha": SOURCE,
+                            "headBranch": f"capsem-source-{SOURCE}",
+                            "status": "completed" if completed else "in_progress",
+                            "conclusion": "success" if completed else "",
+                        }
+                    )
+                )
+            return super().run(argv, **kwargs)
+
+    runner = TransientWatch()
+
+    run_id = RELEASE._resume_release(
+        runner,
+        ref=f"capsem-source-{SOURCE}",
+        source_commit=SOURCE,
+        tag=TAG,
+        channel="nightly",
+        publish=True,
+    )
+
+    assert run_id == "42"
+    assert runner.watch_count == 2
+    assert not any(call[:3] == ("gh", "workflow", "run") for call in runner.calls)
+
+
+def test_transient_watch_failure_still_fails_closed_for_a_red_run() -> None:
+    class FailedWatch(FakeRunner):
+        def run(self, argv, **kwargs):
+            command = tuple(argv)
+            if command == ("gh", "run", "watch", "42", "--exit-status"):
+                self.calls.append(command)
+                raise subprocess.CalledProcessError(1, command)
+            if command[:4] == ("gh", "run", "view", "42"):
+                self.calls.append(command)
+                return RELEASE.CommandResult(
+                    json.dumps(
+                        {
+                            "databaseId": 42,
+                            "displayTitle": f"Release nightly {TAG}",
+                            "headSha": SOURCE,
+                            "headBranch": f"capsem-source-{SOURCE}",
+                            "status": "completed",
+                            "conclusion": "failure",
+                        }
+                    )
+                )
+            return super().run(argv, **kwargs)
+
+    runner = FailedWatch(version_target=SOURCE)
+    run = RELEASE.ReleaseRun(
+        "42",
+        f"Release nightly {TAG}",
+        SOURCE,
+        f"capsem-source-{SOURCE}",
+        "in_progress",
+        "",
+    )
+
+    with pytest.raises(RuntimeError, match="completed with failure"):
+        RELEASE._complete_run(
+            runner,
+            run,
+            TAG,
+            "nightly",
+            SOURCE,
+            f"capsem-source-{SOURCE}",
+        )
 
 
 def test_remote_version_tag_rejects_duplicate_rows() -> None:
