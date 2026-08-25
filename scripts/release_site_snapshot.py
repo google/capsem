@@ -129,8 +129,11 @@ def snapshot_distribution_bytes(
     delay_seconds: float,
     snapshot_out: Path | None,
     expect_snapshot: Path | None,
+    require_valid: bool = False,
+    same_origin_only: bool = True,
+    dist: Path | None = None,
 ) -> None:
-    """Capture rollback bytes even when the distribution being repaired is unhealthy."""
+    """Retry validation and exact bytes as one propagation boundary."""
     last_error: OSError | RuntimeError | ValueError | None = None
     rounds = max(attempts, 1)
     for attempt in range(1, rounds + 1):
@@ -138,8 +141,15 @@ def snapshot_distribution_bytes(
         if hasattr(cache, "clear"):
             cache.clear()
         try:
-            populate()
-            snapshot = release_fetch_snapshot(checker, release_site, same_origin_only=True)
+            result = populate()
+            if require_valid and result != 0:
+                raise RuntimeError("release contract validation failed")
+            snapshot = release_fetch_snapshot(
+                checker,
+                release_site,
+                dist=dist,
+                same_origin_only=same_origin_only,
+            )
             if snapshot_out is not None:
                 write_snapshot(snapshot_out, snapshot)
             elif expect_snapshot is not None:

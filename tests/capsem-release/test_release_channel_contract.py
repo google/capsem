@@ -547,6 +547,48 @@ def test_release_snapshot_fetches_every_public_deploy_file(tmp_path: Path) -> No
         SNAPSHOT.release_fetch_snapshot(checker, site, dist=dist)
 
 
+def test_strict_snapshot_retries_a_lagging_deploy_file(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    manifest = dist / "assets" / "stable" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    (dist / "channels.json").write_bytes(b'{"channels":{}}\n')
+    (dist / "404.html").write_bytes(b"candidate 404")
+    manifest.write_bytes(b'{"version":"1"}\n')
+    site = "https://release.capsem.org"
+    attempts = 0
+    cache: dict[str, Any] = {}
+
+    def populate() -> int:
+        nonlocal attempts
+        attempts += 1
+        return 0
+
+    def fetch(url: str) -> Any:
+        relative = url.removeprefix(f"{site}/")
+        body = (dist / relative).read_bytes()
+        if attempts == 1 and relative == "404.html":
+            body = b"stale 404"
+        result = SimpleNamespace(data=body, error=None)
+        cache[url] = result
+        return result
+
+    checker = SimpleNamespace(_FETCH_BYTES_CACHE=cache, fetch_bytes=fetch)
+    SNAPSHOT.snapshot_distribution_bytes(
+        checker,
+        site,
+        populate=populate,
+        attempts=2,
+        delay_seconds=0,
+        snapshot_out=tmp_path / "production.json",
+        expect_snapshot=None,
+        require_valid=True,
+        same_origin_only=False,
+        dist=dist,
+    )
+
+    assert attempts == 2
+
+
 def _cloudflare_project(
     deployment_id: str,
     *,

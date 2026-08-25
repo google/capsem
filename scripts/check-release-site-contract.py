@@ -14,12 +14,7 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from release_site_snapshot import (
-    release_fetch_snapshot,
-    require_snapshot,
-    snapshot_distribution_bytes,
-    write_snapshot,
-)
+from release_site_snapshot import snapshot_distribution_bytes
 
 from capsem import runtime_preflight_manifest as channel_resolver
 
@@ -87,25 +82,28 @@ def main() -> int:
         parser.error("--snapshot-only requires --snapshot-out or --expect-snapshot")
     if args.snapshot_only and args.dist is not None:
         parser.error("--snapshot-only cannot be combined with --dist")
+    if args.catalog_members and args.channels:
+        parser.error("--catalog-members cannot be combined with --channel")
     checker = load_readiness_checker()
-    if args.snapshot_only:
 
-        def populate_snapshot() -> int:
-            if args.catalog_members:
-                return validate_catalog_members(
-                    release_site=args.release_site,
-                    attempts=1,
-                    delay_seconds=0,
-                    checker=checker,
-                )
-            return validate_release_channels(
+    def populate_snapshot() -> int:
+        if args.catalog_members:
+            return validate_catalog_members(
                 release_site=args.release_site,
-                channels=args.channels or ["stable"],
                 attempts=1,
                 delay_seconds=0,
                 checker=checker,
             )
+        return validate_release_channels(
+            release_site=args.release_site,
+            channels=args.channels or ["stable"],
+            attempts=1,
+            delay_seconds=0,
+            checker=checker,
+        )
 
+    needs_snapshot = args.snapshot_out is not None or args.expect_snapshot is not None
+    if args.snapshot_only or needs_snapshot or args.dist is not None:
         try:
             snapshot_distribution_bytes(
                 checker,
@@ -115,6 +113,9 @@ def main() -> int:
                 delay_seconds=args.delay_seconds,
                 snapshot_out=args.snapshot_out,
                 expect_snapshot=args.expect_snapshot,
+                require_valid=not args.snapshot_only,
+                same_origin_only=args.snapshot_only,
+                dist=args.dist,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(error, file=sys.stderr)
@@ -122,36 +123,19 @@ def main() -> int:
         print(f"{args.release_site.rstrip('/')} release-channel byte snapshot passed.")
         return 0
     if args.catalog_members:
-        if args.channels:
-            parser.error("--catalog-members cannot be combined with --channel")
-        result = validate_catalog_members(
+        return validate_catalog_members(
             release_site=args.release_site,
             attempts=args.attempts,
             delay_seconds=args.delay_seconds,
             checker=checker,
         )
-    else:
-        result = validate_release_channels(
-            release_site=args.release_site,
-            channels=args.channels or ["stable"],
-            attempts=args.attempts,
-            delay_seconds=args.delay_seconds,
-            checker=checker,
-        )
-    if result != 0:
-        return result
-    if args.snapshot_out is None and args.expect_snapshot is None and args.dist is None:
-        return 0
-    try:
-        snapshot = release_fetch_snapshot(checker, args.release_site, dist=args.dist)
-        if args.snapshot_out is not None:
-            write_snapshot(args.snapshot_out, snapshot)
-        elif args.expect_snapshot is not None:
-            require_snapshot(args.expect_snapshot, snapshot)
-    except (OSError, RuntimeError, ValueError) as error:
-        print(f"release-channel byte snapshot failed: {error}", file=sys.stderr)
-        return 1
-    return 0
+    return validate_release_channels(
+        release_site=args.release_site,
+        channels=args.channels or ["stable"],
+        attempts=args.attempts,
+        delay_seconds=args.delay_seconds,
+        checker=checker,
+    )
 
 
 def validate_catalog_members(

@@ -40,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Production activation now retries exact static-file snapshot comparison through CDN propagation instead of rolling back on one stale file.
+
 - Complete release-channel validation now follows the public catalog instead of requiring intentionally absent channels.
 
 - Failed release deployment can now resume from its already-verified channel artifact without rebuilding or repeating qualification.
