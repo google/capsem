@@ -1,6 +1,40 @@
 name: Publish Generated Channel
 
 on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        type: choice
+        required: true
+        options: [stable, nightly]
+      dist_artifact:
+        type: string
+        required: false
+        default: binary-channel-preview
+      artifact_run_id:
+        description: Failed release run containing the verified channel artifact.
+        type: string
+        required: true
+      source_commit:
+        description: Exact source commit qualified by the failed release run.
+        type: string
+        required: true
+      deploy_branch:
+        type: string
+        required: false
+        default: main
+      activate_production:
+        type: boolean
+        required: false
+        default: true
+      release_site_url:
+        type: string
+        required: false
+        default: https://release.capsem.org
+      validate_complete_public_channels:
+        type: boolean
+        required: false
+        default: true
   workflow_call:
     inputs:
       channel:
@@ -9,6 +43,10 @@ on:
       dist_artifact:
         type: string
         required: true
+      artifact_run_id:
+        type: string
+        required: false
+        default: ""
       deploy_branch:
         type: string
         required: false
@@ -46,6 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Publish generated channel
     permissions:
+      actions: read
       contents: read
       deployments: write
 
@@ -58,7 +97,7 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
-          ref: ${{ inputs.source_commit || github.sha }}
+          ref: ${{ inputs.artifact_run_id != '' && github.sha || inputs.source_commit || github.sha }}
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
@@ -68,11 +107,43 @@ jobs:
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
+      - name: Require recovery tooling from current main
+        if: ${{ inputs.artifact_run_id != '' }}
+        run: |
+          git fetch --no-tags origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+
+      - name: Verify failed release run is safe to resume
+        if: ${{ inputs.artifact_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          mkdir -p target/release-channel-deployment
+          gh run view "$ARTIFACT_RUN_ID" \
+            --json databaseId,headSha,headBranch,event,workflowName,status,conclusion,jobs \
+            > target/release-channel-deployment/source-run.json
+          python scripts/verify-release-recovery-run.py \
+            --run target/release-channel-deployment/source-run.json \
+            --run-id "$ARTIFACT_RUN_ID" \
+            --source-commit "$SOURCE_COMMIT"
+
       - name: Download generated asset channel
+        if: ${{ inputs.artifact_run_id == '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: ${{ inputs.dist_artifact }}
           path: target/release-channel/
+
+      - name: Reuse verified asset channel from failed release
+        if: ${{ inputs.artifact_run_id != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ inputs.dist_artifact }}
+          path: target/release-channel/
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.artifact_run_id }}
 
       - name: Require generated asset channel
         run: |

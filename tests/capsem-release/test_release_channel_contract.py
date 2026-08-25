@@ -106,6 +106,12 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
         < verdict
     )
     assert "activate_production:" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "artifact_run_id:" in workflow
+    assert "scripts/verify-release-recovery-run.py" in workflow
+    assert 'test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"' in workflow
+    assert "github-token: ${{ github.token }}" in workflow
+    assert "run-id: ${{ inputs.artifact_run_id }}" in workflow
     assert "format('capsem-preview-{0}-{1}', github.run_id, github.run_attempt)" in workflow
     assert "PREVIEW_URL: ${{ steps.preview.outputs.deployment-url }}" in workflow
     assert "PREVIEW_URL: ${{ inputs.release_site_url }}" not in workflow

@@ -40,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Failed release deployment can now resume from its already-verified channel artifact without rebuilding or repeating qualification.
+
 - Allow a verified release to repair an already-broken production channel while retaining exact rollback-byte proof.
 
 - Binary release monitoring now reattaches to the same authoritative GitHub
