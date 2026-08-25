@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `just install` now packages the exact base-profile asset/config pair that
+  Ironbank built and verified, instead of reopening the checkout's canonical
+  `assets` symlink. A cold macOS install can therefore reuse the assembled
+  content without weakening the package rail's symlink-traversal guard.
+
 - Native installs now validate and activate the release manifest without
   synchronously downloading VM images. The service hydrates missing,
   hash-verified profile assets in the background, preserves resumable partial
