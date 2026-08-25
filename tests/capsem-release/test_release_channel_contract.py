@@ -113,6 +113,12 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     assert "--snapshot-out target/release-channel-deployment/candidate-release.json" in workflow
     assert "--expect-snapshot target/release-channel-deployment/candidate-release.json" in workflow
     assert "--expect-snapshot target/release-channel-deployment/prior-release.json" in workflow
+    prior_step = workflow[prior_snapshot:preview]
+    rollback_step = workflow[rollback_check:verdict]
+    assert "--snapshot-only" in prior_step
+    assert "--snapshot-only" in rollback_step
+    assert "--snapshot-only" not in workflow[preview_check:activation]
+    assert "--snapshot-only" not in workflow[activation_check:decision]
     assert (
         "PRODUCTION_DEPLOYMENT_ID: ${{ steps.production.outputs.pages-deployment-id }}" in workflow
     )
@@ -467,6 +473,39 @@ def test_release_snapshot_requires_catalog_and_manifest_evidence() -> None:
     )
     with pytest.raises(RuntimeError, match=r"channels\.json"):
         SNAPSHOT.release_fetch_snapshot(checker, "https://release.capsem.org")
+
+
+def test_prior_distribution_snapshot_ignores_broken_external_references(tmp_path: Path) -> None:
+    site = "https://release.capsem.org"
+    checker = SimpleNamespace(_FETCH_BYTES_CACHE={})
+
+    def failed_contract(**_kwargs: object) -> int:
+        checker._FETCH_BYTES_CACHE.update(
+            {
+                f"{site}/channels.json": SimpleNamespace(data=b"{}\n", error=None),
+                f"{site}/assets/stable/manifest.json": SimpleNamespace(
+                    data=b'{"channel":"stable"}\n', error=None
+                ),
+                "https://github.example.test/missing.img": SimpleNamespace(
+                    data=None, error="HTTP 404"
+                ),
+            }
+        )
+        return 1
+
+    snapshot_path = tmp_path / "prior.json"
+
+    SNAPSHOT.snapshot_distribution_bytes(
+        checker,
+        site,
+        populate=failed_contract,
+        attempts=1,
+        delay_seconds=0,
+        snapshot_out=snapshot_path,
+        expect_snapshot=None,
+    )
+    entries = json.loads(snapshot_path.read_text(encoding="utf-8"))["entries"]
+    assert set(entries) == {"/channels.json", "/assets/stable/manifest.json"}
 
 
 def test_release_snapshot_fetches_every_public_deploy_file(tmp_path: Path) -> None:

@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urljoin, urlparse
@@ -37,7 +39,11 @@ def _fetch_complete_distribution(checker: Any, release_site: str, dist: Path) ->
 
 
 def release_fetch_snapshot(
-    checker: Any, release_site: str, *, dist: Path | None = None
+    checker: Any,
+    release_site: str,
+    *,
+    dist: Path | None = None,
+    same_origin_only: bool = False,
 ) -> dict[str, object]:
     """Bind every body consumed by the validator to a location-independent path."""
 
@@ -49,11 +55,17 @@ def release_fetch_snapshot(
     site = urlparse(_normalize_release_site(release_site))
     entries: dict[str, dict[str, int | str]] = {}
     for url, fetched in sorted(cache.items()):
-        body = getattr(fetched, "data", None)
-        error = getattr(fetched, "error", None)
-        if not isinstance(url, str) or not isinstance(body, bytes) or error is not None:
+        if not isinstance(url, str):
             continue
         parsed = urlparse(url)
+        if same_origin_only and (parsed.scheme, parsed.netloc) != (site.scheme, site.netloc):
+            continue
+        body = getattr(fetched, "data", None)
+        error = getattr(fetched, "error", None)
+        if same_origin_only and (error is not None or not isinstance(body, bytes)):
+            raise RuntimeError(f"same-origin snapshot fetch failed for {url}: {error}")
+        if not isinstance(body, bytes) or error is not None:
+            continue
         if (parsed.scheme, parsed.netloc) == (site.scheme, site.netloc):
             key = parsed.path or "/"
             if site.scheme == "file":
@@ -106,3 +118,35 @@ def require_snapshot(path: Path, actual: dict[str, object]) -> None:
             f"served distribution differs from snapshot: missing={missing}, "
             f"extra={extra}, changed={changed}"
         )
+
+
+def snapshot_distribution_bytes(
+    checker: Any,
+    release_site: str,
+    *,
+    populate: Callable[[], object],
+    attempts: int,
+    delay_seconds: float,
+    snapshot_out: Path | None,
+    expect_snapshot: Path | None,
+) -> None:
+    """Capture rollback bytes even when the distribution being repaired is unhealthy."""
+    last_error: OSError | RuntimeError | ValueError | None = None
+    rounds = max(attempts, 1)
+    for attempt in range(1, rounds + 1):
+        cache = getattr(checker, "_FETCH_BYTES_CACHE", None)
+        if hasattr(cache, "clear"):
+            cache.clear()
+        try:
+            populate()
+            snapshot = release_fetch_snapshot(checker, release_site, same_origin_only=True)
+            if snapshot_out is not None:
+                write_snapshot(snapshot_out, snapshot)
+            elif expect_snapshot is not None:
+                require_snapshot(expect_snapshot, snapshot)
+            return
+        except (OSError, RuntimeError, ValueError) as error:
+            last_error = error
+        if attempt != rounds:
+            time.sleep(delay_seconds)
+    raise RuntimeError(f"release-channel byte snapshot failed: {last_error}")

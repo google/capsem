@@ -145,6 +145,7 @@ jobs:
           uv run python scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
             --catalog-members \
+            --snapshot-only \
             --snapshot-out target/release-channel-deployment/prior-release.json
 
       - name: Deploy immutable preview
@@ -243,6 +244,7 @@ jobs:
           uv run python scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
             --catalog-members \
+            --snapshot-only \
             --attempts 30 \
             --delay-seconds 20 \
             --expect-snapshot target/release-channel-deployment/prior-release.json

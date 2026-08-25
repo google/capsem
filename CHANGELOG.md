@@ -40,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Allow a verified release to repair an already-broken production channel while retaining exact rollback-byte proof.
+
 - Binary release monitoring now reattaches to the same authoritative GitHub
   Actions run after a transient `gh run watch` API failure. A temporary 5xx no
   longer reports a false release failure, deletes the newly claimed version

@@ -14,7 +14,12 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from release_site_snapshot import release_fetch_snapshot, require_snapshot, write_snapshot
+from release_site_snapshot import (
+    release_fetch_snapshot,
+    require_snapshot,
+    snapshot_distribution_bytes,
+    write_snapshot,
+)
 
 from capsem import runtime_preflight_manifest as channel_resolver
 
@@ -65,12 +70,57 @@ def main() -> int:
         help="Require every validated response to match a prior snapshot.",
     )
     parser.add_argument(
+        "--snapshot-only",
+        action="store_true",
+        help=(
+            "Capture or compare same-origin distribution bytes without requiring the "
+            "prior graph's external references to remain healthy."
+        ),
+    )
+    parser.add_argument(
         "--dist",
         type=Path,
         help="Fetch every public deploy-root file and require its exact local bytes.",
     )
     args = parser.parse_args()
+    if args.snapshot_only and args.snapshot_out is None and args.expect_snapshot is None:
+        parser.error("--snapshot-only requires --snapshot-out or --expect-snapshot")
+    if args.snapshot_only and args.dist is not None:
+        parser.error("--snapshot-only cannot be combined with --dist")
     checker = load_readiness_checker()
+    if args.snapshot_only:
+
+        def populate_snapshot() -> int:
+            if args.catalog_members:
+                return validate_catalog_members(
+                    release_site=args.release_site,
+                    attempts=1,
+                    delay_seconds=0,
+                    checker=checker,
+                )
+            return validate_release_channels(
+                release_site=args.release_site,
+                channels=args.channels or ["stable"],
+                attempts=1,
+                delay_seconds=0,
+                checker=checker,
+            )
+
+        try:
+            snapshot_distribution_bytes(
+                checker,
+                args.release_site,
+                populate=populate_snapshot,
+                attempts=args.attempts,
+                delay_seconds=args.delay_seconds,
+                snapshot_out=args.snapshot_out,
+                expect_snapshot=args.expect_snapshot,
+            )
+        except (OSError, RuntimeError, ValueError) as error:
+            print(error, file=sys.stderr)
+            return 1
+        print(f"{args.release_site.rstrip('/')} release-channel byte snapshot passed.")
+        return 0
     if args.catalog_members:
         if args.channels:
             parser.error("--catalog-members cannot be combined with --channel")
