@@ -135,10 +135,15 @@ def build_transition_verdict(
         if not isinstance(error, str) or not error:
             raise TransitionEvidenceError("candidate rejection event has no causal error")
         required = {
-            "tampered_artifact": "mismatch",
-            "incompatible_profile": "requires Capsem 9999.0.0 or newer",
+            "tampered_artifact": (
+                "mismatch",
+                "failed size or digest verification",
+            ),
+            "incompatible_profile": ("requires Capsem 9999.0.0 or newer",),
         }.get(kind)
-        if required is not None and required.lower() not in error.lower():
+        if required is not None and not any(
+            cause.lower() in error.lower() for cause in required
+        ):
             raise TransitionEvidenceError(
                 f"{kind} rejection event does not name its exact rejection cause"
             )

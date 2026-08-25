@@ -2229,6 +2229,45 @@ def test_the_tamper_wait_requires_a_tamper_specific_message() -> None:
         )
 
 
+def test_the_tamper_wait_accepts_the_products_integrity_error() -> None:
+    module = _load_transition_module()
+    source = "https://release.test/assets/nightly/manifest.json"
+    candidate = "3" * 64
+    previous = "2" * 64
+    rows = [
+        {
+            "schema": module.UPDATE_AUDIT_SCHEMA,
+            "event": "release_candidate_fetched",
+            "source": source,
+            "candidate_manifest_sha256": candidate,
+        },
+        {
+            "schema": module.UPDATE_AUDIT_SCHEMA,
+            "event": "release_candidate_rejected",
+            "source": source,
+            "candidate_manifest_sha256": candidate,
+            "previous": {"manifest_sha256": previous},
+            "current": {"manifest_sha256": previous},
+            "error": (
+                "stage verified update candidate: profile config "
+                "https://release.test/profiles/code/profile.toml "
+                "failed size or digest verification"
+            ),
+        },
+    ]
+
+    verdict = module.build_transition_verdict(
+        rows,
+        kind="tampered_artifact",
+        result="rejected",
+        source=source,
+        candidate_manifest_sha256=candidate,
+        previous_manifest_sha256=previous,
+    )
+
+    assert verdict["preserved_previous"] is True
+
+
 def test_neither_rejection_wait_can_be_satisfied_by_the_other() -> None:
     module = _load_transition_module()
     source = "https://release.test/assets/nightly/manifest.json"
