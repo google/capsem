@@ -3919,7 +3919,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Capsem is 0.6.1.** The version line moves from 1.6 to 0.6 and the patch
+- **Capsem is 0.6.2.** The version line moves from 1.6 to 0.6 and the patch
   becomes a real semver patch instead of a Unix timestamp. `1.6.1785421421`
   parsed as semver but its patch was a clock, so a compatibility window could
   only ever express "built before/after this instant" -- two releases a second

@@ -667,7 +667,7 @@ dependencies = [
 
 [[package]]
 name = "capsem"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "blake3",
@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-admin"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "blake3",
@@ -722,7 +722,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-agent"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "capsem-proto",
  "nix 0.29.0",
@@ -734,7 +734,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-app"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "capsem-proto",
  "filetime",
@@ -755,7 +755,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-bench"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -770,7 +770,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-core"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -837,7 +837,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-gateway"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -864,7 +864,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-guard"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "libc",
@@ -875,7 +875,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-logger"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "blake3",
@@ -895,7 +895,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-mcp"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -920,7 +920,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-mcp-aggregator"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "capsem-core",
@@ -937,7 +937,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-mcp-builtin"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "blake3",
@@ -960,7 +960,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-mock-server"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -987,7 +987,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-process"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -1012,7 +1012,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-proto"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1025,7 +1025,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-service"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -1062,7 +1062,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-tray"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "capsem-core",
@@ -1083,7 +1083,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-tui"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "clap",
