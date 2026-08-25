@@ -900,8 +900,7 @@ def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_
     assert "Validate activated production bytes" in workflow
     assert "uv run python scripts/check-release-site-contract.py" in validator_step
     assert '--base-url "$RELEASE_SITE_URL"' in validator_step
-    assert "--channel stable" in validator_step
-    assert "--channel nightly" in validator_step
+    assert "--catalog-members" in validator_step
     assert 'CHANNEL_ARGS=(--channel "$CHANNEL")' in validator_step
     assert '"${CHANNEL_ARGS[@]}"' in validator_step
     assert "--attempts 30" in validator_step
@@ -3307,7 +3306,8 @@ def test_release_channel_deploy_validates_the_deployed_channel_shape() -> None:
 
     assert "validate_complete_public_channels:" in deploy
     assert 'CHANNEL_ARGS=(--channel "$CHANNEL")' in deploy
-    assert "CHANNEL_ARGS=(--channel stable --channel nightly)" in deploy
+    assert "CHANNEL_ARGS=(--catalog-members)" in deploy
+    assert "CHANNEL_ARGS=(--channel stable --channel nightly)" not in deploy
     assert '"${CHANNEL_ARGS[@]}"' in deploy
     assert "validate_complete_public_channels: false" in staging
     assert "activate_production: false" in staging

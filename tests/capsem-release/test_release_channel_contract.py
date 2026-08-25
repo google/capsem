@@ -72,7 +72,8 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     assert "validate_complete_public_channels:" in workflow
     assert "default: true" in workflow
     assert "scripts/check-release-site-contract.py" in workflow
-    assert "CHANNEL_ARGS=(--channel stable --channel nightly)" in workflow
+    assert workflow.count("CHANNEL_ARGS=(--catalog-members)") == 2
+    assert "CHANNEL_ARGS=(--channel stable --channel nightly)" not in workflow
     assert '--base-url "$RELEASE_SITE_URL"' in workflow
     assert "--attempts 30" in workflow
     assert "group: capsem-public-channel-deploy" in workflow

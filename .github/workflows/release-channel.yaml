@@ -237,7 +237,7 @@ jobs:
         run: |
           CHANNEL_ARGS=(--channel "$CHANNEL")
           if [ "$VALIDATE_COMPLETE_PUBLIC_CHANNELS" = "true" ]; then
-            CHANNEL_ARGS=(--channel stable --channel nightly)
+            CHANNEL_ARGS=(--catalog-members)
           fi
           uv run python scripts/check-release-site-contract.py \
             --base-url "$PREVIEW_URL" \
@@ -269,7 +269,7 @@ jobs:
         run: |
           CHANNEL_ARGS=(--channel "$CHANNEL")
           if [ "$VALIDATE_COMPLETE_PUBLIC_CHANNELS" = "true" ]; then
-            CHANNEL_ARGS=(--channel stable --channel nightly)
+            CHANNEL_ARGS=(--catalog-members)
           fi
           uv run python scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
