@@ -195,8 +195,9 @@ class TestPurge:
         listing = client.get("/vms/list")
         names = [s.get("name") for s in listing["sandboxes"]]
         assert name in names, f"Persistent VM {name} was destroyed despite user saying 'n'"
-        # Cleanup
-        client.delete(f"/vms/{name}/delete")
+        # Cleanup must not silently poison the session-scoped service for the
+        # next test. The UDS helper returns JSON error bodies for HTTP 500s.
+        assert client.delete(f"/vms/{name}/delete") == {"success": True}
 
     def test_purge_all_confirmed_destroys(self, uds_path):
         """capsem purge --all with 'y' should destroy persistent VMs."""

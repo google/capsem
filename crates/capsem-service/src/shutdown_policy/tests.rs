@@ -9,6 +9,12 @@ fn discarding_state_does_not_wait_for_a_flush() {
 }
 
 #[test]
+fn discarding_state_does_not_roll_up_the_ledger_being_deleted() {
+    assert!(!ShutdownMode::Discard.rolls_up_session_ledger());
+    assert!(ShutdownMode::Retain.rolls_up_session_ledger());
+}
+
+#[test]
 fn retaining_state_waits_long_enough_for_a_slow_disk_to_flush() {
     // The budget exists so the guest can sync before teardown. At five seconds
     // it was sized for an idle developer machine: on a loaded CI runner with

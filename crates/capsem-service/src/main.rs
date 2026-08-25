@@ -960,11 +960,12 @@ impl ServiceState {
         &self,
         id: &str,
         status: &str,
-        session_dir: &StdPath,
+        session_dir_for_rollup: Option<&StdPath>,
     ) -> anyhow::Result<()> {
         let stopped_at = capsem_core::session::now_iso();
-        let session_db_path = session_db_path_for_session_dir(session_dir);
-        let session_db_path = session_db_path.exists().then_some(session_db_path);
+        let session_db_path = session_dir_for_rollup
+            .map(session_db_path_for_session_dir)
+            .filter(|path| path.exists());
         capsem_logger::record_session_stop(
             &self.main_db_path(),
             id,
@@ -1790,9 +1791,11 @@ impl ServiceState {
             let unexpected_exit = removed.is_some() && !clean_exit;
             if removed.is_some() {
                 let status = if clean_exit { "stopped" } else { "crashed" };
-                if let Err(error) =
-                    state_clone.record_session_index_stop(&id_clone, status, &session_dir_clone)
-                {
+                if let Err(error) = state_clone.record_session_index_stop(
+                    &id_clone,
+                    status,
+                    Some(&session_dir_clone),
+                ) {
                     error!(
                         id_clone,
                         status,
@@ -11560,7 +11563,12 @@ async fn shutdown_vm_process(
         return Ok(None);
     }
     state
-        .record_session_index_stop(id, "stopped", &session_dir)
+        .record_session_index_stop(
+            id,
+            "stopped",
+            mode.rolls_up_session_ledger()
+                .then_some(session_dir.as_path()),
+        )
         .map_err(|error| {
             AppError(
                 StatusCode::INTERNAL_SERVER_ERROR,

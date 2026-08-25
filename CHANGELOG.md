@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Destructive VM delete and purge no longer query the per-session ledger they
+  are erasing. An interrupted or partially initialized ledger can no longer
+  make `purge --all` fail after process teardown and leave the VM registered.
+
 - macOS qualification now keeps Linux-only bootstrap/process fixture mechanics
   on the Linux lane, makes temporary Git repositories independent of developer
   identity and signing configuration, and copies private-prefix Git objects

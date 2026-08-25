@@ -27,6 +27,16 @@ impl ShutdownMode {
         matches!(self, Self::Retain)
     }
 
+    /// Whether teardown must preserve the per-session ledger in `main.db`.
+    ///
+    /// A discarded session directory is the deletion target, including its
+    /// ledger. Trying to query that database after SIGKILL can instead turn a
+    /// destructive delete into a failure when initialization or a checkpoint
+    /// was interrupted.
+    pub(super) fn rolls_up_session_ledger(self) -> bool {
+        matches!(self, Self::Retain)
+    }
+
     /// How long the guest is given to exit on its own before SIGKILL.
     ///
     /// `Retain` is the graceful path: the guest syncs its filesystem and
