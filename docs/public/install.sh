@@ -325,6 +325,12 @@ clear_macos_install_user_request() {
     fi
 }
 
+stop_existing_capsem() {
+    if [ -x "$HOME/.capsem/bin/capsem" ]; then
+        "$HOME/.capsem/bin/capsem" stop >/dev/null 2>&1 || true
+    fi
+}
+
 install_macos() {
     _pkg_url="$1"
     _version="$2"
@@ -341,6 +347,7 @@ install_macos() {
     verify_package "$PKG_PATH" "$_package_name" "$_expected_bytes" "$_expected_sha256"
 
     echo "Installing .pkg package (may prompt for sudo password)..."
+    stop_existing_capsem
     prepare_install_manifest
     prepare_macos_install_user
     MACOS_INSTALL_USER_REQUEST_WRITTEN=1
@@ -368,6 +375,7 @@ install_linux() {
     verify_package "$DEB_PATH" "$_package_name" "$_expected_bytes" "$_expected_sha256"
 
     echo "Installing .deb package (may prompt for sudo password)..."
+    stop_existing_capsem
     prepare_install_manifest
     sudo apt install -y "$DEB_PATH"
 

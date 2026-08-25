@@ -29,26 +29,28 @@
 set -euo pipefail
 export COPYFILE_DISABLE=1
 
-embed_install_diagnostics() {
-    local maintainer_script="$1"
-    local combined="${maintainer_script}.with-install-diagnostics"
+embed_pkg_script() {
+    local helper="$1"
+    local maintainer_script="$2"
+    local combined="${maintainer_script}.with-${helper}"
     {
         head -n 1 "$maintainer_script"
-        sed -n '2,$p' "$SCRIPT_DIR/pkg-scripts/install-diagnostics"
+        sed -n '2,$p' "$SCRIPT_DIR/pkg-scripts/$helper"
         sed -n '2,$p' "$maintainer_script"
     } > "$combined"
     mv "$combined" "$maintainer_script"
 }
 
+embed_install_diagnostics() {
+    embed_pkg_script install-diagnostics "$1"
+}
+
 embed_install_manifest_resolver() {
-    local maintainer_script="$1"
-    local combined="${maintainer_script}.with-install-manifest"
-    {
-        head -n 1 "$maintainer_script"
-        sed -n '2,$p' "$SCRIPT_DIR/pkg-scripts/install-manifest"
-        sed -n '2,$p' "$maintainer_script"
-    } > "$combined"
-    mv "$combined" "$maintainer_script"
+    embed_pkg_script install-manifest "$1"
+}
+
+embed_native_cohort_retirement() {
+    embed_pkg_script retire-cohort "$1"
 }
 
 usage() {
@@ -251,6 +253,7 @@ ensure_deb_dependency "$WORK_DIR/deb/DEBIAN/control" \
 echo "=== Adding maintainer scripts ==="
 cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"
 embed_install_diagnostics "$WORK_DIR/deb/DEBIAN/preinst"
+embed_native_cohort_retirement "$WORK_DIR/deb/DEBIAN/preinst"
 chmod 755 "$WORK_DIR/deb/DEBIAN/preinst"
 cp "$SCRIPT_DIR/deb-postinst.sh" "$WORK_DIR/deb/DEBIAN/postinst"
 embed_install_diagnostics "$WORK_DIR/deb/DEBIAN/postinst"

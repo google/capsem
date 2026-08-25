@@ -9,6 +9,9 @@ set -euo pipefail
 if ! declare -F capsem_install_enable_failure_trap >/dev/null; then
     source "$(dirname "$0")/pkg-scripts/install-diagnostics"
 fi
+if ! declare -F capsem_retire_native_cohort >/dev/null; then
+    source "$(dirname "$0")/pkg-scripts/retire-cohort"
+fi
 
 if [ -n "${SUDO_USER:-}" ]; then
     TARGET_USER="$SUDO_USER"
@@ -53,11 +56,7 @@ if command -v systemctl >/dev/null 2>&1 && [ -d "$XDG_DIR" ]; then
     su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR systemctl --user stop capsem.service" 2>/dev/null || true
 fi
 
-for name in capsem-service capsem-gateway capsem-tray capsem-process capsem-mcp-aggregator capsem-mcp-builtin; do
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=kill_process name=$name"
-    pkill -9 -f "$CAPSEM_DIR/bin/$name" 2>/dev/null || true
-    pkill -9 -f "/usr/bin/$name" 2>/dev/null || true
-done
+capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID"
 
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=complete"
 CAPSEM_INSTALL_PHASE="complete"

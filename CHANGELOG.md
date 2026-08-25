@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Native package upgrades now retire the exact installed service/helper cohort
+  before replacing signed binaries, including an orphan whose command line has
+  collapsed to only `capsem-service`. The public installer first requests a
+  normal user-level service stop; package scripts then verify user, executable,
+  and PID-file ownership before forcing any remaining helper to exit.
+
 - The desktop toolbar once again shows live input, thinking, and output tokens,
   tool-call count, and estimated cost for the selected session. It polls one
   compact logger-owned summary instead of querying every running VM or loading

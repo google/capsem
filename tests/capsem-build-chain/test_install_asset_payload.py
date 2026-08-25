@@ -2746,8 +2746,8 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert 'CONFIG_ROOT="${POSITIONAL[3]}"' in build_pkg
     assert 'ditto --norsrc --noextattr "$src" "$dst"' in build_pkg
     assert 'copy_tree_clean "$CONFIG_ROOT/profiles" "$SHARE_DIR/profiles"' in build_pkg
-    assert 'install -m 0755 "$SCRIPT_DIR/pkg-scripts/preinstall"' in build_pkg
-    assert 'install -m 0755 "$SCRIPT_DIR/pkg-scripts/install-user"' in build_pkg
+    assert "for package_script in preinstall postinstall install-diagnostics install-user" in build_pkg
+    assert 'install -m 0755 "$SCRIPT_DIR/pkg-scripts/$package_script"' in build_pkg
     assert 'xattr -rc "$WORK_DIR/payload" "$PKG_SCRIPTS"' in build_pkg
     assert 'find "$WORK_DIR/payload" "$PKG_SCRIPTS" -name' in build_pkg
     assert '--scripts "$PKG_SCRIPTS"' in build_pkg

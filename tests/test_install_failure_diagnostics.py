@@ -87,7 +87,10 @@ def test_macos_package_scripts_install_and_enable_failure_diagnostics() -> None:
     preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
     postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
 
-    assert 'install -m 0755 "$SCRIPT_DIR/pkg-scripts/install-diagnostics"' in build_pkg
+    assert "install-diagnostics install-user install-manifest retire-cohort" in build_pkg
+    assert 'install -m 0755 "$SCRIPT_DIR/pkg-scripts/$package_script"' in build_pkg
+    assert 'source "$(dirname "$0")/retire-cohort"' in preinstall
+    assert 'capsem_retire_native_cohort "$CAPSEM_DIR"' in preinstall
     for script in (preinstall, postinstall):
         assert 'source "$(dirname "$0")/install-diagnostics"' in script
         assert "capsem_install_enable_failure_trap" in script
@@ -101,7 +104,11 @@ def test_linux_package_scripts_embed_and_enable_failure_diagnostics() -> None:
     postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()
 
     assert "embed_install_diagnostics" in repack_deb
-    assert '"$SCRIPT_DIR/pkg-scripts/install-diagnostics"' in repack_deb
+    assert "embed_native_cohort_retirement" in repack_deb
+    assert 'sed -n \'2,$p\' "$SCRIPT_DIR/pkg-scripts/$helper"' in repack_deb
+    assert "embed_pkg_script install-diagnostics" in repack_deb
+    assert "embed_pkg_script retire-cohort" in repack_deb
+    assert 'capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID"' in preinst
     for script in (preinst, postinst):
         assert "capsem_install_enable_failure_trap" in script
         assert 'CAPSEM_INSTALL_FAILURE_FILE="$CAPSEM_DIR/logs/install-failure.txt"' in script

@@ -1,0 +1,79 @@
+#!/bin/bash
+# Retire only native helpers proven to belong to the installed Capsem cohort.
+# Full command paths own ordinary helpers. The service and gateway PID files
+# remain authoritative when macOS reports only a basename for an old process.
+
+capsem_pidfile_owns_process() {
+    local capsem_dir="$1"
+    local name="$2"
+    local pid="$3"
+    local pidfile=""
+    case "$name" in
+        capsem-service) pidfile="$capsem_dir/run/service.pid" ;;
+        capsem-gateway) pidfile="$capsem_dir/run/gateway.pid" ;;
+        *) return 1 ;;
+    esac
+    [ -f "$pidfile" ] || return 1
+    local recorded
+    recorded=$(sed -n '1p' "$pidfile" 2>/dev/null || true)
+    [ "$recorded" = "$pid" ]
+}
+
+capsem_process_is_package_owned() {
+    local capsem_dir="$1"
+    local target_uid="$2"
+    local name="$3"
+    local pid="$4"
+    case "$pid" in
+        ""|*[!0-9]*) return 1 ;;
+    esac
+
+    local actual_uid executable process_name
+    actual_uid=$(ps -p "$pid" -o uid= 2>/dev/null | tr -d '[:space:]')
+    [ "$actual_uid" = "$target_uid" ] || return 1
+    if [ -L "/proc/$pid/exe" ]; then
+        executable=$(readlink "/proc/$pid/exe" 2>/dev/null || true)
+        executable=${executable% (deleted)}
+    else
+        executable=$(ps -p "$pid" -o comm= 2>/dev/null | sed 's/[[:space:]]*$//')
+    fi
+    process_name=${executable##*/}
+    [ "$process_name" = "$name" ] || return 1
+    case "$executable" in
+        "$capsem_dir/bin/$name"|/usr/bin/"$name")
+            return 0
+            ;;
+    esac
+    capsem_pidfile_owns_process "$capsem_dir" "$name" "$pid"
+}
+
+capsem_retire_native_cohort() {
+    local capsem_dir="$1"
+    local target_uid="$2"
+    local kill_command="${CAPSEM_INSTALL_KILL:-/bin/kill}"
+    local killed=""
+    local name pid
+    for name in capsem-service capsem-gateway capsem-tray capsem-process capsem-mcp-aggregator capsem-mcp-builtin; do
+        for pid in $(pgrep -u "$target_uid" -f "$name" 2>/dev/null || true); do
+            if capsem_process_is_package_owned "$capsem_dir" "$target_uid" "$name" "$pid"; then
+                "$kill_command" -9 "$pid"
+                killed="$killed $pid"
+                echo "retired native helper pid=$pid name=$name"
+            fi
+        done
+    done
+
+    local survivor
+    for _ in $(seq 1 50); do
+        survivor=""
+        for pid in $killed; do
+            if ps -p "$pid" >/dev/null 2>&1; then
+                survivor="$survivor $pid"
+            fi
+        done
+        [ -n "$survivor" ] || return 0
+        sleep 0.1
+    done
+    echo "capsem: native helper cohort did not stop:$survivor" >&2
+    return 1
+}
