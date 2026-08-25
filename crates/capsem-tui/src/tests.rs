@@ -32,8 +32,8 @@ fn snapshot_contains_light_bar_tabs_and_active_desktop() {
     let snapshot = render_snapshot(&fixture_state(), 100, 24).expect("render snapshot");
 
     assert!(snapshot.contains("  18ms●"));
-    assert!(snapshot.contains("1  profile-v2"));
-    assert!(snapshot.contains("2  linux-os!"));
+    assert!(snapshot.contains("1  Profile V2"));
+    assert!(snapshot.contains("2  Linux OS!"));
     assert!(snapshot.contains("◷ 47m | # 38.4k | $ 0.21 | help: alt+?"));
     assert!(
         !snapshot.contains("github.com/google/capsem"),
@@ -211,9 +211,9 @@ fn empty_create_modal_blocks_enter_when_profiles_are_unavailable() {
 fn tab_colors_use_selected_yellow_and_unselected_blue_only() {
     let buffer = render_test_buffer(&fixture_state(), 100, 24).expect("render buffer");
     let row = buffer.area.height - 1;
-    let selected_number = find_cell_x(&buffer, row, "1  profile-v2");
+    let selected_number = find_cell_x(&buffer, row, "1  Profile V2");
     let selected_label = selected_number + 3;
-    let other_number = find_cell_x(&buffer, row, "2  linux-os!");
+    let other_number = find_cell_x(&buffer, row, "2  Linux OS!");
     let other_label = other_number + 3;
 
     assert_eq!(buffer_cell(&buffer, selected_number, row).bg, yellow());
@@ -246,7 +246,7 @@ fn stopped_session_renders_resume_prompt_and_grey_tab() {
 
     let buffer = render_test_buffer(&state, 100, 24).expect("render stopped buffer");
     let row = buffer.area.height - 1;
-    let stopped_number = find_cell_x(&buffer, row, "1  profile-v2");
+    let stopped_number = find_cell_x(&buffer, row, "1  Profile V2");
     let stopped_label = stopped_number + 3;
 
     assert_eq!(buffer_cell(&buffer, stopped_number, row).bg, grey());
@@ -268,7 +268,8 @@ fn enter_resumes_stopped_active_session_instead_of_forwarding_to_terminal() {
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::Resume {
-            name: "profile-v2".to_string()
+            id: "profile-v2".to_string(),
+            label: "Profile V2".to_string()
         })
     );
 }
@@ -325,8 +326,8 @@ fn corrupted_profile_sessions_are_hidden_from_tabs_but_stay_in_vm_list() {
         "startup focus should move to the first resumable tab instead of a corrupt profile pin"
     );
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render filtered tabs");
-    assert!(!snapshot.contains("profile-v2"));
-    assert!(snapshot.contains("1  linux-os!"));
+    assert!(!snapshot.contains("Profile V2"));
+    assert!(snapshot.contains("1  Linux OS!"));
 
     assert_eq!(
         app.handle_key(key(KeyCode::Char('l'), KeyModifiers::ALT)),
@@ -439,7 +440,8 @@ fn shell_commands_are_alt_owned() {
     assert_eq!(
         app.pending_action(),
         Some(&ControlAction::Stop {
-            id: "profile-v2".to_string()
+            id: "profile-v2".to_string(),
+            label: "Profile V2".to_string()
         })
     );
 }
@@ -574,7 +576,7 @@ fn fork_overlay_asks_for_name_and_invokes_fork_action() {
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render fork dialog");
     assert!(snapshot.contains("fork session"));
     assert!(snapshot.contains("source"));
-    assert!(snapshot.contains("profile-v2"));
+    assert!(snapshot.contains("Profile V2"));
     assert!(snapshot.contains("profile-v2-fork"));
     assert!(snapshot.contains("active input"));
 
@@ -739,7 +741,8 @@ fn control_keys_require_confirmation_before_invoking_service_actions() {
     assert_eq!(
         app.pending_action(),
         Some(&ControlAction::Stop {
-            id: "profile-v2".to_string()
+            id: "profile-v2".to_string(),
+            label: "Profile V2".to_string()
         })
     );
     let modal_snapshot = render_app_snapshot(&app, 100, 24).expect("render confirmation");
@@ -759,7 +762,8 @@ fn control_keys_require_confirmation_before_invoking_service_actions() {
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::Stop {
-            id: "profile-v2".to_string()
+            id: "profile-v2".to_string(),
+            label: "Profile V2".to_string()
         })
     );
     assert_eq!(app.overlay(), AppOverlay::None);
@@ -812,7 +816,8 @@ fn resume_action_is_only_available_for_stopped_or_suspended_sessions() {
     assert_eq!(
         app.pending_action(),
         Some(&ControlAction::Resume {
-            name: "linux-os".to_string()
+            id: "linux-os".to_string(),
+            label: "Linux OS".to_string()
         })
     );
 }
@@ -827,7 +832,8 @@ fn suspend_action_requires_persistent_running_session() {
     assert_eq!(
         app.pending_action(),
         Some(&ControlAction::Suspend {
-            id: "profile-v2".to_string()
+            id: "profile-v2".to_string(),
+            label: "Profile V2".to_string()
         })
     );
 
@@ -865,13 +871,14 @@ fn checkpoint_action_is_alt_c_and_uses_checkpoint_label() {
     assert_eq!(
         app.pending_action(),
         Some(&ControlAction::Checkpoint {
-            id: "profile-v2".to_string()
+            id: "profile-v2".to_string(),
+            label: "Profile V2".to_string()
         })
     );
 
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render checkpoint confirm");
     assert!(snapshot.contains("checkpoint"));
-    assert!(snapshot.contains("profile-v2"));
+    assert!(snapshot.contains("Profile V2"));
 }
 
 #[test]
@@ -927,6 +934,115 @@ fn gateway_status_json_maps_to_tui_state() {
         attention.attention.contains(&Attention::CredentialIssue),
         "corrupted profile status should be surfaced as a credential/profile issue"
     );
+}
+
+#[test]
+fn tui_story_suite_covers_create_stop_resume_navigation_help_latency_and_human_labels() {
+    let mut state = state_from_status_json_for_test(
+        gateway_status_body(),
+        std::time::Duration::from_millis(24),
+    )
+    .expect("parse gateway status for TUI story");
+    state.profiles = fixture_state().profiles;
+    state.sessions[1].can_resume = true;
+    state.sessions[1].profile_status = Some("current".to_string());
+    let mut app = App::new(state);
+
+    let initial = render_app_snapshot(&app, 100, 24).expect("render initial TUI story");
+    assert!(
+        initial.contains("24ms"),
+        "measured gateway latency is visible"
+    );
+    assert!(initial.contains("profile-main"), "named session is visible");
+    assert!(
+        !initial.contains("vm-1"),
+        "the internal session id must not replace a human session name"
+    );
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Right, KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.state().active_session_id, "vm-2");
+    assert_eq!(
+        app.handle_key(key(KeyCode::Left, KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.state().active_session_id, "vm-1");
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('?'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    let help = render_app_snapshot(&app, 100, 24).expect("render TUI story help");
+    assert!(help.contains("Alt+Right"));
+    assert!(help.contains("stop active session"));
+    assert_eq!(
+        app.handle_key(key(KeyCode::Esc, KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('t'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    let stop = render_app_snapshot(&app, 100, 24).expect("render TUI story stop");
+    assert!(stop.contains("profile-main"));
+    assert!(
+        !stop.contains("vm-1"),
+        "confirmation target is the human name"
+    );
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::Stop {
+            id: "vm-1".to_string(),
+            label: "profile-main".to_string()
+        }),
+        "the stop request still routes by immutable session id"
+    );
+
+    let mut stopped = app.state().clone();
+    stopped.sessions[0].lifecycle = SessionLifecycle::Idle;
+    stopped.sessions[0].can_resume = true;
+    app.replace_state(stopped);
+    let stopped = render_app_snapshot(&app, 100, 24).expect("render stopped TUI story");
+    assert!(stopped.contains("profile-main"));
+    assert!(
+        !stopped.contains("vm-1"),
+        "resume prompt uses the human name"
+    );
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::Resume {
+            id: "vm-1".to_string(),
+            label: "profile-main".to_string()
+        }),
+        "the resume request still routes by immutable session id"
+    );
+
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::CreateSession {
+            name: None,
+            profile_id: "corp-default".to_string()
+        })
+    );
+
+    let mut created = app.state().clone();
+    let mut session = created.sessions[0].clone();
+    session.id = "77777777-7777-4777-8777-777777777777".to_string();
+    session.title = "corp-default-1".to_string();
+    session.lifecycle = SessionLifecycle::Working;
+    created.sessions.push(session);
+    app.focus_session_when_available("77777777-7777-4777-8777-777777777777");
+    app.replace_state(created);
+    let created = render_app_snapshot(&app, 100, 24).expect("render created TUI story");
+    assert!(created.contains("corp-default-1"));
+    assert!(!created.contains("77777777"));
 }
 
 #[test]
@@ -1423,11 +1539,12 @@ async fn gateway_provider_invokes_stop_over_authenticated_gateway() {
     let outcome = GatewayProvider::new(format!("http://{addr}"))
         .invoke_async(&ControlAction::Stop {
             id: "vm-1".to_string(),
+            label: "profile-main".to_string(),
         })
         .await
         .expect("invoke stop");
 
-    assert_eq!(outcome.message, "stopped vm-1");
+    assert_eq!(outcome.message, "stopped profile-main");
     server.await.expect("server task");
 }
 
@@ -1502,7 +1619,7 @@ async fn gateway_provider_omits_generated_create_name_for_service_owned_counter(
         .await
         .expect("invoke create");
 
-    assert_eq!(outcome.message, "created code-7");
+    assert_eq!(outcome.message, "created session");
     assert_eq!(outcome.focus_session.as_deref(), Some("code-7"));
     server.await.expect("server task");
 }
@@ -1575,11 +1692,12 @@ async fn gateway_provider_invokes_checkpoint_over_suspend_endpoint() {
     let outcome = GatewayProvider::new(format!("http://{addr}"))
         .invoke_async(&ControlAction::Checkpoint {
             id: "vm-1".to_string(),
+            label: "profile-main".to_string(),
         })
         .await
         .expect("invoke checkpoint");
 
-    assert_eq!(outcome.message, "checkpointed vm-1");
+    assert_eq!(outcome.message, "checkpointed profile-main");
     server.await.expect("server task");
 }
 
@@ -1694,6 +1812,7 @@ async fn gateway_provider_surfaces_action_error_body() {
     let error = GatewayProvider::new(format!("http://{addr}"))
         .invoke_async(&ControlAction::Delete {
             id: "vm-1".to_string(),
+            label: "profile-main".to_string(),
         })
         .await
         .expect_err("delete should fail");

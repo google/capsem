@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The terminal UI now keeps immutable session UUIDs behind the routing boundary
+  and consistently shows human session names in tabs, lifecycle prompts,
+  confirmations, and action results. Its deterministic Ratatui interaction
+  suite now covers create, stop, resume, navigation, help, measured gateway
+  latency, and rendered-screen state.
+
 - Production activation now retries exact static-file snapshot comparison through CDN propagation instead of rolling back on one stale file.
 
 - Complete release-channel validation now follows the public catalog instead of requiring intentionally absent channels.

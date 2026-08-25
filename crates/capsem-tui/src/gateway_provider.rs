@@ -336,7 +336,10 @@ fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
         attention,
         stats: SessionStats {
             duration: Duration::from_secs(vm.uptime_secs.unwrap_or_default()),
-            jobs: vm.total_tool_calls.unwrap_or_default().min(u64::from(u16::MAX)) as u16,
+            jobs: vm
+                .total_tool_calls
+                .unwrap_or_default()
+                .min(u64::from(u16::MAX)) as u16,
             events: vm
                 .total_requests
                 .unwrap_or_default()
@@ -432,7 +435,10 @@ async fn invoke_action(
                 .and_then(|value| value.as_str())
                 .unwrap_or("session");
             Ok(ActionOutcome {
-                message: format!("created {id}"),
+                message: name.as_deref().map_or_else(
+                    || "created session".to_string(),
+                    |name| format!("created {name}"),
+                ),
                 focus_session: Some(id.to_string()),
             })
         }
@@ -454,35 +460,35 @@ async fn invoke_action(
                 focus_session: Some(fork_name.to_string()),
             })
         }
-        ControlAction::Resume { name } => {
-            post_empty(client, base_url, token, &["vms", name, "resume"]).await?;
+        ControlAction::Resume { id, label } => {
+            post_empty(client, base_url, token, &["vms", id, "resume"]).await?;
             Ok(ActionOutcome {
-                message: format!("resumed {name}"),
-                focus_session: Some(name.clone()),
-            })
-        }
-        ControlAction::Checkpoint { id } => {
-            post_empty(client, base_url, token, &["vms", id, "pause"]).await?;
-            Ok(ActionOutcome {
-                message: format!("checkpointed {id}"),
+                message: format!("resumed {label}"),
                 focus_session: Some(id.clone()),
             })
         }
-        ControlAction::Suspend { id } => {
+        ControlAction::Checkpoint { id, label } => {
             post_empty(client, base_url, token, &["vms", id, "pause"]).await?;
             Ok(ActionOutcome {
-                message: format!("suspended {id}"),
+                message: format!("checkpointed {label}"),
                 focus_session: Some(id.clone()),
             })
         }
-        ControlAction::Stop { id } => {
+        ControlAction::Suspend { id, label } => {
+            post_empty(client, base_url, token, &["vms", id, "pause"]).await?;
+            Ok(ActionOutcome {
+                message: format!("suspended {label}"),
+                focus_session: Some(id.clone()),
+            })
+        }
+        ControlAction::Stop { id, label } => {
             post_empty(client, base_url, token, &["vms", id, "stop"]).await?;
             Ok(ActionOutcome {
-                message: format!("stopped {id}"),
+                message: format!("stopped {label}"),
                 focus_session: Some(id.clone()),
             })
         }
-        ControlAction::Delete { id } => {
+        ControlAction::Delete { id, label } => {
             let response = client
                 .delete(join_url(base_url, &["vms", id, "delete"])?)
                 .bearer_auth(token)
@@ -491,7 +497,7 @@ async fn invoke_action(
                 .with_context(|| format!("delete capsem session {id}"))?;
             response_json(response).await?;
             Ok(ActionOutcome {
-                message: format!("deleted {id}"),
+                message: format!("deleted {label}"),
                 focus_session: None,
             })
         }

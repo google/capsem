@@ -35,19 +35,24 @@ pub enum ControlAction {
         name: String,
     },
     Resume {
-        name: String,
+        id: String,
+        label: String,
     },
     Checkpoint {
         id: String,
+        label: String,
     },
     Suspend {
         id: String,
+        label: String,
     },
     Stop {
         id: String,
+        label: String,
     },
     Delete {
         id: String,
+        label: String,
     },
     Purge {
         all: bool,
@@ -94,11 +99,11 @@ impl ControlAction {
             } => name,
             Self::CreateSession { profile_id, .. } => profile_id,
             Self::Fork { name, .. } => name,
-            Self::Resume { name }
-            | Self::Checkpoint { id: name }
-            | Self::Suspend { id: name }
-            | Self::Stop { id: name }
-            | Self::Delete { id: name } => name,
+            Self::Resume { label, .. }
+            | Self::Checkpoint { label, .. }
+            | Self::Suspend { label, .. }
+            | Self::Stop { label, .. }
+            | Self::Delete { label, .. } => label,
             Self::Purge { all: true } => "all sessions",
             Self::Purge { all: false } => "temporary and broken sessions",
         }
@@ -435,8 +440,12 @@ impl App {
             KeyCode::Char('r' | 'R') => self.active_resume_action(),
             KeyCode::Char('c' | 'C') => self.active_checkpoint_action(),
             KeyCode::Char('s' | 'S') => self.active_suspend_action(),
-            KeyCode::Char('t' | 'T') => self.active_id().map(|id| ControlAction::Stop { id }),
-            KeyCode::Char('d' | 'D') => self.active_id().map(|id| ControlAction::Delete { id }),
+            KeyCode::Char('t' | 'T') => {
+                self.active_session_action(|id, label| ControlAction::Stop { id, label })
+            }
+            KeyCode::Char('d' | 'D') => {
+                self.active_session_action(|id, label| ControlAction::Delete { id, label })
+            }
             KeyCode::Char('p' | 'P') => Some(ControlAction::Purge { all: false }),
             KeyCode::Char('u' | 'U') => Some(ControlAction::Update),
             _ => None,
@@ -461,7 +470,8 @@ impl App {
             return None;
         }
         Some(ControlAction::Resume {
-            name: session.id.clone(),
+            id: session.id.clone(),
+            label: session.title.clone(),
         })
     }
 
@@ -476,6 +486,7 @@ impl App {
         }
         Some(ControlAction::Checkpoint {
             id: session.id.clone(),
+            label: session.title.clone(),
         })
     }
 
@@ -486,7 +497,16 @@ impl App {
         }
         Some(ControlAction::Suspend {
             id: session.id.clone(),
+            label: session.title.clone(),
         })
+    }
+
+    fn active_session_action(
+        &self,
+        action: impl FnOnce(String, String) -> ControlAction,
+    ) -> Option<ControlAction> {
+        let session = self.state.active_session()?;
+        Some(action(session.id.clone(), session.title.clone()))
     }
 
     fn active_id(&self) -> Option<String> {

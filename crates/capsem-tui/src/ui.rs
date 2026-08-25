@@ -332,7 +332,7 @@ fn render_waiting_terminal_surface(frame: &mut Frame<'_>, area: Rect, session: &
     let lines = vec![Line::from(vec![
         Span::styled("connecting terminal ", muted_style()),
         Span::styled(
-            session.id.clone(),
+            session.title.clone(),
             muted_style().add_modifier(Modifier::BOLD),
         ),
     ])];
@@ -342,7 +342,7 @@ fn render_waiting_terminal_surface(frame: &mut Frame<'_>, area: Rect, session: &
 fn render_inactive_session_surface(frame: &mut Frame<'_>, area: Rect, session: &SessionSummary) {
     let mut lines = vec![
         Line::from(Span::styled(
-            session.id.clone(),
+            session.title.clone(),
             muted_style().add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
@@ -642,7 +642,7 @@ fn fork_lines(state: &AppState, draft: Option<&ForkDraft>) -> Vec<Line<'static>>
         .unwrap_or(" ");
     vec![
         overlay_title("fork session"),
-        overlay_pair("source", &session.id),
+        overlay_pair("source", &session.title),
         focus_pair("name", name),
         overlay_line("active input: name; type to edit; Backspace deletes"),
         overlay_line("Enter forks; Esc cancels"),
@@ -659,7 +659,7 @@ fn stats_lines(state: &AppState) -> Vec<Line<'static>> {
     vec![
         overlay_title("session info"),
         table_header(&["Field", "Value", "Note", ""]),
-        info_row("session", &session.id, &session.title),
+        info_row("session", &session.title, &session.id),
         info_row(
             "profile",
             &session.profile,
@@ -882,7 +882,7 @@ fn push_tab(
     let number = format!(" {} ", index + 1);
     let label = format!(
         " {}{} ",
-        truncate(&session.id, 14),
+        truncate(&session.title, 14),
         attention_marker(session)
     );
     let width = number.chars().count() + label.chars().count();
