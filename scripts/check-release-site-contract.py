@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from release_site_snapshot import snapshot_distribution_bytes
+from release_site_snapshot import retain_successful_external_fetches, snapshot_distribution_bytes
 
 from capsem import runtime_preflight_manifest as channel_resolver
 
@@ -220,7 +220,7 @@ def validate_release_channels(
     channels = channels or ["stable"]
     last_failures: list[tuple[str, Any]] = []
     for attempt in range(1, attempts + 1):
-        clear_checker_fetch_cache(checker)
+        clear_checker_fetch_cache(checker, release_site)
         failures: list[tuple[str, Any]] = []
         if urlparse(release_site).scheme != "file":
             dns = checker.check_release_site_dns(release_site)
@@ -253,10 +253,8 @@ def validate_release_channels(
     return 1
 
 
-def clear_checker_fetch_cache(checker: Any) -> None:
-    cache = getattr(checker, "_FETCH_BYTES_CACHE", None)
-    if hasattr(cache, "clear"):
-        cache.clear()
+def clear_checker_fetch_cache(checker: Any, release_site: str) -> None:
+    retain_successful_external_fetches(checker, release_site)
 
 
 def normalize_release_site(release_site: str) -> str:

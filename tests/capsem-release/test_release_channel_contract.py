@@ -589,6 +589,107 @@ def test_strict_snapshot_retries_a_lagging_deploy_file(tmp_path: Path) -> None:
     assert attempts == 2
 
 
+def test_snapshot_retry_reuses_successful_external_graph_bytes(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    manifest = dist / "assets" / "stable" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    (dist / "channels.json").write_bytes(b'{"channels":{}}\n')
+    (dist / "404.html").write_bytes(b"candidate 404")
+    manifest.write_bytes(b'{"version":"1"}\n')
+    site = "https://release.capsem.org"
+    external = "https://github.example.test/release/immutable-rootfs.erofs"
+    attempts = 0
+    calls: dict[str, int] = {}
+    cache: dict[str, Any] = {}
+
+    def fetch(url: str) -> Any:
+        if url in cache:
+            return cache[url]
+        calls[url] = calls.get(url, 0) + 1
+        if url == external:
+            body = b"immutable graph bytes"
+        else:
+            relative = url.removeprefix(f"{site}/")
+            body = (dist / relative).read_bytes()
+            if attempts == 1 and relative == "404.html":
+                body = b"stale 404"
+        result = SimpleNamespace(data=body, error=None)
+        cache[url] = result
+        return result
+
+    def populate() -> int:
+        nonlocal attempts
+        attempts += 1
+        fetch(f"{site}/channels.json")
+        fetch(f"{site}/assets/stable/manifest.json")
+        fetch(external)
+        return 0
+
+    checker = SimpleNamespace(_FETCH_BYTES_CACHE=cache, fetch_bytes=fetch)
+    SNAPSHOT.snapshot_distribution_bytes(
+        checker,
+        site,
+        populate=populate,
+        attempts=2,
+        delay_seconds=0,
+        snapshot_out=tmp_path / "production.json",
+        expect_snapshot=None,
+        require_valid=True,
+        same_origin_only=False,
+        dist=dist,
+    )
+
+    assert attempts == 2
+    assert calls[external] == 1
+    assert calls[f"{site}/channels.json"] == 2
+
+
+def test_snapshot_retry_does_not_cache_external_fetch_failures(tmp_path: Path) -> None:
+    site = "https://release.capsem.org"
+    external = "https://github.example.test/release/immutable-rootfs.erofs"
+    attempts = 0
+    external_calls = 0
+    cache: dict[str, Any] = {}
+
+    def fetch(url: str) -> Any:
+        nonlocal external_calls
+        if url in cache:
+            return cache[url]
+        if url == external:
+            external_calls += 1
+            result = SimpleNamespace(
+                data=b"immutable graph bytes" if external_calls == 2 else b"",
+                error=None if external_calls == 2 else "temporary failure",
+            )
+        else:
+            result = SimpleNamespace(data=b"{}\n", error=None)
+        cache[url] = result
+        return result
+
+    def populate() -> int:
+        nonlocal attempts
+        attempts += 1
+        fetch(f"{site}/channels.json")
+        fetch(f"{site}/assets/stable/manifest.json")
+        return int(fetch(external).error is not None)
+
+    checker = SimpleNamespace(_FETCH_BYTES_CACHE=cache, fetch_bytes=fetch)
+    SNAPSHOT.snapshot_distribution_bytes(
+        checker,
+        site,
+        populate=populate,
+        attempts=2,
+        delay_seconds=0,
+        snapshot_out=tmp_path / "production.json",
+        expect_snapshot=None,
+        require_valid=True,
+        same_origin_only=False,
+    )
+
+    assert attempts == 2
+    assert external_calls == 2
+
+
 def _cloudflare_project(
     deployment_id: str,
     *,

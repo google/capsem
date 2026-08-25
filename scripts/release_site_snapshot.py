@@ -19,6 +19,27 @@ def _normalize_release_site(release_site: str) -> str:
     return release_site if parsed.scheme else Path(release_site).resolve().as_uri()
 
 
+def retain_successful_external_fetches(checker: Any, release_site: str) -> None:
+    """Refetch mutable site bytes without redownloading immutable graph bytes."""
+
+    cache = getattr(checker, "_FETCH_BYTES_CACHE", None)
+    if not isinstance(cache, dict):
+        return
+    site = urlparse(_normalize_release_site(release_site))
+    retained: dict[str, Any] = {}
+    for url, fetched in cache.items():
+        if not isinstance(url, str):
+            continue
+        parsed = urlparse(url)
+        same_origin = (parsed.scheme, parsed.netloc) == (site.scheme, site.netloc)
+        body = getattr(fetched, "data", None)
+        error = getattr(fetched, "error", None)
+        if not same_origin and isinstance(body, bytes) and error is None:
+            retained[url] = fetched
+    cache.clear()
+    cache.update(retained)
+
+
 def _fetch_complete_distribution(checker: Any, release_site: str, dist: Path) -> None:
     fetch = getattr(checker, "fetch_bytes", None)
     if not callable(fetch):
@@ -137,9 +158,7 @@ def snapshot_distribution_bytes(
     last_error: OSError | RuntimeError | ValueError | None = None
     rounds = max(attempts, 1)
     for attempt in range(1, rounds + 1):
-        cache = getattr(checker, "_FETCH_BYTES_CACHE", None)
-        if hasattr(cache, "clear"):
-            cache.clear()
+        retain_successful_external_fetches(checker, release_site)
         try:
             result = populate()
             if require_valid and result != 0:

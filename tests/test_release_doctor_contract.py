@@ -1105,11 +1105,15 @@ def test_release_site_contract_cli_retries_requested_channels_as_a_set(monkeypat
     assert "nightly release-channel contract passed" in captured.out
 
 
-def test_release_site_contract_retries_clear_cached_remote_fetches(monkeypatch, capsys) -> None:
+def test_release_site_contract_retries_refresh_site_cache_but_reuse_external_bytes(
+    monkeypatch, capsys
+) -> None:
     validator = _release_site_contract_module()
     cache_clears = 0
     checks: list[tuple[int, str]] = []
     sleep_calls: list[float] = []
+    site = "https://release.capsem.org"
+    external = "https://github.example.test/release/immutable-rootfs.erofs"
 
     class CountingCache(dict):
         def clear(self) -> None:
@@ -1119,7 +1123,14 @@ def test_release_site_contract_retries_clear_cached_remote_fetches(monkeypatch, 
 
     class FakeChecker:
         BLAKE3_IMPORT_ERROR = None
-        _FETCH_BYTES_CACHE = CountingCache({"stale-nightly-manifest": b"old"})
+        _FETCH_BYTES_CACHE = CountingCache(
+            {
+                f"{site}/assets/nightly/manifest.json": SimpleNamespace(
+                    data=b"old", error=None
+                ),
+                external: SimpleNamespace(data=b"immutable graph bytes", error=None),
+            }
+        )
 
         @staticmethod
         def check_release_site_dns(release_site: str):
@@ -1128,16 +1139,19 @@ def test_release_site_contract_retries_clear_cached_remote_fetches(monkeypatch, 
 
         @staticmethod
         def check_release_site_contract(release_site: str, channel: str):
-            assert release_site == "https://release.capsem.org"
+            assert release_site == site
+            assert external in FakeChecker._FETCH_BYTES_CACHE
             checks.append((cache_clears, channel))
             if channel == "nightly" and cache_clears == 1:
-                FakeChecker._FETCH_BYTES_CACHE["nightly-manifest"] = b"stale"
+                FakeChecker._FETCH_BYTES_CACHE[
+                    f"{site}/assets/nightly/manifest.json"
+                ] = SimpleNamespace(data=b"stale", error=None)
                 return SimpleNamespace(
                     ok=False,
                     name="release.capsem.org contract",
                     detail="channel manifest SHA-256 mismatch",
                 )
-            assert "nightly-manifest" not in FakeChecker._FETCH_BYTES_CACHE
+            assert f"{site}/assets/nightly/manifest.json" not in FakeChecker._FETCH_BYTES_CACHE
             return SimpleNamespace(
                 ok=True,
                 name="release.capsem.org contract",
@@ -1157,6 +1171,9 @@ def test_release_site_contract_retries_clear_cached_remote_fetches(monkeypatch, 
     captured = capsys.readouterr()
     assert exit_code == 0
     assert cache_clears == 2
+    assert {
+        external: SimpleNamespace(data=b"immutable graph bytes", error=None)
+    } == FakeChecker._FETCH_BYTES_CACHE
     assert checks == [
         (1, "stable"),
         (1, "nightly"),
