@@ -13,16 +13,19 @@ from capsem.gate.command import GateCommand
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _plan():
+def _plan(monkeypatch: pytest.MonkeyPatch):
     importlib.import_module("capsem.gate.cli")
+    monkeypatch.setattr("capsem.gate.localinstall.host.on_macos", lambda: True)
     return GateCommand.registry["local-install"](
         RecordingRunner(ROOT),
         argparse.Namespace(dry_run=False, graph=False, timing=False),
     ).plan()
 
 
-def test_local_install_builds_content_package_then_installs_that_exact_package() -> None:
-    plan = _plan()
+def test_local_install_builds_content_package_then_installs_that_exact_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _plan(monkeypatch)
     labels = list(plan.labels)
     rendered = plan.describe()
 
