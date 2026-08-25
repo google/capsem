@@ -262,6 +262,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--profile")
     parser.add_argument("--timeout", type=float, default=300.0)
     parser.add_argument("--startup-delay", type=float, default=2.0)
+    parser.add_argument("--keep-session", action="store_true")
     return parser.parse_args()
 
 
@@ -300,16 +301,15 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-
-    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-        subprocess.run(
-            [str(args.capsem), "delete", args.session_name],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=min(args.timeout, 30),
-        )
-
+    if not args.keep_session:
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            subprocess.run(
+                [str(args.capsem), "delete", args.session_name],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=min(args.timeout, 30),
+            )
     print(f"installed shell proof passed: {args.marker}")
     return 0
 

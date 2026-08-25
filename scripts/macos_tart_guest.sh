@@ -37,6 +37,8 @@ RELEASE_HTTP_PORT=18765
 RELEASE_HTTP_LOG="$SHARE/release-http.log"
 RELEASE_HTTP_READY="$SHARE/release-http-ready.json"
 RELEASE_HTTP_PID=""
+# shellcheck source=scripts/macos-tart-regression-probes.sh
+source "$SHARE/macos-tart-regression-probes.sh"
 BINARIES=(
     capsem
     capsem-service
@@ -57,12 +59,12 @@ case "$CHANNEL" in
     stable|nightly) ;;
     *) echo "ERROR: channel must be stable or nightly (got: $CHANNEL)" >&2; exit 2 ;;
 esac
-
 test -s "$PKG"
 test -f "$VERIFY"
 test -f "$TRANSITION_SUPPORT"
 test -f "$INSTALL_USER_REQUEST"
 test -f "$INSTALL_MANIFEST_REQUEST"
+test -f "$SHARE/macos-tart-regression-probes.sh"
 test -s "$ORIGINAL_MANIFEST"
 test -s "$UPDATED_MANIFEST"
 test -s "$TAMPERED_MANIFEST"
@@ -77,7 +79,7 @@ rm -f "$FRESH_INSTALLED_EVIDENCE"
 rm -f "$PRESERVED_INSTALLED_EVIDENCE"
 rm -f "$FRESH_TRANSITION_EVIDENCE" "$UPDATE_TRANSITION_EVIDENCE"
 rm -f "$TAMPER_REJECTION_EVIDENCE" "$INCOMPATIBLE_REJECTION_EVIDENCE"
-
+rm -f "$ASSET_HYDRATION_EVIDENCE" "$STALE_HELPER_EVIDENCE"
 echo "=== Verifying clean guest precondition ==="
 if /usr/sbin/pkgutil --pkg-info com.capsem.pkg >/dev/null 2>&1; then
     echo "ERROR: Tart base image already has the Capsem package receipt" >&2
@@ -156,6 +158,7 @@ bash "$INSTALL_USER_REQUEST" write admin
 bash "$INSTALL_MANIFEST_REQUEST" write "$REMOTE_MANIFEST" "$MANIFEST_URL"
 sudo /usr/sbin/installer -pkg "$PKG" -target /
 clear_install_user_request
+capsem_finish_install_hydration
 
 echo "=== Verifying package receipt and app bundle ==="
 RECEIPT=$(/usr/sbin/pkgutil --pkg-info com.capsem.pkg)
@@ -168,18 +171,6 @@ APP_VERSION=$(/usr/libexec/PlistBuddy \
 test "$APP_VERSION" = "$VERSION"
 
 echo "=== Verifying installed binary cohort ==="
-verify_binary_cohort() {
-    local binary
-    local path
-    for binary in "${BINARIES[@]}"; do
-        path="$CAPSEM_BIN_DIR/$binary"
-        test -x "$path"
-        "$path" --version | grep -F "$VERSION"
-        codesign --verify --strict "$path"
-        codesign -d --verbose=4 "$path" 2>&1 \
-            | grep -F "Signature=adhoc"
-    done
-}
 verify_binary_cohort
 read -r PACKAGE_CHANNEL PACKAGE_MANIFEST_URL < <(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["channel"],m["manifest_url"])' "$INSTALLED_METADATA")
 verify_channel() {
@@ -202,6 +193,13 @@ verify_channel "$PACKAGE_CHANNEL" "$MANIFEST_URL" "$FRESH_INSTALLED_EVIDENCE"
 ORIGINAL_MANIFEST_SHA=$(shasum -a 256 "$ORIGINAL_MANIFEST" | cut -d' ' -f1)
 observe_update_transition fresh_install activated "$ORIGINAL_MANIFEST_SHA" 0 \
     "$FRESH_TRANSITION_EVIDENCE"
+
+echo "=== Proving asynchronous visible asset repair ==="
+capsem_probe_asset_hydration
+
+echo "=== Reinstalling over a live native helper cohort ==="
+capsem_probe_stale_helper_replacement
+verify_binary_cohort
 
 profile_tree_digest() {
     python3 "$TRANSITION_SUPPORT" tree-digest "$CAPSEM_HOME/profiles"
@@ -311,6 +309,8 @@ python3 "$TRANSITION_SUPPORT" write-report \
     --update-transition "$UPDATE_TRANSITION_EVIDENCE" \
     --tamper-rejection "$TAMPER_REJECTION_EVIDENCE" \
     --incompatible-rejection "$INCOMPATIBLE_REJECTION_EVIDENCE" \
+    --asset-hydration "$ASSET_HYDRATION_EVIDENCE" \
+    --stale-helper "$STALE_HELPER_EVIDENCE" \
     --package "$PKG" --app-version "$APP_VERSION" \
     --kernel "$(uname -r)" --architecture "$(uname -m)"
 

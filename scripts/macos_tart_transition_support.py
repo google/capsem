@@ -21,6 +21,19 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def local_tart_capabilities() -> dict[str, bool]:
+    """Describe only the evidence produced by the unsigned local Tart rail."""
+
+    return {
+        "native_install": True,
+        "package_receipt": True,
+        "launchd": True,
+        "physical_vz_boot": False,
+        "signed": False,
+        "gatekeeper": False,
+    }
+
+
 def tree_digest(root: Path) -> str:
     digest = hashlib.sha256()
     for path in sorted(candidate for candidate in root.rglob("*") if candidate.is_file()):
@@ -80,6 +93,8 @@ def write_report(args: argparse.Namespace) -> None:
         "update_transition": _object(args.update_transition),
         "tamper_rejection": _object(args.tamper_rejection),
         "incompatible_rejection": _object(args.incompatible_rejection),
+        "asset_hydration": _object(args.asset_hydration),
+        "stale_helper_replacement": _object(args.stale_helper),
         "guest": {
             "app_version": args.app_version,
             "kernel": args.kernel,
@@ -114,6 +129,8 @@ def parser() -> argparse.ArgumentParser:
         "update-transition",
         "tamper-rejection",
         "incompatible-rejection",
+        "asset-hydration",
+        "stale-helper",
         "package",
     ):
         report.add_argument(f"--{name}", required=True, type=Path)

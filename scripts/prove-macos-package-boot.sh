@@ -38,6 +38,7 @@ DOCTOR_LOG="$WORK_ROOT/doctor.log"
 DOCTOR_EVIDENCE="$WORK_ROOT/doctor.json"
 WINTERFELL_LOG="$WORK_ROOT/winterfell.log"
 WINTERFELL_EVIDENCE="$WORK_ROOT/winterfell.json"
+PERSISTENT_PIN_EVIDENCE="$WORK_ROOT/persistent-pin-resume.json"
 
 [ "$(uname -s)" = "Darwin" ] || {
     echo "ERROR: macOS package guest-boot proof requires macOS" >&2
@@ -56,6 +57,13 @@ stop_isolated_processes() {
     do
         pkill -9 -f "$CAPSEM_HOME_DIR/bin/$name" 2>/dev/null || true
     done
+}
+capsem_isolated() {
+    CAPSEM_HOME="$CAPSEM_HOME_DIR" \
+    CAPSEM_RUN_DIR="$RUN_DIR" \
+    CAPSEM_ASSETS_DIR="$CAPSEM_HOME_DIR/assets" \
+    CAPSEM_PROFILES_DIR="$CAPSEM_HOME_DIR/profiles" \
+        "$CAPSEM_HOME_DIR/bin/capsem" "$@"
 }
 cleanup() {
     stop_isolated_processes
@@ -97,7 +105,76 @@ CAPSEM_PROFILES_DIR="$CAPSEM_HOME_DIR/profiles" \
         --marker CAPSEM_MACOS_PACKAGE_VM_BOOT_OK \
         --session-name macos-package-vm-boot \
         --profile code \
+        --keep-session \
         --timeout 300
+
+echo "=== Proving a named VM keeps its saved profile and image pins ==="
+ACTIVE_PROFILE=$(find "$RUN_DIR/persistent" -type f -name active_profile.toml -print -quit)
+test -s "$ACTIVE_PROFILE"
+PIN_SHA_BEFORE=$(shasum -a 256 "$ACTIVE_PROFILE" | cut -d' ' -f1)
+capsem_isolated suspend macos-package-vm-boot
+capsem_isolated stop
+CURRENT_PROFILE="$CAPSEM_HOME_DIR/profiles/code"
+CURRENT_PROFILE_BACKUP="$WORK_ROOT/code-profile-before-selection-change"
+cp -R "$CURRENT_PROFILE" "$CURRENT_PROFILE_BACKUP"
+python3 - "$CURRENT_PROFILE/profile.toml" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+updated, count = re.subn(
+    r'(?m)^revision\s*=\s*"[^"]+"$',
+    'revision = "glowup-current-profile-advanced"',
+    path.read_text(),
+    count=1,
+)
+if count != 1:
+    raise SystemExit("installed code profile has no revision to advance")
+path.write_text(updated)
+PY
+capsem_isolated start
+capsem_isolated resume macos-package-vm-boot
+for attempt in $(seq 1 90); do
+    if capsem_isolated exec macos-package-vm-boot \
+        'printf CAPSEM_PERSISTENT_PIN_RESUME_OK' \
+        | grep -Fq CAPSEM_PERSISTENT_PIN_RESUME_OK
+    then
+        break
+    fi
+    if [ "$attempt" -eq 90 ]; then
+        capsem_isolated info macos-package-vm-boot --json >&2 || true
+        echo "ERROR: saved-profile persistent VM did not resume" >&2
+        exit 1
+    fi
+    sleep 2
+done
+PIN_SHA_AFTER=$(shasum -a 256 "$ACTIVE_PROFILE" | cut -d' ' -f1)
+test "$PIN_SHA_AFTER" = "$PIN_SHA_BEFORE"
+capsem_isolated suspend macos-package-vm-boot
+capsem_isolated stop
+rm -rf "$CURRENT_PROFILE"
+mv "$CURRENT_PROFILE_BACKUP" "$CURRENT_PROFILE"
+capsem_isolated start
+capsem_isolated delete macos-package-vm-boot
+python3 - "$PERSISTENT_PIN_EVIDENCE" "$PIN_SHA_BEFORE" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+Path(sys.argv[1]).write_text(
+    json.dumps(
+        {
+            "schema": "capsem.persistent_pin_resume.v1",
+            "persistent_pin_resume": True,
+            "saved_profile_sha256": sys.argv[2],
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n"
+)
+PY
 
 echo "=== Running full doctor from the exact package cohort ==="
 set +e
@@ -153,7 +230,7 @@ if [ "$WINTERFELL_STATUS" -ne 0 ]; then
 fi
 
 python3 - "$WORK_ROOT/report.json" "$PKG" "$VERSION" \
-    "$DOCTOR_EVIDENCE" "$WINTERFELL_EVIDENCE" <<'PY'
+    "$DOCTOR_EVIDENCE" "$WINTERFELL_EVIDENCE" "$PERSISTENT_PIN_EVIDENCE" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -162,12 +239,17 @@ import sys
 package = Path(sys.argv[2]).resolve()
 doctor = json.loads(Path(sys.argv[4]).read_text())
 winterfell = json.loads(Path(sys.argv[5]).read_text())
+persistent_pin = json.loads(Path(sys.argv[6]).read_text())
 if doctor.get("schema") != "capsem.installed_doctor.v1" or not doctor.get("passed"):
     raise SystemExit(f"full installed doctor evidence failed: {doctor}")
 if winterfell.get("schema") != "capsem.installed_winterfell.v1" or not winterfell.get(
     "passed"
 ):
     raise SystemExit(f"installed Winterfell evidence failed: {winterfell}")
+if persistent_pin.get("schema") != "capsem.persistent_pin_resume.v1" or not persistent_pin.get(
+    "persistent_pin_resume"
+):
+    raise SystemExit(f"persistent pin resume evidence failed: {persistent_pin}")
 report = {
     "schema": "capsem.macos_package_boot.v1",
     "package": str(package),
@@ -179,8 +261,10 @@ report = {
     "guest_shell_marker": "CAPSEM_MACOS_PACKAGE_VM_BOOT_OK",
     "full_doctor": True,
     "installed_winterfell": True,
+    "persistent_pin_resume": True,
     "doctor_evidence": doctor,
     "winterfell_evidence": winterfell,
+    "persistent_pin_evidence": persistent_pin,
 }
 Path(sys.argv[1]).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
 PY

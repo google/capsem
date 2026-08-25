@@ -22,6 +22,7 @@ from macos_candidate_content import (
     localize_candidate_profile_urls,
     stage_candidate_assets,
 )
+from marketing_install_surface import validate_checked_in_marketing_install_surface
 
 from capsem.gate import config as gate_config
 from capsem.gate.content import ProfileContent
@@ -71,14 +72,12 @@ ROOT = Path(__file__).resolve().parent.parent
 GUEST_RELEASE_ROOT = "http://127.0.0.1:18765/candidate"
 GUEST_ASSET_ROOT = "file:///Volumes/My%20Shared%20Files/capsem-assets"
 
-
 def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
     merged = os.environ.copy()
     if env:
         merged.update(env)
     print("+", shlex.join(command), flush=True)
     subprocess.run(command, cwd=ROOT, env=merged, check=True)
-
 
 def project_version() -> str:
     manifest = (ROOT / "Cargo.toml").read_text()
@@ -287,6 +286,7 @@ def main() -> int:
 
     if platform.system() != "Darwin":
         raise RuntimeError("the macOS release glow-up requires macOS")
+    validate_checked_in_marketing_install_surface(ROOT)
     config = gate_config.load(ROOT)
     content_root = Path(args.content_root)
     content = ProfileContent.isolated(

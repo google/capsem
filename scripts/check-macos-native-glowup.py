@@ -77,7 +77,12 @@ def validate_report(report_path: Path, cargo_toml: Path) -> Mapping[str, object]
     physical = require_mapping(adapter_evidence.get("physical_vz"), "physical_vz")
     if physical.get("package_sha256") != package_sha256:
         raise NativeGlowupError("physical VZ proof did not use the Tart-installed package")
-    for field in ("guest_vm_booted", "full_doctor", "installed_winterfell"):
+    for field in (
+        "guest_vm_booted",
+        "full_doctor",
+        "installed_winterfell",
+        "persistent_pin_resume",
+    ):
         if physical.get(field) is not True:
             raise NativeGlowupError(f"physical VZ proof did not pass {field}")
     expected_transitions = (

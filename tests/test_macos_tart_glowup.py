@@ -16,6 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 HARNESS = PROJECT_ROOT / "scripts" / "macos_tart_glowup.py"
 GLOWUP = PROJECT_ROOT / "scripts" / "macos_release_glowup.py"
 GUEST = PROJECT_ROOT / "scripts" / "macos_tart_guest.sh"
+GUEST_REGRESSIONS = PROJECT_ROOT / "scripts" / "macos-tart-regression-probes.sh"
 GUEST_SUPPORT = PROJECT_ROOT / "scripts" / "macos_tart_transition_support.py"
 HOST_BOOT = PROJECT_ROOT / "scripts" / "prove-macos-package-boot.sh"
 INSTALLED_WINTERFELL = PROJECT_ROOT / "scripts" / "run-installed-winterfell.py"
@@ -576,6 +577,7 @@ def test_macos_glowup_finalizes_shared_transition_report(tmp_path: Path) -> None
                 "guest_vm_booted": True,
                 "full_doctor": True,
                 "installed_winterfell": True,
+                "persistent_pin_resume": True,
             }
         )
     )
@@ -647,6 +649,7 @@ def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> N
                 "guest_vm_booted": True,
                 "full_doctor": True,
                 "installed_winterfell": True,
+                "persistent_pin_resume": True,
             }
         },
         "transition_scope": ["fresh_install", "profile_only", "tamper_rejection"],
@@ -800,7 +803,7 @@ def test_standalone_glowup_owns_build_tart_install_and_physical_boot() -> None:
 def test_local_package_proof_uses_ad_hoc_payload_signing_without_release_keys() -> None:
     glowup = GLOWUP.read_text()
     build = LOCAL_PACKAGE_BUILD.read_text()
-    guest = GUEST.read_text()
+    guest = GUEST.read_text() + GUEST_REGRESSIONS.read_text()
     release = RELEASE_WORKFLOW.read_text()
 
     assert not LOCAL_SIGNING.exists()

@@ -189,3 +189,39 @@ def test_public_installer_stops_the_user_service_before_package_replacement() ->
             "sudo /usr/sbin/installer -pkg"
         ), relative
         assert linux.index("stop_existing_capsem") < linux.index("sudo apt install"), relative
+
+
+def test_installed_glowup_owns_the_release_regression_story_matrix() -> None:
+    local_glowup = (ROOT / "scripts/local-release-glowup.py").read_text(encoding="utf-8")
+    macos_glowup = (ROOT / "scripts/macos_release_glowup.py").read_text(encoding="utf-8")
+    tart_host = (ROOT / "scripts/macos_tart_glowup.py").read_text(encoding="utf-8")
+    tart_guest = (ROOT / "scripts/macos_tart_guest.sh").read_text(encoding="utf-8")
+    tart_regressions = (ROOT / "scripts/macos-tart-regression-probes.sh").read_text(
+        encoding="utf-8"
+    )
+    physical_boot = (ROOT / "scripts/prove-macos-package-boot.sh").read_text(encoding="utf-8")
+    native_check = (ROOT / "scripts/check-macos-native-glowup.py").read_text(encoding="utf-8")
+
+    for source in (local_glowup, macos_glowup):
+        assert "validate_checked_in_marketing_install_surface" in source
+    assert "ASSET_HYDRATION_EVIDENCE" in tart_regressions
+    assert '"started"' in tart_regressions
+    assert "STALE_HELPER_EVIDENCE" in tart_regressions
+    assert "old_service_pid" in tart_regressions
+    assert "macos-tart-regression-probes.sh" in tart_host
+    assert "PERSISTENT_PIN_EVIDENCE" in physical_boot
+    assert "--keep-session" in physical_boot
+    assert '"persistent_pin_resume": True' in physical_boot
+    assert '"persistent_pin_resume"' in native_check
+
+    # TUI rendering and interaction belong to the dedicated Ratatui suite.
+    for source in (
+        local_glowup,
+        macos_glowup,
+        tart_guest,
+        tart_host,
+        tart_regressions,
+        physical_boot,
+    ):
+        assert "capsem-tui --help" not in source
+        assert "CAPSEM_TUI_LATENCY" not in source

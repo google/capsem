@@ -35,7 +35,12 @@ def require_object(value: object, field: str) -> dict[str, object]:
 def validate_physical_evidence(report: dict[str, object], package_sha256: str) -> None:
     if report.get("package_sha256") != package_sha256:
         raise RuntimeError("physical VZ proof did not use the Tart-tested package")
-    required = ("guest_vm_booted", "full_doctor", "installed_winterfell")
+    required = (
+        "guest_vm_booted",
+        "full_doctor",
+        "installed_winterfell",
+        "persistent_pin_resume",
+    )
     missing = [field for field in required if report.get(field) is not True]
     if missing:
         raise RuntimeError(f"physical VZ proof did not pass {missing}")
@@ -193,6 +198,17 @@ def validate_macos_guest_report(
     update = require_object(report.get("update_transition"), "update_transition")
     tamper = require_object(report.get("tamper_rejection"), "tamper_rejection")
     incompatible = require_object(report.get("incompatible_rejection"), "incompatible_rejection")
+    asset_hydration = require_object(report.get("asset_hydration"), "asset_hydration")
+    for field in ("manifest_only_install", "started", "downloading", "completed_ready"):
+        if asset_hydration.get(field) is not True:
+            raise RuntimeError(f"Tart guest asset hydration did not prove {field}")
+    stale_helper = require_object(
+        report.get("stale_helper_replacement"), "stale_helper_replacement"
+    )
+    if stale_helper.get("old_service_retired") is not True:
+        raise RuntimeError("Tart guest did not retire the stale installed helper")
+    if stale_helper.get("old_service_pid") == stale_helper.get("new_service_pid"):
+        raise RuntimeError("Tart guest stale helper replacement reused the old PID")
     validate_complete_verdicts(
         fresh,
         update,

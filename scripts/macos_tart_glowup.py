@@ -18,6 +18,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO, cast
 
+from macos_tart_transition_support import local_tart_capabilities
+
 try:
     from release_glowup import (
         ArtifactIdentity,
@@ -329,19 +331,6 @@ def validate_host() -> None:
             )
 
 
-def local_tart_capabilities() -> dict[str, bool]:
-    """Describe only the evidence produced by the unsigned local Tart rail."""
-
-    return {
-        "native_install": True,
-        "package_receipt": True,
-        "launchd": True,
-        "physical_vz_boot": False,
-        "signed": False,
-        "gatekeeper": False,
-    }
-
-
 def terminate_runner(
     runner: subprocess.Popen[str] | None,
     log_stream: TextIO | None,
@@ -486,6 +475,7 @@ def main() -> int:
         "release_fixture_server.py",
         "release_transition.py",
         "macos_tart_transition_support.py",
+        "macos-tart-regression-probes.sh",
         "serve-release-test-root.py",
     ):
         stage_file(PROJECT_ROOT / "scripts" / name, share / name)
@@ -557,6 +547,8 @@ def main() -> int:
             "update_transition": guest_report["update_transition"],
             "tamper_rejection": guest_report["tamper_rejection"],
             "incompatible_rejection": guest_report["incompatible_rejection"],
+            "asset_hydration": guest_report["asset_hydration"],
+            "stale_helper_replacement": guest_report["stale_helper_replacement"],
         }
         rendered_report = json.dumps(report, indent=2, sort_keys=True) + "\n"
         report_path.write_text(rendered_report)
