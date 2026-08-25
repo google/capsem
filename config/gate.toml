@@ -787,6 +787,7 @@ unknown_head = "unknown"
 [versions]
 # The one authority: a human decision, recorded here and fanned out.
 cargo_manifest = "Cargo.toml"
+uv_lock = "uv.lock"
 tag_prefix = "refs/tags/v"
 
 [[versions.stamped]]

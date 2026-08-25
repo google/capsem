@@ -27,6 +27,22 @@ version = "{version}"
 edition = "2021"
 """
 
+UV_LOCK = """\
+version = 1
+revision = 3
+requires-python = ">=3.11"
+
+[[package]]
+name = "capsem"
+version = "0.0.1"
+source = { editable = "." }
+
+[[package]]
+name = "dependency"
+version = "7.8.9"
+source = { registry = "https://pypi.org/simple" }
+"""
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -44,6 +60,7 @@ def _checkout(tmp_path: Path, *, version: str = "9.9.9", cargo: str | None = Non
     (tmp_path / "crates" / "capsem-app" / "tauri.conf.json").write_text(
         '{\n  "productName": "Capsem",\n  "version": "0.0.1"\n}\n'
     )
+    (tmp_path / "uv.lock").write_text(UV_LOCK)
     return tmp_path
 
 
@@ -122,6 +139,10 @@ def test_stamp_fans_the_one_version_out_to_the_cohort(tmp_path: Path) -> None:
         root / "crates" / "capsem-app" / "tauri.conf.json"
     ).read_text()
     assert 'version = "4.2.0"' in (root / "pyproject.toml").read_text()
+    uv_lock = (root / "uv.lock").read_text()
+    assert 'name = "capsem"\nversion = "4.2.0"' in uv_lock
+    assert 'name = "dependency"\nversion = "7.8.9"' in uv_lock
+    assert runner.ran(r"uv lock --locked --offline")
 
 
 def test_stamp_refreshes_both_lockfiles_after_substituting(tmp_path: Path) -> None:
@@ -131,7 +152,18 @@ def test_stamp_refreshes_both_lockfiles_after_substituting(tmp_path: Path) -> No
 
     versions.stamp(root, runner)
 
-    runner.assert_order(r"cargo update --workspace --offline", r"uv lock --offline")
+    runner.assert_order(r"cargo update --workspace --offline", r"uv lock --locked --offline")
+
+
+def test_stamp_refuses_a_uv_lock_without_one_editable_capsem_root(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    (root / "uv.lock").write_text(UV_LOCK.replace('name = "capsem"', 'name = "other"'))
+    runner = RecordingRunner(root, failures=["rev-parse"])
+
+    with pytest.raises(GateError, match="one editable capsem root"):
+        versions.stamp(root, runner)
+
+    assert not runner.ran(r"uv lock")
 
 
 def test_stamp_refuses_a_version_that_is_already_tagged(tmp_path: Path) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -35,7 +36,10 @@ def test_local_install_builds_content_package_then_installs_that_exact_package(
     assert labels.index("local-install.package") < labels.index("local-install.install")
     assert "scripts/build-test-macos-package.sh" in rendered
     assert "sudo /usr/sbin/installer -pkg" in rendered
-    assert "packages/Capsem-0.6.0.pkg" in rendered
+    version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))[
+        "workspace"
+    ]["package"]["version"]
+    assert f"packages/Capsem-{version}.pkg" in rendered
 
 
 def test_public_install_is_only_the_local_install_dispatch() -> None:

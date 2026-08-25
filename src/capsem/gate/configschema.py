@@ -200,6 +200,7 @@ class StampedFile(Strict):
 
 class VersionsConfig(Strict):
     cargo_manifest: str
+    uv_lock: str
     tag_prefix: str
     stamped: tuple[StampedFile, ...]
 

@@ -148,7 +148,7 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 | 1 | `rustup` (stable, minimal profile) | `sh.rustup.rs` |
 | 1 | `just` | `just.systems` -> `~/.local/bin` |
 | 2 | `uv` | `astral.sh/uv` -> `~/.local/bin` |
-| 2 | Python deps | `uv sync --frozen` |
+| 2 | Python lock metadata + deps | `uv lock --locked` then `uv sync --frozen` |
 | 2 | Rust workspace deps | `cargo fetch --locked` before sandboxed qualification |
 | 2 (Linux) | native compiler/Tauri libs, `cpio`, Docker/Buildx, Bubblewrap | apt or dnf |
 | 2 (Linux) | configured Node major + pnpm 10 | SHA256-verified official Node archive + npm |

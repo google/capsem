@@ -80,6 +80,13 @@ def test_bootstrap_runs_full_doctor_fix_without_a_parallel_check_mode() -> None:
     assert "dry-run" not in bootstrap.lower()
 
 
+def test_bootstrap_materializes_locked_python_metadata_before_frozen_sync() -> None:
+    bootstrap = _read("bootstrap.sh")
+
+    assert "uv lock --locked" in bootstrap
+    assert bootstrap.index("uv lock --locked") < bootstrap.index("uv sync --frozen")
+
+
 def test_bootstrap_uses_colima_exit_status_not_running_text() -> None:
     bootstrap = _read("bootstrap.sh")
 

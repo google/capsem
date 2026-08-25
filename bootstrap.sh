@@ -166,7 +166,8 @@ if ! command -v uv >/dev/null 2>&1; then
     fi
 fi
 if command -v uv >/dev/null 2>&1; then
-    printf "  Python deps (uv sync --frozen)...\n"
+    printf "  Python lock metadata + deps (uv lock --locked; uv sync --frozen)...\n"
+    uv lock --locked
     uv sync --frozen
 else
     printf "  [SKIP] Python deps (uv not installed -- some just recipes will fail)\n"

@@ -40,8 +40,8 @@ SEMVER = re.compile(r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
 
 # How each declared file spells its copy of the version. `[[versions.stamped]]`
 # says which files and which key; this says what that looks like in each
-# format. `Cargo.lock` and `uv.lock` are absent from both on purpose: their
-# copies are refreshed by the tools that own them, not by substitution.
+# format. Cargo owns Cargo.lock; uv verifies its lock after the exact editable
+# root entry changes, without resolving registry dependencies.
 SEMVER_PATTERN = r"\d+\.\d+\.\d+"
 FORMATS = {
     "json_key": (
@@ -89,6 +89,30 @@ def _substitute(path: Path, pattern: re.Pattern[str], template: str, version: st
     write_text(path, replaced)
 
 
+def _stamp_uv_lock(path: Path, version: str) -> None:
+    """Change only uv's editable project row, then let uv verify the lock."""
+    text = path.read_text(encoding="utf-8")
+    try:
+        packages = tomllib.loads(text)["package"]
+    except (KeyError, tomllib.TOMLDecodeError) as exc:
+        raise GateError(f"{path} has no package ledger: {exc}") from None
+    roots = [
+        package
+        for package in packages
+        if package.get("name") == "capsem"
+        and package.get("source", {}).get("editable") == "."
+    ]
+    if len(roots) != 1:
+        raise GateError(f"{path} should contain one editable capsem root, found {len(roots)}")
+    old = require_semver(str(roots[0].get("version", "")), source=str(path))
+    needle = f'[[package]]\nname = "capsem"\nversion = "{old}"\nsource = {{ editable = "." }}'
+    replacement = needle.replace(f'version = "{old}"', f'version = "{version}"')
+    replaced, count = text.replace(needle, replacement), text.count(needle)
+    if count != 1:
+        raise GateError(f"{path} should spell one canonical editable capsem root, found {count}")
+    write_text(path, replaced)
+
+
 def stamp(root: Path, runner: Runner) -> str:
     """Propagate `Cargo.toml`'s version across the release cohort.
 
@@ -115,9 +139,10 @@ def stamp(root: Path, runner: Runner) -> str:
     # Cargo refreshes workspace package versions in place while preserving the
     # already locked dependency graph.
     runner.run(["cargo", "update", "--workspace", "--offline"])
-    # Keep the editable project metadata in the frozen lockfile on the release
-    # version before the prepared release commit is selected and tagged.
-    runner.run(["uv", "lock", "--offline"])
+    # Updating the one editable row before `--locked` makes this verification
+    # independent of registry cache state; an ordinary resolve is not.
+    _stamp_uv_lock(root / settings.uv_lock, version)
+    runner.run(["uv", "lock", "--locked", "--offline"])
     return version
 
 
