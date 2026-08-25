@@ -34,7 +34,7 @@ impl ShutdownMode {
     /// ledger. Trying to query that database after SIGKILL can instead turn a
     /// destructive delete into a failure when initialization or a checkpoint
     /// was interrupted.
-    pub(super) fn session_dir_for_rollup<'a>(self, session_dir: &'a Path) -> Option<&'a Path> {
+    pub(super) fn session_dir_for_rollup(self, session_dir: &Path) -> Option<&Path> {
         matches!(self, Self::Retain).then_some(session_dir)
     }
 
