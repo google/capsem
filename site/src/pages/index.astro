@@ -1,41 +1,24 @@
 ---
 import Base from "../layouts/Base.astro";
 import "../styles/global.css";
+import Nav from "../components/Nav.svelte";
+import Hero from "../components/Hero.svelte";
+import Features from "../components/Features.svelte";
+import ProductOverview from "../components/ProductOverview.svelte";
+import HowItWorks from "../components/HowItWorks.svelte";
+import FAQ from "../components/FAQ.svelte";
+import CTA from "../components/CTA.svelte";
+import Footer from "../components/Footer.svelte";
 ---
 <Base>
-  <header class="absolute inset-x-0 top-0 z-10">
-    <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-      <div class="flex items-center gap-2.5">
-        <img src="/logo.svg" alt="" class="h-8 w-8" />
-        <span class="text-lg font-bold tracking-tight text-heading">Capsem</span>
-      </div>
-      <a href="https://github.com/google/capsem" class="btn-dark">GitHub</a>
-    </div>
-  </header>
-
+  <Nav client:load />
   <main id="main">
-    <section class="relative min-h-screen overflow-hidden pt-32 pb-20 md:pt-44 md:pb-32">
-      <div class="absolute inset-0 bg-[linear-gradient(to_right,#e5e7eb_1px,transparent_1px),linear-gradient(to_bottom,#e5e7eb_1px,transparent_1px)] bg-[size:4rem_4rem] opacity-40"></div>
-      <div class="absolute inset-0 bg-[radial-gradient(ellipse_60%_50%_at_50%_-20%,var(--color-accent-glow),transparent)]"></div>
-
-      <div class="relative mx-auto max-w-6xl px-6">
-        <div class="max-w-3xl">
-          <h1 class="text-5xl font-extrabold leading-[1.08] tracking-tight text-heading md:text-7xl">
-            <span class="gradient-text">CAPSEM</span><br />
-            The fastest way to<br />
-            ship with AI securely.
-          </h1>
-
-          <p class="mt-6 max-w-xl text-lg leading-relaxed text-body md:text-xl">
-            A Rust-powered hypervisor that sandboxes every AI coding agent
-            in its own air-gapped Linux VM. See everything, control everything.
-          </p>
-
-          <p class="mt-10 inline-flex rounded-full bg-heading px-6 py-3 text-sm font-semibold text-white">
-            Available Summer 2026
-          </p>
-        </div>
-      </div>
-    </section>
+    <Hero />
+    <Features />
+    <ProductOverview />
+    <HowItWorks />
+    <FAQ client:visible />
+    <CTA client:visible />
   </main>
+  <Footer />
 </Base>

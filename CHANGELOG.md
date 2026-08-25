@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The public marketing homepage once again exposes the supported installer and
+  stable-channel download instead of the temporary Summer 2026 holding page;
+  release glowup now refuses source whose public install command is hidden.
+
 - Persistent named VMs now resume from their saved validated runtime profile,
   rootfs geometry, and immutable asset pins instead of being invalidated or
   overwritten when the currently selected profile advances. Deprecated pins

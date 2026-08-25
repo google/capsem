@@ -1037,8 +1037,8 @@ suffixes = [".rs"]
 max_lines = 1000
 
 [boundary.rust.oversized_line_counts]
-"crates/capsem-service/src/main.rs" = 13845
-"crates/capsem-service/src/tests.rs" = 12003
+"crates/capsem-service/src/main.rs" = 14049
+"crates/capsem-service/src/tests.rs" = 12130
 
 # The benchmark collectors. Their whole contract is that they print raw
 # samples and compute nothing, so one growing past this ceiling means
@@ -1067,7 +1067,7 @@ max_lines = 300
 "scripts/doctor_session_test.py" = 570
 "scripts/fetch-release-artifacts.py" = 353
 "scripts/integration_test.py" = 1191
-"scripts/local-release-glowup.py" = 2201
+"scripts/local-release-glowup.py" = 2193
 "scripts/macos_release_glowup.py" = 393
 "scripts/macos_tart_glowup.py" = 587
 "scripts/macos_tart_guest.sh" = 317

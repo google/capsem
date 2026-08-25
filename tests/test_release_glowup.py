@@ -20,6 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = PROJECT_ROOT / "scripts" / "release_glowup.py"
 TRANSITION_PATH = PROJECT_ROOT / "scripts" / "release_transition.py"
 LOCAL_GLOWUP_PATH = PROJECT_ROOT / "scripts" / "local-release-glowup.py"
+MARKETING_SURFACE_PATH = PROJECT_ROOT / "scripts" / "marketing_install_surface.py"
 
 
 def _load_module():
@@ -54,6 +55,17 @@ def _load_local_glowup():
     return module
 
 
+def _load_marketing_surface():
+    spec = importlib.util.spec_from_file_location(
+        "marketing_install_surface",
+        MARKETING_SURFACE_PATH,
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _load_first_release():
     """Load the first-release classifier, which imports `release_glowup` itself."""
     path = PROJECT_ROOT / "scripts" / "release_first_release.py"
@@ -66,6 +78,21 @@ def _load_first_release():
     finally:
         sys.path.remove(str(PROJECT_ROOT / "scripts"))
     return module
+
+
+def test_local_glowup_requires_the_public_install_command_to_be_discoverable() -> None:
+    module = _load_marketing_surface()
+
+    module.validate_marketing_install_surface(
+        '<main><Hero /><CTA /><code>curl -fsSL https://capsem.org/install.sh | sh</code></main>',
+        install_script_url="https://capsem.org/install.sh",
+    )
+
+    with pytest.raises(SystemExit, match="does not expose the supported install command"):
+        module.validate_marketing_install_surface(
+            "<main>Available Summer 2026</main>",
+            install_script_url="https://capsem.org/install.sh",
+        )
 
 
 def _artifact(tmp_path: Path, module):

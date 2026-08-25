@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import unquote, urljoin, urlparse
 
+from marketing_install_surface import validate_checked_in_marketing_install_surface
+
 from capsem.gate import config as gate_config
 from capsem.gate.productschema import ProfileRevisionPolicy
 from capsem.gate.releaseauthoring import author_native_candidate
@@ -181,23 +183,12 @@ def _environment_value(name: str) -> str | None:
 
 
 def main() -> int:
-    # Loaded before the parser, because one flag's default is a variable name
-    # this file must not spell for itself.
     config = gate_config.load(PROJECT_ROOT)
     qualified_source_commit = config.environment.qualified_source_commit
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-deb", required=True, type=Path)
-    # Told, never resolved. This authors a release graph carrying package
-    # provenance, and the tree this script sits in is not always the subject --
-    # inside the install container it is a mount -- so a commit taken from
-    # `HEAD` here would be provenance about the wrong bytes.
-    #
-    # Defaulted from the gate's own answer rather than left `required`, because
-    # the release lane's two glow-up steps passed nothing at all and could
-    # therefore never get past `argparse`. The gate exports the commit it
-    # resolved for every action, so the value still arrives from whoever knows
-    # it; an explicit flag continues to win, which is how the install container
-    # names the mount's subject.
+    # Told by the gate: inside the install container this tree is a mount, not the subject.
+    # An explicit value remains available to fixture callers.
     parser.add_argument(
         "--source-commit",
         type=SourceCommit,
@@ -277,6 +268,7 @@ def main() -> int:
         default=_environment_value("CAPSEM_RELEASE_PUBLICATION_BASE"),
     )
     args = parser.parse_args()
+    validate_checked_in_marketing_install_surface(PROJECT_ROOT)
     if args.source_commit is None:
         raise SystemExit(
             "no source commit: pass --source-commit, or run under a gate that "
