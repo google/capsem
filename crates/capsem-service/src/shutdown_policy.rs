@@ -1,4 +1,5 @@
 use super::{PollOpts, ServiceState};
+use std::path::Path;
 
 pub(super) fn process_exit_poll_options(timeout: std::time::Duration) -> PollOpts {
     let cadence = std::time::Duration::from_millis(20);
@@ -33,8 +34,8 @@ impl ShutdownMode {
     /// ledger. Trying to query that database after SIGKILL can instead turn a
     /// destructive delete into a failure when initialization or a checkpoint
     /// was interrupted.
-    pub(super) fn rolls_up_session_ledger(self) -> bool {
-        matches!(self, Self::Retain)
+    pub(super) fn session_dir_for_rollup<'a>(self, session_dir: &'a Path) -> Option<&'a Path> {
+        matches!(self, Self::Retain).then_some(session_dir)
     }
 
     /// How long the guest is given to exit on its own before SIGKILL.

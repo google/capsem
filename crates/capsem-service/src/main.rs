@@ -963,9 +963,8 @@ impl ServiceState {
         session_dir_for_rollup: Option<&StdPath>,
     ) -> anyhow::Result<()> {
         let stopped_at = capsem_core::session::now_iso();
-        let session_db_path = session_dir_for_rollup
-            .map(session_db_path_for_session_dir)
-            .filter(|path| path.exists());
+        let session_db_path = session_dir_for_rollup.map(session_db_path_for_session_dir);
+        let session_db_path = session_db_path.filter(|path| path.exists());
         capsem_logger::record_session_stop(
             &self.main_db_path(),
             id,
@@ -1792,9 +1791,7 @@ impl ServiceState {
             if removed.is_some() {
                 let status = if clean_exit { "stopped" } else { "crashed" };
                 if let Err(error) = state_clone.record_session_index_stop(
-                    &id_clone,
-                    status,
-                    Some(&session_dir_clone),
+                    &id_clone, status, Some(&session_dir_clone),
                 ) {
                     error!(
                         id_clone,
@@ -11563,12 +11560,7 @@ async fn shutdown_vm_process(
         return Ok(None);
     }
     state
-        .record_session_index_stop(
-            id,
-            "stopped",
-            mode.rolls_up_session_ledger()
-                .then_some(session_dir.as_path()),
-        )
+        .record_session_index_stop(id, "stopped", mode.session_dir_for_rollup(&session_dir))
         .map_err(|error| {
             AppError(
                 StatusCode::INTERNAL_SERVER_ERROR,

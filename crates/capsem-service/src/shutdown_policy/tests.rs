@@ -10,8 +10,12 @@ fn discarding_state_does_not_wait_for_a_flush() {
 
 #[test]
 fn discarding_state_does_not_roll_up_the_ledger_being_deleted() {
-    assert!(!ShutdownMode::Discard.rolls_up_session_ledger());
-    assert!(ShutdownMode::Retain.rolls_up_session_ledger());
+    let session_dir = std::path::Path::new("session");
+    assert_eq!(ShutdownMode::Discard.session_dir_for_rollup(session_dir), None);
+    assert_eq!(
+        ShutdownMode::Retain.session_dir_for_rollup(session_dir),
+        Some(session_dir)
+    );
 }
 
 #[test]

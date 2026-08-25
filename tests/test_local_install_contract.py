@@ -6,6 +6,7 @@ import argparse
 import importlib
 from pathlib import Path
 
+import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate.command import GateCommand
