@@ -2,6 +2,19 @@
 
 use super::*;
 
+#[test]
+fn asset_status_retains_background_start_acknowledgement() {
+    let status: AssetStatusResponse = serde_json::from_value(serde_json::json!({
+        "ready": false,
+        "downloading": true,
+        "started": true
+    }))
+    .unwrap();
+
+    assert_eq!(status.started, Some(true));
+    assert_eq!(serde_json::to_value(status).unwrap()["started"], true);
+}
+
 struct EnvGuard {
     key: &'static str,
     prev: Option<String>,

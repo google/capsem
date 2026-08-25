@@ -303,6 +303,8 @@ pub struct AssetStatusResponse {
     #[serde(default)]
     pub ensured: Option<bool>,
     #[serde(default)]
+    pub started: Option<bool>,
+    #[serde(default)]
     pub downloaded: Option<usize>,
     #[serde(default)]
     pub reconcile_error: Option<String>,

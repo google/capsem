@@ -44,7 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   synchronously downloading VM images. The service hydrates missing,
   hash-verified profile assets in the background, preserves resumable partial
   downloads, and exposes visible progress on profile cards while session
-  creation remains blocked until the selected profile is ready.
+  creation remains blocked until the selected profile is ready. CLI JSON also
+  preserves the immediate background-start acknowledgement for release probes.
 
 - Native package upgrades now retire the exact installed service/helper cohort
   before replacing signed binaries, including an orphan whose command line has
