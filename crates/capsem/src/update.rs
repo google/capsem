@@ -3521,7 +3521,9 @@ async fn refresh_assets(
             } else {
                 install_manifest_source(&assets_dir, &source).await?;
             }
-            hydrate_installed_assets(&assets_dir).await?;
+            if should_hydrate_assets(explicit_manifest) {
+                hydrate_installed_assets(&assets_dir).await?;
+            }
             persist_channel_transition(&assets_dir, &transition)?;
             Ok(())
         }
@@ -3558,6 +3560,10 @@ async fn refresh_assets(
     }
 
     hydrate_installed_assets(&assets_dir).await
+}
+
+fn should_hydrate_assets(explicit_manifest: Option<&ExplicitManifestInput<'_>>) -> bool {
+    !explicit_manifest.is_some_and(|input| input.payload.is_some())
 }
 
 fn append_update_audit(mut event: serde_json::Value) {

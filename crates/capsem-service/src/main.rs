@@ -40,6 +40,7 @@ use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
 
+mod asset_background;
 mod proctable;
 mod profile_status_cache;
 mod shutdown_policy;
@@ -6152,14 +6153,13 @@ where
     Ok(snapshot)
 }
 
+#[cfg(test)]
 async fn ensure_assets_for_state(state: Arc<ServiceState>) -> Result<usize, String> {
-    if state
-        .asset_reconcile_inflight
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
-        return Err("asset reconciliation already in progress".to_string());
-    }
+    claim_asset_reconcile(&state)?;
+    ensure_assets_after_claim(state).await
+}
+
+async fn ensure_assets_after_claim(state: Arc<ServiceState>) -> Result<usize, String> {
 
     let result: Result<usize, String> = async {
         let Some(manifest) = state.manifest.read().unwrap().as_ref().cloned() else {
@@ -6239,10 +6239,16 @@ async fn ensure_assets_for_state(state: Arc<ServiceState>) -> Result<usize, Stri
     result
 }
 
+#[cfg(test)]
 async fn ensure_profile_assets_for_state(
     state: Arc<ServiceState>,
     profile: &ProfileConfigFile,
 ) -> Result<usize, String> {
+    claim_asset_reconcile(&state)?;
+    ensure_profile_assets_after_claim(state, profile).await
+}
+
+fn claim_asset_reconcile(state: &ServiceState) -> Result<(), String> {
     if state
         .asset_reconcile_inflight
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -6250,7 +6256,13 @@ async fn ensure_profile_assets_for_state(
     {
         return Err("asset reconciliation already in progress".to_string());
     }
+    Ok(())
+}
 
+async fn ensure_profile_assets_after_claim(
+    state: Arc<ServiceState>,
+    profile: &ProfileConfigFile,
+) -> Result<usize, String> {
     let result: Result<usize, String> = async {
         let arch = capsem_core::net::policy_config::current_profile_arch();
         let arch_assets = profile.assets.current_arch_assets().ok_or_else(|| {
@@ -6486,25 +6498,17 @@ async fn handle_profile_assets_ensure(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let profile_id = validate_profile_route_id(profile_id)?;
     let profile = profile_for_route(profile_id)?;
-    let ensure_result = ensure_profile_assets_for_state(Arc::clone(&state), profile.config()).await;
-    let cache = rebuild_profile_status_cache(&state)?;
+    let started = asset_background::start_profile_ensure(&state, profile.config())?;
+    let cache = profile_status_cache(&state)?;
     let mut status = cache
         .profiles
         .get(profile.config().id.as_str())
         .cloned()
         .unwrap_or_else(|| profile_status_value(&state, &profile));
     if let Some(obj) = status.as_object_mut() {
-        match ensure_result {
-            Ok(downloaded) => {
-                obj.insert("ensured".to_string(), json!(true));
-                obj.insert("downloaded".to_string(), json!(downloaded));
-            }
-            Err(error) => {
-                obj.insert("ensured".to_string(), json!(false));
-                obj.insert("downloaded".to_string(), json!(0));
-                obj.insert("error".to_string(), json!(error.to_string()));
-            }
-        }
+        obj.insert("started".to_string(), json!(started));
+        obj.insert("ensured".to_string(), json!(true));
+        obj.insert("downloaded".to_string(), json!(0));
     }
     Ok(Json(refresh_reconcile_fields(&state, status)))
 }
@@ -13506,19 +13510,7 @@ async fn main() -> Result<()> {
     state.hydrate_session_db_handles();
     state.reconcile_persistent_defunct_from_logs();
 
-    {
-        let state_for_assets = Arc::clone(&state);
-        tokio::spawn(async move {
-            match ensure_assets_for_state(Arc::clone(&state_for_assets)).await {
-                Ok(downloaded) => {
-                    info!(downloaded, "startup asset reconciliation finished");
-                }
-                Err(error) => {
-                    warn!(error = %error, "startup asset reconciliation failed");
-                }
-            }
-        });
-    }
+    asset_background::start_startup_ensure(Arc::clone(&state));
 
     // Reap capsem-process orphans from any prior service run sharing this
     // run_dir. A previous service that crashed (SIGKILL) or was killed by

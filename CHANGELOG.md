@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Native installs now validate and activate the release manifest without
+  synchronously downloading VM images. The service hydrates missing,
+  hash-verified profile assets in the background, preserves resumable partial
+  downloads, and exposes visible progress on profile cards while session
+  creation remains blocked until the selected profile is ready.
+
 - Native package upgrades now retire the exact installed service/helper cohort
   before replacing signed binaries, including an orphan whose command line has
   collapsed to only `capsem-service`. The public installer first requests a

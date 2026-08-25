@@ -47,5 +47,6 @@ export interface AssetStatusResponse {
   error?: string;
   reconcile_error?: string;
   ensured?: boolean;
+  started?: boolean;
   downloaded?: number;
 }

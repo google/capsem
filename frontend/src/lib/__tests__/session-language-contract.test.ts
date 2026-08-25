@@ -62,6 +62,9 @@ describe('user-facing session language contract', () => {
     expect(dashboard).toContain("title={ready ? `New ${launcher.profile.name} session` : profileAssetText(launcher.assets)}");
     expect(dashboard).toContain('<DownloadSimple');
     expect(dashboard).toContain('Downloading');
+    expect(dashboard).toContain('refreshDownloadingProfileAssets');
+    expect(dashboard).toContain('role="progressbar"');
+    expect(dashboard).toContain('aria-valuenow={profileAssetPercent(launcher.assets)}');
     expect(dashboard).not.toContain('Customize Session...');
     expect(dashboard).not.toContain('vmStore.showCreateModal = true');
   });

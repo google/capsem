@@ -43,16 +43,16 @@
   let profilesLoading = $state(true);
   let profilesError = $state<string | null>(null);
 
-  onMount(async () => {
+  onMount(() => {
     void loadProfileLaunchers();
-    try {
-      const stats = await api.getStats();
-      globalStats = stats.global;
-    } catch {
-      // Offline -- globalStats stays null, cards show zeros
-    } finally {
-      statsLoading = false;
-    }
+    void api.getStats()
+      .then(stats => { globalStats = stats.global; })
+      .catch(() => { globalStats = null; })
+      .finally(() => { statsLoading = false; });
+    const progressPoll = window.setInterval(() => {
+      if (!document.hidden) void refreshDownloadingProfileAssets();
+    }, 1000);
+    return () => window.clearInterval(progressPoll);
   });
 
   let sortKey = $state<SortKey>('name');
@@ -175,14 +175,20 @@
     return assetHealth.ready ? 'Ready.' : 'Assets are not ready.';
   }
 
+  function profileAssetPercent(assetHealth: AssetStatusResponse | null): number {
+    if (!assetHealth?.bytes_total) return 0;
+    return Math.min(100, Math.floor(((assetHealth.bytes_done ?? 0) / assetHealth.bytes_total) * 100));
+  }
+
+  function profileAssetProgressText(assetHealth: AssetStatusResponse): string {
+    const name = assetHealth.current_asset ? ` ${assetHealth.current_asset}` : '';
+    return `Downloading${name}: ${profileAssetPercent(assetHealth)}%`;
+  }
+
   function updateProfileLauncher(profileId: string, patch: Partial<ProfileLauncher>) {
     profileLaunchers = profileLaunchers.map(launcher =>
       launcher.profile.id === profileId ? { ...launcher, ...patch } : launcher
     );
-  }
-
-  function delay(ms: number): Promise<void> {
-    return new Promise(resolve => window.setTimeout(resolve, ms));
   }
 
   async function fetchProfileAssets(profile: ProfileSummary): Promise<ProfileLauncher> {
@@ -226,6 +232,25 @@
       profileLaunchers = [];
     } finally {
       profilesLoading = false;
+    }
+  }
+
+  let progressRefreshInFlight = false;
+
+  async function refreshDownloadingProfileAssets() {
+    if (progressRefreshInFlight || !profileLaunchers.some(launcher => launcher.assets?.downloading)) return;
+    progressRefreshInFlight = true;
+    try {
+      const updates = await Promise.all(profileLaunchers.map(async launcher => ({
+        id: launcher.profile.id,
+        assets: await api.getAssetsStatus(launcher.profile.id),
+      })));
+      for (const update of updates) updateProfileLauncher(update.id, { assets: update.assets, ensuring: false });
+      if (!updates.some(update => update.assets.downloading)) await vmStore.refresh();
+    } catch {
+      // The next visible poll retries; the existing status remains useful.
+    } finally {
+      progressRefreshInFlight = false;
     }
   }
 
@@ -287,16 +312,8 @@
     actionError = null;
     updateProfileLauncher(profileId, { ensuring: true, error: null });
     try {
-      let assets = await api.ensureAssets(profileId);
-      updateProfileLauncher(profileId, { assets });
-      for (let attempt = 0; attempt < 120 && assets.downloading && !assets.ready; attempt += 1) {
-        await delay(1000);
-        assets = await api.getAssetsStatus(profileId);
-        updateProfileLauncher(profileId, { assets });
-        if (assets.ready || !assets.downloading) break;
-      }
+      const assets = await api.ensureAssets(profileId);
       updateProfileLauncher(profileId, { assets, ensuring: false });
-      await vmStore.refresh();
     } catch (err) {
       updateProfileLauncher(profileId, { ensuring: false, error: parseApiError(err) });
     }
@@ -495,6 +512,19 @@
                   Customize
                 </button>
               </span>
+              {#if launcher.assets?.downloading}
+                <span class="mt-3 block text-[11px] text-muted-foreground-1">{profileAssetProgressText(launcher.assets)}</span>
+                <span
+                  role="progressbar"
+                  aria-label={`Downloading ${launcher.profile.name} assets`}
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow={profileAssetPercent(launcher.assets)}
+                  class="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-muted"
+                >
+                  <span class="block h-full rounded-full bg-primary transition-[width]" style={`width: ${profileAssetPercent(launcher.assets)}%`}></span>
+                </span>
+              {/if}
             </span>
           </div>
         </div>

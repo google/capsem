@@ -114,3 +114,27 @@ capsem_resolve_install_manifest() {
     [ "$requested_status" -eq 1 ] || return "$requested_status"
     printf '%s\n' "$packaged"
 }
+
+capsem_materialize_install_manifest_input() {
+    local source="${1:?capsem_materialize_install_manifest_input <source> [payload] <temporary>}"
+    local payload="${2:-}"
+    local temporary="${3:?capsem_materialize_install_manifest_input <source> [payload] <temporary>}"
+    local path
+    if [ -n "$payload" ]; then
+        path="${payload#file://}"
+    else
+        case "$source" in
+            file://*) path="${source#file://}" ;;
+            http://*|https://*)
+                curl -fsSL -o "$temporary" "$source"
+                path="$temporary"
+                ;;
+            *) return 1 ;;
+        esac
+    fi
+    [ -f "$path" ] && [ ! -L "$path" ] || {
+        echo "capsem: install manifest input is not a regular file: $path" >&2
+        return 1
+    }
+    printf '%s\n' "$path"
+}

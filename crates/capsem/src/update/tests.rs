@@ -1,6 +1,23 @@
 use super::*;
 
 #[test]
+fn preverified_package_manifest_defers_asset_hydration_to_the_service() {
+    let payload = b"{}".to_vec();
+    let package_handoff = ExplicitManifestInput {
+        source: "file:///tmp/manifest.json",
+        payload: Some(payload),
+    };
+    let ordinary_refresh = ExplicitManifestInput {
+        source: "file:///tmp/manifest.json",
+        payload: None,
+    };
+
+    assert!(!should_hydrate_assets(Some(&package_handoff)));
+    assert!(should_hydrate_assets(Some(&ordinary_refresh)));
+    assert!(should_hydrate_assets(None));
+}
+
+#[test]
 fn is_newer_semver() {
     assert!(is_newer("0.17.0", "0.16.1"));
     assert!(is_newer("1.0.0", "0.99.99"));

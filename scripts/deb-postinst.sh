@@ -106,21 +106,18 @@ done
 # Fix ownership
 chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR"
 
-CAPSEM_INSTALL_PHASE="hydrate_assets"
+CAPSEM_INSTALL_PHASE="install_manifest"
 if [ -x "$CAPSEM_DIR/bin/capsem" ]; then
-    if [ -n "$MANIFEST_PAYLOAD" ]; then
-        MANIFEST_PAYLOAD_PATH="${MANIFEST_PAYLOAD#file://}"
-        HYDRATE_COMMAND="CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets --manifest \"$MANIFEST_SOURCE\" --install-manifest-stdin"
-        su "$TARGET_USER" -c "$HYDRATE_COMMAND" < "$MANIFEST_PAYLOAD_PATH" || HYDRATE_FAILED=1
-    else
-        su "$TARGET_USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets --manifest \"$MANIFEST_SOURCE\"" || HYDRATE_FAILED=1
-    fi
-    if [ "${HYDRATE_FAILED:-0}" = "1" ]; then
-        echo "capsem: asset hydration failed" >&2
-        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=asset_hydration_failed"
+    MANIFEST_INPUT_TEMP="$CAPSEM_DIR/run/install-manifest-input.json"
+    MANIFEST_INPUT=$(capsem_materialize_install_manifest_input "$MANIFEST_SOURCE" "$MANIFEST_PAYLOAD" "$MANIFEST_INPUT_TEMP")
+    INSTALL_MANIFEST_COMMAND="CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets --manifest \"$MANIFEST_SOURCE\" --install-manifest-stdin"
+    if ! su "$TARGET_USER" -c "$INSTALL_MANIFEST_COMMAND" < "$MANIFEST_INPUT"; then
+        echo "capsem: manifest installation failed" >&2
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_install_failed"
         exit 1
     fi
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=assets_hydrated"
+    [ "$MANIFEST_INPUT" != "$MANIFEST_INPUT_TEMP" ] || rm -f "$MANIFEST_INPUT_TEMP"
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_installed"
 fi
 
 case "$MANIFEST_SELECTION" in
@@ -167,18 +164,12 @@ if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     for attempt in $(seq 1 30); do
         STATUS_OUTPUT=$(su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR CAPSEM_HOME=$CAPSEM_DIR CAPSEM_RUN_DIR=$CAPSEM_DIR/run $CAPSEM_DIR/bin/capsem status" 2>/dev/null || true)
         echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=readiness_poll attempt=$attempt"
-        PROFILE_COUNTS=$(echo "$STATUS_OUTPUT" | sed -n 's/^Profiles:[[:space:]]*\([0-9][0-9]*\)\/\([0-9][0-9]*\) ready.*/\1 \2/p' | head -n 1)
-        READY_PROFILES=${PROFILE_COUNTS%% *}
-        TOTAL_PROFILES=${PROFILE_COUNTS##* }
         if echo "$STATUS_OUTPUT" | grep -q "Service:   ok" \
-            && echo "$STATUS_OUTPUT" | grep -q "Gateway:   ok" \
-            && [ -n "$PROFILE_COUNTS" ] \
-            && [ "$READY_PROFILES" = "$TOTAL_PROFILES" ] \
-            && [ "$TOTAL_PROFILES" -gt 0 ]; then
+            && echo "$STATUS_OUTPUT" | grep -q "Gateway:   ok"; then
             READY=1
             break
         fi
-        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=profiles_not_ready attempt=$attempt ready=${READY_PROFILES:-unknown} total=${TOTAL_PROFILES:-unknown}"
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=service_not_ready_yet attempt=$attempt"
         sleep 1
     done
     if [ "$READY" -ne 1 ]; then

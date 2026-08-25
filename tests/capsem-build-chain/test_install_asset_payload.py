@@ -2840,8 +2840,9 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
         'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets --manifest \\"$MANIFEST_SOURCE\\"'
         in deb_postinst
     )
-    assert "event=assets_hydrated" in deb_postinst
-    assert "event=asset_hydration_failed" in deb_postinst
+    assert "event=manifest_installed" in deb_postinst
+    assert "event=assets_hydrated" not in deb_postinst
+    assert "event=asset_hydration_failed" not in deb_postinst
     assert "event=assets_copied" not in deb_postinst
     assert 'echo "capsem: packaged binary missing: /usr/bin/$bin" >&2' in deb_postinst
     assert "event=binary_missing bin=$bin" in deb_postinst
@@ -2850,10 +2851,10 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "install-current-run" in deb_postinst
     assert "install-latest.log" in deb_postinst
     assert 'exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1' in deb_postinst
-    assert 'PROFILE_COUNTS=$(echo "$STATUS_OUTPUT" | sed -n' in deb_postinst
-    assert '[ "$READY_PROFILES" = "$TOTAL_PROFILES" ]' in deb_postinst
-    assert '[ "$TOTAL_PROFILES" -gt 0 ]' in deb_postinst
-    assert "event=profiles_not_ready" in deb_postinst
+    assert 'PROFILE_COUNTS=$(echo "$STATUS_OUTPUT" | sed -n' not in deb_postinst
+    assert '[ "$READY_PROFILES" = "$TOTAL_PROFILES" ]' not in deb_postinst
+    assert '[ "$TOTAL_PROFILES" -gt 0 ]' not in deb_postinst
+    assert "event=profiles_not_ready" not in deb_postinst
     assert "capsem-admin" in deb_postinst
     assert "capsem-tui" in deb_postinst
 
@@ -2882,8 +2883,9 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
         'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets --manifest \\"$MANIFEST_SOURCE\\"'
         in pkg_postinstall
     )
-    assert "event=assets_hydrated" in pkg_postinstall
-    assert "event=asset_hydration_failed" in pkg_postinstall
+    assert "event=manifest_installed" in pkg_postinstall
+    assert "event=assets_hydrated" not in pkg_postinstall
+    assert "event=asset_hydration_failed" not in pkg_postinstall
     assert "event=assets_copied" not in pkg_postinstall
     assert 'echo "capsem: packaged binary missing: $src" >&2' in pkg_postinstall
     assert "event=binary_missing bin=$bin" in pkg_postinstall
@@ -2911,10 +2913,10 @@ def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
     assert 'exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1' in postinstall
     assert "event=readiness_poll" in postinstall
     assert "attempt=$attempt" in postinstall
-    assert 'PROFILE_COUNTS=$(echo "$STATUS_OUTPUT" | sed -n' in postinstall
-    assert '[ "$READY_PROFILES" = "$TOTAL_PROFILES" ]' in postinstall
-    assert '[ "$TOTAL_PROFILES" -gt 0 ]' in postinstall
-    assert "event=profiles_not_ready" in postinstall
+    assert 'PROFILE_COUNTS=$(echo "$STATUS_OUTPUT" | sed -n' not in postinstall
+    assert '[ "$READY_PROFILES" = "$TOTAL_PROFILES" ]' not in postinstall
+    assert '[ "$TOTAL_PROFILES" -gt 0 ]' not in postinstall
+    assert "event=profiles_not_ready" not in postinstall
 
 
 def test_linux_postinstall_prints_service_journal_on_readiness_failure() -> None:
