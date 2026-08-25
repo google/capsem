@@ -937,6 +937,28 @@ def test_a_channel_that_has_never_published_is_absent_from_both_sides(
     )
 
 
+def test_live_manifest_only_treats_http_404_as_unpublished(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_with(code: int) -> Any:
+        def missing(request: Any, *, timeout: int) -> Any:
+            assert timeout == 60
+            raise DEPLOY_FRESHNESS.HTTPError(request.full_url, code, "failure", {}, None)
+
+        return missing
+
+    monkeypatch.setattr(DEPLOY_FRESHNESS, "urlopen", fail_with(404))
+    assert (
+        DEPLOY_FRESHNESS.read_live_manifest("https://release.example.test", "nightly")
+        is None
+    )
+
+    monkeypatch.setattr(DEPLOY_FRESHNESS, "urlopen", fail_with(503))
+    with pytest.raises(DEPLOY_FRESHNESS.HTTPError, match="HTTP Error 503") as caught:
+        DEPLOY_FRESHNESS.read_live_manifest("https://release.example.test", "nightly")
+    caught.value.close()
+
+
 def test_dropping_a_channel_that_is_live_is_still_refused(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

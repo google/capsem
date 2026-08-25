@@ -7,6 +7,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
@@ -14,20 +15,28 @@ CHANNELS = ("stable", "nightly")
 USER_AGENT = "capsem-channel-deploy/1"
 
 
-def read_live_manifest(release_site: str, channel: str) -> bytes:
+def read_live_manifest(release_site: str, channel: str) -> bytes | None:
     url = urljoin(
         f"{release_site.rstrip('/')}/",
         f"assets/{channel}/manifest.json",
     )
-    with urlopen(
-        Request(url, headers={"User-Agent": USER_AGENT}),
-        timeout=60,
-    ) as response:
-        return response.read()
+    try:
+        with urlopen(
+            Request(url, headers={"User-Agent": USER_AGENT}),
+            timeout=60,
+        ) as response:
+            return response.read()
+    except HTTPError as error:
+        if error.code != 404:
+            raise
+        error.close()
+        return None
 
 
-def _is_manifest(body: bytes) -> bool:
+def _is_manifest(body: bytes | None) -> bool:
     """Whether the site returned a channel manifest rather than its own page."""
+    if body is None:
+        return False
     try:
         return isinstance(json.loads(body), dict)
     except (ValueError, UnicodeDecodeError):
@@ -54,7 +63,7 @@ def verify_untouched_channels(
             # Absent from both sides is consistent: a deploy cannot replace a
             # channel that does not exist. The site answers an unpublished path
             # with HTML under a 200, so "never published" arrives as a body
-            # that is not a manifest rather than as a 404.
+            # that is not a manifest or an HTTP 404.
             if not _is_manifest(live):
                 continue
             raise ValueError(
