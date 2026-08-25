@@ -154,7 +154,9 @@ describe('user-facing session language contract', () => {
   });
 
   it('keeps active toolbar stats live and splits input, thinking, and output tokens', () => {
-    expect(vmStore).toContain('api.getVmInfo(vm.id)');
+    expect(vmStore).not.toContain('api.getVmInfo(vm.id)');
+    expect(vmStore).toContain('api.getVmStatsSummary(id)');
+    expect(toolbar).toContain('vmStore.refreshActiveStats(id)');
     expect(toolbar).toContain('total_input_tokens');
     expect(toolbar).toContain('total_thinking_tokens');
     expect(toolbar).toContain('total_output_tokens');

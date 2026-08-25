@@ -234,6 +234,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/purge", post(proxy::handle_proxy))
         .route("/run", post(proxy::handle_proxy))
         .route("/stats", get(proxy::handle_proxy))
+        .route("/vms/{id}/stats/summary", get(proxy::handle_proxy))
         .route("/vms/{id}/stats/detail", get(proxy::handle_proxy))
         .route("/service-logs", get(proxy::handle_proxy))
         .route("/triage", get(proxy::handle_proxy))

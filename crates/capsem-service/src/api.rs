@@ -16,6 +16,18 @@ pub struct StatsResponse {
     pub top_mcp_tools: Vec<McpToolSummary>,
 }
 
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+pub struct VmStatsSummaryResponse {
+    pub total_requests: u64,
+    pub allowed_requests: u64,
+    pub denied_requests: u64,
+    pub total_input_tokens: u64,
+    pub total_thinking_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_tool_calls: u64,
+    pub total_estimated_cost: f64,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProvisionRequest {
     pub name: Option<String>,

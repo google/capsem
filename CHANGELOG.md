@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The desktop toolbar once again shows live input, thinking, and output tokens,
+  tool-call count, and estimated cost for the selected session. It polls one
+  compact logger-owned summary instead of querying every running VM or loading
+  the full statistics report.
+
 - The public marketing homepage once again exposes the supported installer and
   stable-channel download instead of the temporary Summer 2026 holding page;
   release glowup now refuses source whose public install command is hidden.

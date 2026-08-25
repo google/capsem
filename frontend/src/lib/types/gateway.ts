@@ -133,6 +133,17 @@ export interface VmSummary {
   model_call_count?: number;
 }
 
+export interface VmStatsSummary {
+  total_requests: number;
+  allowed_requests: number;
+  denied_requests: number;
+  total_input_tokens: number;
+  total_thinking_tokens: number;
+  total_output_tokens: number;
+  total_tool_calls: number;
+  total_estimated_cost: number;
+}
+
 export interface ResourceSummary {
   total_ram_mb: number;
   total_cpus: number;

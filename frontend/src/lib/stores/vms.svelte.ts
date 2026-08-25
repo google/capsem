@@ -3,7 +3,7 @@
 
 import * as api from '../api';
 import type { AssetStatusResponse } from '../types/assets';
-import type { VmSummary, ResourceSummary, ProvisionRequest, ForkRequest, ForkResponse } from '../types/gateway';
+import type { VmSummary, VmStatsSummary, ResourceSummary, ProvisionRequest, ForkRequest, ForkResponse } from '../types/gateway';
 
 function assetStatusError(e: unknown): string {
   if (!(e instanceof Error)) return 'Asset status unavailable';
@@ -20,6 +20,8 @@ class VmStore {
   polled = $state(false);
   showCreateModal = $state(false);
   createProfileId = $state<string | null>(null);
+  activeStatsId = $state<string | null>(null);
+  activeStats = $state<VmStatsSummary | null>(null);
 
   get loading(): boolean {
     return !this.polled || this.acting;
@@ -27,31 +29,14 @@ class VmStore {
   error = $state<string | null>(null);
 
   #interval: ReturnType<typeof setInterval> | null = null;
+  #statsGeneration = 0;
 
   async refresh(): Promise<void> {
     try {
       const status = await api.getStatus();
-      const vms = await Promise.all(status.vms.map(async vm => {
-        if (vm.status !== 'Running') return vm;
-        try {
-          const info = await api.getVmInfo(vm.id);
-          return {
-            ...vm,
-            ...info,
-            id: vm.id,
-            name: vm.name,
-            status: vm.status,
-            can_resume: vm.can_resume,
-            available_actions: vm.available_actions,
-            resume_blocked_reason: vm.resume_blocked_reason,
-          };
-        } catch {
-          return vm;
-        }
-      }));
       const prevCount = this.vms.length;
       const prevService = this.serviceStatus;
-      this.vms = vms;
+      this.vms = status.vms;
       this.resourceSummary = status.resource_summary;
       this.serviceStatus = status.service;
       this.polled = true;
@@ -65,6 +50,27 @@ class VmStore {
       this.polled = true;
       console.error('[vmStore] refresh FAIL:', this.error);
     }
+  }
+
+  async refreshActiveStats(id: string): Promise<void> {
+    const generation = this.#statsGeneration;
+    try {
+      const stats = await api.getVmStatsSummary(id);
+      if (generation !== this.#statsGeneration) return;
+      this.activeStatsId = id;
+      this.activeStats = stats;
+    } catch {
+      if (generation !== this.#statsGeneration) return;
+      this.activeStatsId = id;
+      this.activeStats = null;
+    }
+  }
+
+  clearActiveStats(id: string): void {
+    ++this.#statsGeneration;
+    if (this.activeStatsId !== id) return;
+    this.activeStatsId = null;
+    this.activeStats = null;
   }
 
   startPolling(intervalMs = 2000): void {

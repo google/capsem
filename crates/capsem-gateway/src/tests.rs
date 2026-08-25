@@ -236,6 +236,7 @@ async fn gateway_security_routes_are_explicitly_forwarded() {
         ("GET", "/vms/test-vm/history/counts"),
         ("GET", "/vms/test-vm/history/transcript"),
         ("GET", "/vms/test-vm/stats/detail"),
+        ("GET", "/vms/test-vm/stats/summary"),
         ("GET", "/vms/test-vm/timeline"),
         ("POST", "/vms/test-vm/stop"),
         ("POST", "/vms/test-vm/pause"),

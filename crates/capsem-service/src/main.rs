@@ -4541,6 +4541,34 @@ async fn handle_stats_detail(
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
+/// GET /vms/{id}/stats/summary -- return compact live toolbar counters.
+async fn handle_stats_summary(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<api::VmStatsSummaryResponse>, AppError> {
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let db_path = session_dir.join("session.db");
+    let db = open_ready_session_db(&state, &id, "stats_summary", &db_path).await?;
+    let stats = db
+        .session_stats()
+        .await
+        .map_err(|error| ledger_route_error(&id, "stats_summary", "query", &db_path, error))?;
+    Ok(Json(api::VmStatsSummaryResponse {
+        total_requests: stats.net_total,
+        allowed_requests: stats.net_allowed,
+        denied_requests: stats.net_denied,
+        total_input_tokens: stats.total_input_tokens,
+        total_thinking_tokens: stats
+            .total_usage_details
+            .get("thinking")
+            .copied()
+            .unwrap_or_default(),
+        total_output_tokens: stats.total_output_tokens,
+        total_tool_calls: stats.total_tool_calls,
+        total_estimated_cost: stats.total_estimated_cost_usd,
+    }))
+}
+
 async fn handle_logs(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -12585,6 +12613,7 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/purge", post(handle_purge))
         .route("/run", post(handle_run))
         .route("/stats", get(handle_stats))
+        .route("/vms/{id}/stats/summary", get(handle_stats_summary))
         .route("/vms/{id}/stats/detail", get(handle_stats_detail))
         .route("/service-logs", get(handle_service_logs))
         .route("/triage", get(handle_triage))

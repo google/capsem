@@ -5,6 +5,7 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use crate::reader::DbReader;
+use crate::reader::SessionStats;
 use crate::writer::{DbWriter, WriteOp};
 
 /// Public DB-boundary contract for Capsem session ledgers.
@@ -115,6 +116,9 @@ enum ReadRequest {
     QueryMany {
         queries: Vec<DbQueryOwned>,
         reply: tokio::sync::oneshot::Sender<DbResult<Vec<String>>>,
+    },
+    SessionStats {
+        reply: tokio::sync::oneshot::Sender<DbResult<SessionStats>>,
     },
     Shutdown,
 }
@@ -441,6 +445,17 @@ impl DbHandle {
         result
     }
 
+    /// Read the compact canonical session aggregates through the DB worker.
+    pub async fn session_stats(&self) -> DbResult<SessionStats> {
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        self.inner
+            .reader_tx
+            .send(ReadRequest::SessionStats { reply })
+            .map_err(|error| format!("db reader worker closed: {error}"))?;
+        rx.await
+            .map_err(|error| format!("db reader worker dropped session stats reply: {error}"))?
+    }
+
     /// Invalidate DB-owned read caches after external logger lifecycle helpers
     /// mutate the same database.
     pub fn invalidate_read_cache(&self) {
@@ -703,6 +718,17 @@ fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, sync_from_disk_be
                         "session db query batch failed"
                     ),
                 }
+                let _ = reply.send(result);
+            }
+            ReadRequest::SessionStats { reply } => {
+                let result = if sync_from_disk_before_query {
+                    reader
+                        .sync_from_disk()
+                        .map_err(|error| error.to_string())
+                        .and_then(|()| reader.session_stats().map_err(|error| error.to_string()))
+                } else {
+                    reader.session_stats().map_err(|error| error.to_string())
+                };
                 let _ = reply.send(result);
             }
             ReadRequest::Shutdown => {

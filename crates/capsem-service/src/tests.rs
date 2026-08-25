@@ -9872,7 +9872,7 @@ async fn stats_detail_route_reads_session_db_ledger() {
             stop_reason: Some("end_turn".to_string()),
             input_tokens: Some(12),
             output_tokens: Some(7),
-            usage_details: BTreeMap::new(),
+            usage_details: BTreeMap::from([("thinking".to_string(), 5)]),
             duration_ms: 25,
             response_bytes: 64,
             estimated_cost_usd: 0.001,
@@ -10017,6 +10017,29 @@ async fn stats_detail_route_reads_session_db_ledger() {
     assert_eq!(
         body["body_blobs"]["def456def456"][1]["body"],
         r#"{"ok":true,"body":"full response body from gateway"}"#
+    );
+
+    let (status, summary) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/vms/stats-detail-vm/stats/summary",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{summary}");
+    assert_eq!(
+        summary,
+        serde_json::json!({
+            "total_requests": 1,
+            "allowed_requests": 1,
+            "denied_requests": 0,
+            "total_input_tokens": 12,
+            "total_thinking_tokens": 5,
+            "total_output_tokens": 7,
+            "total_tool_calls": 1,
+            "total_estimated_cost": 0.001,
+        }),
+        "toolbar summary must remain compact and agree with the session ledger"
     );
 
     let (status, info) = route_request(

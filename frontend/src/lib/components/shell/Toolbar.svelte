@@ -26,10 +26,24 @@
   let menuOpen = $state(false);
   let busy = $derived(vmStore.acting);
   let activeVm = $derived(isVM && active?.vmId ? vmStore.vms.find(v => v.id === active!.vmId) : null);
+  let activeStats = $derived(active?.vmId === vmStore.activeStatsId ? vmStore.activeStats : null);
   let activeTokenStats = $derived({
-    input: activeVm?.total_input_tokens ?? 0,
-    thinking: activeVm?.total_thinking_tokens ?? 0,
-    output: activeVm?.total_output_tokens ?? 0,
+    input: activeStats?.total_input_tokens ?? 0,
+    thinking: activeStats?.total_thinking_tokens ?? 0,
+    output: activeStats?.total_output_tokens ?? 0,
+  });
+
+  $effect(() => {
+    const id = active?.vmId;
+    if (!id) return;
+    void vmStore.refreshActiveStats(id);
+    const interval = setInterval(() => {
+      if (!document.hidden) void vmStore.refreshActiveStats(id);
+    }, 2000);
+    return () => {
+      clearInterval(interval);
+      vmStore.clearActiveStats(id);
+    };
   });
 
   const vmViewButtons: { view: TabView; label: string; icon: typeof Terminal }[] = [
@@ -269,10 +283,10 @@
 
   <!-- Right: active-session stats -->
   <div class="flex items-center gap-x-3 text-[11px] text-muted-foreground-1 tabular-nums">
-    {#if isVM && activeVm}
+    {#if isVM && activeVm && activeStats}
       <span title="Tokens: input / thinking / output">{formatTokens(activeTokenStats.input)} in / {formatTokens(activeTokenStats.thinking)} think / {formatTokens(activeTokenStats.output)} out</span>
-      <span title="Tool calls">{activeVm.total_tool_calls ?? 0} calls</span>
-      <span title="Cost">{formatCost(activeVm.total_estimated_cost ?? 0)}</span>
+      <span title="Tool calls">{activeStats.total_tool_calls} calls</span>
+      <span title="Cost">{formatCost(activeStats.total_estimated_cost)}</span>
     {/if}
   </div>
 </div>
