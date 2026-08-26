@@ -2543,5 +2543,29 @@ def test_the_wire_check_names_which_kind_of_failure_it_found() -> None:
     assert "staging failure" in body, body
 
 
+def test_linux_glowup_proves_background_asset_hydration() -> None:
+    """Linux qualification must prove that install hydration stays asynchronous."""
+    staging = _shell_of_local_glowup()
+    fresh_install = staging[staging.index("sudo apt-get remove --purge -y capsem") :]
+    fresh_install = fresh_install[: fresh_install.index(" update --yes --channel nightly")]
+
+    assert 'grep -Fq "event=manifest_installed"' in fresh_install
+    assert 'if grep -Fq "event=assets_hydrated"' in fresh_install
+    assert "package installer synchronously hydrated VM assets" in fresh_install
+    assert 'assets status --profile "$profile" --json' in staging
+    assert 'status.get("ready") and not status.get("downloading")' in staging
+    assert 'wait_for_profile_assets code "$EVIDENCE_DIR/code-assets-after-install.json"' in fresh_install
+    assert (
+        'wait_for_profile_assets co-work "$EVIDENCE_DIR/co-work-assets-after-install.json"'
+        in fresh_install
+    )
+    assert fresh_install.index("event=manifest_installed") < fresh_install.index(
+        "wait_for_profile_assets code"
+    )
+    assert fresh_install.index("wait_for_profile_assets co-work") < fresh_install.index(
+        "probe_installed_transition fresh-stable"
+    )
+
+
 def _shell_of_local_glowup() -> str:
     return embedded_shell.shell_of(PROJECT_ROOT / "scripts" / "local-release-glowup.py")

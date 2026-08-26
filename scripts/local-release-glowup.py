@@ -1453,6 +1453,31 @@ wait_for_service() {{
   journalctl --user-unit capsem.service --no-pager -n 200 >&2 || true
   return 1
 }}
+wait_for_profile_assets() {{
+  profile="$1"
+  output="$2"
+  for attempt in $(seq 1 180); do
+    if CAPSEM_HOME="$CAPSEM_HOME_DIR" CAPSEM_RUN_DIR="$CAPSEM_HOME_DIR/run" \
+      "$CAPSEM_BIN" assets status --profile "$profile" --json > "$output" \
+      && python3 - "$output" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+status = json.loads(Path(sys.argv[1]).read_text())
+raise SystemExit(0 if status.get("ready") and not status.get("downloading") else 1)
+PY
+    then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "ERROR: profile $profile assets did not settle after $attempt polls" >&2
+  cat "$output" >&2 || true
+  systemctl --user status capsem.service --no-pager -l >&2 || true
+  journalctl --user-unit capsem.service --no-pager -n 200 >&2 || true
+  return 1
+}}
 check_binary_versions() {{
   expected="$1"
   for binary in {" ".join(HOST_BINARIES)}; do
@@ -2119,15 +2144,21 @@ test -f "$HOME/.capsem/assets/manifest.json"
 grep -F {fresh_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
 grep -F '"package_version": "{package_version}"' "$HOME/.capsem/assets/manifest-metadata.json"
 stable_manifest_sha=$(sha256sum "$HOME/.capsem/assets/manifest.json" | cut -d' ' -f1)
-probe_installed_transition fresh-stable \
-  {stable_manifest_url} {fresh_stable_channel} {package_version} \
-  {shlex.quote(str(stable_package))} linux {shlex.quote(package_architecture)} {fresh_manifest_url}
 test -f "$HOME/.capsem/logs/install.log"
 grep -F "event=manifest_source source={stable_manifest_url}" "$HOME/.capsem/logs/install.log"
 grep -F '"package_version": "{package_version}"' "$HOME/.capsem/logs/install.log"
-grep -F "event=assets_hydrated" "$HOME/.capsem/logs/install.log"
+grep -Fq "event=manifest_installed" "$HOME/.capsem/logs/install.log"
+if grep -Fq "event=assets_hydrated" "$HOME/.capsem/logs/install.log"; then
+  echo "ERROR: package installer synchronously hydrated VM assets" >&2
+  exit 1
+fi
 grep -F "event=service_install_invoked" "$HOME/.capsem/logs/install.log"
+wait_for_profile_assets code "$EVIDENCE_DIR/code-assets-after-install.json"
+wait_for_profile_assets co-work "$EVIDENCE_DIR/co-work-assets-after-install.json"
 check_update_log asset_update_complete {stable_manifest_url}
+probe_installed_transition fresh-stable \
+  {stable_manifest_url} {fresh_stable_channel} {package_version} \
+  {shlex.quote(str(stable_package))} linux {shlex.quote(package_architecture)} {fresh_manifest_url}
 dpkg-query -W -f='${{Version}}' capsem | grep -Fx {package_version}
 CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL="$release_channels_url" "$HOME/.capsem/bin/capsem" update --yes --channel nightly
 grep -F {nightly_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
