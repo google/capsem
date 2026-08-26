@@ -137,6 +137,7 @@ def _write_polling_metadata(
     manifest: Path,
     capsem: Path,
     *,
+    checked_url: str | None = None,
     validation_status: str = "valid",
     validation_error: str | None = None,
 ) -> str:
@@ -145,7 +146,7 @@ def _write_polling_metadata(
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata.update(
         manifest_url=polling,
-        checked_url=polling,
+        checked_url=checked_url or polling,
         validation_status=validation_status,
         validation_error=validation_error,
     )
@@ -196,6 +197,22 @@ def test_installed_release_gate_accepts_isolated_poll_fetch_error(
     assert result.returncode == 0, result.stderr
 
 
+def test_installed_release_gate_accepts_selected_bytes_before_public_poll(
+    tmp_path: Path,
+) -> None:
+    home, manifest, capsem = _write_fixture(tmp_path)
+    polling = _write_polling_metadata(
+        home,
+        manifest,
+        capsem,
+        checked_url=manifest.resolve().as_uri(),
+    )
+
+    result = _run(home, manifest, capsem, metadata_manifest_url=polling)
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_installed_release_gate_rejects_fetch_error_without_diagnostics(
     tmp_path: Path,
 ) -> None:
@@ -213,6 +230,25 @@ def test_installed_release_gate_rejects_fetch_error_without_diagnostics(
     assert "validation_error" in result.stderr
 
 
+def test_installed_release_gate_rejects_selected_bytes_fetch_error(
+    tmp_path: Path,
+) -> None:
+    home, manifest, capsem = _write_fixture(tmp_path)
+    polling = _write_polling_metadata(
+        home,
+        manifest,
+        capsem,
+        checked_url=manifest.resolve().as_uri(),
+        validation_status="fetch_error",
+        validation_error="selected candidate could not be fetched",
+    )
+
+    result = _run(home, manifest, capsem, metadata_manifest_url=polling)
+
+    assert result.returncode != 0
+    assert "validation_status" in result.stderr
+
+
 def test_installed_release_gate_rejects_same_source_fetch_error(tmp_path: Path) -> None:
     home, manifest, capsem = _write_fixture(tmp_path)
     metadata_path = home / "assets" / "manifest-metadata.json"
@@ -227,6 +263,21 @@ def test_installed_release_gate_rejects_same_source_fetch_error(tmp_path: Path) 
 
     assert result.returncode != 0
     assert "validation_status" in result.stderr
+
+
+def test_installed_release_gate_rejects_unknown_checked_url(tmp_path: Path) -> None:
+    home, manifest, capsem = _write_fixture(tmp_path)
+    polling = _write_polling_metadata(
+        home,
+        manifest,
+        capsem,
+        checked_url="https://mirror.invalid/manifest.json",
+    )
+
+    result = _run(home, manifest, capsem, metadata_manifest_url=polling)
+
+    assert result.returncode != 0
+    assert "checked_url" in result.stderr
 
 
 def test_installed_release_gate_rejects_invalid_polling_payload(tmp_path: Path) -> None:

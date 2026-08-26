@@ -122,7 +122,6 @@ def main() -> int:
     expected_metadata = {
         "schema": METADATA_SCHEMA,
         "manifest_url": metadata_manifest_url,
-        "checked_url": metadata_manifest_url,
         "channel": args.channel,
         "package_version": args.package_version,
     }
@@ -134,6 +133,15 @@ def main() -> int:
     validation_status = metadata.get("validation_status")
     validation_error = metadata.get("validation_error")
     split_provenance = args.manifest_url != metadata_manifest_url
+    checked_url = metadata.get("checked_url")
+    allowed_checked_urls = {metadata_manifest_url}
+    if split_provenance:
+        allowed_checked_urls.add(args.manifest_url)
+    if checked_url not in allowed_checked_urls:
+        fail(
+            f"manifest-metadata checked_url is {checked_url!r}, expected one of "
+            f"{sorted(allowed_checked_urls)!r}"
+        )
     # A pre-publication package installs hermetic candidate bytes but keeps its
     # public polling URL. The isolated service may record that future poll as a
     # fetch error; exact installed bytes and the loaded manifest remain proven
@@ -142,7 +150,11 @@ def main() -> int:
     if validation_status == "valid":
         if validation_error is not None:
             fail(f"manifest validation_error is not empty: {validation_error!r}")
-    elif split_provenance and validation_status == "fetch_error":
+    elif (
+        split_provenance
+        and checked_url == metadata_manifest_url
+        and validation_status == "fetch_error"
+    ):
         if not isinstance(validation_error, str) or not validation_error.strip():
             fail("manifest-metadata fetch_error requires a non-empty validation_error")
     else:
