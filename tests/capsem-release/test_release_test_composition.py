@@ -910,3 +910,21 @@ def test_source_state_digest_ignores_the_generated_asset_selector(tmp_path: Path
     (tmp_path / "assets").symlink_to("target/ironbank-assets/code/assets")
 
     assert module.source_state_digest(tmp_path) == before
+
+
+def test_source_state_digest_ignores_node_workspace_atomic_scratch(tmp_path: Path) -> None:
+    """pnpm scratch is generated state, not a racing untracked source file."""
+    subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
+    (tmp_path / ".gitignore").write_bytes((PROJECT_ROOT / ".gitignore").read_bytes())
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("source\n", encoding="utf-8")
+    subprocess.run(("git", "add", ".gitignore", "tracked.txt"), cwd=tmp_path, check=True)
+    module = _source_digest_module()
+    before = module.source_state_digest(tmp_path)
+
+    for workspace in CONFIG.toolchain.node_workspaces:
+        scratch = tmp_path / workspace / "_tmp_123_0123456789abcdef"
+        scratch.parent.mkdir(parents=True)
+        scratch.write_text("pnpm atomic write\n", encoding="utf-8")
+
+    assert module.source_state_digest(tmp_path) == before

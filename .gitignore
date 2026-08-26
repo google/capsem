@@ -23,6 +23,13 @@ archive/
 keys.json
 workdir/
 node_modules/
+# pnpm writes atomic metadata scratch beside each configured Node workspace.
+# It can disappear between source enumeration and hashing, and is generated
+# state rather than an untracked source input.
+frontend/_tmp_*
+docs/_tmp_*
+site/_tmp_*
+release-site/_tmp_*
 *.pyc
 __pycache__/
 .ipynb_checkpoints
