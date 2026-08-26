@@ -20,6 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = PROJECT_ROOT / "scripts" / "release_glowup.py"
 TRANSITION_PATH = PROJECT_ROOT / "scripts" / "release_transition.py"
 LOCAL_GLOWUP_PATH = PROJECT_ROOT / "scripts" / "local-release-glowup.py"
+INSTALLED_PROBE_PATH = PROJECT_ROOT / "scripts" / "release_installed_probe.py"
 MARKETING_SURFACE_PATH = PROJECT_ROOT / "scripts" / "marketing_install_surface.py"
 
 
@@ -2153,7 +2154,7 @@ def test_installed_status_is_read_from_the_installed_home() -> None:
 
 
 def test_transition_verdict_uses_the_structured_product_audit() -> None:
-    shell = embedded_shell.shell_of(PROJECT_ROOT / "scripts" / "local-release-glowup.py")
+    shell = _shell_of_local_glowup()
     body = embedded_shell.function_bodies(shell)["observe_update_transition"]
 
     assert '"$CAPSEM_HOME_DIR/logs/update.log"' in body
@@ -2170,7 +2171,7 @@ def test_a_failed_rejection_wait_says_why() -> None:
     where it logs, checking the unit for `--parent-pid`, and finding the poll
     interval -- none of which the failure output contained.
     """
-    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(encoding="utf-8")
+    source = INSTALLED_PROBE_PATH.read_text(encoding="utf-8")
     dump = source[source.index("dump_update_diagnostics() {{") :]
     dump = dump[: dump.index("\n}}")]
     for evidence in (
@@ -2196,7 +2197,7 @@ def test_the_service_log_is_matched_by_pattern_not_by_a_fixed_name() -> None:
     path that never exists -- reported by the diagnostics as "No such file or
     directory" after three minutes of waiting.
     """
-    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(encoding="utf-8")
+    source = INSTALLED_PROBE_PATH.read_text(encoding="utf-8")
     listing = source[source.index("service_logs() {{") :]
     listing = listing[: listing.index("\n}}")]
     assert "service*.log" in listing, (
@@ -2568,4 +2569,9 @@ def test_linux_glowup_proves_background_asset_hydration() -> None:
 
 
 def _shell_of_local_glowup() -> str:
-    return embedded_shell.shell_of(PROJECT_ROOT / "scripts" / "local-release-glowup.py")
+    return "\n".join(
+        (
+            embedded_shell.shell_of(LOCAL_GLOWUP_PATH),
+            embedded_shell.shell_of(INSTALLED_PROBE_PATH),
+        )
+    )

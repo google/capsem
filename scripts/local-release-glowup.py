@@ -89,22 +89,13 @@ except ModuleNotFoundError:
         verify_payload,
     )
 
+try:
+    from release_installed_probe import exact_installed_probe_shell
+except ModuleNotFoundError:
+    from scripts.release_installed_probe import exact_installed_probe_shell
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-HOST_BINARIES = (
-    "capsem",
-    "capsem-service",
-    "capsem-process",
-    "capsem-tui",
-    "capsem-mcp",
-    "capsem-mcp-aggregator",
-    "capsem-mcp-builtin",
-    "capsem-gateway",
-    "capsem-tray",
-    "capsem-admin",
-    "capsem-mock-server",
-    "capsem-bench-rs",
-)
 
 
 @dataclass(frozen=True)
@@ -1431,203 +1422,6 @@ def release_profile_artifacts(manifest: dict[str, object]) -> list[dict[str, obj
     return artifacts
 
 
-def _exact_installed_probe_shell(evidence_dir: Path) -> str:
-    return f"""CAPSEM_BIN="$HOME/.capsem/bin/capsem"
-CAPSEM_HOME_DIR="$HOME/.capsem"
-EVIDENCE_DIR={shlex.quote(str(evidence_dir))}
-mkdir -p "$EVIDENCE_DIR"
-wait_for_service() {{
-  for attempt in $(seq 1 90); do
-    if CAPSEM_HOME="$CAPSEM_HOME_DIR" CAPSEM_RUN_DIR="$CAPSEM_HOME_DIR/run" \
-      "$CAPSEM_BIN" status > "$EVIDENCE_DIR/service-status.txt" 2>&1 \
-      && grep -Fq "Installed: true" "$EVIDENCE_DIR/service-status.txt" \
-      && grep -Fq "Running:   true" "$EVIDENCE_DIR/service-status.txt" \
-      && grep -Fq "Service:   ok" "$EVIDENCE_DIR/service-status.txt" \
-      && grep -Fq "Gateway:   ok" "$EVIDENCE_DIR/service-status.txt"; then
-      return 0
-    fi
-    sleep 2
-  done
-  cat "$EVIDENCE_DIR/service-status.txt" >&2 || true
-  systemctl --user status capsem.service --no-pager -l >&2 || true
-  journalctl --user-unit capsem.service --no-pager -n 200 >&2 || true
-  return 1
-}}
-wait_for_profile_assets() {{
-  profile="$1"
-  output="$2"
-  for attempt in $(seq 1 180); do
-    if CAPSEM_HOME="$CAPSEM_HOME_DIR" CAPSEM_RUN_DIR="$CAPSEM_HOME_DIR/run" \
-      "$CAPSEM_BIN" assets status --profile "$profile" --json > "$output" \
-      && python3 - "$output" <<'PY'
-import json
-from pathlib import Path
-import sys
-
-status = json.loads(Path(sys.argv[1]).read_text())
-raise SystemExit(0 if status.get("ready") and not status.get("downloading") else 1)
-PY
-    then
-      return 0
-    fi
-    sleep 1
-  done
-  echo "ERROR: profile $profile assets did not settle after $attempt polls" >&2
-  cat "$output" >&2 || true
-  systemctl --user status capsem.service --no-pager -l >&2 || true
-  journalctl --user-unit capsem.service --no-pager -n 200 >&2 || true
-  return 1
-}}
-check_binary_versions() {{
-  expected="$1"
-  for binary in {" ".join(HOST_BINARIES)}; do
-    test -x "$CAPSEM_HOME_DIR/bin/$binary"
-    if [ "$binary" = capsem ]; then
-      "$CAPSEM_HOME_DIR/bin/$binary" version
-    else
-      "$CAPSEM_HOME_DIR/bin/$binary" --version
-    fi > "$EVIDENCE_DIR/$binary.version" 2>&1
-    grep -F "$expected" "$EVIDENCE_DIR/$binary.version"
-  done
-}}
-probe_installed_transition() {{
-  label="$1"
-  manifest_url="$2"
-  channel="$3"
-  package_version="$4"
-  artifact="$5"
-  platform="$6"
-  architecture="$7"
-  metadata_manifest_url="${{8:-$manifest_url}}"
-  wait_for_service
-  check_binary_versions "$package_version"
-  dpkg-query -W -f='${{Version}}' capsem | grep -Fx "$package_version"
-  {shlex.quote(sys.executable)} scripts/verify-installed-release.py \
-    --capsem "$CAPSEM_BIN" \
-    --capsem-home "$CAPSEM_HOME_DIR" \
-    --manifest-url "$manifest_url" \
-    --metadata-manifest-url "$metadata_manifest_url" \
-    --channel "$channel" \
-    --package-version "$package_version" \
-    --artifact "$artifact" \
-    --platform "$platform" \
-    --architecture "$architecture" \
-    --evidence-out "$EVIDENCE_DIR/$label-installed.json"
-  doctor_log="$EVIDENCE_DIR/$label-doctor.log"
-  failed_process_logs="$EVIDENCE_DIR/$label-failed-process-logs.txt"
-  if ! CAPSEM_HOME="$CAPSEM_HOME_DIR" CAPSEM_RUN_DIR="$CAPSEM_HOME_DIR/run" \
-    "$CAPSEM_BIN" doctor > "$doctor_log" 2>&1; then
-    : > "$failed_process_logs"
-    while IFS= read -r process_log; do
-      printf '\n===== %s =====\n' "$process_log" >> "$failed_process_logs"
-      tail -n 200 "$process_log" >> "$failed_process_logs" 2>&1 || true
-    done < <(
-      find "$CAPSEM_HOME_DIR/run/sessions" -type f -name process.log \
-        -path "*-failed-*" -print 2>> "$failed_process_logs" || true
-    )
-    cat "$doctor_log" >&2
-    cat "$failed_process_logs" >&2
-    systemctl --user status capsem.service --no-pager -l >&2 || true
-    journalctl --user-unit capsem.service --no-pager -n 200 >&2 || true
-    return 1
-  fi
-  printf '%s\n' '{{"schema":"capsem.installed_doctor.v1","passed":true}}' \
-    > "$EVIDENCE_DIR/$label-doctor.json"
-  {shlex.quote(sys.executable)} scripts/run-installed-winterfell.py \
-    --bin-dir "$CAPSEM_HOME_DIR/bin" \
-    --assets-dir "$CAPSEM_HOME_DIR/assets" \
-    --profiles-dir "$CAPSEM_HOME_DIR/profiles" \
-    --evidence-out "$EVIDENCE_DIR/$label-winterfell.json"
-}}
-observe_update_transition() {{
-  kind="$1"
-  result="$2"
-  source="$3"
-  candidate_manifest_sha="$4"
-  after_line="$5"
-  evidence_out="$6"
-  previous_manifest_sha="${{7:-}}"
-  command=(
-    {shlex.quote(sys.executable)} scripts/release_transition.py
-    --audit-log "$CAPSEM_HOME_DIR/logs/update.log"
-    --after-line "$after_line"
-    --kind "$kind"
-    --result "$result"
-    --source "$source"
-    --candidate-manifest-sha256 "$candidate_manifest_sha"
-    --timeout-seconds 180
-    --evidence-out "$evidence_out"
-  )
-  if [ -n "$previous_manifest_sha" ]; then
-    command+=(--previous-manifest-sha256 "$previous_manifest_sha")
-  fi
-  "${{command[@]}}" || {{
-    dump_update_diagnostics "$kind $result"
-    return 1
-  }}
-}}
-installed_profile_tree_digest() {{
-  find "$CAPSEM_HOME_DIR/profiles" -type f -print0 \
-    | sort -z \
-    | xargs -0 sha256sum \
-    | sha256sum \
-    | cut -d' ' -f1
-}}
-# A rejection proof has two ways to fail and they mean opposite things: the
-# service saw the tampered manifest and installed it anyway, or it never saw
-# it. Attempt 37 waited three minutes on the second and reported the first.
-# Checking the wire first makes the timeout say which.
-assert_manifest_served() {{
-  url="$1"
-  expected="$2"
-  what="$3"
-  actual=$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1) || {{
-    echo "FATAL: $what: cannot fetch $url" >&2
-    return 1
-  }}
-  if [ "$actual" != "$expected" ]; then
-    echo "FATAL: $what was never served." >&2
-    echo "  $url returns sha256=$actual" >&2
-    echo "  the staged candidate is    sha256=$expected" >&2
-    echo "  So this is a staging failure, not a refusal to reject." >&2
-    return 1
-  fi
-}}
-service_logs() {{
-  # `service.log` and `service.<date>.log`, never `services.log` -- the same
-  # membership test `capsem_core::telemetry::log_stream_files` applies. A bare
-  # `service*.log` also matches a neighbouring stream, which would let an
-  # unrelated file satisfy a rejection proof.
-  ls -1t "$CAPSEM_HOME_DIR/run/service.log" \
-         "$CAPSEM_HOME_DIR/run"/service.*.log 2>/dev/null || true
-}}
-# Everything a reader needs to tell the failure modes apart, printed once on
-# the way out: whether the polling loop started at all and on what schedule,
-# what it decided each cycle, whether systemd thinks the unit is up, and the
-# service's own log. Not knowing which of these was true is what made the
-# last failure unreadable.
-dump_update_diagnostics() {{
-  what="$1"
-  echo "=== $what did not happen; diagnostics follow ===" >&2
-  echo "--- automatic update loop decisions ---" >&2
-  # shellcheck disable=SC2046
-  grep -F "automatic release" $(service_logs) 2>&1 | tail -40 >&2 || true
-  echo "--- service log tail ---" >&2
-  echo "service logs found: $(service_logs | tr '\n' ' ')" >&2
-  # shellcheck disable=SC2046
-  tail -80 $(service_logs) >&2 2>&1 || echo "no service log under $CAPSEM_HOME_DIR/run" >&2
-  echo "--- update log ---" >&2
-  tail -40 "$CAPSEM_HOME_DIR/logs/update.log" >&2 2>&1 || true
-  echo "--- systemd unit ---" >&2
-  systemctl --user status capsem.service --no-pager -l >&2 2>&1 || true
-  echo "--- unit environment ---" >&2
-  systemctl --user show-environment >&2 2>&1 || true
-  echo "--- journal (systemd's own view) ---" >&2
-  journalctl --user-unit capsem.service --no-pager -n 200 -o cat >&2 2>&1 || true
-}}
-"""
-
-
 def record_update_audit_marker(path: Path) -> None:
     """Capture the last installed audit line before exposing new candidate bytes."""
 
@@ -1676,7 +1470,7 @@ def run_exact_installed_glowup(
     else:
         fresh_artifact, fresh_package = before_artifact, pairing.before_package
     evidence_dir.mkdir(parents=True, exist_ok=True)
-    probe_functions = _exact_installed_probe_shell(evidence_dir)
+    probe_functions = exact_installed_probe_shell(evidence_dir)
     fresh_transition = evidence_dir / "fresh-install-transition.json"
     fresh_manifest = (
         transport.after_manifest if first_profile_activation else transport.before_manifest
@@ -2101,7 +1895,7 @@ def run_installed_glowup(
     )
     evidence_arg = shlex.quote(str(installed_evidence))
     transition_evidence_dir = installed_evidence.parent / "channel-transition-evidence"
-    probe_functions = _exact_installed_probe_shell(transition_evidence_dir)
+    probe_functions = exact_installed_probe_shell(transition_evidence_dir)
     script = f"""
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
