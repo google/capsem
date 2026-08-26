@@ -132,6 +132,31 @@ def _add_package(
     (home / "assets" / "manifest.json").write_bytes(manifest.read_bytes())
 
 
+def _write_polling_metadata(
+    home: Path,
+    manifest: Path,
+    capsem: Path,
+    *,
+    validation_status: str = "valid",
+    validation_error: str | None = None,
+) -> str:
+    polling = "https://release.capsem.org/assets/stable/manifest.json"
+    metadata_path = home / "assets" / "manifest-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.update(
+        manifest_url=polling,
+        checked_url=polling,
+        validation_status=validation_status,
+        validation_error=validation_error,
+    )
+    metadata_path.write_text(json.dumps(metadata) + "\n", encoding="utf-8")
+    capsem.write_text(
+        capsem.read_text(encoding="utf-8").replace(manifest.resolve().as_uri(), polling),
+        encoding="utf-8",
+    )
+    return polling
+
+
 def test_installed_release_gate_accepts_exact_manifest_metadata_and_ready_profiles(
     tmp_path: Path,
 ) -> None:
@@ -147,20 +172,77 @@ def test_installed_release_gate_separates_selected_bytes_from_polling_provenance
     tmp_path: Path,
 ) -> None:
     home, manifest, capsem = _write_fixture(tmp_path)
-    polling = "https://release.capsem.org/assets/stable/manifest.json"
-    metadata_path = home / "assets" / "manifest-metadata.json"
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    metadata["manifest_url"] = polling
-    metadata["checked_url"] = polling
-    metadata_path.write_text(json.dumps(metadata) + "\n", encoding="utf-8")
-    capsem.write_text(
-        capsem.read_text(encoding="utf-8").replace(manifest.resolve().as_uri(), polling),
-        encoding="utf-8",
+    polling = _write_polling_metadata(home, manifest, capsem)
+
+    result = _run(home, manifest, capsem, metadata_manifest_url=polling)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_installed_release_gate_accepts_isolated_poll_fetch_error(
+    tmp_path: Path,
+) -> None:
+    home, manifest, capsem = _write_fixture(tmp_path)
+    polling = _write_polling_metadata(
+        home,
+        manifest,
+        capsem,
+        validation_status="fetch_error",
+        validation_error=f"error sending request for url ({manifest.resolve().as_uri()})",
     )
 
     result = _run(home, manifest, capsem, metadata_manifest_url=polling)
 
     assert result.returncode == 0, result.stderr
+
+
+def test_installed_release_gate_rejects_fetch_error_without_diagnostics(
+    tmp_path: Path,
+) -> None:
+    home, manifest, capsem = _write_fixture(tmp_path)
+    polling = _write_polling_metadata(
+        home,
+        manifest,
+        capsem,
+        validation_status="fetch_error",
+    )
+
+    result = _run(home, manifest, capsem, metadata_manifest_url=polling)
+
+    assert result.returncode != 0
+    assert "validation_error" in result.stderr
+
+
+def test_installed_release_gate_rejects_same_source_fetch_error(tmp_path: Path) -> None:
+    home, manifest, capsem = _write_fixture(tmp_path)
+    metadata_path = home / "assets" / "manifest-metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.update(
+        validation_status="fetch_error",
+        validation_error="candidate could not be fetched",
+    )
+    metadata_path.write_text(json.dumps(metadata) + "\n", encoding="utf-8")
+
+    result = _run(home, manifest, capsem)
+
+    assert result.returncode != 0
+    assert "validation_status" in result.stderr
+
+
+def test_installed_release_gate_rejects_invalid_polling_payload(tmp_path: Path) -> None:
+    home, manifest, capsem = _write_fixture(tmp_path)
+    polling = _write_polling_metadata(
+        home,
+        manifest,
+        capsem,
+        validation_status="invalid",
+        validation_error="candidate signature is invalid",
+    )
+
+    result = _run(home, manifest, capsem, metadata_manifest_url=polling)
+
+    assert result.returncode != 0
+    assert "validation_status" in result.stderr
 
 
 def test_installed_release_gate_accepts_manifest_selected_legacy_x86_64_deb(

@@ -125,15 +125,30 @@ def main() -> int:
         "checked_url": metadata_manifest_url,
         "channel": args.channel,
         "package_version": args.package_version,
-        "validation_status": "valid",
     }
     for field, expected in expected_metadata.items():
         if metadata.get(field) != expected:
             fail(
                 f"manifest-metadata {field} is {metadata.get(field)!r}, expected {expected!r}"
             )
-    if metadata.get("validation_error") is not None:
-        fail(f"manifest validation_error is not empty: {metadata['validation_error']!r}")
+    validation_status = metadata.get("validation_status")
+    validation_error = metadata.get("validation_error")
+    split_provenance = args.manifest_url != metadata_manifest_url
+    # A pre-publication package installs hermetic candidate bytes but keeps its
+    # public polling URL. The isolated service may record that future poll as a
+    # fetch error; exact installed bytes and the loaded manifest remain proven
+    # independently above and below. Never extend this allowance to an invalid
+    # payload or to a same-source proof.
+    if validation_status == "valid":
+        if validation_error is not None:
+            fail(f"manifest validation_error is not empty: {validation_error!r}")
+    elif split_provenance and validation_status == "fetch_error":
+        if not isinstance(validation_error, str) or not validation_error.strip():
+            fail("manifest-metadata fetch_error requires a non-empty validation_error")
+    else:
+        fail(
+            f"manifest-metadata validation_status is {validation_status!r}, expected 'valid'"
+        )
     if not isinstance(metadata.get("channel_locked"), bool):
         fail("manifest-metadata channel_locked must be boolean")
     if not isinstance(metadata.get("update_available"), bool):
