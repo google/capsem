@@ -368,13 +368,18 @@ def test_reusable_release_workflows_receive_the_same_source_commit() -> None:
         assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
         assert workflow.count("source_commit: ${{ inputs.source_commit }}") >= 3
 
-    for workflow_name in (
-        "release-runtime-preflight.yaml",
-        "fast-gate.yaml",
-        "release-channel.yaml",
-    ):
+    for workflow_name in ("release-runtime-preflight.yaml", "fast-gate.yaml"):
         workflow = (PROJECT_ROOT / ".github" / "workflows" / workflow_name).read_text(
             encoding="utf-8"
         )
         assert "source_commit:" in workflow
         assert "ref: ${{ inputs.source_commit" in workflow
+
+    channel = (PROJECT_ROOT / ".github/workflows/release-channel.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "source_commit:" in channel
+    assert (
+        "ref: ${{ inputs.artifact_run_id != '' && github.sha || "
+        "inputs.source_commit || github.sha }}"
+    ) in channel

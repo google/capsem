@@ -1016,7 +1016,7 @@ def test_installed_glowup_uses_the_materialized_python_without_project_sync(
     interpreter = "/opt/capsem venv/bin/python"
     monkeypatch.setattr(glowup.sys, "executable", interpreter)
 
-    probe = glowup._exact_installed_probe_shell(tmp_path)
+    probe = glowup.exact_installed_probe_shell(tmp_path)
     quoted = "'/opt/capsem venv/bin/python'"
     assert f"{quoted} scripts/verify-installed-release.py" in probe
     assert f"{quoted} scripts/run-installed-winterfell.py" in probe
@@ -2598,12 +2598,14 @@ def test_local_release_glowup_forbids_metadata_only_binary_cohorts() -> None:
 def test_native_glowup_owns_exact_manifest_and_installed_shell_evidence() -> None:
     macos = (PROJECT_ROOT / "scripts" / "macos_release_glowup.py").read_text()
     linux = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    installed_probe = (PROJECT_ROOT / "scripts" / "release_installed_probe.py").read_text()
     authoring = (PROJECT_ROOT / "src/capsem/gate/releaseauthoring.py").read_text()
 
     assert "assert_manifest_artifact" in macos
     assert "assert_manifest_artifact" in linux
     assert "prove-macos-package-boot.sh" in macos
-    assert "verify-installed-release.py" in linux
+    assert "exact_installed_probe_shell" in linux
+    assert "verify-installed-release.py" in installed_probe
     assert '"--source-commit"' in authoring
     assert "source_commit_for_checkout(ROOT)" in macos
 
@@ -3071,10 +3073,7 @@ def test_ci_install_job_selects_exact_profiles_before_building_packages() -> Non
 
 
 def test_installed_doctor_failure_is_printed_and_preserved() -> None:
-    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
-    probe = script.split("probe_installed_transition() {{", maxsplit=1)[1].split(
-        "\n}}\nwait_for_exact_transition()", maxsplit=1
-    )[0]
+    probe = (PROJECT_ROOT / "scripts" / "release_installed_probe.py").read_text()
 
     assert 'doctor_log="$EVIDENCE_DIR/$label-doctor.log"' in probe
     assert 'failed_process_logs="$EVIDENCE_DIR/$label-failed-process-logs.txt"' in probe

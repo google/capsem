@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -18,7 +19,7 @@ SOURCE = "a" * 40
 RUN_ID = "42"
 
 
-def _run() -> dict[str, object]:
+def _run() -> dict[str, Any]:
     return {
         "databaseId": 42,
         "headSha": SOURCE,

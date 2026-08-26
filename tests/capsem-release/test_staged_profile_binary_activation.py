@@ -222,6 +222,7 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
 
     assert "Run the complete fast gate" in reusable_fast_gate
     assert "run: just fast-test" in reusable_fast_gate
+    assert "run: uv run capsem-gate test-release-contracts" in reusable_fast_gate
     assert "needs.author-profile-release.outputs.activation_ready != 'true'" in deferred
     assert "outputs.product_compatible" in deferred
     assert "outputs.functional_ready" in deferred

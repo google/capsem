@@ -480,6 +480,7 @@ def test_release_lanes_run_one_reusable_fast_gate_before_builders() -> None:
     reusable = _workflow("fast-gate.yaml")
     assert "workflow_call:" in reusable
     assert "run: just fast-test" in reusable
+    assert "run: uv run capsem-gate test-release-contracts" in reusable
     linux_prerequisites = reusable.index("Install Linux workspace lint prerequisites")
     gate = reusable.index("Run the complete fast gate")
     assert linux_prerequisites < gate

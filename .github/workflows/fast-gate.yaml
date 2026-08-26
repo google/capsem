@@ -80,3 +80,6 @@ jobs:
           CC_x86_64_unknown_linux_musl: musl-gcc
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: just fast-test
+
+      - name: Run release source contracts
+        run: uv run capsem-gate test-release-contracts

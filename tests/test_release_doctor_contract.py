@@ -810,6 +810,7 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "cargo tauri build" not in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
     assert "run: just fast-test" in fast_gate
+    assert "run: uv run capsem-gate test-release-contracts" in fast_gate
     assert "just qualify-assets" in workflow
     assert "just _test-release-contracts" not in workflow
     assert "scripts/build-complete-release-channel.py" in workflow
@@ -876,8 +877,9 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "Verify restored production bytes" in workflow
     assert "uv run python scripts/check-release-site-contract.py" in workflow
     assert '--base-url "$RELEASE_SITE_URL"' in workflow
-    assert "--channel stable" in workflow
-    assert "--channel nightly" in workflow
+    assert 'CHANNEL_ARGS=(--channel "$CHANNEL")' in workflow
+    assert "CHANNEL_ARGS=(--catalog-members)" in workflow
+    assert '"${CHANNEL_ARGS[@]}"' in workflow
     assert "--attempts 30" in workflow
     assert "--delay-seconds 20" in workflow
     assert workflow.index("Deploy immutable preview") < workflow.index(
@@ -1627,6 +1629,7 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "--input-dir target/candidate-profile-inputs" in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
     assert "run: just fast-test" in fast_gate
+    assert "run: uv run capsem-gate test-release-contracts" in fast_gate
     assert "just qualify-binaries" in workflow
     assert "just _test-release-contracts" not in workflow
     assert "just _build-kernel" not in workflow
@@ -1877,6 +1880,7 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
     assert "run: just fast-test" in fast_gate
+    assert "run: uv run capsem-gate test-release-contracts" in fast_gate
 
     for workflow, verb in ((binary, "qualify-binaries"), (profile, "qualify-assets")):
         assert "group: capsem-release-${{ inputs.channel }}" in workflow
@@ -2144,11 +2148,15 @@ def test_installation_skill_documents_full_host_binary_cohort() -> None:
 def test_installation_skill_documents_deb_preinstall_restart_rail() -> None:
     install_skill = _source_text("skills/dev-installation/SKILL.md")
     deb_preinst = _source_text("scripts/deb-preinst.sh")
+    retire_cohort = _source_text("scripts/pkg-scripts/retire-cohort")
     repack_deb = _source_text("scripts/repack-deb.sh")
 
     assert "systemctl --user stop capsem.service" in deb_preinst
-    assert "event=kill_process" in deb_preinst
+    assert 'source "$(dirname "$0")/pkg-scripts/retire-cohort"' in deb_preinst
+    assert 'capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID"' in deb_preinst
+    assert '"$kill_command" -9 "$pid"' in retire_cohort
     assert 'cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"' in repack_deb
+    assert "embed_native_cohort_retirement" in repack_deb
 
     assert "deb-preinst.sh" in install_skill
     assert "DEBIAN/preinst" in install_skill
@@ -2159,10 +2167,13 @@ def test_installation_skill_documents_deb_preinstall_restart_rail() -> None:
 def test_release_skill_documents_deb_preinstall_restart_rail() -> None:
     release_skill = _skill_text("skills/release-process/SKILL.md")
     deb_preinst = _source_text("scripts/deb-preinst.sh")
+    retire_cohort = _source_text("scripts/pkg-scripts/retire-cohort")
     repack_deb = _source_text("scripts/repack-deb.sh")
 
     assert "systemctl --user stop capsem.service" in deb_preinst
-    assert "event=kill_process" in deb_preinst
+    assert 'source "$(dirname "$0")/pkg-scripts/retire-cohort"' in deb_preinst
+    assert 'capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID"' in deb_preinst
+    assert '"$kill_command" -9 "$pid"' in retire_cohort
     assert 'cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"' in repack_deb
     assert "preinst plus postinst scripts" in repack_deb
     assert "DEBIAN/preinst script" in repack_deb
@@ -3116,6 +3127,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
 
     assert "test-clean" in just
     assert "run: just fast-test" in fast_gate
+    assert "run: uv run capsem-gate test-release-contracts" in fast_gate
     assert "uses: ./.github/workflows/fast-gate.yaml" in assets
     assert "uses: ./.github/workflows/fast-gate.yaml" in release
     assert "just qualify-assets" in assets
@@ -3297,6 +3309,7 @@ def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
         assert "`just test-clean`" in document
 
     assert "run: just fast-test" in fast_gate
+    assert "run: uv run capsem-gate test-release-contracts" in fast_gate
     for workflow in (binary, profile):
         assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
         assert "just qualify-binaries" in workflow or "just qualify-assets" in workflow
@@ -4597,6 +4610,7 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert "uses: ./.github/workflows/fast-gate.yaml" in binary_release
     assert "uses: ./.github/workflows/fast-gate.yaml" in profile_release
     assert "run: just fast-test" in fast_gate
+    assert "run: uv run capsem-gate test-release-contracts" in fast_gate
     gate = _dispatched_text("test-clean:")
     assert "bootstrap.sh" in gate
     assert "check-web-surface.sh frontend" in gate
@@ -4769,6 +4783,9 @@ def test_installer_codesigns_helpers_with_stable_identifiers() -> None:
 
 def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort() -> None:
     preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
+    retire_cohort = (
+        PROJECT_ROOT / "scripts" / "pkg-scripts" / "retire-cohort"
+    ).read_text()
     postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
     deb_preinst = (PROJECT_ROOT / "scripts" / "deb-preinst.sh").read_text()
     deb_postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()
@@ -4798,16 +4815,19 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
     assert 'launchctl bootout "gui/$(id -u "$USER")" "$PLIST"' in preinstall
     assert "launchctl unload" in preinstall
     for name in stale_companions:
-        assert name in preinstall
-        assert 'pkill -9 -f "$CAPSEM_DIR/bin/$name"' in preinstall
-        assert name in deb_preinst
-        assert 'pkill -9 -f "$CAPSEM_DIR/bin/$name"' in deb_preinst
+        assert name in retire_cohort
+    for caller in (preinstall, deb_preinst):
+        assert "retire-cohort" in caller
+        assert "capsem_retire_native_cohort" in caller
+    assert "capsem_process_is_package_owned" in retire_cohort
+    assert '"$kill_command" -9 "$pid"' in retire_cohort
+    assert "retired native helper" in retire_cohort
     assert "pkill -9 -x capsem-app" in preinstall
     assert "systemctl --user stop capsem.service" in deb_preinst
     assert "event=stop_systemd_user_service" in deb_preinst
-    assert "event=kill_process" in deb_preinst
     assert 'cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"' in repack_deb
     assert 'chmod 755 "$WORK_DIR/deb/DEBIAN/preinst"' in repack_deb
+    assert "embed_native_cohort_retirement" in repack_deb
     assert 'rm -rf "$USER_HOME/Applications/Capsem.app"' in preinstall
     assert "rm -rf /Applications/Capsem.app" in preinstall
     assert "rm -rf /usr/local/share/capsem" in preinstall
@@ -4816,7 +4836,7 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
         for name in required_bins:
             assert name in script
         assert "update --assets" in script
-        assert "event=assets_hydrated" in script
+        assert "event=manifest_installed" in script
 
     assert 'src="$PKG_SHARE/bin/$bin"' in postinstall
     assert 'cp "$src" "$CAPSEM_DIR/bin/$bin"' in postinstall

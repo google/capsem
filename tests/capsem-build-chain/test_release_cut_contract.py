@@ -95,7 +95,7 @@ def test_version_stamp_propagates_cargo_toml_and_refreshes_both_frozen_locks() -
     # substitution rather than before -- otherwise the lock records the version
     # the cohort had a moment ago.
     cargo = '["cargo", "update", "--workspace", "--offline"]'
-    uv_lock = '["uv", "lock", "--offline"]'
+    uv_lock = '["uv", "lock", "--locked", "--offline"]'
     assert cargo in stamp
     assert uv_lock in stamp
     assert stamp.index("for stamped in settings.stamped") < stamp.index(cargo)
