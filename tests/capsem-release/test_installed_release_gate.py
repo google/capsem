@@ -151,6 +151,7 @@ def test_installed_release_gate_separates_selected_bytes_from_polling_provenance
     metadata_path = home / "assets" / "manifest-metadata.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata["manifest_url"] = polling
+    metadata["checked_url"] = polling
     metadata_path.write_text(json.dumps(metadata) + "\n", encoding="utf-8")
     capsem.write_text(
         capsem.read_text(encoding="utf-8").replace(manifest.resolve().as_uri(), polling),

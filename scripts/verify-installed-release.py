@@ -122,7 +122,7 @@ def main() -> int:
     expected_metadata = {
         "schema": METADATA_SCHEMA,
         "manifest_url": metadata_manifest_url,
-        "checked_url": args.manifest_url,
+        "checked_url": metadata_manifest_url,
         "channel": args.channel,
         "package_version": args.package_version,
         "validation_status": "valid",
