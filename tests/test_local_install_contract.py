@@ -85,6 +85,9 @@ def test_native_package_retirement_catches_a_basename_only_owned_service(
     tmp_path: Path,
 ) -> None:
     """A package PID file owns the stale service even when argv lost its path."""
+    # Keep fixture PIDs above Linux's hard PID ceiling so /proc can never
+    # redirect the production lookup away from the fake process table.
+    service_pid, gateway_pid, unrelated_pid = "9410041", "9410042", "9410099"
     fake_bin = tmp_path / "bin"
     state = tmp_path / "state"
     capsem_home = tmp_path / "home" / ".capsem"
@@ -92,15 +95,15 @@ def test_native_package_retirement_catches_a_basename_only_owned_service(
     fake_bin.mkdir()
     state.mkdir()
     run_dir.mkdir(parents=True)
-    for pid in (41, 42, 99):
-        (state / str(pid)).touch()
-    (run_dir / "service.pid").write_text("41\n", encoding="utf-8")
+    for pid in (service_pid, gateway_pid, unrelated_pid):
+        (state / pid).touch()
+    (run_dir / "service.pid").write_text(f"{service_pid}\n", encoding="utf-8")
 
     _executable(
         fake_bin / "pgrep",
-        """case "$4" in
-  capsem-service) printf '41\\n99\\n' ;;
-  capsem-gateway) printf '42\\n' ;;
+        f"""case "$4" in
+  capsem-service) printf '{service_pid}\\n{unrelated_pid}\\n' ;;
+  capsem-gateway) printf '{gateway_pid}\\n' ;;
 esac""",
     )
     _executable(
@@ -110,10 +113,10 @@ esac""",
 field="${{4:-}}"
 [ -n "$field" ] || exit 0
 case "$pid:$field" in
-  41:uid=|42:uid=|99:uid=) echo 501 ;;
-  41:comm=) echo capsem-service ;;
-  42:comm=) echo '{capsem_home}/bin/capsem-gateway' ;;
-  99:comm=) echo '/tmp/dev/capsem-service' ;;
+  {service_pid}:uid=|{gateway_pid}:uid=|{unrelated_pid}:uid=) echo 501 ;;
+  {service_pid}:comm=) echo capsem-service ;;
+  {gateway_pid}:comm=) echo '{capsem_home}/bin/capsem-gateway' ;;
+  {unrelated_pid}:comm=) echo '/tmp/dev/capsem-service' ;;
   *) exit 2 ;;
 esac""",
     )
@@ -146,22 +149,32 @@ rm -f "{state}/$2"
         check=True,
     )
 
-    assert kill_log.read_text(encoding="utf-8").splitlines() == ["41", "42"]
-    assert (state / "99").exists(), "an unrelated developer service was killed"
-    assert "retired native helper pid=41 name=capsem-service" in completed.stdout
+    assert kill_log.read_text(encoding="utf-8").splitlines() == [
+        service_pid,
+        gateway_pid,
+    ]
+    assert (state / unrelated_pid).exists(), "an unrelated developer service was killed"
+    assert (
+        f"retired native helper pid={service_pid} name=capsem-service"
+        in completed.stdout
+    )
 
 
 def test_native_package_retirement_fails_closed_when_an_owned_pid_survives(
     tmp_path: Path,
 ) -> None:
+    survivor_pid = "9410041"
     fake_bin = tmp_path / "bin"
     capsem_home = tmp_path / "home" / ".capsem"
     fake_bin.mkdir()
     (capsem_home / "run").mkdir(parents=True)
-    _executable(fake_bin / "pgrep", "[ \"$4\" != capsem-service ] || echo 41")
+    _executable(
+        fake_bin / "pgrep",
+        f'[ "$4" != capsem-service ] || echo {survivor_pid}',
+    )
     _executable(
         fake_bin / "ps",
-        f"""[ "$2" = 41 ]
+        f"""[ "$2" = {survivor_pid} ]
 field="${{4:-}}"
 case "$field" in
   "") exit 0 ;;
@@ -193,7 +206,7 @@ esac""",
     )
 
     assert completed.returncode != 0
-    assert "native helper cohort did not stop: 41" in completed.stderr
+    assert f"native helper cohort did not stop: {survivor_pid}" in completed.stderr
 
 
 def test_public_installer_stops_the_user_service_before_package_replacement() -> None:
