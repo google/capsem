@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SERVICE = PROJECT_ROOT / "crates/capsem-service/src/main.rs"
+UPDATE_COMMAND = PROJECT_ROOT / "crates/capsem-service/src/update_command.rs"
 
 SYSTEMD_UPDATE_OWNERSHIP_RATIONALE = """\
 Linux package replacement stops capsem.service from the Debian preinstall hook.
@@ -46,7 +46,6 @@ def _function(source: str, signature: str) -> str:
 
 def _ownership_violations(body: str) -> list[str]:
     required = (
-        'std::env::var_os("INVOCATION_ID")',
         'program: "systemd-run".to_string()',
         '"--user".to_string()',
         '"--wait".to_string()',
@@ -68,18 +67,21 @@ def _ownership_violations(body: str) -> list[str]:
 
 
 def test_systemd_update_owns_the_complete_transaction_outside_capsem_service() -> None:
+    source = UPDATE_COMMAND.read_text()
     body = _function(
-        SERVICE.read_text(),
-        "fn update_command_plan(kind: UpdateCommandKind)",
+        source,
+        "fn update_command_plan_for(",
     )
     violations = _ownership_violations(body)
+    if 'std::env::var_os("INVOCATION_ID")' not in source:
+        violations.append("does not identify service execution through INVOCATION_ID")
     assert not violations, SYSTEMD_UPDATE_OWNERSHIP_RATIONALE + "\n" + "\n".join(violations)
 
 
 def test_guard_rejects_the_failure_shapes_that_reached_release_qualification() -> None:
     good = _function(
-        SERVICE.read_text(),
-        "fn update_command_plan(kind: UpdateCommandKind)",
+        UPDATE_COMMAND.read_text(),
+        "fn update_command_plan_for(",
     )
     bad_shapes = {
         "direct service child": good.replace(
