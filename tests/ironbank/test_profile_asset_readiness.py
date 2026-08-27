@@ -15,7 +15,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from helpers.service import PROJECT_ROOT, ServiceInstance
+from helpers.service import PROJECT_ROOT, ServiceInstance, wait_profile_assets_settled
 
 from scripts.release_test_binary import ensure_host_test_binary
 
@@ -248,14 +248,19 @@ def test_profile_cards_can_be_built_from_asset_readiness_routes(tmp_path: Path) 
         for index, profile_id in enumerate(("code", "co-work")):
             ensured = client.post(f"/profiles/{profile_id}/assets/ensure", {}, timeout=30)
             assert ensured["profile_id"] == profile_id
+            assert ensured["started"] is True
             assert ensured["ensured"] is True
-            assert ensured["downloaded"] == (3 if index == 0 else 0)
-            assert ensured["ready"] is True
-            assert ensured["missing_assets"] == []
-            assert ensured["invalid_assets"] == []
+            expected_downloaded = 3 if index == 0 else 0
+            assert ensured["downloaded"] in {0, expected_downloaded}
+
+            settled = wait_profile_assets_settled(client, profile_id)
+            assert settled["downloaded"] == expected_downloaded
+            assert settled["ready"] is True
+            assert settled["missing_assets"] == []
+            assert settled["invalid_assets"] == []
 
             expected = _expected_assets(files, installed_assets, _arch())
-            actual_by_kind = {asset["kind"]: asset for asset in ensured["assets"]}
+            actual_by_kind = {asset["kind"]: asset for asset in settled["assets"]}
             assert set(actual_by_kind) == {"kernel", "initrd", "rootfs"}
             for kind, asset in actual_by_kind.items():
                 want = expected[kind]

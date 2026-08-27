@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from helpers.service import PROJECT_ROOT, ServiceInstance
+from helpers.service import PROJECT_ROOT, ServiceInstance, wait_profile_assets_settled
 
 from scripts.release_test_binary import ensure_host_test_binary
 
@@ -176,12 +176,16 @@ def test_profile_asset_routes_gate_start_until_hash_named_assets_are_hydrated(
         assert {asset["status"] for asset in assets["assets"]} == {"missing"}
 
         ensured = client.post("/profiles/code/assets/ensure", {}, timeout=30)
+        assert ensured["started"] is True
         assert ensured["ensured"] is True
-        assert ensured["downloaded"] == 3
-        assert ensured["ready"] is True
-        assert ensured["missing_assets"] == []
-        assert ensured["invalid_assets"] == []
-        assert {asset["status"] for asset in ensured["assets"]} == {"present"}
+        assert ensured["downloaded"] in {0, 3}
+
+        settled = wait_profile_assets_settled(client, "code")
+        assert settled["downloaded"] == 3
+        assert settled["ready"] is True
+        assert settled["missing_assets"] == []
+        assert settled["invalid_assets"] == []
+        assert {asset["status"] for asset in settled["assets"]} == {"present"}
 
         arch = _arch()
         data_by_kind = {
@@ -189,7 +193,7 @@ def test_profile_asset_routes_gate_start_until_hash_named_assets_are_hydrated(
             "initrd": files["initrd.img"],
             "rootfs": files["rootfs.erofs"],
         }
-        for asset in ensured["assets"]:
+        for asset in settled["assets"]:
             data = data_by_kind[asset["kind"]]
             digest = _blake3(data)
             logical_name = {

@@ -214,6 +214,23 @@ def make_service_home_run_dirs() -> tuple[Path, Path]:
     return home_dir, run_dir
 
 
+def wait_profile_assets_settled(
+    client: UdsHttpClient,
+    profile_id: str,
+    *,
+    timeout: float = 5,
+) -> dict:
+    """Wait for a previously-started asynchronous profile hydration."""
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        last = client.get(f"/profiles/{profile_id}/assets/status")
+        if not last.get("downloading", False):
+            return last
+        time.sleep(0.01)
+    raise AssertionError(f"profile {profile_id} assets did not settle: {last}")
+
+
 def _contains_profile_toml(profiles_dir: Path) -> bool:
     return any(path.name == "profile.toml" for path in profiles_dir.glob("*/profile.toml"))
 
