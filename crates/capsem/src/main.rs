@@ -44,6 +44,23 @@ const DEFAULT_PROFILE_ID: &str = "code";
 const DOCTOR_MOCK_SERVER_ADDR: &str = "127.0.0.1:3713";
 const DOCTOR_MOCK_SERVER_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DoctorSessionCleanup {
+    Completed,
+    Failed,
+    Interrupted,
+}
+
+impl DoctorSessionCleanup {
+    fn route(self, vm_id: &str) -> String {
+        let action = match self {
+            Self::Failed => "preserve-failure",
+            Self::Completed | Self::Interrupted => "delete",
+        };
+        format!("/vms/{vm_id}/{action}")
+    }
+}
+
 struct DoctorMockServerLock {
     _flock: Flock<std::fs::File>,
 }
@@ -2356,10 +2373,23 @@ async fn main() -> Result<()> {
             let provisioned = resp.into_result()?;
             let vm_id = provisioned.id;
 
-            // Helper: always delete the session, even on Ctrl-C or error
-            async fn delete_vm(client: &UdsClient, vm_id: &str) {
-                let _: Result<ApiResponse<serde_json::Value>, _> =
-                    client.delete(&format!("/vms/{}/delete", vm_id)).await;
+            async fn cleanup_doctor_vm(
+                client: &UdsClient,
+                vm_id: &str,
+                cleanup: DoctorSessionCleanup,
+            ) {
+                let route = cleanup.route(vm_id);
+                let result: Result<ApiResponse<serde_json::Value>, _> = match cleanup {
+                    DoctorSessionCleanup::Failed => {
+                        client.post(&route, serde_json::json!({})).await
+                    }
+                    DoctorSessionCleanup::Completed | DoctorSessionCleanup::Interrupted => {
+                        client.delete(&route).await
+                    }
+                };
+                if let Err(error) = result {
+                    eprintln!("warning: doctor session cleanup failed: {error:#}");
+                }
             }
 
             let ctrl_c = tokio::signal::ctrl_c();
@@ -2404,14 +2434,14 @@ async fn main() -> Result<()> {
             let (tx, rx) = tokio::select! {
                 _ = &mut ctrl_c => {
                     eprintln!("\nInterrupted, cleaning up session...");
-                    delete_vm(&client, &vm_id).await;
+                    cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Interrupted).await;
                     std::process::exit(130);
                 }
                 res = poll_ipc => match res {
                     Ok(chan) => chan,
                     Err(_) => {
                         eprintln!("Session did not become ready within 30s");
-                        delete_vm(&client, &vm_id).await;
+                        cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Failed).await;
                         std::process::exit(1);
                     }
                 },
@@ -2432,7 +2462,7 @@ async fn main() -> Result<()> {
                 tokio::select! {
                     _ = &mut ctrl_c => {
                         eprintln!("\nInterrupted, cleaning up session...");
-                        delete_vm(&client, &vm_id).await;
+                        cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Interrupted).await;
                         std::process::exit(130);
                     }
                     result = tokio::time::timeout(
@@ -2454,7 +2484,7 @@ async fn main() -> Result<()> {
                 }
                 if tokio::time::Instant::now() >= boot_deadline {
                     eprintln!("Shell did not become ready within 30s");
-                    delete_vm(&client, &vm_id).await;
+                    cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Failed).await;
                     std::process::exit(1);
                 }
             }
@@ -2479,11 +2509,11 @@ async fn main() -> Result<()> {
             // Stream output until we see the sentinel line
             let mut stdout = tokio::io::stdout();
             let mut output_buf = String::new();
-            let exit_code = loop {
+            let (exit_code, cleanup) = loop {
                 tokio::select! {
                     _ = &mut ctrl_c => {
                         eprintln!("\nInterrupted, cleaning up session...");
-                        break 130;
+                        break (130, DoctorSessionCleanup::Interrupted);
                     }
                     result = tokio::time::timeout(
                         std::time::Duration::from_secs(300),
@@ -2506,19 +2536,19 @@ async fn main() -> Result<()> {
                                     output_buf = output_buf.split_off(output_buf.len() - keep);
                                 }
                                 if output_buf.contains("RESULT: PASS") {
-                                    break 0;
+                                    break (0, DoctorSessionCleanup::Completed);
                                 } else if output_buf.contains("RESULT: FAIL") {
-                                    break 1;
+                                    break (1, DoctorSessionCleanup::Failed);
                                 }
                             }
                             Ok(Ok(_)) => continue,
                             Ok(Err(e)) => {
                                 eprintln!("IPC error: {e}");
-                                break 1;
+                                break (1, DoctorSessionCleanup::Failed);
                             }
                             Err(_) => {
                                 eprintln!("Doctor timed out after 300s");
-                                break 1;
+                                break (1, DoctorSessionCleanup::Failed);
                             }
                         }
                     }
@@ -2561,7 +2591,7 @@ async fn main() -> Result<()> {
                 }
             }
 
-            delete_vm(&client, &vm_id).await;
+            cleanup_doctor_vm(&client, &vm_id, cleanup).await;
             mock_server.shutdown();
             if exit_code != 0 {
                 eprintln!("Full log: {}", log_path.display());

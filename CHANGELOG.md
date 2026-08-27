@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nightly release explicitly switches from stable to the candidate nightly
   graph instead of treating the previous nightly as its baseline.
 
+- Failed `capsem doctor` sessions now retain their per-VM process, serial, and
+  ledger evidence instead of destructively deleting it after an IPC loss or
+  diagnostic failure. Hosted qualification also captures the service log, and
+  one-shot runs delete successful ephemeral state while preserving failed IPC
+  sessions for diagnosis.
+
 - Linux automatic binary updates now run the complete verified update
   transaction as an independent transient user service. Stopping
   `capsem.service` during Debian package replacement can no longer kill its

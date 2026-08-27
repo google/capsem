@@ -856,6 +856,22 @@ fn parse_doctor_rejects_fast_escape_hatch() {
 }
 
 #[test]
+fn doctor_cleanup_preserves_failures_but_deletes_success_and_interrupts() {
+    assert_eq!(
+        DoctorSessionCleanup::Failed.route("code-doctor"),
+        "/vms/code-doctor/preserve-failure"
+    );
+    assert_eq!(
+        DoctorSessionCleanup::Completed.route("code-doctor"),
+        "/vms/code-doctor/delete"
+    );
+    assert_eq!(
+        DoctorSessionCleanup::Interrupted.route("code-doctor"),
+        "/vms/code-doctor/delete"
+    );
+}
+
+#[test]
 fn doctor_mock_server_addr_is_iptables_redirect_target() {
     assert_eq!(DOCTOR_MOCK_SERVER_ADDR, "127.0.0.1:3713");
 }

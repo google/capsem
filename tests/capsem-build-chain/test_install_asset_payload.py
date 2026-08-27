@@ -3089,6 +3089,9 @@ def test_installed_doctor_failure_is_printed_and_preserved() -> None:
     assert 'failed_process_logs="$EVIDENCE_DIR/$label-failed-process-logs.txt"' in probe
     assert 'if ! CAPSEM_HOME="$CAPSEM_HOME_DIR" CAPSEM_RUN_DIR="$CAPSEM_HOME_DIR/run"' in probe
     assert 'find "$CAPSEM_HOME_DIR/run/sessions"' in probe
+    assert 'service_evidence="$EVIDENCE_DIR/$label-service-logs.txt"' in probe
+    assert 'done < <(service_logs)' in probe
+    assert 'tail -n 200 "$service_log" | tee -a "$service_evidence" >&2' in probe
     assert 'cat "$doctor_log" >&2' in probe
     assert 'cat "$failed_process_logs" >&2' in probe
 

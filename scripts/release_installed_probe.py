@@ -157,6 +157,7 @@ probe_installed_transition() {{
     --evidence-out "$EVIDENCE_DIR/$label-installed.json"
   doctor_log="$EVIDENCE_DIR/$label-doctor.log"
   failed_process_logs="$EVIDENCE_DIR/$label-failed-process-logs.txt"
+  service_evidence="$EVIDENCE_DIR/$label-service-logs.txt"
   if ! CAPSEM_HOME="$CAPSEM_HOME_DIR" CAPSEM_RUN_DIR="$CAPSEM_HOME_DIR/run" \
     "$CAPSEM_BIN" doctor > "$doctor_log" 2>&1; then
     : > "$failed_process_logs"
@@ -167,6 +168,11 @@ probe_installed_transition() {{
       find "$CAPSEM_HOME_DIR/run/sessions" -type f -name process.log \
         -path "*-failed-*" -print 2>> "$failed_process_logs" || true
     )
+    : > "$service_evidence"
+    while IFS= read -r service_log; do
+      printf '\n===== %s =====\n' "$service_log" | tee -a "$service_evidence" >&2
+      tail -n 200 "$service_log" | tee -a "$service_evidence" >&2 || true
+    done < <(service_logs)
     cat "$doctor_log" >&2
     cat "$failed_process_logs" >&2
     systemctl --user status capsem.service --no-pager -l >&2 || true

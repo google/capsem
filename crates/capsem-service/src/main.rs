@@ -43,6 +43,10 @@ use tracing::{error, info, warn, Instrument};
 mod asset_background;
 mod proctable;
 mod profile_status_cache;
+mod session_cleanup;
+use session_cleanup::{
+    finalize_one_shot_session, handle_preserve_failure, preserve_failed_run_shutdown_result,
+};
 mod shutdown_policy;
 mod startup;
 mod update_command;
@@ -11809,38 +11813,6 @@ async fn shutdown_vm_process(
     Ok(Some((session_dir, persistent, pid)))
 }
 
-/// Preserve a failed one-shot session only when this shutdown call claimed
-/// the instance record. The child watcher and `shutdown_vm_process` race to
-/// remove that record; exactly one receives `Some`, so exactly one owns the
-/// filesystem rename. `None` means the watcher already handled preservation.
-async fn preserve_failed_run_shutdown_result(
-    state: Arc<ServiceState>,
-    id: String,
-    shutdown_result: Option<(PathBuf, bool, u32)>,
-) -> Result<Option<PathBuf>, AppError> {
-    let Some((session_dir, persistent, _pid)) = shutdown_result else {
-        tracing::debug!(
-            id,
-            "failed session preservation already owned by child watcher"
-        );
-        return Ok(None);
-    };
-    if persistent {
-        return Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("one-shot session {id} unexpectedly used persistent storage"),
-        ));
-    }
-    tokio::task::spawn_blocking(move || state.preserve_failed_session_dir(&session_dir, &id))
-        .await
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed session preservation task: {error}"),
-            )
-        })
-}
-
 /// Tear down a warm-restore process that failed to reach ready while the
 /// caller already holds the save/restore locks.
 async fn stop_failed_restore_process_under_lock(state: &ServiceState, id: &str) {
@@ -12554,7 +12526,9 @@ async fn handle_run(
     // blocks until the process is actually gone -- the leak detector needs
     // that guarantee. Route handlers must not mine session.db before returning;
     // durable telemetry is recovered by the ledger rails.
-    let _ = shutdown_vm_process(&state, &id, ShutdownMode::Retain).await?;
+    let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain).await?;
+    let failed = !matches!(&exec_result, Ok(ProcessToService::ExecResult { .. }));
+    finalize_one_shot_session(Arc::clone(&state), id.clone(), shutdown_result, failed).await?;
 
     let response = match exec_result {
         Ok(ProcessToService::ExecResult {
@@ -12611,6 +12585,7 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/{id}/stop", post(handle_stop))
         .route("/vms/{id}/pause", post(handle_suspend))
         .route("/vms/{id}/delete", delete(handle_delete))
+        .route("/vms/{id}/preserve-failure", post(handle_preserve_failure))
         .route("/vms/{id}/start", post(handle_resume))
         .route("/vms/{id}/resume", post(handle_resume))
         .route("/vms/{id}/save", post(handle_persist))

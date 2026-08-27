@@ -7445,6 +7445,82 @@ async fn failed_run_preservation_uses_shutdown_owned_instance_once() {
     );
 }
 
+#[tokio::test]
+async fn failed_session_route_preserves_runtime_ipc_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().to_path_buf());
+    let id = "code-doctor-ipc";
+    let session_dir = state.run_dir.join("sessions").join(id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    std::fs::write(
+        session_dir.join("process.log"),
+        b"process channel closed during doctor",
+    )
+    .unwrap();
+    insert_fake_instance_with_session_dir(&state, id, 0, session_dir.clone());
+
+    let (status, body) = route_request(
+        build_service_router(Arc::clone(&state)),
+        axum::http::Method::POST,
+        &format!("/vms/{id}/preserve-failure"),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["success"], true);
+    assert!(!session_dir.exists());
+    let preserved = find_failed_session_dir(&state.run_dir, id)
+        .expect("unexpected doctor IPC loss must retain the process evidence");
+    assert_eq!(
+        capsem_core::telemetry::read_log_tail(&preserved.join("process.log"), usize::MAX).unwrap(),
+        "process channel closed during doctor"
+    );
+}
+
+#[tokio::test]
+async fn one_shot_completion_deletes_success_and_preserves_ipc_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().to_path_buf());
+
+    let clean_id = "code-run-clean";
+    let clean_dir = state.run_dir.join("sessions").join(clean_id);
+    std::fs::create_dir_all(&clean_dir).unwrap();
+    std::fs::write(clean_dir.join("process.log"), b"command completed").unwrap();
+    finalize_one_shot_session(
+        Arc::clone(&state),
+        clean_id.to_string(),
+        Some((clean_dir.clone(), false, 0)),
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(
+        !clean_dir.exists(),
+        "successful one-shot state must be deleted"
+    );
+
+    let failed_id = "code-run-ipc";
+    let failed_dir = state.run_dir.join("sessions").join(failed_id);
+    std::fs::create_dir_all(&failed_dir).unwrap();
+    std::fs::write(failed_dir.join("process.log"), b"exec IPC closed").unwrap();
+    finalize_one_shot_session(
+        Arc::clone(&state),
+        failed_id.to_string(),
+        Some((failed_dir.clone(), false, 0)),
+        true,
+    )
+    .await
+    .unwrap();
+    assert!(!failed_dir.exists());
+    let preserved = find_failed_session_dir(&state.run_dir, failed_id)
+        .expect("one-shot exec IPC loss must retain the process evidence");
+    assert_eq!(
+        capsem_core::telemetry::read_log_tail(&preserved.join("process.log"), usize::MAX).unwrap(),
+        "exec IPC closed"
+    );
+}
+
 #[test]
 fn cull_keeps_newest_and_prunes_oldest() {
     let dir = tempfile::tempdir().unwrap();
