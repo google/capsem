@@ -131,10 +131,9 @@ count.
 Linux binary qualification includes the public-before to candidate-after
 self-update because the previous service launches the first package transition.
 Candidate `DEBIAN/preinst` detects its `dpkg` in `capsem.service` through
-`/proc/self/cgroup` and preserves the old cohort. Candidate `DEBIAN/postinst`
-defers manifest hydration, status refresh, service registration, and readiness
-so that updater can activate the candidate and request restart. Ordinary
-replacement still stops stale helpers and runs the complete postinstall.
+`/proc/self/cgroup` and preserves the old cohort. Candidate `DEBIAN/postinst` defers
+hydration, status refresh, registration, and readiness so the updater can activate
+the candidate and restart. Ordinary replacement stops stale helpers and completes.
 
 The exact verified `assets/manifest.json` remains the installed source of truth
 byte-for-byte. `assets/manifest-metadata.json` is its only metadata sidecar;
