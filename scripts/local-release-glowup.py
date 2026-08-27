@@ -15,7 +15,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -90,9 +89,9 @@ except ModuleNotFoundError:
     )
 
 try:
-    from release_installed_probe import exact_installed_probe_shell
+    import release_installed_probe as installed_probe
 except ModuleNotFoundError:
-    from scripts.release_installed_probe import exact_installed_probe_shell
+    from scripts import release_installed_probe as installed_probe
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -502,7 +501,9 @@ def main() -> int:
                     nightly_package=nightly_deb,
                     package_architecture=arch,
                     packaged_identity=(
-                        packaged_manifest_metadata(stable_deb) if args.package_ready else None
+                        installed_probe.packaged_manifest_metadata(stable_deb)
+                        if args.package_ready
+                        else None
                     ),
                     evidence_out=evidence_path,
                 )
@@ -1431,25 +1432,6 @@ def record_update_audit_marker(path: Path) -> None:
     path.write_text(f"{lines}\n", encoding="utf-8")
 
 
-AUTOMATIC_UPDATE_POLL_ENVIRONMENT = (
-    "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS",
-    "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS",
-)
-
-
-def clear_accelerated_automatic_update_polling() -> None:
-    """Keep pairing-only systemd manager state out of the next glow-up module."""
-
-    run(
-        [
-            "systemctl",
-            "--user",
-            "unset-environment",
-            *AUTOMATIC_UPDATE_POLL_ENVIRONMENT,
-        ]
-    )
-
-
 def run_exact_installed_glowup(
     *,
     pairing: ExactReleasePairing,
@@ -1467,7 +1449,7 @@ def run_exact_installed_glowup(
             evidence_dir=evidence_dir,
         )
     finally:
-        clear_accelerated_automatic_update_polling()
+        installed_probe.clear_accelerated_automatic_update_polling(run)
 
 
 def _run_exact_installed_glowup(
@@ -1509,7 +1491,7 @@ def _run_exact_installed_glowup(
     else:
         fresh_artifact, fresh_package = before_artifact, pairing.before_package
     evidence_dir.mkdir(parents=True, exist_ok=True)
-    probe_functions = exact_installed_probe_shell(evidence_dir)
+    probe_functions = installed_probe.exact_installed_probe_shell(evidence_dir)
     fresh_transition = evidence_dir / "fresh-install-transition.json"
     fresh_manifest = (
         transport.after_manifest if first_profile_activation else transport.before_manifest
@@ -1872,38 +1854,6 @@ def exact_installed_transition_rows(
     return transitions
 
 
-def packaged_manifest_metadata(deb: Path) -> dict[str, str]:
-    """The channel identity the package itself declares.
-
-    A package-ready run stages the exact publishable .deb rather than repacking
-    it, so a fresh install of that package records the channel it was built for.
-    The hermetic server can still redirect later `capsem update --channel`
-    transitions, but it cannot rewrite this: the install-manifest override
-    deliberately accepts only local file:// targets, so an install-time request
-    can never repoint an installed product at an arbitrary HTTP endpoint.
-    """
-    with tempfile.TemporaryDirectory() as extracted:
-        subprocess.run(["dpkg-deb", "-x", str(deb), extracted], check=True)
-        # Locate the metadata rather than assume a prefix: repack-deb.sh writes
-        # /usr/share/capsem while build-pkg.sh uses /usr/local/share/capsem.
-        found = sorted(Path(extracted).rglob("assets/manifest-metadata.json"))
-        if len(found) != 1:
-            root = Path(extracted)
-            layout = sorted(
-                str(path.relative_to(root)) for path in root.rglob("*capsem*") if path.is_dir()
-            )[:10]
-            raise SystemExit(
-                f"package must declare exactly one manifest metadata, found "
-                f"{len(found)} in {deb}; capsem directories present: {layout or 'none'}"
-            )
-        packaged = json.loads(found[0].read_text(encoding="utf-8"))
-    url = packaged.get("manifest_url")
-    channel = packaged.get("channel")
-    if not isinstance(url, str) or not isinstance(channel, str):
-        raise SystemExit(f"package manifest metadata declares no channel identity: {deb}")
-    return {"manifest_url": url, "channel": channel}
-
-
 def run_installed_glowup(
     *,
     install_script_url: str,
@@ -1934,7 +1884,7 @@ def run_installed_glowup(
     )
     evidence_arg = shlex.quote(str(installed_evidence))
     transition_evidence_dir = installed_evidence.parent / "channel-transition-evidence"
-    probe_functions = exact_installed_probe_shell(transition_evidence_dir)
+    probe_functions = installed_probe.exact_installed_probe_shell(transition_evidence_dir)
     script = f"""
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive

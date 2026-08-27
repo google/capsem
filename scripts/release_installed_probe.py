@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import shlex
+import subprocess
 import sys
+import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 HOST_BINARIES = (
@@ -20,6 +24,53 @@ HOST_BINARIES = (
     "capsem-mock-server",
     "capsem-bench-rs",
 )
+
+
+def packaged_manifest_metadata(deb: Path) -> dict[str, str]:
+    """Return the future polling identity declared by an exact package.
+
+    A package-ready run stages the exact publishable .deb rather than repacking
+    it, so a fresh install records the channel identity built into that package.
+    The hermetic server may redirect later channel transitions, but installation
+    cannot rewrite this metadata or repoint the product at arbitrary HTTP input.
+    """
+
+    with tempfile.TemporaryDirectory() as extracted:
+        subprocess.run(["dpkg-deb", "-x", str(deb), extracted], check=True)
+        # Repacked and native packages use different prefixes, so locate the
+        # one package-owned metadata file instead of assuming either layout.
+        found = sorted(Path(extracted).rglob("assets/manifest-metadata.json"))
+        if len(found) != 1:
+            root = Path(extracted)
+            layout = sorted(
+                str(path.relative_to(root)) for path in root.rglob("*capsem*") if path.is_dir()
+            )[:10]
+            raise SystemExit(
+                f"package must declare exactly one manifest metadata, found "
+                f"{len(found)} in {deb}; capsem directories present: {layout or 'none'}"
+            )
+        packaged = json.loads(found[0].read_text(encoding="utf-8"))
+    url = packaged.get("manifest_url")
+    channel = packaged.get("channel")
+    if not isinstance(url, str) or not isinstance(channel, str):
+        raise SystemExit(f"package manifest metadata declares no channel identity: {deb}")
+    return {"manifest_url": url, "channel": channel}
+
+
+def clear_accelerated_automatic_update_polling(
+    run: Callable[[list[str]], None],
+) -> None:
+    """Keep pairing-only systemd manager state out of the next module."""
+
+    run(
+        [
+            "systemctl",
+            "--user",
+            "unset-environment",
+            "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS",
+            "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS",
+        ]
+    )
 
 
 def exact_installed_probe_shell(evidence_dir: Path) -> str:
@@ -217,4 +268,3 @@ dump_update_diagnostics() {{
   journalctl --user-unit capsem.service --no-pager -n 200 -o cat >&2 2>&1 || true
 }}
 """
-
