@@ -2663,16 +2663,19 @@ slowest_steps = 10
 
 # Which HTTP routes the benchmark system measures.
 #
-# A route added to the router and to neither list fails
-# `tests/test_bench_route_coverage.py`. That is the point: 53 of the 101
-# service routes had no timing signal of any kind, and nothing noticed,
-# because coverage was a hand-maintained list of 27 contracts in a test file
-# rather than something derived from the router.
+# A route added to the router and to no class fails
+# `tests/citadel/test_bench_route_coverage.py` in the fast phase. That is the
+# point: 53 of the 101 service routes had no timing signal of any kind, and
+# nothing noticed, because coverage was a hand-maintained list of 27 contracts
+# in a test file rather than something derived from the router.
 #
 # `unmeasured` is a debt inventory, not an exemption list. It starts holding
 # every route because the bench system measures none of them yet, and each
 # entry is deleted as the routes collector covers it.
+# `internal` is a reasoned, ratcheted inventory for service-UDS control routes
+# that are deliberately neither public gateway routes nor benchmark subjects.
 [benchmark.routes]
+internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS" }
 measured = [
     "/status",
     "/version",

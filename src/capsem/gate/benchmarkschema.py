@@ -13,16 +13,16 @@ from .configschema import Strict
 class RouteCoverageConfig(Strict):
     """Which HTTP routes the benchmark system measures.
 
-    Two lists that must together account for every route the service
-    registers. `unmeasured` is a debt inventory, not an exemption list: it
-    starts holding every route, and entries leave it as the routes collector
-    covers them. A route in neither list fails
-    `tests/test_bench_route_coverage.py`, which is what makes a new route
-    measured by default rather than invisible.
+    Three classes that must together account for every route the service
+    registers. `unmeasured` is debt, not an exemption list. `internal` maps the
+    tiny set of service-only control routes to mandatory reasons. A route in no
+    class fails `tests/citadel/test_bench_route_coverage.py` in the fast phase,
+    which makes a new route measured by default rather than invisible.
     """
 
     measured: tuple[str, ...]
     unmeasured: tuple[str, ...]
+    internal: dict[str, str]
 
 
 class BenchmarkRunConfig(Strict):

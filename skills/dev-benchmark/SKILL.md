@@ -103,9 +103,12 @@ measured.
 
 53 of the 101 service routes had no timing signal, and nothing noticed, because
 coverage was a hand-maintained list inside a test file. It is derived from the
-router now: every registered route must be in `[benchmark.routes] measured` or
-`unmeasured`, and `tests/test_bench_route_coverage.py` fails on a route in
-neither. `unmeasured` is a debt inventory that may only shrink.
+router now: every registered route must be in `[benchmark.routes]` as
+`measured`, `unmeasured`, or in the reasoned `internal` map. The fast Citadel guard at
+`tests/citadel/test_bench_route_coverage.py` fails before build work on a route
+in no class, a duplicate classification, an unexplained internal route, or
+service/gateway topology drift. `unmeasured` is debt that may only shrink;
+`internal` is a one-entry ratchet, not an easy exemption for new routes.
 
 ## Benchmarks that are still pytest
 

@@ -6,9 +6,11 @@ the read-only ones that need no VM, both straight to the service and through
 the gateway, so the proxy hop's cost is a number rather than a guess.
 
 Which routes are measured comes from `[benchmark.routes] measured` in
-`config/gate.toml`, and `tests/test_bench_route_coverage.py` requires every
-registered route to be in that list or explicitly in `unmeasured`. Moving a
-route between the two lists is what adding coverage looks like.
+`config/gate.toml`, and the fast Citadel guard at
+`tests/citadel/test_bench_route_coverage.py` requires every registered route
+to be measured, explicitly recorded as measurement debt, or identified as a
+reasoned internal service-only control route. Moving a route from debt to
+measured is what adding coverage looks like.
 
 Prints raw per-request milliseconds and the process CPU delta; `capsem-bench`
 computes every statistic.
