@@ -1031,6 +1031,46 @@ async fn update_route_apply_dry_run_plans_one_atomic_update() {
 }
 
 #[tokio::test]
+async fn update_apply_plan_escapes_systemd_service_cgroup() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cli = dir.path().join("capsem");
+    let previous_cli = std::env::var_os("CAPSEM_CLI");
+    let previous_invocation = std::env::var_os("INVOCATION_ID");
+    std::env::set_var("CAPSEM_CLI", &cli);
+    std::env::set_var("INVOCATION_ID", "capsem-test-systemd-invocation");
+
+    let plan = update_command_plan(UpdateCommandKind::Apply);
+    let check_plan = update_command_plan(UpdateCommandKind::Check);
+
+    match previous_cli {
+        Some(value) => std::env::set_var("CAPSEM_CLI", value),
+        None => std::env::remove_var("CAPSEM_CLI"),
+    }
+    match previous_invocation {
+        Some(value) => std::env::set_var("INVOCATION_ID", value),
+        None => std::env::remove_var("INVOCATION_ID"),
+    }
+    assert_eq!(plan.program, "systemd-run");
+    assert_eq!(
+        plan.args,
+        vec![
+            "--user",
+            "--wait",
+            "--collect",
+            "--quiet",
+            "--unit=capsem-update",
+            "--",
+            cli.to_str().unwrap(),
+            "update",
+            "--yes",
+        ]
+    );
+    assert_eq!(check_plan.program, cli.to_str().unwrap());
+    assert_eq!(check_plan.args, vec!["update", "--check"]);
+}
+
+#[tokio::test]
 async fn update_route_apply_requires_confirmation_for_live_command() {
     let app = build_service_router(make_test_state());
     let (status, body) = route_request(

@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux automatic binary updates now run the complete verified update
+  transaction as an independent transient user service. Stopping
+  `capsem.service` during Debian package replacement can no longer kill its
+  own updater and leave `dpkg` halfway through the install.
+
 - `just install` now opens the native macOS administrator authorization dialog
   for the exact package install instead of depending on terminal `sudo` state,
   so bounded agent runs can complete without an interactive TTY.

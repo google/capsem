@@ -12925,10 +12925,32 @@ fn update_command_plan(kind: UpdateCommandKind) -> api::UpdateCommandPlan {
         UpdateCommandKind::Check => vec!["update".to_string(), "--check".to_string()],
         UpdateCommandKind::Apply => vec!["update".to_string(), "--yes".to_string()],
     };
-    api::UpdateCommandPlan {
-        program: capsem_cli_program(),
-        args,
+    let program = capsem_cli_program();
+    if kind == UpdateCommandKind::Apply
+        && std::env::var_os("INVOCATION_ID").is_some_and(|value| !value.is_empty())
+    {
+        // The Debian preinstall stops capsem.service before replacing its
+        // binaries. A child update process in that unit's cgroup is killed
+        // with the service, including its apt/dpkg descendants. Run the
+        // complete transaction as a sibling transient user service so it owns
+        // the package stop/restart edge. Do not use --pipe: the service-side
+        // reader disappears during that edge and could SIGPIPE the updater.
+        let mut transient_args = vec![
+            "--user".to_string(),
+            "--wait".to_string(),
+            "--collect".to_string(),
+            "--quiet".to_string(),
+            "--unit=capsem-update".to_string(),
+            "--".to_string(),
+            program,
+        ];
+        transient_args.extend(args);
+        return api::UpdateCommandPlan {
+            program: "systemd-run".to_string(),
+            args: transient_args,
+        };
     }
+    api::UpdateCommandPlan { program, args }
 }
 
 fn capsem_cli_program() -> String {
