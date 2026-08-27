@@ -232,6 +232,16 @@ def _load_local_release_glowup() -> ModuleType:
     return module
 
 
+def _load_release_installed_probe() -> ModuleType:
+    path = PROJECT_ROOT / "scripts" / "release_installed_probe.py"
+    spec = importlib.util.spec_from_file_location("release_installed_probe", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _run_docker_space_gate(
     tmp_path: Path,
     *,
@@ -1012,11 +1022,11 @@ def test_installed_glowup_uses_the_materialized_python_without_project_sync(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    glowup = _load_local_release_glowup()
+    installed_probe = _load_release_installed_probe()
     interpreter = "/opt/capsem venv/bin/python"
-    monkeypatch.setattr(glowup.sys, "executable", interpreter)
+    monkeypatch.setattr(installed_probe.sys, "executable", interpreter)
 
-    probe = glowup.exact_installed_probe_shell(tmp_path)
+    probe = installed_probe.exact_installed_probe_shell(tmp_path)
     quoted = "'/opt/capsem venv/bin/python'"
     assert f"{quoted} scripts/verify-installed-release.py" in probe
     assert f"{quoted} scripts/run-installed-winterfell.py" in probe
