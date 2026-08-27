@@ -5388,7 +5388,10 @@ def test_binary_pairing_failure_uploads_exported_prefix_evidence() -> None:
     assert set(step["with"]["path"].splitlines()) >= {
         "test-artifacts/",
         "target/gate-runs/",
+        "target/test-home/.capsem/run/sessions/",
+        "target/test-home/.capsem/logs/",
     }
+    assert step["with"]["include-hidden-files"] is True
     assert step["with"]["if-no-files-found"] == "error"
 
 

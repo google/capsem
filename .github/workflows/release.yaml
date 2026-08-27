@@ -1026,6 +1026,7 @@ jobs:
             target/test-home/.capsem/run/sessions/
             target/test-home/.capsem/logs/
           retention-days: 7
+          include-hidden-files: true
           if-no-files-found: error
 
   create-release:
