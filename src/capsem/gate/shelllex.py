@@ -22,11 +22,10 @@ guessed would be wrong in the direction that matters.
 from __future__ import annotations
 
 import re
-import warnings
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from .shellsniff import ForeignSourceWarning, sniff
+from .shellsniff import check
 
 #: A redirection, with its optional file descriptor and its optional `&fd`
 #: target, as one token. Recognised here rather than in the parser because
@@ -279,30 +278,13 @@ def tokenize(source: str, *, origin: str = "", foreign: str = "warn") -> list[To
     Jinja templates parsed as shell, reporting a correctly chained `make && ls`
     as two unguarded statements, in a guard written to find exactly that.
     """
-    if foreign != "allow" and (language := sniff(source)) is not None:
-        where = f" ({origin})" if origin else ""
-        message = (
-            f"lexing something that looks like {language}{where}. If this is a "
-            "container of shell rather than shell, extract the body first -- "
-            "shellsurfaces renders templates and pulls RUN and run: bodies out."
-        )
-        if foreign == "refuse":
-            raise ValueError(message)
-        warnings.warn(message, ForeignSourceWarning, stacklevel=2)
+    check(source, origin=origin, foreign=foreign)
     return Lexer(source).tokens()
 
 
 def heredocs(source: str, *, origin: str = "", foreign: str = "warn") -> tuple[Heredoc, ...]:
     """Heredocs in one shell body, with bodies kept as data rather than tokens."""
-    if foreign != "allow" and (language := sniff(source)) is not None:
-        where = f" ({origin})" if origin else ""
-        message = (
-            f"lexing something that looks like {language}{where}. If this is a "
-            "container of shell rather than shell, extract the body first."
-        )
-        if foreign == "refuse":
-            raise ValueError(message)
-        warnings.warn(message, ForeignSourceWarning, stacklevel=2)
+    check(source, origin=origin, foreign=foreign)
     lexer = Lexer(source)
     lexer.tokens()
     return tuple(lexer.heredocs)

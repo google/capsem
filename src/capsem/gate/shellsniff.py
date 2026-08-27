@@ -11,6 +11,7 @@ clean tree.
 from __future__ import annotations
 
 import re
+import warnings
 
 #: Markers that say the text handed to the lexer is not shell.
 #:
@@ -47,3 +48,18 @@ def sniff(source: str) -> str | None:
         if pattern.search(source):
             return name
     return None
+
+
+def check(source: str, *, origin: str, foreign: str) -> None:
+    """Apply the caller's policy when ``source`` is obviously not shell."""
+    if foreign == "allow" or (language := sniff(source)) is None:
+        return
+    where = f" ({origin})" if origin else ""
+    message = (
+        f"lexing something that looks like {language}{where}. If this is a "
+        "container of shell rather than shell, extract the body first -- "
+        "shellsurfaces renders templates and pulls RUN and run: bodies out."
+    )
+    if foreign == "refuse":
+        raise ValueError(message)
+    warnings.warn(message, ForeignSourceWarning, stacklevel=3)

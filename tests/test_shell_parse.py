@@ -13,7 +13,7 @@ import warnings
 
 import pytest
 
-from capsem.gate.shelllex import ForeignSourceWarning, Kind, heredocs, sniff, tokenize
+from capsem.gate.shelllex import Kind, heredocs, tokenize
 from capsem.gate.shellnodes import (
     AndOr,
     Command,
@@ -26,6 +26,7 @@ from capsem.gate.shellnodes import (
     walk,
 )
 from capsem.gate.shellparse import parse
+from capsem.gate.shellsniff import ForeignSourceWarning, sniff
 
 
 def programs(source: str) -> list[str]:

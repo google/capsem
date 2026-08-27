@@ -524,6 +524,7 @@ def test_exact_plan_inspection_derives_from_the_recorded_source_snapshot(
     copied_from: list[Path] = []
 
     monkeypatch.setenv(CONFIG.locks.gate.run_marker, "capsem-gate candidate")
+    monkeypatch.delenv(CONFIG.environment.qualified_source_commit, raising=False)
     monkeypatch.setattr(sourcecapture, "require_recorded", lambda _config: selected)
     monkeypatch.setattr(
         gate_config,
