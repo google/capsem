@@ -22,6 +22,13 @@ TRANSITION_PATH = PROJECT_ROOT / "scripts" / "release_transition.py"
 LOCAL_GLOWUP_PATH = PROJECT_ROOT / "scripts" / "local-release-glowup.py"
 INSTALLED_PROBE_PATH = PROJECT_ROOT / "scripts" / "release_installed_probe.py"
 MARKETING_SURFACE_PATH = PROJECT_ROOT / "scripts" / "marketing_install_surface.py"
+AUTOMATIC_UPDATE_POLL_CLEANUP = [
+    "systemctl",
+    "--user",
+    "unset-environment",
+    "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS",
+    "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS",
+]
 
 
 def _load_module():
@@ -85,7 +92,7 @@ def test_local_glowup_requires_the_public_install_command_to_be_discoverable() -
     module = _load_marketing_surface()
 
     module.validate_marketing_install_surface(
-        '<main><Hero /><CTA /><code>curl -fsSL https://capsem.org/install.sh | sh</code></main>',
+        "<main><Hero /><CTA /><code>curl -fsSL https://capsem.org/install.sh | sh</code></main>",
         install_script_url="https://capsem.org/install.sh",
     )
 
@@ -209,9 +216,10 @@ def test_tamper_candidate_refuses_non_consumed_evidence() -> None:
             architecture="x86_64",
         )
 
-    assert manifest["profiles"]["code"]["architectures"][0]["evidence"][0][
-        "digest"
-    ] == {"sha256": "a" * 64, "blake3": "b" * 64}
+    assert manifest["profiles"]["code"]["architectures"][0]["evidence"][0]["digest"] == {
+        "sha256": "a" * 64,
+        "blake3": "b" * 64,
+    }
 
 
 def _pairing(
@@ -1373,9 +1381,17 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
     assert candidates.incompatible_manifest.read_bytes() != transport.after_manifest.read_bytes()
 
 
+@pytest.mark.parametrize(
+    "fail_call",
+    (
+        pytest.param(None, id="success"),
+        pytest.param(2, id="failure"),
+    ),
+)
 def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    fail_call: int | None,
 ) -> None:
     module = _load_local_glowup()
     before_package = tmp_path / "Capsem_1.5.99_amd64.deb"
@@ -1487,17 +1503,30 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
         after_package=after_package,
     )
     calls: list[list[str]] = []
-    monkeypatch.setattr(module, "run", lambda command, **_kwargs: calls.append(command))
 
-    evidence = module.run_exact_installed_glowup(
-        pairing=pairing,
-        transport=transport,
-        install_script_url="http://127.0.0.1:8765/install.sh",
-        release_base_url="http://127.0.0.1:8765",
-        evidence_dir=tmp_path / "evidence",
-    )
+    def capture(command: list[str], **_kwargs) -> None:
+        calls.append(command)
+        if len(calls) == fail_call:
+            raise RuntimeError("forced installed transition failure")
 
-    assert len(calls) == 5
+    monkeypatch.setattr(module, "run", capture)
+    arguments = {
+        "pairing": pairing,
+        "transport": transport,
+        "install_script_url": "http://127.0.0.1:8765/install.sh",
+        "release_base_url": "http://127.0.0.1:8765",
+        "evidence_dir": tmp_path / "evidence",
+    }
+    if fail_call is not None:
+        with pytest.raises(RuntimeError, match="forced installed transition failure"):
+            module.run_exact_installed_glowup(**arguments)
+        assert calls[-1] == AUTOMATIC_UPDATE_POLL_CLEANUP
+        return
+
+    evidence = module.run_exact_installed_glowup(**arguments)
+
+    assert len(calls) == 6
+    assert calls[-1] == AUTOMATIC_UPDATE_POLL_CLEANUP
     before_script = calls[0][-1]
     after_script = calls[1][-1]
     tamper_script = calls[2][-1]
@@ -1668,7 +1697,8 @@ def test_first_profile_glowup_never_installs_empty_authoring_state(
         evidence_dir=tmp_path / "evidence",
     )
 
-    assert len(calls) == 4
+    assert len(calls) == 5
+    assert calls[-1] == AUTOMATIC_UPDATE_POLL_CLEANUP
     fresh_script = calls[0][-1]
     assert "probe_installed_transition fresh-install" in fresh_script
     assert "probe_installed_transition candidate-after" not in fresh_script
@@ -2555,7 +2585,10 @@ def test_linux_glowup_proves_background_asset_hydration() -> None:
     assert "package installer synchronously hydrated VM assets" in fresh_install
     assert 'assets status --profile "$profile" --json' in staging
     assert 'status.get("ready") and not status.get("downloading")' in staging
-    assert 'wait_for_profile_assets code "$EVIDENCE_DIR/code-assets-after-install.json"' in fresh_install
+    assert (
+        'wait_for_profile_assets code "$EVIDENCE_DIR/code-assets-after-install.json"'
+        in fresh_install
+    )
     assert (
         'wait_for_profile_assets co-work "$EVIDENCE_DIR/co-work-assets-after-install.json"'
         in fresh_install

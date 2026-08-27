@@ -1431,7 +1431,46 @@ def record_update_audit_marker(path: Path) -> None:
     path.write_text(f"{lines}\n", encoding="utf-8")
 
 
+AUTOMATIC_UPDATE_POLL_ENVIRONMENT = (
+    "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS",
+    "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS",
+)
+
+
+def clear_accelerated_automatic_update_polling() -> None:
+    """Keep pairing-only systemd manager state out of the next glow-up module."""
+
+    run(
+        [
+            "systemctl",
+            "--user",
+            "unset-environment",
+            *AUTOMATIC_UPDATE_POLL_ENVIRONMENT,
+        ]
+    )
+
+
 def run_exact_installed_glowup(
+    *,
+    pairing: ExactReleasePairing,
+    transport: ExactReleaseTransport,
+    install_script_url: str,
+    release_base_url: str,
+    evidence_dir: Path,
+) -> ExactInstalledGlowupEvidence:
+    try:
+        return _run_exact_installed_glowup(
+            pairing=pairing,
+            transport=transport,
+            install_script_url=install_script_url,
+            release_base_url=release_base_url,
+            evidence_dir=evidence_dir,
+        )
+    finally:
+        clear_accelerated_automatic_update_polling()
+
+
+def _run_exact_installed_glowup(
     *,
     pairing: ExactReleasePairing,
     transport: ExactReleaseTransport,
