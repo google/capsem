@@ -105,10 +105,12 @@ retry after failure; postinstall removes both only after success.
   `capsem.service`, so preinst preserves that unit and cohort until the old
   updater activates the new manifest and requests its managed restart.
   Postinstall detects the same service-owned transaction and defers manifest
-  hydration and update-status refresh because the public manifest still
-  selects the previous package until publication; the old updater already owns
-  the exact preverified candidate. This is the bootstrap for releases whose
-  previous service does not yet contain the sibling `systemd-run` updater.
+  hydration, update-status refresh, service registration, and readiness because
+  the public manifest still selects the previous package until publication and
+  the new client must not probe the deliberately preserved old service; the old
+  updater already owns the exact preverified candidate and final restart. This
+  is the bootstrap for releases whose previous service does not yet contain the
+  sibling `systemd-run` updater.
   For ordinary installs, `scripts/deb-postinst.sh` symlinks the packaged
   binaries into `~/.capsem/bin`, hydrates assets, and invokes `capsem install`
   to register or enable the user service without restarting an already active

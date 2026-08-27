@@ -50,9 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an older installed service that predates this rail, the new package detects
   its service-owned `dpkg` transaction and preserves the old process cohort
   until manifest activation requests the managed restart. Its Debian
-  postinstall now also defers manifest hydration to that old updater, instead
-  of rejecting the unpublished candidate against the previous public manifest
-  before `apt` can return.
+  postinstall now also defers manifest hydration, service registration, and
+  readiness to that old updater, instead of either rejecting the unpublished
+  candidate against the previous public manifest or probing the new client
+  against the deliberately preserved old service before `apt` can return.
 
 - `just install` now opens the native macOS administrator authorization dialog
   for the exact package install instead of depending on terminal `sudo` state,

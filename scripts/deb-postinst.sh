@@ -105,44 +105,49 @@ chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR"
 CAPSEM_INSTALL_PHASE="install_manifest"
 if capsem_install_runs_inside_service /proc/self/cgroup; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=defer_service_owned_manifest_activation source=$MANIFEST_SOURCE unit=capsem.service"
-else
-    MANIFEST_SELECTION=$(capsem_resolve_install_manifest \
-        "$MANIFEST_SOURCE" \
-        "$CAPSEM_INSTALL_MANIFEST_REQUEST")
-    MANIFEST_SOURCE=$(printf '%s\n' "$MANIFEST_SELECTION" | sed -n '1p')
-    MANIFEST_PAYLOAD=$(printf '%s\n' "$MANIFEST_SELECTION" | sed -n '2p')
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_source source=$MANIFEST_SOURCE"
-    if [ -x "$CAPSEM_DIR/bin/capsem" ]; then
-        MANIFEST_INPUT_TEMP="$CAPSEM_DIR/run/install-manifest-input.json"
-        MANIFEST_INPUT=$(capsem_materialize_install_manifest_input "$MANIFEST_SOURCE" "$MANIFEST_PAYLOAD" "$MANIFEST_INPUT_TEMP")
-        INSTALL_MANIFEST_COMMAND="CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets --manifest \"$MANIFEST_SOURCE\" --install-manifest-stdin"
-        if ! su "$TARGET_USER" -c "$INSTALL_MANIFEST_COMMAND" < "$MANIFEST_INPUT"; then
-            echo "capsem: manifest installation failed" >&2
-            echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_install_failed"
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=defer_service_owned_service_finalization unit=capsem.service"
+    rm -f "$CAPSEM_INSTALL_MANIFEST_REQUEST" "$CAPSEM_INSTALL_MANIFEST_PAYLOAD"
+    CAPSEM_INSTALL_PHASE="complete"
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=complete handoff=service_owned_update"
+    exit 0
+fi
+
+MANIFEST_SELECTION=$(capsem_resolve_install_manifest \
+    "$MANIFEST_SOURCE" \
+    "$CAPSEM_INSTALL_MANIFEST_REQUEST")
+MANIFEST_SOURCE=$(printf '%s\n' "$MANIFEST_SELECTION" | sed -n '1p')
+MANIFEST_PAYLOAD=$(printf '%s\n' "$MANIFEST_SELECTION" | sed -n '2p')
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_source source=$MANIFEST_SOURCE"
+if [ -x "$CAPSEM_DIR/bin/capsem" ]; then
+    MANIFEST_INPUT_TEMP="$CAPSEM_DIR/run/install-manifest-input.json"
+    MANIFEST_INPUT=$(capsem_materialize_install_manifest_input "$MANIFEST_SOURCE" "$MANIFEST_PAYLOAD" "$MANIFEST_INPUT_TEMP")
+    INSTALL_MANIFEST_COMMAND="CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets --manifest \"$MANIFEST_SOURCE\" --install-manifest-stdin"
+    if ! su "$TARGET_USER" -c "$INSTALL_MANIFEST_COMMAND" < "$MANIFEST_INPUT"; then
+        echo "capsem: manifest installation failed" >&2
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_install_failed"
+        exit 1
+    fi
+    [ "$MANIFEST_INPUT" != "$MANIFEST_INPUT_TEMP" ] || rm -f "$MANIFEST_INPUT_TEMP"
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_installed"
+fi
+
+case "$MANIFEST_SELECTION" in
+    *$'\n'*)
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=update_status_refresh_skipped source=$MANIFEST_SOURCE reason=preverified_install_payload"
+        ;;
+    http://*|https://*)
+        CAPSEM_INSTALL_PHASE="refresh_update_status"
+        if ! su "$TARGET_USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --check"; then
+            echo "capsem: update status refresh failed" >&2
+            echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=update_status_refresh_failed source=$MANIFEST_SOURCE"
             exit 1
         fi
-        [ "$MANIFEST_INPUT" != "$MANIFEST_INPUT_TEMP" ] || rm -f "$MANIFEST_INPUT_TEMP"
-        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_installed"
-    fi
-
-    case "$MANIFEST_SELECTION" in
-        *$'\n'*)
-            echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=update_status_refresh_skipped source=$MANIFEST_SOURCE reason=preverified_install_payload"
-            ;;
-        http://*|https://*)
-            CAPSEM_INSTALL_PHASE="refresh_update_status"
-            if ! su "$TARGET_USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --check"; then
-                echo "capsem: update status refresh failed" >&2
-                echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=update_status_refresh_failed source=$MANIFEST_SOURCE"
-                exit 1
-            fi
-            echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=update_status_refreshed source=$MANIFEST_SOURCE"
-            ;;
-        *)
-            echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=update_status_refresh_skipped source=$MANIFEST_SOURCE reason=non_http_manifest"
-            ;;
-    esac
-fi
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=update_status_refreshed source=$MANIFEST_SOURCE"
+        ;;
+    *)
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=update_status_refresh_skipped source=$MANIFEST_SOURCE reason=non_http_manifest"
+        ;;
+esac
 
 # Register systemd user unit as the target user.
 # XDG_RUNTIME_DIR is required for systemctl --user; su drops it.

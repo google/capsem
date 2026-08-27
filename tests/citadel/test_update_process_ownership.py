@@ -47,11 +47,12 @@ The first package carrying that fix is still installed by the previous service,
 which cannot run code it does not have. Its dpkg transaction must therefore be
 recognized from `/proc/self/cgroup` by the new package preinstall. While that
 transaction is inside capsem.service, preinstall must neither stop the unit nor
-retire its helper cohort. Postinstall must also defer manifest hydration: the
-public manifest still selects the previous package until publication, while the
-old updater already owns the exact preverified candidate. The old updater can
-then activate that candidate and request the managed restart after dpkg has
-completed.
+retire its helper cohort. Postinstall must also defer manifest hydration and
+service finalization: the public manifest still selects the previous package
+until publication, while the old updater already owns the exact preverified
+candidate and the previous service must remain usable until activation. The old
+updater can then activate that candidate and request the managed restart after
+dpkg has completed.
 """
 
 
@@ -150,19 +151,24 @@ def _postinstall_handoff_violations(postinstall: str) -> list[str]:
     if guard not in postinstall:
         return ["postinstall does not detect an old-service-owned dpkg transaction"]
     start = postinstall.index(guard)
-    end = postinstall.index('CAPSEM_INSTALL_PHASE="register_service"', start)
-    branch = postinstall[start:end]
-    if "\nelse\n" not in branch:
-        return ["postinstall does not separate service-owned and ordinary hydration"]
-    deferred, ordinary = branch.split("\nelse\n", maxsplit=1)
+    branch_end = postinstall.index("\nfi\n", start)
+    deferred = postinstall[start:branch_end]
+    ordinary = postinstall[branch_end:]
     violations = []
     if "event=defer_service_owned_manifest_activation" not in deferred:
         violations.append("postinstall does not report deferred candidate activation")
+    if "event=defer_service_owned_service_finalization" not in deferred:
+        violations.append("postinstall does not report deferred service finalization")
+    if "exit 0" not in deferred:
+        violations.append("service-owned postinstall still reaches service registration")
     for command in ("update --assets", "update --check"):
         if command in deferred:
             violations.append(f"service-owned postinstall still runs `{command}`")
         if command not in ordinary:
             violations.append(f"ordinary postinstall lost `{command}`")
+    for phase in ('CAPSEM_INSTALL_PHASE="register_service"', "event=readiness_poll"):
+        if phase not in ordinary:
+            violations.append(f"ordinary postinstall lost `{phase}`")
     return violations
 
 
@@ -233,6 +239,8 @@ def test_release_skills_document_the_old_service_package_handoff() -> None:
         assert "/proc/self/cgroup" in skill
         assert "postinstall" in skill.lower()
         assert "defers manifest hydration" in skill
+        assert "service registration" in skill
+        assert "readiness" in skill
     assert "preserves that unit and cohort" in installation_skill
     assert "preserves the old cohort" in release_skill
 
@@ -289,4 +297,13 @@ def test_guard_rejects_the_failure_shapes_that_reached_release_qualification() -
     )
     assert _postinstall_handoff_violations(stale_public_hydration), (
         "ownership guard accepts candidate hydration before the old updater resumes"
+    )
+
+    premature_service_finalization = postinstall.replace(
+        "    exit 0\nfi\n\nMANIFEST_SELECTION",
+        "    :\nfi\n\nMANIFEST_SELECTION",
+    )
+    assert premature_service_finalization != postinstall
+    assert _postinstall_handoff_violations(premature_service_finalization), (
+        "ownership guard accepts service registration before the old updater resumes"
     )
