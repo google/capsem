@@ -27,6 +27,9 @@ transient user service. Wrapping only apt leaves the parent unable to activate
 profiles or record the audit result. `--pipe` is forbidden because the reader
 dies with capsem.service and can SIGPIPE the surviving updater. The fixed unit
 name also prevents the restarted service from launching a duplicate update.
+`INVOCATION_ID` is inherited, so it must be paired with `SYSTEMD_EXEC_PID`
+matching the current process; otherwise children of the GitHub runner, an IDE,
+or any unrelated systemd service are misidentified as capsem.service.
 """
 
 
@@ -68,6 +71,16 @@ def _ownership_violations(body: str) -> list[str]:
     return violations
 
 
+def _systemd_detection_violations(body: str) -> list[str]:
+    required = (
+        "invocation_id.is_some_and(|value| !value.is_empty())",
+        ".and_then(OsStr::to_str)",
+        "value.parse::<u32>()",
+        "== Some(current_pid)",
+    )
+    return [f"missing `{needle}`" for needle in required if needle not in body]
+
+
 def test_systemd_update_owns_the_complete_transaction_outside_capsem_service() -> None:
     source = UPDATE_COMMAND.read_text()
     body = _function(
@@ -75,8 +88,14 @@ def test_systemd_update_owns_the_complete_transaction_outside_capsem_service() -
         "fn update_command_plan_for(",
     )
     violations = _ownership_violations(body)
+    detection = _function(source, "fn direct_systemd_invocation(")
+    violations.extend(_systemd_detection_violations(detection))
     if 'std::env::var_os("INVOCATION_ID")' not in source:
         violations.append("does not identify service execution through INVOCATION_ID")
+    if 'std::env::var_os("SYSTEMD_EXEC_PID")' not in source:
+        violations.append("does not distinguish the directly executed service from descendants")
+    if "std::process::id()" not in source:
+        violations.append("does not compare SYSTEMD_EXEC_PID with the current service process")
     assert not violations, SYSTEMD_UPDATE_OWNERSHIP_RATIONALE + "\n" + "\n".join(violations)
 
 
@@ -105,3 +124,12 @@ def test_guard_rejects_the_failure_shapes_that_reached_release_qualification() -
     }
     undetected = [name for name, source in bad_shapes.items() if not _ownership_violations(source)]
     assert not undetected, f"ownership guard accepts known failure shapes: {undetected}"
+
+    detection = _function(UPDATE_COMMAND.read_text(), "fn direct_systemd_invocation(")
+    inherited_ancestor = detection.replace(
+        "== Some(current_pid)",
+        ".is_some()",
+    )
+    assert _systemd_detection_violations(inherited_ancestor), (
+        "ownership guard accepts an inherited systemd ancestor identity"
+    )

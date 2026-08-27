@@ -1515,6 +1515,9 @@ def test_installed_service_owns_one_serial_automatic_update_path() -> None:
 
     assert "UpdateCommandKind::Apply" in service
     assert 'vec!["update".to_string(), "--yes".to_string()]' in update_command
+    assert 'std::env::var_os("INVOCATION_ID")' in update_command
+    assert 'std::env::var_os("SYSTEMD_EXEC_PID")' in update_command
+    assert "std::process::id()" in update_command
     assert "UpdateCommandKind::Assets" not in update_command
     assert '"--assets".to_string()' not in update_command
     assert "UpdateApplyAction" not in api

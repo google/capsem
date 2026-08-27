@@ -1,6 +1,7 @@
 //! Update command construction and systemd process ownership.
 
 use capsem_service::api;
+use std::ffi::OsStr;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,8 +14,26 @@ pub(crate) fn update_command_plan(kind: UpdateCommandKind) -> api::UpdateCommand
     update_command_plan_for(
         kind,
         capsem_cli_program(),
-        std::env::var_os("INVOCATION_ID").is_some_and(|value| !value.is_empty()),
+        direct_systemd_invocation(
+            std::env::var_os("INVOCATION_ID").as_deref(),
+            std::env::var_os("SYSTEMD_EXEC_PID").as_deref(),
+            std::process::id(),
+        ),
     )
+}
+
+fn direct_systemd_invocation(
+    invocation_id: Option<&OsStr>,
+    exec_pid: Option<&OsStr>,
+    current_pid: u32,
+) -> bool {
+    // Both values are inherited. Only the PID match proves systemd executed
+    // this service directly instead of an unrelated ancestor.
+    invocation_id.is_some_and(|value| !value.is_empty())
+        && exec_pid
+            .and_then(OsStr::to_str)
+            .and_then(|value| value.parse::<u32>().ok())
+            == Some(current_pid)
 }
 
 fn update_command_plan_for(
