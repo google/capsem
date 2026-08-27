@@ -27,7 +27,7 @@ quick checks. After frontend changes intended for the desktop app, use
 | Recipe | What it does | Boots VM? |
 |--------|-------------|-----------|
 | `just fast-test` | Incomplete source feedback from the canonical `_test-fast` module | No |
-| `just focus-test <group>` | Run one existing owner: `assets`, `binaries`, `benchmark`, `install`, `release-system`, or `functional` | Depends on group |
+| `just focus-test <group>` | Run one existing owner: `assets`, `binaries`, `benchmark`, `install`, `release-system`, or `functional`; `release-system` is source-only contract proof | Depends on group |
 | `just install` | Build the complete local macOS package and install that exact package for hands-on testing | No |
 | `just test-clean [commit]` | Exceptional cold whole-system diagnostic: rebuild and exercise every configured artifact and VM path | Yes |
 

@@ -9,7 +9,7 @@ import pytest
 import variables
 from helpers.gate import RecordingRunner
 
-from capsem.gate import cli, focus
+from capsem.gate import cli, focus, module_contracts
 from capsem.gate.qualification import LocalQualification
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +42,18 @@ def test_each_focus_group_is_the_existing_owning_plan(group: str, target) -> Non
     )
 
     assert alias.plan().describe() == owner.plan().describe()
+
+
+def test_release_system_focus_is_source_only_and_needs_no_local_package() -> None:
+    assert focus.TARGETS["release-system"] is module_contracts.ReleaseContractsModule
+    plan = focus.FocusTestCommand(
+        RecordingRunner(ROOT),
+        _args("release-system"),
+        qualification=LocalQualification(bin_dir="target/debug"),
+    ).plan().describe()
+
+    assert "contracts.release" in plan
+    assert "rehearsal.cohort" not in plan
 
 
 def test_focus_adopts_the_owner_lifecycle_without_nesting_a_gate_action() -> None:

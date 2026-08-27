@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 
-from . import bench, module_rehearsal, staticmodule, vmmodules
+from . import bench, module_contracts, staticmodule, vmmodules
 from .command import GateCommand
 from .lifecycle import Resource
 from .plan import Plan
@@ -23,7 +23,7 @@ TARGETS: dict[str, type[GateCommand]] = {
     "binaries": staticmodule.StaticModule,
     "functional": vmmodules.FunctionalModule,
     "install": vmmodules.GlowupModule,
-    "release-system": module_rehearsal.RehearsalModule,
+    "release-system": module_contracts.ReleaseContractsModule,
 }
 
 

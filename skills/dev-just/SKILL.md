@@ -25,7 +25,7 @@ allowlist update in the same change.
 | `just logs [sandbox-id\|failure]` | Tail service logs, show a sandbox log, or list the latest preserved failure evidence. |
 | `just doctor [fix]` | Validate host tools, Docker/Colima, Tart cache/boot/SSH, signing, and assets. |
 | `just fast-test` | Explicitly incomplete source feedback; it prints the targeted and release rails. |
-| `just focus-test <group> [reuse\|clean]` | Rerun one existing owner: assets, binaries, benchmark, install, release-system, or functional. |
+| `just focus-test <group> [reuse\|clean]` | Rerun one existing owner: assets, binaries, benchmark, install, release-system, or functional. `release-system` is source-only and needs no package or install. |
 | `just install` | Optional hands-on local package testing; never a release prerequisite and never release authority. |
 | `just test-clean [source-commit]` | Exceptional cold complete diagnostic; never the routine edit loop. |
 | `just release-binaries <channel> <source-commit>` | Dispatch qualification and publication of packages against pulled profiles. |
@@ -98,7 +98,9 @@ exchange for no decision made.
 - `fast-test` is exactly the incomplete `test-fast` module. It may not bundle
   compiled, VM, install, or release work.
 - `focus-test` aliases an existing owning gate command; it must not copy or
-  compose a second test graph. Neither feedback command is release authority.
+  compose a second test graph. `focus-test release-system` aliases the
+  source-only release-contract owner; package rehearsal and installed-product
+  proof belong to qualification. Neither feedback command is release authority.
 - No generic or combined release recipe. The two approved release commands
   revalidate exact qualification before delegating to one checked-in
   implementation, and the two workflows share the per-channel lock.

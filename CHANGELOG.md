@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Developer verification now has explicit cost boundaries: `just fast-test`
   prints that it is incomplete, `just focus-test <group>` reruns one existing
   owner (`assets`, `binaries`, `benchmark`, `install`, `release-system`, or
-  `functional`), and `just install` builds and installs the complete local
+  `functional`), `release-system` stays source-only instead of demanding a
+  locally built package, and `just install` builds and installs the complete local
   macOS package for hands-on testing. The duplicate public `test` and
   `vm-smoke` spellings are gone; `just test-clean` remains the exceptional
   cold whole-system diagnostic. Release qualification belongs to the hosted
