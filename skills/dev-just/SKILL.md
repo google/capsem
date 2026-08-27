@@ -26,7 +26,7 @@ allowlist update in the same change.
 | `just doctor [fix]` | Validate host tools, Docker/Colima, Tart cache/boot/SSH, signing, and assets. |
 | `just fast-test` | Explicitly incomplete source feedback; it prints the targeted and release rails. |
 | `just focus-test <group> [reuse\|clean]` | Rerun one existing owner: assets, binaries, benchmark, install, release-system, or functional. |
-| `just install` | Build the complete installable product and install that exact package on macOS for hands-on testing. |
+| `just install` | Optional hands-on local package testing; never a release prerequisite and never release authority. |
 | `just test-clean [source-commit]` | Exceptional cold complete diagnostic; never the routine edit loop. |
 | `just release-binaries <channel> <source-commit>` | Dispatch qualification and publication of packages against pulled profiles. |
 | `just release-profile <channel> <profile> <source-commit>` | Dispatch qualification and publication of one profile against the pulled package. |
@@ -41,8 +41,9 @@ live recipe list against it.
 ## The Python system replaced shell orchestration
 
 Treat the Justfile as a stable user interface, not as the implementation of a
-command. For `focus-test`, `install`, `release-binaries`, and `release-profile`, one recipe line
-crosses one exact argv boundary into `capsem-gate`. From there:
+command. For `focus-test`, `release-binaries`, and `release-profile`, one recipe
+line crosses one exact argv boundary into `capsem-gate`; `install` prints its
+hands-on-only warning before crossing the same boundary. From there:
 
 | Concern | Owner |
 |---|---|

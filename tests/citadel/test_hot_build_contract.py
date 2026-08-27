@@ -1,6 +1,6 @@
 """Citadel guards for hot-path dev build optimization.
 
-Manual release validation and `just install` use debug binaries. If protocol
+Hands-on local validation through `just install` uses debug binaries. If protocol
 codecs silently fall back to opt-level 0, route latency and gateway benchmarks
 look like runtime regressions even though the compiler contract is broken.
 """
@@ -28,10 +28,10 @@ HOT_DEV_OPTIMIZED_PACKAGES = {
 RATIONALE = """\
 Hot codec package lost dev optimization.
 
-Capsem's manual release path uses debug binaries from `just install`, so JSON,
-MessagePack, DNS wire parsing, and BLAKE3 must stay optimized in the dev
-profile. If this guard fails, route/gateway latency can regress from compiler
-configuration before the DB or network code even runs.
+Capsem's hands-on local install path uses debug binaries, so JSON, MessagePack,
+DNS wire parsing, and BLAKE3 must stay optimized in the dev profile. If this
+guard fails, route/gateway latency can regress from compiler configuration
+before the DB or network code even runs.
 """
 
 

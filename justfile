@@ -307,10 +307,11 @@ fast-test:
 focus-test group mode="reuse":
     @uv run capsem-gate focus-test {{quote(group)}} {{quote(mode)}}
 
-# Build the complete installable product and install that exact local package
-# onto this Mac for hands-on testing. This is not release qualification.
+# Optional hands-on testing: build the complete installable product and install
+# that exact local package on this Mac. Never a release prerequisite.
 install:
-    @uv run capsem-gate local-install
+    @echo "Agent: optional hands-on local testing only; 'just install' does not qualify or unblock a release. Dispatch releases directly with 'just release-binaries ...' or 'just release-profile ...'."
+    uv run capsem-gate local-install
 
 
 # Measure performance and record it. `just bench` takes every dimension that

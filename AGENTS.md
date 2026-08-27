@@ -18,7 +18,11 @@ just doctor fix    # Install prerequisites and materialize missing VM assets
 just shell         # Build + boot VM (~10s)
 just fast-test     # Incomplete source feedback; prints the next supported rails
 just focus-test functional # Rerun one named functional owner
-just install       # Build and install the complete local product for hands-on testing
+
+# Optional hands-on local testing; never a release prerequisite
+just install
+
+# Release dispatchers; hosted lanes own exact-package install and qualification
 source_commit=$(git rev-parse HEAD)
 just release-binaries nightly "$source_commit"
 just release-profile nightly code "$source_commit"

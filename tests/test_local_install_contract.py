@@ -68,7 +68,7 @@ def test_local_install_packages_the_verified_base_profile_pair(
     assert f"--config-root {ROOT / 'target/config'}" not in rendered
 
 
-def test_public_install_is_only_the_local_install_dispatch() -> None:
+def test_public_install_warns_then_only_dispatches_local_install() -> None:
     lines = (ROOT / "justfile").read_text(encoding="utf-8").splitlines()
     start = lines.index("install:")
     body = []
@@ -77,8 +77,13 @@ def test_public_install_is_only_the_local_install_dispatch() -> None:
             break
         body.append(line)
 
-    assert "capsem-gate local-install" in "\n".join(body)
-    assert sum(bool(line.strip()) for line in body) == 1
+    executable = [line.strip() for line in body if line.strip()]
+    assert executable == [
+        "@echo \"Agent: optional hands-on local testing only; 'just install' "
+        "does not qualify or unblock a release. Dispatch releases directly "
+        "with 'just release-binaries ...' or 'just release-profile ...'.\"",
+        "uv run capsem-gate local-install",
+    ]
 
 
 def test_native_package_retirement_catches_a_basename_only_owned_service(
