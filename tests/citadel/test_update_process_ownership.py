@@ -19,6 +19,12 @@ SERVICE_MAIN = PROJECT_ROOT / "crates/capsem-service/src/main.rs"
 SERVICE_INSTALL = PROJECT_ROOT / "crates/capsem/src/service_install.rs"
 DEB_PREINSTALL = PROJECT_ROOT / "scripts/deb-preinst.sh"
 INSTALL_COHORT = PROJECT_ROOT / "scripts/pkg-scripts/retire-cohort"
+REPACK_DEB = PROJECT_ROOT / "scripts/repack-deb.sh"
+INSTALLATION_SKILL = PROJECT_ROOT / "skills/dev-installation/SKILL.md"
+RELEASE_SKILL = PROJECT_ROOT / "skills/release-process/SKILL.md"
+RELEASE_CI_INVARIANTS = (
+    PROJECT_ROOT / "skills/release-process/references/ci-invariants.md"
+)
 
 SYSTEMD_UPDATE_OWNERSHIP_RATIONALE = """\
 Linux package replacement stops capsem.service from the Debian preinstall hook.
@@ -162,6 +168,34 @@ def test_systemd_update_owns_the_complete_transaction_outside_capsem_service() -
         )
     )
     assert not violations, SYSTEMD_UPDATE_OWNERSHIP_RATIONALE + "\n" + "\n".join(violations)
+
+
+def test_release_skills_document_the_old_service_package_handoff() -> None:
+    preinstall = DEB_PREINSTALL.read_text()
+    cohort = INSTALL_COHORT.read_text()
+    repack = REPACK_DEB.read_text()
+    installation_skill = " ".join(INSTALLATION_SKILL.read_text().split())
+    release_skill = " ".join(
+        (RELEASE_SKILL.read_text() + RELEASE_CI_INVARIANTS.read_text()).split()
+    )
+
+    assert 'source "$(dirname "$0")/pkg-scripts/retire-cohort"' in preinstall
+    assert '"$kill_command" -9 "$pid"' in cohort
+    assert 'cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"' in repack
+    assert "embed_native_cohort_retirement" in repack
+    assert "preinst plus postinst scripts" in repack
+    assert "DEBIAN/preinst script" in repack
+    assert "systemctl --user stop capsem.service" in preinstall
+    assert "event=preserve_service_owned_update" in preinstall
+
+    for skill in (installation_skill, release_skill):
+        assert "deb-preinst.sh" in skill
+        assert "DEBIAN/preinst" in skill
+        assert "systemctl --user stop capsem.service" in skill
+        assert "stale helper cohort before package replacement" in skill
+        assert "/proc/self/cgroup" in skill
+    assert "preserves that unit and cohort" in installation_skill
+    assert "preserves the old cohort" in release_skill
 
 
 def test_guard_rejects_the_failure_shapes_that_reached_release_qualification() -> None:

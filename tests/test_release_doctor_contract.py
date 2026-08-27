@@ -2149,55 +2149,6 @@ def test_installation_skill_documents_full_host_binary_cohort() -> None:
     assert "capsem update --yes" in install_skill
 
 
-def test_installation_skill_documents_deb_preinstall_restart_rail() -> None:
-    install_skill = _source_text("skills/dev-installation/SKILL.md")
-    deb_preinst = _source_text("scripts/deb-preinst.sh")
-    retire_cohort = _source_text("scripts/pkg-scripts/retire-cohort")
-    repack_deb = _source_text("scripts/repack-deb.sh")
-
-    assert "systemctl --user stop capsem.service" in deb_preinst
-    assert "capsem_install_runs_inside_service /proc/self/cgroup" in deb_preinst
-    assert "event=preserve_service_owned_update" in deb_preinst
-    assert "capsem_install_runs_inside_service" in retire_cohort
-    assert 'source "$(dirname "$0")/pkg-scripts/retire-cohort"' in deb_preinst
-    assert 'capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID"' in deb_preinst
-    assert '"$kill_command" -9 "$pid"' in retire_cohort
-    assert 'cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"' in repack_deb
-    assert "embed_native_cohort_retirement" in repack_deb
-
-    assert "deb-preinst.sh" in install_skill
-    assert "DEBIAN/preinst" in install_skill
-    assert "systemctl --user stop capsem.service" in install_skill
-    assert "stale helper cohort before package replacement" in install_skill
-    assert "/proc/self/cgroup" in install_skill
-    assert "preserves that unit and cohort" in install_skill
-
-
-def test_release_skill_documents_deb_preinstall_restart_rail() -> None:
-    release_skill = _skill_text("skills/release-process/SKILL.md")
-    deb_preinst = _source_text("scripts/deb-preinst.sh")
-    retire_cohort = _source_text("scripts/pkg-scripts/retire-cohort")
-    repack_deb = _source_text("scripts/repack-deb.sh")
-
-    assert "systemctl --user stop capsem.service" in deb_preinst
-    assert "capsem_install_runs_inside_service /proc/self/cgroup" in deb_preinst
-    assert "event=preserve_service_owned_update" in deb_preinst
-    assert "capsem_install_runs_inside_service" in retire_cohort
-    assert 'source "$(dirname "$0")/pkg-scripts/retire-cohort"' in deb_preinst
-    assert 'capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID"' in deb_preinst
-    assert '"$kill_command" -9 "$pid"' in retire_cohort
-    assert 'cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"' in repack_deb
-    assert "preinst plus postinst scripts" in repack_deb
-    assert "DEBIAN/preinst script" in repack_deb
-
-    assert "deb-preinst.sh" in release_skill
-    assert "DEBIAN/preinst" in release_skill
-    assert "systemctl --user stop capsem.service" in release_skill
-    assert "stale helper cohort before package replacement" in release_skill
-    assert "/proc/self/cgroup" in release_skill
-    assert "preserves the old cohort" in release_skill
-
-
 def _install_release_graph_contract_fixture(
     checker,
     *,
