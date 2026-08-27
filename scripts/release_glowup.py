@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Platform-neutral contracts for native release glow-up adapters.
-
-Operating-system adapters own only execution: Docker/systemd on Linux and
-Tart/launchd on macOS.  Candidate identity, manifest coherence, installed
-health, and the durable evidence schema live here so both adapters prove the
-same release properties.
-"""
+"""Platform-neutral identity, transition, and evidence contracts for glow-up."""
 
 from __future__ import annotations
 
@@ -39,6 +33,15 @@ class TransitionKind(str, Enum):
     PROFILE_THEN_BINARY = "profile_then_binary"
     CHANNEL_SWITCH = "channel_switch"
     TAMPER_REJECTION = "tamper_rejection"
+
+
+def explicit_channel_switch_args(
+    kind: TransitionKind, channel: str
+) -> tuple[str, ...]:
+    """Return the product command required to cross a channel boundary."""
+    if kind is TransitionKind.CHANNEL_SWITCH:
+        return ("update", "--yes", "--channel", channel)
+    return ()
 
 
 class ArtifactIdentity:
@@ -401,19 +404,7 @@ def artifact_identity_from_manifest_package(
 
 
 def requires_changed_profiles(kind: TransitionKind) -> bool:
-    """Whether a pairing of this kind names the profiles it stages.
-
-    Every kind but `BINARY_ONLY` does, and a first release most of all: none of
-    its profiles was ever served, so all of them are staged.
-
-    A function because the rule was written twice. `validate_pairing_inputs`
-    demanded a non-empty set for `FRESH_INSTALL`, while its caller in
-    `local-release-glowup.py` listed only the two profile transitions and passed
-    an empty one -- so that pairing raised "fresh_install release pairing
-    requires changed profiles" no matter what it was handed. Both halves had
-    tests; their composition did not, and `FRESH_INSTALL` is the pairing a first
-    release makes.
-    """
+    """Whether this pairing names every profile it stages."""
     return kind is not TransitionKind.BINARY_ONLY
 
 
@@ -421,6 +412,7 @@ def validate_pairing_inputs(
     *,
     kind: TransitionKind | str,
     channel: str,
+    baseline_channel: str | None = None,
     before_manifest_bytes: bytes,
     after_manifest_bytes: bytes,
     before_artifact: ArtifactIdentity | None,
@@ -443,19 +435,22 @@ def validate_pairing_inputs(
         TransitionKind.BINARY_ONLY,
         TransitionKind.PROFILE_ONLY,
         TransitionKind.PROFILE_THEN_BINARY,
+        TransitionKind.CHANNEL_SWITCH,
     }:
         raise GlowupContractError(
             f"{transition_kind.value} is not a release-lane pairing transition"
         )
     before_manifest = load_manifest_bytes(before_manifest_bytes)
     after_manifest = load_manifest_bytes(after_manifest_bytes)
-    for label, manifest in (
-        ("public-before", before_manifest),
-        ("candidate-after", after_manifest),
+    baseline = baseline_channel or channel
+    for label, manifest, expected_channel in (
+        ("public-before", before_manifest, baseline),
+        ("candidate-after", after_manifest, channel),
     ):
-        if manifest.get("channel") != channel:
+        if manifest.get("channel") != expected_channel:
             raise GlowupContractError(
-                f"{label} manifest channel is {manifest.get('channel')!r}, expected {channel!r}"
+                f"{label} manifest channel is {manifest.get('channel')!r}, "
+                f"baseline channel expected {expected_channel!r}"
             )
 
     if transition_kind is TransitionKind.FRESH_INSTALL:
@@ -472,7 +467,7 @@ def validate_pairing_inputs(
         before = PairingIdentity.from_manifest_bytes(
             before_manifest_bytes,
             artifact=before_artifact,
-            channel=channel,
+            channel=baseline,
             allow_empty_profiles=transition_kind
             in {TransitionKind.PROFILE_ONLY, TransitionKind.PROFILE_THEN_BINARY},
         )
@@ -491,7 +486,12 @@ def validate_pairing_inputs(
     changed_profile_ids = tuple(changed_profiles)
     if len(changed_profile_ids) != len(set(changed_profile_ids)):
         raise GlowupContractError("release pairing changed profile ids must be unique")
-    if not requires_changed_profiles(transition_kind):
+    if transition_kind is TransitionKind.CHANNEL_SWITCH:
+        if set(changed_profile_ids) != set(after_profile_map):
+            raise GlowupContractError(
+                "channel_switch release pairing must stage every candidate profile"
+            )
+    elif not requires_changed_profiles(transition_kind):
         if changed_profile_ids:
             raise GlowupContractError("binary_only release pairing cannot select a changed profile")
     else:

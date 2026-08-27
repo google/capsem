@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Release transitions now always begin from the latest verified stable
+  manifest. Stable releases no longer depend on mutable nightly state, and a
+  nightly release explicitly switches from stable to the candidate nightly
+  graph instead of treating the previous nightly as its baseline.
+
 - Linux automatic binary updates now run the complete verified update
   transaction as an independent transient user service. Stopping
   `capsem.service` during Debian package replacement can no longer kill its

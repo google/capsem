@@ -35,10 +35,7 @@ class GlowupModule(
     """The end of the gate, and the only part that installs anything.
 
     Two shapes again. A release lane arrives with the publishable package
-    already built and proves the glow-up against it, twice: once as staged,
-    and once with the release environment cleared so the channel switch has to
-    rediscover its state from the installed system rather than inherit what it
-    was told.
+    already built and proves its exact public-before to candidate transition.
 
     A local run builds both architectures first, and on macOS also builds,
     signs and installs the real `.pkg` inside a disposable Tart VM -- the one
@@ -80,15 +77,11 @@ def pulled_package(
     after: tuple,
     content: ProfileContent,
     *,
-    work_dirs: tuple[str, str] | None = None,
+    work_dir: str | None = None,
     skip_install: bool = False,
     pairing: dict[str, str] | None = None,
 ) -> Step:
-    """The publishable package, proved twice.
-
-    Once as staged, and once with the release environment cleared, so the
-    channel switch has to rediscover its state from the installed system
-    rather than inherit what it was told.
+    """Prove the publishable package's one exact release transition.
 
     Public because `module_rehearsal` runs exactly this against a cohort the
     local lane fabricated from its own build. Not copied there: a rehearsal of
@@ -97,11 +90,7 @@ def pulled_package(
     two work directories differ, so that a rehearsal and a real lane on the
     same machine cannot land in one another's scratch.
     """
-    settings = config.modules
-    glowup_dir, switch_dir = work_dirs or (
-        settings.glowup_work_dir,
-        settings.channel_switch_work_dir,
-    )
+    glowup_dir = work_dir or config.modules.glowup_work_dir
     verified = phase.add(
         step(
             "content",
@@ -131,7 +120,7 @@ def pulled_package(
         platformproof.platform_step(config, qualification.package),
         after=(verified,),
     )
-    staged = phase.add(
+    return phase.add(
         _glowup_step(
             config,
             "package",
@@ -142,18 +131,6 @@ def pulled_package(
             pairing=pairing,
         ),
         after=(supported,),
-    )
-    return phase.add(
-        _glowup_step(
-            config,
-            "channel-switch",
-            qualification,
-            switch_dir,
-            content,
-            clear=settings.channel_switch_cleared,
-            skip_install=skip_install,
-        ),
-        after=(staged,),
     )
 
 

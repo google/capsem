@@ -16,12 +16,13 @@ class ReleasePairingEnvironment(Strict):
 
     One table because it is one fact: which channel, from which public state to
     which candidate, and where each side's verified cohort is. The glow-up reads
-    all six or none -- it refuses a partial set for the same reason
+    all seven or none -- it refuses a partial set for the same reason
     `qualification` refuses a half-set release environment, and for the same
     consequence: a partial one still produces a green proof of the wrong thing.
     """
 
     channel: str
+    baseline_channel: str
     transition: str
     before_manifest: str
     after_manifest: str
@@ -32,6 +33,7 @@ class ReleasePairingEnvironment(Strict):
         self,
         *,
         channel: object,
+        baseline_channel: object,
         transition: object,
         before_manifest: object,
         after_manifest: object,
@@ -41,6 +43,7 @@ class ReleasePairingEnvironment(Strict):
         """The exact transition one glow-up run is proving."""
         return {
             self.channel: str(channel),
+            self.baseline_channel: str(baseline_channel),
             self.transition: str(transition),
             self.before_manifest: str(before_manifest),
             self.after_manifest: str(after_manifest),
@@ -53,6 +56,7 @@ class ReleasePairingEnvironment(Strict):
         """Every name this table declares, for whoever has to clear them."""
         return (
             self.channel,
+            self.baseline_channel,
             self.transition,
             self.before_manifest,
             self.after_manifest,

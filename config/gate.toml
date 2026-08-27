@@ -2158,7 +2158,6 @@ platform_support_script = "scripts/prove-deb-platform-support.py"
 macos_glowup_report = "target/macos-tart-glowup/report.json"
 macos_report_variable = "CAPSEM_MACOS_NATIVE_GLOWUP_REPORT"
 glowup_work_dir = "target/release-module-glowup"
-channel_switch_work_dir = "target/release-module-channel-switch"
 
 # The local rehearsal of the release lane's pulled path. `just test` builds
 # every artifact and installs the one it built; what it never did is resolve a
@@ -2182,7 +2181,6 @@ rehearsal_inputs_dir = "target/release-rehearsal-inputs"
 rehearsal_package = "target/release-rehearsal-package/Capsem_{version}_{arch}.deb"
 rehearsal_content_root = "target/release-rehearsal-content"
 rehearsal_glowup_work_dir = "target/release-rehearsal-glowup"
-rehearsal_channel_switch_work_dir = "target/release-rehearsal-channel-switch"
 # The public before-state the rehearsal pairs against, and the candidate
 # manifest it authored. `{channel}` is the rehearsal channel.
 #
@@ -2199,26 +2197,10 @@ release_bin_dir = "CAPSEM_RELEASE_BIN_DIR"
 default_bin_dir = "target/debug"
 # Cleared for the channel-switch run: it has to rediscover the channel from
 # the installed state rather than inherit what the previous run was told.
-channel_switch_cleared = [
-    "CAPSEM_RELEASE_CHANNEL",
-    "CAPSEM_RELEASE_TRANSITION",
-    "CAPSEM_RELEASE_BEFORE_MANIFEST",
-    "CAPSEM_RELEASE_AFTER_MANIFEST",
-    "CAPSEM_RELEASE_BEFORE_PACKAGE",
-    "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS",
-    "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS",
-    "CAPSEM_RELEASE_PROFILE",
-    "CAPSEM_RELEASE_CANDIDATE_PROFILE_PUBLICATION",
-    "CAPSEM_RELEASE_PUBLICATION_BASE",
-]
-
-# What a glow-up is told about the transition it proves. A workflow exports
-# these; the local rehearsal passes them for a cohort it fabricated itself.
-# Every name here must also appear in `channel_switch_cleared` above, which the
-# schema checks rather than trusts: two lists of the same names drift, and a
-# survivor hands the second proof the answer it exists to rediscover.
+# What a glow-up is told about the one exact transition it proves.
 [modules.release_pairing]
 channel = "CAPSEM_RELEASE_CHANNEL"
+baseline_channel = "CAPSEM_RELEASE_BASELINE_CHANNEL"
 transition = "CAPSEM_RELEASE_TRANSITION"
 before_manifest = "CAPSEM_RELEASE_BEFORE_MANIFEST"
 after_manifest = "CAPSEM_RELEASE_AFTER_MANIFEST"

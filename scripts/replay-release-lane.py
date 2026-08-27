@@ -122,6 +122,7 @@ def released_environment(cohort: dict, channel: str) -> dict[str, str]:
         "CAPSEM_TEST_BINARY": f"{ROOT}/target/debug/capsem",
         "CAPSEM_RELEASE_INPUT_DIR": cohort["inputs"],
         "CAPSEM_RELEASE_CHANNEL": channel,
+        "CAPSEM_RELEASE_BASELINE_CHANNEL": channel,
         "CAPSEM_RELEASE_TRANSITION": "auto",
         "CAPSEM_RELEASE_BEFORE_MANIFEST": cohort["before_manifest"],
         "CAPSEM_RELEASE_AFTER_MANIFEST": cohort["manifest"],

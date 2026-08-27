@@ -692,19 +692,15 @@ def test_release_glowup_consumes_the_exact_pairing_environment() -> None:
     assert "validate_exact_release_pairing(args)" in adapter
 
 
-def test_release_glowup_also_runs_pre_activation_channel_switches() -> None:
-    """The channel switch runs a second time with the release environment
-    cleared, so it has to rediscover its state from the installed system
-    rather than inherit what the staged run was told."""
+def test_release_glowup_runs_one_exact_candidate_transition() -> None:
+    """The exact pairing is the release transition; do not prove a second,
+    synthetic candidate-to-itself channel switch in the hosted lane."""
     glowup = _planned("test-glowup", BINARY_LANE)
 
-    assert glowup.count("scripts/local-release-glowup.py") == 2
+    assert glowup.count("scripts/local-release-glowup.py") == 1
     assert "--work-dir target/release-module-glowup" in glowup
-    assert "--work-dir target/release-module-channel-switch" in glowup
-
-    switch = glowup[glowup.index("glowup.channel-switch") :]
-    for variable in CONFIG.modules.channel_switch_cleared:
-        assert f"{variable}=" in switch, f"{variable} must be cleared for the switch"
+    assert "glowup.channel-switch" not in glowup
+    assert "target/release-module-channel-switch" not in glowup
 
 
 def test_standalone_local_glowup_materializes_config_without_release_builders() -> None:

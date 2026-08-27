@@ -195,10 +195,7 @@ def rehearsal(
         rehearsed,
         (proved,),
         staged,
-        work_dirs=(
-            settings.rehearsal_glowup_work_dir,
-            settings.rehearsal_channel_switch_work_dir,
-        ),
+        work_dir=settings.rehearsal_glowup_work_dir,
         # The install half owns the machine: it purges the host's `capsem`,
         # deletes `~/.capsem`, and reinstalls from the channel under test. A
         # release runner is disposable and a developer's machine is not, and
@@ -215,6 +212,7 @@ def rehearsal(
         # published nothing, which is exactly the case being proved.
         pairing=settings.release_pairing.runtime(
             channel=settings.rehearsal_channel,
+            baseline_channel=settings.rehearsal_channel,
             transition="auto",
             before_manifest=Path(settings.rehearsal_before_inputs) / config.install.manifest_name,
             after_manifest=settings.rehearsal_after_manifest.format(

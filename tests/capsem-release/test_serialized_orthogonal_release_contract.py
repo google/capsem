@@ -594,6 +594,7 @@ def test_binary_pairing_uses_exact_public_before_and_candidate_after_cohorts() -
     resolve = _job_block(workflow, "resolve-channel-source")
     pairing = _job_block(workflow, "test-binary-pairing")
 
+    assert '--channel "stable"' in resolve
     assert "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}" in resolve
     assert "allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}" in resolve
     assert "allow-empty-packages: ${{ steps.public-before.outputs.bootstrap }}" in resolve
@@ -613,6 +614,7 @@ def test_binary_pairing_uses_exact_public_before_and_candidate_after_cohorts() -
     assert "target/candidate-profile-inputs" in pairing
     for variable in (
         "CAPSEM_RELEASE_CHANNEL",
+        "CAPSEM_RELEASE_BASELINE_CHANNEL=${{ needs.resolve-channel-source.outputs.baseline_channel }}",
         "CAPSEM_RELEASE_TRANSITION=auto",
         "CAPSEM_RELEASE_BEFORE_MANIFEST",
         "CAPSEM_RELEASE_AFTER_MANIFEST",
@@ -628,6 +630,7 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
 
     assert "Validate selected channel profile through capsem-admin" in workflow
     assert "Select exact public-before manifest" in workflow
+    assert '--channel "stable"' in workflow
     assert "Fetch latest selected channel source manifest" in workflow
     assert "--bootstrap-missing-first-party" in workflow
     assert '--source-commit "${{ inputs.source_commit }}"' in workflow
@@ -707,7 +710,8 @@ def test_profile_pairing_reuses_one_staged_publication_and_exact_public_before()
     assert "target/candidate-profile-inputs" in pairing
     for variable in (
         "CAPSEM_RELEASE_CHANNEL",
-        "CAPSEM_RELEASE_TRANSITION=profile_only",
+        "CAPSEM_RELEASE_BASELINE_CHANNEL",
+        "CAPSEM_RELEASE_TRANSITION=auto",
         "CAPSEM_RELEASE_BEFORE_MANIFEST",
         "CAPSEM_RELEASE_AFTER_MANIFEST",
         "CAPSEM_RELEASE_BEFORE_PACKAGE",

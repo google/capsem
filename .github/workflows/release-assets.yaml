@@ -79,6 +79,7 @@ jobs:
     name: Resolve current channel binary
     outputs:
       functional_ready: ${{ steps.functional-cohort.outputs.functional-ready }}
+      baseline_channel: ${{ steps.public-before.outputs.manifest-channel }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
@@ -96,7 +97,7 @@ jobs:
         id: public-before
         run: |
           python3 scripts/select-runtime-preflight-manifest.py \
-            --channel "${{ inputs.channel }}" \
+            --channel "stable" \
             --bootstrap-missing-first-party \
             --github-output "$GITHUB_OUTPUT"
 
@@ -124,7 +125,7 @@ jobs:
         run: |
           python3 scripts/project-first-channel-before.py \
             --source-manifest target/channel-source/manifest.json \
-            --channel "${{ inputs.channel }}" \
+            --channel "stable" \
             --bootstrap "${{ steps.public-before.outputs.bootstrap }}" \
             --retired "${{ steps.public-before.outputs.retired }}" \
             --output target/channel-source/public-before.json
@@ -396,6 +397,7 @@ jobs:
         env:
           PUBLICATION_IDENTITY: ${{ needs.author-profile-release.outputs.publication_identity }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_BASELINE_CHANNEL: ${{ needs.resolve-current-binary.outputs.baseline_channel }}
           RELEASE_PROFILE: ${{ inputs.profile }}
           ACTIVATION_READY: ${{ needs.author-profile-release.outputs.activation_ready }}
         run: bash scripts/stage-profile-pairing.sh

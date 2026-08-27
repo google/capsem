@@ -22,6 +22,7 @@ from typing import cast
 from urllib.parse import unquote, urljoin, urlparse
 
 from marketing_install_surface import validate_checked_in_marketing_install_surface
+from release_pairing_baseline import exact_channel_catalog
 
 from capsem.gate import config as gate_config
 from capsem.gate.productschema import ProfileRevisionPolicy
@@ -37,6 +38,7 @@ try:
         assert_manifest_artifact,
         build_report,
         build_transition_evidence,
+        explicit_channel_switch_args,
         requires_changed_profiles,
         tamper_profile_artifact_digest,
         validate_installed_evidence,
@@ -51,6 +53,7 @@ except ModuleNotFoundError:
         assert_manifest_artifact,
         build_report,
         build_transition_evidence,
+        explicit_channel_switch_args,
         requires_changed_profiles,
         tamper_profile_artifact_digest,
         validate_installed_evidence,
@@ -100,6 +103,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 @dataclass(frozen=True)
 class ExactReleasePairing:
     channel: str
+    baseline_channel: str
     transition: TransitionKind
     changed_profiles: tuple[str, ...]
     #: Absent for a first release: no predecessor to identify or to boot.
@@ -120,6 +124,7 @@ class ExactReleaseTransport:
     current_manifest: Path
     channel_catalog: Path
     current_manifest_url: str
+    before_manifest_url: str
     #: The polling URL's path, so the channel catalog and the check that reads
     #: it back cannot disagree about where the manifest is served.
     current_manifest_route: str
@@ -158,16 +163,7 @@ def _environment_path(name: str) -> Path | None:
 
 
 def _environment_value(name: str) -> str | None:
-    """An exported-but-empty variable is absent, exactly as elsewhere.
-
-    Not a nicety. The channel-switch run is *given* the pairing variables as
-    empty strings -- that is how it is made to rediscover the channel from the
-    installed system rather than inherit what the previous run was told. Read
-    as present, one empty string makes the whole set look half-supplied, and
-    `validate_exact_release_pairing` refuses a partial pairing before the run
-    starts. `qualification.from_environment` had already learned this and
-    written it down; this reader had not.
-    """
+    """Treat exported-but-empty pairing values as absent."""
     value = (os.environ.get(name) or "").strip()
     return value or None
 
@@ -177,8 +173,6 @@ def main() -> int:
     qualified_source_commit = config.environment.qualified_source_commit
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-deb", required=True, type=Path)
-    # Told by the gate: inside the install container this tree is a mount, not the subject.
-    # An explicit value remains available to fixture callers.
     parser.add_argument(
         "--source-commit",
         type=SourceCommit,
@@ -210,6 +204,11 @@ def main() -> int:
         "--release-channel",
         choices=("stable", "nightly"),
         default=_environment_value("CAPSEM_RELEASE_CHANNEL"),
+    )
+    parser.add_argument(
+        "--release-baseline-channel",
+        choices=("stable", "nightly"),
+        default=_environment_value("CAPSEM_RELEASE_BASELINE_CHANNEL"),
     )
     parser.add_argument(
         "--release-transition",
@@ -539,20 +538,35 @@ def main() -> int:
     return 0
 
 
+def validate_selected_profile_scope(
+    *,
+    transition: TransitionKind,
+    selected_profile: str | None,
+    changed_profiles: tuple[str, ...],
+) -> None:
+    """Keep one profile release owned while a channel switch stages its graph."""
+    if selected_profile is None:
+        return
+    if transition is TransitionKind.CHANNEL_SWITCH:
+        if selected_profile not in changed_profiles:
+            raise SystemExit(
+                "exact pairing selected profile is absent from the cross-channel target"
+            )
+        return
+    if changed_profiles != (selected_profile,):
+        raise SystemExit(
+            "exact pairing selected profile does not match the classified manifest delta"
+        )
+
+
 def validate_exact_release_pairing(
     args: argparse.Namespace,
 ) -> ExactReleasePairing | None:
     """Fail closed when a release lane supplies an incomplete exact pairing."""
-
-    # `or None` on every one: cleared and absent have to mean the same thing.
-    # The channel-switch run is handed these as empty strings so it rediscovers
-    # the channel from the installed system instead of inheriting what the
-    # previous run was told, and one empty string read as present makes the set
-    # look half-supplied -- which refuses the run before it starts. Normalized
-    # here rather than only at the argument defaults, because this is the
-    # function that decides, and it should not depend on how it was called.
+    # Cleared and absent values are the same; a partial exact pairing is illegal.
     core_fields = {
         "release_channel": args.release_channel or None,
+        "release_baseline_channel": args.release_baseline_channel or None,
         "release_transition": args.release_transition or None,
         "before_manifest": args.before_manifest or None,
         "after_manifest": args.after_manifest or None,
@@ -569,12 +583,13 @@ def validate_exact_release_pairing(
     missing = [name for name, value in core_fields.items() if value is None]
     if missing:
         raise SystemExit(
-            "exact pairing requires release channel, transition, before/after "
+            "exact pairing requires release channel, baseline channel, transition, before/after "
             "manifests, and before/after profile inputs; "
             f"missing={missing}"
         )
 
     channel = str(args.release_channel)
+    baseline_channel = str(args.release_baseline_channel)
     before_manifest = Path(args.before_manifest)
     after_manifest = Path(args.after_manifest)
     before_profile_inputs = Path(args.before_profile_inputs)
@@ -604,15 +619,17 @@ def validate_exact_release_pairing(
     if args.release_transition == "auto":
         transition, changed_profiles = classify_pairing_inputs(
             channel=channel,
+            baseline_channel=baseline_channel,
             before_manifest_bytes=before_manifest_bytes,
             after_manifest_bytes=after_manifest_bytes,
             before_artifact=before_artifact,
             after_artifact=after_artifact,
         )
-        if args.profile is not None and changed_profiles != (args.profile,):
-            raise SystemExit(
-                "exact pairing selected profile does not match the classified manifest delta"
-            )
+        validate_selected_profile_scope(
+            transition=transition,
+            selected_profile=args.profile,
+            changed_profiles=changed_profiles,
+        )
     else:
         transition = TransitionKind(str(args.release_transition))
         changed_profiles = (str(args.profile),) if args.profile is not None else ()
@@ -627,7 +644,9 @@ def validate_exact_release_pairing(
     supplied_publication_fields = [
         name for name, value in publication_fields.items() if value is not None
     ]
-    if transition is TransitionKind.PROFILE_ONLY:
+    if transition is TransitionKind.PROFILE_ONLY or (
+        transition is TransitionKind.CHANNEL_SWITCH and args.profile is not None
+    ):
         missing_profile = [name for name, value in profile_fields.items() if value is None]
         if missing_profile:
             raise SystemExit(
@@ -658,12 +677,13 @@ def validate_exact_release_pairing(
             )
     elif any(value is not None for value in profile_fields.values()):
         raise SystemExit(
-            "binary_only exact pairing cannot supply candidate profile publication inputs"
+            f"{transition.value} exact pairing cannot supply candidate profile publication inputs"
         )
 
     before, after = validate_pairing_inputs(
         kind=transition,
         channel=channel,
+        baseline_channel=baseline_channel,
         before_manifest_bytes=before_manifest_bytes,
         after_manifest_bytes=after_manifest_bytes,
         before_artifact=before_artifact,
@@ -672,6 +692,7 @@ def validate_exact_release_pairing(
     )
     return ExactReleasePairing(
         channel=channel,
+        baseline_channel=baseline_channel,
         transition=transition,
         changed_profiles=changed_profiles,
         before=before,
@@ -774,9 +795,6 @@ def _stage_exact_transport_release(
         replacements[url] = local_url
         expected_profile_urls.add(url)
 
-    # A first release's public-before graph serves no package, so there is no
-    # artifact to project and no URL to rewrite. The manifest still is one: the
-    # site has to answer with an empty graph before the candidate is promoted.
     staged_package: Path | None = None
     package_absolute_url: str | None = None
     if package_path is not None:
@@ -828,7 +846,6 @@ def stage_exact_release_transport(
     base_url: str,
 ) -> ExactReleaseTransport:
     """Build URL-only local projections around exact manifests and artifact bytes."""
-
     before_manifest, before_package = _stage_exact_transport_release(
         label="before",
         manifest_path=pairing.before_manifest,
@@ -847,40 +864,32 @@ def stage_exact_release_transport(
     )
     if after_package is None:
         raise SystemExit("exact candidate-after transport must stage its native package")
-    # `<base>/assets/<channel>/manifest.json`, because that is the only shape
-    # the product will fetch: `channel_manifest_url` requires an `assets`
-    # segment with a channel after it. Served from `/transitions/current/...`,
-    # every automatic-update cycle in this proof failed with "release channel
-    # check failed" before fetching a byte -- and the tamper wait, which
-    # accepted any failed cycle, reported a pass.
     current_route = f"/transitions/assets/{pairing.channel}/manifest.json"
     current_manifest = dist / Path(current_route.lstrip("/"))
-    copy_artifact_tree(before_manifest, current_manifest)
-    current_contents = current_manifest.read_bytes()
+    cross_channel = pairing.baseline_channel != pairing.channel
+    initial_manifest = after_manifest if cross_channel else before_manifest
+    copy_artifact_tree(initial_manifest, current_manifest)
+    before_route = (
+        f"/transitions/assets/{pairing.baseline_channel}/manifest.json"
+        if cross_channel
+        else current_route
+    )
+    before_current = dist / Path(before_route.lstrip("/"))
+    if cross_channel:
+        copy_artifact_tree(before_manifest, before_current)
     channel_catalog = dist / "transitions" / "channels.json"
     channel_catalog.write_text(
         json.dumps(
-            {
-                "version": 1,
-                "generated_at": "2030-01-01T00:00:00Z",
-                "release_site": f"{base_url}/",
-                "channels": {
-                    pairing.channel: {
-                        "label": pairing.channel.replace("-", " ").title(),
-                        "manifests": [
-                            {
-                                "version": json.loads(current_contents).get("version", "1.0.0"),
-                                "status": "current",
-                                "url": current_route,
-                                "digest": {
-                                    "sha256": hashlib.sha256(current_contents).hexdigest(),
-                                    "blake3": file_blake3(current_manifest),
-                                },
-                            }
-                        ],
-                    }
-                },
-            },
+            exact_channel_catalog(
+                baseline_channel=pairing.baseline_channel,
+                target_channel=pairing.channel,
+                before_route=before_route,
+                before_manifest=before_current,
+                before_blake3=file_blake3(before_current),
+                target_route=current_route,
+                target_manifest=current_manifest,
+                target_blake3=file_blake3(current_manifest),
+            ),
             indent=2,
             sort_keys=True,
         )
@@ -893,6 +902,7 @@ def stage_exact_release_transport(
         current_manifest=current_manifest,
         channel_catalog=channel_catalog,
         current_manifest_url=f"{base_url}{current_route}",
+        before_manifest_url=f"{base_url}{before_route}",
         current_manifest_route=current_route,
         channel_catalog_url=f"{base_url}/transitions/channels.json",
         before_package=before_package,
@@ -1478,8 +1488,6 @@ def _run_exact_installed_glowup(
     if before_artifact is not None and before_artifact.architecture != after_artifact.architecture:
         raise SystemExit("exact installed transition cannot change package architecture")
 
-    # A first release, and a channel receiving its first profiles, both install
-    # the candidate directly: neither has a predecessor to boot first.
     first_profile_activation = activates_first_profiles(
         transition=pairing.transition, before_manifest_bytes=pairing.before_manifest.read_bytes()
     )
@@ -1496,6 +1504,12 @@ def _run_exact_installed_glowup(
     fresh_manifest = (
         transport.after_manifest if first_profile_activation else transport.before_manifest
     )
+    fresh_channel = pairing.channel if first_profile_activation else pairing.baseline_channel
+    fresh_manifest_url = (
+        transport.current_manifest_url
+        if first_profile_activation
+        else transport.before_manifest_url
+    )
     fresh_script = f"""
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -1503,14 +1517,14 @@ export DEBIAN_FRONTEND=noninteractive
 sudo apt-get remove --purge -y capsem || true
 rm -rf "$HOME/.capsem"
 curl -fsSL {shlex.quote(install_script_url)} | \
-  CAPSEM_CHANNEL={shlex.quote(pairing.channel)} \
+  CAPSEM_CHANNEL={shlex.quote(fresh_channel)} \
   CAPSEM_RELEASE_BASE_URL={shlex.quote(release_base_url)} \
-  CAPSEM_MANIFEST_URL={shlex.quote(transport.current_manifest_url)} sh
+  CAPSEM_MANIFEST_URL={shlex.quote(fresh_manifest_url)} sh
 CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" \
   CAPSEM_RELEASE_CHANNELS_URL={shlex.quote(transport.channel_catalog_url)} \
-  "$HOME/.capsem/bin/capsem" update --assets --channel {shlex.quote(pairing.channel)}
+  "$HOME/.capsem/bin/capsem" update --assets --channel {shlex.quote(fresh_channel)}
 observe_update_transition fresh_install activated \
-  {shlex.quote(transport.current_manifest_url)} \
+  {shlex.quote(fresh_manifest_url)} \
   {shlex.quote(file_sha256(fresh_manifest))} 0 \
   {shlex.quote(str(fresh_transition))}
 systemctl --user set-environment \
@@ -1518,8 +1532,8 @@ systemctl --user set-environment \
   CAPSEM_AUTOMATIC_UPDATE_POLL_SECS=2
 systemctl --user restart capsem.service
 probe_installed_transition fresh-install \
-  {shlex.quote(transport.current_manifest_url)} \
-  {shlex.quote(pairing.channel)} \
+  {shlex.quote(fresh_manifest_url)} \
+  {shlex.quote(fresh_channel)} \
   {shlex.quote(fresh_artifact.version)} \
   {shlex.quote(str(fresh_package))} \
   {shlex.quote(fresh_artifact.platform)} \
@@ -1532,10 +1546,20 @@ probe_installed_transition fresh-install \
         candidate_marker = evidence_dir / "candidate-after-audit-line"
         record_update_audit_marker(candidate_marker)
         promote_exact_candidate_transport(transport)
+        switch = explicit_channel_switch_args(pairing.transition, pairing.channel)
+        switch_command = ""
+        if switch:
+            switch_command = (
+                'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" '
+                f'CAPSEM_RELEASE_CHANNELS_URL={shlex.quote(transport.channel_catalog_url)} '
+                '"$HOME/.capsem/bin/capsem" '
+                + " ".join(shlex.quote(argument) for argument in switch)
+            )
         after_script = f"""
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 {probe_functions}
+{switch_command}
 observe_update_transition {shlex.quote(pairing.transition.value)} activated \
   {shlex.quote(transport.current_manifest_url)} \
   {shlex.quote(file_sha256(transport.after_manifest))} \

@@ -79,6 +79,8 @@ jobs:
     needs: runtime-preflight
     runs-on: ubuntu-latest
     name: Resolve serialized channel source manifest
+    outputs:
+      baseline_channel: ${{ steps.public-before.outputs.manifest-channel }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
@@ -90,7 +92,7 @@ jobs:
         id: public-before
         run: |
           python3 scripts/select-runtime-preflight-manifest.py \
-            --channel "$RELEASE_CHANNEL" \
+            --channel "stable" \
             --bootstrap-missing-first-party \
             --github-output "$GITHUB_OUTPUT"
 
@@ -109,7 +111,7 @@ jobs:
         run: |
           python3 scripts/project-first-channel-before.py \
             --source-manifest target/channel-source/manifest.json \
-            --channel "$RELEASE_CHANNEL" \
+            --channel "stable" \
             --bootstrap "${{ steps.public-before.outputs.bootstrap }}" \
             --retired "${{ steps.public-before.outputs.retired }}" \
             --output target/channel-source/public-before.json
@@ -866,7 +868,7 @@ jobs:
             --timeout 300
 
   test-binary-pairing:
-    needs: [build-app-macos, build-app-linux, author-binary-candidate]
+    needs: [resolve-channel-source, build-app-macos, build-app-linux, author-binary-candidate]
     runs-on: ubuntu-24.04
     name: Complete binary pairing gate
     steps:
@@ -996,6 +998,7 @@ jobs:
             echo "CAPSEM_RELEASE_BIN_DIR=$PWD/target/debug"
             echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/target/candidate-profile-inputs"
             echo "CAPSEM_RELEASE_CHANNEL=$RELEASE_CHANNEL"
+            echo "CAPSEM_RELEASE_BASELINE_CHANNEL=${{ needs.resolve-channel-source.outputs.baseline_channel }}"
             echo "CAPSEM_RELEASE_TRANSITION=auto"
             echo "CAPSEM_RELEASE_BEFORE_MANIFEST=$PWD/target/binary-public-before/profiles/manifest.json"
             echo "CAPSEM_RELEASE_AFTER_MANIFEST=$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json"

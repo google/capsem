@@ -1,5 +1,4 @@
 """Citadel guard: a release lane may only read what it was handed.
-
 The Citadel is where Capsem records architectural mistakes that must not be
 repeated. This one cost five dispatches of a binary release, each about forty
 minutes, and every one of them failed for the same reason wearing a different
@@ -336,25 +335,4 @@ def test_only_the_rehearsal_may_build_a_release_state_in_code() -> None:
     assert not offenders, (
         "these build a release qualification directly instead of going "
         "through `from_environment` or `qualification.rehearsal`:\n  " + "\n  ".join(offenders)
-    )
-
-
-def test_the_channel_switch_clears_every_variable_the_pairing_hands_over() -> None:
-    """The second glow-up must rediscover the channel, not inherit it.
-
-    `[modules] channel_switch_cleared` and `[modules.release_pairing]` are two
-    lists of the same variable names, so they can drift. A pairing variable that
-    survives into the channel-switch run is a proof handed the answer it exists
-    to find -- and it looks exactly like a passing one, which is why this is
-    checked rather than read. Both lists appear obviously complete right up
-    until one of them gains an entry.
-    """
-    settings = gate_config.load(ROOT).modules
-
-    uncleared = sorted(
-        set(settings.release_pairing.variables) - set(settings.channel_switch_cleared)
-    )
-    assert not uncleared, (
-        f"{uncleared} is handed to a glow-up and never cleared, so the "
-        "channel-switch run inherits the transition it exists to rediscover"
     )

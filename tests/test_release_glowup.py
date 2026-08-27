@@ -1030,6 +1030,90 @@ def test_exact_pairing_classifier_distinguishes_binary_and_staged_profile(
     assert profiles == ("code", "experimental")
 
 
+def test_exact_pairing_classifier_anchors_nightly_on_verified_stable(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    classifier = _load_first_release()
+    before_root = tmp_path / "before"
+    before_root.mkdir()
+    before_artifact = _artifact(before_root, module)
+    after_path = tmp_path / "after" / "Capsem-1.5.101.pkg"
+    after_path.parent.mkdir(parents=True)
+    after_path.write_bytes(b"exact nightly candidate")
+    after_artifact = module.ArtifactIdentity.from_path(
+        after_path,
+        version="1.5.101",
+        platform="macos",
+        architecture="arm64",
+    )
+    before_manifest = _manifest(before_artifact)
+    before_manifest["channel"] = "stable"
+    before_manifest["profiles"] = {
+        "code": {"revision": "code-stable"},
+        "co-work": {"revision": "co-work-stable"},
+    }
+    after_manifest = _manifest(after_artifact)
+    after_manifest["channel"] = "nightly"
+    after_manifest["profiles"] = json.loads(json.dumps(before_manifest["profiles"]))
+
+    kind, profiles = classifier.classify_pairing_inputs(
+        channel="nightly",
+        baseline_channel="stable",
+        before_manifest_bytes=json.dumps(before_manifest).encode(),
+        after_manifest_bytes=json.dumps(after_manifest).encode(),
+        before_artifact=before_artifact,
+        after_artifact=after_artifact,
+    )
+
+    assert kind is classifier.TransitionKind.CHANNEL_SWITCH
+    assert profiles == ("co-work", "code")
+
+    before_manifest["channel"] = "nightly"
+    with pytest.raises(classifier.GlowupContractError, match="baseline channel"):
+        classifier.classify_pairing_inputs(
+            channel="nightly",
+            baseline_channel="stable",
+            before_manifest_bytes=json.dumps(before_manifest).encode(),
+            after_manifest_bytes=json.dumps(after_manifest).encode(),
+            before_artifact=before_artifact,
+            after_artifact=after_artifact,
+        )
+
+
+def test_only_cross_channel_pairing_requires_an_explicit_product_switch() -> None:
+    module = _load_module()
+
+    assert module.explicit_channel_switch_args(
+        module.TransitionKind.CHANNEL_SWITCH, "nightly"
+    ) == ("update", "--yes", "--channel", "nightly")
+    assert module.explicit_channel_switch_args(
+        module.TransitionKind.BINARY_ONLY, "stable"
+    ) == ()
+
+
+def test_cross_channel_profile_release_stages_the_complete_target_but_owns_one_profile() -> None:
+    module = _load_local_glowup()
+
+    module.validate_selected_profile_scope(
+        transition=module.TransitionKind.CHANNEL_SWITCH,
+        selected_profile="code",
+        changed_profiles=("co-work", "code"),
+    )
+    with pytest.raises(SystemExit, match="selected profile"):
+        module.validate_selected_profile_scope(
+            transition=module.TransitionKind.CHANNEL_SWITCH,
+            selected_profile="code",
+            changed_profiles=("co-work",),
+        )
+    with pytest.raises(SystemExit, match="manifest delta"):
+        module.validate_selected_profile_scope(
+            transition=module.TransitionKind.PROFILE_ONLY,
+            selected_profile="code",
+            changed_profiles=("co-work", "code"),
+        )
+
+
 def test_exact_pairing_rejects_manifest_channel_or_package_mismatch(
     tmp_path: Path,
 ) -> None:
@@ -1073,6 +1157,7 @@ def test_release_pairing_cli_is_all_or_nothing() -> None:
     module = _load_local_glowup()
     empty = SimpleNamespace(
         release_channel=None,
+        release_baseline_channel=None,
         release_transition=None,
         before_manifest=None,
         after_manifest=None,
@@ -1297,6 +1382,7 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
     )
     pairing = module.ExactReleasePairing(
         channel="nightly",
+        baseline_channel="nightly",
         transition=module.TransitionKind.PROFILE_THEN_BINARY,
         changed_profiles=("code",),
         before=before,
@@ -1480,6 +1566,7 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     )
     pairing = module.ExactReleasePairing(
         channel="nightly",
+        baseline_channel="nightly",
         transition=module.TransitionKind.BINARY_ONLY,
         changed_profiles=(),
         before=before,
@@ -1497,6 +1584,7 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
         current_manifest=current_manifest,
         channel_catalog=channel_catalog,
         current_manifest_url=("http://127.0.0.1:8765/transitions/assets/nightly/manifest.json"),
+        before_manifest_url=("http://127.0.0.1:8765/transitions/assets/nightly/manifest.json"),
         current_manifest_route="/transitions/assets/nightly/manifest.json",
         channel_catalog_url="http://127.0.0.1:8765/transitions/channels.json",
         before_package=before_package,
@@ -1664,6 +1752,7 @@ def test_first_profile_glowup_never_installs_empty_authoring_state(
     )
     pairing = module.ExactReleasePairing(
         channel="nightly",
+        baseline_channel="nightly",
         transition=module.TransitionKind.PROFILE_ONLY,
         changed_profiles=("code",),
         before=before,
@@ -1681,6 +1770,7 @@ def test_first_profile_glowup_never_installs_empty_authoring_state(
         current_manifest=current_manifest,
         channel_catalog=channel_catalog,
         current_manifest_url=("http://127.0.0.1:8765/transitions/assets/nightly/manifest.json"),
+        before_manifest_url=("http://127.0.0.1:8765/transitions/assets/nightly/manifest.json"),
         current_manifest_route="/transitions/assets/nightly/manifest.json",
         channel_catalog_url="http://127.0.0.1:8765/transitions/channels.json",
         before_package=package,

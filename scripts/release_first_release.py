@@ -149,6 +149,7 @@ def verify_candidate_profile_publication(
 def classify_pairing_inputs(
     *,
     channel: str,
+    baseline_channel: str | None = None,
     before_manifest_bytes: bytes,
     after_manifest_bytes: bytes,
     before_artifact: ArtifactIdentity | None,
@@ -159,7 +160,12 @@ def classify_pairing_inputs(
     before_profile_map = _profile_map(before_manifest_bytes, "public-before")
     after_profile_map = _profile_map(after_manifest_bytes, "candidate-after")
     first_release = public_before_is_unpublished(before_manifest_bytes)
+    baseline = baseline_channel or channel
 
+    if first_release and baseline != channel:
+        raise GlowupContractError(
+            f"{channel} release has no published {baseline} baseline channel"
+        )
     if first_release:
         transition_kind = TransitionKind.FRESH_INSTALL
         # Every profile the candidate declares is staged, because none of them
@@ -167,6 +173,9 @@ def classify_pairing_inputs(
         changed = sorted(after_profile_map)
         if not changed:
             raise GlowupContractError("a first release must publish at least one profile")
+    elif baseline != channel:
+        transition_kind = TransitionKind.CHANNEL_SWITCH
+        changed = sorted(after_profile_map)
     else:
         changed = sorted(
             profile_id
@@ -180,6 +189,7 @@ def classify_pairing_inputs(
     validate_pairing_inputs(
         kind=transition_kind,
         channel=channel,
+        baseline_channel=baseline,
         before_manifest_bytes=before_manifest_bytes,
         after_manifest_bytes=after_manifest_bytes,
         before_artifact=before_artifact,

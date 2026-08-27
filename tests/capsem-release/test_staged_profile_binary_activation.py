@@ -280,6 +280,7 @@ def test_cold_channel_pairing_executes_no_package_action(
         "GITHUB_REPOSITORY": "google/capsem",
         "PUBLICATION_IDENTITY": PUBLICATION_IDENTITY,
         "RELEASE_CHANNEL": "stable",
+        "RELEASE_BASELINE_CHANNEL": "stable",
         "RELEASE_PROFILE": "code",
         "ACTIVATION_READY": "false",
     }
@@ -316,6 +317,7 @@ def test_cold_channel_pairing_rejects_an_unknown_activation_decision(
             "GITHUB_REPOSITORY": "google/capsem",
             "PUBLICATION_IDENTITY": PUBLICATION_IDENTITY,
             "RELEASE_CHANNEL": "stable",
+            "RELEASE_BASELINE_CHANNEL": "stable",
             "RELEASE_PROFILE": "code",
             "ACTIVATION_READY": "unknown",
         },
