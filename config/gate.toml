@@ -2793,6 +2793,7 @@ unmeasured = [
     "/vms/{id}/snapshots/status",
     "/vms/{id}/start",
     "/vms/{id}/stats/detail",
+    "/vms/{id}/stats/summary",
     "/vms/{id}/status",
     "/vms/{id}/stop",
     "/vms/{id}/timeline",
