@@ -32,13 +32,10 @@ def _violations(binary: str, profile: str, staging: str) -> list[str]:
 
 
 def _sources() -> tuple[str, str, str]:
-    return tuple(
-        (ROOT / path).read_text(encoding="utf-8")
-        for path in (
-            ".github/workflows/release.yaml",
-            ".github/workflows/release-assets.yaml",
-            "scripts/stage-profile-pairing.sh",
-        )
+    return (
+        (ROOT / ".github/workflows/release.yaml").read_text(encoding="utf-8"),
+        (ROOT / ".github/workflows/release-assets.yaml").read_text(encoding="utf-8"),
+        (ROOT / "scripts/stage-profile-pairing.sh").read_text(encoding="utf-8"),
     )
 
 

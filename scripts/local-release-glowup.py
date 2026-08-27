@@ -22,7 +22,7 @@ from typing import cast
 from urllib.parse import unquote, urljoin, urlparse
 
 from marketing_install_surface import validate_checked_in_marketing_install_surface
-from release_pairing_baseline import exact_channel_catalog
+from release_pairing_baseline import exact_channel_catalog, validate_selected_profile_scope
 
 from capsem.gate import config as gate_config
 from capsem.gate.productschema import ProfileRevisionPolicy
@@ -163,9 +163,7 @@ def _environment_path(name: str) -> Path | None:
 
 
 def _environment_value(name: str) -> str | None:
-    """Treat exported-but-empty pairing values as absent."""
-    value = (os.environ.get(name) or "").strip()
-    return value or None
+    return (os.environ.get(name) or "").strip() or None
 
 
 def main() -> int:
@@ -536,27 +534,6 @@ def main() -> int:
         f"stable={stable_version} nightly={nightly_version} dist={dist}"
     )
     return 0
-
-
-def validate_selected_profile_scope(
-    *,
-    transition: TransitionKind,
-    selected_profile: str | None,
-    changed_profiles: tuple[str, ...],
-) -> None:
-    """Keep one profile release owned while a channel switch stages its graph."""
-    if selected_profile is None:
-        return
-    if transition is TransitionKind.CHANNEL_SWITCH:
-        if selected_profile not in changed_profiles:
-            raise SystemExit(
-                "exact pairing selected profile is absent from the cross-channel target"
-            )
-        return
-    if changed_profiles != (selected_profile,):
-        raise SystemExit(
-            "exact pairing selected profile does not match the classified manifest delta"
-        )
 
 
 def validate_exact_release_pairing(
@@ -1488,10 +1465,10 @@ def _run_exact_installed_glowup(
     if before_artifact is not None and before_artifact.architecture != after_artifact.architecture:
         raise SystemExit("exact installed transition cannot change package architecture")
 
-    first_profile_activation = activates_first_profiles(
+    first_activation = activates_first_profiles(
         transition=pairing.transition, before_manifest_bytes=pairing.before_manifest.read_bytes()
     )
-    if first_profile_activation:
+    if first_activation:
         promote_exact_candidate_transport(transport)
         fresh_artifact, fresh_package = after_artifact, pairing.after_package
     elif before_artifact is None or pairing.before_package is None:
@@ -1501,14 +1478,10 @@ def _run_exact_installed_glowup(
     evidence_dir.mkdir(parents=True, exist_ok=True)
     probe_functions = installed_probe.exact_installed_probe_shell(evidence_dir)
     fresh_transition = evidence_dir / "fresh-install-transition.json"
-    fresh_manifest = (
-        transport.after_manifest if first_profile_activation else transport.before_manifest
-    )
-    fresh_channel = pairing.channel if first_profile_activation else pairing.baseline_channel
+    fresh_manifest = transport.after_manifest if first_activation else transport.before_manifest
+    fresh_channel = pairing.channel if first_activation else pairing.baseline_channel
     fresh_manifest_url = (
-        transport.current_manifest_url
-        if first_profile_activation
-        else transport.before_manifest_url
+        transport.current_manifest_url if first_activation else transport.before_manifest_url
     )
     fresh_script = f"""
 set -euxo pipefail
@@ -1542,7 +1515,7 @@ probe_installed_transition fresh-install \
     run(["bash", "-lc", fresh_script])
 
     candidate_transition = evidence_dir / "candidate-after-transition.json"
-    if not first_profile_activation:
+    if not first_activation:
         candidate_marker = evidence_dir / "candidate-after-audit-line"
         record_update_audit_marker(candidate_marker)
         promote_exact_candidate_transport(transport)
@@ -1551,7 +1524,7 @@ probe_installed_transition fresh-install \
         if switch:
             switch_command = (
                 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" '
-                f'CAPSEM_RELEASE_CHANNELS_URL={shlex.quote(transport.channel_catalog_url)} '
+                f"CAPSEM_RELEASE_CHANNELS_URL={shlex.quote(transport.channel_catalog_url)} "
                 '"$HOME/.capsem/bin/capsem" '
                 + " ".join(shlex.quote(argument) for argument in switch)
             )
@@ -1672,29 +1645,23 @@ probe_installed_transition rejection-preserved \
         fresh_doctor=fresh_doctor,
         fresh_winterfell=fresh_winterfell,
         candidate_installed=(
-            fresh_installed
-            if first_profile_activation
-            else evidence_dir / "candidate-after-installed.json"
+            fresh_installed if first_activation else evidence_dir / "candidate-after-installed.json"
         ),
         candidate_doctor=(
-            fresh_doctor
-            if first_profile_activation
-            else evidence_dir / "candidate-after-doctor.json"
+            fresh_doctor if first_activation else evidence_dir / "candidate-after-doctor.json"
         ),
         candidate_winterfell=(
             fresh_winterfell
-            if first_profile_activation
+            if first_activation
             else evidence_dir / "candidate-after-winterfell.json"
         ),
-        candidate_transition=(
-            fresh_transition if first_profile_activation else candidate_transition
-        ),
+        candidate_transition=(fresh_transition if first_activation else candidate_transition),
         tamper_rejection=tamper_evidence,
         incompatible_rejection=incompatible_evidence,
         preserved_installed=evidence_dir / "rejection-preserved-installed.json",
         preserved_doctor=evidence_dir / "rejection-preserved-doctor.json",
         preserved_winterfell=evidence_dir / "rejection-preserved-winterfell.json",
-        fresh_uses_after=first_profile_activation,
+        fresh_uses_after=first_activation,
     )
 
 

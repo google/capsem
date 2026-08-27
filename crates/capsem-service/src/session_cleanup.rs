@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 pub(super) async fn preserve_failed_run_shutdown_result(
     state: Arc<ServiceState>,
     id: String,
