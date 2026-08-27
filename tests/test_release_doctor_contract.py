@@ -1483,6 +1483,7 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
 
 def test_installed_service_owns_one_serial_automatic_update_path() -> None:
     service = _source_text("crates/capsem-service/src/main.rs")
+    update_command = _source_text("crates/capsem-service/src/update_command.rs")
     api = _source_text("crates/capsem-service/src/api.rs")
     route_tests = _source_text("tests/capsem-service/test_update_routes.py")
     apply_request = api.split("pub struct UpdateApplyRequest", maxsplit=1)[1].split(
@@ -1513,9 +1514,9 @@ def test_installed_service_owns_one_serial_automatic_update_path() -> None:
     assert service.count("execute_update_command_unlocked(plan).await") == 3
 
     assert "UpdateCommandKind::Apply" in service
-    assert 'vec!["update".to_string(), "--yes".to_string()]' in service
-    assert "UpdateCommandKind::Assets" not in service
-    assert '"--assets".to_string()' not in service
+    assert 'vec!["update".to_string(), "--yes".to_string()]' in update_command
+    assert "UpdateCommandKind::Assets" not in update_command
+    assert '"--assets".to_string()' not in update_command
     assert "UpdateApplyAction" not in api
     assert "action" not in apply_request
     assert '["update", "--yes"]' in route_tests

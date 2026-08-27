@@ -54,7 +54,9 @@ def _ownership_violations(body: str) -> list[str]:
         '"--".to_string()',
         "transient_args.extend(args)",
     )
-    violations = [f"missing `{needle}`" for needle in required if needle not in body]
+    violations: list[str] = [
+        f"missing `{needle}`" for needle in required if needle not in body
+    ]
     if '"--pipe"' in body:
         violations.append("uses `--pipe`, tying the updater back to capsem.service")
     if (
