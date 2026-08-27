@@ -97,12 +97,18 @@ retry after failure; postinstall removes both only after success.
   `scripts/pkg-scripts/postinstall` copies binaries, hydrates assets, registers
   the service, waits for service/gateway readiness, and opens the app.
 - Linux `.deb`: `scripts/deb-preinst.sh` is packaged as `DEBIAN/preinst`. It
-  runs `systemctl --user stop capsem.service` when a user systemd session is
-  available, then kills the stale helper cohort before package replacement so
-  old service/gateway/tray/process binaries cannot survive from old inodes.
-  `scripts/deb-postinst.sh` symlinks the packaged binaries into
-  `~/.capsem/bin`, hydrates assets, and invokes `capsem install` to register or
-  restart the user service.
+  normally runs `systemctl --user stop capsem.service` when a user systemd
+  session is available, then kills the stale helper cohort before package replacement
+  so old service/gateway/tray/process binaries cannot survive from
+  old inodes. A self-update started by an older installed service is the one
+  exception: `/proc/self/cgroup` proves that `dpkg` belongs to
+  `capsem.service`, so preinst preserves that unit and cohort until the old
+  updater activates the new manifest and requests its managed restart. This is
+  the bootstrap for releases whose previous service does not yet contain the
+  sibling `systemd-run` updater. `scripts/deb-postinst.sh` symlinks the packaged
+  binaries into `~/.capsem/bin`, hydrates assets, and invokes `capsem install`
+  to register or enable the user service without restarting an already active
+  unit mid-transaction.
 
 ## Self-update (update.rs)
 

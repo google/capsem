@@ -2156,6 +2156,9 @@ def test_installation_skill_documents_deb_preinstall_restart_rail() -> None:
     repack_deb = _source_text("scripts/repack-deb.sh")
 
     assert "systemctl --user stop capsem.service" in deb_preinst
+    assert "capsem_install_runs_inside_service /proc/self/cgroup" in deb_preinst
+    assert "event=preserve_service_owned_update" in deb_preinst
+    assert "capsem_install_runs_inside_service" in retire_cohort
     assert 'source "$(dirname "$0")/pkg-scripts/retire-cohort"' in deb_preinst
     assert 'capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID"' in deb_preinst
     assert '"$kill_command" -9 "$pid"' in retire_cohort
@@ -2166,6 +2169,8 @@ def test_installation_skill_documents_deb_preinstall_restart_rail() -> None:
     assert "DEBIAN/preinst" in install_skill
     assert "systemctl --user stop capsem.service" in install_skill
     assert "stale helper cohort before package replacement" in install_skill
+    assert "/proc/self/cgroup" in install_skill
+    assert "preserves that unit and cohort" in install_skill
 
 
 def test_release_skill_documents_deb_preinstall_restart_rail() -> None:
@@ -2175,6 +2180,9 @@ def test_release_skill_documents_deb_preinstall_restart_rail() -> None:
     repack_deb = _source_text("scripts/repack-deb.sh")
 
     assert "systemctl --user stop capsem.service" in deb_preinst
+    assert "capsem_install_runs_inside_service /proc/self/cgroup" in deb_preinst
+    assert "event=preserve_service_owned_update" in deb_preinst
+    assert "capsem_install_runs_inside_service" in retire_cohort
     assert 'source "$(dirname "$0")/pkg-scripts/retire-cohort"' in deb_preinst
     assert 'capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID"' in deb_preinst
     assert '"$kill_command" -9 "$pid"' in retire_cohort
@@ -2186,6 +2194,8 @@ def test_release_skill_documents_deb_preinstall_restart_rail() -> None:
     assert "DEBIAN/preinst" in release_skill
     assert "systemctl --user stop capsem.service" in release_skill
     assert "stale helper cohort before package replacement" in release_skill
+    assert "/proc/self/cgroup" in release_skill
+    assert "preserves the old cohort" in release_skill
 
 
 def _install_release_graph_contract_fixture(

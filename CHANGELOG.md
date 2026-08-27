@@ -46,7 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own updater and leave `dpkg` halfway through the install. Direct systemd
   ownership is now identified by the service process ID as well as its
   invocation ID, so inherited runner or desktop-session variables cannot send
-  unrelated child services through that path.
+  unrelated child services through that path. When the update is initiated by
+  an older installed service that predates this rail, the new package detects
+  its service-owned `dpkg` transaction and preserves the old process cohort
+  until manifest activation requests the managed restart.
 
 - `just install` now opens the native macOS administrator authorization dialog
   for the exact package install instead of depending on terminal `sudo` state,

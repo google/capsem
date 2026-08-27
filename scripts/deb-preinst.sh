@@ -1,10 +1,11 @@
 #!/bin/bash
-# deb-preinst.sh -- Stop stale Capsem user services before .deb replacement.
+# deb-preinst.sh -- Retire stale Capsem processes before .deb replacement.
 #
 # dpkg can replace /usr/bin payloads while the old service, gateway, tray, or
 # process binaries keep running from old inodes. Stop the user unit first, then
-# kill any package-owned helpers by exact installed paths before unpacking the
-# new binaries.
+# kill package-owned helpers before unpacking new binaries. A package update
+# started by the old service must instead preserve that cohort until the old
+# updater activates the manifest and requests its managed restart.
 set -euo pipefail
 if ! declare -F capsem_install_enable_failure_trap >/dev/null; then
     source "$(dirname "$0")/pkg-scripts/install-diagnostics"
@@ -51,12 +52,15 @@ echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=start user=$TARGE
 CAPSEM_INSTALL_PHASE="stop_existing_install"
 TARGET_UID=$(id -u "$TARGET_USER")
 XDG_DIR="/run/user/$TARGET_UID"
-if command -v systemctl >/dev/null 2>&1 && [ -d "$XDG_DIR" ]; then
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=stop_systemd_user_service unit=capsem.service"
-    su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR systemctl --user stop capsem.service" 2>/dev/null || true
+if capsem_install_runs_inside_service /proc/self/cgroup; then
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=preserve_service_owned_update unit=capsem.service"
+else
+    if command -v systemctl >/dev/null 2>&1 && [ -d "$XDG_DIR" ]; then
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=stop_systemd_user_service unit=capsem.service"
+        su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR systemctl --user stop capsem.service" 2>/dev/null || true
+    fi
+    capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID"
 fi
-
-capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID"
 
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=complete"
 CAPSEM_INSTALL_PHASE="complete"

@@ -271,7 +271,7 @@ def test_postinst_script_is_included(tmp_path):
 
 
 def test_preinst_script_is_included(tmp_path):
-    """DEBIAN/preinst stops stale helpers before dpkg replaces binaries."""
+    """DEBIAN/preinst owns ordinary retirement and old-service handoff."""
     fixture = _build_fixture_deb(tmp_path)
     bin_dir = tmp_path / "bin"
     config_dir = tmp_path / "target-config"
@@ -292,9 +292,10 @@ def test_preinst_script_is_included(tmp_path):
     assert preinst.read_text().startswith(expected_head), (
         "preinst doesn't look like scripts/deb-preinst.sh"
     )
-    assert "Tester action: copy the output of this command into the bug report:" in (
-        preinst.read_text()
-    )
+    preinst_text = preinst.read_text()
+    assert "Tester action: copy the output of this command into the bug report:" in preinst_text
+    assert "capsem_install_runs_inside_service" in preinst_text
+    assert "event=preserve_service_owned_update" in preinst_text
 
 
 def test_missing_companion_binary_fails_loudly(tmp_path):

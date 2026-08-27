@@ -209,6 +209,63 @@ esac""",
     assert f"native helper cohort did not stop: {survivor_pid}" in completed.stderr
 
 
+@pytest.mark.parametrize(
+    ("cgroup", "inside_service"),
+    [
+        ("0::/user.slice/user-501.slice/user@501.service/app.slice/capsem.service\n", True),
+        (
+            "0::/user.slice/user-501.slice/user@501.service/app.slice/"
+            "capsem.service/updater\n",
+            True,
+        ),
+        (
+            "0::/user.slice/user-501.slice/user@501.service/app.slice/"
+            "github-runner.service\n",
+            False,
+        ),
+        ("12:memory:/docker/1234\n", False),
+    ],
+)
+def test_linux_package_detects_only_its_own_service_cgroup(
+    tmp_path: Path,
+    cgroup: str,
+    inside_service: bool,
+) -> None:
+    cgroup_file = tmp_path / "cgroup"
+    cgroup_file.write_text(cgroup, encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; capsem_install_runs_inside_service "$2"',
+            "bash",
+            str(ROOT / "scripts/pkg-scripts/retire-cohort"),
+            str(cgroup_file),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert (completed.returncode == 0) is inside_service
+
+
+def test_deb_preinstall_preserves_a_service_owned_update_until_activation() -> None:
+    preinstall = (ROOT / "scripts/deb-preinst.sh").read_text(encoding="utf-8")
+
+    branch = preinstall[preinstall.index("if capsem_install_runs_inside_service") :]
+    preserve, ordinary = branch.split("else", maxsplit=1)
+    ordinary, _ = ordinary.rsplit("\nfi", maxsplit=1)
+
+    assert "/proc/self/cgroup" in preserve
+    assert "event=preserve_service_owned_update" in preserve
+    assert "systemctl --user stop capsem.service" not in preserve
+    assert "capsem_retire_native_cohort" not in preserve
+    assert "systemctl --user stop capsem.service" in ordinary
+    assert "capsem_retire_native_cohort" in ordinary
+
+
 def test_public_installer_stops_the_user_service_before_package_replacement() -> None:
     for relative in ("site/public/install.sh", "docs/public/install.sh"):
         installer = (ROOT / relative).read_text(encoding="utf-8")

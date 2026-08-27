@@ -3,6 +3,12 @@
 # Full command paths own ordinary helpers. The service and gateway PID files
 # remain authoritative when macOS reports only a basename for an old process.
 
+capsem_install_runs_inside_service() {
+    local cgroup_file="${1:-/proc/self/cgroup}"
+    [ -r "$cgroup_file" ] || return 1
+    grep -Eq '(^|/)capsem[.]service($|/)' "$cgroup_file"
+}
+
 capsem_pidfile_owns_process() {
     local capsem_dir="$1"
     local name="$2"

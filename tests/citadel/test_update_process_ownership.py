@@ -15,6 +15,10 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 UPDATE_COMMAND = PROJECT_ROOT / "crates/capsem-service/src/update_command.rs"
+SERVICE_MAIN = PROJECT_ROOT / "crates/capsem-service/src/main.rs"
+SERVICE_INSTALL = PROJECT_ROOT / "crates/capsem/src/service_install.rs"
+DEB_PREINSTALL = PROJECT_ROOT / "scripts/deb-preinst.sh"
+INSTALL_COHORT = PROJECT_ROOT / "scripts/pkg-scripts/retire-cohort"
 
 SYSTEMD_UPDATE_OWNERSHIP_RATIONALE = """\
 Linux package replacement stops capsem.service from the Debian preinstall hook.
@@ -30,6 +34,13 @@ name also prevents the restarted service from launching a duplicate update.
 `INVOCATION_ID` is inherited, so it must be paired with `SYSTEMD_EXEC_PID`
 matching the current process; otherwise children of the GitHub runner, an IDE,
 or any unrelated systemd service are misidentified as capsem.service.
+
+The first package carrying that fix is still installed by the previous service,
+which cannot run code it does not have. Its dpkg transaction must therefore be
+recognized from `/proc/self/cgroup` by the new package preinstall. While that
+transaction is inside capsem.service, preinstall must neither stop the unit nor
+retire its helper cohort. The old updater can then activate the new manifest and
+request the managed restart after dpkg has completed.
 """
 
 
@@ -81,6 +92,45 @@ def _systemd_detection_violations(body: str) -> list[str]:
     return [f"missing `{needle}`" for needle in required if needle not in body]
 
 
+def _package_handoff_violations(preinstall: str, cohort: str) -> list[str]:
+    required_cohort = (
+        "capsem_install_runs_inside_service()",
+        'grep -Eq \'(^|/)capsem[.]service($|/)\' "$cgroup_file"',
+    )
+    violations = [
+        f"missing `{needle}` from package cgroup detection"
+        for needle in required_cohort
+        if needle not in cohort
+    ]
+    if "if capsem_install_runs_inside_service /proc/self/cgroup; then" not in preinstall:
+        violations.append("preinstall does not detect an old-service-owned dpkg transaction")
+        return violations
+    branch = preinstall[preinstall.index("if capsem_install_runs_inside_service") :]
+    preserve, ordinary = branch.split("else", maxsplit=1)
+    ordinary, _ = ordinary.rsplit("\nfi", maxsplit=1)
+    if "event=preserve_service_owned_update" not in preserve:
+        violations.append("preinstall does not report the preserved self-update handoff")
+    for destructive in (
+        "systemctl --user stop capsem.service",
+        "capsem_retire_native_cohort",
+    ):
+        if destructive in preserve:
+            violations.append(f"service-owned package transaction still runs `{destructive}`")
+        if destructive not in ordinary:
+            violations.append(f"ordinary package replacement lost `{destructive}`")
+    return violations
+
+
+def _managed_restart_violations(service: str, install: str) -> list[str]:
+    required = (
+        (service, "selected_binary != state.current_version"),
+        (service, "state.update_restart.notify_one()"),
+        (install, "Restart=always"),
+        (install, '.args(["--user", "enable", "--now", "capsem"])'),
+    )
+    return [f"missing managed restart rail `{needle}`" for source, needle in required if needle not in source]
+
+
 def test_systemd_update_owns_the_complete_transaction_outside_capsem_service() -> None:
     source = UPDATE_COMMAND.read_text()
     body = _function(
@@ -96,6 +146,18 @@ def test_systemd_update_owns_the_complete_transaction_outside_capsem_service() -
         violations.append("does not distinguish the directly executed service from descendants")
     if "std::process::id()" not in source:
         violations.append("does not compare SYSTEMD_EXEC_PID with the current service process")
+    violations.extend(
+        _package_handoff_violations(
+            DEB_PREINSTALL.read_text(),
+            INSTALL_COHORT.read_text(),
+        )
+    )
+    violations.extend(
+        _managed_restart_violations(
+            SERVICE_MAIN.read_text(),
+            SERVICE_INSTALL.read_text(),
+        )
+    )
     assert not violations, SYSTEMD_UPDATE_OWNERSHIP_RATIONALE + "\n" + "\n".join(violations)
 
 
@@ -132,4 +194,14 @@ def test_guard_rejects_the_failure_shapes_that_reached_release_qualification() -
     )
     assert _systemd_detection_violations(inherited_ancestor), (
         "ownership guard accepts an inherited systemd ancestor identity"
+    )
+
+    preinstall = DEB_PREINSTALL.read_text()
+    cohort = INSTALL_COHORT.read_text()
+    self_killing_package = preinstall.replace(
+        "if capsem_install_runs_inside_service /proc/self/cgroup; then",
+        "if false; then",
+    )
+    assert _package_handoff_violations(self_killing_package, cohort), (
+        "ownership guard accepts a package that kills an update launched by 0.6.1"
     )
