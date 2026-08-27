@@ -64,8 +64,8 @@ def _run_dir() -> Path:
 
 
 CAPSEM_HOME = _capsem_home()
-SESSIONS_DIR = _run_dir() / "sessions"
 PERSISTENT_DIR = _run_dir() / "persistent"
+SERVICE_SOCKET = _run_dir() / "service.sock"
 MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
 
 
@@ -100,16 +100,6 @@ class Results:
         return len(self.failed) == 0
 
 
-def _new_session_dirs(root: Path, existing: set[str]) -> list[Path]:
-    if not root.exists():
-        return []
-    return sorted(
-        (p for p in root.iterdir() if p.is_dir() and p.name not in existing),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-
-
 def _parse_created_session_id(stdout: str) -> str:
     for line in stdout.splitlines():
         stripped = line.strip()
@@ -134,13 +124,6 @@ def run_doctor(binary: str, assets_dir: str, mock_base_url: str) -> tuple[str, P
     ephemeral session directory after exit.
     """
     env = _cli_env(assets_dir)
-
-    existing_persistent = (
-        {p.name for p in PERSISTENT_DIR.iterdir()} if PERSISTENT_DIR.exists() else set()
-    )
-    existing_sessions = (
-        {p.name for p in SESSIONS_DIR.iterdir()} if SESSIONS_DIR.exists() else set()
-    )
 
     session_name = f"doctor-ledger-{os.getpid()}-{int(time.time())}"
     print(f"{BOLD}Creating VM for capsem-doctor ...{RESET}")
@@ -170,12 +153,6 @@ def run_doctor(binary: str, assets_dir: str, mock_base_url: str) -> tuple[str, P
         sys.exit(create.returncode)
     session_id = _parse_created_session_id(create.stdout)
     session_dir = PERSISTENT_DIR / session_id
-
-    if not session_dir.exists():
-        new_sessions = _new_session_dirs(PERSISTENT_DIR, existing_persistent)
-        if new_sessions:
-            session_dir = new_sessions[0]
-            session_id = session_dir.name
 
     if not session_dir.exists():
         print(f"{RED}FAIL: no persistent session directory found in {PERSISTENT_DIR}{RESET}")
@@ -208,38 +185,27 @@ def run_doctor(binary: str, assets_dir: str, mock_base_url: str) -> tuple[str, P
     if proc.stderr.strip():
         print(proc.stderr.strip(), file=sys.stderr)
 
-    preserved_dir = cleanup_session(binary, session_id, assets_dir, existing_sessions)
-    if preserved_dir is not None:
-        session_dir = preserved_dir
+    stopped = subprocess.run(
+        [
+            "curl",
+            "-fsS",
+            "--unix-socket",
+            str(SERVICE_SOCKET),
+            "-X",
+            "POST",
+            f"http://localhost/vms/{session_id}/stop",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if stopped.returncode != 0:
+        print(f"{RED}FAIL: could not stop doctor ledger session{RESET}")
+        print((stopped.stdout + stopped.stderr)[-8_000:])
+        sys.exit(stopped.returncode)
 
     print(f"  session: {CYAN}{session_id}{RESET}  exit_code: {exit_code}")
     return session_id, session_dir, exit_code
-
-
-def cleanup_session(
-    binary: str,
-    session_id: str,
-    assets_dir: str,
-    existing_sessions: set[str],
-) -> Path | None:
-    subprocess.run(
-        [binary, "delete", session_id],
-        env=_cli_env(assets_dir),
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-    for _ in range(50):
-        matches = [
-            p
-            for p in _new_session_dirs(SESSIONS_DIR, existing_sessions)
-            if p.name.startswith(f"{session_id}-")
-        ]
-        if matches:
-            return matches[0]
-        time.sleep(0.1)
-    return None
 
 
 def verify_session(session_id: str, session_dir: Path) -> bool:
@@ -563,6 +529,18 @@ def main():
     print(f"  {GREEN}PASS{RESET}  capsem-doctor exited with code 0")
 
     ok = verify_session(session_id, session_dir)
+    if ok:
+        deleted = subprocess.run(
+            [args.binary, "delete", session_id],
+            env=_cli_env(args.assets),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if deleted.returncode != 0:
+            print(f"{RED}FAIL: could not delete validated doctor session{RESET}")
+            print((deleted.stdout + deleted.stderr)[-8_000:])
+            ok = False
     sys.exit(0 if ok else 1)
 
 

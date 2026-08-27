@@ -88,27 +88,8 @@ YELLOW = "\033[33m"
 CYAN = "\033[36m"
 RESET = "\033[0m"
 
-def _capsem_home() -> Path:
-    """Resolve the capsem base dir, honoring CAPSEM_HOME like the Rust helper.
-
-    Tests run with CAPSEM_HOME pointing at an isolated directory so this
-    script never stomps on a locally installed capsem under ~/.capsem.
-    """
-    env = os.environ.get("CAPSEM_HOME")
-    if env:
-        return Path(env)
-    return Path.home() / ".capsem"
-
-
-def _run_dir() -> Path:
-    env = os.environ.get("CAPSEM_RUN_DIR")
-    if env:
-        return Path(env)
-    return _capsem_home() / "run"
-
-
 CAPSEM_HOME = INTEGRATION_HOME
-SESSIONS_DIR = INTEGRATION_RUN_DIR / "sessions"
+PERSISTENT_DIR = INTEGRATION_RUN_DIR / "persistent"
 MAIN_DB = INTEGRATION_RUNTIME_ROOT / "sessions" / "main.db"
 SERVICE_SOCKET = INTEGRATION_RUN_DIR / "service.sock"
 SERVICE_PIDFILE = INTEGRATION_RUN_DIR / "service.pid"
@@ -174,17 +155,6 @@ def _integration_runtime_env() -> dict[str, str]:
         "CAPSEM_HOME": str(INTEGRATION_HOME),
         "CAPSEM_RUN_DIR": str(INTEGRATION_RUN_DIR),
     }
-
-
-def _new_session_dirs(sessions_dir: Path, existing: set[str]) -> list[Path]:
-    """Return session directories created after `existing` was captured."""
-    if not sessions_dir.exists():
-        return []
-    return sorted(
-        (p for p in sessions_dir.iterdir() if p.is_dir() and p.name not in existing),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
 
 
 def _vm_command(local_base_url: str) -> str:
@@ -436,12 +406,13 @@ def _print_vm_failure_diagnostics(
                 print(process_tail)
 
 
-def run_vm(binary: str, assets_dir: str, profile: str) -> tuple[str, int]:
-    """Boot a temp VM via `capsem run`, return (session_id, exit_code).
+def run_vm(binary: str, assets_dir: str, profile: str) -> tuple[bool, int]:
+    """Run telemetry proof in a named session, stop to flush, inspect, delete.
 
-    The service preserves the session dir after `run` completes, so we
-    find it by looking for the newest `*-tmp` directory created during
-    this invocation.
+    Successful `capsem run` sessions are destroyed by contract. The telemetry
+    proof needs the stopped session DB, logs, and snapshots, so it explicitly
+    owns a named session. The separate persistence proof below keeps exercising
+    the real one-shot `run` lifecycle.
     """
     env = {
         **os.environ,
@@ -454,6 +425,9 @@ def run_vm(binary: str, assets_dir: str, profile: str) -> tuple[str, int]:
     }
 
     mock_proc = None
+    session_id = None
+    telemetry_ok = False
+    exit_code = 1
 
     # Restart the dev service with CAPSEM_HOME/CAPSEM_CORP_CONFIG in its env so
     # the policy rules from `tests/fixtures/config/integration/settings.toml` actually
@@ -468,9 +442,6 @@ def run_vm(binary: str, assets_dir: str, profile: str) -> tuple[str, int]:
         "tests/fixtures/config/integration/corp.toml",
     )
 
-    # Snapshot session dirs before so we can find the new one after.
-    existing = {p.name for p in SESSIONS_DIR.iterdir()} if SESSIONS_DIR.exists() else set()
-
     try:
         mock_proc, ready = start_mock_server()
         mock_base_url = ready["base_url"]
@@ -479,21 +450,61 @@ def run_vm(binary: str, assets_dir: str, profile: str) -> tuple[str, int]:
         # Pass deterministic local fixture settings via --env so they reach the
         # VM through the service. Do not inject proxy variables: guest traffic
         # must prove the iptables-nft redirect rail.
-        cmd = _profile_run_prefix(binary, profile, timeout=300)
+        session_name = f"integration-{profile}-{os.getpid()}"
+        create = [binary, "create", "--name", session_name, "--profile", profile]
         for key, value in local_fixture_env(
             mock_base_url,
             ready.get("https_base_url"),
         ).items():
-            cmd.extend(["--env", f"{key}={value}"])
-        cmd.append(_vm_command(local_base_url=mock_base_url))
+            create.extend(["--env", f"{key}={value}"])
+        created = subprocess.run(
+            create, env=env, capture_output=True, text=True, timeout=60,
+        )
+        if created.returncode != 0 or not created.stdout.split():
+            print(f"{RED}FAIL: could not create retained integration session{RESET}")
+            print(_bounded_tail(created.stdout + created.stderr))
+            return False, created.returncode or 1
+        session_id = created.stdout.split()[0]
 
         print(f"{BOLD}Booting VM with test command ...{RESET}")
         proc = subprocess.run(
-            cmd,
+            [binary, "exec", "--timeout", "300", session_id,
+             _vm_command(local_base_url=mock_base_url)],
             env=env, capture_output=True, text=True, timeout=300,
         )
-    finally:
         stop_process(mock_proc)
+        mock_proc = None
+
+        stopped = subprocess.run(
+            ["curl", "-fsS", "--unix-socket", str(SERVICE_SOCKET),
+             "-X", "POST", f"http://localhost/vms/{session_id}/stop"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if stopped.returncode != 0:
+            print(f"{RED}FAIL: could not stop retained integration session{RESET}")
+            print(_bounded_tail(stopped.stdout + stopped.stderr))
+            return False, stopped.returncode
+
+        exit_code = proc.returncode
+        if proc.stdout.strip():
+            print(proc.stdout.strip())
+        session_dir = PERSISTENT_DIR / session_id
+        _print_vm_failure_diagnostics(proc, session_dir)
+        print(f"  session: {CYAN}{session_id}{RESET}  exit_code: {exit_code}")
+        telemetry_ok = exit_code == 0 and verify_session(session_id, session_dir)
+        if telemetry_ok:
+            deleted = subprocess.run(
+                [binary, "delete", session_id],
+                env=env, capture_output=True, text=True, timeout=30,
+            )
+            if deleted.returncode != 0:
+                print(f"{RED}FAIL: could not delete retained integration session{RESET}")
+                print(_bounded_tail(deleted.stdout + deleted.stderr))
+                telemetry_ok = False
+        return telemetry_ok, exit_code
+    finally:
+        if mock_proc is not None:
+            stop_process(mock_proc)
         # Always tear down the test service. Subsequent smoke steps spawn
         # their own fixtures, and leaving this one around would shadow any
         # default-config service the pipeline expects next.
@@ -504,25 +515,6 @@ def run_vm(binary: str, assets_dir: str, profile: str) -> tuple[str, int]:
             service_proc.kill()
         with contextlib.suppress(FileNotFoundError):
             SERVICE_PIDFILE.unlink()
-    exit_code = proc.returncode
-    if proc.stdout.strip():
-        print(proc.stdout.strip())
-
-    # Find the new session dir created during this invocation. Session names
-    # are profile-scoped (`code-1`, `co-work-1`, ...), not legacy `*-tmp`.
-    new_sessions = _new_session_dirs(SESSIONS_DIR, existing)
-
-    if not new_sessions:
-        print(f"{RED}FAIL: no new session directory found in {SESSIONS_DIR}{RESET}")
-        print(f"    {YELLOW}--- stderr ---{RESET}")
-        for line in proc.stderr.strip().splitlines()[:30]:
-            print(f"    {line}")
-        sys.exit(1)
-
-    session_id = new_sessions[0].name
-    _print_vm_failure_diagnostics(proc, new_sessions[0])
-    print(f"  session: {CYAN}{session_id}{RESET}  exit_code: {exit_code}")
-    return session_id, exit_code
 
 
 # ── assertions ───────────────────────────────────────────────────────────
@@ -559,10 +551,10 @@ class Results:
         return len(self.failed) == 0
 
 
-def verify_session(session_id: str) -> bool:
+def verify_session(session_id: str, session_dir: Path) -> bool:
     """Open the session DB, run all assertions, return True on success."""
-    db_path = SESSIONS_DIR / session_id / "session.db"
-    gz_path = SESSIONS_DIR / session_id / "session.db.gz"
+    db_path = session_dir / "session.db"
+    gz_path = session_dir / "session.db.gz"
 
     # Session DB may be gzip-compressed after vacuum. Decompress for reading.
     if not db_path.exists() and gz_path.exists():
@@ -897,7 +889,7 @@ def verify_session(session_id: str) -> bool:
             )
 
             # Cross-check: main.db rollup matches session.db actuals.
-            sconn = sqlite3.connect(str(SESSIONS_DIR / session_id / "session.db"))
+            sconn = sqlite3.connect(str(session_dir / "session.db"))
             actual_fs = sconn.execute("SELECT COUNT(*) FROM fs_events").fetchone()[0]
             actual_net = sconn.execute("SELECT COUNT(*) FROM net_events").fetchone()[0]
             actual_tools = sconn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
@@ -928,7 +920,7 @@ def verify_session(session_id: str) -> bool:
     print(f"\n{BOLD}log files{RESET}")
 
     # Per-VM session log: ~/.capsem/run/sessions/<id>/process.log
-    vm_log_path = SESSIONS_DIR / session_id / "process.log"
+    vm_log_path = session_dir / "process.log"
     r.check(
         vm_log_path.exists(),
         f"process.log exists at {vm_log_path}",
@@ -1049,7 +1041,7 @@ def verify_session(session_id: str) -> bool:
 
     # ── auto-snapshots ────────────────────────────────────────────────
     print(f"\n{BOLD}auto-snapshots{RESET}")
-    snap_dir = SESSIONS_DIR / session_id / "auto_snapshots"
+    snap_dir = session_dir / "auto_snapshots"
     r.check(
         snap_dir.exists(),
         "auto_snapshots directory exists",
@@ -1176,13 +1168,12 @@ def main():
     )
     args = parser.parse_args()
 
-    session_id, exit_code = run_vm(args.binary, args.assets, args.profile)
+    telemetry_ok, exit_code = run_vm(args.binary, args.assets, args.profile)
 
     if exit_code != 0:
         print(f"{RED}FAIL: VM integration workload exited with code {exit_code}{RESET}")
         sys.exit(1)
 
-    telemetry_ok = verify_session(session_id)
     ephemeral_ok = check_persistence(args.binary, args.assets, args.profile)
     sys.exit(0 if (telemetry_ok and ephemeral_ok) else 1)
 

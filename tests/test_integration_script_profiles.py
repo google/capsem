@@ -12,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 def load_integration_script():
     script_path = PROJECT_ROOT / "scripts" / "integration_test.py"
     spec = importlib.util.spec_from_file_location("capsem_integration_test", script_path)
+    assert spec is not None
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -86,6 +87,86 @@ def test_integration_script_pins_every_cli_run_to_the_selected_profile():
     ]
 
 
+def test_integration_telemetry_uses_a_retained_named_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("CAPSEM_INTEGRATION_HOME", str(tmp_path / "integration-home"))
+    monkeypatch.setenv(
+        "CAPSEM_INTEGRATION_RUNTIME_ROOT", str(tmp_path / "runtime-root")
+    )
+    module = load_integration_script()
+
+    persistent_dir = module.INTEGRATION_RUN_DIR / "persistent"
+    persistent_dir.mkdir(parents=True)
+    calls = []
+    stopped = {"value": False}
+
+    class FakeService:
+        def send_signal(self, _signal):
+            pass
+
+        def wait(self, timeout):
+            assert timeout == 10
+
+        def kill(self):
+            raise AssertionError("clean fake service must not be killed")
+
+    monkeypatch.setattr(module, "_kill_dev_service", lambda: None)
+    monkeypatch.setattr(
+        module,
+        "_start_service_with_test_config",
+        lambda *_args: FakeService(),
+    )
+    monkeypatch.setattr(
+        module,
+        "start_mock_server",
+        lambda: (object(), {"base_url": "http://127.0.0.1:3713"}),
+    )
+    monkeypatch.setattr(module, "stop_process", lambda _process: None)
+
+    def fake_run(args, **_kwargs):
+        args = [str(arg) for arg in args]
+        calls.append(args)
+        if len(args) > 1 and args[1] == "create":
+            (persistent_dir / "vm-123").mkdir()
+            return subprocess.CompletedProcess(args, 0, "vm-123 (persistent)\n", "")
+        if len(args) > 1 and args[1] == "exec":
+            return subprocess.CompletedProcess(args, 0, "CAPSEM_INTEGRATION_DONE\n", "")
+        if args[0] == "curl" and args[-1].endswith("/vms/vm-123/stop"):
+            stopped["value"] = True
+            return subprocess.CompletedProcess(args, 0, '{"success":true}', "")
+        if len(args) > 1 and args[1] == "delete":
+            assert stopped["value"]
+            return subprocess.CompletedProcess(args, 0, "Session deleted.\n", "")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    verified = {}
+
+    def fake_verify(session_id, session_dir):
+        assert stopped["value"], "the retained session must be stopped before DB inspection"
+        verified["session_id"] = session_id
+        verified["session_dir"] = session_dir
+        return True
+
+    monkeypatch.setattr(module, "verify_session", fake_verify)
+
+    telemetry_ok, exit_code = module.run_vm("capsem", "assets", "code")
+
+    assert telemetry_ok
+    assert exit_code == 0
+    assert verified == {
+        "session_id": "vm-123",
+        "session_dir": persistent_dir / "vm-123",
+    }
+    assert [args[1] if args[0] != "curl" else "stop" for args in calls] == [
+        "create",
+        "exec",
+        "stop",
+        "delete",
+    ]
+    assert all(len(args) < 2 or args[1] != "run" for args in calls)
+
+
 def test_integration_script_service_paths_use_process_scoped_isolated_home():
     module = load_integration_script()
 
@@ -96,7 +177,7 @@ def test_integration_script_service_paths_use_process_scoped_isolated_home():
     assert module.INTEGRATION_RUNTIME_ROOT.name == f"capsem-integration-{os.getuid()}-{os.getpid()}"
     assert module.INTEGRATION_RUN_DIR == module.INTEGRATION_RUNTIME_ROOT / "run"
     assert module.SERVICE_SOCKET == module.INTEGRATION_RUN_DIR / "service.sock"
-    assert module.SESSIONS_DIR == module.INTEGRATION_RUN_DIR / "sessions"
+    assert module.PERSISTENT_DIR == module.INTEGRATION_RUN_DIR / "persistent"
     assert module.MAIN_DB == module.INTEGRATION_RUNTIME_ROOT / "sessions" / "main.db"
     assert len(os.fsencode(module.SERVICE_SOCKET)) < 108
 
@@ -120,36 +201,6 @@ def test_integration_script_uses_isolated_credential_broker_store():
     assert env["CAPSEM_CREDENTIAL_STORE_PATH"] == str(
         module.INTEGRATION_HOME / "run" / "credential-store.json"
     )
-
-
-def test_integration_script_discovers_profile_scoped_session_names(tmp_path):
-    module = load_integration_script()
-
-    sessions = tmp_path / "run" / "sessions"
-    sessions.mkdir(parents=True)
-    (sessions / "already-there").mkdir()
-    code = sessions / "code-1"
-    cowork = sessions / "co-work-1"
-    code.mkdir()
-    cowork.mkdir()
-    older = 1_700_000_000
-    newer = older + 10
-    os.utime(code, (older, older))
-    os.utime(cowork, (newer, newer))
-
-    discovered = module._new_session_dirs(sessions, {"already-there"})
-
-    assert [p.name for p in discovered] == ["co-work-1", "code-1"]
-
-
-def test_integration_script_does_not_require_legacy_tmp_suffix(tmp_path):
-    module = load_integration_script()
-
-    sessions = tmp_path / "run" / "sessions"
-    sessions.mkdir(parents=True)
-    (sessions / "code-1").mkdir()
-
-    assert [p.name for p in module._new_session_dirs(sessions, set())] == ["code-1"]
 
 
 def test_integration_model_fixture_command_is_bounded_and_asserts_output_file():
