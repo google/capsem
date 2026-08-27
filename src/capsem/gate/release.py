@@ -75,7 +75,7 @@ class ReleaseBinariesCommand(
         _require_channel(config, channel)
 
         clean = self._worktree_steps(plan, self.source_commit())
-        accepted = clean
+        accepted = self._live_advisory_proof(plan, after=clean)
         accepted = self._forced_source_proof(plan, after=accepted)
         checked = plan.add(
             step(
@@ -208,7 +208,7 @@ class ReleaseProfileCommand(
         _require_profile(config, self._args.profile)
 
         clean = self._worktree_steps(plan, self.source_commit())
-        accepted = clean
+        accepted = self._live_advisory_proof(plan, after=clean)
         accepted = self._forced_source_proof(plan, after=accepted)
         checked = plan.add(
             step(

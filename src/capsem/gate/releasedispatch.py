@@ -94,6 +94,12 @@ class QualifiedRelease:
         )
         return (module_contracts.release_contracts(plan, self._config, after=(guards,)),)
 
+    def _live_advisory_proof(self, plan: Plan, *, after: tuple) -> tuple:
+        """Fail known-live dependency drift before spending a hosted dispatch."""
+        from . import audits
+
+        return tuple(plan.add(check, after=after) for check in audits.live(self._config))
+
     def resources(self, runner: Runner) -> tuple[Resource, ...]:
         return (
             SandboxReport(self._config, runner, mode=self._sandbox_mode),

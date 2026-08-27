@@ -25,37 +25,13 @@ def all_of(config: GateConfig) -> list[Step]:
     """Every audit, in no particular order because there is none."""
     audits = config.audits
     return [
-        # These three query mutable advisory authorities at qualification time.
-        # Locked language dependencies can be materialized before the sandbox;
-        # current RustSec, npm bulk, and OSV answers cannot.  Keep only these
-        # explicit actions on the authenticated scoped-egress runner.
-        step(
-            "audit.cargo",
-            Script(audits.cargo, outside_sandbox=True),
-            kind=Kind.STATIC_TEST,
-            needs=frozenset({Needs.NETWORK}),
-            speed=Speed.FAST,
-        ),
+        *live(config),
         # Sandboxed, and deliberately: it reads `cargo metadata --locked`,
         # resolving from the materialized cache and compiling nothing.
         step(
             "audit.dependency-drift",
             Script(audits.dependency_drift),
             kind=Kind.STATIC_TEST,
-            speed=Speed.FAST,
-        ),
-        step(
-            "audit.pnpm",
-            Script(audits.pnpm, outside_sandbox=True),
-            kind=Kind.STATIC_TEST,
-            needs=frozenset({Needs.NETWORK}),
-            speed=Speed.FAST,
-        ),
-        step(
-            "audit.python-lock",
-            Run(["bash", audits.python_lock], outside_sandbox=True),
-            kind=Kind.STATIC_TEST,
-            needs=frozenset({Needs.NETWORK}),
             speed=Speed.FAST,
         ),
         step(
@@ -99,6 +75,26 @@ def all_of(config: GateConfig) -> list[Step]:
             kind=Kind.LINT,
             speed=Speed.FAST,
         ),
+    ]
+
+
+def live(config: GateConfig) -> list[Step]:
+    """The three audit answers that can change while source stays unchanged."""
+    audits = config.audits
+    actions = (
+        ("audit.cargo", Script(audits.cargo, outside_sandbox=True)),
+        ("audit.pnpm", Script(audits.pnpm, outside_sandbox=True)),
+        ("audit.python-lock", Run(["bash", audits.python_lock], outside_sandbox=True)),
+    )
+    return [
+        step(
+            label,
+            action,
+            kind=Kind.STATIC_TEST,
+            needs=frozenset({Needs.NETWORK}),
+            speed=Speed.FAST,
+        )
+        for label, action in actions
     ]
 
 

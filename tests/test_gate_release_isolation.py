@@ -48,6 +48,9 @@ INSPECTS_THE_EDITED_TREE = ("source.worktree-clean",)
 # genuinely need the network.
 NETWORKED = {
     "release-binaries": (
+        "audit.cargo",
+        "audit.pnpm",
+        "audit.python-lock",
         "channel-source",
         "precheck",
         "source.remote-main",
@@ -55,11 +58,16 @@ NETWORKED = {
         "release",
     ),
     "release-profile": (
+        "audit.cargo",
+        "audit.pnpm",
+        "audit.python-lock",
         "source.remote-main",
         "source.publish-ref",
         "release",
     ),
 }
+
+LIVE_ADVISORIES = ("audit.cargo", "audit.pnpm", "audit.python-lock")
 
 
 def _plan(name: str, **args):
@@ -193,6 +201,23 @@ def test_force_does_not_invent_a_local_qualification_waiver() -> None:
     assert "qualification.accept" not in forced.labels
     assert "qualification.waived" not in forced.labels
     assert "source.worktree-clean" not in forced.labels
+
+
+@pytest.mark.parametrize(("name", "args"), RELEASES)
+@pytest.mark.parametrize("forced", (False, True))
+def test_release_checks_every_mutable_advisory_before_slow_or_public_work(
+    name, args, forced
+) -> None:
+    """Known-live red must fail locally before it consumes a hosted dispatch."""
+    selected = {**args, "force": "true"} if forced else args
+    ordered = list(_plan(name, **selected).labels)
+
+    for advisory in LIVE_ADVISORIES:
+        assert ordered.count(advisory) == 1
+        assert ordered.index(advisory) < ordered.index("source.remote-main")
+        assert ordered.index(advisory) < ordered.index("release")
+        if forced:
+            assert ordered.index(advisory) < ordered.index("citadel")
 
 
 def test_a_forced_release_still_proves_its_source() -> None:
