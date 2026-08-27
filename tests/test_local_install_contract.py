@@ -240,7 +240,7 @@ def test_linux_package_detects_only_its_own_service_cgroup(
             "-c",
             'source "$1"; capsem_install_runs_inside_service "$2"',
             "bash",
-            str(ROOT / "scripts/pkg-scripts/retire-cohort"),
+            str(ROOT / "scripts/pkg-scripts/service-owned-update"),
             str(cgroup_file),
         ],
         text=True,

@@ -129,11 +129,11 @@ boundary substitutes for another, and skipped or inspect-only checks do not
 count.
 
 Linux binary qualification includes the public-before to candidate-after
-self-update; it cannot depend on new service code because the previous service
-launches the first package transition. Candidate `DEBIAN/preinst` detects its
-`dpkg` inside `capsem.service` through `/proc/self/cgroup` and preserves the old
-cohort until exact manifest activation requests the managed restart. Ordinary
-package replacement still stops the unit and retires stale helpers.
+self-update because the previous service launches the first package transition.
+Candidate `DEBIAN/preinst` detects its `dpkg` in `capsem.service` through
+`/proc/self/cgroup` and preserves the old cohort. Candidate `DEBIAN/postinst`
+defers manifest hydration and status refresh so that updater can activate the
+candidate and request restart. Ordinary replacement still stops stale helpers.
 
 The exact verified `assets/manifest.json` remains the installed source of truth
 byte-for-byte. `assets/manifest-metadata.json` is its only metadata sidecar;

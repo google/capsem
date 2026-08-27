@@ -18,6 +18,8 @@ UPDATE_COMMAND = PROJECT_ROOT / "crates/capsem-service/src/update_command.rs"
 SERVICE_MAIN = PROJECT_ROOT / "crates/capsem-service/src/main.rs"
 SERVICE_INSTALL = PROJECT_ROOT / "crates/capsem/src/service_install.rs"
 DEB_PREINSTALL = PROJECT_ROOT / "scripts/deb-preinst.sh"
+DEB_POSTINSTALL = PROJECT_ROOT / "scripts/deb-postinst.sh"
+SERVICE_OWNERSHIP = PROJECT_ROOT / "scripts/pkg-scripts/service-owned-update"
 INSTALL_COHORT = PROJECT_ROOT / "scripts/pkg-scripts/retire-cohort"
 REPACK_DEB = PROJECT_ROOT / "scripts/repack-deb.sh"
 INSTALLATION_SKILL = PROJECT_ROOT / "skills/dev-installation/SKILL.md"
@@ -45,8 +47,11 @@ The first package carrying that fix is still installed by the previous service,
 which cannot run code it does not have. Its dpkg transaction must therefore be
 recognized from `/proc/self/cgroup` by the new package preinstall. While that
 transaction is inside capsem.service, preinstall must neither stop the unit nor
-retire its helper cohort. The old updater can then activate the new manifest and
-request the managed restart after dpkg has completed.
+retire its helper cohort. Postinstall must also defer manifest hydration: the
+public manifest still selects the previous package until publication, while the
+old updater already owns the exact preverified candidate. The old updater can
+then activate that candidate and request the managed restart after dpkg has
+completed.
 """
 
 
@@ -101,15 +106,15 @@ def _systemd_detection_violations(body: str) -> list[str]:
     return violations
 
 
-def _package_handoff_violations(preinstall: str, cohort: str) -> list[str]:
-    required_cohort = (
+def _package_handoff_violations(preinstall: str, ownership: str) -> list[str]:
+    required_ownership = (
         "capsem_install_runs_inside_service()",
         'grep -Eq \'(^|/)capsem[.]service($|/)\' "$cgroup_file"',
     )
     violations: list[str] = [
         f"missing `{needle}` from package cgroup detection"
-        for needle in required_cohort
-        if needle not in cohort
+        for needle in required_ownership
+        if needle not in ownership
     ]
     if "if capsem_install_runs_inside_service /proc/self/cgroup; then" not in preinstall:
         violations.append("preinstall does not detect an old-service-owned dpkg transaction")
@@ -140,6 +145,27 @@ def _managed_restart_violations(service: str, install: str) -> list[str]:
     return [f"missing managed restart rail `{needle}`" for source, needle in required if needle not in source]
 
 
+def _postinstall_handoff_violations(postinstall: str) -> list[str]:
+    guard = "if capsem_install_runs_inside_service /proc/self/cgroup; then"
+    if guard not in postinstall:
+        return ["postinstall does not detect an old-service-owned dpkg transaction"]
+    start = postinstall.index(guard)
+    end = postinstall.index('CAPSEM_INSTALL_PHASE="register_service"', start)
+    branch = postinstall[start:end]
+    if "\nelse\n" not in branch:
+        return ["postinstall does not separate service-owned and ordinary hydration"]
+    deferred, ordinary = branch.split("\nelse\n", maxsplit=1)
+    violations = []
+    if "event=defer_service_owned_manifest_activation" not in deferred:
+        violations.append("postinstall does not report deferred candidate activation")
+    for command in ("update --assets", "update --check"):
+        if command in deferred:
+            violations.append(f"service-owned postinstall still runs `{command}`")
+        if command not in ordinary:
+            violations.append(f"ordinary postinstall lost `{command}`")
+    return violations
+
+
 def test_systemd_update_owns_the_complete_transaction_outside_capsem_service() -> None:
     source = UPDATE_COMMAND.read_text()
     body = _function(
@@ -158,7 +184,7 @@ def test_systemd_update_owns_the_complete_transaction_outside_capsem_service() -
     violations.extend(
         _package_handoff_violations(
             DEB_PREINSTALL.read_text(),
-            INSTALL_COHORT.read_text(),
+            SERVICE_OWNERSHIP.read_text(),
         )
     )
     violations.extend(
@@ -170,8 +196,15 @@ def test_systemd_update_owns_the_complete_transaction_outside_capsem_service() -
     assert not violations, SYSTEMD_UPDATE_OWNERSHIP_RATIONALE + "\n" + "\n".join(violations)
 
 
+def test_service_owned_postinstall_defers_manifest_activation_to_old_updater() -> None:
+    violations = _postinstall_handoff_violations(DEB_POSTINSTALL.read_text())
+    assert not violations, SYSTEMD_UPDATE_OWNERSHIP_RATIONALE + "\n" + "\n".join(violations)
+
+
 def test_release_skills_document_the_old_service_package_handoff() -> None:
     preinstall = DEB_PREINSTALL.read_text()
+    postinstall = DEB_POSTINSTALL.read_text()
+    ownership = SERVICE_OWNERSHIP.read_text()
     cohort = INSTALL_COHORT.read_text()
     repack = REPACK_DEB.read_text()
     installation_skill = " ".join(INSTALLATION_SKILL.read_text().split())
@@ -179,6 +212,10 @@ def test_release_skills_document_the_old_service_package_handoff() -> None:
         (RELEASE_SKILL.read_text() + RELEASE_CI_INVARIANTS.read_text()).split()
     )
 
+    for maintainer_script in (preinstall, postinstall):
+        assert 'source "$(dirname "$0")/pkg-scripts/service-owned-update"' in maintainer_script
+    assert "capsem_install_runs_inside_service()" in ownership
+    assert repack.count('embed_pkg_script service-owned-update "$WORK_DIR/deb/DEBIAN/') == 2
     assert 'source "$(dirname "$0")/pkg-scripts/retire-cohort"' in preinstall
     assert '"$kill_command" -9 "$pid"' in cohort
     assert 'cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"' in repack
@@ -194,6 +231,8 @@ def test_release_skills_document_the_old_service_package_handoff() -> None:
         assert "systemctl --user stop capsem.service" in skill
         assert "stale helper cohort before package replacement" in skill
         assert "/proc/self/cgroup" in skill
+        assert "postinstall" in skill.lower()
+        assert "defers manifest hydration" in skill
     assert "preserves that unit and cohort" in installation_skill
     assert "preserves the old cohort" in release_skill
 
@@ -234,11 +273,20 @@ def test_guard_rejects_the_failure_shapes_that_reached_release_qualification() -
     )
 
     preinstall = DEB_PREINSTALL.read_text()
-    cohort = INSTALL_COHORT.read_text()
+    ownership = SERVICE_OWNERSHIP.read_text()
     self_killing_package = preinstall.replace(
         "if capsem_install_runs_inside_service /proc/self/cgroup; then",
         "if false; then",
     )
-    assert _package_handoff_violations(self_killing_package, cohort), (
+    assert _package_handoff_violations(self_killing_package, ownership), (
         "ownership guard accepts a package that kills an update launched by 0.6.1"
+    )
+
+    postinstall = DEB_POSTINSTALL.read_text()
+    stale_public_hydration = postinstall.replace(
+        "event=defer_service_owned_manifest_activation",
+        "event=defer_service_owned_manifest_activation update --assets",
+    )
+    assert _postinstall_handoff_violations(stale_public_hydration), (
+        "ownership guard accepts candidate hydration before the old updater resumes"
     )

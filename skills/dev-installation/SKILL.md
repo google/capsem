@@ -103,9 +103,13 @@ retry after failure; postinstall removes both only after success.
   old inodes. A self-update started by an older installed service is the one
   exception: `/proc/self/cgroup` proves that `dpkg` belongs to
   `capsem.service`, so preinst preserves that unit and cohort until the old
-  updater activates the new manifest and requests its managed restart. This is
-  the bootstrap for releases whose previous service does not yet contain the
-  sibling `systemd-run` updater. `scripts/deb-postinst.sh` symlinks the packaged
+  updater activates the new manifest and requests its managed restart.
+  Postinstall detects the same service-owned transaction and defers manifest
+  hydration and update-status refresh because the public manifest still
+  selects the previous package until publication; the old updater already owns
+  the exact preverified candidate. This is the bootstrap for releases whose
+  previous service does not yet contain the sibling `systemd-run` updater.
+  For ordinary installs, `scripts/deb-postinst.sh` symlinks the packaged
   binaries into `~/.capsem/bin`, hydrates assets, and invokes `capsem install`
   to register or enable the user service without restarting an already active
   unit mid-transaction.

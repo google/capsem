@@ -10,6 +10,9 @@ set -euo pipefail
 if ! declare -F capsem_install_enable_failure_trap >/dev/null; then
     source "$(dirname "$0")/pkg-scripts/install-diagnostics"
 fi
+if ! declare -F capsem_install_runs_inside_service >/dev/null; then
+    source "$(dirname "$0")/pkg-scripts/service-owned-update"
+fi
 if ! declare -F capsem_retire_native_cohort >/dev/null; then
     source "$(dirname "$0")/pkg-scripts/retire-cohort"
 fi

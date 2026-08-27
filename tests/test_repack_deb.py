@@ -268,6 +268,8 @@ def test_postinst_script_is_included(tmp_path):
     assert "Tester action: copy the output of this command into the bug report:" in postinst_text
     assert "capsem_resolve_install_manifest" in postinst_text
     assert "CAPSEM_INSTALL_MANIFEST_REQUEST" in postinst_text
+    assert "capsem_install_runs_inside_service" in postinst_text
+    assert "event=defer_service_owned_manifest_activation" in postinst_text
 
 
 def test_preinst_script_is_included(tmp_path):

@@ -48,7 +48,6 @@ embed_install_diagnostics() {
 embed_install_manifest_resolver() {
     embed_pkg_script install-manifest "$1"
 }
-
 embed_native_cohort_retirement() {
     embed_pkg_script retire-cohort "$1"
 }
@@ -253,11 +252,13 @@ ensure_deb_dependency "$WORK_DIR/deb/DEBIAN/control" \
 echo "=== Adding maintainer scripts ==="
 cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"
 embed_install_diagnostics "$WORK_DIR/deb/DEBIAN/preinst"
+embed_pkg_script service-owned-update "$WORK_DIR/deb/DEBIAN/preinst"
 embed_native_cohort_retirement "$WORK_DIR/deb/DEBIAN/preinst"
 chmod 755 "$WORK_DIR/deb/DEBIAN/preinst"
 cp "$SCRIPT_DIR/deb-postinst.sh" "$WORK_DIR/deb/DEBIAN/postinst"
 embed_install_diagnostics "$WORK_DIR/deb/DEBIAN/postinst"
 embed_install_manifest_resolver "$WORK_DIR/deb/DEBIAN/postinst"
+embed_pkg_script service-owned-update "$WORK_DIR/deb/DEBIAN/postinst"
 chmod 755 "$WORK_DIR/deb/DEBIAN/postinst"
 
 if [ ! -d "$CONFIG_ROOT/profiles" ]; then

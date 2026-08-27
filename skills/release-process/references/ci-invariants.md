@@ -151,7 +151,10 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
   available, then kills the stale helper cohort before package replacement so
   old service/gateway/tray/process binaries cannot survive from old inodes.
   `scripts/deb-postinst.sh` owns symlink refresh, asset hydration, and service
-  registration after replacement.
+  registration after replacement. When `/proc/self/cgroup` proves the package
+  transaction belongs to the old `capsem.service`, preinstall preserves that
+  cohort and postinstall defers manifest hydration/status refresh so the old
+  updater can activate its already-verified candidate after `apt` returns.
 - **Clean-checkout proof belongs before tagging.** When fixing release-only
   failures, test the exact path a runner takes: fresh checkout, install deps,
   then focused checks (`pnpm -C frontend run check`, generated-config conformance
