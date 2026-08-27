@@ -170,6 +170,19 @@ def test_nothing_is_published_before_release_preflight_passes(
     assert order.index("source.publish-ref") < order.index(publication)
 
 
+def test_hosted_release_failure_cleans_only_its_unpublished_version_claim() -> None:
+    workflow = _workflow("release.yaml")
+    cleanup = _job_block(workflow, "cleanup-unpublished-version-claim")
+
+    assert "always()" in cleanup
+    assert "failure() || cancelled()" in cleanup
+    assert "needs: [verify-release-downloads]" in cleanup
+    assert "release_version_tag.py cleanup-exact" in cleanup
+    assert '--tag "$RELEASE_TAG"' in cleanup
+    assert '--source-commit "$SOURCE_COMMIT"' in cleanup
+    assert '--repository "${{ github.repository }}"' in cleanup
+
+
 @pytest.mark.parametrize(
     ("recipe", "arguments", "release_trace"),
     (

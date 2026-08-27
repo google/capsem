@@ -21,6 +21,11 @@ NOTES_SPEC = importlib.util.spec_from_file_location("extract_release_notes", NOT
 assert NOTES_SPEC is not None and NOTES_SPEC.loader is not None
 NOTES = importlib.util.module_from_spec(NOTES_SPEC)
 NOTES_SPEC.loader.exec_module(NOTES)
+TAGS_SCRIPT = PROJECT_ROOT / "scripts" / "release_version_tag.py"
+TAGS_SPEC = importlib.util.spec_from_file_location("release_version_tag", TAGS_SCRIPT)
+assert TAGS_SPEC is not None and TAGS_SPEC.loader is not None
+TAGS = importlib.util.module_from_spec(TAGS_SPEC)
+TAGS_SPEC.loader.exec_module(TAGS)
 
 SOURCE = "0123456789abcdef0123456789abcdef01234567"
 VERSION = f"{RELEASE.RELEASE_LINE}.2"
@@ -54,8 +59,11 @@ def _prepared_tree(root: Path) -> None:
 
 
 class FakeRunner:
-    def __init__(self, *, version_target: str | None = None) -> None:
+    def __init__(
+        self, *, version_target: str | None = None, release_published: bool = False
+    ) -> None:
         self.version_target = version_target
+        self.release_published = release_published
         self.calls: list[tuple[str, ...]] = []
         self.dispatched = False
         self.dispatch_id = ""
@@ -84,6 +92,11 @@ class FakeRunner:
             return RELEASE.CommandResult(
                 f"{self.version_target}\trefs/tags/{TAG}\n"
                 f"{self.version_target}\trefs/tags/{TAG}^{{}}\n"
+            )
+        if command[:3] == ("gh", "api", "graphql"):
+            release = {"tagName": TAG} if self.release_published else None
+            return RELEASE.CommandResult(
+                json.dumps({"data": {"repository": {"release": release}}})
             )
         if "tag" in command and "-a" in command:
             return RELEASE.CommandResult("")
@@ -506,4 +519,47 @@ def test_a_version_that_already_existed_survives_a_failure(
     with pytest.raises(RuntimeError, match="macOS job failed"):
         RELEASE.release_binaries("stable", SOURCE, runner)
 
+    assert ("git", "push", "origin", f":refs/tags/{TAG}") not in runner.calls
+
+
+def test_hosted_cleanup_deletes_only_the_exact_unpublished_claim() -> None:
+    runner = FakeRunner(version_target=SOURCE)
+
+    deleted = TAGS.discard_exact_unpublished_claim(
+        runner,
+        tag=TAG,
+        source_commit=SOURCE,
+        repository="google/capsem",
+    )
+
+    assert deleted
+    assert ("git", "push", "origin", f":refs/tags/{TAG}") in runner.calls
+
+
+def test_hosted_cleanup_refuses_an_unrelated_version_tag() -> None:
+    unrelated = "f" * 40
+    runner = FakeRunner(version_target=unrelated)
+
+    with pytest.raises(RuntimeError, match="refusing to discard"):
+        TAGS.discard_exact_unpublished_claim(
+            runner,
+            tag=TAG,
+            source_commit=SOURCE,
+            repository="google/capsem",
+        )
+
+    assert ("git", "push", "origin", f":refs/tags/{TAG}") not in runner.calls
+
+
+def test_hosted_cleanup_keeps_a_published_exact_version_tag() -> None:
+    runner = FakeRunner(version_target=SOURCE, release_published=True)
+
+    deleted = TAGS.discard_exact_unpublished_claim(
+        runner,
+        tag=TAG,
+        source_commit=SOURCE,
+        repository="google/capsem",
+    )
+
+    assert not deleted
     assert ("git", "push", "origin", f":refs/tags/{TAG}") not in runner.calls

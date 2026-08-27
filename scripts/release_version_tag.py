@@ -17,8 +17,12 @@ arrives as a protocol so this module shares no infrastructure with its caller.
 
 from __future__ import annotations
 
+import argparse
+import json
 import subprocess
+import sys
 from collections.abc import Sequence
+from contextlib import suppress
 from typing import Any, Protocol
 
 
@@ -133,3 +137,104 @@ def discard_claimed_version(runner: TagRunner, tag: str) -> None:
             runner.run(argv)
         except (OSError, subprocess.CalledProcessError):
             continue
+
+
+def _repository_release_exists(runner: TagRunner, repository: str, tag: str) -> bool:
+    owner, separator, name = repository.partition("/")
+    if not separator or not owner or not name or "/" in name:
+        raise ValueError(f"repository must be owner/name, got {repository!r}")
+    query = (
+        "query($owner:String!,$name:String!,$tag:String!){"
+        "repository(owner:$owner,name:$name){release(tagName:$tag){tagName}}}"
+    )
+    raw = _capture(
+        runner,
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        f"query={query}",
+        "-F",
+        f"owner={owner}",
+        "-F",
+        f"name={name}",
+        "-F",
+        f"tag={tag}",
+    )
+    try:
+        release = json.loads(raw)["data"]["repository"]["release"]
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("GitHub returned malformed release identity data") from exc
+    return release is not None
+
+
+def discard_exact_unpublished_claim(
+    runner: TagRunner,
+    *,
+    tag: str,
+    source_commit: str,
+    repository: str,
+) -> bool:
+    """Delete only this failed hosted run's exact unpublished version claim."""
+    target = remote_version_target(runner, tag)
+    if target is None:
+        return False
+    if target != source_commit:
+        raise RuntimeError(
+            f"refusing to discard {tag}: it targets {target}, not {source_commit}"
+        )
+    if _repository_release_exists(runner, repository, tag):
+        return False
+    runner.run(("git", "push", "origin", f":refs/tags/{tag}"))
+    with suppress(OSError, subprocess.CalledProcessError):
+        runner.run(("git", "tag", "-d", tag))
+    return True
+
+
+class CommandRunner:
+    def run(
+        self,
+        argv: Sequence[str],
+        *,
+        capture: bool = False,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            list(argv),
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE if capture else None,
+            env=env,
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    cleanup = subparsers.add_parser("cleanup-exact")
+    cleanup.add_argument("--tag", required=True)
+    cleanup.add_argument("--source-commit", required=True)
+    cleanup.add_argument("--repository", required=True)
+    args = parser.parse_args()
+    if not args.tag.startswith("v"):
+        parser.error("--tag must start with v")
+    if len(args.source_commit) != 40 or any(
+        character not in "0123456789abcdef" for character in args.source_commit
+    ):
+        parser.error("--source-commit must be an exact lowercase commit")
+    try:
+        deleted = discard_exact_unpublished_claim(
+            CommandRunner(),
+            tag=args.tag,
+            source_commit=args.source_commit,
+            repository=args.repository,
+        )
+    except (OSError, subprocess.CalledProcessError, RuntimeError, ValueError) as error:
+        print(f"version-claim cleanup failed: {error}", file=sys.stderr)
+        return 1
+    print(f"{'deleted' if deleted else 'kept'} version claim {args.tag}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1382,3 +1382,21 @@ jobs:
             --marker CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK \
             --session-name release-live-public-shell-x86_64 \
             --timeout 300
+
+  cleanup-unpublished-version-claim:
+    needs: [verify-release-downloads]
+    if: ${{ always() && inputs.publish == true && (failure() || cancelled()) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+      - name: Give back an exact unpublished version claim after failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/release_version_tag.py cleanup-exact \
+            --tag "$RELEASE_TAG" \
+            --source-commit "$SOURCE_COMMIT" \
+            --repository "${{ github.repository }}"
