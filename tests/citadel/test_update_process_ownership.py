@@ -89,7 +89,10 @@ def _systemd_detection_violations(body: str) -> list[str]:
         "value.parse::<u32>()",
         "== Some(current_pid)",
     )
-    return [f"missing `{needle}`" for needle in required if needle not in body]
+    violations: list[str] = [
+        f"missing `{needle}`" for needle in required if needle not in body
+    ]
+    return violations
 
 
 def _package_handoff_violations(preinstall: str, cohort: str) -> list[str]:
@@ -97,7 +100,7 @@ def _package_handoff_violations(preinstall: str, cohort: str) -> list[str]:
         "capsem_install_runs_inside_service()",
         'grep -Eq \'(^|/)capsem[.]service($|/)\' "$cgroup_file"',
     )
-    violations = [
+    violations: list[str] = [
         f"missing `{needle}` from package cgroup detection"
         for needle in required_cohort
         if needle not in cohort

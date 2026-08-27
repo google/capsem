@@ -75,17 +75,16 @@ The complete candidate remains inside the host-kernel network boundary.
 Bubblewrap on Linux and Seatbelt on macOS provide loopback only; the one-time
 authenticated egress helper serves only marked advisory queries, fresh
 manifest/version-ref resolution, remote-main validation, source-ref
-publication, and final dispatch. Every
-brokered command remains runner-guarded and journaled. Never widen the whole
-release because one edge needs network.
+publication, and final dispatch. Every brokered command remains runner-guarded
+and journaled. Never widen the whole release because one edge needs network.
 
 Candidate and both release commands accept only the enforcing sandbox mode;
 `off` and `report` are diagnostic modes for incomplete modules and can never
 produce complete qualification evidence.
 
-Exceptional local `just test-clean` rebuilds every package/profile and runs the six release
-modules: `_test-fast`, `_test-static`, `_test-artifacts`, `_test-functional`,
-`_test-glowup`, and `_test-release-contracts`.
+Exceptional local `just test-clean` rebuilds every package/profile and runs
+the six release modules: `_test-fast`, `_test-static`, `_test-artifacts`,
+`_test-functional`, `_test-glowup`, and `_test-release-contracts`.
 
 Release CI saves construction time, never test quality. The binary lane builds
 packages and digest-resolves profiles; the profile lane builds exactly one
@@ -129,13 +128,12 @@ available. Local Apple Silicon `just test-clean` owns that VZ proof. Neither pla
 boundary substitutes for another, and skipped or inspect-only checks do not
 count.
 
-Linux binary qualification must include the public-before to candidate-after
-self-update. A release cannot depend only on new service code: the previous
-installed service launches the first package transition. The candidate
-`DEBIAN/preinst` detects that its `dpkg` process is inside `capsem.service` from
-`/proc/self/cgroup` and preserves the old cohort until exact manifest
-activation requests the managed restart. Ordinary package replacement still
-stops the user unit and retires stale helpers before unpacking.
+Linux binary qualification includes the public-before to candidate-after
+self-update; it cannot depend on new service code because the previous service
+launches the first package transition. Candidate `DEBIAN/preinst` detects its
+`dpkg` inside `capsem.service` through `/proc/self/cgroup` and preserves the old
+cohort until exact manifest activation requests the managed restart. Ordinary
+package replacement still stops the unit and retires stale helpers.
 
 The exact verified `assets/manifest.json` remains the installed source of truth
 byte-for-byte. `assets/manifest-metadata.json` is its only metadata sidecar;

@@ -39,7 +39,7 @@ So there is one file, and the other two are symlinks. Copies are refused rather
 than compared, because comparing them is what nobody ever did.
 
 A symlink also keeps every existing reference working -- `config/gate.toml`,
-`tests/test_agent_skill_index.py` and several skills name `CLAUDE.md` by path,
+`tests/citadel/test_agent_skill_index.py` and several skills name `CLAUDE.md` by path,
 and `test_agent_skill_index.py` requires that path to carry the complete skill
 index table.
 

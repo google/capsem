@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # Files that must carry the complete skill index table.
 FULL_INDEX_FILES = ("CLAUDE.md", "GEMINI.md")

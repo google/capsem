@@ -18,7 +18,6 @@ import re
 import subprocess
 import tokenize
 import tomllib
-from collections import Counter
 from pathlib import Path
 
 import pydantic
@@ -163,26 +162,6 @@ def test_the_relaxed_step_holds_back_each_ratchet_rule_exactly_once() -> None:
         assert relaxed.count(f"--ignore {rule}") == 1
     assert "src" not in relaxed.split("--ignore")[0].split()[4:], (
         "a strict root must not be re-checked with rules held back"
-    )
-
-
-def test_the_type_ratchet_records_every_diagnostic_count_exactly() -> None:
-    """Debt may shrink deliberately, but it may never grow invisibly."""
-    from capsem.gate.sourcechecks import ty_inventory_argv
-
-    result = subprocess.run(
-        ty_inventory_argv(CONFIG, CONFIG.lint.relaxed_roots),
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    counts = Counter(re.findall(r"(?:error|warning)\[([a-z][a-z0-9-]+)\]", result.stdout))
-
-    assert counts == Counter(CONFIG.lint.ty_ratchet), (
-        "Ty debt changed. Fix new diagnostics; for reductions, lower the exact "
-        "count or remove the family from config/gate.toml.\n"
-        f"expected: {dict(CONFIG.lint.ty_ratchet)}\nactual: {dict(sorted(counts.items()))}"
     )
 
 

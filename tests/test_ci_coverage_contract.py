@@ -63,7 +63,9 @@ def test_partial_macos_python_cohorts_aggregate_without_judging_the_complete_flo
     """
     ci = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     test_job = workflow_job_block(ci, "test")
-    selected = python_pytest_command_containing(test_job, "tests/test_agent_skill_index.py")
+    selected = python_pytest_command_containing(
+        test_job, "tests/citadel/test_agent_skill_index.py"
+    )
     appended = python_pytest_command_containing(test_job, "tests/capsem-release/")
 
     assert "--cov=src/capsem" in selected
