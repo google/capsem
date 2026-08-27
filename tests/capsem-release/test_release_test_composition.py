@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import yaml
+from helpers.workflow_contract import parsed_commands, workflow_job_source, workflow_jobs
 
 from capsem.gate import config as _gate_config
 
@@ -158,35 +160,20 @@ def _recipe(name: str) -> str:
 
 
 def _workflow_job(path: str, name: str) -> str:
-    lines = (PROJECT_ROOT / path).read_text(encoding="utf-8").splitlines()
-    start = lines.index(f"  {name}:")
-    end = next(
-        (
-            index
-            for index in range(start + 1, len(lines))
-            if lines[index].startswith("  ")
-            and not lines[index].startswith("    ")
-            and lines[index].endswith(":")
-        ),
-        len(lines),
+    return workflow_job_source(
+        (PROJECT_ROOT / path).read_text(encoding="utf-8"), name
     )
-    return "\n".join(lines[start:end])
 
 
 SETUP_JUST = "extractions/setup-just"
 SETUP_PNPM = "pnpm/action-setup"
 SETUP_NODE = "actions/setup-node"
 SETUP_UV = "astral-sh/setup-uv"
-UV_CALL = re.compile(r"(?<![\w-])uv[ \t]")
-
 PROVISIONED_WORKFLOWS = (
     ".github/workflows/ci.yaml",
     ".github/workflows/release.yaml",
     ".github/workflows/release-assets.yaml",
 )
-
-_TEST_PATH = re.compile(r"(?<![\w./-])tests/[\w./-]*")
-
 
 def _justfile_graph():
     script = PROJECT_ROOT / "scripts" / "justfile-graph.py"
@@ -213,12 +200,24 @@ def _tests_requiring_just() -> tuple[str, ...]:
 
 def _job_shell(job: str) -> str:
     """The shell a job runs, without `uses:` action references."""
-    return "\n".join(line for line in job.splitlines() if "uses:" not in line)
+    document = yaml.safe_load(job) or {}
+    definition = document
+    return "\n".join(
+        step["run"]
+        for step in definition.get("steps") or ()
+        if isinstance(step, dict) and isinstance(step.get("run"), str)
+    )
 
 
 def _selects_a_just_dependent_test(shell: str, just_tests: tuple[str, ...]) -> bool:
     """A directory argument selects everything under it; a file selects itself."""
-    for selected in _TEST_PATH.findall(shell):
+    selected_paths = (
+        argument
+        for command in parsed_commands(shell, origin="CI job")
+        for argument in command.argv
+        if argument.startswith("tests/")
+    )
+    for selected in selected_paths:
         if selected.endswith("/"):
             if any(test.startswith(selected) for test in just_tests):
                 return True
@@ -228,17 +227,7 @@ def _selects_a_just_dependent_test(shell: str, just_tests: tuple[str, ...]) -> b
 
 
 def _workflow_job_names(path: str) -> tuple[str, ...]:
-    lines = (PROJECT_ROOT / path).read_text(encoding="utf-8").splitlines()
-    start = lines.index("jobs:")
-    names = []
-    for line in lines[start + 1 :]:
-        if line and not line.startswith(" "):
-            break
-        match = re.match(r"^  ([A-Za-z_][\w-]*):$", line)
-        if match:
-            names.append(match.group(1))
-    assert names, f"{path} must declare jobs"
-    return tuple(names)
+    return tuple(workflow_jobs(PROJECT_ROOT / path))
 
 
 def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
@@ -261,17 +250,17 @@ def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
     assert just_tests, "the just-dependent test scan must find the release contracts"
 
     missing: list[str] = []
-    recipes_reaching_uv = GRAPH.recipes_reaching(JUSTFILE, UV_CALL)
+    recipes_reaching_uv = GRAPH.recipes_reaching(JUSTFILE, "uv")
     for path in PROVISIONED_WORKFLOWS:
         for name in _workflow_job_names(path):
             job = _workflow_job(path, name)
             shell = _job_shell(job)
-            needs_just = bool(GRAPH.JUST_CALL.search(shell)) or _selects_a_just_dependent_test(
+            needs_just = bool(GRAPH.just_recipes(shell)) or _selects_a_just_dependent_test(
                 shell, just_tests
             )
             needs_pnpm = GRAPH.shell_reaches_pnpm(shell, JUSTFILE)
-            needs_uv = bool(UV_CALL.search(shell)) or any(
-                recipe in recipes_reaching_uv for recipe in GRAPH.JUST_RECIPE.findall(shell)
+            needs_uv = GRAPH.invokes(shell, "uv") or any(
+                recipe in recipes_reaching_uv for recipe in GRAPH.just_recipes(shell)
             )
             for required, needed in (
                 (SETUP_JUST, needs_just),

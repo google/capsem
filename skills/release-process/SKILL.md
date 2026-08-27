@@ -22,10 +22,10 @@ the normative contract when older repository text disagrees.
 
 ## Reference routing
 
-- Read `references/qualification-and-test-composition.md` before changing
-  public release commands, plan composition, candidate/source guards, sandbox
-  or egress behavior, fail-stop ordering, shared test modules, artifact
-  staging, `ProfileContent`, or `--force` (CI-only changes; never shipped bytes).
+- Read `references/qualification-and-test-composition.md` before changing public
+  release commands, source guards, sandbox/egress, execution-envelope or
+  workflow/shell parity, test composition, artifact staging, `ProfileContent`, or
+  `--force` (CI-only changes; never shipped bytes).
 - Read `references/lane-workflows.md` before changing channel locking, preview
   deployment, profile/binary ownership, nightly sequencing, staged activation,
   base-image materialization, or corporate authoring.

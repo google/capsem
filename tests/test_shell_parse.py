@@ -13,7 +13,7 @@ import warnings
 
 import pytest
 
-from capsem.gate.shelllex import ForeignSourceWarning, Kind, sniff, tokenize
+from capsem.gate.shelllex import ForeignSourceWarning, Kind, heredocs, sniff, tokenize
 from capsem.gate.shellnodes import (
     AndOr,
     Command,
@@ -102,6 +102,23 @@ def test_a_heredoc_body_is_data_not_shell() -> None:
 def test_an_indented_heredoc_terminator_is_honoured() -> None:
     source = "cat <<-EOF\n\tbody\n\tEOF\necho after\n"
     assert programs(source) == ["cat", "echo"]
+
+
+def test_heredoc_metadata_preserves_quotedness_body_and_line() -> None:
+    source = "cat <<EOF\n`runs`\nEOF\ncat <<'SAFE'\n$(does-not-run)\nSAFE\n"
+
+    unquoted, quoted = heredocs(source)
+
+    assert (unquoted.delimiter, unquoted.quoted, unquoted.body) == (
+        "EOF",
+        False,
+        ((2, "`runs`"),),
+    )
+    assert (quoted.delimiter, quoted.quoted, quoted.body) == (
+        "SAFE",
+        True,
+        ((5, "$(does-not-run)"),),
+    )
 
 
 def test_an_unbalanced_quote_does_not_hang_or_raise() -> None:

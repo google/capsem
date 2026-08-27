@@ -78,6 +78,16 @@ class Token:
         return self.kind is Kind.WORD
 
 
+@dataclass(frozen=True)
+class Heredoc:
+    """One heredoc body and whether the shell expands its contents."""
+
+    delimiter: str
+    quoted: bool
+    line: int
+    body: tuple[tuple[int, str], ...]
+
+
 class Lexer:
     """A single pass over one shell body.
 
@@ -91,7 +101,8 @@ class Lexer:
         self._source = source
         self._at = 0
         self._line = 1
-        self._heredocs: list[str] = []
+        self._heredocs: list[tuple[str, bool, int]] = []
+        self.heredocs: list[Heredoc] = []
 
     def tokens(self) -> list[Token]:
         found: list[Token] = []
@@ -233,7 +244,7 @@ class Lexer:
         self._skip_blanks()
         token = self._word()
         if token.value:
-            self._heredocs.append(token.value)
+            self._heredocs.append((token.value, token.text != token.value, token.line))
         else:
             self._at = save
 
@@ -245,14 +256,18 @@ class Lexer:
         that swallowed the rest of the file.
         """
         while self._heredocs:
-            delimiter = self._heredocs.pop(0)
+            delimiter, quoted, opener_line = self._heredocs.pop(0)
+            body: list[tuple[int, str]] = []
             while self._at < len(self._source):
                 end = self._source.find("\n", self._at)
                 line = self._source[self._at : end if end != -1 else len(self._source)]
                 self._at = len(self._source) if end == -1 else end + 1
+                line_number = self._line
                 self._line += 1
                 if line.strip() == delimiter:
                     break
+                body.append((line_number, line))
+            self.heredocs.append(Heredoc(delimiter, quoted, opener_line, tuple(body)))
 
 
 def tokenize(source: str, *, origin: str = "", foreign: str = "warn") -> list[Token]:
@@ -275,3 +290,19 @@ def tokenize(source: str, *, origin: str = "", foreign: str = "warn") -> list[To
             raise ValueError(message)
         warnings.warn(message, ForeignSourceWarning, stacklevel=2)
     return Lexer(source).tokens()
+
+
+def heredocs(source: str, *, origin: str = "", foreign: str = "warn") -> tuple[Heredoc, ...]:
+    """Heredocs in one shell body, with bodies kept as data rather than tokens."""
+    if foreign != "allow" and (language := sniff(source)) is not None:
+        where = f" ({origin})" if origin else ""
+        message = (
+            f"lexing something that looks like {language}{where}. If this is a "
+            "container of shell rather than shell, extract the body first."
+        )
+        if foreign == "refuse":
+            raise ValueError(message)
+        warnings.warn(message, ForeignSourceWarning, stacklevel=2)
+    lexer = Lexer(source)
+    lexer.tokens()
+    return tuple(lexer.heredocs)

@@ -61,10 +61,10 @@ uv run python scripts/stage-release-test-inputs.py \
     --config-root target/release-config \
     --shared-config-root config
 
-CAPSEM_ASSET_MANIFEST="file://$PWD/assets/manifest.json" \
+CAPSEM_ASSET_MANIFEST="$PWD/assets/manifest.json" \
 CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
 CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/config" \
-    bash scripts/materialize-config.sh
+    bash scripts/materialize-config.sh --pair-content
 
 package=$(uv run python scripts/stage-release-test-inputs.py \
     --input-dir target/profile-public-before/packages \

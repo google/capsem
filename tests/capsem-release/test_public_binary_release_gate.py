@@ -7,7 +7,6 @@ import hashlib
 import importlib.util
 import io
 import json
-import re
 import subprocess
 import sys
 import tarfile
@@ -15,18 +14,20 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+import yaml
+from helpers.workflow_contract import workflow_job_source
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "check-public-binary-release.py"
 
 
 def _workflow_job_blocks(workflow: str) -> dict[str, str]:
-    blocks: dict[str, str] = {}
-    matches = list(re.finditer(r"(?m)^  ([a-zA-Z0-9_-]+):\n", workflow))
-    for index, match in enumerate(matches):
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(workflow)
-        blocks[match.group(1)] = workflow[match.start() : end]
-    return blocks
+    document = yaml.safe_load(workflow) or {}
+    jobs = document.get("jobs") or {}
+    assert isinstance(jobs, dict)
+    return {
+        str(name): workflow_job_source(workflow, str(name)) for name in jobs
+    }
 
 
 def _load_release_gate() -> ModuleType:
@@ -35,7 +36,11 @@ def _load_release_gate() -> ModuleType:
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    sys.path.insert(0, str(SCRIPT.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(SCRIPT.parent))
     return module
 
 

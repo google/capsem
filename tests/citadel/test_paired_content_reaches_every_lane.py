@@ -21,51 +21,63 @@ fails the comparison against the very manifest it was given.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
+
+from helpers.workflow_contract import (
+    just_recipe_names,
+    parsed_commands,
+    workflow_jobs,
+    workflow_reachable_shell,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
 WORKFLOWS = ROOT / ".github/workflows"
 
 #: The recipes whose plans contain `glowup.content`.
-PROVES_PAIRED_CONTENT = ("just qualify-binaries", "just qualify-assets")
+PROVES_PAIRED_CONTENT = {"qualify-binaries", "qualify-assets"}
 
-MATERIALIZE = "bash scripts/materialize-config.sh"
-
-
-def _jobs(workflow: Path) -> dict[str, str]:
-    """Each top-level job of a workflow, as text.
-
-    Sliced rather than parsed: the subject is what a job's `run:` blocks say,
-    and a YAML load would give back the same strings after discarding the line
-    numbers that make a failure findable.
-    """
-    text = workflow.read_text(encoding="utf-8")
-    starts = [match.start() for match in re.finditer(r"^  (?P<name>[a-z][a-z0-9-]*):$", text, re.M)]
-    names = re.findall(r"^  ([a-z][a-z0-9-]*):$", text, re.M)
-    bounds = [*starts, len(text)]
-    return {name: text[bounds[index] : bounds[index + 1]] for index, name in enumerate(names)}
+MATERIALIZE = "scripts/materialize-config.sh"
 
 
 def _qualifying_jobs() -> dict[str, str]:
-    found = {
-        f"{workflow.name}:{name}": body
-        for workflow in sorted(WORKFLOWS.glob("*.yaml"))
-        for name, body in _jobs(workflow).items()
-        if any(recipe in body for recipe in PROVES_PAIRED_CONTENT)
-    }
+    found = {}
+    for workflow in sorted(WORKFLOWS.glob("*.yaml")):
+        for name, job in workflow_jobs(workflow).items():
+            runs = [
+                step["run"]
+                for step in job.get("steps") or ()
+                if isinstance(step, dict) and isinstance(step.get("run"), str)
+            ]
+            if not any(
+                PROVES_PAIRED_CONTENT.intersection(
+                    just_recipe_names(run, origin=f"{workflow.name}:{name}")
+                )
+                for run in runs
+            ):
+                continue
+            found[f"{workflow.name}:{name}"] = workflow_reachable_shell(
+                ROOT, workflow, job=name
+            )
     assert found, "no workflow job qualifies a release, so this guard watches nothing"
     return found
+
+
+def _materializers(label: str, shell: str):
+    return [
+        command
+        for command in parsed_commands(shell, origin=label)
+        if MATERIALIZE in command.argv
+    ]
 
 
 def test_every_qualifying_job_pairs_the_content_it_materializes() -> None:
     """The flag itself, in the jobs whose plans compare the two manifests."""
     unpaired = [
-        f"{label}: {line.strip()}"
+        f"{label}: {' '.join(command.argv)}"
         for label, body in _qualifying_jobs().items()
-        for line in body.splitlines()
-        if MATERIALIZE in line and "--pair-content" not in line
+        for command in _materializers(label, body)
+        if "--pair-content" not in command.argv
     ]
     assert not unpaired, (
         "these jobs qualify a release and materialize configuration without "
@@ -81,11 +93,11 @@ def test_the_paired_manifest_is_named_as_a_path_and_not_a_url() -> None:
     reads like a mismatch in the content rather than in how it was addressed.
     """
     urls = [
-        f"{label}: {line.strip()}"
+        f"{label}: {assignment}"
         for label, body in _qualifying_jobs().items()
-        if MATERIALIZE in body
-        for line in body.splitlines()
-        if "CAPSEM_ASSET_MANIFEST=" in line and "file://" in line
+        for command in _materializers(label, body)
+        for assignment in command.assignments
+        if assignment.startswith("CAPSEM_ASSET_MANIFEST=") and "file://" in assignment
     ]
     assert not urls, (
         "a paired materialization compares its selected manifest against the "

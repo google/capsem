@@ -29,6 +29,7 @@ import os
 from pathlib import Path
 
 import pytest
+from helpers import gate as gate_helpers
 from helpers.gate import RecordingJournal, RecordingRunner, gate_issued
 
 from capsem.gate import cli  # noqa: F401 - imported so every command registers
@@ -477,6 +478,25 @@ def test_interrogating_the_gate_plan_leaves_the_checkout_alone() -> None:
         )
     finally:
         recorded.unlink(missing_ok=True)
+
+
+def test_exact_release_dispatcher_inspects_its_immutable_prefix_without_candidate_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _checkout(tmp_path)
+    config = gate_config.for_root(root)
+    commit = "a" * 40
+    validated = []
+    monkeypatch.setattr(gate_helpers, "PROJECT_ROOT", root)
+    monkeypatch.setenv(config.locks.gate.run_marker, "test-gate")
+    monkeypatch.setenv(config.environment.qualified_source_commit, commit)
+    monkeypatch.setattr(
+        "capsem.gate.sourcecommit.require_detached_checkout",
+        lambda found_root, found_commit: validated.append((found_root, str(found_commit))),
+    )
+
+    assert gate_helpers._inspection_subject(root, config) == root
+    assert validated == [(root, commit)]
 
 
 def test_exact_plan_inspection_derives_from_the_recorded_source_snapshot(

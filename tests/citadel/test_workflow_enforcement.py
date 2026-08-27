@@ -23,7 +23,6 @@ apart gets deleted the first time it blocks something reasonable.
 
 from __future__ import annotations
 
-import re
 from enum import StrEnum
 from pathlib import Path
 
@@ -31,7 +30,9 @@ import pytest
 import yaml
 from helpers.workflow_contract import (
     canonical_shell_commands,
+    direct_script_paths,
     disables_fail_fast,
+    dispatched_script_paths,
     is_bare_command,
     referenced_need_results,
 )
@@ -134,10 +135,6 @@ def _result_env(step: dict) -> dict[str, frozenset[str]]:
     return found
 
 
-#: A step that dispatches to a checked-in script instead of carrying its body.
-SCRIPT_DISPATCH = re.compile(r"\b(?:bash|sh)\s+(scripts/[A-Za-z0-9_./-]+\.sh)")
-
-
 def _step_shell(step: dict) -> str:
     """A step's shell, following a dispatch into `scripts/`.
 
@@ -151,7 +148,7 @@ def _step_shell(step: dict) -> str:
     and both halves are on that path.
     """
     body = str(step.get(Key.RUN, ""))
-    for relative in SCRIPT_DISPATCH.findall(body):
+    for relative in dispatched_script_paths(body, origin="workflow enforcement step"):
         script = PROJECT_ROOT / relative
         if script.is_file():
             body = f"{body}\n{script.read_text(encoding='utf-8')}"
@@ -191,7 +188,7 @@ def _decides_the_gate(command: tuple[str, ...], results: dict[str, frozenset[str
     all. Recognising only the comparison let the mutation battery pass a
     workflow whose gate had been switched off.
     """
-    if SCRIPT_DISPATCH.search(" ".join(command)):
+    if command[:1] in {("bash",), ("sh",)} and direct_script_paths(command):
         return True
     if command[:1] != (ENFORCEMENT_COMMAND,):
         return False
@@ -407,7 +404,11 @@ def _apply(document: dict, mutation: Mutation) -> dict:
                         line.strip().startswith(f"{ENFORCEMENT_COMMAND} ")
                         and any(name in line for name in results)
                     )
-                    or SCRIPT_DISPATCH.search(line)
+                    or any(
+                        command[:1] in {("bash",), ("sh",)}
+                        and direct_script_paths(command)
+                        for command in canonical_shell_commands(line)
+                    )
                     else line
                     for line in str(step[Key.RUN]).splitlines()
                 )

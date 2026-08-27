@@ -7,13 +7,18 @@ Artifact correctness remains covered by the executable lane and glow-up suites.
 from __future__ import annotations
 
 import importlib.util
-import re
 import sys
 from itertools import product
 from pathlib import Path
 
 import pytest
-from helpers.workflow_contract import workflow_reachable_text
+from helpers.workflow_contract import (
+    emitted_assignment_names,
+    parsed_commands,
+    workflow_reachable_shell,
+    workflow_reachable_text,
+    workflow_step,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -171,12 +176,12 @@ def test_nothing_is_published_before_release_preflight_passes(
         (
             "release-binaries",
             ("stable",),
-            r"scripts/release-binaries\.py stable 0{40}",
+            f"scripts/release-binaries.py stable {'0' * 40}",
         ),
         (
             "release-profile",
             ("stable", "code"),
-            r"capsem-admin -- release --channel stable --profile code --source-commit 0{40}",
+            f"capsem-admin -- release --channel stable --profile code --source-commit {'0' * 40}",
         ),
     ),
 )
@@ -205,9 +210,7 @@ def test_public_release_command_runs_preflight_before_dispatching_qualification(
     assert order.index("source.publish-ref") < order.index("release")
 
     # And the publishing step is the one the trace names.
-    import re
-
-    assert re.search(release_trace, "\n".join(plan.step_named("release").render())), (
+    assert release_trace in "\n".join(plan.step_named("release").render()), (
         f"the release step does not run {release_trace}"
     )
 
@@ -546,7 +549,7 @@ def test_binary_lane_pulls_profiles_and_never_builds_them() -> None:
 
 
 def test_profile_lane_installs_pulled_package_runtime_dependencies() -> None:
-    pairing = workflow_reachable_text(
+    pairing = workflow_reachable_shell(
         ROOT,
         WORKFLOWS / "release-assets.yaml",
         job="test-profile-pairing",
@@ -558,7 +561,12 @@ def test_profile_lane_installs_pulled_package_runtime_dependencies() -> None:
 
     assert resolve_package < install_dependencies < functional
     assert "sudo dpkg -i" not in pairing
-    assert not re.search(r"sudo apt-get install[^\n]*(?:\$package|\.deb)", pairing)
+    assert not any(
+        command.program == "apt-get"
+        and "sudo" in command.argv
+        and any(word == "$package" or word.endswith(".deb") for word in command.argv)
+        for command in parsed_commands(pairing, origin="release-assets:test-profile-pairing")
+    )
 
 
 def test_binary_candidate_manifest_is_authored_once_before_pairing() -> None:
@@ -612,17 +620,25 @@ def test_binary_pairing_uses_exact_public_before_and_candidate_after_cohorts() -
     ) in pairing
     assert "kind: profiles" in pairing
     assert "target/candidate-profile-inputs" in pairing
+    activation = workflow_step(
+        WORKFLOWS / "release.yaml",
+        "test-binary-pairing",
+        "Activate exact candidate package binaries for functional tests",
+    )
+    exported = emitted_assignment_names(
+        str(activation["run"]), origin="release.yaml:test-binary-pairing:activate"
+    )
     for variable in (
         "CAPSEM_RELEASE_CHANNEL",
-        "CAPSEM_RELEASE_BASELINE_CHANNEL=${{ needs.resolve-channel-source.outputs.baseline_channel }}",
-        "CAPSEM_RELEASE_TRANSITION=auto",
+        "CAPSEM_RELEASE_BASELINE_CHANNEL",
+        "CAPSEM_RELEASE_TRANSITION",
         "CAPSEM_RELEASE_BEFORE_MANIFEST",
         "CAPSEM_RELEASE_AFTER_MANIFEST",
         "CAPSEM_RELEASE_BEFORE_PACKAGE",
         "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS",
         "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS",
     ):
-        assert variable in pairing
+        assert variable in exported
 
 
 def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:

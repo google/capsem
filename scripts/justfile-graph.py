@@ -20,6 +20,15 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+try:
+    from capsem.gate.shellnodes import commands
+    from capsem.gate.shellparse import parse as parse_shell
+except ModuleNotFoundError:  # pragma: no cover - standalone script path
+    import sys
+
+    sys.path.insert(0, str(ROOT / "src"))
+    from capsem.gate.shellnodes import commands
+    from capsem.gate.shellparse import parse as parse_shell
 
 # A recipe header is `name params: deps`, anchored at column zero so recipe
 # bodies (always indented) cannot match. `:(?![=])` keeps `foo := bar`
@@ -27,13 +36,6 @@ ROOT = Path(__file__).resolve().parents[1]
 RECIPE_HEADER = re.compile(
     r"(?m)^(?P<name>[A-Za-z_][\w-]*)(?P<params>[^:\n]*):(?![=])(?P<deps>[^\n]*)$"
 )
-# `just`/`pnpm` must be followed by an argument on the SAME line: `\s` would
-# span newlines and match the trailing "just" of `uses: extractions/setup-just`.
-JUST_CALL = re.compile(r"(?<![\w-])just[ \t]+[-_A-Za-z]")
-JUST_RECIPE = re.compile(r"(?<![\w-])just[ \t]+([-_A-Za-z][\w-]*)")
-PNPM_CALL = re.compile(r"(?<![\w-])pnpm[ \t]")
-
-
 def read_justfile(root: Path = ROOT) -> str:
     return (root / "justfile").read_text(encoding="utf-8")
 
@@ -55,7 +57,32 @@ def recipe_body(justfile: str, name: str) -> str:
     return "\n".join(lines[start:end])
 
 
-GATE_COMMAND = re.compile(r"capsem-gate\s+([a-z][a-z0-9-]*)")
+def shell_commands(shell: str):
+    """Commands in shell position; comments, strings and spacing are inert."""
+    return commands(parse_shell(shell, origin="justfile graph"))
+
+
+def invokes(shell: str, program: str) -> bool:
+    return any(command.program == program for command in shell_commands(shell))
+
+
+def just_recipes(shell: str) -> tuple[str, ...]:
+    return tuple(
+        command.subcommand()
+        for command in shell_commands(shell)
+        if command.program == "just" and command.subcommand()
+    )
+
+
+def gate_commands(shell: str) -> tuple[str, ...]:
+    found = []
+    for command in shell_commands(shell):
+        if "capsem-gate" not in command.argv:
+            continue
+        index = command.argv.index("capsem-gate") + 1
+        if index < len(command.argv):
+            found.append(command.argv[index])
+    return tuple(found)
 
 
 @functools.cache
@@ -103,8 +130,8 @@ def recipe_dependency_graph(justfile: str) -> dict[str, tuple[str, ...]]:
     }
 
 
-def recipes_reaching(justfile: str, command: re.Pattern[str]) -> frozenset[str]:
-    """Every recipe that runs `command` itself, or reaches one that does."""
+def recipes_reaching(justfile: str, program: str) -> frozenset[str]:
+    """Every recipe that runs ``program`` itself, or reaches one that does."""
     graph = recipe_dependency_graph(justfile)
     bodies = {name: recipe_body(justfile, name) for name in graph}
     # A recipe reaches `command` if it runs it, or if it dispatches to a gate
@@ -113,7 +140,7 @@ def recipes_reaching(justfile: str, command: re.Pattern[str]) -> frozenset[str]:
     reaching = {
         name
         for name, body in bodies.items()
-        if command.search(body) or _gate_dispatch_matches(body, command)
+        if invokes(body, program) or _gate_dispatch_matches(body, program)
     }
     changed = True
     while changed:
@@ -121,7 +148,7 @@ def recipes_reaching(justfile: str, command: re.Pattern[str]) -> frozenset[str]:
         for name, dependencies in graph.items():
             if name in reaching:
                 continue
-            invoked = set(JUST_RECIPE.findall(bodies[name]))
+            invoked = set(just_recipes(bodies[name]))
             if any(dep in reaching for dep in dependencies) or any(
                 call in reaching for call in invoked
             ):
@@ -130,33 +157,28 @@ def recipes_reaching(justfile: str, command: re.Pattern[str]) -> frozenset[str]:
     return frozenset(reaching)
 
 
-def _gate_dispatch_matches(body: str, command: re.Pattern[str]) -> bool:
-    return any(
-        command.search(gate_command_body(name)) for name in GATE_COMMAND.findall(body)
-    )
+def _gate_dispatch_matches(body: str, program: str) -> bool:
+    return any(invokes(gate_command_body(name), program) for name in gate_commands(body))
 
 
 def recipes_running_pnpm(justfile: str) -> frozenset[str]:
-    return recipes_reaching(justfile, PNPM_CALL)
+    return recipes_reaching(justfile, "pnpm")
 
 
 def recipe_reaches_pnpm_through_the_gate(body: str) -> bool:
-    return any(
-        PNPM_CALL.search(gate_command_body(name))
-        for name in GATE_COMMAND.findall(body)
-    )
+    return any(invokes(gate_command_body(name), "pnpm") for name in gate_commands(body))
 
 
 def shell_reaches_pnpm(shell: str, justfile: str) -> bool:
     """Whether a CI job's shell runs pnpm directly, through a recipe, or
     through a gate command a recipe dispatches to."""
-    if PNPM_CALL.search(shell):
+    if invokes(shell, "pnpm"):
         return True
     if recipe_reaches_pnpm_through_the_gate(shell):
         return True
 
     reaching = recipes_running_pnpm(justfile)
-    invoked = JUST_RECIPE.findall(shell)
+    invoked = just_recipes(shell)
     if any(recipe in reaching for recipe in invoked):
         return True
 

@@ -515,15 +515,10 @@ def _inspection_checkout(source: Path) -> Iterator[Path]:
     from unittest.mock import patch
 
     from capsem.gate import config as gate_config
-    from capsem.gate import host, snapshot, sourcecapture
+    from capsem.gate import host, snapshot
 
     config = gate_config.load(source)
-    subject = source
-    if (
-        os.environ.get(config.locks.gate.run_marker) is not None
-        and source.resolve() == PROJECT_ROOT.resolve()
-    ):
-        subject = sourcecapture.require_recorded(config).root
+    subject = _inspection_subject(source, config)
 
     with tempfile.TemporaryDirectory(
         prefix=".capsem-gate-inspect-", dir=source.parent
@@ -545,6 +540,31 @@ def _inspection_checkout(source: Path) -> Iterator[Path]:
             # macOS ``cp -c`` and asks GNU cp to execute it.
             _seed_observed_source(checkout)
         yield checkout
+
+
+def _inspection_subject(source: Path, config) -> Path:
+    """Select immutable source without inventing candidate evidence for dispatchers."""
+    if (
+        os.environ.get(config.locks.gate.run_marker) is None
+        or source.resolve() != PROJECT_ROOT.resolve()
+    ):
+        return source
+    receipt = config.path(config.candidate.source_state_file)
+    if receipt.exists():
+        from capsem.gate import sourcecapture
+
+        return sourcecapture.require_recorded(config).root
+
+    selected = os.environ.get(config.environment.qualified_source_commit)
+    if selected is None:
+        from capsem.gate import sourcecapture
+
+        return sourcecapture.require_recorded(config).root
+    from capsem.gate import sourcecommit
+
+    commit = sourcecommit.SourceCommit(selected)
+    sourcecommit.require_detached_checkout(source, commit)
+    return source
 
 
 def _seed_observed_source(checkout: Path) -> None:

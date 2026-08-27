@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 from pathlib import Path
 
+import yaml
+from helpers.workflow_contract import workflow_job_source, workflow_step_source
 from rust_sources import sibling_tests
 
 from capsem.gate.versions import workspace_version
@@ -24,16 +25,12 @@ def _function(source: str, name: str, next_name: str) -> str:
 
 
 def _job(workflow: str, name: str, _next_name: str) -> str:
-    body = workflow.split(f"  {name}:\n", maxsplit=1)[1]
-    next_job = re.search(r"\n  [a-z0-9][a-z0-9-]*:\n", body)
-    return body if next_job is None else body[: next_job.start()]
+    return workflow_job_source(workflow, name)
 
 
 def _step(job: str, name: str, next_name: str | None) -> str:
-    body = job.split(f"      - name: {name}\n", maxsplit=1)[1]
-    if next_name is None:
-        return body
-    return body.split(f"      - name: {next_name}\n", maxsplit=1)[0]
+    del next_name
+    return workflow_step_source(job, name)
 
 
 def _release_plan(command: str, *arguments: str):
@@ -198,9 +195,7 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
         "Build deployable channel from authored source manifest",
         "Attest VM asset provenance",
     )
-    immutable = _step(publish, "Publish immutable GitHub profile release", None).split(
-        "\n      - uses:", maxsplit=1
-    )[0]
+    immutable = _step(publish, "Publish immutable GitHub profile release", None)
 
     assert "needs.author-profile-release.outputs.release_needed == 'true'" in pairing
     assert "uses: ./.github/workflows/fast-gate.yaml" in fast_gate
@@ -398,9 +393,7 @@ def test_profile_publication_retry_verifies_owned_bytes_and_uploads_only_missing
         encoding="utf-8"
     )
     publish = _job(workflow, "publish-profile-release", "deploy-channel")
-    immutable = _step(publish, "Publish immutable GitHub profile release", None).split(
-        "\n      - uses:", maxsplit=1
-    )[0]
+    immutable = _step(publish, "Publish immutable GitHub profile release", None)
 
     assert "scripts/publish-immutable-release-assets.sh" in immutable
     assert (
@@ -422,9 +415,14 @@ def test_profile_publication_retry_verifies_owned_bytes_and_uploads_only_missing
 def test_profile_provenance_precedes_authoritative_source_publication() -> None:
     workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
     publish = _job(workflow, "publish-profile-release", "deploy-channel")
+    names = [
+        step.get("name")
+        for step in (yaml.safe_load(publish) or {}).get("steps") or ()
+        if isinstance(step, dict)
+    ]
 
-    assert publish.index("      - name: Attest VM asset provenance") < publish.index(
-        "      - name: Publish immutable GitHub profile release"
+    assert names.index("Attest VM asset provenance") < names.index(
+        "Publish immutable GitHub profile release"
     )
 
 

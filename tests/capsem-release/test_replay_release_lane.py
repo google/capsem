@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
-import re
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from helpers.workflow_contract import emitted_assignment_names, workflow_step
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "replay-release-lane.py"
@@ -43,13 +43,14 @@ def test_binary_replay_uses_fabricated_content_and_exact_workflow_environment(
     assert environment["CAPSEM_TEST_ASSETS_DIR"] == f"{cohort['content_root']}/assets"
     assert environment["CAPSEM_TEST_CONFIG_ROOT"] == f"{cohort['content_root']}/target/config"
 
-    workflow = (ROOT / ".github" / "workflows" / "release.yaml").read_text(
-        encoding="utf-8"
+    activation = workflow_step(
+        ROOT / ".github" / "workflows" / "release.yaml",
+        "test-binary-pairing",
+        "Activate exact candidate package binaries for functional tests",
     )
-    pairing = workflow.split("  test-binary-pairing:\n", maxsplit=1)[1].split(
-        "\n  create-release:", maxsplit=1
-    )[0]
-    workflow_environment = set(re.findall(r'echo "(CAPSEM_[A-Z0-9_]+)=', pairing))
+    workflow_environment = emitted_assignment_names(
+        str(activation["run"]), origin="release.yaml:test-binary-pairing:activate"
+    )
     replay_environment = {
         name
         for name in environment

@@ -224,6 +224,21 @@ preparation may differ—local builds both families, a release lane downloads th
 unchanged family—but the resulting manifest-addressed bundle enters the same
 module implementations.
 
+The shared module list is only half of parity. Release contracts must exercise
+each legal execution envelope: ordinary checkout, exact detached dispatcher
+prefix without a candidate receipt, and hosted qualification with materialized
+inputs. A helper that branches on gate markers or release variables owes a
+focused case for every legal branch; otherwise one test list describes several
+incompatible "fast" realities.
+
+Parse release workflows as YAML and pass each selected `run:` body to
+`capsem.gate.shelllex`/`shellparse`. Never use regex, indentation slicing, or
+`str.index` to infer jobs, steps, commands, assignments, redirections, or
+heredocs. Presentation changes such as `echo` to `printf`, quoting, line wraps,
+or YAML flow-to-block style do not change a release contract and must not spend
+a hosted dispatch. Add the shared semantic reader first, then a Citadel guard
+that prevents a second textual parser.
+
 Assets and materialized configuration travel as one `ProfileContent` root.
 Package construction, Debian proof, macOS Tart/physical-VZ proof, and final
 install/glow-up must derive both paths from that one value and validate it

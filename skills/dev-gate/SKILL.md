@@ -429,6 +429,12 @@ raw templates on the first attempt and reported a correctly chained
 Its suite found four bugs in it before any consumer did. Add cases to
 `tests/test_shell_parse.py` when you extend it.
 
+This applies to tests too: a workflow is parsed as YAML, its `run:` value is
+then passed to `shelllex`/`shellparse`, and heredocs come from the lexer's
+metadata. Do not use regex or indentation slicing as a smaller local parser.
+That creates a second grammar which eventually disagrees on quoting, `printf`,
+or a moved script and turns the release dispatcher into the first real test.
+
 ## An exclusion is exact, hashed, and states why
 
 Every guard eventually meets something it should not fail on. `exclusions.py`

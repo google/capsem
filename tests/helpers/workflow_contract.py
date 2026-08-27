@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import textwrap
 from collections.abc import Mapping
 from dataclasses import dataclass
 from itertools import pairwise
@@ -11,6 +12,10 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from yaml.nodes import MappingNode, Node, SequenceNode
+
+from capsem.gate.shellnodes import Command, commands
+from capsem.gate.shellparse import parse as parse_shell
 
 from .shelltokens import OPERATORS, REDIRECTS, tokenize
 
@@ -21,6 +26,139 @@ _GITHUB_EXPRESSION = re.compile(r"\$\{\{\s*(.*?)\s*}}")
 # authoritative.
 _NEEDS_RESULT = re.compile(r"\bneeds\.([A-Za-z0-9_-]+)\.result\b")
 _DIRECT_SCRIPT = re.compile(r"^scripts/[A-Za-z0-9_./-]+\.(?:sh|py)$")
+
+
+def workflow_document(path: Path) -> dict[str, Any]:
+    """Load one workflow as YAML instead of rediscovering its indentation."""
+    document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    assert isinstance(document, dict), f"{path.name}: workflow must be a mapping"
+    return document
+
+
+def workflow_jobs(path: Path) -> Mapping[str, Any]:
+    """The workflow's jobs, preserving YAML's declaration order."""
+    jobs = workflow_document(path).get("jobs") or {}
+    assert isinstance(jobs, dict) and jobs, f"{path.name}: workflow must declare jobs"
+    return jobs
+
+
+def workflow_job(path: Path, name: str) -> dict[str, Any]:
+    """One exact workflow job selected by YAML identity."""
+    job = workflow_jobs(path).get(name)
+    assert isinstance(job, dict), f"{path.name}: missing or invalid job {name!r}"
+    return job
+
+
+def workflow_step(path: Path, job_name: str, step_name: str) -> dict[str, Any]:
+    """One exact named step selected from a parsed workflow."""
+    matches = [
+        step
+        for step in workflow_job(path, job_name).get("steps") or ()
+        if isinstance(step, dict) and step.get("name") == step_name
+    ]
+    assert len(matches) == 1, (
+        f"{path.name}:{job_name}: expected one step named {step_name!r}, "
+        f"found {len(matches)}"
+    )
+    return matches[0]
+
+
+def _mapping_value(node: Node, key: str) -> Node | None:
+    if not isinstance(node, MappingNode):
+        return None
+    return next(
+        (value for found, value in node.value if getattr(found, "value", None) == key),
+        None,
+    )
+
+
+def workflow_job_source(source: str, name: str) -> str:
+    """One job's original YAML bytes, selected through the parsed document."""
+    document = yaml.compose(source)
+    jobs = _mapping_value(document, "jobs") if document is not None else None
+    job = _mapping_value(jobs, name) if jobs is not None else None
+    assert job is not None, f"workflow is missing job {name!r}"
+    selected = source[job.start_mark.index : job.end_mark.index]
+    return textwrap.dedent(" " * job.start_mark.column + selected)
+
+
+def workflow_step_source(job_source: str, name: str) -> str:
+    """One step's original YAML bytes, selected by its parsed ``name`` key."""
+    job = yaml.compose(job_source)
+    steps = _mapping_value(job, "steps") if job is not None else None
+    assert isinstance(steps, SequenceNode), f"job has no steps while selecting {name!r}"
+    matches = [
+        step
+        for step in steps.value
+        if getattr(_mapping_value(step, "name"), "value", None) == name
+    ]
+    assert len(matches) == 1, f"expected one step named {name!r}"
+    step = matches[0]
+    selected = job_source[step.start_mark.index : step.end_mark.index]
+    return textwrap.dedent(" " * step.start_mark.column + selected)
+
+
+def parsed_commands(shell: str, *, origin: str) -> tuple[Command, ...]:
+    """Commands in one shell body, independent of quoting and presentation."""
+    return tuple(commands(parse_shell(shell, origin=origin)))
+
+
+def emitted_assignment_names(shell: str, *, origin: str) -> frozenset[str]:
+    """Assignment records emitted by ``echo`` or ``printf`` commands.
+
+    GitHub environment steps write ``NAME=value`` records to ``GITHUB_ENV``.
+    Reading their shell as text made ``echo`` and ``printf`` different
+    contracts. The parser makes the command and its arguments authoritative;
+    splitting a printf format's literal ``\\n`` then recovers its records.
+    """
+    found: set[str] = set()
+    for command in parsed_commands(shell, origin=origin):
+        if command.program not in {"echo", "printf"}:
+            continue
+        for argument in command.argv[1:]:
+            for record in argument.replace("\\n", "\n").splitlines():
+                name, separator, _value = record.partition("=")
+                if separator and name and name.replace("_", "a").isalnum():
+                    found.add(name)
+    return frozenset(found)
+
+
+def dispatched_script_paths(shell: str, *, origin: str) -> tuple[str, ...]:
+    """Tracked scripts reached directly through a shell interpreter."""
+    return tuple(
+        path
+        for command in parsed_commands(shell, origin=origin)
+        if command.program in {"bash", "sh"}
+        for path in direct_script_paths(command.argv)
+    )
+
+
+_JUST_OPTIONS_WITH_VALUE = frozenset(
+    {"--chooser", "--justfile", "--shell", "--shell-arg", "--working-directory", "-f", "-d"}
+)
+
+
+def just_recipe_names(shell: str, *, origin: str) -> tuple[str, ...]:
+    """Recipes invoked in shell command position, not comments or arguments."""
+    found: list[str] = []
+    for command in parsed_commands(shell, origin=origin):
+        if command.program != "just":
+            continue
+        arguments = iter(command.argv[command.argv.index("just") + 1 :])
+        for argument in arguments:
+            if argument in _JUST_OPTIONS_WITH_VALUE:
+                next(arguments, None)
+            elif argument == "--set":
+                next(arguments, None)
+                next(arguments, None)
+            elif argument == "--":
+                if recipe := next(arguments, None):
+                    found.append(recipe)
+                break
+            elif not argument.startswith("-"):
+                found.append(argument)
+                break
+    return tuple(found)
 
 
 def direct_script_paths(command: tuple[str, ...]) -> tuple[str, ...]:
@@ -86,6 +224,37 @@ def workflow_reachable_text(
                         f"{workflow.name}:{job_name} dispatches untracked {candidate}"
                     )
                     rendered.append((root / candidate).read_text(encoding="utf-8"))
+    return "\n".join(rendered)
+
+
+def workflow_reachable_shell(root: Path, workflow: Path, *, job: str) -> str:
+    """A job's run bodies plus directly dispatched tracked scripts.
+
+    Unlike ``workflow_reachable_text``, this is a shell-only subject suitable
+    for ``shellparse``. Feeding YAML containing shell to the parser produces a
+    plausible tree of the container rather than the program inside it.
+    """
+    tracked = set(
+        subprocess.run(
+            ["git", "ls-files"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+    )
+    rendered: list[str] = []
+    for index, step in enumerate(workflow_job(workflow, job).get("steps") or ()):
+        if not isinstance(step, dict) or not isinstance(step.get("run"), str):
+            continue
+        body = step["run"]
+        rendered.append(body)
+        for command in parsed_commands(body, origin=f"{workflow.name}:{job}:{index}"):
+            for candidate in direct_script_paths(command.argv):
+                assert candidate in tracked, (
+                    f"{workflow.name}:{job} dispatches untracked {candidate}"
+                )
+                rendered.append((root / candidate).read_text(encoding="utf-8"))
     return "\n".join(rendered)
 
 

@@ -20,18 +20,14 @@ the internals.
 
 from __future__ import annotations
 
-import re
 import tomllib
 from pathlib import Path
 
 import pytest
+from helpers.workflow_contract import just_recipe_names, workflow_jobs
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = sorted((PROJECT_ROOT / ".github/workflows").glob("*.yaml"))
-
-#: `just [--flags] <recipe>`, capturing the recipe name.
-_JUST_CALL = re.compile(r"\bjust\s+(?:--?[\w-]+(?:[= ][^\s]+)?\s+)*([A-Za-z_][\w-]*)")
-
 
 def _approved() -> set[str]:
     document = tomllib.loads(
@@ -40,19 +36,27 @@ def _approved() -> set[str]:
     return set(document["just"]["approved"])
 
 
-def _calls(text: str) -> set[str]:
-    return set(_JUST_CALL.findall(text))
+def _calls(workflow: Path) -> set[str]:
+    return {
+        recipe
+        for job_name, job in workflow_jobs(workflow).items()
+        for index, step in enumerate(job.get("steps") or ())
+        if isinstance(step, dict) and isinstance(step.get("run"), str)
+        for recipe in just_recipe_names(
+            step["run"], origin=f"{workflow.name}:{job_name}:{index}"
+        )
+    }
 
 
 def test_the_workflow_inventory_is_not_empty() -> None:
     """Without this the guard passes by finding nothing to check."""
     assert len(WORKFLOWS) >= 5
-    assert any(_calls(path.read_text(encoding="utf-8")) for path in WORKFLOWS)
+    assert any(_calls(path) for path in WORKFLOWS)
 
 
 @pytest.mark.parametrize("workflow", WORKFLOWS, ids=lambda path: path.name)
 def test_no_workflow_invokes_a_private_recipe(workflow: Path) -> None:
-    private = sorted(name for name in _calls(workflow.read_text(encoding="utf-8")) if name.startswith("_"))
+    private = sorted(name for name in _calls(workflow) if name.startswith("_"))
 
     assert not private, (
         f"{workflow.name} calls private recipes {private}. Underscore recipes are "
@@ -66,7 +70,7 @@ def test_every_recipe_a_workflow_calls_is_on_the_public_surface(workflow: Path) 
     """Public and private are not the only two states: a recipe can simply not
     exist, and a workflow naming one fails only when that job finally runs."""
     approved = _approved()
-    called = _calls(workflow.read_text(encoding="utf-8"))
+    called = _calls(workflow)
 
     unknown = sorted(name for name in called if name not in approved)
     assert not unknown, (
