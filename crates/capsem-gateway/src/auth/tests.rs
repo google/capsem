@@ -27,6 +27,7 @@ fn test_app(token: &str) -> Router {
         .route("/token", get(|| async { "token" }))
         .route("/vms/list", get(|| async { "ok" }))
         .route("/status", get(|| async { "status" }))
+        .route("/events", get(|| async { "events" }))
         .route("/terminal/{id}", get(|| async { "terminal" }))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -450,7 +451,52 @@ async fn token_endpoint_exempt_from_auth() {
     assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
-// --- WebSocket query-param auth (terminal paths only) ---
+// --- WebSocket query-param auth ---
+
+#[tokio::test]
+async fn events_accepts_query_param_token() {
+    let app = test_app("my-secret");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/events?token=my-secret")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn events_rejects_wrong_query_param_token() {
+    let app = test_app("correct");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/events?token=wrong")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn events_rejects_a_missing_token() {
+    let app = test_app("required");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
 
 #[tokio::test]
 async fn terminal_accepts_query_param_token() {
