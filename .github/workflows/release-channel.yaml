@@ -168,10 +168,6 @@ jobs:
             --project "$RELEASE_CHANNEL_PROJECT" \
             --production-branch "${{ inputs.deploy_branch || 'main' }}"
 
-      - name: Prove release hostname cache purge
-        if: ${{ inputs.activate_production }}
-        run: python scripts/cloudflare_cache_purge.py --project release
-
       - name: Capture current production deployment
         if: ${{ inputs.activate_production }}
         run: |
@@ -246,7 +242,6 @@ jobs:
           RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
           VALIDATE_COMPLETE_PUBLIC_CHANNELS: ${{ inputs.validate_complete_public_channels }}
         run: |
-          python scripts/cloudflare_cache_purge.py --project release
           CHANNEL_ARGS=(--channel "$CHANNEL")
           if [ "$VALIDATE_COMPLETE_PUBLIC_CHANNELS" = "true" ]; then
             CHANNEL_ARGS=(--catalog-members)
@@ -286,7 +281,6 @@ jobs:
         env:
           RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
         run: |
-          python scripts/cloudflare_cache_purge.py --project release
           uv run python scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
             --catalog-members \
