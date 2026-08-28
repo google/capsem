@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Handshake peers now decode legacy `Hello` messages that predate the optional
+  trace context field, preserving typed schema/version mismatch diagnostics.
 - Parent-watch thread creation failures now return a structured guard error
   instead of panicking during companion startup.
 - Companion singleton guards now retain stable in-process lock identity when a
