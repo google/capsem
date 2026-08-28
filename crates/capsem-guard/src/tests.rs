@@ -359,6 +359,72 @@ fn watch_parent_with_does_not_fire_while_parent_alive() {
     );
 }
 
+#[test]
+#[ignore = "subprocess helper invoked by parent_watch_exits_after_real_parent_sigkill"]
+fn parent_watch_sigkill_helper() {
+    let Some(ready_path) = std::env::var_os("CAPSEM_GUARD_READY_PATH") else {
+        return;
+    };
+    watch_parent_or_exit(Some(current_ppid())).expect("arm real parent watch");
+    std::fs::write(ready_path, b"ready").unwrap();
+    loop {
+        thread::sleep(Duration::from_secs(60));
+    }
+}
+
+#[test]
+fn parent_watch_exits_after_real_parent_sigkill() {
+    let dir = tempfile::tempdir().unwrap();
+    let ready_path = dir.path().join("watcher.ready");
+    let test_binary = std::env::current_exe().unwrap();
+    let script = r#"
+exec 3>&1
+"$1" --exact tests::parent_watch_sigkill_helper --ignored --nocapture >/dev/null 2>&1 &
+child=$!
+printf '%s\n' "$child"
+wait "$child"
+"#;
+    let mut parent = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(script)
+        .arg("capsem-guard-parent")
+        .arg(test_binary)
+        .env("CAPSEM_GUARD_READY_PATH", &ready_path)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn intermediate parent");
+    let mut stdout = std::io::BufReader::new(parent.stdout.take().unwrap());
+    let mut child_line = String::new();
+    std::io::BufRead::read_line(&mut stdout, &mut child_line).unwrap();
+    let child_pid: u32 = child_line.trim().parse().expect("watcher child pid");
+
+    let ready_deadline = Instant::now() + Duration::from_secs(5);
+    while !ready_path.exists() && Instant::now() < ready_deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    if !ready_path.exists() {
+        unsafe { libc::kill(child_pid as libc::pid_t, libc::SIGKILL) };
+        let _ = parent.kill();
+        let _ = parent.wait();
+        panic!("watcher child did not arm within 5 seconds");
+    }
+
+    unsafe { libc::kill(parent.id() as libc::pid_t, libc::SIGKILL) };
+    let _ = parent.wait();
+
+    let mut pipe = stdout.into_inner();
+    let (eof_tx, eof_rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let mut tail = Vec::new();
+        let result = std::io::Read::read_to_end(&mut pipe, &mut tail);
+        let _ = eof_tx.send(result);
+    });
+    if eof_rx.recv_timeout(Duration::from_secs(3)).is_err() {
+        unsafe { libc::kill(child_pid as libc::pid_t, libc::SIGKILL) };
+        panic!("watcher child outlived its SIGKILL'd parent");
+    }
+}
+
 // ---- Singleton error paths ----------------------------------------
 //
 // The happy path is covered above; these exercise the branches llvm-cov
