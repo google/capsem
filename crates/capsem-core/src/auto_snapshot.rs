@@ -555,7 +555,7 @@ pub(crate) fn snapshot_entry_digest(path: &Path, is_symlink: bool) -> Option<bla
         hasher.update(target.as_os_str().as_encoded_bytes());
     } else {
         let mut file = std::fs::File::open(path).ok()?;
-        let mut buffer = [0u8; 64 * 1024];
+        let mut buffer = vec![0u8; 64 * 1024].into_boxed_slice();
         loop {
             let read = file.read(&mut buffer).ok()?;
             if read == 0 {
