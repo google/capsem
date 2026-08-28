@@ -1,0 +1,20 @@
+version = 1
+transition_item = "S05-004"
+
+# Exact shrinking transition inventory captured after the adversarial and
+# final-owner current-state RED run. S05-004 must move these paths and reduce
+# the legacy caller inventory to zero without changing either reviewed digest.
+legacy_caller_count = 15
+legacy_caller_sha256 = "7b4ffdcb8ef9566042caff24e1411e3c2685ee6474710cc89b1c056e1b36ce5d"
+ambient_fallback_count = 0
+ambient_fallback_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+[resources."capsem-ca.crt"]
+path = "security/keys/capsem-ca.crt"
+sha256 = "fdedfba5141babd1f62d38f7a512ede47aac7a2f688ec643f55976af7cafcf1b"
+size = 615
+
+[resources."capsem-ca.key"]
+path = "security/keys/capsem-ca.key"
+sha256 = "56189a9fd3149947a5169470cb124c08d58781bd354b5c22eae7b93d3e5cc36f"
+size = 241
