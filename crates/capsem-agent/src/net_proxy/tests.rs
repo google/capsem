@@ -42,38 +42,6 @@ fn async_vsock_from_socketpair() {
 }
 
 #[test]
-fn test_sanitize_process_name() {
-    assert_eq!(sanitize_process_name("gemini"), "gemini");
-    assert_eq!(sanitize_process_name("my proc"), "my_proc");
-    assert_eq!(sanitize_process_name("my\nproc"), "my_proc");
-    assert_eq!(sanitize_process_name("my\rproc"), "my_proc");
-    assert_eq!(sanitize_process_name("my\0proc"), "my_proc");
-
-    let long_name = "A".repeat(200);
-    assert_eq!(sanitize_process_name(&long_name).len(), 128);
-}
-
-#[test]
-fn sanitize_truncates_multibyte_names_on_a_character_boundary() {
-    let name = format!("{}é", "a".repeat(127));
-    let result = sanitize_process_name(&name);
-
-    assert_eq!(result.chars().count(), 128);
-    assert!(result.ends_with('é'));
-}
-
-#[test]
-fn sanitize_blocks_meta_line_injection() {
-    // Newline in process name would split the \0CAPSEM_META:...\n frame
-    let evil = "evil\nCAPS_META:spoof";
-    let sanitized = sanitize_process_name(evil);
-    assert!(!sanitized.contains('\n'));
-    assert!(!sanitized.contains('\0'));
-    let meta = format!("\0CAPSEM_META:{}\n", sanitized);
-    assert_eq!(meta.matches('\n').count(), 1);
-}
-
-#[test]
 fn port_hex_parsing_extracts_exact_port() {
     // Simulate /proc/net/tcp format: local_address is "HEX_IP:HEX_PORT".
     // Verify rsplit(':') extracts the port portion correctly.
@@ -124,8 +92,8 @@ async fn meta_line_injected_before_data() {
     let fd = a.into_raw_fd();
     let mut vsock = AsyncVsock::new(fd).unwrap();
 
-    let meta = "\0CAPSEM_META:test-agent\n".to_string();
-    tokio::io::AsyncWriteExt::write_all(&mut vsock, meta.as_bytes())
+    let meta = encode_meta_line("test-agent");
+    tokio::io::AsyncWriteExt::write_all(&mut vsock, &meta)
         .await
         .unwrap();
 

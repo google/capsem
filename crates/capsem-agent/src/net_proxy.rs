@@ -22,6 +22,9 @@ mod vsock_io;
 #[path = "procfs.rs"]
 mod procfs;
 
+#[path = "process_attribution.rs"]
+mod process_attribution;
+
 use std::io;
 use std::os::unix::io::{BorrowedFd, FromRawFd, RawFd};
 use std::pin::Pin;
@@ -35,6 +38,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::signal;
 
 use capsem_proto::VSOCK_PORT_SNI_PROXY;
+use process_attribution::encode_meta_line;
 use vsock_io::{vsock_connect, VSOCK_HOST_CID};
 
 /// TCP port to listen on for HTTPS traffic (iptables REDIRECT target
@@ -202,16 +206,6 @@ async fn get_process_name(client_port: u16) -> Option<String> {
     .unwrap_or(None)
 }
 
-fn sanitize_process_name(name: &str) -> String {
-    // Replace newlines, control characters, and spaces with underscores.
-    // Limit to 128 chars.
-    name
-        .chars()
-        .map(|c| if c.is_control() || c == ' ' { '_' } else { c })
-        .take(128)
-        .collect()
-}
-
 async fn handle_connection(mut tcp_stream: TcpStream) {
     let peer_addr = match tcp_stream.peer_addr() {
         Ok(addr) => addr,
@@ -221,7 +215,6 @@ async fn handle_connection(mut tcp_stream: TcpStream) {
     let process_name = get_process_name(peer_addr.port())
         .await
         .unwrap_or_else(|| "unknown".to_string());
-    let process_name = sanitize_process_name(&process_name);
 
     let vsock_raw =
         match tokio::task::spawn_blocking(|| vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_SNI_PROXY))
@@ -245,8 +238,8 @@ async fn handle_connection(mut tcp_stream: TcpStream) {
         }
     };
 
-    let meta = format!("\0CAPSEM_META:{}\n", process_name);
-    if let Err(e) = vsock_stream.write_all(meta.as_bytes()).await {
+    let meta = encode_meta_line(&process_name);
+    if let Err(e) = vsock_stream.write_all(&meta).await {
         eprintln!("[capsem-net-proxy] failed to inject process meta: {e}");
         return;
     }
