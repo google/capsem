@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Snapshot change lists and workspace hashes now detect content edits that
+  preserve a file's byte length.
+
 - Guest network attribution now checks recently active processes before
   scanning every process file descriptor for each outbound connection.
 

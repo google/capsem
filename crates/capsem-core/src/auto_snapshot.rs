@@ -8,6 +8,7 @@
 //! The AI can diff and revert files against any populated slot via MCP tools.
 
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -32,7 +33,7 @@ pub struct SlotMetadata {
     pub epoch_millis: u128,
     pub origin: SnapshotOrigin,
     pub name: Option<String>,
-    pub hash: Option<String>, // blake3 of workspace manifest
+    pub hash: Option<String>, // blake3 of workspace paths, metadata, and content
 }
 
 /// Info about a populated snapshot slot.
@@ -547,12 +548,29 @@ impl AutoSnapshotScheduler {
     }
 }
 
-/// Compute a blake3 hash of the workspace manifest (sorted file paths + sizes).
-/// Includes symlinks: hashes both symlink size and link target path to
-/// distinguish symlinks pointing at different targets.
+pub(crate) fn snapshot_entry_digest(path: &Path, is_symlink: bool) -> Option<blake3::Hash> {
+    let mut hasher = blake3::Hasher::new();
+    if is_symlink {
+        let target = std::fs::read_link(path).ok()?;
+        hasher.update(target.as_os_str().as_encoded_bytes());
+    } else {
+        let mut file = std::fs::File::open(path).ok()?;
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer).ok()?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+        }
+    }
+    Some(hasher.finalize())
+}
+
+/// Compute a blake3 hash of sorted workspace paths, metadata, and content.
+/// Symlinks hash their raw target path without following it.
 fn workspace_hash(workspace: &Path) -> String {
-    let mut entries: BTreeMap<String, u64> = BTreeMap::new();
-    let mut symlink_targets: BTreeMap<String, String> = BTreeMap::new();
+    let mut entries: BTreeMap<String, (u64, bool, Option<blake3::Hash>)> = BTreeMap::new();
     for entry in walkdir::WalkDir::new(workspace)
         .follow_links(false)
         .into_iter()
@@ -569,21 +587,22 @@ fn workspace_hash(workspace: &Path) -> String {
                 .symlink_metadata()
                 .map(|m| m.len())
                 .unwrap_or(0);
-            entries.insert(rel_str.clone(), size);
-            if ft.is_symlink() {
-                if let Ok(target) = std::fs::read_link(entry.path()) {
-                    symlink_targets.insert(rel_str, target.to_string_lossy().to_string());
-                }
-            }
+            let is_symlink = ft.is_symlink();
+            let digest = snapshot_entry_digest(entry.path(), is_symlink);
+            entries.insert(rel_str, (size, is_symlink, digest));
         }
     }
     let mut hasher = blake3::Hasher::new();
-    for (path, size) in &entries {
+    for (path, (size, is_symlink, digest)) in &entries {
+        hasher.update(&(path.len() as u64).to_le_bytes());
         hasher.update(path.as_bytes());
         hasher.update(&size.to_le_bytes());
-        // Include symlink target in hash so different targets produce different hashes.
-        if let Some(target) = symlink_targets.get(path) {
-            hasher.update(target.as_bytes());
+        hasher.update(&[u8::from(*is_symlink)]);
+        if let Some(digest) = digest {
+            hasher.update(&[1]);
+            hasher.update(digest.as_bytes());
+        } else {
+            hasher.update(&[0]);
         }
     }
     hasher.finalize().to_hex().to_string()
