@@ -41,6 +41,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- VM launch and resume now publish instance state before starting child-exit
+  cleanup, preventing fast process failures from leaving phantom running VMs.
+- File validation now rejects `..` only as a parent-directory component, so
+  legitimate filenames such as `data..backup.txt` are accepted.
+- Handshake peers now decode legacy `Hello` messages that predate the optional
+  trace context field, preserving typed schema/version mismatch diagnostics.
+- Parent-watch thread creation failures now return a structured guard error
+  instead of panicking during companion startup.
+- Companion singleton guards now retain stable in-process lock identity when a
+  lockfile is replaced during acquisition.
+- Guest terminal output now appends to `serial.log` on a dedicated writer
+  thread instead of blocking a Tokio worker on synchronous disk I/O.
+- Concurrent exec commands now keep independent output capture and completion
+  state instead of overwriting one shared active slot.
+- HTTP, DNS, MCP, process, and file security paths now share immutable plugin
+  policy snapshots instead of deep-cloning the policy map for each event.
+- The MCP aggregator now exits its request reader after a framing error instead
+  of parsing subsequent bytes from a desynchronized stream.
+- Built-in HTTP tools now bound connection setup and the complete request,
+  including response-body reads, so stalled upstreams cannot occupy handlers
+  indefinitely.
+- MCP discovery protocol events no longer trigger unnecessary tool-ledger
+  flushes or inflate persisted logger-write metrics.
+- Logger writes now use a bounded operation queue with real async and blocking
+  backpressure instead of accumulating unbounded batches in memory.
+- Model-item deduplication now stays database-owned instead of retaining every
+  item key in process memory for the lifetime of a session.
+- The gateway proxy now removes hop-by-hop and connection-nominated request
+  headers before forwarding requests to the service.
+- Gateway status reads now bound their service response time, body size, and
+  background connection lifetime so a stalled or oversized response cannot
+  block status polling indefinitely.
+- Apple VZ serial consoles now close their duplicated pipe descriptors when a
+  VM handle is dropped instead of leaking descriptors across VM lifecycles.
+- Security decision rows now record the same first matching enforcement rule
+  that the runtime actually applies.
+- Truncated gzip response headers are now forwarded intact instead of being
+  silently dropped when the upstream stream ends during classification.
+- Malformed model-request fallbacks now reuse their compiled field matcher
+  instead of rebuilding it for every request.
+- MCP catalogs now ignore duplicate namespaced tool definitions instead of
+  advertising ambiguous entries.
+- Manifest merges now compare numeric version components, so multi-digit asset
+  and binary revisions remain ordered correctly.
+- Snapshot change lists and workspace hashes now detect content edits that
+  preserve a file's byte length.
+
+- Guest network attribution now checks recently active processes before
+  scanning every process file descriptor for each outbound connection.
+
+- Guest process attribution now handles long Unicode process names without
+  crashing MCP or network relay tasks.
+
+- Agent terminal reconnects now shut down and join the previous terminal
+  reader before reusing its file descriptor, preventing stale readers from
+  corrupting input or spinning after a disconnect.
+
 - Release transitions now always begin from the latest verified stable
   manifest. Stable releases no longer depend on mutable nightly state, and a
   nightly release explicitly switches from stable to the candidate nightly

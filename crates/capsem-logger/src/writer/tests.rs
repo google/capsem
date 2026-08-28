@@ -1098,13 +1098,31 @@ fn try_write_on_open_writer_succeeds() {
 }
 
 #[test]
+fn writer_channel_capacity_applies_backpressure() {
+    let (tx, _rx) = writer_channel(1);
+    tx.try_send(WriterMessage::write(file_event_with_credential(
+        "/queued",
+        None,
+    )))
+    .unwrap();
+
+    assert!(matches!(
+        tx.try_send(WriterMessage::write(file_event_with_credential(
+            "/full",
+            None,
+        ))),
+        Err(std::sync::mpsc::TrySendError::Full(_))
+    ));
+}
+
+#[test]
 fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
     use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 
     let recorder = DebuggingRecorder::new();
     let snapshotter = recorder.snapshotter();
-    let (tx, rx) = std::sync::mpsc::channel();
-    tx.send(super::WriterMessage::Batch(vec![WriteOp::FileEvent(
+    let (tx, rx) = writer_channel(16);
+    tx.send(super::WriterMessage::write(WriteOp::FileEvent(
         crate::events::FileEvent {
             event_id: None,
             timestamp: std::time::SystemTime::now(),
@@ -1114,7 +1132,7 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
             trace_id: None,
             credential_ref: None,
         },
-    )]))
+    )))
     .unwrap();
     drop(tx);
 
@@ -1128,7 +1146,7 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
     )
     .unwrap();
 
-    metrics::with_local_recorder(&recorder, || writer_loop(conn, rx, None));
+    metrics::with_local_recorder(&recorder, || writer_loop(conn, rx, None, 16));
 
     let snapshot = snapshotter.snapshot().into_vec();
     assert!(snapshot.iter().any(
@@ -1183,21 +1201,6 @@ fn db_writer_records_enqueue_metrics() {
     }));
     assert!(snapshot.iter().any(|(key, _, _, value)| {
         key.key().name() == DB_ENQUEUE_TOTAL && matches!(value, DebugValue::Counter(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_ENQUEUE_LOCK_WAIT_MS && matches!(value, DebugValue::Histogram(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_PRODUCER_BUFFER_SIZE && matches!(value, DebugValue::Gauge(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_PRODUCER_BUFFER_CAPACITY && matches!(value, DebugValue::Gauge(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_PRODUCER_BATCH_SENT_TOTAL && matches!(value, DebugValue::Counter(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_PRODUCER_BATCH_SEND_MS && matches!(value, DebugValue::Histogram(_))
     }));
 }
 
@@ -1625,6 +1628,55 @@ fn mcp_call_insert_populates_row() {
 }
 
 #[test]
+fn mcp_protocol_only_event_does_not_claim_tool_storage() {
+    use metrics_util::debugging::DebuggingRecorder;
+
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    let event = WriteOp::McpCall(crate::events::McpCall {
+        event_id: Some("abcdef123456".into()),
+        timestamp: std::time::SystemTime::now(),
+        server_name: "github".into(),
+        method: "tools/list".into(),
+        tool_name: None,
+        request_id: Some("r1".into()),
+        request_preview: Some("{}".into()),
+        response_preview: Some(r#"{"tools":[]}"#.into()),
+        decision: "allowed".into(),
+        duration_ms: 1,
+        error_message: None,
+        process_name: Some("agent".into()),
+        bytes_sent: 2,
+        bytes_received: 12,
+        transport: "vsock_frame".into(),
+        policy_mode: Some("security_event".into()),
+        policy_action: Some("allow".into()),
+        policy_rule: Some("profiles.rules.default_mcp".into()),
+        policy_reason: None,
+        trace_id: Some("trace-list".into()),
+        credential_ref: None,
+    });
+
+    let outcome = metrics::with_local_recorder(&recorder, || {
+        execute_memory_batch(&conn, &[event]).unwrap()
+    });
+    let snapshot = snapshotter.snapshot().into_vec();
+
+    assert!(
+        outcome.tables.is_empty(),
+        "protocol-only MCP evidence must not dirty the user tool ledger"
+    );
+    assert_eq!(outcome.written, 0);
+    assert!(
+        snapshot
+            .iter()
+            .all(|(key, _, _, _)| key.key().name() != DB_WRITE_OPS_TOTAL),
+        "a no-op protocol event must not count as a persisted logger write"
+    );
+}
+
+#[test]
 fn audit_event_insert_populates_row() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("audit.db");
@@ -1992,12 +2044,8 @@ fn minimal_model_call(trace_id: &str) -> WriteOp {
     })
 }
 
-/// The rolled-back transaction leaves the model-item dedup set describing rows
-/// that no longer exist. Retrying without reloading it would skip every item the
-/// failed attempt had already claimed, so the salvage would drop exactly the
-/// data it exists to save.
 #[test]
-fn salvaging_a_failed_batch_reloads_the_model_item_dedup_set() {
+fn salvaging_a_failed_batch_preserves_model_items() {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("session.db");
     let writer = DbWriter::open(&db_path, 64).unwrap();
@@ -2025,10 +2073,13 @@ fn salvaging_a_failed_batch_reloads_the_model_item_dedup_set() {
         .query_row("SELECT count(*) FROM model_items", [], |row| row.get(0))
         .unwrap();
 
-    assert_eq!(calls, 1, "the model call survives the rejected row beside it");
+    assert_eq!(
+        calls, 1,
+        "the model call survives the rejected row beside it"
+    );
     assert!(
         items > 0,
-        "and so do its items -- a stale dedup set would have skipped them"
+        "the model items must survive retrying the rejected batch one row at a time"
     );
 }
 

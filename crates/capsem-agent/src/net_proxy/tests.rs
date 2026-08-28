@@ -42,29 +42,6 @@ fn async_vsock_from_socketpair() {
 }
 
 #[test]
-fn test_sanitize_process_name() {
-    assert_eq!(sanitize_process_name("gemini"), "gemini");
-    assert_eq!(sanitize_process_name("my proc"), "my_proc");
-    assert_eq!(sanitize_process_name("my\nproc"), "my_proc");
-    assert_eq!(sanitize_process_name("my\rproc"), "my_proc");
-    assert_eq!(sanitize_process_name("my\0proc"), "my_proc");
-
-    let long_name = "A".repeat(200);
-    assert_eq!(sanitize_process_name(&long_name).len(), 128);
-}
-
-#[test]
-fn sanitize_blocks_meta_line_injection() {
-    // Newline in process name would split the \0CAPSEM_META:...\n frame
-    let evil = "evil\nCAPS_META:spoof";
-    let sanitized = sanitize_process_name(evil);
-    assert!(!sanitized.contains('\n'));
-    assert!(!sanitized.contains('\0'));
-    let meta = format!("\0CAPSEM_META:{}\n", sanitized);
-    assert_eq!(meta.matches('\n').count(), 1);
-}
-
-#[test]
 fn port_hex_parsing_extracts_exact_port() {
     // Simulate /proc/net/tcp format: local_address is "HEX_IP:HEX_PORT".
     // Verify rsplit(':') extracts the port portion correctly.
@@ -94,6 +71,45 @@ fn port_hex_parsing_ipv6_format() {
     assert_eq!(port_part, port_hex);
 }
 
+#[test]
+fn recent_processes_are_searched_before_the_full_proc_walk() {
+    let proc_root = std::env::temp_dir().join(format!(
+        "capsem-net-proxy-pids-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    std::fs::create_dir_all(proc_root.join("net")).unwrap();
+    std::fs::create_dir_all(proc_root.join("100/fd")).unwrap();
+    std::fs::create_dir_all(proc_root.join("200/fd")).unwrap();
+    std::fs::write(
+        proc_root.join("net/tcp"),
+        "header\n  0: 0100007F:01BB 00000000:0000 01 00000000:00000000 00:00000000 00000000 1000 0 42\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("socket:[42]", proc_root.join("200/fd/3")).unwrap();
+
+    let candidates = pid_candidates(&proc_root, &[200]);
+    let owner = find_process_pid(&proc_root, 443, &[200]);
+    std::fs::remove_dir_all(proc_root).unwrap();
+
+    assert_eq!(candidates, vec![200, 100]);
+    assert_eq!(owner, Some(200));
+}
+
+#[test]
+fn recent_process_cache_is_bounded_and_mru_ordered() {
+    let attributor = ProcessAttributor::default();
+    for pid in 1..=(RECENT_PID_CAPACITY as u32 + 1) {
+        attributor.remember(pid);
+    }
+    attributor.remember(10);
+
+    let recent_pids = attributor.recent_pids.lock().unwrap();
+    assert_eq!(recent_pids.len(), RECENT_PID_CAPACITY);
+    assert_eq!(recent_pids.front(), Some(&10));
+    assert!(!recent_pids.contains(&1));
+}
+
 #[tokio::test]
 async fn tcp_bind_accept_localhost() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -115,8 +131,8 @@ async fn meta_line_injected_before_data() {
     let fd = a.into_raw_fd();
     let mut vsock = AsyncVsock::new(fd).unwrap();
 
-    let meta = "\0CAPSEM_META:test-agent\n".to_string();
-    tokio::io::AsyncWriteExt::write_all(&mut vsock, meta.as_bytes())
+    let meta = encode_meta_line("test-agent");
+    tokio::io::AsyncWriteExt::write_all(&mut vsock, &meta)
         .await
         .unwrap();
 

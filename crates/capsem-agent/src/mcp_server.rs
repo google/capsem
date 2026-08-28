@@ -12,6 +12,9 @@ mod vsock_io;
 #[path = "procfs.rs"]
 mod procfs;
 
+#[path = "process_attribution.rs"]
+mod process_attribution;
+
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::os::unix::io::RawFd;
@@ -23,6 +26,7 @@ use std::thread;
 use capsem_proto::{
     MCP_FRAME_FLAG_NOTIFICATION, MCP_FRAME_HEADER_LEN, MCP_FRAME_MAX_SIZE, VSOCK_PORT_SNI_PROXY,
 };
+use process_attribution::{encode_meta_line, sanitize_process_name};
 use serde_json::Value;
 use vsock_io::{read_exact_fd, vsock_connect_retry, write_all_fd, VSOCK_HOST_CID};
 
@@ -91,20 +95,6 @@ fn get_parent_process_name() -> String {
     let ppid = nix::unistd::getppid();
     let raw = procfs::process_name_for_pid(ppid.as_raw() as u32);
     sanitize_process_name(&raw)
-}
-
-/// Sanitize a process name for use in framed MCP attribution.
-/// Replaces control characters (including newlines and NUL) and spaces with
-/// underscores, and truncates to 128 chars to match the frame envelope.
-fn sanitize_process_name(name: &str) -> String {
-    let mut s = name
-        .chars()
-        .map(|c| if c.is_control() || c == ' ' { '_' } else { c })
-        .collect::<String>();
-    if s.len() > 128 {
-        s.truncate(128);
-    }
-    s
 }
 
 fn main() {
@@ -204,8 +194,8 @@ fn connect_framed(
     // Keep the established diagnostic metadata prefix so host logs can still
     // attribute the connection. The framed envelope carries authoritative
     // per-request process attribution.
-    let meta = format!("\0CAPSEM_META:{}\n", process_name);
-    if let Err(e) = write_all_fd(fd, meta.as_bytes()) {
+    let meta = encode_meta_line(process_name);
+    if let Err(e) = write_all_fd(fd, &meta) {
         eprintln!("[capsem-mcp-server] failed to send framed metadata: {e}");
         process::exit(1);
     }

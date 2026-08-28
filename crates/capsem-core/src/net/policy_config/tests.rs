@@ -1,6 +1,43 @@
 use super::*;
 use std::collections::HashMap;
 
+#[test]
+fn repeated_plugin_policy_snapshots_share_one_allocation() {
+    let policy = std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(
+        PluginPolicy::new(),
+    )));
+
+    let first = snapshot_plugin_policy(&policy);
+    let second = snapshot_plugin_policy(&policy);
+
+    assert!(
+        std::sync::Arc::ptr_eq(&first, &second),
+        "reading an unchanged policy must only increment an Arc refcount"
+    );
+}
+
+#[test]
+fn replacing_plugin_policy_snapshot_is_visible_to_later_readers() {
+    let policy = std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(
+        PluginPolicy::new(),
+    )));
+    let before = snapshot_plugin_policy(&policy);
+    let mut replacement = PluginPolicy::new();
+    replacement.insert(
+        "log_sanitizer".to_string(),
+        SecurityPluginConfig {
+            mode: SecurityPluginMode::Rewrite,
+            detection_level: DetectionLevel::High,
+        },
+    );
+
+    *policy.write().unwrap() = std::sync::Arc::new(replacement);
+    let after = snapshot_plugin_policy(&policy);
+
+    assert!(!std::sync::Arc::ptr_eq(&before, &after));
+    assert_eq!(after["log_sanitizer"].mode, SecurityPluginMode::Rewrite);
+}
+
 struct EnvVarGuard {
     key: &'static str,
     old: Option<String>,

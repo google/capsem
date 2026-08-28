@@ -13,6 +13,9 @@ use super::security_rule_profile::{
     SecurityRulePriorityName, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource,
 };
 use super::types::{NetworkConfig, RuleFileReferences, SettingsFile};
+use super::validation::{
+    validate_identifier_shape, validate_non_empty, validate_profile_target, IdentifierError,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -2217,36 +2220,16 @@ impl ProfileSkills {
 }
 
 pub fn validate_profile_id(id: &str) -> Result<(), String> {
-    validate_non_empty("profile.id", id)?;
-    if id.len() > 64 {
-        return Err("profile.id must be at most 64 characters".to_string());
+    match validate_identifier_shape(id) {
+        Ok(()) => Ok(()),
+        Err(IdentifierError::Empty) => Err("profile.id must not be empty".to_string()),
+        Err(IdentifierError::TooLong) => {
+            Err("profile.id must be at most 64 characters".to_string())
+        }
+        Err(IdentifierError::InvalidCharacters) => {
+            Err("profile.id must use lowercase ascii, digits, '-' or '_'".to_string())
+        }
     }
-    if !id
-        .chars()
-        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
-    {
-        return Err("profile.id must use lowercase ascii, digits, '-' or '_'".to_string());
-    }
-    Ok(())
-}
-
-fn validate_non_empty(kind: &str, value: &str) -> Result<(), String> {
-    if value.trim().is_empty() {
-        Err(format!("{kind} must not be empty"))
-    } else {
-        Ok(())
-    }
-}
-
-fn validate_profile_target(kind: &str, value: &str) -> Result<(), String> {
-    validate_non_empty(kind, value)?;
-    if value.len() > 128 {
-        return Err(format!("{kind} must be at most 128 characters"));
-    }
-    if value.contains("..") || value.contains('\\') || value.trim() != value {
-        return Err(format!("{kind} must not contain traversal or padding"));
-    }
-    Ok(())
 }
 
 fn validate_profile_skill_path(value: &str) -> Result<(), String> {

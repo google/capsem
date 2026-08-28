@@ -8017,6 +8017,36 @@ fn provision_persistent_validates_name() {
     );
 }
 
+#[test]
+fn child_reapers_start_after_instance_registration() {
+    let source = include_str!("main.rs");
+    for (function, next_function) in [
+        ("    fn provision_sandbox(", "    fn resume_sandbox("),
+        (
+            "    fn resume_sandbox(",
+            "    fn has_existing_resume_checkpoint(",
+        ),
+    ] {
+        let start = source.find(function).expect("launch function exists");
+        let end = source[start..]
+            .find(next_function)
+            .map(|offset| start + offset)
+            .expect("following function exists");
+        let body = &source[start..end];
+        let insertion = body
+            .find("instances.insert(")
+            .expect("launch function registers its instance");
+        let reaper = body
+            .rfind("tokio::spawn(async move")
+            .expect("launch function starts its child reaper");
+
+        assert!(
+            insertion < reaper,
+            "{function} must publish the instance before its child reaper can run"
+        );
+    }
+}
+
 // -----------------------------------------------------------------------
 // Image handler tests (service-level unit tests)
 // -----------------------------------------------------------------------

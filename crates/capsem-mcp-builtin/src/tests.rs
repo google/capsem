@@ -37,6 +37,50 @@ async fn spawn_one_response_http_server() -> String {
     format!("http://{addr}/")
 }
 
+async fn spawn_stalled_body_http_server() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind stalled HTTP fixture");
+    let addr = listener.local_addr().expect("fixture local addr");
+    tokio::spawn(async move {
+        let Ok((mut socket, _peer)) = listener.accept().await else {
+            return;
+        };
+        let mut buf = [0_u8; 1024];
+        let _ = socket.read(&mut buf).await;
+        let response = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "content-type: text/plain\r\n",
+            "content-length: 1\r\n",
+            "\r\n"
+        );
+        let _ = socket.write_all(response.as_bytes()).await;
+        std::future::pending::<()>().await;
+    });
+    format!("http://{addr}/")
+}
+
+#[tokio::test]
+async fn builtin_http_client_times_out_while_reading_a_stalled_body() {
+    let client = build_http_client(
+        std::time::Duration::from_millis(50),
+        std::time::Duration::from_millis(50),
+    )
+    .expect("build test client");
+    let url = spawn_stalled_body_http_server().await;
+
+    let result = tokio::time::timeout(std::time::Duration::from_millis(500), async {
+        client.get(url).send().await?.text().await
+    })
+    .await;
+
+    match result {
+        Ok(Err(error)) => assert!(error.is_timeout(), "unexpected HTTP error: {error}"),
+        Ok(Ok(body)) => panic!("stalled body unexpectedly completed: {body:?}"),
+        Err(_) => panic!("the request outlived the client-owned deadline"),
+    }
+}
+
 #[tokio::test]
 async fn http_builtin_flushes_net_event_before_tool_response_returns() {
     let tmp = tempfile::tempdir().expect("tempdir");

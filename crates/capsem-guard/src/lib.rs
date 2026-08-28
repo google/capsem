@@ -42,6 +42,11 @@ pub enum GuardError {
     NoParent,
     #[error("parent pid {0} is not alive at startup")]
     ParentDead(u32),
+    #[error("failed to spawn parent-watch thread: {source}")]
+    WatcherSpawn {
+        #[source]
+        source: std::io::Error,
+    },
     #[error("io error on {path}: {source}")]
     Io {
         path: PathBuf,
@@ -106,7 +111,7 @@ pub fn watch_parent_or_exit(parent_pid: Option<u32>) -> Result<(), GuardError> {
     if !parent_is_expected(ppid) {
         return Err(GuardError::ParentDead(ppid));
     }
-    spawn_watcher(ppid, PARENT_POLL_INTERVAL, || std::process::exit(0));
+    spawn_watcher(ppid, PARENT_POLL_INTERVAL, || std::process::exit(0))?;
     info!(parent_pid = ppid, "parent watch armed");
     Ok(())
 }
@@ -114,25 +119,48 @@ pub fn watch_parent_or_exit(parent_pid: Option<u32>) -> Result<(), GuardError> {
 /// Internal helper used by the real `watch_parent_or_exit` and by tests.
 /// Tests inject a custom terminator so they can observe the effect without
 /// exiting the test runner.
-fn spawn_watcher<F>(parent_pid: u32, interval: Duration, terminator: F)
+type WatcherTask = Box<dyn FnOnce() + Send + 'static>;
+
+fn spawn_watcher<F>(parent_pid: u32, interval: Duration, terminator: F) -> Result<(), GuardError>
 where
     F: Fn() + Send + 'static,
 {
-    thread::Builder::new()
-        .name(format!("capsem-guard-watch-{parent_pid}"))
-        .spawn(move || loop {
-            if !parent_is_expected(parent_pid) {
-                warn!(
-                    parent_pid,
-                    current_ppid = current_ppid(),
-                    "parent gone or reparented; terminating companion"
-                );
-                terminator();
-                return;
-            }
-            thread::sleep(interval);
-        })
-        .expect("failed to spawn parent-watch thread");
+    spawn_watcher_with(parent_pid, interval, terminator, |builder, task| {
+        builder.spawn(task)
+    })
+}
+
+fn spawn_watcher_with<F, S>(
+    parent_pid: u32,
+    interval: Duration,
+    terminator: F,
+    spawn: S,
+) -> Result<(), GuardError>
+where
+    F: Fn() + Send + 'static,
+    S: FnOnce(thread::Builder, WatcherTask) -> std::io::Result<thread::JoinHandle<()>>,
+{
+    let task: WatcherTask = Box::new(move || loop {
+        if !parent_is_expected(parent_pid) {
+            warn!(
+                parent_pid,
+                current_ppid = current_ppid(),
+                "parent gone or reparented; terminating companion"
+            );
+            terminator();
+            return;
+        }
+        thread::sleep(interval);
+    });
+    let handle = spawn(
+        thread::Builder::new().name(format!("capsem-guard-watch-{parent_pid}")),
+        task,
+    )
+    .map_err(|source| GuardError::WatcherSpawn { source })?;
+    // The watcher intentionally owns its process-lifetime execution. Dropping
+    // JoinHandle detaches it; it does not stop or cancel the created thread.
+    drop(handle);
+    Ok(())
 }
 
 /// Process-wide registry of in-flight Singleton paths. Covers the window
@@ -151,13 +179,13 @@ pub struct Singleton {
     // Kept alive for its Drop: closing the fd releases the flock.
     _file: File,
     path: PathBuf,
-    canonical: PathBuf,
+    registry_key: PathBuf,
 }
 
 impl Drop for Singleton {
     fn drop(&mut self) {
         if let Ok(mut held) = held_locks().lock() {
-            held.remove(&self.canonical);
+            held.remove(&self.registry_key);
         }
     }
 }
@@ -170,6 +198,21 @@ impl Singleton {
     /// * `Err(_)` -- a real IO error (permissions, missing parent dir we could
     ///   not create, etc.). The caller should fail loudly.
     pub fn try_acquire(lock_path: &Path) -> Result<Option<Self>, GuardError> {
+        Self::try_acquire_after_open(lock_path, || {})
+    }
+
+    fn try_acquire_after_open<F>(
+        lock_path: &Path,
+        after_open: F,
+    ) -> Result<Option<Self>, GuardError>
+    where
+        F: FnOnce(),
+    {
+        let registry_key = std::path::absolute(lock_path).map_err(|e| GuardError::Io {
+            path: lock_path.to_path_buf(),
+            source: e,
+        })?;
+
         if let Some(parent) = lock_path.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent).map_err(|e| GuardError::Io {
@@ -211,24 +254,25 @@ impl Singleton {
         }
         // SAFETY: we just opened this fd successfully.
         let file: File = unsafe { File::from_raw_fd(raw_fd) };
+        // The hook makes lockfile replacement between open and reservation
+        // deterministic in the regression test; production supplies a no-op.
+        after_open();
 
         // In-process exclusion: if another thread in this process already
-        // holds a Singleton on the canonical path, refuse without touching
+        // holds a Singleton for this path, refuse without touching
         // the file lock. flock alone is not sufficient for same-process
         // mutual exclusion: a subprocess spawn in another thread can cause
         // our fd to briefly leak through the fork-to-exec window and keep
         // the kernel lock alive after we close our copy, causing spurious
         // reacquire failures.
-        let canonical =
-            std::fs::canonicalize(lock_path).unwrap_or_else(|_| lock_path.to_path_buf());
         {
             let mut held = held_locks().lock().expect("held-locks mutex poisoned");
-            if held.contains(&canonical) {
+            if held.contains(&registry_key) {
                 return Ok(None);
             }
             // Reserve the slot before the syscall so racing threads in this
             // process see "taken" even before flock returns.
-            held.insert(canonical.clone());
+            held.insert(registry_key.clone());
         }
 
         // Kernel-level cross-process exclusion via flock(2). CLOEXEC above
@@ -242,7 +286,7 @@ impl Singleton {
             held_locks()
                 .lock()
                 .expect("held-locks mutex poisoned")
-                .remove(&canonical);
+                .remove(&registry_key);
             if errno == libc::EWOULDBLOCK {
                 return Ok(None);
             }
@@ -263,7 +307,7 @@ impl Singleton {
         Ok(Some(Self {
             _file: file,
             path: lock_path.to_path_buf(),
-            canonical,
+            registry_key,
         }))
     }
 

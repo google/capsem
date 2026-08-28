@@ -8,14 +8,15 @@
 
 use super::provider::ModelProtocol;
 
-/// Fallback for truncated JSON: search for "model":"..." in the first few KB
-/// using a simple byte scan.
+static MODEL_FIELD_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#""model"\s*:\s*"([^"]+)""#).expect("model field regex is valid")
+});
+
+/// Fallback for truncated JSON: search for "model":"..." with a shared matcher.
 fn extract_model_field(body: &[u8]) -> Option<String> {
     let s = String::from_utf8_lossy(body);
-    // Look for "model": "..." or "model":"..."
-    let pattern = r#""model"\s*:\s*"([^"]+)""#;
-    let re = regex::Regex::new(pattern).ok()?;
-    re.captures(&s)
+    MODEL_FIELD_REGEX
+        .captures(&s)
         .and_then(|cap| cap.get(1))
         .map(|m| m.as_str().to_string())
 }

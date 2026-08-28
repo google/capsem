@@ -2,11 +2,8 @@ use std::sync::Arc;
 
 use capsem_core::mcp::aggregator::AggregatorClient;
 use capsem_core::net::mitm_proxy::McpEndpointState;
-use capsem_core::net::policy_config::{
-    ModelEndpointRegistry, SecurityPluginConfig, SecurityRuleSet,
-};
+use capsem_core::net::policy_config::{ModelEndpointRegistry, SecurityRuleSet, SharedPluginPolicy};
 use capsem_logger::DbWriter;
-use std::collections::BTreeMap;
 
 /// Shared MCP state for capsem-process after the guest transport cutover.
 ///
@@ -18,6 +15,6 @@ pub(crate) struct McpRuntime {
     pub(crate) endpoint: Arc<McpEndpointState>,
     pub(crate) db: Arc<DbWriter>,
     pub(crate) security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
-    pub(crate) plugin_policy: Arc<std::sync::RwLock<BTreeMap<String, SecurityPluginConfig>>>,
+    pub(crate) plugin_policy: SharedPluginPolicy,
     pub(crate) model_endpoints: Arc<std::sync::RwLock<Arc<ModelEndpointRegistry>>>,
 }

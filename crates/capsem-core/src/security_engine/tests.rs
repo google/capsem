@@ -1715,23 +1715,91 @@ match = 'model.provider == "openai"'
     };
     assert_eq!(
         decision_rows,
-        vec![
-            (
-                "corp.rules.block_openai".to_string(),
-                "allow".to_string(),
-                "block".to_string(),
-                "block".to_string(),
-                "corp.rules.block_openai".to_string(),
-            ),
-            (
-                "profiles.rules.detect_openai".to_string(),
-                "block".to_string(),
-                "allow".to_string(),
-                "block".to_string(),
-                "profiles.rules.detect_openai".to_string(),
-            ),
-        ],
-        "the table must show the allow rule could not downgrade the existing block"
+        vec![(
+            "corp.rules.block_openai".to_string(),
+            "allow".to_string(),
+            "block".to_string(),
+            "block".to_string(),
+            "corp.rules.block_openai".to_string(),
+        )],
+        "only the first matching enforcement rule produces a decision transition"
+    );
+}
+
+#[tokio::test]
+async fn decision_ledger_uses_the_same_first_match_as_enforcement() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    let rules = security_rule_set(
+        r#"
+[profiles.rules.allow_preferred]
+name = "allow_preferred"
+action = "allow"
+priority = 10
+match = 'http.host == "api.example.com"'
+
+[profiles.rules.block_weaker]
+name = "block_weaker"
+action = "block"
+priority = 20
+match = 'http.host == "api.example.com"'
+"#,
+    );
+    let event_id = emit_security_write(&writer, net_write(None))
+        .await
+        .expect("primary HTTP event must receive an id");
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("api.example.com".into()),
+            ..Default::default()
+        });
+
+    let emission = emit_matching_security_rules_with_decision(
+        &writer,
+        event_id,
+        RuntimeSecurityEventType::HttpRequest,
+        &rules,
+        &event,
+        1_789_000_000_255,
+    )
+    .await
+    .unwrap();
+    writer.flush().await;
+    writer.shutdown_blocking();
+
+    assert_eq!(
+        emission.enforcement.action,
+        SecurityEnforcementAction::Allow
+    );
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let matched_rules: i64 = conn
+        .query_row("SELECT count(*) FROM security_rule_events", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(
+        matched_rules, 2,
+        "every matched rule remains forensic evidence"
+    );
+    let decisions: Vec<(String, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT rule_id, effective_decision
+                 FROM security_decision_events ORDER BY id",
+            )
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    };
+    assert_eq!(
+        decisions,
+        vec![(
+            "profiles.rules.allow_preferred".to_string(),
+            "allow".to_string()
+        )]
     );
 }
 

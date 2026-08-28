@@ -352,9 +352,9 @@ pub struct McpServerManager {
     resource_catalog: Vec<McpResourceDef>,
     prompt_catalog: Vec<McpPromptDef>,
     // Routing maps
-    tool_routing: HashMap<String, String>, // namespaced_name -> server_name
+    tool_names: HashSet<String>,
     resource_routing: HashMap<String, String>, // namespaced_uri -> server_name
-    prompt_routing: HashMap<String, String>, // namespaced_name -> server_name
+    prompt_routing: HashMap<String, String>,   // namespaced_name -> server_name
 }
 
 impl McpServerManager {
@@ -366,7 +366,7 @@ impl McpServerManager {
             tool_catalog: Vec::new(),
             resource_catalog: Vec::new(),
             prompt_catalog: Vec::new(),
-            tool_routing: HashMap::new(),
+            tool_names: HashSet::new(),
             resource_routing: HashMap::new(),
             prompt_routing: HashMap::new(),
         }
@@ -434,6 +434,14 @@ impl McpServerManager {
                         continue;
                     }
                     let ns_name = namespace_name(&def.name, name);
+                    if !self.tool_names.insert(ns_name.clone()) {
+                        warn!(
+                            server = %def.name,
+                            tool = name,
+                            "duplicate MCP tool definition ignored"
+                        );
+                        continue;
+                    }
 
                     let annotations = tool.annotations.as_ref().map(|a| ToolAnnotations {
                         title: a.title.clone(),
@@ -455,7 +463,6 @@ impl McpServerManager {
                         annotations,
                         timeout_secs: None,
                     });
-                    self.tool_routing.insert(ns_name, def.name.clone());
                 }
             }
             Err(e) => {

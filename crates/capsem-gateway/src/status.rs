@@ -5,13 +5,17 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
 use tokio::net::UnixStream;
 use tokio::sync::RwLock;
 
 use crate::AppState;
+
+const STATUS_RESPONSE_MAX_BODY_SIZE: usize = 10 * 1024 * 1024;
+const STATUS_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const STATUS_CONN_DRIVER_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub struct StatusCache {
     /// Previous response retained only to diff VM lifecycle events. It must
@@ -305,12 +309,22 @@ async fn fetch_profiles_status(state: &AppState) -> Option<serde_json::Value> {
 
 /// Simple GET request over UDS.
 async fn uds_get(uds_path: &std::path::Path, path: &str) -> anyhow::Result<Bytes> {
+    tokio::time::timeout(STATUS_REQUEST_TIMEOUT, uds_get_inner(uds_path, path))
+        .await
+        .map_err(|_| anyhow::anyhow!("status request timed out"))?
+}
+
+async fn uds_get_inner(uds_path: &std::path::Path, path: &str) -> anyhow::Result<Bytes> {
     let stream = UnixStream::connect(uds_path).await?;
     let io = TokioIo::new(stream);
     let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
     tokio::spawn(async move {
-        if let Err(e) = conn.await {
-            tracing::error!(error = %e, "UDS connection error in status fetch");
+        match tokio::time::timeout(STATUS_CONN_DRIVER_TIMEOUT, conn).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                tracing::error!(error = %e, "UDS connection error in status fetch");
+            }
+            Err(_) => tracing::warn!("UDS connection driver timed out in status fetch"),
         }
     });
 
@@ -319,11 +333,13 @@ async fn uds_get(uds_path: &std::path::Path, path: &str) -> anyhow::Result<Bytes
         .uri(format!("http://localhost{}", path))
         .body(Full::new(Bytes::new()))?;
 
-    let res = tokio::time::timeout(Duration::from_secs(5), sender.send_request(req))
-        .await
-        .map_err(|_| anyhow::anyhow!("status request timed out"))??;
+    let res = sender.send_request(req).await?;
 
-    Ok(res.into_body().collect().await?.to_bytes())
+    Ok(Limited::new(res.into_body(), STATUS_RESPONSE_MAX_BODY_SIZE)
+        .collect()
+        .await
+        .map_err(|error| anyhow::anyhow!("status response body failed: {error}"))?
+        .to_bytes())
 }
 
 #[cfg(test)]

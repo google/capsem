@@ -253,7 +253,7 @@ fn main() {
     println!("| bench | rows | elapsed ms | rows/sec | notes |");
     println!("|---|---:|---:|---:|---|");
     println!(
-        "| db_handle_write_accept_dns | {} | {:.3} | {:.0} | write() ack means accepted into DB-owned producer buffer |",
+        "| db_handle_write_accept_dns | {} | {:.3} | {:.0} | write() ack means accepted into the bounded DB-owned writer queue |",
         WRITE_ROWS,
         write_ms,
         WRITE_ROWS as f64 / (write_ms / 1000.0)

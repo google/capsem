@@ -19,6 +19,7 @@ mod security_rule_profile;
 mod settings_metadata;
 mod tree;
 mod types;
+mod validation;
 
 pub use builder::*;
 pub use lint::*;
@@ -31,6 +32,16 @@ pub use security_rule_profile::*;
 pub use settings_metadata::{default_settings_file, setting_definitions};
 pub use tree::*;
 pub use types::*;
+
+/// Immutable plugin configuration selected for one runtime generation.
+pub type PluginPolicy = std::collections::BTreeMap<String, SecurityPluginConfig>;
+pub type PluginPolicySnapshot = std::sync::Arc<PluginPolicy>;
+/// Live policy handle whose writers replace a snapshot and readers clone its Arc.
+pub type SharedPluginPolicy = std::sync::Arc<std::sync::RwLock<PluginPolicySnapshot>>;
+
+pub fn snapshot_plugin_policy(policy: &SharedPluginPolicy) -> PluginPolicySnapshot {
+    policy.read().unwrap().clone()
+}
 
 #[cfg(test)]
 #[allow(unused_imports)]

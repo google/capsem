@@ -9,23 +9,6 @@ fn mcp_transport_uses_mitm_vsock_port() {
 }
 
 #[test]
-fn meta_line_format() {
-    let name = "claude";
-    let meta = format!("\0CAPSEM_META:{}\n", name);
-    assert!(meta.starts_with('\0'));
-    assert!(meta.contains("CAPSEM_META:claude"));
-    assert!(meta.ends_with('\n'));
-}
-
-#[test]
-fn meta_line_nul_prefix_required() {
-    let meta = "\0CAPSEM_META:gemini\n".to_string();
-    assert_eq!(meta.as_bytes()[0], 0x00);
-    let json = r#"{"jsonrpc":"2.0","method":"tools/call"}"#;
-    assert_ne!(json.as_bytes()[0], 0x00);
-}
-
-#[test]
 fn classify_valid_request_tracks_id_and_method() {
     let line = r#"{"jsonrpc":"2.0","id":"abc","method":"tools/call"}"#;
     assert_eq!(
@@ -85,40 +68,6 @@ fn pending_disconnect_errors_are_emitted_once_with_original_ids() {
     assert!(text.contains(r#""id":7"#));
     assert!(text.contains(r#""id":"abc""#));
     assert!(text.contains("MCP transport disconnected"));
-}
-
-#[test]
-fn sanitize_strips_control_chars() {
-    assert_eq!(sanitize_process_name("clean"), "clean");
-    assert_eq!(sanitize_process_name("has space"), "has_space");
-    assert_eq!(sanitize_process_name("has\nnewline"), "has_newline");
-    assert_eq!(sanitize_process_name("has\rcarriage"), "has_carriage");
-    assert_eq!(sanitize_process_name("has\0nul"), "has_nul");
-    assert_eq!(sanitize_process_name("has\ttab"), "has_tab");
-}
-
-#[test]
-fn sanitize_truncates_long_names() {
-    let long = "x".repeat(200);
-    let result = sanitize_process_name(&long);
-    assert_eq!(result.len(), 128);
-}
-
-#[test]
-fn sanitize_preserves_slashes_and_dashes() {
-    assert_eq!(
-        sanitize_process_name("claude/code-v4.0"),
-        "claude/code-v4.0"
-    );
-}
-
-#[test]
-fn sanitize_meta_line_injection_blocked() {
-    let evil = "evil\nCAPS_META:spoof";
-    let sanitized = sanitize_process_name(evil);
-    assert!(!sanitized.contains('\n'), "newline must be stripped");
-    let meta = format!("\0CAPSEM_META:{}\n", sanitized);
-    assert_eq!(meta.matches('\n').count(), 1);
 }
 
 #[test]

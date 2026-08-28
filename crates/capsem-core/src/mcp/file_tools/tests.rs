@@ -550,7 +550,7 @@ fn list_changed_files_shows_create_modify_delete() {
     sched.take_snapshot().unwrap(); // cp-0
 
     // Modify one, delete one, create a new one.
-    std::fs::write(ws.join("modify_me.txt"), "after -- different length").unwrap();
+    std::fs::write(ws.join("modify_me.txt"), "after!").unwrap();
     std::fs::remove_file(ws.join("delete_me.txt")).unwrap();
     std::fs::write(ws.join("brand_new.txt"), "hello").unwrap();
 

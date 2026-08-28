@@ -44,7 +44,7 @@ use crate::net::ai_traffic::provider::{
     extract_model_from_path, tool_origin, ModelProtocol, ProviderKind,
 };
 use crate::net::ai_traffic::{request_parser, TraceState};
-use crate::net::policy_config::SecurityRuleSet;
+use crate::net::policy_config::{snapshot_plugin_policy, SecurityRuleSet, SharedPluginPolicy};
 use crate::security_engine::{
     delegate_matching_security_rules_for_evaluated_event, emit_security_write_try,
     HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, RuntimeSecurityEventType,
@@ -114,11 +114,7 @@ pub struct TelemetryDeps {
     pub pricing: Arc<PricingTable>,
     pub trace_state: Arc<Mutex<TraceState>>,
     pub security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
-    pub plugin_policy: Arc<
-        std::sync::RwLock<
-            std::collections::BTreeMap<String, crate::net::policy_config::SecurityPluginConfig>,
-        >,
-    >,
+    pub plugin_policy: SharedPluginPolicy,
 }
 
 /// Sync `ChunkHook` that tracks response bytes/preview and, on
@@ -264,7 +260,7 @@ impl ChunkHook for TelemetryHook {
         let stage_started = Instant::now();
         let db = Arc::clone(&self.deps.db);
         let rules = self.deps.security_rules.read().unwrap().clone();
-        let plugin_policy = self.deps.plugin_policy.read().unwrap().clone();
+        let plugin_policy = snapshot_plugin_policy(&self.deps.plugin_policy);
         let credential_injections = req_ctx.credential_injections.clone();
         record_telemetry_stage(stage_started, "ledger_deps_clone");
 

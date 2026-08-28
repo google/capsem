@@ -59,7 +59,7 @@ where
             Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(
                 Vec::new(),
             )))),
-            Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+            Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
             Arc::new(tokio::sync::Semaphore::new(
                 crate::mcp::default_inflight_cap(),
             )),

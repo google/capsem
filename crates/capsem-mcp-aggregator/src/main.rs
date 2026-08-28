@@ -131,16 +131,8 @@ async fn main() -> Result<()> {
 
     let reader_result: Result<()> = async {
         loop {
-            let req: AggregatorRequest = match read_frame(&mut stdin).await {
-                Ok(Some(r)) => r,
-                Ok(None) => {
-                    info!("stdin closed, shutting down");
-                    return Ok(());
-                }
-                Err(e) => {
-                    error!(error = %e, "failed to read request frame");
-                    continue;
-                }
+            let Some(req) = read_next_request(&mut stdin).await else {
+                return Ok(());
             };
 
             // Ack Shutdown synchronously on the reader path so we can break
@@ -182,6 +174,23 @@ async fn main() -> Result<()> {
     drain_fut.await;
 
     reader_result
+}
+
+async fn read_next_request<R>(reader: &mut R) -> Option<AggregatorRequest>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    match read_frame(reader).await {
+        Ok(Some(request)) => Some(request),
+        Ok(None) => {
+            info!("stdin closed, shutting down");
+            None
+        }
+        Err(error) => {
+            error!(%error, "failed to read request frame");
+            None
+        }
+    }
 }
 
 async fn handle_request(

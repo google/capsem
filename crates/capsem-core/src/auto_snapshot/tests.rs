@@ -359,7 +359,7 @@ fn workspace_hash_changes_on_modification() {
     std::fs::write(ws.join("a.txt"), "v1").unwrap();
 
     let h1 = workspace_hash(&ws);
-    std::fs::write(ws.join("a.txt"), "v2-longer").unwrap();
+    std::fs::write(ws.join("a.txt"), "v2").unwrap();
     let h2 = workspace_hash(&ws);
     assert_ne!(h1, h2);
 }

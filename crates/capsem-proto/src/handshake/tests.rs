@@ -17,6 +17,28 @@ fn hello_serializes_compactly() {
 }
 
 #[test]
+fn hello_decodes_legacy_payload_without_traceparent() {
+    #[derive(serde::Serialize)]
+    struct LegacyHello {
+        version: u16,
+        schema_hash: u64,
+        peer: String,
+    }
+
+    let legacy = LegacyHello {
+        version: crate::PROTOCOL_VERSION,
+        schema_hash: crate::SCHEMA_HASH,
+        peer: "capsem-process-old".into(),
+    };
+    let bytes = rmp_serde::to_vec_named(&legacy).unwrap();
+
+    let decoded: Hello = rmp_serde::from_slice(&bytes).unwrap();
+
+    assert_eq!(decoded.peer, legacy.peer);
+    assert!(decoded.traceparent.is_empty());
+}
+
+#[test]
 fn verify_matches_when_ours() {
     let h = Hello::ours("capsem-service-test", "");
     assert!(verify(&h).is_ok());

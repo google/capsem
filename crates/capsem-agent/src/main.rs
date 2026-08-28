@@ -943,27 +943,83 @@ fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd) {
     // This prevents deadlocks when both master_fd and vsock_fd buffers are full.
     let master_fd_clone = master_fd;
     let vsock_fd_clone = vsock_fd;
-    std::thread::spawn(move || {
-        let mut local_buf = [0u8; 8192];
+    std::thread::scope(|scope| {
+        let reader = scope.spawn(move || {
+            let mut local_buf = [0u8; 8192];
+            loop {
+                let mut poll_fds = [PollFd::new(
+                    unsafe { std::os::unix::io::BorrowedFd::borrow_raw(vsock_fd_clone) },
+                    PollFlags::POLLIN,
+                )];
+
+                match poll(&mut poll_fds, PollTimeout::from(1000u16)) {
+                    Ok(0) => continue,
+                    Ok(_) => {}
+                    Err(nix::errno::Errno::EINTR) => continue,
+                    Err(_) => break,
+                }
+
+                if let Some(revents) = poll_fds[0].revents() {
+                    if revents.contains(PollFlags::POLLIN) {
+                        match nix::unistd::read(vsock_fd_clone, &mut local_buf) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                if write_all_fd(master_fd_clone, &local_buf[..n]).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(nix::errno::Errno::EAGAIN) => {}
+                            Err(_) => break,
+                        }
+                    }
+                    if revents
+                        .intersects(PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL)
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+
         loop {
-            let mut poll_fds = [PollFd::new(
-                unsafe { std::os::unix::io::BorrowedFd::borrow_raw(vsock_fd_clone) },
-                PollFlags::POLLIN,
-            )];
+            // Poll vsock_fd too so a local shutdown (triggered by the heartbeat
+            // detecting host death) wakes us up via POLLHUP. Otherwise we'd sit
+            // in poll forever waiting for PTY activity that never comes.
+            let mut poll_fds = [
+                PollFd::new(
+                    unsafe { std::os::unix::io::BorrowedFd::borrow_raw(master_fd) },
+                    PollFlags::POLLIN,
+                ),
+                PollFd::new(
+                    unsafe { std::os::unix::io::BorrowedFd::borrow_raw(vsock_fd) },
+                    PollFlags::empty(),
+                ),
+            ];
 
             match poll(&mut poll_fds, PollTimeout::from(1000u16)) {
                 Ok(0) => continue,
                 Ok(_) => {}
                 Err(nix::errno::Errno::EINTR) => continue,
-                Err(_) => break,
+                Err(e) => {
+                    eprintln!("[capsem-agent] poll error: {e}");
+                    break;
+                }
             }
 
+            if let Some(revents) = poll_fds[1].revents() {
+                if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL)
+                {
+                    break;
+                }
+            }
+
+            // Master PTY -> vsock (stdout direction)
             if let Some(revents) = poll_fds[0].revents() {
                 if revents.contains(PollFlags::POLLIN) {
-                    match nix::unistd::read(vsock_fd_clone, &mut local_buf) {
+                    match nix::unistd::read(master_fd, &mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
-                            if write_all_fd(master_fd_clone, &local_buf[..n]).is_err() {
+                            if write_all_fd(vsock_fd, &buf[..n]).is_err() {
                                 break;
                             }
                         }
@@ -976,58 +1032,14 @@ fn bridge_loop(master_fd: RawFd, vsock_fd: RawFd) {
                 }
             }
         }
+
+        unsafe {
+            libc::shutdown(vsock_fd, libc::SHUT_RDWR);
+        }
+        if reader.join().is_err() {
+            eprintln!("[capsem-agent] terminal reader thread panicked");
+        }
     });
-
-    loop {
-        // Poll vsock_fd too so a local shutdown (triggered by the heartbeat
-        // detecting host death) wakes us up via POLLHUP. Otherwise we'd sit
-        // in poll forever waiting for PTY activity that never comes.
-        let mut poll_fds = [
-            PollFd::new(
-                unsafe { std::os::unix::io::BorrowedFd::borrow_raw(master_fd) },
-                PollFlags::POLLIN,
-            ),
-            PollFd::new(
-                unsafe { std::os::unix::io::BorrowedFd::borrow_raw(vsock_fd) },
-                PollFlags::empty(),
-            ),
-        ];
-
-        match poll(&mut poll_fds, PollTimeout::from(1000u16)) {
-            Ok(0) => continue,
-            Ok(_) => {}
-            Err(nix::errno::Errno::EINTR) => continue,
-            Err(e) => {
-                eprintln!("[capsem-agent] poll error: {e}");
-                break;
-            }
-        }
-
-        if let Some(revents) = poll_fds[1].revents() {
-            if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL) {
-                break;
-            }
-        }
-
-        // Master PTY -> vsock (stdout direction)
-        if let Some(revents) = poll_fds[0].revents() {
-            if revents.contains(PollFlags::POLLIN) {
-                match nix::unistd::read(master_fd, &mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if write_all_fd(vsock_fd, &buf[..n]).is_err() {
-                            break;
-                        }
-                    }
-                    Err(nix::errno::Errno::EAGAIN) => {}
-                    Err(_) => break,
-                }
-            }
-            if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR) {
-                break;
-            }
-        }
-    }
 }
 
 /// Tail /var/log/audit/audit.log and stream parsed execve records to host via vsock:5006.

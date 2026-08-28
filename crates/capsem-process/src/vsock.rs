@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use capsem_core::{read_control_msg, write_control_msg, VsockConnection};
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
 use capsem_proto::{GuestToHost, HostToGuest, HostVsockService};
-use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,8 +13,7 @@ use crate::helpers::clone_fd;
 use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
 
 type SecurityRulesHandle = Arc<RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>;
-type PluginPolicyHandle =
-    Arc<RwLock<BTreeMap<String, capsem_core::net::policy_config::SecurityPluginConfig>>>;
+type PluginPolicyHandle = capsem_core::net::policy_config::SharedPluginPolicy;
 
 /// Maximum attempts for the initial handshake before giving up.
 ///
@@ -37,6 +35,7 @@ const HANDSHAKE_RETRY_MAX: usize = 3;
 /// especially just after resume. Keep a generous transport-loss bound without
 /// imposing any delay on already-deposited or genuinely empty commands.
 const EXEC_OUTPUT_DEPOSIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const SERIAL_LOG_QUEUE_CAPACITY: usize = 8;
 
 use capsem_core::paths::checkpoint_complete_path;
 
@@ -177,14 +176,14 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let term_out = Arc::clone(&terminal_output);
     let serial_log_path = session_dir.join("serial.log");
     let pty_log_out = pty_log.clone();
-
-    tokio::spawn(async move {
-        let mut log_file = std::fs::OpenOptions::new()
+    let (serial_log_tx, serial_log_handle) = spawn_serial_log_writer(move || {
+        std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&serial_log_path)
-            .ok();
+            .open(serial_log_path)
+    });
 
+    tokio::spawn(async move {
         let mut current_conn = terminal_rekey_rx.recv().await;
         loop {
             let conn = match current_conn.take() {
@@ -234,12 +233,10 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                         _ => break,
                                     }
                                 }
-                                coalesce.flush_to(|batch| {
-                                    let b = batch.to_vec();
-                                    if let Some(ref mut f) = log_file { let _ = f.write_all(&b); }
-                                    if let Some(ref pl) = pty_log_out { pl.record_output(&b); }
-                                    term_out.push(b);
-                                });
+                                let batch = coalesce.flush_to(<[u8]>::to_vec);
+                                let _ = serial_log_tx.send(batch.clone()).await;
+                                if let Some(ref pl) = pty_log_out { pl.record_output(&batch); }
+                                term_out.push(batch);
                             }
                             None => break, // FD closed
                         }
@@ -258,6 +255,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             }
             let _ = read_handle.join();
         }
+        drop(serial_log_tx);
+        let _ = tokio::task::spawn_blocking(move || serial_log_handle.join()).await;
         term_out.close();
     });
 
@@ -447,10 +446,10 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     );
                 }
                 ServiceToProcess::Exec { id, command } => {
-                    // active_exec is owned by ipc.rs's Exec handler -- it
+                    // active_execs is owned by ipc.rs's Exec handler -- it
                     // creates the capture slot *before* sending here. The
                     // control bridge owns delivery/replay, so this layer just
-                    // forwards without replacing the active_exec slot.
+                    // forwards without replacing the per-id capture slot.
                     let trace_id =
                         capsem_core::telemetry::ambient_capsem_trace_id().or_else(|| {
                             capsem_core::telemetry::child_trace_env(&format!(
@@ -483,11 +482,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     // network and file boundaries: withhold the dispatch and
                     // fail the caller's job.
                     if let Some(refusal) = exec_boundary_refusal(id, &boundary) {
-                        js_for_cmd
-                            .active_exec
-                            .lock()
-                            .unwrap()
-                            .take_if(|active| active.id == id);
+                        js_for_cmd.active_execs.lock().unwrap().remove(&id);
                         if let Some(tx) = js_for_cmd.jobs.lock().unwrap().remove(&id) {
                             capsem_core::try_send!(
                                 "job_result_exec_blocked",
@@ -497,13 +492,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         continue;
                     }
                     if let Ok(Some(emission)) = &boundary {
-                        if let Some(active) = js_for_cmd
-                            .active_exec
-                            .lock()
-                            .unwrap()
-                            .as_mut()
-                            .filter(|active| active.id == id)
-                        {
+                        if let Some(active) = js_for_cmd.active_execs.lock().unwrap().get_mut(&id) {
                             active.event_id = Some(emission.event_id.clone());
                         }
                     }
@@ -971,20 +960,7 @@ fn dispatch_aux_connection(
                     // proceed. notify_one stores a permit if ExecDone is
                     // not yet parked, so the common "deposit finishes
                     // first" path wakes ExecDone immediately.
-                    let notify = {
-                        let mut guard = js.active_exec.lock().unwrap();
-                        if let Some(ref mut active) = *guard {
-                            if active.id == id {
-                                active.captured = local_buf;
-                                active.total_bytes = total_seen;
-                                Some(active.deposited.clone())
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    };
+                    let notify = deposit_exec_output(&js, id, local_buf, total_seen);
                     if let Some(n) = notify {
                         n.notify_one();
                     }
@@ -1004,19 +980,7 @@ fn dispatch_aux_connection(
                     }
                 };
                 info!("audit port: connected, reading audit records");
-                let mut len_buf = [0u8; 4];
-                loop {
-                    if std::io::Read::read_exact(&mut file, &mut len_buf).is_err() {
-                        break;
-                    }
-                    let len = u32::from_be_bytes(len_buf) as usize;
-                    if len > capsem_proto::MAX_FRAME_SIZE as usize {
-                        break;
-                    }
-                    let mut payload = vec![0u8; len];
-                    if std::io::Read::read_exact(&mut file, &mut payload).is_err() {
-                        break;
-                    }
+                while let Ok(Some(payload)) = read_bounded_frame(&mut file) {
                     if let Ok(record) = capsem_proto::decode_audit_record(&payload) {
                         let timestamp = std::time::SystemTime::UNIX_EPOCH
                             + std::time::Duration::from_micros(record.timestamp_us);
@@ -1153,6 +1117,52 @@ fn read_exec_output(reader: &mut impl std::io::Read) -> (Vec<u8>, u64) {
     (output, total_seen)
 }
 
+fn spawn_serial_log_writer<W, F>(open: F) -> (mpsc::Sender<Vec<u8>>, std::thread::JoinHandle<()>)
+where
+    W: std::io::Write + Send + 'static,
+    F: FnOnce() -> std::io::Result<W> + Send + 'static,
+{
+    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(SERIAL_LOG_QUEUE_CAPACITY);
+    let handle = std::thread::spawn(move || {
+        let mut writer = match open() {
+            Ok(writer) => writer,
+            Err(error) => {
+                warn!(error = %error, "failed to open serial log");
+                return;
+            }
+        };
+        while let Some(batch) = rx.blocking_recv() {
+            let _ = writer.write_all(&batch);
+        }
+        let _ = writer.flush();
+    });
+    (tx, handle)
+}
+
+/// Read one length-prefixed payload without allocating beyond the protocol
+/// frame limit. EOF while reading the next prefix ends the stream; malformed
+/// lengths and truncated payloads are framing errors.
+fn read_bounded_frame(reader: &mut impl std::io::Read) -> std::io::Result<Option<Vec<u8>>> {
+    let mut len_buf = [0u8; 4];
+    match reader.read_exact(&mut len_buf) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(error) => return Err(error),
+    }
+
+    let len = u32::from_be_bytes(len_buf) as usize;
+    if len > capsem_proto::MAX_FRAME_SIZE as usize {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("frame too large ({len} > MAX_FRAME_SIZE)"),
+        ));
+    }
+
+    let mut payload = vec![0u8; len];
+    reader.read_exact(&mut payload)?;
+    Ok(Some(payload))
+}
+
 /// Persistent DNS query handler over the vsock DNS port (T3.2).
 ///
 /// Wire shape:
@@ -1169,7 +1179,7 @@ async fn serve_dns_session(
     db: Arc<capsem_logger::DbWriter>,
     security_rules: Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
 ) {
-    use std::io::{Read as _, Write as _};
+    use std::io::Write as _;
 
     let conn_fd = conn.fd;
     loop {
@@ -1179,24 +1189,7 @@ async fn serve_dns_session(
         // write one response.
         let read_res = tokio::task::spawn_blocking(move || -> Result<Option<Vec<u8>>> {
             let mut file = clone_fd(conn_fd)?;
-            let mut len_buf = [0u8; 4];
-            match file.read_exact(&mut len_buf) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    return Ok(None);
-                }
-                Err(error) => {
-                    return Err(error).context("DNS port: failed to read length prefix");
-                }
-            }
-            let len = u32::from_be_bytes(len_buf) as usize;
-            if len > capsem_proto::MAX_FRAME_SIZE as usize {
-                anyhow::bail!("DNS port: frame too large ({len} > MAX_FRAME_SIZE)");
-            }
-            let mut payload = vec![0u8; len];
-            file.read_exact(&mut payload)
-                .context("DNS port: failed to read payload")?;
-            Ok(Some(payload))
+            read_bounded_frame(&mut file).context("DNS port: failed to read frame")
         })
         .await;
 
@@ -1475,6 +1468,19 @@ fn rewritten_file_content(
     }
 }
 
+fn deposit_exec_output(
+    job_store: &JobStore,
+    id: u64,
+    captured: Vec<u8>,
+    total_bytes: u64,
+) -> Option<Arc<tokio::sync::Notify>> {
+    let mut guard = job_store.active_execs.lock().unwrap();
+    let active = guard.get_mut(&id)?;
+    active.captured = captured;
+    active.total_bytes = total_bytes;
+    Some(Arc::clone(&active.deposited))
+}
+
 async fn handle_guest_msg(
     msg: GuestToHost,
     js: &Arc<JobStore>,
@@ -1493,16 +1499,15 @@ async fn handle_guest_msg(
             // a transport-loss bound, not a scheduler-latency assumption: a
             // loaded runner can delay the reader for hundreds of milliseconds.
             let notify = js
-                .active_exec
+                .active_execs
                 .lock()
                 .unwrap()
-                .as_ref()
-                .filter(|a| a.id == id)
+                .get(&id)
                 .map(|a| a.deposited.clone());
             if let Some(n) = notify {
                 let _ = tokio::time::timeout(EXEC_OUTPUT_DEPOSIT_TIMEOUT, n.notified()).await;
             }
-            let active_exec = js.active_exec.lock().unwrap().take().filter(|a| a.id == id);
+            let active_exec = js.active_execs.lock().unwrap().remove(&id);
             let (event_id, duration_ms, stdout, total_bytes) = active_exec
                 .map(|active| {
                     (

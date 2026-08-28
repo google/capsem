@@ -268,11 +268,13 @@ pub(crate) async fn handle_ipc_connection(
                     let (j_tx, j_rx) = oneshot::channel();
                     job_store.jobs.lock().unwrap().insert(id, j_tx);
 
-                    // Reset active_exec for this id. The EXEC-port
-                    // handler keys its capture by active_exec.id, so
-                    // this slot must be in place *before* we send.
-                    *job_store.active_exec.lock().unwrap() =
-                        Some(crate::job_store::ActiveExec::new(id));
+                    // Install this id's capture slot before dispatch so the
+                    // EXEC-port reader can deposit independently of other jobs.
+                    job_store
+                        .active_execs
+                        .lock()
+                        .unwrap()
+                        .insert(id, crate::job_store::ActiveExec::new());
 
                     capsem_core::try_send!(
                         "ctrl_exec",
@@ -707,7 +709,7 @@ pub(crate) async fn handle_ipc_connection(
 
                 let new_network = Arc::new(runtime_config.network);
                 let new_security_rules = Arc::new(runtime_config.security_rules);
-                let new_plugin_policy = runtime_config.plugins;
+                let new_plugin_policy = Arc::new(runtime_config.plugins);
                 let new_model_endpoints = Arc::new(runtime_config.model_endpoints);
                 let security_rule_ids = new_security_rules
                     .rules()

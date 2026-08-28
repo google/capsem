@@ -1,5 +1,5 @@
 use std::io::Read;
-use std::os::unix::io::{FromRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
 use anyhow::Result;
 use objc2::rc::Retained;
@@ -14,8 +14,8 @@ use tracing::{debug, debug_span, warn};
 /// A serial console reader that pipes VM output into a broadcast channel.
 pub struct AppleVzSerialConsole {
     tx: broadcast::Sender<Vec<u8>>,
-    read_fd: RawFd,
-    input_fd: RawFd,
+    read_fd: OwnedFd,
+    input_fd: Option<OwnedFd>,
     // Keep the NSPipes alive so the Virtualization framework's file handles stay valid.
     #[allow(dead_code)]
     _pipes: Option<(Retained<NSPipe>, Retained<NSPipe>)>,
@@ -61,39 +61,38 @@ pub fn create_serial_port() -> Result<(
             std::io::Error::last_os_error()
         ));
     }
+    let output_read_fd_dup = unsafe { OwnedFd::from_raw_fd(output_read_fd_dup) };
 
     // Get the raw fd for the host-owned input pipe writer.
     let input_write_fd = input_pipe.fileHandleForWriting().fileDescriptor();
     let input_write_fd_dup = unsafe { libc::dup(input_write_fd) };
     if input_write_fd_dup < 0 {
-        unsafe {
-            libc::close(output_read_fd_dup);
-        }
         return Err(anyhow::anyhow!(
             "dup() failed: {}",
             std::io::Error::last_os_error()
         ));
     }
+    let input_write_fd_dup = unsafe { OwnedFd::from_raw_fd(input_write_fd_dup) };
 
     let (tx, _rx) = broadcast::channel(256);
     let console = AppleVzSerialConsole {
         tx,
         read_fd: output_read_fd_dup,
-        input_fd: input_write_fd_dup,
+        input_fd: Some(input_write_fd_dup),
         _pipes: Some((input_pipe, output_pipe)),
     };
 
     Ok((serial_config, console))
 }
 
-/// Create an AppleVzSerialConsole from raw pipe file descriptors (for testing).
+/// Create an AppleVzSerialConsole that owns raw pipe file descriptors (for testing).
 #[cfg(test)]
 pub fn create_console_from_fd(read_fd: RawFd, input_fd: RawFd) -> AppleVzSerialConsole {
     let (tx, _rx) = broadcast::channel(256);
     AppleVzSerialConsole {
         tx,
-        read_fd,
-        input_fd,
+        read_fd: unsafe { OwnedFd::from_raw_fd(read_fd) },
+        input_fd: (input_fd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(input_fd) }),
         _pipes: None,
     }
 }
@@ -107,7 +106,13 @@ impl AppleVzSerialConsole {
 
     /// Spawn a background thread that reads from the pipe and broadcasts raw bytes.
     pub fn spawn_reader(&self) {
-        let read_fd = self.read_fd;
+        let read_fd = match self.read_fd.try_clone() {
+            Ok(read_fd) => read_fd,
+            Err(error) => {
+                warn!(%error, "failed to duplicate serial reader fd");
+                return;
+            }
+        };
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             read_loop(read_fd, &tx);
@@ -122,13 +127,15 @@ impl crate::hypervisor::SerialConsole for AppleVzSerialConsole {
 
     fn input_fd(&self) -> RawFd {
         self.input_fd
+            .as_ref()
+            .map_or(-1, |input_fd| input_fd.as_raw_fd())
     }
 }
 
 /// Core read loop: reads bytes from a file descriptor and sends them
 /// immediately through the broadcast channel.
-fn read_loop(fd: RawFd, tx: &broadcast::Sender<Vec<u8>>) {
-    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+fn read_loop(fd: OwnedFd, tx: &broadcast::Sender<Vec<u8>>) {
+    let mut file = std::fs::File::from(fd);
     let mut buf = [0u8; 4096];
 
     loop {

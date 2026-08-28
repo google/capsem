@@ -204,12 +204,15 @@ where
             Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
             Poll::Ready(None) => {
                 if !this.end_dispatched && this.pipeline.has_chunk_hooks() {
-                    this.pipeline.dispatch_response_end(
+                    let tail = this.pipeline.dispatch_response_end(
                         &mut this.state,
                         &this.conn,
                         this.trace_id.as_deref(),
                     );
                     this.end_dispatched = true;
+                    if !tail.is_empty() {
+                        return Poll::Ready(Some(Ok(hyper::body::Frame::data(tail))));
+                    }
                 }
                 Poll::Ready(None)
             }
@@ -218,7 +221,7 @@ where
     }
 
     fn is_end_stream(&self) -> bool {
-        self.inner.is_end_stream()
+        (!self.pipeline.has_chunk_hooks() || self.end_dispatched) && self.inner.is_end_stream()
     }
 
     fn size_hint(&self) -> hyper::body::SizeHint {
@@ -237,7 +240,7 @@ impl<B> Drop for ChunkDispatchBody<B> {
         // accumulator state (SSE parser's trailing event without a
         // terminating blank line, etc.).
         if !self.end_dispatched && self.pipeline.has_chunk_hooks() {
-            self.pipeline.dispatch_response_end(
+            let _ = self.pipeline.dispatch_response_end(
                 &mut self.state,
                 &self.conn,
                 self.trace_id.as_deref(),

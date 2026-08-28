@@ -224,7 +224,7 @@ async fn run_tcp_listener(forwarder: Arc<DnsForwarder>) -> io::Result<()> {
     let listener = TcpListener::bind((LISTEN_BIND, LISTEN_PORT)).await?;
     eprintln!("[capsem-dns-proxy] tcp listening on {LISTEN_BIND}:{LISTEN_PORT}");
     loop {
-        let (mut stream, peer) = match listener.accept().await {
+        let (stream, peer) = match listener.accept().await {
             Ok(x) => x,
             Err(e) => {
                 eprintln!("[capsem-dns-proxy] tcp accept error: {e}");
@@ -233,44 +233,50 @@ async fn run_tcp_listener(forwarder: Arc<DnsForwarder>) -> io::Result<()> {
         };
         let _ = stream.set_nodelay(true);
         let forwarder = Arc::clone(&forwarder);
-        tokio::spawn(async move {
-            loop {
-                let mut len_buf = [0u8; 2];
-                match stream.read_exact(&mut len_buf).await {
-                    Ok(_) => {}
-                    Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return,
-                    Err(e) => {
-                        eprintln!("[capsem-dns-proxy] tcp read len from {peer}: {e}");
-                        return;
-                    }
-                }
-                let dns_len = u16::from_be_bytes(len_buf) as usize;
-                let mut payload = vec![0u8; dns_len];
-                if let Err(e) = stream.read_exact(&mut payload).await {
-                    eprintln!("[capsem-dns-proxy] tcp read body from {peer}: {e}");
+        tokio::spawn(serve_tcp_connection(stream, peer, forwarder));
+    }
+}
+
+async fn serve_tcp_connection(
+    mut stream: tokio::net::TcpStream,
+    peer: std::net::SocketAddr,
+    forwarder: Arc<DnsForwarder>,
+) {
+    loop {
+        let mut len_buf = [0u8; 2];
+        match stream.read_exact(&mut len_buf).await {
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return,
+            Err(e) => {
+                eprintln!("[capsem-dns-proxy] tcp read len from {peer}: {e}");
+                return;
+            }
+        }
+        let dns_len = u16::from_be_bytes(len_buf) as usize;
+        let mut payload = vec![0u8; dns_len];
+        if let Err(e) = stream.read_exact(&mut payload).await {
+            eprintln!("[capsem-dns-proxy] tcp read body from {peer}: {e}");
+            return;
+        }
+        match forwarder.forward_query(payload, "tcp").await {
+            Ok(resp) => {
+                if resp.raw.is_empty() {
                     return;
                 }
-                match forwarder.forward_query(payload, "tcp").await {
-                    Ok(resp) => {
-                        if resp.raw.is_empty() {
-                            return;
-                        }
-                        let resp_len = resp.raw.len() as u16;
-                        let mut out = Vec::with_capacity(2 + resp.raw.len());
-                        out.extend_from_slice(&resp_len.to_be_bytes());
-                        out.extend_from_slice(&resp.raw);
-                        if let Err(e) = stream.write_all(&out).await {
-                            eprintln!("[capsem-dns-proxy] tcp write to {peer}: {e}");
-                            return;
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("[capsem-dns-proxy] tcp forward error from {peer}: {e}");
-                        return;
-                    }
+                let resp_len = resp.raw.len() as u16;
+                let mut out = Vec::with_capacity(2 + resp.raw.len());
+                out.extend_from_slice(&resp_len.to_be_bytes());
+                out.extend_from_slice(&resp.raw);
+                if let Err(e) = stream.write_all(&out).await {
+                    eprintln!("[capsem-dns-proxy] tcp write to {peer}: {e}");
+                    return;
                 }
             }
-        });
+            Err(e) => {
+                eprintln!("[capsem-dns-proxy] tcp forward error from {peer}: {e}");
+                return;
+            }
+        }
     }
 }
 

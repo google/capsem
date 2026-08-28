@@ -28,6 +28,46 @@ fn exec_output_read_retries_interrupted_socket_reads() {
     assert_eq!(total, captured.len() as u64, "nothing was dropped");
 }
 
+#[test]
+fn serial_log_writer_runs_on_a_dedicated_thread() {
+    struct TrackingWriter {
+        bytes: Arc<std::sync::Mutex<Vec<u8>>>,
+        writer_thread: Arc<std::sync::Mutex<Option<std::thread::ThreadId>>>,
+    }
+
+    impl std::io::Write for TrackingWriter {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            *self.writer_thread.lock().unwrap() = Some(std::thread::current().id());
+            self.bytes.lock().unwrap().extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let caller_thread = std::thread::current().id();
+    let bytes = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer_thread = Arc::new(std::sync::Mutex::new(None));
+    let bytes_for_writer = Arc::clone(&bytes);
+    let thread_for_writer = Arc::clone(&writer_thread);
+    let (tx, handle) = spawn_serial_log_writer(move || {
+        Ok(TrackingWriter {
+            bytes: bytes_for_writer,
+            writer_thread: thread_for_writer,
+        })
+    });
+
+    tx.blocking_send(b"first".to_vec()).unwrap();
+    tx.blocking_send(b"second".to_vec()).unwrap();
+    drop(tx);
+    handle.join().unwrap();
+
+    assert_eq!(*bytes.lock().unwrap(), b"firstsecond");
+    assert_ne!(*writer_thread.lock().unwrap(), Some(caller_thread));
+}
+
 // -----------------------------------------------------------------------
 // Vsock port classification
 // -----------------------------------------------------------------------
@@ -81,6 +121,47 @@ fn classify_audit_port() {
 }
 
 #[test]
+fn bounded_frame_reader_returns_one_complete_payload() {
+    let payload = b"audit-record";
+    let mut frame = Vec::from((payload.len() as u32).to_be_bytes());
+    frame.extend_from_slice(payload);
+
+    let decoded = read_bounded_frame(&mut std::io::Cursor::new(frame))
+        .unwrap()
+        .expect("complete frame");
+
+    assert_eq!(decoded, payload);
+}
+
+#[test]
+fn bounded_frame_reader_rejects_oversized_length_before_payload_read() {
+    let oversized = capsem_proto::MAX_FRAME_SIZE + 1;
+    let mut reader = std::io::Cursor::new(oversized.to_be_bytes().to_vec());
+
+    let error = read_bounded_frame(&mut reader).unwrap_err();
+
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(reader.position(), 4, "only the length prefix may be read");
+}
+
+#[test]
+fn bounded_frame_reader_rejects_truncated_payload() {
+    let mut frame = Vec::from(5u32.to_be_bytes());
+    frame.extend_from_slice(b"no");
+
+    let error = read_bounded_frame(&mut std::io::Cursor::new(frame)).unwrap_err();
+
+    assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+}
+
+#[test]
+fn bounded_frame_reader_returns_none_on_clean_eof() {
+    let frame = read_bounded_frame(&mut std::io::Cursor::new(Vec::new())).unwrap();
+
+    assert!(frame.is_none());
+}
+
+#[test]
 fn classify_dns_proxy_port() {
     assert_eq!(
         classify_vsock_port(capsem_proto::VSOCK_PORT_DNS_PROXY),
@@ -109,7 +190,9 @@ fn make_conn(port: u32) -> VsockConnection {
 }
 
 fn empty_plugin_policy() -> PluginPolicyHandle {
-    Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()))
+    Arc::new(std::sync::RwLock::new(
+        std::collections::BTreeMap::new().into(),
+    ))
 }
 
 fn file_import_event_with_content(content: &str) -> capsem_core::security_engine::SecurityEvent {
@@ -316,12 +399,12 @@ async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
     js.jobs.lock().unwrap().insert(id, tx);
 
     // Simulate the dispatch path: the ServiceToProcess::Exec handler has
-    // set active_exec, and the EXEC-port reader thread has already
+    // installed the active exec slot, and the EXEC-port reader has already
     // deposited its (empty) local_buf and signalled completion. ExecDone
     // arriving after that must return immediately -- no blanket stall.
-    let active = crate::job_store::ActiveExec::new(id);
+    let active = crate::job_store::ActiveExec::new();
     active.deposited.notify_one();
-    *js.active_exec.lock().unwrap() = Some(active);
+    js.active_execs.lock().unwrap().insert(id, active);
 
     let start = std::time::Instant::now();
     handle_guest_msg(
@@ -371,7 +454,10 @@ async fn exec_done_waits_for_delayed_output_deposit_without_truncation() {
     let id: u64 = 43;
     let (tx, rx) = oneshot::channel::<JobResult>();
     js.jobs.lock().unwrap().insert(id, tx);
-    *js.active_exec.lock().unwrap() = Some(crate::job_store::ActiveExec::new(id));
+    js.active_execs
+        .lock()
+        .unwrap()
+        .insert(id, crate::job_store::ActiveExec::new());
 
     // Reproduce a loaded runner after resume: the serialized control channel
     // delivers ExecDone promptly, while the dedicated EXEC-port reader does
@@ -380,10 +466,9 @@ async fn exec_done_waits_for_delayed_output_deposit_without_truncation() {
     let deposit = tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         let notify = {
-            let mut guard = js_for_deposit.active_exec.lock().unwrap();
+            let mut guard = js_for_deposit.active_execs.lock().unwrap();
             let active = guard
-                .as_mut()
-                .filter(|active| active.id == id)
+                .get_mut(&id)
                 .expect("ExecDone must not discard the capture slot before deposit");
             active.captured = b"/run/capsem-venv\n".to_vec();
             Arc::clone(&active.deposited)
@@ -410,6 +495,69 @@ async fn exec_done_waits_for_delayed_output_deposit_without_truncation() {
         }
         other => panic!("expected Exec result, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn concurrent_exec_completions_keep_each_stdout() {
+    use crate::job_store::{ActiveExec, JobResult, JobStore};
+    use capsem_proto::GuestToHost;
+    use std::sync::Arc;
+    use tokio::sync::oneshot;
+
+    let js = Arc::new(JobStore::new());
+    let db = Arc::new(capsem_logger::DbWriter::open_in_memory(16).unwrap());
+    let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(
+        capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
+    )));
+    let plugin_policy = empty_plugin_policy();
+    let first_id = 501;
+    let second_id = 502;
+    let (first_tx, first_rx) = oneshot::channel();
+    let (second_tx, second_rx) = oneshot::channel();
+    js.jobs.lock().unwrap().insert(first_id, first_tx);
+    js.jobs.lock().unwrap().insert(second_id, second_tx);
+
+    {
+        let mut active = js.active_execs.lock().unwrap();
+        active.insert(first_id, ActiveExec::new());
+        active.insert(second_id, ActiveExec::new());
+    }
+    if let Some(notify) = deposit_exec_output(&js, first_id, b"first\n".to_vec(), 6) {
+        notify.notify_one();
+    }
+    if let Some(notify) = deposit_exec_output(&js, second_id, b"second\n".to_vec(), 7) {
+        notify.notify_one();
+    }
+
+    handle_guest_msg(
+        GuestToHost::ExecDone {
+            id: first_id,
+            exit_code: 0,
+        },
+        &js,
+        &db,
+        &security_rules,
+        &plugin_policy,
+    )
+    .await;
+    handle_guest_msg(
+        GuestToHost::ExecDone {
+            id: second_id,
+            exit_code: 0,
+        },
+        &js,
+        &db,
+        &security_rules,
+        &plugin_policy,
+    )
+    .await;
+
+    let stdout = |result| match result {
+        JobResult::Exec { stdout, .. } => stdout,
+        other => panic!("expected Exec result, got {other:?}"),
+    };
+    assert_eq!(stdout(first_rx.await.unwrap()), b"first\n");
+    assert_eq!(stdout(second_rx.await.unwrap()), b"second\n");
 }
 
 #[tokio::test]

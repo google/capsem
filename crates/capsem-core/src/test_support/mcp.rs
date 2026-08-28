@@ -1,15 +1,17 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::Router;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
-use rmcp::model::{ServerCapabilities, ServerInfo};
+use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool};
+use rmcp::service::{MaybeSendFuture, RequestContext};
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
-use rmcp::{schemars, tool, tool_handler, tool_router, ServerHandler};
+use rmcp::{schemars, tool, tool_handler, tool_router, RoleServer, ServerHandler};
 use serde::Deserialize;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -117,6 +119,29 @@ impl ServerHandler for RecordingMcpHandler {
     }
 }
 
+#[derive(Debug, Clone)]
+struct DuplicateToolMcpHandler;
+
+impl ServerHandler for DuplicateToolMcpHandler {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    }
+
+    fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListToolsResult, rmcp::ErrorData>> + MaybeSendFuture + '_ {
+        std::future::ready(Ok(ListToolsResult {
+            tools: vec![
+                Tool::new("echo", "first definition", Arc::new(Default::default())),
+                Tool::new("echo", "duplicate definition", Arc::new(Default::default())),
+            ],
+            ..Default::default()
+        }))
+    }
+}
+
 pub(crate) async fn spawn_recording_mcp_server() -> anyhow::Result<LocalMcpServer> {
     let state = RecordingMcpState::default();
     let handler_state = state.clone();
@@ -138,6 +163,38 @@ pub(crate) async fn spawn_recording_mcp_server() -> anyhow::Result<LocalMcpServe
                 record_mcp_http_request,
             ));
 
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let handle = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            let _ = axum::serve(listener, router)
+                .with_graceful_shutdown(async move { shutdown.cancelled_owned().await })
+                .await;
+        }
+    });
+
+    Ok(LocalMcpServer {
+        url: format!("http://{addr}/mcp"),
+        state,
+        shutdown,
+        handle,
+    })
+}
+
+pub(crate) async fn spawn_duplicate_tool_mcp_server() -> anyhow::Result<LocalMcpServer> {
+    let state = RecordingMcpState::default();
+    let shutdown = CancellationToken::new();
+    let service: StreamableHttpService<DuplicateToolMcpHandler, LocalSessionManager> =
+        StreamableHttpService::new(
+            move || Ok(DuplicateToolMcpHandler),
+            Default::default(),
+            StreamableHttpServerConfig::default()
+                .with_sse_keep_alive(None)
+                .with_cancellation_token(shutdown.child_token()),
+        );
+
+    let router = Router::new().nest_service("/mcp", service);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     let handle = tokio::spawn({

@@ -3,7 +3,156 @@
 use super::*;
 
 // -----------------------------------------------------------------------
-// ServiceToProcess serde roundtrips
+// Production bincode wire contract
+// -----------------------------------------------------------------------
+
+fn assert_bincode_variant_index<T>(message: &T, expected: u32)
+where
+    T: serde::Serialize + for<'de> serde::Deserialize<'de>,
+{
+    let bytes = bincode::serialize(message).expect("serialize production IPC frame");
+    let actual = u32::from_le_bytes(bytes[..4].try_into().unwrap());
+    assert_eq!(actual, expected, "bincode enum index changed");
+
+    let decoded: T = bincode::deserialize(&bytes).expect("deserialize production IPC frame");
+    assert_eq!(
+        bincode::serialize(&decoded).unwrap(),
+        bytes,
+        "bincode payload did not round-trip exactly"
+    );
+}
+
+#[test]
+fn service_to_process_bincode_indices_and_roundtrips_are_stable() {
+    let messages = vec![
+        ServiceToProcess::Ping,
+        ServiceToProcess::TerminalInput { data: vec![1] },
+        ServiceToProcess::TerminalResize { cols: 80, rows: 24 },
+        ServiceToProcess::Shutdown,
+        ServiceToProcess::Exec {
+            id: 1,
+            command: "true".into(),
+        },
+        ServiceToProcess::WriteFile {
+            id: 2,
+            path: "/tmp/x".into(),
+            data: vec![2],
+        },
+        ServiceToProcess::ReadFile {
+            id: 3,
+            path: "/tmp/x".into(),
+        },
+        ServiceToProcess::LogFileBoundary {
+            id: 4,
+            action: FileBoundaryAction::Import,
+            path: "/tmp/x".into(),
+            data: vec![3],
+            size: 1,
+            mime_type: None,
+        },
+        ServiceToProcess::ReloadConfig,
+        ServiceToProcess::StartTerminalStream,
+        ServiceToProcess::StopTerminalStream,
+        ServiceToProcess::PrepareSnapshot,
+        ServiceToProcess::Unfreeze,
+        ServiceToProcess::Suspend {
+            checkpoint_path: "/tmp/checkpoint".into(),
+        },
+        ServiceToProcess::Resume,
+        ServiceToProcess::McpListServers { id: 5 },
+        ServiceToProcess::McpListTools { id: 6 },
+        ServiceToProcess::McpRefreshTools { id: 7 },
+        ServiceToProcess::SnapshotStatus { id: 8 },
+        ServiceToProcess::McpCallTool {
+            id: 9,
+            namespaced_name: "server__tool".into(),
+            arguments_json: "{}".into(),
+        },
+    ];
+
+    for (expected, message) in messages.iter().enumerate() {
+        assert_bincode_variant_index(message, expected as u32);
+    }
+}
+
+#[test]
+fn process_to_service_bincode_indices_and_roundtrips_are_stable() {
+    let messages = vec![
+        ProcessToService::Pong,
+        ProcessToService::TerminalOutput { data: vec![1] },
+        ProcessToService::StateChanged {
+            id: "vm".into(),
+            state: "Running".into(),
+            trigger: "booted".into(),
+        },
+        ProcessToService::ExecResult {
+            id: 1,
+            stdout: vec![2],
+            stderr: vec![],
+            exit_code: 0,
+            truncated: false,
+        },
+        ProcessToService::WriteFileResult {
+            id: 2,
+            success: true,
+            error: None,
+        },
+        ProcessToService::ReadFileResult {
+            id: 3,
+            data: Some(vec![3]),
+            error: None,
+        },
+        ProcessToService::LogFileBoundaryResult {
+            id: 4,
+            success: true,
+            data: None,
+            error: None,
+        },
+        ProcessToService::ShutdownRequested { id: "vm".into() },
+        ProcessToService::SuspendRequested { id: "vm".into() },
+        ProcessToService::SnapshotReady { id: "vm".into() },
+        ProcessToService::McpServersResult {
+            id: 5,
+            servers: vec![],
+        },
+        ProcessToService::McpToolsResult {
+            id: 6,
+            tools: vec![],
+        },
+        ProcessToService::McpRefreshResult {
+            id: 7,
+            success: true,
+            error: None,
+        },
+        ProcessToService::SnapshotStatusResult {
+            id: 8,
+            status: SnapshotStatus {
+                total: 0,
+                auto_count: 0,
+                manual_count: 0,
+                manual_available: 0,
+                snapshots: vec![],
+            },
+        },
+        ProcessToService::McpCallToolResult {
+            id: 9,
+            result_json: Some("{}".into()),
+            event_id: None,
+            error: None,
+        },
+        ProcessToService::SuspendFailed {
+            id: "vm".into(),
+            error: "failed".into(),
+        },
+    ];
+
+    for (expected, message) in messages.iter().enumerate() {
+        assert_bincode_variant_index(message, expected as u32);
+    }
+}
+
+// -----------------------------------------------------------------------
+// Supplemental JSON payload-shape roundtrips
 // -----------------------------------------------------------------------
 
 #[test]

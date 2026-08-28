@@ -24,7 +24,7 @@ use super::hooks::{
     HookState, Registration, StopAction,
 };
 use super::metrics as m;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use std::time::Instant;
 use tracing::{debug, trace, Instrument};
 
@@ -214,20 +214,38 @@ impl Pipeline {
         state: &mut HookState,
         conn: &ConnMeta,
         trace_id: Option<&str>,
-    ) {
+    ) -> Bytes {
         if self.chunk_hooks.is_empty() {
-            return;
+            return Bytes::new();
         }
         let mut ctx = ChunkCtx {
             state,
             conn,
             trace_id,
         };
+        let mut tail = Bytes::new();
         for hook in self.chunk_hooks.iter() {
+            if !tail.is_empty() {
+                self.run_chunk(hook.as_ref(), "response_tail", &mut ctx, |h, c| {
+                    h.on_response_chunk(&mut tail, c)
+                });
+            }
             self.run_chunk(hook.as_ref(), "response_end", &mut ctx, |h, c| {
                 h.on_response_end(c)
             });
+            let produced = hook.take_response_tail(&mut ctx);
+            if !produced.is_empty() {
+                if tail.is_empty() {
+                    tail = produced;
+                } else {
+                    let mut combined = BytesMut::with_capacity(tail.len() + produced.len());
+                    combined.extend_from_slice(&tail);
+                    combined.extend_from_slice(&produced);
+                    tail = combined.freeze();
+                }
+            }
         }
+        tail
     }
 
     /// Common timing + counter wrapper for sync chunk-hook calls. Cheap

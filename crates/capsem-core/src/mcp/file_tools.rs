@@ -18,7 +18,7 @@ use std::time::SystemTime;
 use serde_json::Value;
 use walkdir::WalkDir;
 
-use crate::auto_snapshot::{AutoSnapshotScheduler, SnapshotOrigin};
+use crate::auto_snapshot::{snapshot_entry_digest, AutoSnapshotScheduler, SnapshotOrigin};
 
 use super::builtin_tools::{paginate, DEFAULT_MAX_LENGTH};
 use super::types::{JsonRpcResponse, McpToolDef, ToolAnnotations};
@@ -387,11 +387,23 @@ fn validate_snapshot_name(name: &str) -> Result<&str, String> {
     Ok(name)
 }
 
-/// Entry from a directory walk: size and whether the entry is a symlink.
+/// Entry from a directory walk: metadata and a streamed content digest.
 #[derive(Debug, Clone, Copy)]
 struct FileEntry {
     size: u64,
     is_symlink: bool,
+    digest: Option<blake3::Hash>,
+}
+
+impl FileEntry {
+    fn differs_from(self, other: Self) -> bool {
+        self.size != other.size
+            || self.is_symlink != other.is_symlink
+            || match (self.digest, other.digest) {
+                (Some(current), Some(snapshot)) => current != snapshot,
+                _ => true,
+            }
+    }
 }
 
 /// Entry describing a changed file.
@@ -431,11 +443,13 @@ fn collect_files(root: &Path) -> HashMap<String, FileEntry> {
                 .symlink_metadata()
                 .map(|m| m.len())
                 .unwrap_or(0);
+            let is_symlink = ft.is_symlink();
             files.insert(
                 rel_str,
                 FileEntry {
                     size,
-                    is_symlink: ft.is_symlink(),
+                    is_symlink,
+                    digest: snapshot_entry_digest(entry.path(), is_symlink),
                 },
             );
         }
@@ -509,10 +523,10 @@ fn collect_changes(scheduler: &AutoSnapshotScheduler, workspace_root: &Path) -> 
             }
         }
 
-        // Modified: in both but different size.
+        // Modified: in both but different metadata or content.
         for (path, cur_entry) in &current_files {
             if let Some(snap_entry) = snap_files.get(path) {
-                if cur_entry.size != snap_entry.size && seen_paths.insert(path.clone()) {
+                if cur_entry.differs_from(*snap_entry) && seen_paths.insert(path.clone()) {
                     changes.push(ChangedFile {
                         path: path.clone(),
                         op: "modified",

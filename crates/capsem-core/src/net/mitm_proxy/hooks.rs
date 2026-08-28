@@ -294,6 +294,13 @@ pub trait ChunkHook: Send + Sync {
 
     /// Called once when the response body finishes.
     fn on_response_end(&self, _ctx: &mut ChunkCtx<'_>) {}
+
+    /// Return bytes withheld while classifying or transforming the response.
+    /// The pipeline feeds this tail through later chunk hooks before their end
+    /// callbacks, then the body wrapper emits it as the final data frame.
+    fn take_response_tail(&self, _ctx: &mut ChunkCtx<'_>) -> Bytes {
+        Bytes::new()
+    }
 }
 
 pub type ArcChunkHook = Arc<dyn ChunkHook>;
