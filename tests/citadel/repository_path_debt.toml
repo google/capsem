@@ -51,6 +51,7 @@ version = 1
 "build_system/tests/image/test_image_module_boundary.py" = "50c86b7ed8ac2cf95bd48334961bf0530cdc77b5a56f852c5c61b89d735fd711"
 "build_system/tests/image/test_models.py" = "b81f662a532cdd268ebc921fe4d22ed2c07ca214929392f598214240dcda54c4"
 "build_system/tests/image/test_validate.py" = "b81f662a532cdd268ebc921fe4d22ed2c07ca214929392f598214240dcda54c4"
+"build_system/tests/test_reproducible_sdist.py" = "50c86b7ed8ac2cf95bd48334961bf0530cdc77b5a56f852c5c61b89d735fd711"
 "codecov.yml" = "025eeebbc2519db4dc65c8e9260c231146a17612b63fca020106be862147ec2c"
 "config/README.md" = "df7594253ad90ebc2afd7577a485277ac0470e13aada8efa91627a3fdce59f21"
 "config/data/README.md" = "519c657fcc02c827d505bbed34a6ccc847227f3d2cd698ad9d4d27674d1d28af"

@@ -34,7 +34,7 @@ from .sandboxschema import SandboxConfig as SandboxConfig
 from .sourcecontractschema import ScriptSizeConfig
 from .timingschema import TimingRegressionConfig as TimingRegressionConfig
 
-#: A first-party tree to check. Relative, normalized, and inside the checkout:
+#: A first-party file or tree to check. Relative, normalized, and inside the checkout:
 #: an absolute or escaping root would check somebody else's code and report it
 #: as this repository's.
 PythonRoot = Annotated[str, StringConstraints(min_length=1, pattern=r"^[A-Za-z0-9_][\w./-]*$")]

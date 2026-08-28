@@ -34,6 +34,9 @@ include-package-data = true
 [tool.setuptools.package-dir]
 capsem_builder = "builder"
 
+[tool.setuptools.cmdclass]
+sdist = "sdist_command.ReproducibleSdist"
+
 [[tool.uv.index]]
 url = "https://pypi.org/simple"
 default = true
@@ -98,6 +101,7 @@ dev = [
     "hadolint-py==2.14.0.1",
     "pyyaml>=6.0.3",
     "ruff>=0.15.16",
+    "setuptools>=80",
     "ty>=0.0.46",
     "watchdog>=6.0.0",
     "websockets>=16.0",

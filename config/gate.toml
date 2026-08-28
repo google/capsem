@@ -805,9 +805,9 @@ key = "version"
 # ---------------------------------------------------------------------------
 
 [lint]
-python_roots = ["build_system/builder", "build_system/tests", "scripts", "tests", "guest"]
+python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/tests", "scripts", "tests", "guest"]
 # Already passes every rule, and must keep doing so.
-strict_roots = ["build_system/builder"]
+strict_roots = ["build_system/builder", "build_system/sdist_command.py"]
 # Match the import roots exercised by the sole pytest project plus the guest
 # trees and script bootstrap paths that are materialized at runtime. Keeping
 # these explicit lets Ty inspect a conventional capsem-builder install without

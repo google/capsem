@@ -1,4 +1,4 @@
-"""What `config/gate.toml` says about linting: trees, tools and surfaces.
+"""What `config/gate.toml` says about linting: files, trees, tools and surfaces.
 
 Split from `harnessschema`, which describes the gate running itself. The seam
 is the same one that file already documents: machinery there, what the
@@ -34,7 +34,7 @@ class MarkdownLintConfig(Strict):
 
 
 class LintConfig(Strict):
-    """Which trees are checked, which strictly, and what is held back."""
+    """Which source surfaces are checked, which strictly, and what is held back."""
 
     markdown: MarkdownLintConfig = MarkdownLintConfig()
     python_roots: tuple[PythonRoot, ...]

@@ -129,6 +129,11 @@ def _plan():
     )._describe()
 
 
+def _python_sources(root: str) -> tuple[Path, ...]:
+    path = PROJECT_ROOT / root
+    return (path,) if path.is_file() else tuple(sorted(path.rglob("*.py")))
+
+
 def test_each_tool_is_its_own_step() -> None:
     labels = set(_plan().labels)
 
@@ -175,6 +180,7 @@ def test_ty_uses_the_installed_package_and_scoped_relaxed_search_paths() -> None
 
     strict = " ".join(plan.step_named("python.ty.strict").render())
     assert "--extra-search-path" not in strict
+    assert "build_system/sdist_command.py" in strict
 
     relaxed_arguments = tuple(
         shlex.split(" ".join(plan.step_named("python.ty.relaxed").render()))
@@ -222,7 +228,7 @@ def test_python_suppressions_and_exclusions_cannot_grow_unnoticed() -> None:
     comments = (
         token.string
         for root in CONFIG.lint.python_roots
-        for path in sorted((PROJECT_ROOT / root).rglob("*.py"))
+        for path in _python_sources(root)
         for token in tokenize.generate_tokens(
             iter(path.read_text(encoding="utf-8").splitlines(keepends=True)).__next__
         )

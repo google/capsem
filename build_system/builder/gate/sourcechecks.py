@@ -10,11 +10,12 @@ took four minutes" covered Ruff, strict Ty and relaxed Ty together; a Ruff
 failure and a Ty failure were one line in one `GateError`; and neither could
 overlap the other when the machine had room.
 
-The split that matters is strict against relaxed. `build_system/builder` passes
-every rule and is checked with nothing held back. The other trees hold back `ty_ratchet` --
-roughly four hundred diagnostics dominated by inference over untyped fixture
-data -- because the alternative was checking them loosely or not at all, and
-not at all is what actually happened for years.
+The split that matters is strict against relaxed. The builder and its root
+packaging command pass every rule and are checked with nothing held back. The
+other surfaces hold back `ty_ratchet` -- roughly four hundred diagnostics
+dominated by inference over untyped fixture data -- because the alternative
+was checking them loosely or not at all, and not at all is what actually
+happened for years.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
     """
     phase = plan.phase("python")
     settings = config.lint
-    present = [name for name in settings.python_roots if (config.root / name).is_dir()]
+    present = [name for name in settings.python_roots if (config.root / name).exists()]
     strict = [name for name in present if name in settings.strict_roots]
     relaxed = [name for name in present if name not in settings.strict_roots]
 
