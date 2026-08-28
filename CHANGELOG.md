@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Malformed model-request fallbacks now reuse their compiled field matcher
+  instead of rebuilding it for every request.
 - MCP catalogs now ignore duplicate namespaced tool definitions instead of
   advertising ambiguous entries.
 - Manifest merges now compare numeric version components, so multi-digit asset

@@ -21,6 +21,22 @@ fn test_extract_model_field() {
 }
 
 #[test]
+fn model_field_regex_is_reused_across_fallback_parses() {
+    let compiled = std::sync::LazyLock::force(&MODEL_FIELD_REGEX) as *const regex::Regex;
+
+    for _ in 0..10 {
+        assert_eq!(
+            extract_model_field(br#"{"model":"gpt-4o""#).as_deref(),
+            Some("gpt-4o")
+        );
+        assert_eq!(
+            std::sync::LazyLock::force(&MODEL_FIELD_REGEX) as *const regex::Regex,
+            compiled
+        );
+    }
+}
+
+#[test]
 fn test_truncated_json_fallback() {
     let truncated =
         br#"{"model": "claude-3-5-sonnet-20240620", "messages": [{"role": "user", "con"#;
