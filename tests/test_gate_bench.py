@@ -27,6 +27,12 @@ CONFIG = gate_config.load(PROJECT_ROOT)
 SETTINGS = CONFIG.benchmark.run
 
 
+def test_collectors_live_under_benchmark_ownership() -> None:
+    """Executable inputs belong beside the reviewed benchmark evidence."""
+    assert SETTINGS.collectors == "benchmarks/collectors"
+    assert (PROJECT_ROOT / SETTINGS.collectors).is_dir()
+
+
 def _plan(cls, **overrides):
     args = argparse.Namespace(
         dry_run=False,

@@ -59,7 +59,7 @@ difference between two machines.
 
 ## Collectors
 
-`bench/collectors/<dimension>`, executable, no suffix. Print one JSON document
+`benchmarks/collectors/<dimension>`, executable, no suffix. Print one JSON document
 of raw samples on stdout and nothing else:
 
 ```json

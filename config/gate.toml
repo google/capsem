@@ -1045,10 +1045,10 @@ max_lines = 1000
 # statistics have started living in a collector -- which is exactly how `p99`
 # came to mean a different thing in each of ten producers.
 #
-# They carry no suffix (`bench/collectors/routes` is run by name), so they are
+# They carry no suffix (`benchmarks/collectors/routes` is run by name), so they are
 # found by shebang, the same way `scripts/pkg-scripts/*` are.
 [boundary.bench]
-roots = ["bench"]
+roots = ["benchmarks/collectors"]
 suffixes = [".py"]
 max_lines = 300
 
@@ -2824,7 +2824,7 @@ codex = 2500
 crate = "capsem-bench"
 bin_name = "capsem-bench-rs"
 binary = "target/debug/capsem-bench-rs"
-collectors = "bench/collectors"
+collectors = "benchmarks/collectors"
 # One SQLite file rather than a JSON tree. Asking "is /vms/list slower than it
 # was three releases ago" used to mean globbing filenames and parsing ten
 # shapes; it is now a query.

@@ -181,7 +181,12 @@ def _observe() -> Observed:
         for path in tracked
         if path.startswith("graphics/")
     )
-    reviewed = tuple(path for path in tracked if path.startswith("benchmarks/"))
+    reviewed = tuple(
+        path
+        for path in tracked
+        if path.startswith("benchmarks/")
+        and not path.startswith("benchmarks/collectors/")
+    )
     recordings = tuple(
         f"tracked generated recording: {path}"
         for path in tracked

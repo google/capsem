@@ -60,7 +60,7 @@ struct RunArgs {
     /// Dimensions to measure. Every one when omitted.
     dimensions: Vec<String>,
     /// Directory holding one executable per dimension.
-    #[arg(long, default_value = "bench/collectors")]
+    #[arg(long, default_value = "benchmarks/collectors")]
     collectors: PathBuf,
     /// The benchmark store to record into.
     #[arg(long, default_value = "target/test-benchmarks/benchmarks.db")]
