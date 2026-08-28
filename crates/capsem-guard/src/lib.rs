@@ -142,12 +142,16 @@ where
 {
     let task: WatcherTask = Box::new(move || loop {
         if !parent_is_expected(parent_pid) {
+            let observed_parent_pid = current_ppid();
+            // Parent death often closes the companion's stdout/stderr pipes.
+            // Termination is the contract; a broken diagnostic sink must not
+            // panic this watcher before it performs that action.
+            terminator();
             warn!(
                 parent_pid,
-                current_ppid = current_ppid(),
-                "parent gone or reparented; terminating companion"
+                current_ppid = observed_parent_pid,
+                "parent gone or reparented; companion terminator returned"
             );
-            terminator();
             return;
         }
         thread::sleep(interval);

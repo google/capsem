@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Parent-watched companions now terminate before attempting best-effort
+  reparenting logs, so a launcher that closes their stdout/stderr pipes cannot
+  strand a gateway, tray, MCP server, or mock server on PID 1 holding its
+  sockets.
 - VM launch and resume now publish instance state before starting child-exit
   cleanup, preventing fast process failures from leaving phantom running VMs.
 - File validation now rejects `..` only as a parent-directory component, so

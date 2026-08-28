@@ -9,6 +9,7 @@ import selectors
 import subprocess
 import tempfile
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ else:
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MOCK_SERVER_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-mock-server"
 MOCK_SERVER_CRATE = PROJECT_ROOT / "crates" / "capsem-mock-server"
+GUARD_CRATE = PROJECT_ROOT / "crates" / "capsem-guard"
 MOCK_SERVER_ADDR = "127.0.0.1:3713"
 DEFAULT_LOCK_TIMEOUT_S = 600.0
 
@@ -114,14 +116,20 @@ def stop_process(proc: subprocess.Popen[str] | None) -> None:
         lock_file.close()
 
 
+def _mock_server_sources() -> Iterable[Path]:
+    """Yield the binary's owned sources, including its lifecycle dependency."""
+    return (
+        path
+        for crate in (MOCK_SERVER_CRATE, GUARD_CRATE)
+        for path in crate.rglob("*")
+        if path.is_file() and path.suffix in {".rs", ".toml"}
+    )
+
+
 def _ensure_mock_server_binary() -> None:
     ensure_host_test_binary(
         MOCK_SERVER_BINARY,
-        source_paths=(
-            path
-            for path in MOCK_SERVER_CRATE.rglob("*")
-            if path.is_file() and path.suffix in {".rs", ".toml"}
-        ),
+        source_paths=_mock_server_sources(),
         build_command=("cargo", "build", "-p", "capsem-mock-server"),
         project_root=PROJECT_ROOT,
     )

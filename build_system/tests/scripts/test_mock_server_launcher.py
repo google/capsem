@@ -16,6 +16,14 @@ from helpers.mock_server import (
     start_mock_server,
     stop_process,
 )
+from scripts import mock_server as mock_server_launcher
+
+
+def test_mock_server_freshness_tracks_the_shared_parent_guard() -> None:
+    sources = set(mock_server_launcher._mock_server_sources())
+
+    assert mock_server_launcher.MOCK_SERVER_CRATE / "src/main.rs" in sources
+    assert mock_server_launcher.GUARD_CRATE / "src/lib.rs" in sources
 
 
 def test_mock_server_launcher_waits_for_busy_address_then_starts() -> None:
