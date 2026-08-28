@@ -54,9 +54,9 @@ def selected_tools(job: str) -> set[str]:
     import re
     import tomllib
 
-    declared = tomllib.loads(
-        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
-    )["toolchain"]["sets"]
+    declared = tomllib.loads((PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))[
+        "toolchain"
+    ]["sets"]
     chosen: set[str] = set()
     for match in re.findall(r"--sets ([a-z,]+)", job):
         for label in match.split(","):
@@ -121,8 +121,8 @@ def test_every_runner_of_the_broad_suite_installs_what_that_suite_shells_out_to(
         absent = sorted(needed - selected_tools(job))
         if absent:
             missing.append(f"{workflow_name}:{job_name} lacks {absent}")
-    assert not missing, (
-        "these run the broad suite without the tools it invokes: " + "; ".join(missing)
+    assert not missing, "these run the broad suite without the tools it invokes: " + "; ".join(
+        missing
     )
 
 
@@ -491,3 +491,33 @@ def test_public_release_storage_is_verified_before_channel_deployment() -> None:
     assert "b3sum -c -" in candidate
     assert "needs: [verify-release-candidate]" in deploy
     assert "needs: [deploy-release-channel]" in public
+
+
+def test_assembly_recovery_reuses_qualified_artifacts_and_keeps_public_proof() -> None:
+    workflow = _read(".github/workflows/release-publication-recovery.yaml")
+    recover = _job_block(workflow, "recover-release-channel")
+    deploy = _job_block(workflow, "deploy-release-channel")
+    public = _job_block(workflow, "verify-release-downloads")
+
+    assert "workflow_dispatch:" in workflow
+    assert "group: capsem-release-${{ inputs.channel }}" in workflow
+    assert "--failed-job assemble-release-channel" in recover
+    assert "binary-channel-candidate" in recover
+    assert "run-id: ${{ inputs.failed_run_id }}" in recover
+    assert "scripts/build-complete-release-channel.py" in recover
+    assert "CAPSEM_MANIFEST_URL" in recover
+    assert "scripts/publish-immutable-release-assets.sh" in recover
+    assert "binary-channel-preview" in recover
+    assert "binary-channel-before" in recover
+    assert "release-binaries" not in workflow
+    assert "qualify-binaries" not in workflow
+
+    assert "needs: [recover-release-channel]" in deploy
+    assert "uses: ./.github/workflows/release-channel.yaml" in deploy
+    assert "source_commit: ${{ github.sha }}" in deploy
+
+    assert "needs: [deploy-release-channel]" in public
+    assert "scripts/verify-channel-downloads.py" in public
+    assert "scripts/check-public-binary-release.py" in public
+    assert "Enable KVM for live public-install VM proof" in public
+    assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in public

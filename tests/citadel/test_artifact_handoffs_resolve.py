@@ -95,6 +95,64 @@ def _artifacts(job: dict, action: str) -> set[str]:
     return found
 
 
+def _has_cross_run_resolver(job: dict) -> bool:
+    """The job proves which immutable prior run may supply artifacts."""
+    commands = [step.get("run") or "" for step in _steps(job)]
+    return any(
+        isinstance(command, str)
+        and (
+            "verify-release-recovery-run.py" in command
+            or "resolve-reusable-profile-assets.py" in command
+        )
+        for command in commands
+    )
+
+
+def _needs_output_producer(run_id: str) -> str | None:
+    """Return the job named by a ``needs.<job>.outputs.*`` expression."""
+    marker = "needs."
+    output_marker = ".outputs."
+    if marker not in run_id:
+        return None
+    remainder = run_id.split(marker, 1)[1]
+    if output_marker not in remainder:
+        return None
+    producer = remainder.split(output_marker, 1)[0]
+    return producer or None
+
+
+def _cross_run_downloads(job: dict, jobs: dict[str, dict]) -> set[str]:
+    """Authenticated artifacts admitted by an earlier run-identity proof."""
+    verified = False
+    found: set[str] = set()
+    axes = _matrix_values(job)
+    for step in _steps(job):
+        command = step.get("run") or ""
+        if isinstance(command, str) and "verify-release-recovery-run.py" in command:
+            verified = True
+        uses = step.get("uses") or ""
+        if not uses.startswith(DOWNLOAD):
+            continue
+        inputs = step.get("with") or {}
+        run_id = inputs.get("run-id")
+        if run_id is None:
+            continue
+        name = inputs.get("name")
+        token = inputs.get("github-token")
+        assert isinstance(name, str) and name, "cross-run artifact download needs a literal name"
+        assert isinstance(run_id, str) and run_id, f"cross-run download {name!r} needs run-id"
+        assert isinstance(token, str) and token, f"cross-run download {name!r} needs github-token"
+        producer = _needs_output_producer(run_id)
+        upstream_verified = (
+            producer in _needs(job) and producer in jobs and _has_cross_run_resolver(jobs[producer])
+        )
+        assert verified or upstream_verified, (
+            f"cross-run download {name!r} has no prior immutable run resolver"
+        )
+        found |= _expand(name, axes)
+    return found
+
+
 def _ancestors(jobs: dict[str, dict], name: str) -> set[str]:
     """Every job that must finish before `name`, transitively."""
     seen: set[str] = set()
@@ -130,13 +188,52 @@ def test_the_guard_sees_real_handoffs() -> None:
     assert total >= 5, f"only {total} static artifact downloads found; the shape has drifted"
 
 
+def test_cross_run_download_requires_an_immutable_run_resolver() -> None:
+    job = {
+        "steps": [
+            {
+                "uses": "actions/download-artifact@pinned",
+                "with": {
+                    "name": "qualified-candidate",
+                    "run-id": "${{ inputs.failed_run_id }}",
+                    "github-token": "${{ github.token }}",
+                },
+            }
+        ]
+    }
+    with pytest.raises(AssertionError, match="no prior immutable run resolver"):
+        _cross_run_downloads(job, {"consume": job})
+
+
+def test_cross_run_download_accepts_a_verified_upstream_matrix_reuse() -> None:
+    producer = {"steps": [{"run": "python3 scripts/resolve-reusable-profile-assets.py"}]}
+    consumer = {
+        "needs": ["resolve"],
+        "strategy": {"matrix": {"arch": ["arm64", "x86_64"]}},
+        "steps": [
+            {
+                "uses": "actions/download-artifact@pinned",
+                "with": {
+                    "name": "vm-assets-${{ matrix.arch }}",
+                    "run-id": "${{ needs.resolve.outputs.reuse_run_id }}",
+                    "github-token": "${{ github.token }}",
+                },
+            }
+        ],
+    }
+    assert _cross_run_downloads(consumer, {"resolve": producer}) == {
+        "vm-assets-arm64",
+        "vm-assets-x86_64",
+    }
+
+
 @pytest.mark.parametrize("workflow", WORKFLOWS, ids=lambda path: path.name)
 def test_every_downloaded_artifact_is_uploaded_by_an_earlier_job(workflow: Path) -> None:
     """The download either resolves or the release dies an hour in."""
     jobs = _workflow_jobs(workflow)
     unresolved = []
     for name, job in jobs.items():
-        wanted = _artifacts(job, DOWNLOAD)
+        wanted = _artifacts(job, DOWNLOAD) - _cross_run_downloads(job, jobs)
         if not wanted:
             continue
         earlier = _ancestors(jobs, name)
@@ -146,7 +243,9 @@ def test_every_downloaded_artifact_is_uploaded_by_an_earlier_job(workflow: Path)
             available |= _artifacts(jobs[ancestor], UPLOAD)
         for missing in sorted(wanted - available):
             producers = sorted(
-                other for other, candidate in jobs.items() if missing in _artifacts(candidate, UPLOAD)
+                other
+                for other, candidate in jobs.items()
+                if missing in _artifacts(candidate, UPLOAD)
             )
             unresolved.append(
                 f"{name} downloads {missing!r}, "
@@ -156,6 +255,4 @@ def test_every_downloaded_artifact_is_uploaded_by_an_earlier_job(workflow: Path)
                     else "which no job in this workflow uploads"
                 )
             )
-    assert not unresolved, (
-        f"{workflow.name}: " + "; ".join(unresolved)
-    )
+    assert not unresolved, f"{workflow.name}: " + "; ".join(unresolved)

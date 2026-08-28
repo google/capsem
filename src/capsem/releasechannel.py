@@ -11,6 +11,11 @@ class FirstPartyChannel(StrEnum):
     STABLE = "stable"
     NIGHTLY = "nightly"
 
+    @property
+    def dependencies(self) -> tuple[str, ...]:
+        """Public channel graphs required to publish this channel."""
+        return (FirstPartyChannel.STABLE.value,) if self is FirstPartyChannel.NIGHTLY else ()
+
     @classmethod
     def parse(cls, value: str) -> FirstPartyChannel:
         try:

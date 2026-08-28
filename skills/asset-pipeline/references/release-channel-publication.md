@@ -50,6 +50,12 @@ or `http://...` for hosted corporate channels.
 The root channel catalog makes stable/nightly switching a manifest URL choice.
 Stable can point at `https://release.capsem.org/assets/stable/manifest.json`
 while nightly points at `https://release.capsem.org/assets/nightly/manifest.json`.
+Publication dependencies are deliberately one-way. A stable publication is
+self-contained and must never read, preserve, validate, or wait for nightly;
+nightly may be absent or broken without blocking stable. A nightly publication
+must resolve the latest good public stable graph, carry it byte-for-byte into
+the generated distribution, and then add nightly so clients can always switch
+back. If that stable baseline is unavailable or invalid, nightly fails closed.
 Package postinstall and glow-up tests must use those URL-shaped inputs directly;
 do not add package-time manifest converters or compatibility adapters for old
 manifest shapes.

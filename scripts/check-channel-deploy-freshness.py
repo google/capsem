@@ -11,7 +11,9 @@ from urllib.error import HTTPError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
-CHANNELS = ("stable", "nightly")
+from capsem.releasechannel import FirstPartyChannel
+
+CHANNELS = tuple(channel.value for channel in FirstPartyChannel)
 USER_AGENT = "capsem-channel-deploy/1"
 
 
@@ -54,9 +56,7 @@ def verify_untouched_channels(
     parsed = urlparse(release_site)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("release site must be an absolute HTTP(S) URL")
-    for channel in CHANNELS:
-        if channel == selected_channel:
-            continue
+    for channel in FirstPartyChannel.parse(selected_channel).dependencies:
         candidate_path = dist / "assets" / channel / "manifest.json"
         live = read_live_manifest(release_site, channel)
         if not candidate_path.is_file():
@@ -67,8 +67,7 @@ def verify_untouched_channels(
             if not _is_manifest(live):
                 continue
             raise ValueError(
-                f"generated dist is missing published {channel} manifest; "
-                "deploying would remove it"
+                f"generated dist is missing published {channel} manifest; deploying would remove it"
             )
         candidate = candidate_path.read_bytes()
         if candidate != live:

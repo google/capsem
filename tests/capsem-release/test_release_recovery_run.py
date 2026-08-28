@@ -19,7 +19,20 @@ SOURCE = "a" * 40
 RUN_ID = "42"
 
 
-def _run() -> dict[str, Any]:
+def _run(failed_job: str = VERIFY.DEPLOY_JOB) -> dict[str, Any]:
+    outcomes = {
+        VERIFY.ASSEMBLY_JOB: "success",
+        VERIFY.CANDIDATE_JOB: "success",
+        VERIFY.DEPLOY_JOB: "failure",
+        VERIFY.POST_DEPLOY_JOB: "skipped",
+    }
+    if failed_job == VERIFY.ASSEMBLY_JOB:
+        outcomes = {
+            VERIFY.ASSEMBLY_JOB: "failure",
+            VERIFY.CANDIDATE_JOB: "skipped",
+            VERIFY.SKIPPED_DEPLOY_JOB: "skipped",
+            VERIFY.POST_DEPLOY_JOB: "skipped",
+        }
     return {
         "databaseId": 42,
         "headSha": SOURCE,
@@ -29,19 +42,23 @@ def _run() -> dict[str, Any]:
         "status": "completed",
         "conclusion": "failure",
         "jobs": [
-            {"name": "source-identity", "conclusion": "success"},
-            {"name": "Complete binary pairing gate", "conclusion": "success"},
-            {"name": "create-release", "conclusion": "success"},
-            {"name": "assemble-release-channel", "conclusion": "success"},
-            {"name": VERIFY.CANDIDATE_JOB, "conclusion": "success"},
-            {"name": VERIFY.DEPLOY_JOB, "conclusion": "failure"},
-            {"name": VERIFY.POST_DEPLOY_JOB, "conclusion": "skipped"},
+            *({"name": name, "conclusion": "success"} for name in VERIFY.QUALIFIED_JOBS),
+            *({"name": name, "conclusion": conclusion} for name, conclusion in outcomes.items()),
         ],
     }
 
 
 def test_recovery_accepts_only_a_verified_candidate_stopped_at_deployment() -> None:
     VERIFY.verify_recovery_run(_run(), RUN_ID, SOURCE)
+
+
+def test_recovery_accepts_qualified_release_stopped_at_channel_assembly() -> None:
+    VERIFY.verify_recovery_run(
+        _run(VERIFY.ASSEMBLY_JOB),
+        RUN_ID,
+        SOURCE,
+        failed_job=VERIFY.ASSEMBLY_JOB,
+    )
 
 
 @pytest.mark.parametrize(
@@ -78,6 +95,18 @@ def test_recovery_rejects_any_other_job_outcome(job: str, conclusion: str) -> No
             row["conclusion"] = conclusion
     with pytest.raises(ValueError, match="did not stop only at deployment"):
         VERIFY.verify_recovery_run(run, RUN_ID, SOURCE)
+
+
+def test_assembly_recovery_rejects_any_unqualified_artifact() -> None:
+    run = _run(VERIFY.ASSEMBLY_JOB)
+    next(row for row in run["jobs"] if row["name"] == "build-app-macos")["conclusion"] = "failure"
+    with pytest.raises(ValueError, match="did not stop only at assemble-release-channel"):
+        VERIFY.verify_recovery_run(
+            run,
+            RUN_ID,
+            SOURCE,
+            failed_job=VERIFY.ASSEMBLY_JOB,
+        )
 
 
 def test_recovery_rejects_duplicate_jobs() -> None:

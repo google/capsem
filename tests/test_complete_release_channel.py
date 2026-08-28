@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from email.message import Message
 from pathlib import Path
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -18,6 +19,15 @@ def _module():
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _freshness_module():
+    path = PROJECT_ROOT / "scripts" / "check-channel-deploy-freshness.py"
+    spec = importlib.util.spec_from_file_location("check_channel_deploy_freshness", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
@@ -50,45 +60,47 @@ def test_missing_public_channel_bootstraps_from_primary_asset_manifest(monkeypat
     assert documents["nightly"] == _legacy()
 
 
-def test_existing_other_channel_is_preserved_from_public_graph(monkeypatch) -> None:
+def test_nightly_preserves_latest_good_stable_from_public_graph(monkeypatch) -> None:
     module = _module()
-    nightly_url = "https://release.example/assets/nightly/manifest.json"
+    stable_url = "https://release.example/assets/stable/manifest.json"
 
     def fake_read(source: str):
-        if source == "source.json":
-            return _legacy()
-        if source == nightly_url:
+        if source == "nightly.json":
             return _graph("nightly")
+        if source == stable_url:
+            return _graph("stable")
         raise AssertionError(source)
 
     monkeypatch.setattr(module, "read_json_source", fake_read)
     sources, documents = module.resolve_channel_sources(
-        explicit={"stable": "source.json"},
-        primary_channel="stable",
+        explicit={"nightly": "nightly.json"},
+        primary_channel="nightly",
         release_site="https://release.example",
-        allow_mirror_missing=True,
+        allow_mirror_missing=False,
     )
 
-    assert sources["nightly"] == nightly_url
-    assert documents["nightly"]["channel"] == "nightly"
+    assert sources["stable"] == stable_url
+    assert documents["stable"]["channel"] == "stable"
 
 
-def test_graph_manifest_cannot_be_relabelled_to_bootstrap_another_channel(monkeypatch) -> None:
+def test_stable_graph_never_reads_nightly(monkeypatch) -> None:
     module = _module()
 
     def fake_read(source: str):
         if source == "stable.json":
             return _graph("stable")
-        raise URLError("missing")
+        raise AssertionError(f"stable publication read unrelated channel: {source}")
 
     monkeypatch.setattr(module, "read_json_source", fake_read)
-    with pytest.raises(RuntimeError, match="cannot bootstrap missing nightly"):
-        module.resolve_channel_sources(
-            explicit={"stable": "stable.json"},
-            primary_channel="stable",
-            release_site="https://release.example",
-            allow_mirror_missing=True,
-        )
+    sources, documents = module.resolve_channel_sources(
+        explicit={"stable": "stable.json"},
+        primary_channel="stable",
+        release_site="https://release.example",
+        allow_mirror_missing=False,
+    )
+
+    assert sources == {"stable": "stable.json"}
+    assert set(documents) == {"stable"}
 
 
 def test_missing_public_channel_fails_closed_without_explicit_bootstrap(monkeypatch) -> None:
@@ -102,21 +114,22 @@ def test_missing_public_channel_fails_closed_without_explicit_bootstrap(monkeypa
     module = _module()
 
     def fake_read(source: str):
-        if source == "source.json":
-            return _legacy()
+        if source == "nightly.json":
+            return _graph("nightly")
         raise URLError("missing")
 
     monkeypatch.setattr(module, "read_json_source", fake_read)
-    with pytest.raises(RuntimeError, match="cannot reach nightly channel"):
+    with pytest.raises(RuntimeError, match="cannot reach stable channel"):
         module.resolve_channel_sources(
-            explicit={"stable": "source.json"},
-            primary_channel="stable",
+            explicit={"nightly": "nightly.json"},
+            primary_channel="nightly",
             release_site="https://release.example",
             allow_mirror_missing=False,
         )
 
 
 def test_asset_workflow_and_local_gate_share_complete_dist_builder() -> None:
+    module = _module()
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text()
     release = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
     local_web_gate = (PROJECT_ROOT / "scripts/check-web-surface.sh").read_text()
@@ -132,10 +145,13 @@ def test_asset_workflow_and_local_gate_share_complete_dist_builder() -> None:
     assert "--profile-source-ref HEAD" not in local_web_gate
     assert 'command.extend(["--source-root", str(args.profile_source_root)])' in builder
     assert "profile_source = parser.add_mutually_exclusive_group()" in builder
-    assert "--channel stable" not in workflow.split(
-        "- name: Build complete asset channel preview", maxsplit=1
-    )[1].split("- name: Publish immutable", maxsplit=1)[0]
-    assert 'REQUIRED_CHANNELS = ("stable", "nightly")' in builder
+    assert (
+        "--channel stable"
+        not in workflow.split("- name: Build complete asset channel preview", maxsplit=1)[1].split(
+            "- name: Publish immutable", maxsplit=1
+        )[0]
+    )
+    assert module.REQUIRED_CHANNELS == ("stable", "nightly")
     assert '"assets",\n                "channel",\n                "check"' in builder
 
 
@@ -146,22 +162,14 @@ def test_complete_builder_preserves_public_mirror_from_public_bytes() -> None:
     assert 'command.extend(["--public-base", args.release_site])' in builder
 
 
-def test_an_unpublished_channel_is_assembled_without_rather_than_required(monkeypatch) -> None:
-    """A stable release must not depend on nightly having published.
-
-    `release.capsem.org` answers an unpublished path with its own HTML page
-    under a 200, so "no such channel" arrives as a JSON parse error rather than
-    a 404. Treating that as fatal made a stable release require nightly, while
-    nightly cannot publish until a stable release creates the package cohort it
-    bootstraps from -- a cycle neither channel could leave, and the one that
-    blocked a binary release four jobs past where any attempt had reached.
-    """
+def test_stable_assembly_does_not_depend_on_a_404_nightly(monkeypatch) -> None:
+    """Stable never reads nightly, including when the public path is a 404."""
     module = _module()
 
     def fake_read(source: str):
         if source == "source.json":
             return _graph("stable")
-        raise ValueError("public preserved manifest is not a release graph")
+        raise HTTPError(source, 404, "Not Found", Message(), None)
 
     monkeypatch.setattr(module, "read_json_source", fake_read)
     sources, documents = module.resolve_channel_sources(
@@ -175,8 +183,24 @@ def test_an_unpublished_channel_is_assembled_without_rather_than_required(monkey
     assert "nightly" not in documents
 
 
-def test_the_cycle_is_broken_in_both_directions(monkeypatch) -> None:
-    """Nightly must not depend on stable either; the list holds both."""
+def test_stable_deploy_never_reads_nightly(tmp_path: Path, monkeypatch) -> None:
+    module = _freshness_module()
+    dist = tmp_path / "dist"
+    (dist / "assets" / "stable").mkdir(parents=True)
+
+    def unrelated(_release_site: str, channel: str) -> bytes:
+        raise AssertionError(f"stable deployment read unrelated channel: {channel}")
+
+    monkeypatch.setattr(module, "read_live_manifest", unrelated)
+    module.verify_untouched_channels(
+        selected_channel="stable",
+        dist=dist,
+        release_site="https://release.example.test",
+    )
+
+
+def test_nightly_requires_a_latest_good_stable_graph(monkeypatch) -> None:
+    """Nightly owns the dependency: channel switching starts from stable."""
     module = _module()
 
     def fake_read(source: str):
@@ -185,14 +209,13 @@ def test_the_cycle_is_broken_in_both_directions(monkeypatch) -> None:
         raise ValueError("public preserved manifest is not a release graph")
 
     monkeypatch.setattr(module, "read_json_source", fake_read)
-    sources, _ = module.resolve_channel_sources(
-        explicit={"nightly": "nightly.json"},
-        primary_channel="nightly",
-        release_site="https://release.example",
-        allow_mirror_missing=False,
-    )
-
-    assert sources == {"nightly": "nightly.json"}
+    with pytest.raises(RuntimeError, match="latest good stable"):
+        module.resolve_channel_sources(
+            explicit={"nightly": "nightly.json"},
+            primary_channel="nightly",
+            release_site="https://release.example",
+            allow_mirror_missing=False,
+        )
 
 
 def test_only_the_channels_that_resolved_are_built_and_checked() -> None:
@@ -218,9 +241,9 @@ def test_only_the_channels_that_resolved_are_built_and_checked() -> None:
 
 def test_both_loops_read_the_same_channel_list() -> None:
     """Stated in the source, because the failure was the two drifting apart."""
-    source = (
-        PROJECT_ROOT / "scripts" / "build-complete-release-channel.py"
-    ).read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "scripts" / "build-complete-release-channel.py").read_text(
+        encoding="utf-8"
+    )
 
     assert source.count("channels_to_assemble(") == 2, (
         "one definition and one call: a second inline list is how the build and "

@@ -15,7 +15,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, url2pathname, urlopen
 
-REQUIRED_CHANNELS = ("stable", "nightly")
+from capsem.releasechannel import FirstPartyChannel
+
+REQUIRED_CHANNELS = tuple(channel.value for channel in FirstPartyChannel)
 RELEASE_HTTP_USER_AGENT = "capsem-release-client/1"
 
 
@@ -61,9 +63,7 @@ def parse_channel_sources(values: list[str]) -> dict[str, str]:
 
 
 def channels_to_assemble(documents: dict[str, Any], primary_channel: str) -> list[str]:
-    """What resolved, in build order. Read by both the build and check loops,
-    which disagreed once: the build skipped an unpublished nightly and the
-    check still demanded it."""
+    """Build resolved mirrors first and the primary channel last."""
     ordered = [
         channel
         for channel in REQUIRED_CHANNELS
@@ -91,7 +91,11 @@ def resolve_channel_sources(
                 f"graph source for {channel} declares channel {document.get('channel')!r}"
             )
 
-    for channel in REQUIRED_CHANNELS:
+    primary_document = documents[primary_channel]
+    dependencies = FirstPartyChannel.parse(primary_channel).dependencies
+    if allow_mirror_missing and not is_release_graph(primary_document):
+        dependencies = tuple(channel for channel in REQUIRED_CHANNELS if channel != primary_channel)
+    for channel in dependencies:
         if channel in sources:
             continue
         public_source = f"{release_site.rstrip('/')}/assets/{channel}/manifest.json"
@@ -104,18 +108,20 @@ def resolve_channel_sources(
                     f"public preserved graph declares {public_document.get('channel')!r}"
                 )
         except (ValueError, json.JSONDecodeError) as error:
-            # Resolved, and not a channel: the site serves HTML under a 200
-            # for an unpublished path. Nothing to preserve, so preserve
-            # nothing; requiring it made stable depend on nightly.
+            if channel == "stable":
+                raise RuntimeError(
+                    f"latest good {channel} channel at {public_source} is invalid: {error}"
+                ) from error
+            # An unpublished legacy mirror may be HTML under a 200. There is
+            # nothing to preserve.
             print(f"{channel} is not published ({error}); assembling without it", file=sys.stderr)
             continue
         except (HTTPError, URLError, OSError, TimeoutError) as error:
-            # Unreachable is not evidence: a blip must not drop a real nightly.
             primary_source = sources[primary_channel]
-            primary_document = documents[primary_channel]
             if not allow_mirror_missing:
                 raise RuntimeError(
-                    f"cannot reach {channel} channel at {public_source}: {error}"
+                    f"cannot reach {channel} channel at {public_source}: {error}; "
+                    f"latest good {channel} is required"
                 ) from error
             if is_release_graph(primary_document):
                 raise RuntimeError(
@@ -146,9 +152,7 @@ def manifest_version_for_channel(
         return primary_version
     version = document.get("version")
     if not isinstance(version, str) or not version:
-        raise ValueError(
-            f"untouched {channel} graph has no manifest version to preserve"
-        )
+        raise ValueError(f"untouched {channel} graph has no manifest version to preserve")
     return version
 
 
@@ -231,10 +235,7 @@ def build_complete_dist(args: argparse.Namespace) -> None:
             channel,
         ]
         source = urlparse(sources[channel])
-        is_public_mirror = (
-            channel != args.primary_channel
-            and source.scheme in {"http", "https"}
-        )
+        is_public_mirror = channel != args.primary_channel and source.scheme in {"http", "https"}
         if is_public_mirror:
             command.extend(["--public-base", args.release_site])
         elif args.profile_source_ref:

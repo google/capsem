@@ -881,60 +881,31 @@ def test_deploy_rejects_stale_untouched_channel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dist = tmp_path / "dist"
-    nightly = dist / "assets" / "nightly" / "manifest.json"
-    nightly.parent.mkdir(parents=True)
-    nightly.write_bytes(b'{"channel":"nightly","version":"1.0.8"}\n')
-    live_nightly = nightly.read_bytes()
+    stable = dist / "assets" / "stable" / "manifest.json"
+    stable.parent.mkdir(parents=True)
+    stable.write_bytes(b'{"channel":"stable","version":"1.0.8"}\n')
+    live_stable = stable.read_bytes()
     monkeypatch.setattr(
         DEPLOY_FRESHNESS,
         "read_live_manifest",
         lambda _release_site, channel: (
-            live_nightly if channel == "nightly" else (_ for _ in ()).throw(AssertionError(channel))
+            live_stable if channel == "stable" else (_ for _ in ()).throw(AssertionError(channel))
         ),
     )
 
     DEPLOY_FRESHNESS.verify_untouched_channels(
-        selected_channel="stable",
+        selected_channel="nightly",
         dist=dist,
         release_site="https://release.example.test",
     )
 
-    nightly.write_bytes(b'{"channel":"nightly","version":"stale"}\n')
+    stable.write_bytes(b'{"channel":"stable","version":"stale"}\n')
     with pytest.raises(ValueError, match="refusing to replace another channel"):
         DEPLOY_FRESHNESS.verify_untouched_channels(
-            selected_channel="stable",
+            selected_channel="nightly",
             dist=dist,
             release_site="https://release.example.test",
         )
-
-
-def test_a_channel_that_has_never_published_is_absent_from_both_sides(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Absent from the dist and absent live is consistent, not a fault.
-
-    The deploy cannot replace a nightly that does not exist. Requiring its
-    manifest in the dist made a stable deploy depend on nightly having
-    published, while nightly cannot publish until a stable release creates the
-    package cohort it bootstraps from -- the same cycle the channel assembly
-    had, one job further on.
-    """
-    dist = tmp_path / "dist"
-    (dist / "assets" / "stable").mkdir(parents=True)
-
-    def unpublished(_release_site: str, channel: str) -> bytes:
-        # The site answers an unpublished path with its own HTML under a 200.
-        assert channel == "nightly"
-        return b"<!DOCTYPE html><html><head><title>Not found</title>"
-
-    monkeypatch.setattr(DEPLOY_FRESHNESS, "read_live_manifest", unpublished)
-
-    DEPLOY_FRESHNESS.verify_untouched_channels(
-        selected_channel="stable",
-        dist=dist,
-        release_site="https://release.example.test",
-    )
 
 
 def test_live_manifest_only_treats_http_404_as_unpublished(
@@ -948,10 +919,7 @@ def test_live_manifest_only_treats_http_404_as_unpublished(
         return missing
 
     monkeypatch.setattr(DEPLOY_FRESHNESS, "urlopen", fail_with(404))
-    assert (
-        DEPLOY_FRESHNESS.read_live_manifest("https://release.example.test", "nightly")
-        is None
-    )
+    assert DEPLOY_FRESHNESS.read_live_manifest("https://release.example.test", "nightly") is None
 
     monkeypatch.setattr(DEPLOY_FRESHNESS, "urlopen", fail_with(503))
     with pytest.raises(DEPLOY_FRESHNESS.HTTPError, match="HTTP Error 503") as caught:
@@ -959,27 +927,23 @@ def test_live_manifest_only_treats_http_404_as_unpublished(
     caught.value.close()
 
 
-def test_dropping_a_channel_that_is_live_is_still_refused(
+def test_nightly_cannot_drop_the_live_stable_channel(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The protection worth keeping: a deploy must not delete a real channel.
-
-    Absent from the dist while published live is the dangerous shape -- the
-    deploy would replace the site without it.
-    """
+    """Nightly must carry the latest good stable graph for switching back."""
     dist = tmp_path / "dist"
-    (dist / "assets" / "stable").mkdir(parents=True)
+    (dist / "assets" / "nightly").mkdir(parents=True)
 
     monkeypatch.setattr(
         DEPLOY_FRESHNESS,
         "read_live_manifest",
-        lambda _release_site, _channel: b'{"channel":"nightly","version":"1.0.8"}\n',
+        lambda _release_site, _channel: b'{"channel":"stable","version":"1.0.8"}\n',
     )
 
-    with pytest.raises(ValueError, match="published nightly"):
+    with pytest.raises(ValueError, match="published stable"):
         DEPLOY_FRESHNESS.verify_untouched_channels(
-            selected_channel="stable",
+            selected_channel="nightly",
             dist=dist,
             release_site="https://release.example.test",
         )
