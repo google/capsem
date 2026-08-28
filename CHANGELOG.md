@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- MCP catalogs now ignore duplicate namespaced tool definitions instead of
+  advertising ambiguous entries.
 - Manifest merges now compare numeric version components, so multi-digit asset
   and binary revisions remain ordered correctly.
 - Snapshot change lists and workspace hashes now detect content edits that

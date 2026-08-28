@@ -239,6 +239,25 @@ fn local_http_mcp_def(url: String, auth: Option<McpAuthConfig>) -> McpServerDef 
 }
 
 #[tokio::test]
+async fn duplicate_tool_definitions_are_advertised_once() {
+    let harness = crate::test_support::mcp::spawn_duplicate_tool_mcp_server()
+        .await
+        .unwrap();
+    let def = local_http_mcp_def(harness.url.clone(), None);
+    let mut mgr = McpServerManager::new(vec![def.clone()], reqwest::Client::new());
+
+    mgr.connect_and_initialize(&def).await.unwrap();
+
+    let tools: Vec<_> = mgr
+        .tool_catalog()
+        .iter()
+        .filter(|tool| tool.namespaced_name == "localtest__echo")
+        .collect();
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].description.as_deref(), Some("first definition"));
+}
+
+#[tokio::test]
 async fn local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call() {
     let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
