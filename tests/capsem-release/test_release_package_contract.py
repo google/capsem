@@ -15,6 +15,7 @@ SPEC = importlib.util.spec_from_file_location("release_package_contract", SCRIPT
 assert SPEC is not None and SPEC.loader is not None
 CONTRACT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CONTRACT)
+FIXTURE_VERSION = "9.9.9"
 
 
 def _package(
@@ -29,7 +30,7 @@ def _package(
     path.write_bytes(payload)
     return {
         "name": name,
-        "version": "0.6.2",
+        "version": FIXTURE_VERSION,
         "status": "current",
         "platform": platform,
         "architecture": architecture,
@@ -46,21 +47,21 @@ def _manifest(root: Path) -> dict[str, Any]:
         "packages": [
             _package(
                 root,
-                name="Capsem-0.6.2.pkg",
+                name=f"Capsem-{FIXTURE_VERSION}.pkg",
                 platform="macos",
                 architecture="arm64",
                 payload=b"macos package",
             ),
             _package(
                 root,
-                name="Capsem_0.6.2_amd64.deb",
+                name=f"Capsem_{FIXTURE_VERSION}_amd64.deb",
                 platform="linux",
                 architecture="amd64",
                 payload=b"amd64 package",
             ),
             _package(
                 root,
-                name="Capsem_0.6.2_arm64.deb",
+                name=f"Capsem_{FIXTURE_VERSION}_arm64.deb",
                 platform="linux",
                 architecture="arm64",
                 payload=b"arm64 package",
@@ -79,7 +80,7 @@ def test_package_contract_verifies_the_exact_current_storage_cohort(tmp_path: Pa
         CONTRACT.verify_storage(
             document,
             expected_prefix=f"{source.as_uri()}/",
-            expected_version="0.6.2",
+            expected_version=FIXTURE_VERSION,
             expected_count=3,
             work_dir=work,
         )
@@ -96,8 +97,8 @@ def test_package_contract_rejects_storage_outside_the_immutable_release(tmp_path
     with pytest.raises(ValueError, match="URL is outside"):
         CONTRACT.verify_storage(
             _manifest(source),
-            expected_prefix="https://github.example.test/releases/download/v0.6.2/",
-            expected_version="0.6.2",
+            expected_prefix=f"https://github.example.test/releases/download/v{FIXTURE_VERSION}/",
+            expected_version=FIXTURE_VERSION,
             expected_count=3,
             work_dir=tmp_path / "verified",
         )
@@ -109,7 +110,7 @@ def test_selected_package_version_requires_one_current_platform_architecture(
     source = tmp_path / "source"
     source.mkdir()
     document = _manifest(source)
-    assert CONTRACT.selected_version(document, "linux", "amd64") == "0.6.2"
+    assert CONTRACT.selected_version(document, "linux", "amd64") == FIXTURE_VERSION
     document["packages"].append(dict(document["packages"][1]))
     with pytest.raises(ValueError, match="exactly one"):
         CONTRACT.selected_version(document, "linux", "amd64")

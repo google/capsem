@@ -165,7 +165,8 @@ jobs:
           RELEASE_CHANNEL_PROJECT: release
         run: |
           python scripts/check-cloudflare-pages-project.py \
-            --project "$RELEASE_CHANNEL_PROJECT"
+            --project "$RELEASE_CHANNEL_PROJECT" \
+            --production-branch "${{ inputs.deploy_branch || 'main' }}"
 
       - name: Prove release hostname cache purge
         if: ${{ inputs.activate_production }}
@@ -229,14 +230,21 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy target/release-channel/ --project-name=release --branch=${{ inputs.deploy_branch || 'main' }}
 
+      - name: Verify canonical production deployment
+        id: production_identity
+        if: ${{ inputs.activate_production && steps.production.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          PRODUCTION_DEPLOYMENT_ID: ${{ steps.production.outputs.pages-deployment-id }}
+        run: python scripts/cloudflare_pages_rollback.py verify --project release --deployment-id "$PRODUCTION_DEPLOYMENT_ID" --attempts 30 --delay-seconds 2
+
       - name: Validate activated production bytes
         id: production_check
-        if: ${{ inputs.activate_production && steps.production.outcome == 'success' }}
+        if: ${{ inputs.activate_production && steps.production_identity.outcome == 'success' }}
         continue-on-error: true
         env:
           RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
           VALIDATE_COMPLETE_PUBLIC_CHANNELS: ${{ inputs.validate_complete_public_channels }}
-          PRODUCTION_DEPLOYMENT_ID: ${{ steps.production.outputs.pages-deployment-id }}
         run: |
           python scripts/cloudflare_cache_purge.py --project release
           CHANNEL_ARGS=(--channel "$CHANNEL")
@@ -249,11 +257,6 @@ jobs:
             --attempts 30 \
             --delay-seconds 20 \
             --expect-snapshot target/release-channel-deployment/candidate-release.json
-          python scripts/cloudflare_pages_rollback.py verify \
-            --project release \
-            --deployment-id "$PRODUCTION_DEPLOYMENT_ID" \
-            --attempts 30 \
-            --delay-seconds 10
 
       - name: Decide production recovery
         id: recovery

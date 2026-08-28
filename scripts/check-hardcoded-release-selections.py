@@ -242,8 +242,8 @@ if resurrected:
 
 
 release_workflows = [
-    ROOT / ".github/workflows/release.yaml",
-    ROOT / ".github/workflows/release-assets.yaml",
+    ROOT / ".github/workflows" / name
+    for name in ("release.yaml", "release-assets.yaml", "release-publication-recovery.yaml")
 ]
 expected_group = "group: capsem-release-${{ inputs.channel }}"
 for workflow in release_workflows:

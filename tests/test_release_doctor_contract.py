@@ -18,7 +18,7 @@ from typing import ClassVar
 
 import pytest
 import yaml
-from helpers.workflow_contract import assert_unmasked_step, workflow_reachable_text
+from helpers.workflow_contract import assert_unmasked_step, parsed_commands, workflow_reachable_text
 
 from capsem.gate.shellnodes import arm_named
 from capsem.gate.shellparse import parse as parse_shell
@@ -2703,23 +2703,32 @@ def test_manifest_source_inputs_are_url_only() -> None:
         assert "manifest must be a URL" in script
         assert "pathlib.Path(source).read_bytes()" not in script
 
-    for workflow in (release, release_assets, release_channel):
-        source_lines = [
-            line.strip() for line in workflow.splitlines() if line.strip().startswith("--manifest ")
-        ]
-        for line in source_lines:
-            if "profile materialize" in line:
-                continue
-            if "$ASSET_MANIFEST_URL" in line:
-                assert "ASSET_MANIFEST_URL: https://release.capsem.org/assets/" in workflow
-                assert "/manifest.json" in workflow
-            elif (
-                "target/source-channel/manifest.json" not in line
-                and "$RELEASE_DIR/channel-source-$CHANNEL.json" not in line
-            ):
-                assert "file://" in line or "https://" in line or "http://" in line
-            assert "--manifest assets/manifest.json" not in line
-            assert '--manifest "$MANIFEST_PATH"' not in line
+    workflows = {
+        "release.yaml": release,
+        "release-assets.yaml": release_assets,
+        "release-channel.yaml": release_channel,
+    }
+    package_commands = []
+    for name, workflow in workflows.items():
+        document = yaml.safe_load(workflow)
+        for job_name, job in document["jobs"].items():
+            for step in job.get("steps", ()):
+                shell = step.get("run") if isinstance(step, dict) else None
+                if not isinstance(shell, str):
+                    continue
+                package_commands.extend(
+                    command
+                    for command in parsed_commands(shell, origin=f"{name}:{job_name}")
+                    if {"scripts/build-pkg.sh", "scripts/repack-deb.sh"}.intersection(command.argv)
+                )
+
+    assert package_commands
+    for command in package_commands:
+        manifest = command.argv[command.argv.index("--manifest") + 1]
+        if manifest == "$ASSET_MANIFEST_URL":
+            assert "ASSET_MANIFEST_URL: https://release.capsem.org/assets/" in release
+        else:
+            assert manifest.startswith(("file://", "https://", "http://"))
 
     assert "manifest must be a URL" in admin
     assert "unsupported {label} URL scheme" in admin

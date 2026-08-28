@@ -40,6 +40,10 @@ def main() -> int:
         default=os.environ.get("RELEASE_CHANNEL_PROJECT", "release"),
         help="Cloudflare Pages project name.",
     )
+    parser.add_argument(
+        "--production-branch",
+        help="Branch Cloudflare must declare as production for this deployment.",
+    )
     args = parser.parse_args()
 
     if not args.account_id:
@@ -50,7 +54,7 @@ def main() -> int:
         return 1
 
     response = fetch_cloudflare_project(args.account_id, args.api_token, args.project)
-    ok, detail = validate_project_response(response, args.project)
+    ok, detail = validate_project_response(response, args.project, args.production_branch)
     if ok:
         print(detail)
         return 0
@@ -93,18 +97,40 @@ def fetch_cloudflare_project(
 def validate_project_response(
     response: CloudflareResponse,
     expected_project: str,
+    expected_production_branch: str | None = None,
 ) -> tuple[bool, str]:
     payload = response.payload
-    if (
+    visible = (
         response.status == 200
         and isinstance(payload, dict)
         and payload.get("success") is True
         and isinstance(payload.get("result"), dict)
         and payload["result"].get("name") == expected_project
-    ):
+    )
+    if visible:
+        assert isinstance(payload, dict)
+        result = payload["result"]
+        assert isinstance(result, dict)
+        production_branch = result.get("production_branch")
+        if (
+            expected_production_branch is not None
+            and production_branch != expected_production_branch
+        ):
+            return (
+                False,
+                f"Cloudflare Pages project {expected_project} production branch is "
+                f"{production_branch!r}, not requested deploy branch "
+                f"{expected_production_branch!r}.",
+            )
+        branch_detail = (
+            f" with production branch {production_branch}"
+            if expected_production_branch is not None
+            else ""
+        )
         return (
             True,
-            f"Cloudflare Pages project {expected_project} is visible to the configured account.",
+            f"Cloudflare Pages project {expected_project}{branch_detail} is visible to the "
+            "configured account.",
         )
 
     details = "unknown error"
