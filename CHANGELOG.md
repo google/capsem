@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- VM launch and resume now publish instance state before starting child-exit
+  cleanup, preventing fast process failures from leaving phantom running VMs.
 - File validation now rejects `..` only as a parent-directory component, so
   legitimate filenames such as `data..backup.txt` are accepted.
 - Handshake peers now decode legacy `Hello` messages that predate the optional

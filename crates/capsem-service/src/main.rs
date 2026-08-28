@@ -1764,11 +1764,91 @@ impl ServiceState {
             return Err(error.context("failed to record main.db session start"));
         }
 
+        if persistent {
+            let registration =
+                self.persistent_registry
+                    .lock()
+                    .unwrap()
+                    .register(PersistentVmEntry {
+                        id: id.to_string(),
+                        name: name.to_string(),
+                        profile_id: profile_id.clone(),
+                        profile_revision: profile_revision.clone(),
+                        profile_payload_hash: profile_payload_hash.clone(),
+                        asset_pins: asset_pins.clone(),
+                        ram_mb,
+                        cpus,
+                        base_version: version.clone(),
+                        created_at: format!(
+                            "{}",
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs()
+                        ),
+                        session_dir: session_dir.clone(),
+                        forked_from: from.clone(),
+                        description: description.clone(),
+                        suspended: false,
+                        defunct: false,
+                        last_error: None,
+                        checkpoint_path: None,
+                        env: env.clone(),
+                    });
+            if let Err(error) = registration {
+                let _ = child.start_kill();
+                tokio::spawn(async move {
+                    let _ = child.wait().await;
+                });
+                return Err(error);
+            }
+        }
+
+        if session_db_path_for_session_dir(&session_dir).exists() {
+            if let Err(error) = self.register_session_db_handle(id, &session_dir) {
+                let _ = child.start_kill();
+                tokio::spawn(async move {
+                    let _ = child.wait().await;
+                });
+                return Err(error);
+            }
+        } else {
+            info!(
+                vm_id = id,
+                operation = "defer_session_db_handle_registration",
+                session_dir = %session_dir.display(),
+                "session DB not present yet; route will register the external reader lazily"
+            );
+        }
+
         let id_clone = id.to_string();
         let name_clone = name.to_string();
         let state_clone = Arc::clone(self);
         let uds_clone = uds_path.clone();
         let session_dir_clone = session_dir.clone();
+        let mut instances = self.instances.lock().unwrap();
+        instances.insert(
+            id.to_string(),
+            InstanceInfo {
+                id: id.to_string(),
+                name: name.to_string(),
+                profile_id,
+                profile_revision,
+                profile_payload_hash,
+                asset_pins,
+                pid,
+                uds_path,
+                session_dir: session_dir.clone(),
+                ram_mb,
+                cpus,
+                start_time: std::time::Instant::now(),
+                base_version: version.clone(),
+                persistent,
+                env,
+                forked_from: from.clone(),
+            },
+        );
+        drop(instances);
         tokio::spawn(async move {
             let exit_status = child.wait().await.ok();
             info!(id_clone, ?exit_status, "capsem-process exited, cleaning up");
@@ -1875,70 +1955,6 @@ impl ServiceState {
             let _ = std::fs::remove_file(&uds_clone);
             let _ = std::fs::remove_file(uds_clone.with_extension("ready"));
         });
-
-        if persistent {
-            let mut registry = self.persistent_registry.lock().unwrap();
-            registry.register(PersistentVmEntry {
-                id: id.to_string(),
-                name: name.to_string(),
-                profile_id: profile_id.clone(),
-                profile_revision: profile_revision.clone(),
-                profile_payload_hash: profile_payload_hash.clone(),
-                asset_pins: asset_pins.clone(),
-                ram_mb,
-                cpus,
-                base_version: version.clone(),
-                created_at: format!(
-                    "{}",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                ),
-                session_dir: session_dir.clone(),
-                forked_from: from.clone(),
-                description: description.clone(),
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: env.clone(),
-            })?;
-        }
-
-        if session_db_path_for_session_dir(&session_dir).exists() {
-            self.register_session_db_handle(id, &session_dir)?;
-        } else {
-            info!(
-                vm_id = id,
-                operation = "defer_session_db_handle_registration",
-                session_dir = %session_dir.display(),
-                "session DB not present yet; route will register the external reader lazily"
-            );
-        }
-
-        let mut instances = self.instances.lock().unwrap();
-        instances.insert(
-            id.to_string(),
-            InstanceInfo {
-                id: id.to_string(),
-                name: name.to_string(),
-                profile_id,
-                profile_revision,
-                profile_payload_hash,
-                asset_pins,
-                pid,
-                uds_path,
-                session_dir: session_dir.clone(),
-                ram_mb,
-                cpus,
-                start_time: std::time::Instant::now(),
-                base_version: version.clone(),
-                persistent,
-                env,
-                forked_from: from.clone(),
-            },
-        );
 
         Ok(())
     }
@@ -2128,22 +2144,14 @@ impl ServiceState {
         let pid = child.id().unwrap_or(0);
         info!(name, pid, "capsem-process resumed");
 
-        let vm_id_clone = vm_id.clone();
-        let state_clone = Arc::clone(self);
-        let uds_clone = uds_path.clone();
-        tokio::spawn(async move {
-            let exit_status = child.wait().await;
-            info!(vm_id_clone, exit_status = ?exit_status, "capsem-process (resume) exited, cleaning up");
-            // Persistent VMs: remove from instances but keep session dir.
-            tracing::warn!(vm_id_clone, exit_status = ?exit_status, "resume_sandbox child exit handler removing instance");
-            state_clone.instances.lock().unwrap().remove(&vm_id_clone);
-            state_clone.unregister_session_db_handle(&vm_id_clone);
-            let _ = std::fs::remove_file(&uds_clone);
-            let _ = std::fs::remove_file(uds_clone.with_extension("ready"));
-        });
-
         if session_db_path_for_session_dir(&entry.session_dir).exists() {
-            self.register_session_db_handle(&vm_id, &entry.session_dir)?;
+            if let Err(error) = self.register_session_db_handle(&vm_id, &entry.session_dir) {
+                let _ = child.start_kill();
+                tokio::spawn(async move {
+                    let _ = child.wait().await;
+                });
+                return Err(error);
+            }
         } else {
             info!(
                 vm_id = vm_id,
@@ -2153,6 +2161,9 @@ impl ServiceState {
             );
         }
 
+        let vm_id_clone = vm_id.clone();
+        let state_clone = Arc::clone(self);
+        let uds_clone = uds_path.clone();
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
             vm_id.clone(),
@@ -2175,6 +2186,17 @@ impl ServiceState {
                 forked_from: entry.forked_from.clone(),
             },
         );
+        drop(instances);
+        tokio::spawn(async move {
+            let exit_status = child.wait().await;
+            info!(vm_id_clone, exit_status = ?exit_status, "capsem-process (resume) exited, cleaning up");
+            // Persistent VMs: remove from instances but keep session dir.
+            tracing::warn!(vm_id_clone, exit_status = ?exit_status, "resume_sandbox child exit handler removing instance");
+            state_clone.instances.lock().unwrap().remove(&vm_id_clone);
+            state_clone.unregister_session_db_handle(&vm_id_clone);
+            let _ = std::fs::remove_file(&uds_clone);
+            let _ = std::fs::remove_file(uds_clone.with_extension("ready"));
+        });
 
         Ok(vm_id)
     }
