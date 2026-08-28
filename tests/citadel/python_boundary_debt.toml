@@ -4,11 +4,14 @@ version = 1
 # Python project-boundary guard and is emptied or replaced by the target shape
 # as the migration lands.
 obsolete_root_paths = ["pyproject.toml", "uv.lock", "src/capsem/"]
-distributions = ["pyproject.toml=capsem"]
+distributions = [
+  "build_system/pyproject.toml=capsem-builder",
+  "pyproject.toml=capsem",
+]
 entrypoints = [
   "pyproject.toml:capsem-builder=capsem.builder.cli:main",
   "pyproject.toml:capsem-gate=capsem.gatelaunch:main",
 ]
-old_import_count = 1163
-old_import_sha256 = "a4e3f0211b3ec9e45c0c77175dda696c2d559ac7b47a7086772e4dc306a49ee2"
-python_source_roots = ["guest", "scripts", "sprints", "src", "tests"]
+old_import_count = 1159
+old_import_sha256 = "9b69882b7e099d7a91dd854d7468c7c080b32c3ca2f70e7521b5f42f3d143915"
+python_source_roots = ["build_system", "guest", "scripts", "sprints", "src", "tests"]

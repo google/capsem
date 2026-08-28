@@ -24,6 +24,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path(__file__).with_name("python_boundary_debt.toml")
 SELF = "tests/citadel/test_python_project_boundary.py"
+BUILD_PROJECT = ROOT / "build_system" / "pyproject.toml"
 
 RATIONALE = """\
 The build system must be one project rooted at build_system/, with the direct
@@ -32,7 +33,10 @@ An ambient checkout, stale bytecode, old capsem identity, or undeclared Python
 root can otherwise make local commands pass while clean installs fail.
 """
 
-OLD_IMPORT = re.compile(r"^\s*(?:from|import)\s+(capsem(?:\.[A-Za-z_][A-Za-z0-9_.]*)?)", re.MULTILINE)
+OLD_IMPORT = re.compile(
+    r"^\s*(?:from|import)\s+(capsem(?!_)(?:\.[A-Za-z_][A-Za-z0-9_.]*)?)",
+    re.MULTILINE,
+)
 OBSOLETE_ROOTS = ("pyproject.toml", "uv.lock", "src/capsem/")
 FORBIDDEN_NESTING = ("build_system/builder/src/", "build_system/builder/capsem_builder/")
 
@@ -156,6 +160,20 @@ def _synthetic(**changes: object) -> Observed:
     return Observed(**values)  # type: ignore[arg-type]
 
 
+def _direct_mapping_problems(project: dict[str, Any]) -> list[str]:
+    problems: list[str] = []
+    if project.get("project", {}).get("name") != "capsem-builder":
+        problems.append("distribution is not capsem-builder")
+    if project.get("build-system", {}).get("build-backend") != "setuptools.build_meta":
+        problems.append("backend cannot provide the reviewed editable path mapping")
+    setuptools = project.get("tool", {}).get("setuptools", {})
+    if setuptools.get("packages") != ["capsem_builder"]:
+        problems.append("installed package list is not exactly capsem_builder")
+    if setuptools.get("package-dir") != {"capsem_builder": "builder"}:
+        problems.append("builder/ is not mapped directly to capsem_builder")
+    return problems
+
+
 @pytest.mark.parametrize(
     ("observed", "message"),
     [
@@ -186,6 +204,53 @@ def test_each_prohibited_shape_is_observed_red(observed: Observed, message: str)
     assert any(message in problem for problem in _problems(observed, empty_policy)), RATIONALE
 
 
+@pytest.mark.parametrize(
+    ("project", "message"),
+    [
+        ({"project": {"name": "capsem"}}, "distribution is not capsem-builder"),
+        (
+            {
+                "project": {"name": "capsem-builder"},
+                "build-system": {"build-backend": "hatchling.build"},
+                "tool": {
+                    "setuptools": {
+                        "packages": ["capsem_builder"],
+                        "package-dir": {"capsem_builder": "builder"},
+                    }
+                },
+            },
+            "backend cannot provide",
+        ),
+        (
+            {
+                "project": {"name": "capsem-builder"},
+                "build-system": {"build-backend": "setuptools.build_meta"},
+                "tool": {
+                    "setuptools": {
+                        "packages": ["capsem_builder"],
+                        "package-dir": {
+                            "capsem_builder": "builder/capsem_builder"
+                        },
+                    }
+                },
+            },
+            "builder/ is not mapped directly",
+        ),
+    ],
+)
+def test_non_direct_project_mappings_are_observed_red(
+    project: dict[str, Any], message: str
+) -> None:
+    assert any(message in problem for problem in _direct_mapping_problems(project)), RATIONALE
+
+
+def test_build_system_project_uses_the_direct_package_mapping() -> None:
+    assert BUILD_PROJECT.is_file(), RATIONALE + "\nmissing build_system/pyproject.toml"
+    project = tomllib.loads(BUILD_PROJECT.read_text(encoding="utf-8"))
+    problems = _direct_mapping_problems(project)
+    assert not problems, RATIONALE + "\n" + "\n".join(problems)
+
+
 def test_checkout_is_not_an_ambient_import_source() -> None:
     environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     result = subprocess.run(
@@ -198,6 +263,10 @@ def test_checkout_is_not_an_ambient_import_source() -> None:
     )
     assert result.returncode != 0, RATIONALE + "\ncapsem imported without an installed distribution"
     assert "ModuleNotFoundError" in result.stderr, result.stderr
+
+
+def test_new_namespace_is_not_counted_as_an_old_import() -> None:
+    assert OLD_IMPORT.findall("import capsem_builder\nfrom capsem_builder import gate") == []
 
 
 def test_current_python_boundary_debt_is_exact() -> None:
