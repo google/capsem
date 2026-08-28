@@ -1,0 +1,14 @@
+version = 1
+
+# Exact temporary T2 debt. Every field is reconciled symmetrically by the
+# Python project-boundary guard and is emptied or replaced by the target shape
+# as the migration lands.
+obsolete_root_paths = ["pyproject.toml", "uv.lock", "src/capsem/"]
+distributions = ["pyproject.toml=capsem"]
+entrypoints = [
+  "pyproject.toml:capsem-builder=capsem.builder.cli:main",
+  "pyproject.toml:capsem-gate=capsem.gatelaunch:main",
+]
+old_import_count = 1163
+old_import_sha256 = "a4e3f0211b3ec9e45c0c77175dda696c2d559ac7b47a7086772e4dc306a49ee2"
+python_source_roots = ["guest", "scripts", "sprints", "src", "tests"]
