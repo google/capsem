@@ -19,6 +19,7 @@ mod security_rule_profile;
 mod settings_metadata;
 mod tree;
 mod types;
+mod validation;
 
 pub use builder::*;
 pub use lint::*;

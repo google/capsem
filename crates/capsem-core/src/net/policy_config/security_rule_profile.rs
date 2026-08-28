@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::condition::{evaluate_condition_with, validate_condition_with, CompiledCondition};
 use super::types::{default_true, PolicySubject};
+use super::validation::{validate_identifier, validate_non_empty, validate_profile_target};
 
 pub const CORP_PRIORITY_MIN: i32 = -1000;
 pub const CORP_PRIORITY_MAX: i32 = -10;
@@ -1175,44 +1176,8 @@ fn known_fields_for_root(root: &str) -> Vec<&'static str> {
         .collect()
 }
 
-pub(crate) fn validate_identifier(kind: &str, value: &str) -> Result<(), String> {
-    validate_non_empty(kind, value)?;
-    if value.len() > 64 {
-        return Err(format!("{kind} must be at most 64 characters"));
-    }
-    if value
-        .chars()
-        .all(|ch| ch == '_' || ch == '-' || ch.is_ascii_lowercase() || ch.is_ascii_digit())
-    {
-        Ok(())
-    } else {
-        Err(format!(
-            "{kind} must use only lowercase a-z, 0-9, '_' or '-': {value}"
-        ))
-    }
-}
-
 fn validate_rule_name(kind: &str, value: &str) -> Result<(), String> {
     validate_identifier(kind, value)
-}
-
-fn validate_non_empty(kind: &str, value: &str) -> Result<(), String> {
-    if value.trim().is_empty() {
-        Err(format!("{kind} must not be empty"))
-    } else {
-        Ok(())
-    }
-}
-
-fn validate_profile_target(kind: &str, value: &str) -> Result<(), String> {
-    validate_non_empty(kind, value)?;
-    if value.len() > 128 {
-        return Err(format!("{kind} must be at most 128 characters"));
-    }
-    if value.contains("..") || value.contains('\\') || value.trim() != value {
-        return Err(format!("{kind} must not contain traversal or padding"));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

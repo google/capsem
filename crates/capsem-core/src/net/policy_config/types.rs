@@ -446,7 +446,7 @@ impl SettingsFile {
             validate_stored_setting_contract(id, &entry.value)?;
         }
         for plugin_id in self.plugins.keys() {
-            super::security_rule_profile::validate_identifier("plugin id", plugin_id)?;
+            super::validation::validate_identifier("plugin id", plugin_id)?;
         }
         if let Some(mcp) = &self.mcp {
             mcp.validate("settings")?;
