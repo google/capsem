@@ -91,7 +91,7 @@ jobs:
         with:
           key: profile-release-selection
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync --frozen
+      - run: uv sync --project build_system --frozen
 
       - name: Select exact public-before manifest
         id: public-before
@@ -152,7 +152,7 @@ jobs:
       - name: Check pulled package functional binary cohort
         id: functional-cohort
         run: |
-          uv run python scripts/stage-release-test-inputs.py \
+          uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
             --input-dir target/profile-public-before/packages \
             --check-functional-cohort \
             --github-output "$GITHUB_OUTPUT"
@@ -168,7 +168,7 @@ jobs:
 
       - name: Prove public-before cohorts use one manifest
         run: |
-          uv run python scripts/verify-release-inputs.py \
+          uv run --project build_system --frozen python scripts/verify-release-inputs.py \
             --input-dir target/profile-public-before/profiles
           cmp \
             target/profile-public-before/packages/manifest.json \
@@ -263,7 +263,7 @@ jobs:
           ref: ${{ inputs.source_commit }}
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync --frozen
+      - run: uv sync --project build_system --frozen
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
@@ -322,7 +322,7 @@ jobs:
         with:
           ref: ${{ inputs.source_commit }}
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync --frozen
+      - run: uv sync --project build_system --frozen
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
@@ -464,7 +464,7 @@ jobs:
         run: cd release-site && pnpm install --frozen-lockfile
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync --frozen
+      - run: uv sync --project build_system --frozen
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
@@ -500,7 +500,7 @@ jobs:
 
       - name: Verify profile release lane policy
         run: |
-          uv run pytest \
+          uv run --project build_system --frozen pytest \
             tests/capsem-release/test_profile_lane_gate.py \
             tests/capsem-release/test_release_lane_diff_policy.py -q
 
@@ -509,7 +509,7 @@ jobs:
           PROFILE_IDENTITY=$(python3 -c 'import json; print(json.load(open("target/profile-release-selection.json"))["publication_identity"])')
           ASSET_BASE="https://github.com/${{ github.repository }}/releases/download/$PROFILE_IDENTITY"
           MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open("target/source-channel/manifest.json"))["version"])')
-          uv run python scripts/build-complete-release-channel.py \
+          uv run --project build_system --frozen python scripts/build-complete-release-channel.py \
             --channel-source "$CHANNEL=file://$PWD/assets/manifest.json" \
             --primary-channel "$CHANNEL" \
             --assets-dir assets \
@@ -521,7 +521,7 @@ jobs:
       - name: Check selected channel profile delta
         id: profile-delta
         run: |
-          uv run python scripts/check-profile-release-delta.py \
+          uv run --project build_system --frozen python scripts/check-profile-release-delta.py \
             --source-manifest target/source-channel/manifest.json \
             --candidate-manifest "target/profile-candidate/assets/$CHANNEL/manifest.json" \
             --public-manifest target/profile-public-before/profiles/manifest.json \
@@ -575,13 +575,13 @@ jobs:
           set -euo pipefail
           PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$PUBLICATION_IDENTITY"
           RELEASE_DIR="target/asset-release/$PUBLICATION_IDENTITY"
-          uv run python scripts/stage-profile-publication.py \
+          uv run --project build_system --frozen python scripts/stage-profile-publication.py \
             --manifest target/source-channel/manifest.json \
             --profile "${{ inputs.profile }}" \
             --assets-dir assets \
             --config-root config \
             --release-dir "$RELEASE_DIR"
-          uv run python scripts/verify-profile-publication.py \
+          uv run --project build_system --frozen python scripts/verify-profile-publication.py \
             --manifest "$RELEASE_DIR/channel-source-$CHANNEL.json" \
             --profile "${{ inputs.profile }}" \
             --publication-base "$PUBLICATION_BASE" \
@@ -641,7 +641,7 @@ jobs:
         run: cd release-site && pnpm install --frozen-lockfile
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync --frozen
+      - run: uv sync --project build_system --frozen
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
@@ -677,7 +677,7 @@ jobs:
       - name: Build deployable channel from authored source manifest
         if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
         run: |
-          uv run python scripts/build-complete-release-channel.py \
+          uv run --project build_system --frozen python scripts/build-complete-release-channel.py \
             --channel-source "$CHANNEL=file://$PWD/target/source-channel/manifest.json" \
             --primary-channel "$CHANNEL" \
             --assets-dir assets \
@@ -702,7 +702,7 @@ jobs:
           RELEASE_DIR="target/asset-release/$TAG"
           NOTES_FILE="target/asset-release/profile-release-notes.md"
           PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
-          uv run python scripts/verify-profile-publication.py \
+          uv run --project build_system --frozen python scripts/verify-profile-publication.py \
             --manifest "$RELEASE_DIR/channel-source-$CHANNEL.json" \
             --profile "${{ inputs.profile }}" \
             --publication-base "$PUBLICATION_BASE" \

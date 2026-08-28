@@ -17,8 +17,8 @@ allowed_generated_support = [
 ]
 
 # Exact shrinking transition inventory captured after the adversarial RED run.
-producer_count = 6
-producer_sha256 = "b5461353d26c6755eb8cf582f0a05f2c387371fd54227e5ba5f7e6454cab7187"
+producer_count = 4
+producer_sha256 = "d0c80deba1d4e638e1b9485a05118e60d9c51ab0d10dd27c212356e0865c7bde"
 ambient_asset_count = 10
 ambient_asset_sha256 = "d8d3b4969e2ba940eb787d65226a4e2485a782da980f00040584015ca88cd553"
 ci_transfer_count = 12

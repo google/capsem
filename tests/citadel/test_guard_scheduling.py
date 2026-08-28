@@ -97,7 +97,7 @@ def _recipe_commands(name: str) -> tuple[str, ...]:
 def test_public_fast_test_reaches_the_fast_graph_before_release_contracts() -> None:
     """The five-second guards cannot sit behind the eight-minute contracts."""
     commands = _recipe_commands("_test-source-checks")
-    fast = "uv run capsem-gate test-fast"
+    fast = "uv run --project build_system --frozen capsem-gate test-fast"
     contracts = "just _test-release-contracts"
 
     assert fast in commands and contracts in commands, (

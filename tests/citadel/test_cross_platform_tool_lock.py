@@ -23,19 +23,23 @@ The exact version and reviewed macOS wheel digest below make a cross-platform
 tool upgrade an explicit source-contract change. Verify every platform wheel
 before changing them; do not widen the dependency back to a range.
 
-See skills/citadel/SKILL.md and pyproject.toml [dependency-groups].
+See skills/citadel/SKILL.md and build_system/pyproject.toml [dependency-groups].
 """
 
 
 def _locked_hadolint() -> dict[str, Any]:
-    lock = tomllib.loads((PROJECT_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    lock = tomllib.loads(
+        (PROJECT_ROOT / "build_system/uv.lock").read_text(encoding="utf-8")
+    )
     rows = [row for row in lock["package"] if row["name"] == "hadolint-py"]
     assert len(rows) == 1, CROSS_PLATFORM_TOOL_LOCK_RATIONALE
     return rows[0]
 
 
 def test_hadolint_uses_the_reviewed_exact_cross_platform_cohort() -> None:
-    project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    project = tomllib.loads(
+        (PROJECT_ROOT / "build_system/pyproject.toml").read_text(encoding="utf-8")
+    )
     dependencies = project["dependency-groups"]["dev"]
     requirement = f"hadolint-py=={HADOLINT_VERSION}"
 

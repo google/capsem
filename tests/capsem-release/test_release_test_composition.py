@@ -359,13 +359,14 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
         "scripts/check-cargo-audit.py",
         "scripts/audit-pnpm-bulk.py",
         "scripts/audit-python-lock.sh",
-        # ruff over the whole tree, and ty over src/scripts/tests/guest -- as
+        # Ruff over the whole tree, and Ty over the strict builder package -- as
         # three steps, so a ruff failure no longer hides what ty would have
         # said. The explicit all-platform surface keeps the exact diagnostic
-        # ratchet identical on Linux and macOS. ty used to run on src/capsem
-        # alone, leaving the release scripts with no type gate at all.
-        "ruff check .",
-        "ty check --error-on-warning --python-platform all src",
+        # ratchet identical on Linux and macOS. The project/config flags keep
+        # the nested build-system project explicit after the root facade is gone.
+        "ruff check --config build_system/pyproject.toml .",
+        "ty check --project build_system --error-on-warning --python-platform all "
+        "build_system/builder",
         "cargo clippy --workspace --all-targets -- -D warnings",
         "check-web-surface.sh frontend",
         "check-web-surface.sh release-site",
@@ -461,10 +462,12 @@ def test_release_contract_module_does_not_reenter_source_build_suites() -> None:
     # module would pass vacuously.
     for pattern in CONFIG.modules.contract_globs:
         assert pattern not in release_contracts
-    assert "build_system/tests/scripts/test_bootstrap_contract.py" in release_contracts
+    assert "build_system/tests/" in release_contracts
 
     for source_test in SOURCE_CONTRACT_TESTS:
-        assert source_test in release_contracts
+        assert (PROJECT_ROOT / source_test).is_file()
+        if not source_test.startswith("build_system/tests/"):
+            assert source_test in release_contracts
     assert "tests/capsem-recipes" not in release_contracts
     assert "tests/capsem-recipes/" in _recipe("_test-recipes")
 
@@ -584,7 +587,9 @@ def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) 
     assert len(trace_lines) == 2
     gate_command, _cwd, gate_args = trace_lines[1].split(":", maxsplit=2)
     assert gate_command == "uv"
-    assert gate_args == "run capsem-gate test-release-contracts"
+    assert gate_args == (
+        "run --project build_system --frozen capsem-gate test-release-contracts"
+    )
 
 
 def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
@@ -615,7 +620,7 @@ def test_static_module_audits_the_locked_python_graph_fail_closed() -> None:
     """
     fast = _planned("test-fast")
     static = _planned("test-static")
-    pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    pyproject = (PROJECT_ROOT / "build_system/pyproject.toml").read_text(encoding="utf-8")
     audit_script = (PROJECT_ROOT / "scripts/audit-python-lock.sh").read_text(encoding="utf-8")
 
     assert "scripts/audit-python-lock.sh" in fast
@@ -625,7 +630,7 @@ def test_static_module_audits_the_locked_python_graph_fail_closed() -> None:
         "uv export",
         "--locked",
         "--no-emit-project",
-        "uv run pip-audit",
+        "uv run --project build_system --frozen pip-audit",
         "-s osv",
         "--require-hashes",
         "--disable-pip",
@@ -655,7 +660,7 @@ def test_standalone_functional_scripts_use_the_project_python() -> None:
     for module in ("test-functional", "smoke"):
         planned = _planned(module)
         for script in ("scripts/injection_test.py", "scripts/integration_test.py"):
-            assert f"uv run python {script}" in planned
+            assert f"uv run --project build_system --frozen python {script}" in planned
             assert f"python3 {script}" not in planned
 
 
@@ -868,6 +873,19 @@ def test_source_state_digest_covers_dirty_and_untracked_nonignored_files(
     if os.name != "nt":
         untracked.chmod(0o755)
         assert module.source_state_digest(tmp_path) != with_untracked
+
+
+def test_source_state_digest_accepts_a_tracked_deletion(tmp_path: Path) -> None:
+    subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("present\n", encoding="utf-8")
+    subprocess.run(("git", "add", "tracked.txt"), cwd=tmp_path, check=True)
+    module = _source_digest_module()
+
+    present = module.source_state_digest(tmp_path)
+    tracked.unlink()
+
+    assert module.source_state_digest(tmp_path) != present
 
 
 def test_source_state_digest_ignores_the_generated_asset_selector(tmp_path: Path) -> None:

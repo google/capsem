@@ -95,8 +95,8 @@ def main() -> int:
 
     if BLAKE3_IMPORT_ERROR is not None:
         print(
-            "missing Python dependency: blake3. Run `uv sync` once, then "
-            "`uv run python scripts/check-remote-release-readiness.py`.",
+            "missing Python dependency: blake3. Run `uv sync --project build_system` once, then "
+            "`uv run --project build_system --frozen python scripts/check-remote-release-readiness.py`.",
             file=sys.stderr,
         )
         return 2

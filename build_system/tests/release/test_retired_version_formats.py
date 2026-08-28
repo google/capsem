@@ -318,7 +318,10 @@ def _stamping_and_tool_sources() -> list[Path]:
     return [
         PROJECT_ROOT / raw.decode()
         for raw in listed
-        if raw and raw.decode().endswith(".py") and Path(raw.decode()).name != Path(__file__).name
+        if raw
+        and raw.decode().endswith(".py")
+        and Path(raw.decode()).name != Path(__file__).name
+        and (PROJECT_ROOT / raw.decode()).is_file()
     ]
 
 

@@ -123,6 +123,7 @@ def _ambient_fallbacks(sources: dict[str, str]) -> tuple[str, ...]:
             f"{path}:{line_number}:{line.strip()}"
             for path, text in sources.items()
             if path.startswith(PRODUCTION_ROOTS)
+            if not path.startswith("build_system/tests/")
             for line_number, line in enumerate(text.splitlines(), 1)
             if CA_NAME.search(line) and AMBIENT.search(line)
         )
@@ -298,6 +299,23 @@ def test_ambient_fallback_is_observed_red() -> None:
         "ambient_fallback debt" in problem
         for problem in _problems(_final_policy(), observed)
     ), RATIONALE
+
+
+def test_test_assertions_are_not_production_fallbacks() -> None:
+    records = _ambient_fallbacks(
+        {
+            "build_system/tests/image/test_docker.py": (
+                'assert (context_dir / "capsem-ca.crt").is_file()'
+            ),
+            "build_system/builder/image/doctor.py": (
+                'fallback = root / "capsem-ca.crt" if alternate.exists() else primary'
+            ),
+        }
+    )
+    assert records == (
+        'build_system/builder/image/doctor.py:1:fallback = root / "capsem-ca.crt" '
+        "if alternate.exists() else primary",
+    )
 
 
 def test_missing_policy_fails_closed() -> None:

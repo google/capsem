@@ -179,6 +179,22 @@ def test_the_prefix_carries_the_working_tree_and_not_build_output(source: Path) 
     assert not (target / "target" / "debug" / "huge.bin").exists()
 
 
+def test_the_prefix_accepts_a_tracked_deletion(source: Path) -> None:
+    """A dirty checkout may remove a tracked file before the gate snapshots it.
+
+    ``git ls-files`` still names that path. Passing the raw listing to ``cp``
+    made every intentional tracked deletion fail before plan inspection, which
+    meant the repository could not remove its retired root project files.
+    """
+    from capsem_builder.gate import snapshot
+
+    (source / "tracked.txt").unlink()
+    target = source.parent / "prefix"
+    snapshot.populate(source, target, _config())
+
+    assert not (target / "tracked.txt").exists()
+
+
 def test_a_tracked_symlink_stays_a_symlink(source: Path) -> None:
     """Copied as a link, not as whatever it points at.
 

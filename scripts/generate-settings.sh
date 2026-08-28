@@ -28,7 +28,7 @@ echo "[generate] $(date +%H:%M:%S) generating schema + defaults + mock" >> "$LOG
 # passes a scratch directory so the gate never writes into its own checked-in
 # source; without it they land in the checkout as before.
 if [ -n "${1:-}" ]; then
-  (cd "$ROOT" && uv run python scripts/generate_schema.py --settings-dir "$1" >> "$LOG" 2>&1)
+  (cd "$ROOT" && uv run --project build_system --frozen python scripts/generate_schema.py --settings-dir "$1" >> "$LOG" 2>&1)
 else
-  (cd "$ROOT" && uv run python scripts/generate_schema.py >> "$LOG" 2>&1)
+  (cd "$ROOT" && uv run --project build_system --frozen python scripts/generate_schema.py >> "$LOG" 2>&1)
 fi

@@ -55,7 +55,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - name: Install locked Python dependencies
-        run: uv sync --frozen
+        run: uv sync --project build_system --frozen
 
       - name: Write deterministic host release artifacts
         run: |
@@ -70,7 +70,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           case "$ASSET_CHANNEL" in stable|nightly) ;; *) exit 1 ;; esac
-          uv run python scripts/fetch-channel-source-manifest.py \
+          uv run --project build_system --frozen python scripts/fetch-channel-source-manifest.py \
             --channel "$ASSET_CHANNEL" \
             --source-commit "${{ github.sha }}" \
             --require-profile-membership \
@@ -94,14 +94,14 @@ jobs:
 
       - name: Prove VM asset metadata did not change
         run: >-
-          uv run python scripts/write-binary-channel-staging-proof.py
+          uv run --project build_system --frozen python scripts/write-binary-channel-staging-proof.py
           "$RUNNER_TEMP/binary-channel-dry-run"
 
       - name: Build complete binary channel preview with existing VM assets
         run: |
           set -euo pipefail
           generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          uv run python scripts/build-complete-release-channel.py \
+          uv run --project build_system --frozen python scripts/build-complete-release-channel.py \
             --channel-source "$ASSET_CHANNEL=file://$RUNNER_TEMP/binary-channel-dry-run/manifest.json" \
             --primary-channel "$ASSET_CHANNEL" \
             --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \

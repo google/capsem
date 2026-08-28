@@ -8,7 +8,7 @@ no longer contained; an isolated cache made them vanish without a source
 change.
 
 That is not merely bad local feedback. `just test-clean` and both release
-commands begin with `uv run capsem-gate`. The local diagnostic records its
+commands begin with `uv run --project build_system --frozen capsem-gate`. The local diagnostic records its
 commit and source digest, while each release freezes and dispatches that exact
 source to a hosted qualifying lane. A stale module could otherwise construct a
 plan that does not correspond to the source being diagnosed or published.

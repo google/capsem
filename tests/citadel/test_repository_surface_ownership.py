@@ -160,13 +160,14 @@ def _problems(policy: Mapping[str, Any], tracked: Sequence[str]) -> list[str]:
 
 
 def _tracked_paths() -> list[str]:
-    return subprocess.run(
+    paths = subprocess.run(
         ("git", "ls-files"),
         cwd=ROOT,
         check=True,
         capture_output=True,
         text=True,
     ).stdout.splitlines()
+    return [path for path in paths if (ROOT / path).exists()]
 
 
 def test_undeclared_target_surface_fails_closed() -> None:

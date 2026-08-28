@@ -182,7 +182,7 @@ def main() -> int:
     if not target.is_file():
         print(
             "No gate digest yet. Every `just test` writes one, or run "
-            "`uv run capsem-gate runs digest`."
+            "`uv run --project build_system --frozen capsem-gate runs digest`."
         )
         return 0
 

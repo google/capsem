@@ -86,7 +86,7 @@ jobs:
         with:
           key: release-channel-recovery
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync --frozen
+      - run: uv sync --project build_system --frozen
 
       - name: Reuse qualified binary channel candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -104,7 +104,7 @@ jobs:
       - name: Build complete release channel from qualified candidate
         run: |
           generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          uv run python scripts/build-complete-release-channel.py \
+          uv run --project build_system --frozen python scripts/build-complete-release-channel.py \
             --channel-source "$RELEASE_CHANNEL=file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
             --primary-channel "$RELEASE_CHANNEL" \
             --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
@@ -114,7 +114,7 @@ jobs:
 
       - name: Verify public package storage from recovered candidate
         run: |
-          uv run python scripts/release-package-contract.py verify-storage \
+          uv run --project build_system --frozen python scripts/release-package-contract.py verify-storage \
             --manifest "target/release-channel/assets/$RELEASE_CHANNEL/manifest.json" \
             --expected-prefix "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
             --expected-version "${RELEASE_TAG#v}" \
@@ -161,7 +161,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync --frozen
+      - run: uv sync --project build_system --frozen
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-channel-before
@@ -179,11 +179,11 @@ jobs:
           done
 
       - name: Verify every URL in the public channel manifest
-        run: uv run python scripts/verify-channel-downloads.py --manifest-url "$ASSET_MANIFEST_URL"
+        run: uv run --project build_system --frozen python scripts/verify-channel-downloads.py --manifest-url "$ASSET_MANIFEST_URL"
 
       - name: Verify public release packages and installer contract
         run: |
-          uv run python3 scripts/check-public-binary-release.py \
+          uv run --project build_system --frozen python3 scripts/check-public-binary-release.py \
             --channel "$RELEASE_CHANNEL" \
             --manifest-url "$ASSET_MANIFEST_URL" \
             --install-script-url https://capsem.org/install.sh \

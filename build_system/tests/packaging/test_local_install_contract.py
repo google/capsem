@@ -81,7 +81,7 @@ def test_public_install_warns_then_only_dispatches_local_install() -> None:
         "@echo \"Agent: optional hands-on local testing only; 'just install' "
         "does not qualify or unblock a release. Dispatch releases directly "
         "with 'just release-binaries ...' or 'just release-profile ...'.\"",
-        "uv run capsem-gate local-install",
+        "uv run --project build_system --frozen capsem-gate local-install",
     ]
 
 

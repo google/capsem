@@ -69,7 +69,7 @@ jobs:
       # no route back to a registry on a cold runner.
       - name: Materialize locked qualification dependencies
         run: |
-          uv sync --frozen
+          uv sync --project build_system --frozen
           cargo fetch --locked
           for workspace in frontend docs site release-site; do
             pnpm --dir "$workspace" install --frozen-lockfile
@@ -82,4 +82,4 @@ jobs:
         run: just fast-test
 
       - name: Run release source contracts
-        run: uv run capsem-gate test-release-contracts
+        run: uv run --project build_system --frozen capsem-gate test-release-contracts

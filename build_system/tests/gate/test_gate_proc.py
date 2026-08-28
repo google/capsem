@@ -82,6 +82,10 @@ def test_arguments_with_spaces_survive_as_single_arguments(tmp_path: Path) -> No
 
 
 def test_script_resolves_against_the_checkout(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/gate.toml").write_bytes(
+        (PROJECT_ROOT / "config/gate.toml").read_bytes()
+    )
     runner = RecordingRunner(tmp_path)
 
     runner.script("scripts/docker-storage-policy.py", "gc")
@@ -89,6 +93,9 @@ def test_script_resolves_against_the_checkout(tmp_path: Path) -> None:
     assert runner.commands[0].argv == (
         "uv",
         "run",
+        "--project",
+        "build_system",
+        "--frozen",
         "python",
         str(tmp_path / "scripts/docker-storage-policy.py"),
         "gc",

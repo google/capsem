@@ -75,8 +75,8 @@ scripts/                  CI and release gate scripts invoked by the gate
 
 `target/gate-runs/DIGEST.md` is the state of the build across recent runs: what
 the last run did, which steps keep failing, where the time goes, and what to do
-about it. Every gate run regenerates it; `uv run capsem-gate runs digest`
-rebuilds it on demand and `uv run capsem-gate runs trend --step <label>` follows
+about it. Every gate run regenerates it; `uv run --project build_system --frozen capsem-gate runs digest`
+rebuilds it on demand and `uv run --project build_system --frozen capsem-gate runs trend --step <label>` follows
 one step run by run.
 
 Read it before starting work and before reporting that anything passes. One

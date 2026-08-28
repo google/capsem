@@ -288,8 +288,12 @@ class Runner:
         check: bool = True,
     ) -> int:
         """Run a checked-in Python script through the project's uv environment."""
+        from . import config as gate_config
+        from .pythonenv import uv_run
+
+        config = gate_config.for_root(self.root)
         return self.run(
-            ["uv", "run", "python", str(self.root / relative), *(str(a) for a in args)],
+            uv_run(config, "python", self.root / relative, *args),
             cwd=cwd,
             env=env,
             check=check,

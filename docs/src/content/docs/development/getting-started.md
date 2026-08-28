@@ -53,7 +53,7 @@ lifecycles in the bootstrap run.
 | 1 (Linux) | Node 24 + pnpm 10 | SHA256-verified Node archive + npm | Matches CI and the immutable host builder |
 | 1 (Linux) | Docker/KVM/vhost-vsock access | durable groups + udev policy and current-session ACL | Lets the same bootstrap process build and run repeated VM lifecycles without a logout |
 | 2 | `uv` | `astral.sh/uv` installer → `~/.local/bin` | Python deps for `capsem-builder` |
-| 2 | Python deps | `uv sync` | Locked via `uv.lock` |
+| 2 | Python deps | `uv sync --project build_system` | Locked via `uv.lock` |
 | 2 (macOS) | `flock`, `pnpm` | `brew` | flock = multi-agent recipe lock; pnpm = frontend deps |
 | 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` + symlink into `~/.docker/cli-plugins` | Container runtime for `just build-assets code` |
 | 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 128` | Runs Docker; Rosetta enables x86_64 cross-builds and the disk retains release caches |

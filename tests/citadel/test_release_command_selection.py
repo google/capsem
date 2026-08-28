@@ -49,7 +49,7 @@ def _normalized(path: str) -> str:
 def test_install_warns_that_release_dispatch_is_direct() -> None:
     assert _recipe_body("install") == [
         f'@echo "{INSTALL_WARNING}"',
-        "uv run capsem-gate local-install",
+        "uv run --project build_system --frozen capsem-gate local-install",
     ], RATIONALE
 
 

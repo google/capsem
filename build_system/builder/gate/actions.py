@@ -23,10 +23,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
 
+from .config import GateConfig
 from .context import Context
 from .escape import escaping_runner
 from .invocation import Command
 from .opacity import CallJustification
+from .pythonenv import uv_run
 from .scopeenv import action_environment
 
 
@@ -135,6 +137,7 @@ class Script(Action, name="script"):
 
     def __init__(
         self,
+        config: GateConfig,
         relative: str,
         *args: object,
         root: Path | None = None,
@@ -142,6 +145,7 @@ class Script(Action, name="script"):
         check: bool = True,
         outside_sandbox: bool = False,
     ) -> None:
+        self._config = config
         self._relative = relative
         self._args = tuple(str(arg) for arg in args)
         self._root = root
@@ -159,7 +163,7 @@ class Script(Action, name="script"):
         """
         rendered = str(
             Command(
-                argv=("uv", "run", "python", self._relative, *self._args),
+                argv=tuple(uv_run(self._config, "python", self._relative, *self._args)),
                 env=self._env,
             )
         )
@@ -190,7 +194,7 @@ class Script(Action, name="script"):
         # `__file__`, so running this tree's copy elsewhere would still stamp,
         # commit and push here.
         runner.run(
-            ["uv", "run", "python", str(self._root / self._relative), *self._args],
+            uv_run(self._config, "python", self._root / self._relative, *self._args),
             cwd=self._root,
             env=env,
             check=self._check,

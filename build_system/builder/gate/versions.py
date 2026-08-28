@@ -96,20 +96,20 @@ def _stamp_uv_lock(path: Path, version: str) -> None:
         packages = tomllib.loads(text)["package"]
     except (KeyError, tomllib.TOMLDecodeError) as exc:
         raise GateError(f"{path} has no package ledger: {exc}") from None
-    roots = [
-        package
-        for package in packages
-        if package.get("name") == "capsem"
-        and package.get("source", {}).get("editable") == "."
-    ]
+    roots = [package for package in packages if package.get("source", {}).get("editable") == "."]
     if len(roots) != 1:
-        raise GateError(f"{path} should contain one editable capsem root, found {len(roots)}")
+        raise GateError(f"{path} should contain one editable project root, found {len(roots)}")
+    name = str(roots[0].get("name", ""))
+    if not name:
+        raise GateError(f"{path} editable project root has no package name")
     old = require_semver(str(roots[0].get("version", "")), source=str(path))
-    needle = f'[[package]]\nname = "capsem"\nversion = "{old}"\nsource = {{ editable = "." }}'
+    needle = f'[[package]]\nname = "{name}"\nversion = "{old}"\nsource = {{ editable = "." }}'
     replacement = needle.replace(f'version = "{old}"', f'version = "{version}"')
     replaced, count = text.replace(needle, replacement), text.count(needle)
     if count != 1:
-        raise GateError(f"{path} should spell one canonical editable capsem root, found {count}")
+        raise GateError(
+            f"{path} should spell one canonical editable {name} root, found {count}"
+        )
     write_text(path, replaced)
 
 
@@ -142,7 +142,8 @@ def stamp(root: Path, runner: Runner) -> str:
     # Updating the one editable row before `--locked` makes this verification
     # independent of registry cache state; an ordinary resolve is not.
     _stamp_uv_lock(root / settings.uv_lock, version)
-    runner.run(["uv", "lock", "--locked", "--offline"])
+    project = str(Path(settings.uv_lock).parent)
+    runner.run(["uv", "lock", "--project", project, "--locked", "--offline"])
     return version
 
 

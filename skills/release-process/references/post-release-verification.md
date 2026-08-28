@@ -12,7 +12,7 @@ xcrun stapler validate /tmp/verify/Capsem-*.pkg       # Staple ticket present
 gh release download vX.Y.Z --pattern '*.deb' -D /tmp/verify
 curl -fsSL https://release.capsem.org/channels.json -o /tmp/verify/channels.json
 curl -fsSL https://release.capsem.org/assets/stable/manifest.json -o /tmp/verify/asset-manifest.json
-uv run python3 scripts/check-public-binary-release.py \
+uv run --project build_system --frozen python3 scripts/check-public-binary-release.py \
   --channel stable \
   --manifest-url https://release.capsem.org/assets/stable/manifest.json \
   --install-script-url https://capsem.org/install.sh \

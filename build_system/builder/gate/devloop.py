@@ -40,7 +40,7 @@ class DevCommand(GateCommand, name="dev", help="run one development surface"):
     variadic into one string before interpolating it, so the recipe could
     either quote it -- collapsing every argument into one -- or leave it as
     shell source, which is what it did. Neither preserves the boundaries, so
-    the passthrough is spelled `uv run capsem-gate dev tui --fixture` instead
+    the passthrough is spelled `uv run --project build_system --frozen capsem-gate dev tui --fixture` instead
     of pretending `just` can carry it.
     """
 

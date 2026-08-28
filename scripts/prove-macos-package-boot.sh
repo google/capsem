@@ -215,7 +215,7 @@ echo "=== Running installed Winterfell from the exact package cohort ==="
 set +e
 CAPSEM_HOME="$CAPSEM_HOME_DIR" \
 CAPSEM_RUN_DIR="$RUN_DIR" \
-    uv run python "$ROOT/scripts/run-installed-winterfell.py" \
+    uv run --project build_system --frozen python "$ROOT/scripts/run-installed-winterfell.py" \
         --bin-dir "$CAPSEM_HOME_DIR/bin" \
         --assets-dir "$CAPSEM_HOME_DIR/assets" \
         --profiles-dir "$CAPSEM_HOME_DIR/profiles" \

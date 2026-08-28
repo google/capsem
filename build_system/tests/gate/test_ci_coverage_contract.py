@@ -14,16 +14,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_python_coverage_gate_does_not_round_subthreshold_total() -> None:
-    report = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())["tool"]["coverage"][
-        "report"
-    ]
+    report = tomllib.loads((PROJECT_ROOT / "build_system/pyproject.toml").read_text())["tool"][
+        "coverage"
+    ]["report"]
 
     assert report["precision"] >= 2, "a floor compared against a rounded total passes at 84.5%"
     assert report["fail_under"] > 0, "coverage must actually block"
 
 
 def test_no_caller_restates_the_coverage_floor() -> None:
-    """The floor lives in pyproject; every runner inherits it.
+    """The floor lives in build_system/pyproject.toml; every runner inherits it.
 
     It used to be spelled `--cov-fail-under=85` in the justfile and again in
     ci.yaml, and a third `--cov=` invocation in ci.yaml carried no floor at all
@@ -66,18 +66,22 @@ def test_partial_macos_python_cohorts_aggregate_without_judging_the_complete_flo
     selected = python_pytest_command_containing(
         test_job, "tests/citadel/test_agent_skill_index.py"
     )
-    appended = python_pytest_command_containing(test_job, "tests/capsem-release/")
+    appended = python_pytest_command_containing(
+        test_job, "--cov-report=xml:codecov-python.xml"
+    )
 
-    assert "--cov=src/capsem" in selected
+    assert "--cov=build_system/builder" in selected
     assert "--cov-report=" in selected
     assert "--cov-fail-under=0" in selected
     assert "--cov-append" not in selected
 
-    assert "--cov=src/capsem" in appended
+    assert "--cov=build_system/builder" in appended
     assert "--cov-append" in appended
     assert "--cov-report=xml:codecov-python.xml" in appended
     assert "--cov-fail-under=0" in appended
-    assert test_job.index("- name: Python schema tests with coverage") < test_job.index(
+    assert test_job.index(
+        "- name: Cross-system Python schema tests with coverage"
+    ) < test_job.index(
         "- name: Python integration tests (non-VM suites)"
     )
 
@@ -372,10 +376,10 @@ def test_release_binaries_and_package_rails_covered() -> None:
 
     release_integration_command = python_pytest_command_containing(
         test_job,
-        "tests/capsem-release/",
+        "--cov-report=xml:codecov-python.xml",
     )
     for coverage_arg in (
-        "--cov=src/capsem",
+        "--cov=build_system/builder",
         "--cov-append",
         "--cov-report=xml:codecov-python.xml",
     ):
@@ -547,11 +551,20 @@ def codecov_upload_files(workflow: str) -> set[str]:
 def python_pytest_command_containing(shell: str, needle: str) -> str:
     lines = shell.splitlines()
     for index, line in enumerate(lines):
-        if "uv run python -m pytest" not in line:
+        if "uv run --project build_system --frozen python -m pytest" not in line:
             continue
         command_lines = [line.strip()]
         if not line.strip().endswith("\\"):
-            command = line.strip()
+            indentation = len(line) - len(line.lstrip())
+            for continuation in lines[index + 1 :]:
+                stripped = continuation.strip()
+                if not stripped:
+                    break
+                continuation_indent = len(continuation) - len(continuation.lstrip())
+                if continuation_indent < indentation:
+                    break
+                command_lines.append(stripped)
+            command = " ".join(command_lines)
             if needle in command:
                 return command
             continue

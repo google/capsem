@@ -185,7 +185,7 @@ and frozen pnpm store. Source build, smoke, and the privileged systemd runtime
 all use networking disabled. They bind the runnable input-keyed tag to the
 exact platform-child ID before use; the child ID is evidence but is not itself
 runnable on every containerd store. Do not repair a failure with runtime apt,
-pnpm, uv sync, a second build, or an unverified image tag.
+pnpm, uv sync --project build_system, a second build, or an unverified image tag.
 
 Manifest-selected profile content includes a verified immutable input subtree
 under the same `ProfileContent` root as assets and materialized config. Mount

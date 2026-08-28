@@ -38,7 +38,7 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
     strict = [name for name in present if name in settings.strict_roots]
     relaxed = [name for name in present if name not in settings.strict_roots]
 
-    steps = [phase.add(_ruff(), after=after)]
+    steps = [phase.add(_ruff(config), after=after)]
     if strict:
         # No `--ignore`: that is what strict means, and a held-back rule here
         # would be the ratchet quietly growing a second home.
@@ -50,9 +50,21 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
     return tuple(steps)
 
 
-def ruff_argv() -> list[str]:
+def ruff_argv(config: GateConfig) -> list[str]:
     """Ruff over the whole tree; its own configuration selects the rules."""
-    return ["uv", "run", "ruff", "check", "."]
+    project = config.suites.pytest.build_system_project
+    return [
+        "uv",
+        "run",
+        "--project",
+        project,
+        "--frozen",
+        "ruff",
+        "check",
+        "--config",
+        config.suites.pytest.project_manifest,
+        ".",
+    ]
 
 
 def ty_argv(
@@ -64,10 +76,25 @@ def ty_argv(
     with nothing held back, does each ratchet rule still fire -- and a second
     hand-assembled argv is a second thing to keep in step with the first.
     """
+    project = config.suites.pytest.build_system_project
     flags = ["--error-on-warning"] if config.lint.error_on_warning else []
     platform = ["--python-platform", config.lint.python_platform]
     ignores = [flag for rule in held_back for flag in ("--ignore", rule)]
-    return ["uv", "run", "ty", "check", *flags, *platform, *roots, *ignores]
+    return [
+        "uv",
+        "run",
+        "--project",
+        project,
+        "--frozen",
+        "ty",
+        "check",
+        "--project",
+        project,
+        *flags,
+        *platform,
+        *roots,
+        *ignores,
+    ]
 
 
 def ty_inventory_argv(
@@ -83,8 +110,13 @@ def ty_inventory_argv(
     return [
         "uv",
         "run",
+        "--project",
+        config.suites.pytest.build_system_project,
+        "--frozen",
         "ty",
         "check",
+        "--project",
+        config.suites.pytest.build_system_project,
         "--exit-zero",
         "--output-format",
         "concise",
@@ -96,10 +128,10 @@ def ty_inventory_argv(
     ]
 
 
-def _ruff():
+def _ruff(config: GateConfig):
     from .execution import step
 
-    return step("ruff", Run(ruff_argv()), kind=Kind.LINT, speed=Speed.FAST)
+    return step("ruff", Run(ruff_argv(config)), kind=Kind.LINT, speed=Speed.FAST)
 
 
 def _ty(label: str, config: GateConfig, roots: list[str], held_back: tuple[str, ...]):

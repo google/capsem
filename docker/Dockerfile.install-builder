@@ -11,7 +11,7 @@ ENV RUSTUP_AUTO_INSTALL=0
 COPY Cargo.toml Cargo.lock rust-toolchain.toml /prefetch/
 COPY .cargo/config.toml /prefetch/.cargo/config.toml
 COPY crates /prefetch/crates
-COPY pyproject.toml uv.lock /prefetch/
+COPY build_system/pyproject.toml build_system/uv.lock /prefetch/build_system/
 COPY release-site/package.json release-site/pnpm-lock.yaml \
     release-site/pnpm-workspace.yaml /prefetch/release-site/
 
@@ -22,7 +22,7 @@ RUN selected="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" \
     && rustup target list --toolchain "${selected}" --installed | grep -Fx "${RUST_TARGET}"
 RUN mkdir -p /capsem-deps/cargo/registry /capsem-deps/cargo/git \
     && CARGO_HOME=/capsem-deps/cargo cargo fetch --locked --target "${RUST_TARGET}"
-RUN UV_PROJECT_ENVIRONMENT="${INSTALL_VENV}" uv sync --locked --no-install-project
+RUN UV_PROJECT_ENVIRONMENT="${INSTALL_VENV}" uv sync --project build_system --locked --no-install-project
 RUN cd release-site && pnpm fetch --frozen-lockfile --store-dir /capsem-deps/pnpm
 
 FROM ${BASE}
@@ -80,5 +80,4 @@ ENV UV_OFFLINE=true
 ENV RUSTUP_AUTO_INSTALL=0
 ENV CARGO_NET_OFFLINE=true
 ENV CARGO_HOME=${CARGO_STORE}
-ENV PYTHONPATH=/src/src
 ENV CAPSEM_INSTALL_PNPM_STORE=${PNPM_STORE}

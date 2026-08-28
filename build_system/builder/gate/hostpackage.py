@@ -163,9 +163,13 @@ class _GenerateSbom(Action, name="generate-sbom"):
 
     def perform(self, context: Context) -> None:
         settings = context.config.sbom
-        Script(settings.script, "--output", settings.output, *_artifacts(context.config)).perform(
-            context
-        )
+        Script(
+            context.config,
+            settings.script,
+            "--output",
+            settings.output,
+            *_artifacts(context.config),
+        ).perform(context)
 
 
 class _ValidateSbom(Action, name="validate-sbom"):

@@ -374,7 +374,7 @@ def test_bootstrap_and_doctor_prove_tart_cache_clone_boot_and_ssh() -> None:
     doctor = _source_text("scripts/doctor-macos.sh")
     readiness = _source_text("scripts/tart_readiness.py")
 
-    assert 'uv run python "$SCRIPT_DIR/scripts/tart_readiness.py"' in bootstrap
+    assert 'uv run --project build_system --frozen python "$SCRIPT_DIR/scripts/tart_readiness.py"' in bootstrap
     assert "--require-cache" in doctor
     assert "cached, cloned, booted, and SSH-ready" in doctor
     assert '"tart", "clone"' in readiness
@@ -576,9 +576,9 @@ def test_ci_materializes_runtime_profiles_after_generating_settings() -> None:
 
 def test_ci_python_schema_pytest_paths_exist() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
-    coverage_step = workflow.split("- name: Python schema tests with coverage", maxsplit=1)[
-        1
-    ].split("# Python integration tests", maxsplit=1)[0]
+    coverage_step = workflow.split(
+        "- name: Cross-system Python schema tests with coverage", maxsplit=1
+    )[1].split("# Python integration tests", maxsplit=1)[0]
     paths = sorted(
         set(re.findall(r"(?:build_system/)?tests/[^\s\\]+", coverage_step))
     )
@@ -617,7 +617,7 @@ def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     assert 'test "$SITE_BUILD_RESULT" = success' in gate
     assert 'test "$RELEASE_SITE_BUILD_RESULT" = success' in gate
     assert "astral-sh/setup-uv@" in release_site_job
-    assert "uv sync --frozen" in release_site_job
+    assert "uv sync --project build_system --frozen" in release_site_job
     assert "bash scripts/check-web-surface.sh release-site" in release_site_job
 
 
@@ -690,7 +690,8 @@ def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
         ("test", "Integration tests with coverage"),
         ("test", "Build frontend bundle"),
         ("test", "Frontend type-check and test"),
-        ("test", "Python schema tests with coverage"),
+        ("test", "Cross-system Python schema tests with coverage"),
+        ("test", "Build-system Python schema tests with coverage"),
         ("test", "Python integration tests (non-VM suites)"),
         ("test", "Verify all integration test imports"),
         ("test", "Schema drift check"),
@@ -811,7 +812,7 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "cargo tauri build" not in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
     assert "run: just fast-test" in fast_gate
-    assert "run: uv run capsem-gate test-release-contracts" in fast_gate
+    assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
     assert "just qualify-assets" in workflow
     assert "just _test-release-contracts" not in workflow
     assert "scripts/build-complete-release-channel.py" in workflow
@@ -873,7 +874,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "Validate activated production bytes" in workflow
     assert "Restore prior production deployment" in workflow
     assert "Verify restored production bytes" in workflow
-    assert "uv run python scripts/check-release-site-contract.py" in workflow
+    assert "uv run --project build_system --frozen python scripts/check-release-site-contract.py" in workflow
     assert '--base-url "$RELEASE_SITE_URL"' in workflow
     assert 'CHANNEL_ARGS=(--channel "$CHANNEL")' in workflow
     assert "CHANNEL_ARGS=(--catalog-members)" in workflow
@@ -898,7 +899,7 @@ def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_
     ].split("\n      - name:", maxsplit=1)[0]
 
     assert "Validate activated production bytes" in workflow
-    assert "uv run python scripts/check-release-site-contract.py" in validator_step
+    assert "uv run --project build_system --frozen python scripts/check-release-site-contract.py" in validator_step
     assert '--base-url "$RELEASE_SITE_URL"' in validator_step
     assert "--catalog-members" in validator_step
     assert 'CHANNEL_ARGS=(--channel "$CHANNEL")' in validator_step
@@ -1267,7 +1268,7 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
     docs_text = " ".join(docs.split())
 
     assert "astral-sh/setup-uv@" in workflow
-    assert "uv run python scripts/check-release-site-contract.py" in workflow
+    assert "uv run --project build_system --frozen python scripts/check-release-site-contract.py" in workflow
     assert "import hashlib" in script
     assert "import blake3" in script
     assert "def fetch_and_verify_evidence_artifact" in script
@@ -1317,7 +1318,7 @@ def test_release_channel_cache_header_documentation_matches_deploy_smoke() -> No
     asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
 
     script = _source_text("scripts/check-remote-release-readiness.py")
-    assert "uv run python scripts/check-release-site-contract.py" in workflow
+    assert "uv run --project build_system --frozen python scripts/check-release-site-contract.py" in workflow
     assert "def check_release_cache_headers" in script
     assert '("no-cache", "must-revalidate")' in script
     assert '("public", "max-age=31536000", "immutable")' in script
@@ -1629,7 +1630,7 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "--input-dir target/candidate-profile-inputs" in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
     assert "run: just fast-test" in fast_gate
-    assert "run: uv run capsem-gate test-release-contracts" in fast_gate
+    assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
     assert "just qualify-binaries" in workflow
     assert "just _test-release-contracts" not in workflow
     assert "just _build-kernel" not in workflow
@@ -1878,7 +1879,7 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
     assert "run: just fast-test" in fast_gate
-    assert "run: uv run capsem-gate test-release-contracts" in fast_gate
+    assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
 
     for workflow, verb in ((binary, "qualify-binaries"), (profile, "qualify-assets")):
         assert "group: capsem-release-${{ inputs.channel }}" in workflow
@@ -1928,7 +1929,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "Notarize and staple .pkg" in macos_build
     assert "Verify exact notarized package identity and Gatekeeper acceptance" in macos_build
     assert "Build Linux package through the shared hermetic rail" in linux_build
-    assert "uv run capsem-gate cross-compile" in linux_build
+    assert "uv run --project build_system --frozen capsem-gate cross-compile" in linux_build
     assert "Collect Linux artifacts" in linux_build
     assert "Record binary candidate metadata once" in author
     assert "Prove binary candidate preserved every profile" in author
@@ -3095,7 +3096,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
 
     assert "test-clean" in just
     assert "run: just fast-test" in fast_gate
-    assert "run: uv run capsem-gate test-release-contracts" in fast_gate
+    assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
     assert "uses: ./.github/workflows/fast-gate.yaml" in assets
     assert "uses: ./.github/workflows/fast-gate.yaml" in release
     assert "just qualify-assets" in assets
@@ -3106,7 +3107,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     assert "just build-assets" in assets
     assert "build-assets arch" in just
 
-    assert "uv run capsem-gate install" in ci
+    assert "uv run --project build_system --frozen capsem-gate install" in ci
     assert "_gate-install:" in just
     install_job = ci.split("  test-install:", 1)[1].split("\n  #", 1)[0]
     assert "runs-on: ubuntu-24.04" in install_job
@@ -3121,7 +3122,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
         "scripts/prove-installed-shell.py",
     ):
         assert shared_script in release
-    assert "uv run capsem-gate cross-compile" in release
+    assert "uv run --project build_system --frozen capsem-gate cross-compile" in release
     assert "scripts/repack-deb.sh" in _source_text("scripts/build-linux-package.sh")
     assert "scripts/build-test-macos-package.sh" in macos_glowup
     # The local rail must reach the same shared scripts CI does. Since the
@@ -3277,7 +3278,7 @@ def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
         assert "`just test-clean`" in document
 
     assert "run: just fast-test" in fast_gate
-    assert "run: uv run capsem-gate test-release-contracts" in fast_gate
+    assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
     for workflow in (binary, profile):
         assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
         assert "just qualify-binaries" in workflow or "just qualify-assets" in workflow
@@ -3587,7 +3588,7 @@ def test_remote_release_readiness_missing_dependency_reports_setup_hint(tmp_path
 
     assert result.returncode == 2
     assert "missing Python dependency: blake3" in result.stderr
-    assert "uv run python scripts/check-remote-release-readiness.py" in result.stderr
+    assert "uv run --project build_system --frozen python scripts/check-remote-release-readiness.py" in result.stderr
     assert "Traceback" not in result.stderr
 
 
@@ -3820,7 +3821,7 @@ def test_remote_release_readiness_checker_verifies_vm_asset_file_content() -> No
     )
     assert "fetch_and_verify_evidence_artifact(" in script
     assert '"VM asset file"' in script
-    assert "uv run python scripts/check-release-site-contract.py" in workflow
+    assert "uv run --project build_system --frozen python scripts/check-release-site-contract.py" in workflow
 
 
 def test_remote_release_readiness_rejects_evidence_content_drift() -> None:
@@ -4126,7 +4127,7 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
     assert '"host SBOM evidence"' in script
     assert "VM asset attestation predicate_url missing" in script
     assert "missing from {predicate_label}" in script
-    assert "uv run python scripts/check-release-site-contract.py" in workflow
+    assert "uv run --project build_system --frozen python scripts/check-release-site-contract.py" in workflow
 
 
 def test_remote_readiness_rejects_attestation_rail_drift() -> None:
@@ -4388,7 +4389,7 @@ def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
 
     select_pos = workflow.find("scripts/gate-tool-list.py")
     install_pos = workflow.find("- name: Install prebuilt Rust tools")
-    bootstrap_pos = workflow.find("uv run python -m pytest tests/capsem-bootstrap/")
+    bootstrap_pos = workflow.find("uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml tests/capsem-bootstrap/")
 
     assert select_pos != -1, "the job no longer derives its tools from config"
     assert install_pos != -1
@@ -4578,7 +4579,7 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert "uses: ./.github/workflows/fast-gate.yaml" in binary_release
     assert "uses: ./.github/workflows/fast-gate.yaml" in profile_release
     assert "run: just fast-test" in fast_gate
-    assert "run: uv run capsem-gate test-release-contracts" in fast_gate
+    assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
     gate = _dispatched_text("test-clean:")
     assert "bootstrap.sh" in gate
     assert "check-web-surface.sh frontend" in gate
@@ -4591,7 +4592,7 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert "_dev-frontend: _pnpm-install _generate-settings" in just
     assert '_build-ui profile="debug": _pnpm-install _generate-settings' in just
     assert "\ntest-frontend:" not in just
-    assert "uv run python scripts/generate_schema.py" not in just
+    assert "uv run --project build_system --frozen python scripts/generate_schema.py" not in just
 
 
 def test_generated_settings_gate_bootstraps_ignored_output_and_rejects_tracked_drift(
@@ -5351,7 +5352,7 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
     assert linux_job.index("Fetch exact selected ${{ matrix.arch }} profiles") < linux_job.index(
         "bash scripts/materialize-config.sh"
     )
-    assert "uv run capsem-gate cross-compile" in linux_job
+    assert "uv run --project build_system --frozen capsem-gate cross-compile" in linux_job
     assert "--content-root target/package-content" in linux_job
     assert "--defer-proof" in linux_job
     assert "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/" in linux_job
@@ -5784,9 +5785,9 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
 
 def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
-    coverage_step = workflow.split("- name: Python schema tests with coverage", maxsplit=1)[
-        1
-    ].split(
+    coverage_step = workflow.split(
+        "- name: Cross-system Python schema tests with coverage", maxsplit=1
+    )[1].split(
         "# Python integration tests that need no VM",
         maxsplit=1,
     )[0]
@@ -5802,7 +5803,7 @@ def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:
     assert "build_system/tests/image/test_models.py" in coverage_step
     assert "build_system/tests/image/test_skills.py" in coverage_step
     assert "--cov=build_system/builder" in coverage_step
-    assert "--cov=src/capsem" in coverage_step
+    assert "--cov=src/capsem" not in coverage_step
 
 
 def test_generate_settings_creates_catalog_directory_before_redirect() -> None:
@@ -5839,7 +5840,7 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
     bench_package_pos = block.find("-p capsem-bench")
     bench_binary_pos = block.find("target/debug/capsem-bench-rs")
     sign_pos = block.find("codesign --sign - --entitlements entitlements.plist --force")
-    pytest_pos = block.find("uv run python -m pytest tests/capsem-bootstrap/")
+    pytest_pos = block.find("uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml tests/capsem-bootstrap/")
 
     assert asset_pos != -1
     assert build_pos != -1

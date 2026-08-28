@@ -136,7 +136,9 @@ def test_children_inherit_the_isolation(tmp_path: Path) -> None:
 
 def test_the_console_script_is_the_launcher() -> None:
     """Otherwise the isolation is a function nobody calls."""
-    manifest = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    manifest = tomllib.loads(
+        (PROJECT_ROOT / "build_system/pyproject.toml").read_text(encoding="utf-8")
+    )
 
     assert manifest["project"]["scripts"]["capsem-gate"] == (
         "capsem_builder.gatelaunch:main"

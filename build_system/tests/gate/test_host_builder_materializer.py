@@ -215,7 +215,7 @@ def test_macos_release_installs_only_config_owned_cargo_tools() -> None:
     installer = next(step for step in steps if step.get("name", "").startswith("Install exact"))
 
     assert installer["run"] == (
-        "uv run python scripts/install-configured-cargo-tools.py cargo-tauri cargo-sbom"
+        "uv run --project build_system --frozen python scripts/install-configured-cargo-tools.py cargo-tauri cargo-sbom"
     )
     job = str(steps)
     assert "cargo install" not in job

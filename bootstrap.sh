@@ -166,9 +166,9 @@ if ! command -v uv >/dev/null 2>&1; then
     fi
 fi
 if command -v uv >/dev/null 2>&1; then
-    printf "  Python lock metadata + deps (uv lock --locked; uv sync --frozen)...\n"
-    uv lock --locked
-    uv sync --frozen
+    printf "  Python lock metadata + deps (uv lock --project build_system --locked; uv sync --project build_system --frozen)...\n"
+    uv lock --project build_system --locked
+    uv sync --project build_system --frozen
 else
     printf "  [SKIP] Python deps (uv not installed -- some just recipes will fail)\n"
 fi
@@ -216,7 +216,7 @@ if [ "$(uname -s)" = "Darwin" ] \
     && command -v tart >/dev/null 2>&1 \
     && command -v sshpass >/dev/null 2>&1; then
     printf "  Tart base image + boot readiness...\n"
-    uv run python "$SCRIPT_DIR/scripts/tart_readiness.py"
+    uv run --project build_system --frozen python "$SCRIPT_DIR/scripts/tart_readiness.py"
     export CAPSEM_BOOTSTRAP_TART_PROVEN=1
 fi
 
@@ -260,7 +260,7 @@ if command -v pnpm >/dev/null 2>&1; then
             "$CAPSEM_GATE_RUN"
     else
         printf "  Locked Node workspaces...\n"
-        uv run capsem-gate install-node
+        uv run --project build_system --frozen capsem-gate install-node
     fi
 else
     printf "  [SKIP] Node workspace deps (pnpm not installed -- doctor will catch this)\n"

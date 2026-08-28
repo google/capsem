@@ -57,7 +57,7 @@ def _span(log: Path | None, offset: int) -> OutputSpan | None:
 #: the composition model exists to make unrepresentable.
 ENTRYPOINTS = frozenset({"just", "capsem-gate"})
 
-#: Programs that run another program. `uv run capsem-gate assets` runs
+#: Programs that run another program. `uv run --project build_system --frozen capsem-gate assets` runs
 #: capsem-gate, so a check on `argv[0]` alone is defeated by the exact spelling
 #: the gate already used at every one of these call sites.
 WRAPPERS = frozenset({"uv", "caffeinate", "env", "nohup", "time", "stdbuf"})

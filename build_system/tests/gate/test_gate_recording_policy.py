@@ -4,7 +4,7 @@ Two defects with one cause: `records` was a class constant, so it could not
 depend on *how* a command was invoked, and `_summarize` assumed the thing
 `_recording()` returned always had a run directory.
 
-    $ uv run capsem-gate version --timing
+    $ uv run --project build_system --frozen capsem-gate version --timing
     <the version>
     AttributeError: 'NullJournal' object has no attribute 'directory'
 

@@ -111,6 +111,8 @@ def _tracked_sources() -> tuple[list[str], dict[str, str]]:
         metadata, raw_path = record.split(b"\t", 1)
         mode = metadata.split(b" ", 1)[0]
         path = raw_path.decode("utf-8")
+        if not (ROOT / path).exists():
+            continue
         tracked.append(path)
         if mode == b"120000":
             continue

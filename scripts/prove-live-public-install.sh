@@ -12,7 +12,7 @@ channel=$3
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 capsem_home=${CAPSEM_HOME:-"$HOME/.capsem"}
 capsem="$capsem_home/bin/capsem"
-expected_version=$(uv run python "$script_dir/release-package-contract.py" selected-version \
+expected_version=$(uv run --project build_system --frozen python "$script_dir/release-package-contract.py" selected-version \
   --manifest "$manifest_path" --platform linux --architecture amd64)
 
 curl -fsSL https://capsem.org/install.sh | CAPSEM_CHANNEL="$channel" sh

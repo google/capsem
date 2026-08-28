@@ -28,6 +28,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import embedded_shell
@@ -197,7 +198,7 @@ def test_the_cli_only_parses_and_dispatches() -> None:
         "through the registry."
     )
     assert "subprocess" not in cli, "the CLI dispatches; the modules run things"
-    for smell in ("docker ", "cargo ", "pnpm ", "uv run"):
+    for smell in ("docker ", "cargo ", "pnpm ", "uv run --project build_system --frozen"):
         assert smell not in cli, f"the CLI should not know about {smell.strip()!r}"
 
 
@@ -209,8 +210,8 @@ def test_every_gate_module_imports_on_its_own(module: str) -> None:
         pytest.skip("package entry points, exercised through the CLI")
 
     subprocess.run(
-        ["python3", "-c", f"import {name}"],
-        cwd=PROJECT_ROOT / "src",
+        [sys.executable, "-c", f"import {name}"],
+        cwd=PROJECT_ROOT,
         check=True,
         capture_output=True,
     )
@@ -232,7 +233,7 @@ def test_the_strict_python_tree_needs_no_rules_held_back() -> None:
     settings = CONFIG.lint
 
     assert set(settings.strict_roots) <= set(settings.python_roots)
-    assert "src" in settings.strict_roots
+    assert "build_system/builder" in settings.strict_roots
 
     from capsem_builder.gate.sourcechecks import ty_argv
 

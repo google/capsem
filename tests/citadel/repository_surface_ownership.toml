@@ -43,7 +43,7 @@ reason = "Workflow edits fail closed into every required CI owner."
 [[surface]]
 id = "build-system-builder"
 state = "migrating"
-current = ["build_system/README.md", "build_system/builder/", "build_system/pyproject.toml", "build_system/uv.lock", "src/", "pyproject.toml", "uv.lock"]
+current = ["build_system/README.md", "build_system/builder/", "build_system/pyproject.toml", "build_system/uv.lock"]
 targets = ["build_system/builder/"]
 lint = ["python.ruff", "python.ty.strict", "python.ty.relaxed"]
 tests = ["build_system/tests/image/", "build_system/tests/gate/", "build_system/tests/policy/", "build_system/tests/release/"]

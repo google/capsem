@@ -34,6 +34,7 @@ TAG = f"v{VERSION}"
 
 def _prepared_tree(root: Path) -> None:
     (root / "crates/capsem-app").mkdir(parents=True)
+    (root / "build_system").mkdir()
     (root / "Cargo.toml").write_text(
         f'[workspace.package]\nversion = "{VERSION}"\n', encoding="utf-8"
     )
@@ -45,9 +46,11 @@ def _prepared_tree(root: Path) -> None:
     (root / "crates/capsem-app/tauri.conf.json").write_text(
         json.dumps({"version": VERSION}), encoding="utf-8"
     )
-    (root / "pyproject.toml").write_text(f'[project]\nversion = "{VERSION}"\n', encoding="utf-8")
-    (root / "uv.lock").write_text(
-        f'[[package]]\nname = "capsem"\nversion = "{VERSION}"\n', encoding="utf-8"
+    (root / "build_system/pyproject.toml").write_text(
+        f'[project]\nversion = "{VERSION}"\n', encoding="utf-8"
+    )
+    (root / "build_system/uv.lock").write_text(
+        f'[[package]]\nname = "capsem-builder"\nversion = "{VERSION}"\n', encoding="utf-8"
     )
     body = "### Fixed\n\n- Qualify one committed immutable source."
     (root / "CHANGELOG.md").write_text(

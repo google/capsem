@@ -53,6 +53,7 @@ class QualifiedRelease:
                 step(
                     "source.worktree-clean",
                     Script(
+                        self._config,
                         self._config.release.clean_worktree,
                         str(outer),
                         str(commit),

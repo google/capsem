@@ -8,7 +8,7 @@ or the paired `ProfileContent` boundary.
 ## Python owns release orchestration
 
 The Justfile is only the public command and argv boundary: each release recipe
-dispatches its arguments once to the matching `uv run capsem-gate` subcommand.
+dispatches its arguments once to the matching `uv run --project build_system --frozen capsem-gate` subcommand.
 
 Python under `src/capsem/gate/` owns the release graph:
 

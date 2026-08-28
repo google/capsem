@@ -249,7 +249,7 @@ def test_the_fixture_clears_every_variable_that_picks_a_lane() -> None:
     cleared too, and nothing else would say so.
     """
     # Read as a module: the fixture's list is the subject, not a helper to call.
-    import tests.conftest as suite_conftest
+    import conftest as suite_conftest
 
     config = gate_config.load(ROOT)
     settings = config.modules

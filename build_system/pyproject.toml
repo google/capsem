@@ -42,9 +42,32 @@ default = true
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
 filterwarnings = ["error"]
-pythonpath = ["../tests", "tests/gate", "tests/release", "tests/release_site"]
+pythonpath = ["..", "../tests", "tests/gate", "tests/release", "tests/release_site"]
 markers = [
+    "mcp: MCP black-box integration tests (require capsem-service + VM assets)",
+    "integration: Service/CLI integration tests (require capsem-service + VM)",
+    "session: Session.db telemetry tests (require capsem-service + VM + workload)",
+    "snapshot: Snapshot lifecycle tests (require capsem-service + VM)",
+    "isolation: Multi-VM isolation tests (require capsem-service + 2+ VMs)",
+    "security: Security invariant tests (require capsem-service + VM)",
+    "config: Config obedience tests (require capsem-service + VM)",
+    "bootstrap: Setup/install flow tests (no VM needed)",
+    "stress: Load and edge case tests (require capsem-service + VMs)",
+    "build_chain: Build chain E2E tests (cargo build -> codesign -> pack -> boot)",
+    "guest: Guest validation tests (network, services, filesystem, env)",
+    "cleanup: VM cleanup verification tests (process, socket, session dir)",
+    "codesign: Codesigning strict tests (FAIL not skip when unsigned)",
+    "serial: Serial console and boot timing tests",
+    "benchmark: Host-side benchmarks (parallel VMs, capsem-bench) -- slow, run with `-m benchmark`",
+    "session_lifecycle: Session.db lifecycle tests (exists, schema, events, shutdown)",
+    "config_runtime: Config runtime tests (CPU, RAM, blocked domains in guest)",
     "recipe: Just recipe and gate-dispatch contract tests",
+    "recovery: Recovery and crash-resilience tests (stale state, orphans)",
+    "rootfs: Rootfs artifact validation tests (no VM needed)",
+    "session_exhaustive: Exhaustive per-table session.db data validation",
+    "e2e: End-to-end tests via real CLI binary (the actual user path)",
+    "gateway: Gateway TCP-to-UDS proxy tests (mock UDS or real service)",
+    "live_provider: Optional public-provider canaries; skipped unless CAPSEM_RUN_LIVE_PROVIDER_CANARIES=1 and the matching real credential is provided",
 ]
 
 [tool.ruff]
@@ -54,6 +77,10 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "B", "C4", "I", "PIE", "RET", "RUF", "SIM", "UP"]
 ignore = ["UP042"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/fetch-release-artifacts.py" = ["E402"]
+"scripts/integration_test.py" = ["E402"]
 
 [tool.coverage.report]
 precision = 2

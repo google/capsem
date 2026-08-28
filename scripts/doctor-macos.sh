@@ -3,12 +3,12 @@
 # Sourced by doctor-common.sh, do not run directly.
 
 recommended_docker_disk_gib() {
-    uv run python "$PROJECT_ROOT/scripts/docker-storage-policy.py" shell --rail default \
+    uv run --project build_system --frozen python "$PROJECT_ROOT/scripts/docker-storage-policy.py" shell --rail default \
         | awk -F= '/CAPSEM_DOCKER_RECOMMENDED_DISK_GIB/ { print $2 }'
 }
 
 minimum_docker_disk_gib() {
-    uv run python "$PROJECT_ROOT/scripts/docker-storage-policy.py" shell --rail default \
+    uv run --project build_system --frozen python "$PROJECT_ROOT/scripts/docker-storage-policy.py" shell --rail default \
         | awk -F= '/CAPSEM_DOCKER_MINIMUM_DISK_GIB/ { print $2 }'
 }
 
@@ -60,7 +60,7 @@ check_platform() {
     fi
     if command -v tart &>/dev/null; then
         local tart_snapshot
-        tart_snapshot=$(uv run python "$PROJECT_ROOT/scripts/docker-storage-policy.py" \
+        tart_snapshot=$(uv run --project build_system --frozen python "$PROJECT_ROOT/scripts/docker-storage-policy.py" \
             tart-snapshot --label doctor 2>&1 || true)
         if printf '%s\n' "$tart_snapshot" | grep -q "retain-base-image-cache"; then
             pass "Tart base image cache present"
@@ -68,7 +68,7 @@ check_platform() {
             pass "Tart base image cache not present (first glow-up will pull it)"
         fi
         if printf '%s\n' "$tart_snapshot" | grep -q "delete-owned-working-vm"; then
-            fail "stale Capsem-owned Tart VM found -- run: uv run python scripts/docker-storage-policy.py tart-clean --label doctor"
+            fail "stale Capsem-owned Tart VM found -- run: uv run --project build_system --frozen python scripts/docker-storage-policy.py tart-clean --label doctor"
         else
             pass "no leaked Capsem-owned Tart VMs"
         fi
@@ -76,7 +76,7 @@ check_platform() {
             if [[ "${CAPSEM_BOOTSTRAP_TART_PROVEN:-0}" = "1" ]] \
                 && python3 -c 'import json; p=json.load(open("target/tart-readiness/report.json")); assert p["booted"] and p["ssh_ready"]' 2>/dev/null; then
                 pass "Tart base image cached, cloned, booted, and SSH-ready (bootstrap proof)"
-            elif uv run python "$PROJECT_ROOT/scripts/tart_readiness.py" \
+            elif uv run --project build_system --frozen python "$PROJECT_ROOT/scripts/tart_readiness.py" \
                 --require-cache >/dev/null; then
                 pass "Tart base image cached, cloned, booted, and SSH-ready"
             else

@@ -30,6 +30,7 @@ from .actions import Run
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
 from .harnessschema import Exclusive
+from .pythonenv import pytest
 
 
 @dataclass(frozen=True)
@@ -54,10 +55,10 @@ class Suite:
 
     def argv(self, config: GateConfig) -> list[str]:
         settings = config.suites.pytest
-        argv = ["uv", "run"]
-        if self.project:
-            argv += ["--project", self.project, "--frozen"]
-        argv += ["python", "-m", "pytest", *self.paths, *settings.base_flags]
+        project = self.project or settings.build_system_project
+        if project != settings.build_system_project:
+            raise ValueError(f"unknown Python test project {project!r}")
+        argv = pytest(config, *self.paths, *settings.base_flags)
 
         if self.stop_at_first_failure:
             argv.append(settings.stop_at_first)
@@ -135,17 +136,7 @@ def collection(config: GateConfig) -> Step:
     settings = config.suites.pytest
     return step(
         "pytest.collection",
-        Run(
-            [
-                "uv",
-                "run",
-                "python",
-                "-m",
-                "pytest",
-                settings.root,
-                *settings.collection_flags,
-            ]
-        ),
+        Run(pytest(config, settings.root, *settings.collection_flags)),
         kind=Kind.STATIC_TEST,
         speed=Speed.FAST,
     )
@@ -156,20 +147,7 @@ def build_system_collection(config: GateConfig) -> Step:
     settings = config.suites.pytest
     return step(
         "pytest.build-system-collection",
-        Run(
-            [
-                "uv",
-                "run",
-                "--project",
-                settings.build_system_project,
-                "--frozen",
-                "python",
-                "-m",
-                "pytest",
-                settings.build_system_root,
-                *settings.collection_flags,
-            ]
-        ),
+        Run(pytest(config, settings.build_system_root, *settings.collection_flags)),
         kind=Kind.STATIC_TEST,
         speed=Speed.FAST,
     )

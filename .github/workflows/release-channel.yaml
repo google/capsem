@@ -144,7 +144,7 @@ jobs:
         env:
           RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
         run: |
-          uv run python scripts/check-channel-deploy-freshness.py \
+          uv run --project build_system --frozen python scripts/check-channel-deploy-freshness.py \
             --selected-channel "$CHANNEL" \
             --dist "$DIST_DIR" \
             --release-site "$RELEASE_SITE_URL"
@@ -180,7 +180,7 @@ jobs:
         env:
           RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
         run: |
-          uv run python scripts/check-release-site-contract.py \
+          uv run --project build_system --frozen python scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
             --catalog-members \
             --snapshot-only \
@@ -206,7 +206,7 @@ jobs:
           if [ "$VALIDATE_COMPLETE_PUBLIC_CHANNELS" = "true" ]; then
             CHANNEL_ARGS=(--catalog-members)
           fi
-          uv run python scripts/check-release-site-contract.py \
+          uv run --project build_system --frozen python scripts/check-release-site-contract.py \
             --base-url "$PREVIEW_URL" \
             "${CHANNEL_ARGS[@]}" \
             --dist "$DIST_DIR" \
@@ -246,7 +246,7 @@ jobs:
           if [ "$VALIDATE_COMPLETE_PUBLIC_CHANNELS" = "true" ]; then
             CHANNEL_ARGS=(--catalog-members)
           fi
-          uv run python scripts/check-release-site-contract.py \
+          uv run --project build_system --frozen python scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
             "${CHANNEL_ARGS[@]}" \
             --attempts 30 \
@@ -281,7 +281,7 @@ jobs:
         env:
           RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
         run: |
-          uv run python scripts/check-release-site-contract.py \
+          uv run --project build_system --frozen python scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
             --catalog-members \
             --snapshot-only \

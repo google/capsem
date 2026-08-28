@@ -24,25 +24,37 @@ from .execution import SATURATES, Kind, Needs, Speed, Step, step
 def all_of(config: GateConfig) -> list[Step]:
     """Every audit, in no particular order because there is none."""
     audits = config.audits
+    project = config.suites.pytest.build_system_project
     return [
         *live(config),
         # Sandboxed, and deliberately: it reads `cargo metadata --locked`,
         # resolving from the materialized cache and compiling nothing.
         step(
             "audit.dependency-drift",
-            Script(audits.dependency_drift),
+            Script(config, audits.dependency_drift),
             kind=Kind.STATIC_TEST,
             speed=Speed.FAST,
         ),
         step(
             "audit.public-surface",
-            Script(audits.public_surface),
+            Script(config, audits.public_surface),
             kind=Kind.STATIC_TEST,
             speed=Speed.FAST,
         ),
         step(
             "audit.skills",
-            Run(["uv", "run", "capsem-builder", "validate-skills", audits.skills_dir]),
+            Run(
+                [
+                    "uv",
+                    "run",
+                    "--project",
+                    project,
+                    "--frozen",
+                    "capsem-builder",
+                    "validate-skills",
+                    audits.skills_dir,
+                ]
+            ),
             kind=Kind.STATIC_TEST,
             speed=Speed.FAST,
         ),
@@ -59,19 +71,19 @@ def all_of(config: GateConfig) -> list[Step]:
         # checked and each fails closed.
         step(
             "audit.shell",
-            Run(_surface(audits, "shell", ",".join(audits.shell_ignore))),
+            Run(_surface(config, "shell", ",".join(audits.shell_ignore))),
             kind=Kind.LINT,
             speed=Speed.FAST,
         ),
         step(
             "audit.docker",
-            Run(_surface(audits, "dockerfile", ",".join(audits.docker_ignore))),
+            Run(_surface(config, "dockerfile", ",".join(audits.docker_ignore))),
             kind=Kind.LINT,
             speed=Speed.FAST,
         ),
         step(
             "audit.markdown",
-            Run(_surface(audits, "markdown", "")),
+            Run(_surface(config, "markdown", "")),
             kind=Kind.LINT,
             speed=Speed.FAST,
         ),
@@ -82,8 +94,8 @@ def live(config: GateConfig) -> list[Step]:
     """The three audit answers that can change while source stays unchanged."""
     audits = config.audits
     actions = (
-        ("audit.cargo", Script(audits.cargo, outside_sandbox=True)),
-        ("audit.pnpm", Script(audits.pnpm, outside_sandbox=True)),
+        ("audit.cargo", Script(config, audits.cargo, outside_sandbox=True)),
+        ("audit.pnpm", Script(config, audits.pnpm, outside_sandbox=True)),
         ("audit.python-lock", Run(["bash", audits.python_lock], outside_sandbox=True)),
     )
     return [
@@ -98,9 +110,21 @@ def live(config: GateConfig) -> list[Step]:
     ]
 
 
-def _surface(audits, name: str, exclude: str) -> list[str]:
+def _surface(config: GateConfig, name: str, exclude: str) -> list[str]:
     """One entry point per surface, through the shared Citadel harness."""
-    argv = ["uv", "run", "python", audits.surfaces, name, "--severity", audits.shell_severity]
+    audits = config.audits
+    argv = [
+        "uv",
+        "run",
+        "--project",
+        config.suites.pytest.build_system_project,
+        "--frozen",
+        "python",
+        audits.surfaces,
+        name,
+        "--severity",
+        audits.shell_severity,
+    ]
     return [*argv, "--exclude", exclude] if exclude else argv
 
 
@@ -108,7 +132,7 @@ def source_syntax(config: GateConfig) -> Step:
     """Parse every source file before anything spends time on it."""
     return step(
         "audit.source-syntax",
-        Script(config.audits.source_syntax),
+        Script(config, config.audits.source_syntax),
         kind=Kind.LINT,
         speed=Speed.FAST,
     )

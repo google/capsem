@@ -35,6 +35,7 @@ from . import buildcache, cargotarget, snapshot
 from .config import GateConfig
 from .errors import GateError, PrefixBusy
 from .prefixlease import lease, parent_dir, reclaim_orphan_leases
+from .pythonenv import uv_run
 from .sourcecommit import SourceCommit, require_detached_checkout
 
 #: `cp` flags that ask APFS for copy-on-write. Clonefile is what makes this
@@ -158,7 +159,7 @@ def run_from_private_copy(
     """Copy the checkout, run the same command inside the copy, bring back what
     it produced, and give the copy back.
 
-    Through `uv run` in the prefix rather than this interpreter, deliberately.
+    Through `uv run --project build_system --frozen` in the prefix rather than this interpreter, deliberately.
     Re-execing `sys.executable -m capsem_builder.gate` would keep the *parent's*
     `sys.path`, so the child would run the outer checkout's code while sitting
     in the copy -- measuring one tree and qualifying another, which is the
@@ -237,7 +238,7 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
     if commit is not None:
         child_env[config.environment.source_commit] = str(commit)
     status = runner.run(
-        ["uv", "run", "capsem-gate", *arguments],
+        uv_run(config, "capsem-gate", *arguments),
         cwd=path,
         env=child_env,
         check=False,

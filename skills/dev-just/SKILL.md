@@ -15,7 +15,7 @@ allowlist update in the same change.
 
 | Command | Contract |
 |---|---|
-| `just dev [ui\|frontend\|tui]` | Select one development surface. No passthrough arguments: `just` joins a variadic before interpolating it, so no spelling preserves argument boundaries. Use `uv run capsem-gate dev tui …` when you need them. |
+| `just dev [ui\|frontend\|tui]` | Select one development surface. No passthrough arguments: `just` joins a variadic before interpolating it, so no spelling preserves argument boundaries. Use `uv run --project build_system --frozen capsem-gate dev tui …` when you need them. |
 | `just build [debug\|release]` | Build the desktop app with its embedded frontend. |
 | `just build-all [debug\|release]` | Build all host binaries, desktop app, docs, and site. |
 | `just build-docs` | Build documentation and marketing sites. |
@@ -156,8 +156,8 @@ only to the tagged publication workflow.
 Run:
 
 ```bash
-uv run python scripts/check_public_surface.py
-uv run python -m pytest tests/test_public_surface_contract.py
+uv run --project build_system --frozen python scripts/check_public_surface.py
+uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml tests/test_public_surface_contract.py
 ```
 
 The gate also locks the Capsem CLI command tree and service HTTP method/path

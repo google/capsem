@@ -512,7 +512,7 @@ def test_profile_release_asset_job_has_no_parallel_package_authority() -> None:
     # to the gate's config-owned helpers; workflow-local apt/npm/cargo/brew
     # commands would be a second authority and must change this exact counter.
     assert Counter(token for token in tokens if token in MUTABLE_TOOLS) == Counter({"uv": 1})
-    assert ("uv", "sync", "--frozen") in commands
+    assert ("uv", "sync", "--project", "build_system", "--frozen") in commands
     assert "CAPSEM_CDXGEN_CMD" not in tokens
     assert "musl-gcc" not in tokens
 

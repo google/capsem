@@ -57,8 +57,7 @@ KNOWN_ROOT_FILES = frozenset(
         "Cargo.toml", "GEMINI.md", "LATEST_RELEASE.md", "LICENSE",
         "README.md", "RELEASE.md", "SECURITY.md", "audit.toml",
         "bootstrap.sh", "codecov.yml", "entitlements.plist", "justfile",
-        "pyproject.toml", "rust-toolchain.toml", "test-dev-null.sh",
-        "uv.lock",
+        "rust-toolchain.toml", "test-dev-null.sh",
     }
 )
 BUILD_SYSTEM_ROOTS = frozenset({"src", "scripts", "docker"})
@@ -68,8 +67,6 @@ BUILD_SYSTEM_FILES = frozenset(
         "audit.toml",
         "bootstrap.sh",
         "entitlements.plist",
-        "pyproject.toml",
-        "uv.lock",
     }
 )
 RUST_GUEST_CONFIG_ROOTS = frozenset(

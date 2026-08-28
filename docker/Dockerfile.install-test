@@ -22,6 +22,11 @@ LABEL org.capsem.install-image.input-key=${INPUT_IDENTITY}
 COPY --chown=capsem:capsem . /src
 WORKDIR /src
 
+# The helper image prefetches the locked dependencies but deliberately omits
+# the source project. Install this checkout's sole Python distribution without
+# network access so the proof cannot fall back to a root PYTHONPATH package.
+RUN uv sync --project /src/build_system --offline --frozen
+
 # Materialize the source-specific release-site links from the locked helper
 # store without registry access. Runtime rendering performs no install/sync.
 USER capsem

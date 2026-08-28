@@ -997,7 +997,7 @@ def test_install_image_has_one_network_open_materializer_and_no_runtime_repairs(
     deb = (PROJECT_ROOT / "build_system/builder/gate/debproof.py").read_text(encoding="utf-8")
     graph = (PROJECT_ROOT / "build_system/builder/gate/releasegraph.py").read_text(encoding="utf-8")
 
-    assert "uv sync --locked --no-install-project" in helper
+    assert "uv sync --project build_system --locked --no-install-project" in helper
     assert "pnpm fetch --frozen-lockfile" in helper
     assert "COPY --from=dependency-fetch --chown=capsem:capsem /capsem-deps/pnpm" in helper
     assert "APT_SNAPSHOT_BASE" in helper and "APT_SNAPSHOT_ID" in helper
@@ -1163,7 +1163,7 @@ def test_full_gate_runs_fast_checks_before_install_harness_preflight() -> None:
     assert "linux_musl_toolchain_available" in preflight
     assert "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test" in preflight
     assert "CAPSEM_TEST_OUTPUT_ROOT=/tmp/capsem-test-output" in preflight
-    assert "/home/capsem/.venv-install-test/bin/python -m pytest --version" in preflight
+    assert "/home/capsem/.venv-install-test/bin/python -m pytest -c build_system/pyproject.toml --version" in preflight
     assert "sudo -n true" in preflight
 
     # A sealed smoke failure is a materialization defect. It cannot repair
@@ -2972,6 +2972,9 @@ def test_release_workflow_retries_app_cargo_tool_installs_through_config_authori
     assert installer["run"].split() == [
         "uv",
         "run",
+        "--project",
+        "build_system",
+        "--frozen",
         "python",
         "scripts/install-configured-cargo-tools.py",
         "cargo-tauri",
@@ -2986,7 +2989,7 @@ def test_release_workflow_retries_app_cargo_tool_installs_through_config_authori
         assert tool["install"][-1] == "--locked"
 
     build_app_linux = "\n".join(str(step.get("run", "")) for step in linux_steps)
-    assert "uv run capsem-gate cross-compile" in build_app_linux
+    assert "uv run --project build_system --frozen capsem-gate cross-compile" in build_app_linux
     assert "install-configured-cargo-tools.py" not in build_app_linux
     assert "cargo install" not in build_app_linux
     assert "sudo apt-get" not in build_app_linux
@@ -3019,7 +3022,9 @@ def test_ci_install_job_sets_up_uv_before_the_shared_install_gate() -> None:
     install_job = _workflow_job_blocks(workflow)["test-install"]
 
     setup_pos = install_job.find("astral-sh/setup-uv@")
-    install_pos = install_job.find("uv run capsem-gate install")
+    install_pos = install_job.find(
+        "uv run --project build_system --frozen capsem-gate install"
+    )
     assert setup_pos != -1, "test-install invokes uv-backed Just helpers without setup-uv"
     assert setup_pos < install_pos, "test-install sets up uv after the shared install gate"
 
@@ -3036,8 +3041,12 @@ def test_ci_install_job_selects_exact_profiles_before_building_packages() -> Non
     source_pos = install_job.index("scripts/fetch-channel-source-manifest.py")
     stage_pos = install_job.index("scripts/stage-release-test-inputs.py")
     materialize_pos = install_job.index("bash scripts/materialize-config.sh")
-    package_pos = install_job.index("uv run capsem-gate cross-compile x86_64")
-    gate_pos = install_job.index("uv run capsem-gate install")
+    package_pos = install_job.index(
+        "uv run --project build_system --frozen capsem-gate cross-compile x86_64"
+    )
+    gate_pos = install_job.index(
+        "uv run --project build_system --frozen capsem-gate install"
+    )
     assert (
         resolve_pos < source_pos < fetch_pos < stage_pos < materialize_pos < package_pos < gate_pos
     )

@@ -25,21 +25,21 @@ PUBLICATION_BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${PU
 PUBLICATION_DIR="target/asset-release/${PUBLICATION_IDENTITY}"
 
 # The public-before pair must agree before anything is pulled against it.
-uv run python scripts/verify-release-inputs.py \
+uv run --project build_system --frozen python scripts/verify-release-inputs.py \
     --input-dir target/profile-public-before/packages
-uv run python scripts/verify-release-inputs.py \
+uv run --project build_system --frozen python scripts/verify-release-inputs.py \
     --input-dir target/profile-public-before/profiles
 cmp \
     target/profile-public-before/packages/manifest.json \
     target/profile-public-before/profiles/manifest.json
 
-uv run python scripts/fetch-release-artifacts.py \
+uv run --project build_system --frozen python scripts/fetch-release-artifacts.py \
     --manifest-url "file://$PWD/target/source-channel/manifest.json" \
     --kind profiles \
     --output target/candidate-profile-inputs \
     --local-publication-base "$PUBLICATION_BASE" \
     --local-publication-dir "$PUBLICATION_DIR"
-uv run python scripts/verify-release-inputs.py \
+uv run --project build_system --frozen python scripts/verify-release-inputs.py \
     --input-dir target/candidate-profile-inputs
 
 # A retired or first-channel public-before graph deliberately has no package.
@@ -52,10 +52,10 @@ if [[ "$ACTIVATION_READY" == "false" ]]; then
 fi
 [[ "$ACTIVATION_READY" == "true" ]]
 
-uv run python scripts/stage-release-test-inputs.py \
+uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
     --input-dir target/profile-public-before/packages \
     --binary-dir target/debug
-uv run python scripts/stage-release-test-inputs.py \
+uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
     --input-dir target/candidate-profile-inputs \
     --assets-dir assets \
     --config-root target/release-config \
@@ -66,11 +66,11 @@ CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
 CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/config" \
     bash scripts/materialize-config.sh --pair-content
 
-package=$(uv run python scripts/stage-release-test-inputs.py \
+package=$(uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
     --input-dir target/profile-public-before/packages \
     --print-package-path)
 test -n "$package"
-uv run python scripts/install-deb-runtime-dependencies.py "$package" --config config/gate.toml
+uv run --project build_system --frozen python scripts/install-deb-runtime-dependencies.py "$package" --config config/gate.toml
 
 {
     echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package"

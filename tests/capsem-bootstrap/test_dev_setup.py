@@ -49,7 +49,7 @@ class TestDevSetup:
         bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text()
         gate = (PROJECT_ROOT / "config/gate.toml").read_text()
 
-        assert "uv run capsem-gate install-node" in bootstrap
+        assert "uv run --project build_system --frozen capsem-gate install-node" in bootstrap
         assert "pnpm install --frozen-lockfile" not in bootstrap
         assert 'node_env = { CI = "true" }' in gate
         assert 'node_workspaces = ["frontend", "docs", "site", "release-site"]' in gate

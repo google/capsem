@@ -24,7 +24,7 @@
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
 # Propagate Cargo.toml's version across the release cohort (capsem.gate.versions).
 _stamp-version:
-    @uv run capsem-gate stamp-version
+    @uv run --project build_system --frozen capsem-gate stamp-version
 
 # Build one profile's VM assets for one architecture: kernel, then rootfs.
 build-assets arch profile="":
@@ -39,27 +39,27 @@ test-linux-rust:
 
 # Qualify the candidate packages against the manifest-selected profiles.
 qualify-binaries workspace_root:
-    uv run capsem-gate qualify-binaries {{quote(workspace_root)}}
+    uv run --project build_system --frozen capsem-gate qualify-binaries {{quote(workspace_root)}}
 
 
 # Qualify one profile's built assets against the selected binary.
 qualify-assets input_dir profile workspace_root activation_ready:
-    uv run capsem-gate qualify-assets {{quote(input_dir)}} {{quote(profile)}} {{quote(workspace_root)}} --activation-ready {{quote(activation_ready)}}
+    uv run --project build_system --frozen capsem-gate qualify-assets {{quote(input_dir)}} {{quote(profile)}} {{quote(workspace_root)}} --activation-ready {{quote(activation_ready)}}
 
 
 # Replay a release qualification lane locally, against a cohort built here.
 replay-release-lane lane="binaries":
-    uv run python scripts/replay-release-lane.py --lane {{quote(lane)}}
+    uv run --project build_system --frozen python scripts/replay-release-lane.py --lane {{quote(lane)}}
 
 
 # Build, test, and publish only Capsem binaries/packages for one channel.
 release-binaries channel source_commit force="false":
-    uv run capsem-gate release-binaries {{quote(channel)}} {{quote(source_commit)}} --force {{quote(force)}}
+    uv run --project build_system --frozen capsem-gate release-binaries {{quote(channel)}} {{quote(source_commit)}} --force {{quote(force)}}
 
 
 # Build, test, and publish exactly one channel/profile through capsem-admin.
 release-profile channel profile source_commit force="false":
-    uv run capsem-gate release-profile {{quote(channel)}} {{quote(profile)}} {{quote(source_commit)}} --force {{quote(force)}}
+    uv run --project build_system --frozen capsem-gate release-profile {{quote(channel)}} {{quote(profile)}} {{quote(source_commit)}} --force {{quote(force)}}
 
 
 # Compile all host binaries
@@ -68,7 +68,7 @@ _build-host:
 
 # Codesign all host binaries (macOS only, needed for Virtualization.framework)
 _sign: _build-host
-    uv run capsem-gate sign
+    uv run --project build_system --frozen capsem-gate sign
 
 
 # Ensure capsem-service daemon is running with the current binary.
@@ -77,12 +77,12 @@ _sign: _build-host
 # `just test` and `just vm-smoke` run against an isolated test home
 # without ever touching the user's locally installed capsem.
 _ensure-service: _sign
-    uv run capsem-gate ensure-service
+    uv run --project build_system --frozen capsem-gate ensure-service
 
 
 # Start service daemon + Tauri GUI with hot-reloading
 _dev-ui: _ensure-dev-ready _pnpm-install run-service
-    uv run capsem-gate dev ui
+    uv run --project build_system --frozen capsem-gate dev ui
 
 
 # Frontend-only dev server with mock data (no Tauri/VM needed)
@@ -96,7 +96,7 @@ _dev-frontend: _pnpm-install _generate-settings
 #   just build          # debug binary at ./target/debug/capsem-app
 #   just build release  # release binary at ./target/release/capsem-app
 _build-ui profile="debug": _pnpm-install _generate-settings
-    uv run capsem-gate build-ui {{quote(profile)}}
+    uv run --project build_system --frozen capsem-gate build-ui {{quote(profile)}}
 
 
 # Frontend release gate used by Sprinty and docs.
@@ -107,7 +107,7 @@ build-docs: _pnpm-install
 
 # Select one deliberate development surface.
 dev surface="ui": _ensure-dev-ready _pnpm-install
-    uv run capsem-gate dev {{quote(surface)}}
+    uv run --project build_system --frozen capsem-gate dev {{quote(surface)}}
 
 
 # Build the desktop application with its embedded frontend.
@@ -124,7 +124,7 @@ build-all profile="debug":
 
 # Start service daemon + boot temporary VM + shell (~10s after first build)
 shell: _prepared-runtime _ensure-service
-    uv run capsem-gate shell
+    uv run --project build_system --frozen capsem-gate shell
 
 
 # Start capsem-service daemon (builds, signs, launches or reuses running instance)
@@ -133,24 +133,24 @@ run-service: _prepared-runtime _ensure-service
 # Execute a command in a fresh temporary VM (auto-provisioned and destroyed)
 # Usage: just exec "echo hello"   or   just exec "ls -la"
 exec +CMD: run-service
-    uv run capsem-gate exec -- {{quote(CMD)}}
+    uv run --project build_system --frozen capsem-gate exec -- {{quote(CMD)}}
 
 
 
 # Build kernel only for one profile/arch (CI-facing primitive).
 _build-kernel arch profile="":
-    uv run capsem-gate build-assets {{quote(profile)}} {{quote(arch)}} --template kernel
+    uv run --project build_system --frozen capsem-gate build-assets {{quote(profile)}} {{quote(arch)}} --template kernel
 
 
 # Build rootfs only for one profile/arch (CI-facing primitive).
 _build-rootfs arch profile="":
-    uv run capsem-gate build-assets {{quote(profile)}} {{quote(arch)}} --template rootfs
+    uv run --project build_system --frozen capsem-gate build-assets {{quote(profile)}} {{quote(arch)}} --template rootfs
 
 
 # VM asset rebuild (kernel + rootfs). Profile is mandatory. Optional second arg
 # restricts to one arch.
 _build-assets profile="" arch="":
-    uv run capsem-gate build-assets {{quote(profile)}} {{quote(arch)}}
+    uv run --project build_system --frozen capsem-gate build-assets {{quote(profile)}} {{quote(arch)}}
 
 
 # Ironbank VM asset gate. This is the superset owner for the image-build work
@@ -159,7 +159,7 @@ _build-assets profile="" arch="":
 # validation, and a real shell marker from each profile-owned host-arch image.
 # Outputs stay under target/ so the gate never mutates the developer's assets/.
 _gate-assets: _bootstrap _install-tools _generate-settings _sign
-    @uv run capsem-gate assets
+    @uv run --project build_system --frozen capsem-gate assets
 
 # Run ALL tests: Rust + frontend + Python + injection + integration + bench + cross-compile + install e2e. No shortcuts.
 #
@@ -176,47 +176,47 @@ _bootstrap:
 # diagnose with nothing reused, compiling every artifact from nothing. Release
 # qualification belongs to the release rails; agents must not run this by habit.
 test-clean source_commit="":
-    @uv run capsem-gate candidate {{quote(source_commit)}} --clean-build
+    @uv run --project build_system --frozen capsem-gate candidate {{quote(source_commit)}} --clean-build
 
 # After the source-only fast gate passes, local composition constructs every
 # artifact family before running the remaining modules used by release CI.
 _test-candidate:
-    uv run capsem-gate test-candidate
+    uv run --project build_system --frozen capsem-gate test-candidate
 
 
 # Parser errors, source contracts, dependency vulnerabilities, lint, Clippy,
 # and every JavaScript/web check run before Colima, bootstrap, artifacts, or
 # VMs. This is private composition, not a public release shortcut.
 _test-source-checks:
-    uv run capsem-gate test-fast
+    uv run --project build_system --frozen capsem-gate test-fast
     just _check-generated-settings
     just _test-release-contracts
 
 _test-compiled-checks: _clean-stale _check-generated-settings
     just _bound-docker-test-storage
-    uv run capsem-gate test-static
+    uv run --project build_system --frozen capsem-gate test-static
 
 _test-artifacts:
-    uv run capsem-gate test-artifacts
+    uv run --project build_system --frozen capsem-gate test-artifacts
 
 _test-profile-artifacts input_dir profile:
-    uv run capsem-gate test-profile-artifacts {{quote(input_dir)}} {{quote(profile)}}
+    uv run --project build_system --frozen capsem-gate test-profile-artifacts {{quote(input_dir)}} {{quote(profile)}}
 
 _test-functional: _generate-settings
-    uv run capsem-gate test-functional
+    uv run --project build_system --frozen capsem-gate test-functional
 
 _test-glowup:
-    uv run capsem-gate test-glowup
+    uv run --project build_system --frozen capsem-gate test-glowup
 
 _test-release-contracts: _release-site-pnpm-install
-    uv run capsem-gate test-release-contracts
+    uv run --project build_system --frozen capsem-gate test-release-contracts
 
 # Require Docker headroom without discarding content-addressed compiler caches.
 # Cargo validates cached artifacts against the current source inputs; bounded
 # reuse speeds forward fixes without weakening the before/after tree invariant.
 
 _test-recipes:
-    uv run python -m pytest tests/capsem-recipes/ -v --tb=short -m recipe
+    uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml tests/capsem-recipes/ -v --tb=short -m recipe
 
 # Build the capsem-host-builder Docker image (cached, only rebuilds changed layers).
 
@@ -224,7 +224,7 @@ _test-recipes:
 # Linux CI calls this recipe natively. Mac-local `just test` calls it through
 # capsem-host-builder so cfg(target_os = "linux") tests are not CI-only.
 _gate-linux-rust:
-    uv run capsem-gate linux-rust
+    uv run --project build_system --frozen capsem-gate linux-rust
 
 
 # Build the Linux parity base image, with network, before a sealed run needs it.
@@ -234,29 +234,29 @@ _gate-linux-rust:
 # a multi-gigabyte network build at minute four. `capsem-gate linux-rust` names
 # this recipe when the image is missing.
 _warm-linux-rust-base:
-    uv run capsem-gate warm-linux-rust-base
+    uv run --project build_system --frozen capsem-gate warm-linux-rust-base
 
 
 # Run the production release SBOM generator over the exact current-version
 # packages built by the canonical gate. Mac runs cover one .pkg plus both .deb
 # architectures; native Linux qualification covers both .deb architectures.
 _gate-host-package-sbom:
-    uv run capsem-gate host-sbom
+    uv run --project build_system --frozen capsem-gate host-sbom
 
 
 # Remove cross-compilation image and cached volumes.
 _clean-host-image:
-    @uv run capsem-gate storage clean --scope all
+    @uv run --project build_system --frozen capsem-gate storage clean --scope all
 
 _release-completed-docker-rails:
-    @uv run capsem-gate storage release completed-docker-rails
+    @uv run --project build_system --frozen capsem-gate storage release completed-docker-rails
 
 _release-completed-package-rails:
-    @uv run capsem-gate storage release completed-package-arm64
-    @uv run capsem-gate storage release completed-package-x86_64
+    @uv run --project build_system --frozen capsem-gate storage release completed-package-arm64
+    @uv run --project build_system --frozen capsem-gate storage release completed-package-x86_64
 
 _release-deferred-install-target:
-    @uv run capsem-gate storage release deferred-install-target
+    @uv run --project build_system --frozen capsem-gate storage release deferred-install-target
 
 # repack-deb.sh below reads the materialized profile catalog from target/config,
 # so this recipe owns filling it rather than leaving each call site to remember.
@@ -276,7 +276,7 @@ _release-deferred-install-target:
 #   - Tauri signing keys: CI from secrets, local from private/tauri/
 #   - See: .github/workflows/release.yaml build-app-linux job
 _cross-compile arch="": _clean-stale _check-assets _generate-settings _materialize-config
-    @uv run capsem-gate cross-compile {{quote(arch)}}
+    @uv run --project build_system --frozen capsem-gate cross-compile {{quote(arch)}}
 
 # Generate settings schema/UI metadata and frontend mock data.
 _generate-settings:
@@ -299,19 +299,19 @@ _check-generated-settings:
 # public VM-smoke spelling for agents to stack beside it.
 fast-test:
     @echo "Agent: incomplete feedback only; use 'just focus-test <group>' for targeted proof, or 'just release-profile ...' / 'just release-binaries ...' for qualification."
-    uv run capsem-gate test-fast
+    uv run --project build_system --frozen capsem-gate test-fast
 
 
 # One existing gate owner, selected by a closed group name. `clean` discards
 # reusable build output for the exceptional stale-cache reproduction.
 focus-test group mode="reuse":
-    @uv run capsem-gate focus-test {{quote(group)}} {{quote(mode)}}
+    @uv run --project build_system --frozen capsem-gate focus-test {{quote(group)}} {{quote(mode)}}
 
 # Optional hands-on testing: build the complete installable product and install
 # that exact local package on this Mac. Never a release prerequisite.
 install:
     @echo "Agent: optional hands-on local testing only; 'just install' does not qualify or unblock a release. Dispatch releases directly with 'just release-binaries ...' or 'just release-profile ...'."
-    uv run capsem-gate local-install
+    uv run --project build_system --frozen capsem-gate local-install
 
 
 # Measure performance and record it. `just bench` takes every dimension that
@@ -321,16 +321,16 @@ install:
 # ran them, and a release once failed on a gateway CPU figure that no run had
 # ever recorded.
 bench *dimensions: _prepared-runtime
-    @uv run capsem-gate bench {{ quote(dimensions) }}
+    @uv run --project build_system --frozen capsem-gate bench {{ quote(dimensions) }}
 
 # The dev loop: only the dimensions that need no guest, bounded so it stays a
 # dev loop. Records like any other run; never evidence.
 bench-quick *dimensions:
-    @uv run capsem-gate bench --quick {{ quote(dimensions) }}
+    @uv run --project build_system --frozen capsem-gate bench --quick {{ quote(dimensions) }}
 
 # What every measured subject reads, and how it has moved.
 bench-report:
-    @uv run capsem-gate bench-report
+    @uv run --project build_system --frozen capsem-gate bench-report
 
 
 # Run install e2e tests in Docker (Linux + systemd).
@@ -338,58 +338,58 @@ bench-report:
 # the container, and CI's test-install job enables the pnpm cache -- whose
 # post-job save step fails on a store that was never created.
 _gate-install: _pnpm-install
-    @uv run capsem-gate install
+    @uv run --project build_system --frozen capsem-gate install
 
 # Check dev tools and dependencies. Pass "fix" to auto-fix.
 doctor fix="": _pnpm-install
-    @uv run capsem-gate doctor
+    @uv run --project build_system --frozen capsem-gate doctor
     @scripts/doctor-common.sh {{ if fix == "fix" { "--fix" } else { "" } }}
 
 # View service logs, a sandbox's logs, or the latest preserved test failure.
 # `just logs`, `just logs <sandbox-id>`, `just logs failure`.
 logs target="":
-    uv run capsem-gate logs {{quote(target)}}
+    uv run --project build_system --frozen capsem-gate logs {{quote(target)}}
 
 
 # Remove stale rootfs copies, orphan UDS sockets, and trim bloated incremental caches.
 # See scripts/clean_stale.py for implementation (tested: tests/capsem-cleanup-script/).
 _clean-stale:
-    @uv run python3 scripts/clean_stale.py
+    @uv run --project build_system --frozen python3 scripts/clean_stale.py
 
 # Auto-prune Docker after builds: stopped containers, dangling images, build cache >7d.
 # Keeps named volumes (cross-compile cargo caches) and recent build cache for fast rebuilds.
 _docker-gc:
-    @uv run capsem-gate storage gc
+    @uv run --project build_system --frozen capsem-gate storage gc
 
 # Enforce release-rail headroom while preserving content-addressed Cargo,
 # registry, rustup, and recent BuildKit caches that make forward fixes fast.
 _bound-docker-test-storage:
-    @uv run capsem-gate storage ensure-space default candidate-boundary
+    @uv run --project build_system --frozen capsem-gate storage ensure-space default candidate-boundary
 
 # Explicit deep cleanup for a human-requested cold rebuild. The canonical gate
 # deliberately does not call this recipe.
 _clean-docker-test-targets:
-    @uv run capsem-gate storage clean --scope working --rail default
+    @uv run --project build_system --frozen capsem-gate storage clean --scope working --rail default
 
 # --- Internal helpers (hidden from `just --list`) ---
 
 # Run doctor automatically on first use (creates .dev-setup sentinel)
 _ensure-dev-ready:
-    uv run capsem-gate dev-ready
+    uv run --project build_system --frozen capsem-gate dev-ready
 
 
 # Auto-install Rust targets, components, and cargo tools
 _install-tools:
-    uv run capsem-gate install-tools
+    uv run --project build_system --frozen capsem-gate install-tools
 
 
 # Verify VM assets exist (vmlinuz, initrd.img, rootfs)
 _check-assets:
-    uv run capsem-gate check-assets
+    uv run --project build_system --frozen capsem-gate check-assets
 
 
 _pnpm-install:
-    uv run capsem-gate install-node
+    uv run --project build_system --frozen capsem-gate install-node
 
 
 _release-site-pnpm-install:
@@ -402,11 +402,11 @@ _compile: _frontend _clean-stale
     cargo build -p capsem
 
 _sign-release: _compile
-    uv run capsem-gate sign
+    uv run --project build_system --frozen capsem-gate sign
 
 
 _pack-initrd:
-    uv run capsem-gate pack-initrd
+    uv run --project build_system --frozen capsem-gate pack-initrd
 
 
 _materialize-config:

@@ -352,8 +352,8 @@ def test_the_lane_identity_covers_everything_an_asset_is_built_from() -> None:
         "crates/capsem-bench",    # the guest benchmark binary in rootfs
         "Cargo.toml",             # workspace versions and dependency features
         "Cargo.lock",             # exact Rust dependency graph
-        "pyproject.toml",         # Python builder dependency declaration
-        "uv.lock",                # exact Python dependency graph
+        "build_system/pyproject.toml",  # Python builder dependency declaration
+        "build_system/uv.lock",         # exact Python dependency graph
         ".cargo",                 # cross-target compiler/linker configuration
         "rust-toolchain.toml",    # exact Rust compiler and components
     ):

@@ -91,7 +91,7 @@ def test_the_public_fast_gate_is_the_shared_module_itself() -> None:
     fast_test = variables.block(variables.FAST_TEST)
     planned = _planned("test-fast")
 
-    assert "uv run capsem-gate test-fast" in fast_test
+    assert "uv run --project build_system --frozen capsem-gate test-fast" in fast_test
     assert "incomplete" in fast_test
     assert "just focus-test" in fast_test
     assert "just release-profile" in fast_test

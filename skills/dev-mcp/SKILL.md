@@ -281,7 +281,7 @@ Read `references/mcp-wire.md` for the full wire format details.
 
 The MCP integration tests (`tests/capsem-mcp/`) are black-box tests that boot a real service + VM and exercise the full MCP protocol over stdio.
 
-**Run with:** `uv run pytest tests/capsem-mcp/ -m mcp -v`
+**Run with:** `uv run --project build_system --frozen pytest tests/capsem-mcp/ -m mcp -v`
 
 **Test files:**
 

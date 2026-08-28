@@ -67,7 +67,7 @@ StrictYamlLoader.add_constructor(
 )
 
 
-def _tracked_sources() -> list[Path]:
+def _tracked_sources(root: Path = ROOT) -> list[Path]:
     result = subprocess.run(
         [
             "git",
@@ -79,12 +79,13 @@ def _tracked_sources() -> list[Path]:
             "*.yaml",
             "*.yml",
         ],
-        cwd=ROOT,
+        cwd=root,
         check=True,
         capture_output=True,
         text=True,
     )
-    return [ROOT / path for path in result.stdout.splitlines() if path]
+    candidates = [root / path for path in result.stdout.splitlines() if path]
+    return [path for path in candidates if path.is_file()]
 
 
 def _check_yaml(path: Path) -> None:

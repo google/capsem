@@ -18,7 +18,7 @@ commit journal at their first edge rather than repeating that plan.
 
 **A plan action may never invoke `just` or another `capsem-gate` command.**
 
-`GuardedRunner` refuses it at runtime, seeing through `uv run` and `caffeinate
+`GuardedRunner` refuses it at runtime, seeing through `uv run --project build_system --frozen` and `caffeinate
 env`. This is not style: the machine lock is not reentrant, so every such call
 was a child waiting out its 7200-second timeout for the lock its own parent
 held. Twenty-two of them existed, and each read perfectly at the call site —
@@ -216,22 +216,22 @@ commands are exact owned process trees; only `Runner.launch` may outlive an acti
 ## Asking without running
 
 ```bash
-uv run capsem-gate <command> --dry-run    # every step, every action, real argv
+uv run --project build_system --frozen capsem-gate <command> --dry-run    # every step, every action, real argv
 ```
 ```bash
-uv run capsem-gate <command> --graph      # the same graph as mermaid
+uv run --project build_system --frozen capsem-gate <command> --graph      # the same graph as mermaid
 ```
 ```bash
-uv run capsem-gate runs last --failed     # what broke, where, how long
+uv run --project build_system --frozen capsem-gate runs last --failed     # what broke, where, how long
 ```
 ```bash
-uv run capsem-gate runs digest            # the cross-run state, and what to do
+uv run --project build_system --frozen capsem-gate runs digest            # the cross-run state, and what to do
 ```
 ```bash
-uv run capsem-gate runs trend --step <label>   # one step, run by run
+uv run --project build_system --frozen capsem-gate runs trend --step <label>   # one step, run by run
 ```
 ```bash
-uv run capsem-gate gc --dry-run           # what disk the gate holds, per tree
+uv run --project build_system --frozen capsem-gate gc --dry-run           # what disk the gate holds, per tree
 ```
 
 `runs` and `gc` do not record themselves: `runs last` used to open a run and
@@ -267,7 +267,7 @@ Every step declares `kind`, `needs`, `arch`, `speed` and `concurrency`;
 every edge declares `Requires`. `workgraph.from_plan` turns a `Plan` into a
 typed DAG, and the questions get asked there rather than of source text.
 
-Ask the graph, not the file. `uv run capsem-gate runs schedule <command>`
+Ask the graph, not the file. `uv run --project build_system --frozen capsem-gate runs schedule <command>`
 reports the binding set -- the nodes with no slack, whose cost *is* the run's
 cost, which is not the same as the list of slowest steps.
 

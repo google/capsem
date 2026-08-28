@@ -29,7 +29,7 @@ jobs:
 
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync --frozen
+      - run: uv sync --project build_system --frozen
 
       # `just` recipes reach `_pnpm-install`, which installs every Node
       # workspace. Without pnpm on PATH those recipes die with exit 127.
@@ -169,10 +169,10 @@ jobs:
             frontend/pnpm-lock.yaml
             release-site/pnpm-lock.yaml
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync --frozen
+      - run: uv sync --project build_system --frozen
       - name: macOS release portability preflight
         run: >-
-          uv run python -m pytest
+          uv run --project build_system --frozen python -m pytest
           tests/capsem-release/test_release_channel_contract.py::test_binary_staging_artifacts_are_deterministic_and_recordable
           -q
       - run: bash scripts/generate-settings.sh
@@ -228,42 +228,40 @@ jobs:
       # Python schema tests with coverage
       - name: Python lint and type check
         run: |
-          uv run capsem-gate lint
-          uv run capsem-builder validate-skills skills
+          uv run --project build_system --frozen capsem-gate lint
+          uv run --project build_system --frozen capsem-builder validate-skills skills
 
-      - name: Python schema tests with coverage
-        run: |
-          uv run python -m pytest \
-            tests/citadel/test_agent_skill_index.py \
-            tests/test_capsem_bench_mock_server_protocol.py \
-            tests/test_capsem_bench_storage.py \
-            tests/test_settings_spec.py \
-            tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py \
-            --cov=src/capsem \
-            --cov-report= \
-            --cov-fail-under=0 \
-            --junitxml=python-junit.xml
-          uv run --project build_system --frozen python -m pytest \
-            build_system/tests/image/test_audit.py \
-            build_system/tests/packaging/test_build_pkg.py \
-            build_system/tests/image/test_cli.py \
-            build_system/tests/image/test_config.py \
-            build_system/tests/image/test_docker.py \
-            build_system/tests/image/test_doctor.py \
-            build_system/tests/image/test_image_build_backend.py \
-            build_system/tests/image/test_manifest.py \
-            build_system/tests/scripts/test_mock_server_launcher.py \
-            build_system/tests/image/test_models.py \
-            build_system/tests/scripts/test_protocol_fixture_recorder.py \
-            build_system/tests/packaging/test_repack_deb.py \
-            build_system/tests/image/test_skills.py \
-            build_system/tests/image/test_validate.py \
-            build_system/tests/scripts/test_clean_stale.py \
-            --cov=build_system/builder \
-            --cov-append \
-            --cov-report= \
-            --cov-fail-under=0 \
-            --junitxml=build-system-python-junit.xml
+      - name: Cross-system Python schema tests with coverage
+        run: >-
+          uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml
+          tests/citadel/test_agent_skill_index.py
+          tests/test_capsem_bench_mock_server_protocol.py
+          tests/test_capsem_bench_storage.py
+          tests/test_settings_spec.py
+          tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py
+          --cov=build_system/builder --cov-report= --cov-fail-under=0
+          --junitxml=python-junit.xml
+
+      - name: Build-system Python schema tests with coverage
+        run: >-
+          uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml
+          build_system/tests/image/test_audit.py
+          build_system/tests/packaging/test_build_pkg.py
+          build_system/tests/image/test_cli.py
+          build_system/tests/image/test_config.py
+          build_system/tests/image/test_docker.py
+          build_system/tests/image/test_doctor.py
+          build_system/tests/image/test_image_build_backend.py
+          build_system/tests/image/test_manifest.py
+          build_system/tests/scripts/test_mock_server_launcher.py
+          build_system/tests/image/test_models.py
+          build_system/tests/scripts/test_protocol_fixture_recorder.py
+          build_system/tests/packaging/test_repack_deb.py
+          build_system/tests/image/test_skills.py
+          build_system/tests/image/test_validate.py
+          build_system/tests/scripts/test_clean_stale.py
+          --cov=build_system/builder --cov-append --cov-report= --cov-fail-under=0
+          --junitxml=build-system-python-junit.xml
 
       # Python integration tests that need no VM
       - name: Python integration tests (non-VM suites)
@@ -273,12 +271,12 @@ jobs:
           for bin in target/debug/capsem-process target/debug/capsem-service target/debug/capsem target/debug/capsem-mcp target/debug/capsem-mock-server target/debug/capsem-bench-rs; do
             codesign --sign - --entitlements entitlements.plist --force "$bin"
           done
-          uv run python -m pytest tests/capsem-bootstrap/ \
+          uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml tests/capsem-bootstrap/ \
             tests/capsem-codesign/ \
             tests/capsem-rootfs-artifacts/ \
             tests/capsem-release/ \
             -v --tb=short \
-            --cov=src/capsem \
+            --cov=build_system/builder \
             --cov-append \
             --cov-report=xml:codecov-python.xml \
             --cov-fail-under=0
@@ -286,12 +284,12 @@ jobs:
       # Verify all integration test suites import cleanly (catches broken imports/syntax)
       - name: Verify all integration test imports
         run: |
-          uv run python -m pytest tests/capsem-*/ --collect-only -q
+          uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml tests/capsem-*/ --collect-only -q
 
       # Schema drift check
       - name: Schema drift check
         run: |
-          uv run python scripts/generate_schema.py
+          uv run --project build_system --frozen python scripts/generate_schema.py
           git diff --exit-code config/settings/schema.generated.json \
             config/settings/ui-metadata.generated.json \
             frontend/src/lib/mock-settings.generated.ts
@@ -458,7 +456,7 @@ jobs:
 
       - name: Stage one exact install content pair
         run: |
-          uv run python scripts/stage-release-test-inputs.py \
+          uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
             --input-dir target/ci-install-content/inputs \
             --assets-dir target/ci-install-content/assets \
             --config-root target/ci-install-source-config \
@@ -475,14 +473,14 @@ jobs:
           CAPSEM_INSTALL_MANIFEST_URL: ${{ steps.install-manifest.outputs.manifest-url }}
           CAPSEM_INSTALL_CHANNEL: stable
         run: |
-          uv run capsem-gate cross-compile x86_64 \
+          uv run --project build_system --frozen capsem-gate cross-compile x86_64 \
             --content-root target/ci-install-content \
             --defer-proof
 
       - name: Run install e2e tests
         id: install_e2e
         run: |
-          uv run capsem-gate install \
+          uv run --project build_system --frozen capsem-gate install \
             --selected-content-root target/ci-install-content
 
       - name: Upload install and glow-up evidence on failure
@@ -588,7 +586,7 @@ jobs:
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
       - name: Install Python dependencies
-        run: uv sync --frozen
+        run: uv sync --project build_system --frozen
 
       - name: Install release site dependencies
         run: cd release-site && pnpm install --frozen-lockfile

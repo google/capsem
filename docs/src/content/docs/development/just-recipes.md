@@ -198,7 +198,7 @@ test holds that. The build, test and release logic lives in
 That means a recipe is rarely the thing to read. To see what one does:
 
 ```bash
-uv run capsem-gate <command> --dry-run
+uv run --project build_system --frozen capsem-gate <command> --dry-run
 ```
 
 which prints every step in execution order with the exact argv it would invoke,

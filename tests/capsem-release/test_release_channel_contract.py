@@ -145,7 +145,7 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     )
     assert "activate_production: false" in staging
     assert "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86" in staging
-    assert "uv sync --frozen" in staging
+    assert "uv sync --project build_system --frozen" in staging
     assert "bash scripts/rehearse-asset-channel-staging.sh" in staging
     assert "scripts/write-release-site-ci-fixture.py" not in staging
     assert "--without-binary-files" not in staging
@@ -206,7 +206,7 @@ def test_binary_staging_builds_parseable_packages_with_production_sbom() -> None
     assert "scripts/write-binary-staging-artifacts.sh" in workflow
     assert "scripts/fetch-channel-source-manifest.py" in workflow
     assert "scripts/build-complete-release-channel.py" in workflow
-    assert "uv sync --frozen" in workflow
+    assert "uv sync --project build_system --frozen" in workflow
     assert 'curl -fsSL "$ASSET_MANIFEST_URL"' not in workflow
     assert '--primary-channel "$ASSET_CHANNEL"' in workflow
     assert "inputs.channel" not in workflow

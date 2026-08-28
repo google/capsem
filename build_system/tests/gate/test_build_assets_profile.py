@@ -78,7 +78,7 @@ def test_build_assets_requires_profile_and_uses_capsem_admin() -> None:
     assert "cargo" in argv[0] or "capsem-admin" in " ".join(argv)
     assert "--profile" in argv
     assert argv[argv.index("--profile") + 1] == "config/profiles/code/profile.toml"
-    assert "uv run capsem-builder build guest/" not in " ".join(argv)
+    assert "uv run --project build_system --frozen capsem-builder build guest/" not in " ".join(argv)
 
 
 def test_every_asset_build_rail_materializes_exact_bases_before_building() -> None:

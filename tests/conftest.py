@@ -341,7 +341,8 @@ def pytest_sessionstart(session):
         else:
             guidance = (
                 "Run `just build-assets code` (for assets/) and "
-                "`uv run capsem-builder agent` (for target/linux-agent/) "
+                "`uv run --project build_system --frozen capsem-builder agent` "
+                "(for target/linux-agent/) "
                 "before invoking pytest. Locally, unset the env var to let "
                 "tests skip on missing artifacts."
             )

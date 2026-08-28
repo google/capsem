@@ -71,6 +71,7 @@ def ort(config: GateConfig, consumer: OrtConsumer) -> Step:
     return step(
         "toolchain.ort",
         Script(
+            config,
             settings.script,
             "--url",
             distribution.url,

@@ -96,7 +96,7 @@ cannot merge even though the Cloudflare deploy workflows are separate.
 Before claiming release readiness, run the read-only live gate checker:
 
 ```bash
-uv run python scripts/check-remote-release-readiness.py
+uv run --project build_system --frozen python scripts/check-remote-release-readiness.py
 ```
 
 It verifies that the local checkout has no unpublished commits relative to

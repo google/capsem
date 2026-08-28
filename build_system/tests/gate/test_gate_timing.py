@@ -171,7 +171,7 @@ def test_a_quick_action_is_not_worth_naming() -> None:
     """A list of every action is a list nobody reads."""
     events = [
         _shape(["lint"], []),
-        _action("lint", "uv run ruff check .", 40),
+        _action("lint", "uv run --project build_system --frozen ruff check .", 40),
         _ended("lint", 40),
         {"event": "run.end", "duration_ms": 50},
     ]

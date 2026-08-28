@@ -211,7 +211,7 @@ def _prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
     cleaned = phase.add(
         step(
             "clean-stale",
-            Script(settings.clean_stale_script),
+            Script(config, settings.clean_stale_script),
             kind=Kind.STATIC_TEST,
             needs=frozenset({Needs.DISK}),
             speed=Speed.FAST,

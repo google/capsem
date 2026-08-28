@@ -185,4 +185,4 @@ def test_every_package_builder_enforces_exact_provenance() -> None:
     assert (
         release_workflow.count("bash scripts/check-build-provenance.sh target/release/capsem") == 1
     ), "the macOS publication builder must reject stale provenance directly"
-    assert "uv run capsem-gate cross-compile" in release_workflow
+    assert "uv run --project build_system --frozen capsem-gate cross-compile" in release_workflow

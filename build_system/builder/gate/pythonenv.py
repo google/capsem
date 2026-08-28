@@ -1,0 +1,30 @@
+"""The sole locked Python project used by every engineering command."""
+
+from __future__ import annotations
+
+from .config import GateConfig
+
+
+def uv_run(config: GateConfig, *arguments: object) -> list[str]:
+    """Run arguments through the build-system project without lock mutation."""
+    return [
+        "uv",
+        "run",
+        "--project",
+        config.suites.pytest.build_system_project,
+        "--frozen",
+        *(str(argument) for argument in arguments),
+    ]
+
+
+def pytest(config: GateConfig, *arguments: object) -> list[str]:
+    """Run pytest with the sole project's configuration selected explicitly."""
+    return uv_run(
+        config,
+        "python",
+        "-m",
+        "pytest",
+        "-c",
+        config.suites.pytest.project_manifest,
+        *arguments,
+    )

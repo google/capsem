@@ -81,6 +81,7 @@ class ReleaseBinariesCommand(
             step(
                 "source.remote-main",
                 Script(
+                    config,
                     settings.source,
                     str(self.source_commit()),
                     "--ref-template",
@@ -99,6 +100,7 @@ class ReleaseBinariesCommand(
             step(
                 "precheck",
                 Script(
+                    config,
                     *settings.notes,
                     channel,
                     str(self.source_commit()),
@@ -116,6 +118,7 @@ class ReleaseBinariesCommand(
             step(
                 "channel-source",
                 Script(
+                    config,
                     settings.fetch_manifest,
                     "--channel",
                     channel,
@@ -136,6 +139,7 @@ class ReleaseBinariesCommand(
             step(
                 "source.publish-ref",
                 Script(
+                    config,
                     settings.source,
                     str(self.source_commit()),
                     "--ref-template",
@@ -153,6 +157,7 @@ class ReleaseBinariesCommand(
             step(
                 "release",
                 Script(
+                    config,
                     settings.binaries,
                     channel,
                     str(self.source_commit()),
@@ -214,6 +219,7 @@ class ReleaseProfileCommand(
             step(
                 "source.remote-main",
                 Script(
+                    config,
                     settings.source,
                     str(self.source_commit()),
                     "--ref-template",
@@ -233,6 +239,7 @@ class ReleaseProfileCommand(
             step(
                 "source.publish-ref",
                 Script(
+                    config,
                     settings.source,
                     str(self.source_commit()),
                     "--ref-template",

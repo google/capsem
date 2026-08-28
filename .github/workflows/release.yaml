@@ -86,7 +86,7 @@ jobs:
         with:
           ref: ${{ inputs.source_commit }}
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync --frozen
+      - run: uv sync --project build_system --frozen
 
       - name: Select exact public-before manifest
         id: public-before
@@ -146,7 +146,7 @@ jobs:
 
       - name: Prove public-before cohorts use one manifest
         run: |
-          uv run python scripts/verify-release-inputs.py \
+          uv run --project build_system --frozen python scripts/verify-release-inputs.py \
             --input-dir target/binary-public-before/profiles
           cmp \
             target/binary-public-before/packages/manifest.json \
@@ -290,7 +290,7 @@ jobs:
 
       - name: Stage exact selected profile inputs
         run: |
-          uv run python scripts/stage-release-test-inputs.py \
+          uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
             --input-dir target/binary-selected-profiles \
             --assets-dir target/release-assets \
             --config-root target/release-config \
@@ -320,7 +320,7 @@ jobs:
       - name: Install exact config-owned Cargo tools
         env:
           CARGO_NET_RETRY: 10
-        run: uv run python scripts/install-configured-cargo-tools.py cargo-tauri cargo-sbom
+        run: uv run --project build_system --frozen python scripts/install-configured-cargo-tools.py cargo-tauri cargo-sbom
 
       - name: Import Apple certificate
         env:
@@ -352,7 +352,7 @@ jobs:
 
       - name: Validate build context completeness
         run: |
-          uv run python3 -c "
+          uv run --project build_system --frozen python3 -c "
           from capsem_builder.image.doctor import check_source_files
           from pathlib import Path
           result = check_source_files(Path('.'))
@@ -517,7 +517,7 @@ jobs:
           key: materialize-package-config-${{ matrix.arch }}
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync --frozen
+      - run: uv sync --project build_system --frozen
 
       - name: Fetch exact selected ${{ matrix.arch }} profiles
         uses: ./.github/actions/fetch-release-inputs
@@ -529,7 +529,7 @@ jobs:
 
       - name: Stage exact selected profile inputs
         run: |
-          uv run python scripts/stage-release-test-inputs.py \
+          uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
             --input-dir target/binary-selected-profiles \
             --assets-dir target/package-content/assets \
             --config-root target/package-source-config \
@@ -551,7 +551,7 @@ jobs:
           CAPSEM_INSTALL_CHANNEL: ${{ inputs.channel }}
           CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json
         run: |
-          uv run capsem-gate cross-compile "${{ matrix.arch }}" \
+          uv run --project build_system --frozen capsem-gate cross-compile "${{ matrix.arch }}" \
             --content-root target/package-content \
             --defer-proof
 
@@ -592,7 +592,7 @@ jobs:
           key: release-channel-binary-author
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync --frozen
+      - run: uv sync --project build_system --frozen
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -680,7 +680,7 @@ jobs:
 
       - name: Verify binary release lane policy
         run: |
-          uv run pytest \
+          uv run --project build_system --frozen pytest \
             tests/capsem-release/test_binary_lane_gate.py \
             tests/capsem-release/test_release_lane_diff_policy.py -q
 
@@ -877,7 +877,7 @@ jobs:
           ref: ${{ inputs.source_commit }}
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - run: uv sync --frozen
+      - run: uv sync --project build_system --frozen
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
@@ -950,9 +950,9 @@ jobs:
 
       - name: Verify exact public-before cohorts
         run: |
-          uv run python scripts/verify-release-inputs.py \
+          uv run --project build_system --frozen python scripts/verify-release-inputs.py \
             --input-dir target/binary-public-before/packages
-          uv run python scripts/verify-release-inputs.py \
+          uv run --project build_system --frozen python scripts/verify-release-inputs.py \
             --input-dir target/binary-public-before/profiles
           cmp \
             target/binary-public-before/packages/manifest.json \
@@ -968,9 +968,9 @@ jobs:
 
       - name: Stage exact candidate-after profiles
         run: |
-          uv run python scripts/verify-release-inputs.py \
+          uv run --project build_system --frozen python scripts/verify-release-inputs.py \
             --input-dir target/candidate-profile-inputs
-          uv run python scripts/stage-release-test-inputs.py \
+          uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
             --input-dir target/candidate-profile-inputs \
             --assets-dir assets \
             --config-root target/release-config \
@@ -986,11 +986,11 @@ jobs:
           set -euo pipefail
           package=$(find release-test-package -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$package"
-          uv run python scripts/install-deb-runtime-dependencies.py "$package" --config config/gate.toml
-          before_package=$(uv run python scripts/stage-release-test-inputs.py \
+          uv run --project build_system --frozen python scripts/install-deb-runtime-dependencies.py "$package" --config config/gate.toml
+          before_package=$(uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
             --input-dir target/binary-public-before/packages \
             --print-package-path)
-          uv run python scripts/stage-release-test-inputs.py \
+          uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
             --package-file "$package" \
             --binary-dir target/debug
           {
@@ -1147,7 +1147,7 @@ jobs:
         run: |
           set -euo pipefail
           generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          uv run python scripts/build-complete-release-channel.py \
+          uv run --project build_system --frozen python scripts/build-complete-release-channel.py \
             --channel-source "$RELEASE_CHANNEL=file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
             --primary-channel "$RELEASE_CHANNEL" \
             --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
@@ -1190,7 +1190,7 @@ jobs:
 
       - name: Verify public GitHub package storage from the candidate manifest
         run: |
-          uv run python scripts/release-package-contract.py verify-storage \
+          uv run --project build_system --frozen python scripts/release-package-contract.py verify-storage \
             --manifest "candidate-release/assets/$RELEASE_CHANNEL/manifest.json" \
             --expected-prefix "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
             --expected-version "${RELEASE_TAG#v}" \
@@ -1253,12 +1253,12 @@ jobs:
 
       - name: Verify every URL in the asset channel manifest is reachable
         run: >
-          uv run python scripts/verify-channel-downloads.py
+          uv run --project build_system --frozen python scripts/verify-channel-downloads.py
           --manifest-url "$ASSET_MANIFEST_URL"
       - name: Verify public release packages and installer contract
         run: |
           set -euo pipefail
-          uv run python3 scripts/check-public-binary-release.py \
+          uv run --project build_system --frozen python3 scripts/check-public-binary-release.py \
             --channel "$RELEASE_CHANNEL" \
             --manifest-url "$ASSET_MANIFEST_URL" \
             --stable-manifest-url https://release.capsem.org/assets/stable/manifest.json \

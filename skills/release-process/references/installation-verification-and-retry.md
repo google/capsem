@@ -70,7 +70,7 @@ Linux install qualification separates four observable graph boundaries:
 
 Only step 2 may use the ordinary BuildKit network. A warm helper must carry the
 matching input-key label; source build, smoke, Debian proof, and full systemd
-install never repair missing inputs with apt, pnpm, uv sync, another build, or
+install never repair missing inputs with apt, pnpm, uv sync --project build_system, another build, or
 an unverified tag. The shared host-builder is an explicit prerequisite; sealing
 that upstream materializer is separate tracked work, so do not describe a cold
 daemon as globally one-egress until that prerequisite is also closed.
@@ -135,7 +135,7 @@ first.
 Run it by hand whenever you need to answer "is the channel healthy right now?":
 
 ```bash
-uv run python scripts/check-release-site-contract.py \
+uv run --project build_system --frozen python scripts/check-release-site-contract.py \
   --base-url https://release.capsem.org --channel stable --attempts 1
 ```
 
@@ -161,8 +161,8 @@ zero means the segment passed, not that current source completed `just test-clea
 The transitional CLI spells this:
 
 ```bash
-uv run capsem-gate runs last --failed
-uv run capsem-gate candidate --prefix <retained-prefix> --from <failed-step>
+uv run --project build_system --frozen capsem-gate runs last --failed
+uv run --project build_system --frozen capsem-gate candidate --prefix <retained-prefix> --from <failed-step>
 ```
 
 Call it diagnostic continuation despite those legacy names. The named step

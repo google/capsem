@@ -243,7 +243,7 @@ def validate_release_channels(
     release_site = normalize_release_site(release_site)
     if getattr(checker, "BLAKE3_IMPORT_ERROR", None) is not None:
         print(
-            "missing Python dependency: blake3. Run `uv sync` before validation.",
+            "missing Python dependency: blake3. Run `uv sync --project build_system` before validation.",
             file=sys.stderr,
         )
         return 2

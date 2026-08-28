@@ -26,7 +26,12 @@ def source_state_digest(root: Path = ROOT) -> str:
     for encoded in paths:
         relative = os.fsdecode(encoded)
         path = root / relative
-        metadata = path.lstat()
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            # `git ls-files` names tracked deletions. Their absence is already
+            # source state; there are no bytes or mode to hash for them.
+            continue
         digest.update(encoded)
         digest.update(b"\0")
         digest.update(f"{stat.S_IMODE(metadata.st_mode):04o}".encode())

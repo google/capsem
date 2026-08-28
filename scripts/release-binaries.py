@@ -35,8 +35,8 @@ VERSION_COHORT_PATHS = (
     Path("Cargo.toml"),
     Path("Cargo.lock"),
     Path("crates/capsem-app/tauri.conf.json"),
-    Path("pyproject.toml"),
-    Path("uv.lock"),
+    Path("build_system/pyproject.toml"),
+    Path("build_system/uv.lock"),
 )
 
 SOURCE_COMMIT = re.compile(r"[0-9a-f]{40}\Z")
@@ -160,10 +160,10 @@ def _validate_version_cohort(version: str) -> None:
             workspace_only=True,
         ),
         "tauri.conf.json": {str(tauri.get("version", ""))},
-        "pyproject.toml": {_version_line(ROOT / "pyproject.toml")},
-        "uv.lock capsem package": _lock_package_versions(
-            ROOT / "uv.lock",
-            package_name="capsem",
+        "build_system/pyproject.toml": {_version_line(ROOT / "build_system/pyproject.toml")},
+        "build_system/uv.lock capsem-builder package": _lock_package_versions(
+            ROOT / "build_system/uv.lock",
+            package_name="capsem-builder",
         ),
     }
     expected = {

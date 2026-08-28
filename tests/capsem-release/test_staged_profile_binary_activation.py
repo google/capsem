@@ -216,7 +216,10 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
 
     assert "Run the complete fast gate" in reusable_fast_gate
     assert "run: just fast-test" in reusable_fast_gate
-    assert "run: uv run capsem-gate test-release-contracts" in reusable_fast_gate
+    assert (
+        "run: uv run --project build_system --frozen capsem-gate test-release-contracts"
+        in reusable_fast_gate
+    )
     assert "needs.author-profile-release.outputs.activation_ready != 'true'" in deferred
     assert "outputs.product_compatible" in deferred
     assert "outputs.functional_ready" in deferred
@@ -329,7 +332,13 @@ def test_hosted_macos_never_claims_the_local_apple_vz_proof() -> None:
     """GitHub-hosted macOS cannot nest Apple Virtualization.framework, so the
     boot proof belongs to a local run and the workflow must not claim it."""
     workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
-    release_skill = (ROOT / "skills" / "release-process" / "SKILL.md").read_text(encoding="utf-8")
+    release_skill = (
+        ROOT
+        / "skills"
+        / "release-process"
+        / "references"
+        / "installation-verification-and-retry.md"
+    ).read_text(encoding="utf-8")
     local_gate = (ROOT / "justfile").read_text(encoding="utf-8")
 
     assert "test-profile-arm64-boot:" not in workflow

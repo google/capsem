@@ -31,7 +31,7 @@ def platform_step(config: GateConfig, package: str | None) -> Step:
         raise GateError("the platform support proof needs the exact package it proves")
     return step(
         "platform-support",
-        Script(config.modules.platform_support_script, "--package", package),
+        Script(config, config.modules.platform_support_script, "--package", package),
         contends=(config.exclusive("docker_daemon"),),
         kind=Kind.E2E,
         needs=frozenset({Needs.DOCKER, Needs.DISK}),

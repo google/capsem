@@ -36,7 +36,17 @@ SKILL_ROOT = "skills/"
 
 
 def shell_tool(severity: str, exclude: str) -> Tool:
-    argv = ["uv", "run", "shellcheck", f"--severity={severity}", "--shell=bash", "--format=gcc"]
+    argv = [
+        "uv",
+        "run",
+        "--project",
+        "build_system",
+        "--frozen",
+        "shellcheck",
+        f"--severity={severity}",
+        "--shell=bash",
+        "--format=gcc",
+    ]
     if exclude:
         argv += ["--exclude", exclude]
 
@@ -61,7 +71,17 @@ def shell_tool(severity: str, exclude: str) -> Tool:
 
 
 def docker_tool(ignored: tuple[str, ...]) -> Tool:
-    argv = ["uv", "run", "hadolint", "--format", "json", "--no-fail"]
+    argv = [
+        "uv",
+        "run",
+        "--project",
+        "build_system",
+        "--frozen",
+        "hadolint",
+        "--format",
+        "json",
+        "--no-fail",
+    ]
     for code in ignored:
         argv += ["--ignore", code]
 

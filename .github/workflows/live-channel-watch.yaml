@@ -42,7 +42,7 @@ jobs:
       # The contract check hashes artifacts with blake3, which is a project
       # dependency rather than a stdlib module.
       - name: Install Python dependencies
-        run: uv sync --frozen
+        run: uv sync --project build_system --frozen
 
       - name: Validate every catalog member resolves end to end
         env:
@@ -51,7 +51,7 @@ jobs:
           # Few attempts, short delay: this is observing steady state, not
           # waiting for a deploy to propagate. A channel that needs thirty
           # retries to answer is already failing its users.
-          uv run python scripts/check-release-site-contract.py \
+          uv run --project build_system --frozen python scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
             --catalog-members \
             --attempts 3 \

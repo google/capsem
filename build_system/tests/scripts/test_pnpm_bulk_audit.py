@@ -118,7 +118,7 @@ def test_every_fast_gate_blocks_on_bulk_dependency_advisories() -> None:
     assert "uses: ./.github/workflows/fast-gate.yaml" in ci
     assert "fast-gate" in ci.split("  pr-gate:", 1)[1]
     assert "run: just fast-test" in fast_gate
-    assert "run: uv run capsem-gate test-release-contracts" in fast_gate
+    assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
     assert "npm bulk advisory audit (blocking security signal)" in scheduled
     assert "run: python3 scripts/audit-pnpm-bulk.py" in scheduled
     assert "--project-dir frontend" not in scheduled

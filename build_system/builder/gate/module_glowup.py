@@ -164,6 +164,7 @@ def _glowup_step(
     return step(
         label,
         Script(
+            config,
             settings.glowup_script,
             "--input-deb",
             qualification.package,
@@ -250,6 +251,7 @@ def _build_and_prove(plan: Plan, phase, config: GateConfig, after: tuple) -> Ste
                 step(
                     "macos-package",
                     Script(
+                        config,
                         config.modules.macos_glowup_script,
                         "--content-root",
                         content.root,

@@ -850,7 +850,10 @@ def test_profile_release_publishes_deferred_assets_but_withholds_channel_deploy(
     assert "Qualify the profile assets" in pairing
     assert "Run the complete fast gate" in reusable_fast_gate
     assert "run: just fast-test" in reusable_fast_gate
-    assert "run: uv run capsem-gate test-release-contracts" in reusable_fast_gate
+    assert (
+        "run: uv run --project build_system --frozen capsem-gate test-release-contracts"
+        in reusable_fast_gate
+    )
     assert "Run shared release contracts" not in pairing
     # One verb owning both shapes; the lane decides which from this flag.
     qualify = pairing.split("- name: Qualify the profile assets", maxsplit=1)[1].split(

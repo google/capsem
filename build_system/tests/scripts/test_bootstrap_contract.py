@@ -83,8 +83,8 @@ def test_bootstrap_runs_full_doctor_fix_without_a_parallel_check_mode() -> None:
 def test_bootstrap_materializes_locked_python_metadata_before_frozen_sync() -> None:
     bootstrap = _read("bootstrap.sh")
 
-    assert "uv lock --locked" in bootstrap
-    assert bootstrap.index("uv lock --locked") < bootstrap.index("uv sync --frozen")
+    assert "uv lock --project build_system --locked" in bootstrap
+    assert bootstrap.index("uv lock --project build_system --locked") < bootstrap.index("uv sync --project build_system --frozen")
 
 
 def test_bootstrap_uses_colima_exit_status_not_running_text() -> None:
@@ -188,14 +188,14 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert "PNPM_MAJOR=${PNPM_VERSION%%.*}" in bootstrap
     assert '"$PNPM_MAJOR" = 10' in bootstrap
     assert "pnpm 10 is required after bootstrap" in bootstrap
-    assert "uv run capsem-gate install-node" in bootstrap
-    assert "uv sync --frozen" in bootstrap
+    assert "uv run --project build_system --frozen capsem-gate install-node" in bootstrap
+    assert "uv sync --project build_system --frozen" in bootstrap
     assert "cargo fetch --locked" in bootstrap
     assert "cd frontend && CI=true pnpm install" not in bootstrap
     assert 'if [ -n "${CAPSEM_GATE_RUN:-}" ]; then' in bootstrap
     assert "fast.toolchain.node already owns every locked workspace" in bootstrap
     assert bootstrap.index('if [ -n "${CAPSEM_GATE_RUN:-}" ]; then') < bootstrap.index(
-        "uv run capsem-gate install-node"
+        "uv run --project build_system --frozen capsem-gate install-node"
     )
 
     # Daemon activation and a new socket are asynchronous on a fresh host.
@@ -690,7 +690,7 @@ def test_bootstrap_and_doctor_install_then_expose_config_owned_cargo_tools() -> 
     doctor = _read("scripts/doctor-common.sh")
 
     assert "_doctor_install_gate_tools" in doctor
-    assert "uv run capsem-gate install-tools" in doctor
+    assert "uv run --project build_system --frozen capsem-gate install-tools" in doctor
     assert 'capsem_gate_cargo_tool_versions "$PROJECT_ROOT/config/gate.toml"' in doctor
     assert '[[ "$actual" == "$expected"* ]]' in doctor
     assert 'actual=$("${probe_argv[@]}"' in doctor
@@ -871,7 +871,7 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     assert "python.ruff" in labels
     assert "python.ty.strict" in labels
     for command in [
-        "uv run capsem-builder validate-skills skills",
+        "uv run --project build_system --frozen capsem-builder validate-skills skills",
         "cargo clippy --workspace --all-targets -- -D warnings",
         "bash scripts/check-web-surface.sh frontend",
         "bash scripts/check-web-surface.sh docs",
@@ -895,7 +895,7 @@ def test_both_release_lanes_reuse_fail_closed_static_module() -> None:
     assert "uses: ./.github/workflows/fast-gate.yaml" in binary_workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in profile_workflow
     assert "run: just fast-test" in fast_gate
-    assert "run: uv run capsem-gate test-release-contracts" in fast_gate
+    assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
     assert "run: just test-clean" not in binary_workflow
     assert "run: just test-clean" not in profile_workflow
     assert "cargo clippy --workspace --all-targets -- -D warnings" in _gate_issues()

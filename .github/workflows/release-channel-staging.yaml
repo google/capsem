@@ -48,7 +48,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - name: Install locked Python dependencies
-        run: uv sync --frozen
+        run: uv sync --project build_system --frozen
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:

@@ -54,7 +54,7 @@ def test_release_system_focus_is_source_only_and_needs_no_local_package() -> Non
     assert "contracts.release" in plan
     assert "contracts.build-system" in plan
     assert (
-        "uv run --project build_system --frozen python -m pytest build_system/tests/"
+        "uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml build_system/tests/"
         in plan
     )
     assert "rehearsal.cohort" not in plan

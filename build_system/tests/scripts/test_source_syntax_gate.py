@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +28,22 @@ def test_source_syntax_checker_accepts_repository_sources() -> None:
     assert "shell" in result.stdout
     assert "JSON" in result.stdout
     assert "TOML" in result.stdout
+
+
+def test_source_syntax_checker_ignores_a_tracked_deletion(tmp_path: Path) -> None:
+    subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
+    tracked = tmp_path / "tracked.py"
+    tracked.write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(("git", "add", "tracked.py"), cwd=tmp_path, check=True)
+
+    spec = importlib.util.spec_from_file_location("check_source_syntax", CHECKER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module._tracked_sources(tmp_path) == [tracked]
+
+    tracked.unlink()
+    assert module._tracked_sources(tmp_path) == []
 
 
 def test_source_syntax_checker_rejects_malformed_yaml(tmp_path: Path) -> None:

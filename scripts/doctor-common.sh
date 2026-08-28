@@ -84,7 +84,7 @@ _doctor_install_node_workspaces() {
             "$CAPSEM_GATE_RUN"
         return 0
     fi
-    uv run capsem-gate install-node
+    uv run --project build_system --frozen capsem-gate install-node
 }
 
 _doctor_install_gate_tools() {
@@ -98,10 +98,10 @@ _doctor_install_gate_tools() {
         local rustup_bin cargo_bin
         rustup_bin=$(readlink -f "$(command -v rustup)")
         cargo_bin=$(dirname "$rustup_bin")
-        PATH="$cargo_bin:$PATH" uv run capsem-gate install-tools
+        PATH="$cargo_bin:$PATH" uv run --project build_system --frozen capsem-gate install-tools
         capsem_expose_gate_cargo_tools "$PROJECT_ROOT/config/gate.toml"
     else
-        uv run capsem-gate install-tools
+        uv run --project build_system --frozen capsem-gate install-tools
     fi
 }
 

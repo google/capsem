@@ -1,7 +1,7 @@
 """Would the gate work if we started now?
 
 One Python package with one console script is easy to say and easy to have
-wrong. `uv sync` can succeed while the entry point resolves to a stale wheel, a
+wrong. `uv sync --project build_system` can succeed while the entry point resolves to a stale wheel, a
 storage phase can name a rail the policy no longer declares, and a recipe can
 dispatch to a subcommand that was renamed. Each of those surfaces deep inside a
 run and reads as a product defect rather than an installation one.
@@ -110,8 +110,13 @@ def test_macos_doctor_does_not_interpret_the_linux_command_policy() -> None:
 
 
 def _checkout(tmp_path: Path, *, gate_toml: str | None = None) -> Path:
-    for name in ("pyproject.toml", "justfile"):
-        (tmp_path / name).write_text((PROJECT_ROOT / name).read_text(encoding="utf-8"))
+    (tmp_path / "justfile").write_text(
+        (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
+    )
+    (tmp_path / "build_system").mkdir(exist_ok=True)
+    (tmp_path / "build_system/pyproject.toml").write_text(
+        (PROJECT_ROOT / "build_system/pyproject.toml").read_text(encoding="utf-8")
+    )
     (tmp_path / "config").mkdir(exist_ok=True)
     (tmp_path / "config" / "gate.toml").write_text(
         gate_toml or (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
@@ -204,7 +209,7 @@ def test_a_ready_gate_says_so(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_every_declared_console_script_is_runnable() -> None:
-    """`uv sync` succeeding is not the same as the entry points working.
+    """`uv sync --project build_system` succeeding is not the same as the entry points working.
 
     Run rather than read. The name it resolves to moved once already -- to
     `capsem_builder.gatelaunch:main`, which re-execs under an isolated bytecode cache
@@ -213,13 +218,21 @@ def test_every_declared_console_script_is_runnable() -> None:
     """
     import tomllib
 
-    declared = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
-        "project"
-    ]["scripts"]
-    assert "capsem-gate" in declared
+    declared = tomllib.loads(
+        (PROJECT_ROOT / "build_system/pyproject.toml").read_text(encoding="utf-8")
+    )["project"]["scripts"]
+    assert set(declared) == {"capsem-builder", "capsem-gate"}
 
     result = subprocess.run(
-        ["uv", "run", "capsem-gate", "--help"],
+        [
+            "uv",
+            "run",
+            "--project",
+            "build_system",
+            "--frozen",
+            "capsem-gate",
+            "--help",
+        ],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
@@ -243,7 +256,7 @@ def test_the_justfile_dispatches_to_the_gate_rather_than_reimplementing_it() -> 
     justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
     config = gate_config.load(PROJECT_ROOT)
 
-    assert "uv run capsem-gate" in justfile
+    assert "uv run --project build_system --frozen capsem-gate" in justfile
     assert config.boundary.max_recipe_lines <= 5
     assert not config.boundary.recipes_with_inline_control_flow
 
@@ -282,14 +295,14 @@ def test_lint_runs_ruff_and_both_ty_passes(tmp_path: Path) -> None:
     plan = _lint_plan(tmp_path)
     described = plan.describe()
 
-    assert "ruff check ." in described
+    assert "ruff check --config build_system/pyproject.toml ." in described
     strict = " ".join(plan.step_named("python.ty.strict").render())
     relaxed = " ".join(plan.step_named("python.ty.relaxed").render())
 
-    assert "src" in strict
+    assert "build_system/builder" in strict
     assert "--ignore" in relaxed
     assert "--ignore" not in strict, (
-        "src/ passes every rule and must be checked with none held back"
+        "build_system/builder passes every rule and must be checked with none held back"
     )
 
 
@@ -348,7 +361,7 @@ def test_a_subcommand_named_in_a_comment_is_not_a_dispatch(tmp_path: Path) -> No
     justfile.write_text(
         justfile.read_text(encoding="utf-8")
         + "\n# `capsem-gate not-a-real-subcommand` is only mentioned here.\n"
-        + "#     uv run capsem-gate also-not-real\n",
+        + "#     uv run --project build_system --frozen capsem-gate also-not-real\n",
         encoding="utf-8",
     )
 

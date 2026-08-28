@@ -110,6 +110,8 @@ def _tracked_text_sources(root: Path = ROOT) -> dict[str, str]:
         metadata, raw_path = record.split(b"\t", 1)
         mode = metadata.split(b" ", 1)[0]
         path = raw_path.decode("utf-8")
+        if not (root / path).exists():
+            continue
         if mode == b"120000" or path in EXCLUDED_POLICY_FILES:
             continue
         raw = (root / path).read_bytes()

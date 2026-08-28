@@ -32,7 +32,7 @@ revision = 3
 requires-python = ">=3.11"
 
 [[package]]
-name = "capsem"
+name = "capsem-builder"
 version = "0.0.1"
 source = { editable = "." }
 
@@ -52,14 +52,15 @@ def _checkout(tmp_path: Path, *, version: str = "9.9.9", cargo: str | None = Non
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     )
     (tmp_path / "Cargo.toml").write_text(cargo or WORKSPACE.format(version=version))
-    (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "capsem"\nversion = "0.0.1"\n'
+    (tmp_path / "build_system").mkdir()
+    (tmp_path / "build_system" / "pyproject.toml").write_text(
+        '[project]\nname = "capsem-builder"\nversion = "0.0.1"\n'
     )
     (tmp_path / "crates" / "capsem-app").mkdir(parents=True)
     (tmp_path / "crates" / "capsem-app" / "tauri.conf.json").write_text(
         '{\n  "productName": "Capsem",\n  "version": "0.0.1"\n}\n'
     )
-    (tmp_path / "uv.lock").write_text(UV_LOCK)
+    (tmp_path / "build_system" / "uv.lock").write_text(UV_LOCK)
     return tmp_path
 
 
@@ -137,11 +138,11 @@ def test_stamp_fans_the_one_version_out_to_the_cohort(tmp_path: Path) -> None:
     assert '"version": "4.2.0"' in (
         root / "crates" / "capsem-app" / "tauri.conf.json"
     ).read_text()
-    assert 'version = "4.2.0"' in (root / "pyproject.toml").read_text()
-    uv_lock = (root / "uv.lock").read_text()
-    assert 'name = "capsem"\nversion = "4.2.0"' in uv_lock
+    assert 'version = "4.2.0"' in (root / "build_system" / "pyproject.toml").read_text()
+    uv_lock = (root / "build_system" / "uv.lock").read_text()
+    assert 'name = "capsem-builder"\nversion = "4.2.0"' in uv_lock
     assert 'name = "dependency"\nversion = "7.8.9"' in uv_lock
-    assert runner.ran(r"uv lock --locked --offline")
+    assert runner.ran(r"uv lock --project build_system --locked --offline")
 
 
 def test_stamp_refreshes_both_lockfiles_after_substituting(tmp_path: Path) -> None:
@@ -151,18 +152,20 @@ def test_stamp_refreshes_both_lockfiles_after_substituting(tmp_path: Path) -> No
 
     versions.stamp(root, runner)
 
-    runner.assert_order(r"cargo update --workspace --offline", r"uv lock --locked --offline")
+    runner.assert_order(r"cargo update --workspace --offline", r"uv lock --project build_system --locked --offline")
 
 
-def test_stamp_refuses_a_uv_lock_without_one_editable_capsem_root(tmp_path: Path) -> None:
+def test_stamp_refuses_a_uv_lock_without_one_editable_project_root(tmp_path: Path) -> None:
     root = _checkout(tmp_path)
-    (root / "uv.lock").write_text(UV_LOCK.replace('name = "capsem"', 'name = "other"'))
+    (root / "build_system" / "uv.lock").write_text(
+        UV_LOCK.replace('source = { editable = "." }', 'source = { registry = "elsewhere" }', 1)
+    )
     runner = RecordingRunner(root, failures=["rev-parse"])
 
-    with pytest.raises(GateError, match="one editable capsem root"):
+    with pytest.raises(GateError, match="one editable project root"):
         versions.stamp(root, runner)
 
-    assert not runner.ran(r"uv lock")
+    assert not runner.ran(r"uv lock --project build_system")
 
 
 def test_stamp_refuses_a_version_that_is_already_tagged(tmp_path: Path) -> None:
@@ -208,10 +211,10 @@ def test_stamping_is_a_pure_function_of_the_declared_version(tmp_path: Path) -> 
     runner = RecordingRunner(root, failures=["rev-parse"])
 
     versions.stamp(root, runner)
-    first = (root / "pyproject.toml").read_text()
+    first = (root / "build_system" / "pyproject.toml").read_text()
     versions.stamp(root, runner)
 
-    assert (root / "pyproject.toml").read_text() == first
+    assert (root / "build_system" / "pyproject.toml").read_text() == first
 
 
 def test_the_stamped_version_carries_no_clock_component(tmp_path: Path) -> None:

@@ -1,7 +1,7 @@
 """Is this checkout's gate installed and coherent?
 
 The gate is one Python package with one console script. That is easy to say and
-easy to have wrong: `uv sync` can succeed while `capsem-gate` resolves to a
+easy to have wrong: `uv sync --project build_system` can succeed while `capsem-gate` resolves to a
 stale wheel from a previous checkout, `config/gate.toml` can name a rail the
 storage policy no longer declares, and a recipe can dispatch to a subcommand
 that was renamed. Each of those fails deep inside a run, and reads as a product
@@ -27,6 +27,7 @@ from .execution import Kind, Speed, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .proc import Runner
+from .pythonenv import uv_run
 
 
 @dataclass(frozen=True)
@@ -35,32 +36,36 @@ class Finding:
     detail: str
 
 
-def _installed_entry_points(root, runner: Runner) -> list[Finding]:
+def _installed_entry_points(config: gate_config.GateConfig, runner: Runner) -> list[Finding]:
     """The console scripts pyproject declares must actually be runnable."""
     findings = []
-    declared = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"][
-        "scripts"
-    ]
+    project = config.suites.pytest.build_system_project
+    manifest = config.path(config.suites.pytest.project_manifest)
+    declared = tomllib.loads(manifest.read_text(encoding="utf-8"))["project"]["scripts"]
 
     for name in sorted(declared):
-        if shutil.which(name) is None and not _runs_through_uv(runner, name):
+        if shutil.which(name) is None and not _runs_through_uv(runner, project, name):
             findings.append(
                 Finding(
                     f"entry point {name}",
-                    f"declared in pyproject but not runnable; run `uv sync` in {root}",
+                    f"declared in {manifest} but not runnable; "
+                    f"run `uv sync --project {project}` in {config.root}",
                 )
             )
     return findings
 
 
-def _runs_through_uv(runner: Runner, name: str) -> bool:
+def _runs_through_uv(runner: Runner, project: str, name: str) -> bool:
     """Through the runner, so the probe is recorded like any other command.
 
     This called `subprocess.run` directly, which is the one thing the harness
     exists to own -- a doctor that reaches past it can report on a machine the
     run log never saw it touch.
     """
-    return runner.succeeds(["uv", "run", name, "--help"])
+    config = gate_config.for_root(runner.root)
+    if project != config.suites.pytest.build_system_project:
+        raise GateError(f"unknown Python project {project!r}")
+    return runner.succeeds(uv_run(config, name, "--help"))
 
 
 def _storage_rails(config: gate_config.GateConfig) -> list[Finding]:
@@ -128,7 +133,7 @@ def check(runner: Runner) -> list[Finding]:
     """Everything that must hold before the gate can run at all."""
     config = gate_config.for_root(runner.root)
     return [
-        *_installed_entry_points(config.root, runner),
+        *_installed_entry_points(config, runner),
         *_storage_rails(config),
         *_dispatched_subcommands(config, runner),
     ]

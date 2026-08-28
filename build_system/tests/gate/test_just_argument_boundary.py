@@ -6,7 +6,7 @@ Python cannot contain this: by the time the gate sees an argument the shell has
 already run whatever was in it.
 
     $ just --dry-run release-binaries 'nightly; echo HOST_PWNED'
-    uv run capsem-gate release-binaries nightly; echo HOST_PWNED
+    uv run --project build_system --frozen capsem-gate release-binaries nightly; echo HOST_PWNED
 
 The recipes are discovered rather than listed. A hand-maintained list of five
 public recipes is what let `build`, `build-all`, and every CI-facing asset
@@ -220,7 +220,7 @@ def test_no_recipe_takes_an_unquotable_variadic_passthrough() -> None:
     `quote()` collapses it to one argument and no quoting preserves the
     original boundaries, so a recipe that means "pass these through
     individually" cannot be written in `just` at all. Callers that need it
-    reach `uv run capsem-gate` directly.
+    reach `uv run --project build_system --frozen capsem-gate` directly.
     """
     body = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
 

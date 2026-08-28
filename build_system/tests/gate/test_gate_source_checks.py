@@ -140,8 +140,14 @@ def test_the_steps_are_independent_leaves() -> None:
 def test_the_argv_each_step_issues() -> None:
     described = _plan().describe()
 
-    assert "uv run ruff check ." in described
-    assert "uv run ty check --error-on-warning --python-platform all src" in described
+    assert (
+        "uv run --project build_system --frozen ruff check "
+        "--config build_system/pyproject.toml ."
+    ) in described
+    assert (
+        "uv run --project build_system --frozen ty check --project build_system "
+        "--error-on-warning --python-platform all build_system/builder"
+    ) in described
 
 
 def test_strict_holds_nothing_back() -> None:
@@ -158,7 +164,7 @@ def test_the_relaxed_step_holds_back_each_ratchet_rule_exactly_once() -> None:
 
     for rule in CONFIG.lint.ty_ratchet:
         assert relaxed.count(f"--ignore {rule}") == 1
-    assert "src" not in relaxed.split("--ignore")[0].split()[4:], (
+    assert "build_system/builder" not in relaxed.split("--ignore")[0].split()[4:], (
         "a strict root must not be re-checked with rules held back"
     )
 
@@ -175,7 +181,9 @@ def test_python_suppressions_and_exclusions_cannot_grow_unnoticed() -> None:
         if token.type == tokenize.COMMENT
     )
     sources = "\n".join(comments)
-    project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    project = tomllib.loads(
+        (PROJECT_ROOT / "build_system/pyproject.toml").read_text(encoding="utf-8")
+    )
     ruff = project["tool"]["ruff"]
     ruff_lint = ruff["lint"]
     ty = project["tool"].get("ty", {})

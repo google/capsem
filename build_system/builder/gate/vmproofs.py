@@ -49,6 +49,7 @@ def injection(
     return step(
         f"injection.{profile}",
         Script(
+            config,
             settings.injection_script,
             "--binary",
             _binary(config),
@@ -78,6 +79,7 @@ def integration(
     return step(
         f"integration.{profile}",
         Script(
+            config,
             settings.integration_script,
             "--binary",
             _binary(config),

@@ -148,7 +148,7 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 | 1 | `rustup` (stable, minimal profile) | `sh.rustup.rs` |
 | 1 | `just` | `just.systems` -> `~/.local/bin` |
 | 2 | `uv` | `astral.sh/uv` -> `~/.local/bin` |
-| 2 | Python lock metadata + deps | `uv lock --locked` then `uv sync --frozen` |
+| 2 | Python lock metadata + deps | `uv lock --project build_system --locked` then `uv sync --project build_system --frozen` |
 | 2 | Rust workspace deps | `cargo fetch --locked` before sandboxed qualification |
 | 2 (Linux) | native compiler/Tauri libs, `cpio`, Docker/Buildx, Bubblewrap | apt or dnf |
 | 2 (Linux) | configured Node major + pnpm 10 | SHA256-verified official Node archive + npm |
@@ -215,7 +215,7 @@ To avoid repeated permission prompts when using `just` and `capsem` commands, ad
   "permissions": {
     "allow": [
       "Bash(just *)",
-      "Bash(uv run *)",
+      "Bash(uv run --project build_system --frozen *)",
       "Bash(cargo *)",
       "Bash(pnpm *)",
       "Bash(cd frontend && pnpm *)",
@@ -229,7 +229,7 @@ To avoid repeated permission prompts when using `just` and `capsem` commands, ad
 
 This allows:
 - `just *` -- all recipes (run, test, build-assets, query-session, list-sessions, doctor, etc.)
-- `uv run *` -- capsem-builder CLI and Python scripts
+- `uv run --project build_system --frozen *` -- capsem-builder CLI and Python scripts
 - `cargo *` -- Rust builds, tests, checks
 - `pnpm *` -- frontend package management and builds
 - `npx *` -- skills CLI and other npx tools

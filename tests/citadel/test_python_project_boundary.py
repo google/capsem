@@ -95,7 +95,11 @@ def _old_import_inventory(root: Path, tracked: list[str]) -> tuple[int, str]:
 
 
 def _observe(root: Path = ROOT, tracked: list[str] | None = None) -> Observed:
-    paths = tracked if tracked is not None else _tracked(root)
+    paths = [
+        path
+        for path in (tracked if tracked is not None else _tracked(root))
+        if (root / path).is_file()
+    ]
     path_set = set(paths)
     obsolete = [path for path in OBSOLETE_ROOTS[:2] if path in path_set]
     if any(path.startswith(OBSOLETE_ROOTS[2]) for path in paths):

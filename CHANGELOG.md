@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Python engineering tooling now has one locked project under `build_system/`:
+  the `capsem-builder` distribution owns both `capsem-builder` and
+  `capsem-gate`, and the obsolete root `capsem` distribution, package facade,
+  project file, and lockfile are removed to reserve that name for the SDK.
+
 ### Added
 
 - Developer verification now has explicit cost boundaries: `just fast-test`

@@ -113,6 +113,7 @@ def rehearsal(
         step(
             "cohort",
             Script(
+                config,
                 settings.rehearsal_script,
                 "--assets-dir",
                 config.path(config.assets.test_root)

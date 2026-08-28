@@ -64,7 +64,7 @@ metadata only helps render settings.
 just _build-assets code [arch]                # Profile-derived asset rebuild
 just _build-kernel arm64 code                 # Kernel slice
 just _build-rootfs arm64 code                 # Rootfs slice
-uv run capsem-builder audit                  # Parse trivy/grype vulnerability output
+uv run --project build_system --frozen capsem-builder audit                  # Parse trivy/grype vulnerability output
 ```
 
 Use admin/just recipes for all product image work. `capsem-builder` is a

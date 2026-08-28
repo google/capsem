@@ -136,7 +136,7 @@ def recipes_reaching(justfile: str, program: str) -> frozenset[str]:
     bodies = {name: recipe_body(justfile, name) for name in graph}
     # A recipe reaches `command` if it runs it, or if it dispatches to a gate
     # subcommand whose plan runs it. Without the second clause the walk stops
-    # at every `uv run capsem-gate ...` line, which is now most of them.
+    # at every `uv run --project build_system --frozen capsem-gate ...` line, which is now most of them.
     reaching = {
         name
         for name, body in bodies.items()

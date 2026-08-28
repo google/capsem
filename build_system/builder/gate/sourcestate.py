@@ -28,6 +28,7 @@ from .context import Context
 from .errors import GateError
 from .execution import Kind, Needs, ResumePolicy, Speed, Step, step
 from .fileactions import write_text
+from .pythonenv import uv_run
 from .sourcecapture import CaptureSourceSnapshot
 from .sourcecommit import SourceCommit, require_detached_checkout
 
@@ -50,7 +51,11 @@ def gate_source() -> Path:
 
 def _digest(context: Context, tree: Path | None = None) -> str:
     """The source digest of a tree; this run's own when none is named."""
-    argv = ["uv", "run", "python", str(context.path(context.config.candidate.source_digest_script))]
+    argv = uv_run(
+        context.config,
+        "python",
+        context.path(context.config.candidate.source_digest_script),
+    )
     if tree is not None:
         argv += ["--root", str(tree)]
     return context.runner.capture(argv)
@@ -159,7 +164,7 @@ class RequireIsolatedBytecode(Action, name="require-isolated-bytecode"):
                 "cache is the ambient one. A same-size edit within one timestamp "
                 f"tick leaves a stale .pyc that still validates, and {MARKER} is "
                 "how a run proves it re-execed under a private cache first. Run "
-                "`uv run capsem-gate ...`, or export it with a fresh directory."
+                "`uv run --project build_system --frozen capsem-gate ...`, or export it with a fresh directory."
             )
         context.journal.note(f"{PYCACHE}={prefix}")
 

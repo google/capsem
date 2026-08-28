@@ -315,8 +315,8 @@ identity_inputs = [
     "Cargo.lock",
     "rust-toolchain.toml",
     ".cargo/config.toml",
-    "pyproject.toml",
-    "uv.lock",
+    "build_system/pyproject.toml",
+    "build_system/uv.lock",
     "release-site/package.json",
     "release-site/pnpm-lock.yaml",
     "release-site/pnpm-workspace.yaml",
@@ -674,8 +674,8 @@ identity_roots = [
     "crates/capsem-bench",
     "Cargo.toml",
     "Cargo.lock",
-    "pyproject.toml",
-    "uv.lock",
+    "build_system/pyproject.toml",
+    "build_system/uv.lock",
     ".cargo",
     "rust-toolchain.toml",
 ]
@@ -770,7 +770,7 @@ bootstrap_script = "bootstrap.sh"
 clean_stale_script = "scripts/clean_stale.py"
 generated_settings_script = "scripts/check-generated-settings.sh"
 materialize_script = "scripts/materialize-config.sh"
-recipe_suite = ["uv", "run", "python", "-m", "pytest", "tests/capsem-recipes/", "-v", "--tb=short", "-m", "recipe"]
+recipe_suite = ["uv", "run", "--project", "build_system", "--frozen", "python", "-m", "pytest", "-c", "build_system/pyproject.toml", "tests/capsem-recipes/", "-v", "--tb=short", "-m", "recipe"]
 # The rail and boundary the whole gate's disk budget is taken against.
 candidate_budget = ["default", "candidate-boundary"]
 # Where a failed gate's evidence is kept, and what to call a run whose
@@ -787,7 +787,7 @@ unknown_head = "unknown"
 [versions]
 # The one authority: a human decision, recorded here and fanned out.
 cargo_manifest = "Cargo.toml"
-uv_lock = "uv.lock"
+uv_lock = "build_system/uv.lock"
 tag_prefix = "refs/tags/v"
 
 [[versions.stamped]]
@@ -796,7 +796,7 @@ kind = "json_key"
 key = "version"
 
 [[versions.stamped]]
-path = "pyproject.toml"
+path = "build_system/pyproject.toml"
 kind = "toml_key"
 key = "version"
 
@@ -805,9 +805,9 @@ key = "version"
 # ---------------------------------------------------------------------------
 
 [lint]
-python_roots = ["src", "build_system/builder", "build_system/tests", "scripts", "tests", "guest"]
+python_roots = ["build_system/builder", "build_system/tests", "scripts", "tests", "guest"]
 # Already passes every rule, and must keep doing so.
-strict_roots = ["src", "build_system/builder"]
+strict_roots = ["build_system/builder"]
 # Check the same cross-platform Python surface on Linux and macOS so the exact
 # diagnostic ratchet cannot change merely because the gate moved hosts.
 python_platform = "all"
@@ -1163,7 +1163,7 @@ run_marker = "CAPSEM_GATE_RUN"
 # Every entry is idempotent: present means nothing happens. Written as eight
 # near-identical `if ! ... ; then ... fi` blocks in shell, where the only thing
 # that varied was the probe and the install.
-sync = ["uv", "sync", "--frozen"]
+sync = ["uv", "sync", "--project", "build_system", "--frozen"]
 node_workspaces = ["frontend", "docs", "site", "release-site"]
 # CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
 # prompt, which hangs an unattended gate when the store layout drifts from the
@@ -1409,7 +1409,7 @@ freshness_inputs = [
     "config/docker/image/build.toml",
     "docker/Dockerfile.guest-rust-builder",
 ]
-build = ["uv", "run", "capsem-builder", "agent", "config/docker/image"]
+build = ["uv", "run", "--project", "build_system", "--frozen", "capsem-builder", "agent", "config/docker/image"]
 
 # Checked-in guest payloads copied in beside the binaries.
 init = "guest/artifacts/capsem-init"
@@ -1633,7 +1633,7 @@ cli = "target/debug/capsem"
 # the same in all four.
 admin = ["cargo", "run", "-p", "capsem-admin", "--", "image", "build"]
 workspace_admin = ["cargo", "run", "-p", "capsem-admin", "--", "image", "workspace"]
-dependency_backend = ["uv", "run", "python", "-m", "capsem_builder.image.image_build_backend"]
+dependency_backend = ["uv", "run", "--project", "build_system", "--frozen", "python", "-m", "capsem_builder.image.image_build_backend"]
 # The profile materializer copies this directory byte-for-byte. It is also the
 # one authority the gate uses to prefetch exact per-platform base manifests.
 source_config = "config/docker/image"
@@ -1728,7 +1728,6 @@ max_lines = 20
 # Exact ratchets, as everywhere else: an entry may not grow, and a body that
 # shrinks updates or removes its entry in the same change.
 [boundary.shell_bodies.oversized_line_counts]
-"ci.yaml:test:22:Python schema tests with coverage" = 25
 "release-assets.yaml:author-profile-release:17:Author selected channel profile in the source manifest" = 32
 "release-assets.yaml:publish-profile-release:16:Publish immutable GitHub profile release" = 33
 "release.yaml:build-app-macos:22:Verify macOS package installation path policy" = 31
@@ -1997,6 +1996,7 @@ root = "tests/"
 # in dry runs and prevents a caller from reconstructing either path.
 build_system_root = "build_system/tests/"
 build_system_project = "build_system"
+project_manifest = "build_system/pyproject.toml"
 # The Citadel: source-level guards recording architectural mistakes that must
 # not be repeated. Named separately from `root` because it belongs in the fast
 # phase, not the broad suite. It reads source and asserts on it -- no artifact,
@@ -2838,7 +2838,7 @@ collectors = "benchmarks/collectors"
 store = "target/test-benchmarks/benchmarks.db"
 # The collectors are Python and import the project's dependencies, so they run
 # under the project's interpreter rather than whatever the shebang resolves to.
-interpreter = "uv run --active python"
+interpreter = "uv run --project build_system --frozen --active python"
 # A collector that never exits would hold the machine lock the whole gate runs
 # under, so one is always bounded.
 timeout_secs = 900

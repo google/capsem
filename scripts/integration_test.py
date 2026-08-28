@@ -11,8 +11,8 @@ Exercises:
   6. main.db      -- rollup counters match session.db actuals
 
 Usage:
-    uv run python scripts/integration_test.py              # uses target/debug/capsem
-    uv run python scripts/integration_test.py --binary ./capsem --assets ./assets
+    uv run --project build_system --frozen python scripts/integration_test.py              # uses target/debug/capsem
+    uv run --project build_system --frozen python scripts/integration_test.py --binary ./capsem --assets ./assets
 
 Ironbank note: this is black-box product proof. Do not close a release gate
 with status-only replay, row-exists checks, skipped/slow cases, public

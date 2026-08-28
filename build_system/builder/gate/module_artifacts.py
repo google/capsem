@@ -131,7 +131,7 @@ def pulled_artifacts(
     verify = phase.add(
         step(
             "release-inputs.verify",
-            Script(settings.verify_inputs_script, "--input-dir", input_dir),
+            Script(config, settings.verify_inputs_script, "--input-dir", input_dir),
             kind=Kind.STATIC_TEST,
             needs=frozenset({Needs.DISK}),
             speed=Speed.FAST,
@@ -146,6 +146,7 @@ def pulled_artifacts(
         step(
             "release-inputs.boot",
             Script(
+                config,
                 settings.prove_profile_assets_script,
                 "--input-dir",
                 input_dir,

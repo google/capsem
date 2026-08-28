@@ -88,13 +88,13 @@ def test_version_stamp_propagates_cargo_toml_and_refreshes_both_frozen_locks() -
     # without touching the code that walks it.
     assert config.versions.cargo_manifest == "Cargo.toml"
     stamped = {entry.path for entry in config.versions.stamped}
-    assert "pyproject.toml" in stamped
+    assert "build_system/pyproject.toml" in stamped
 
     # Each lockfile is refreshed by the tool that owns it, after the
     # substitution rather than before -- otherwise the lock records the version
     # the cohort had a moment ago.
     cargo = '["cargo", "update", "--workspace", "--offline"]'
-    uv_lock = '["uv", "lock", "--locked", "--offline"]'
+    uv_lock = '["uv", "lock", "--project", project, "--locked", "--offline"]'
     assert cargo in stamp
     assert uv_lock in stamp
     assert stamp.index("for stamped in settings.stamped") < stamp.index(cargo)
@@ -127,11 +127,13 @@ def test_version_stamp_refuses_a_version_that_is_already_tagged() -> None:
 def test_checked_in_python_lock_matches_project_version() -> None:
     project_version = next(
         line.split('"', 2)[1]
-        for line in (PROJECT_ROOT / "pyproject.toml").read_text().splitlines()
+        for line in (PROJECT_ROOT / "build_system/pyproject.toml").read_text().splitlines()
         if line.startswith("version = ")
     )
-    lock_lines = (PROJECT_ROOT / "uv.lock").read_text().splitlines()
-    package_index = next(i for i, line in enumerate(lock_lines) if line == 'name = "capsem"')
+    lock_lines = (PROJECT_ROOT / "build_system/uv.lock").read_text().splitlines()
+    package_index = next(
+        i for i, line in enumerate(lock_lines) if line == 'name = "capsem-builder"'
+    )
     locked_version = lock_lines[package_index + 1].split('"', 2)[1]
 
     assert locked_version == project_version

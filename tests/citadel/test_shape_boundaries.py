@@ -12,6 +12,7 @@ they drift, and drift is what a ratchet exists to prevent.
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -199,16 +200,12 @@ def test_the_ratchet_notices_a_file_growing(family: str, monkeypatch: pytest.Mon
         inflated[target] = rule.max_lines + 1
 
     monkeypatch.setattr(
-        "tests.citadel.test_shape_boundaries._tracked_line_counts",
+        sys.modules[__name__],
+        "_tracked_line_counts",
         lambda *_args, **_kwargs: inflated,
-        raising=False,
     )
-    globals()["_tracked_line_counts"] = lambda *_a, **_k: inflated
-    try:
-        with pytest.raises(AssertionError, match=expected):
-            test_oversized_sources_match_the_exact_debt_ratchet(family)
-    finally:
-        globals()["_tracked_line_counts"] = _REAL_TRACKED_LINE_COUNTS
+    with pytest.raises(AssertionError, match=expected):
+        test_oversized_sources_match_the_exact_debt_ratchet(family)
 
 
 @pytest.mark.parametrize("family", FAMILIES)

@@ -22,9 +22,9 @@ the implementation from the Just recipe or recreate it with shell commands.
 Start with:
 
 ```bash
-uv run capsem-gate runs last --failed
-uv run capsem-gate <command> --dry-run
-uv run capsem-gate <command> --graph
+uv run --project build_system --frozen capsem-gate runs last --failed
+uv run --project build_system --frozen capsem-gate <command> --dry-run
+uv run --project build_system --frozen capsem-gate <command> --graph
 ```
 
 Use the smallest focused pytest, cargo, pnpm, or script command for red/green
@@ -53,8 +53,8 @@ When a clean candidate fails after expensive predecessors have succeeded, use
 quickly. The current CLI retains legacy flag names:
 
 ```bash
-uv run capsem-gate runs last --failed
-uv run capsem-gate candidate --prefix <retained-prefix> --from <failed-step>
+uv run --project build_system --frozen capsem-gate runs last --failed
+uv run --project build_system --frozen capsem-gate candidate --prefix <retained-prefix> --from <failed-step>
 ```
 
 The `--from` step runs; graph predecessors are reported as `carried`. Before

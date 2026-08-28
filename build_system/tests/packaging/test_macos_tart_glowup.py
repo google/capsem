@@ -751,10 +751,10 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke(
 
     assert "brew install cirruslabs/cli/tart cirruslabs/cli/sshpass" in bootstrap
     assert "brew trust --formula cirruslabs/cli/softnet" in bootstrap
-    assert 'uv run python "$SCRIPT_DIR/scripts/tart_readiness.py"' in bootstrap
+    assert 'uv run --project build_system --frozen python "$SCRIPT_DIR/scripts/tart_readiness.py"' in bootstrap
     assert "tart --version" in doctor
     assert "sshpass" in doctor
-    assert 'uv run python "$PROJECT_ROOT/scripts/tart_readiness.py"' in doctor
+    assert 'uv run --project build_system --frozen python "$PROJECT_ROOT/scripts/tart_readiness.py"' in doctor
     assert "test-macos-install:" not in justfile
     from capsem_builder.gate import config as gate_config
 

@@ -68,7 +68,12 @@ def _subject(source: Path) -> list[Path]:
         capture_output=True,
         text=True,
     ).stdout
-    return [Path(name) for name in listing.split("\0") if name]
+    relatives = [Path(name) for name in listing.split("\0") if name]
+    return [
+        relative
+        for relative in relatives
+        if (source / relative).exists() or (source / relative).is_symlink()
+    ]
 
 
 def _copy_files(source: Path, target: Path, relatives: list[Path]) -> None:

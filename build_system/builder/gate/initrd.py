@@ -86,7 +86,7 @@ def finalize(
     return phase.add(
         step(
             "hash-aliases",
-            Script(config.initrd.hash_assets, str(assets)),
+            Script(config, config.initrd.hash_assets, str(assets)),
             kind=Kind.STATIC_TEST,
             needs=frozenset({Needs.DISK}),
             speed=Speed.FAST,

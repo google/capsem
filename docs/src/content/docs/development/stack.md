@@ -176,7 +176,7 @@ builder to produce kernel + rootfs via Docker.
 
 ```bash
 cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --arch arm64
-uv run capsem-builder doctor --profile code --config-root config # check prerequisites and profile
+uv run --project build_system --frozen capsem-builder doctor --profile code --config-root config # check prerequisites and profile
 ```
 
 ### Container runtime
