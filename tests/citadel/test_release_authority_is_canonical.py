@@ -5,15 +5,26 @@ from __future__ import annotations
 import hashlib
 import re
 import subprocess
+import tomllib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+DEBT = Path(__file__).with_name("release_authority_debt.toml")
 CANONICAL_TITLE = "# Capsem Binary, Profile, Manifest, and Channel Release Specification"
 OLD_AUTHORITY = "tmp/release-spec.md"
 ROUTING_SURFACES = ("AGENTS.md", "skills/release-process/")
+EXCLUDED_POLICY_FILES = frozenset(
+    {
+        "tests/citadel/release_authority_debt.toml",
+        "tests/citadel/repository_path_debt.toml",
+        "tests/citadel/repository_surface_ownership.toml",
+        "tests/citadel/test_release_authority_is_canonical.py",
+        "tests/citadel/test_repository_path_ownership.py",
+    }
+)
 AUTHORITY_CLAIMS = (
     re.compile(r"\bnormative contract\b", re.IGNORECASE),
     re.compile(r"\bgoverning contract\b", re.IGNORECASE),
@@ -55,7 +66,11 @@ def _violations(
         problems.append(f"obsolete normative source is still tracked: {OLD_AUTHORITY}")
 
     stale_paths = {
-        path for path, text in sources.items() if OLD_AUTHORITY in text and path != OLD_AUTHORITY
+        path
+        for path, text in sources.items()
+        if OLD_AUTHORITY in text
+        and path != OLD_AUTHORITY
+        and path not in EXCLUDED_POLICY_FILES
     }
     for path in sorted(stale_paths):
         if debt.get(path) != _digest(sources[path]):
@@ -70,6 +85,19 @@ def _violations(
         if claims:
             problems.append(f"duplicate normative release authority in {path}: {claims}")
     return sorted(problems)
+
+
+def _load_debt() -> dict[str, str]:
+    policy = tomllib.loads(DEBT.read_text(encoding="utf-8"))
+    files = policy.get("files", {})
+    assert files, RELEASE_AUTHORITY_RATIONALE + "\nrelease authority debt is empty"
+    debt: dict[str, str] = {}
+    for path, entry in files.items():
+        assert entry.get("digest") and entry.get("item") and entry.get("reason"), (
+            RELEASE_AUTHORITY_RATIONALE + f"\nincomplete debt entry: {path}"
+        )
+        debt[path] = entry["digest"]
+    return debt
 
 
 def _tracked_sources() -> tuple[list[str], dict[str, str]]:
@@ -160,3 +188,9 @@ def test_exact_hashed_debt_is_allowed_and_reconciles_both_ways() -> None:
     assert f"stale release-authority debt entry: {path}" in _violations(
         ["RELEASE.md"], {"RELEASE.md": CANONICAL_TITLE}, debt
     )
+
+
+def test_current_repository_release_authority_is_canonical() -> None:
+    tracked, sources = _tracked_sources()
+    problems = _violations(tracked, sources, _load_debt())
+    assert not problems, RELEASE_AUTHORITY_RATIONALE + "\n" + "\n".join(problems)

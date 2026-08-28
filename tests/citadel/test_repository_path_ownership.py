@@ -43,6 +43,7 @@ OBSOLETE_PREFIXES = (
 OBSOLETE_ROOT_FILES = ("entitlements.plist", "pyproject.toml", "uv.lock")
 EXCLUDED_POLICY_FILES = frozenset(
     {
+        "tests/citadel/release_authority_debt.toml",
         "tests/citadel/repository_path_debt.toml",
         "tests/citadel/repository_surface_ownership.toml",
         "tests/citadel/test_release_authority_is_canonical.py",

@@ -17,7 +17,7 @@
 **/test-artifacts
 # Local benchmark-framework experiments are source checkouts with their own
 # archives and Git object store. They are not Capsem build inputs; keep the
-# tracked tmp/release-spec.md available to the lane.
+# tracked RELEASE.md available to the lane.
 **/benchmark-framework-spike
 
 # Release credentials. Never in a build context.

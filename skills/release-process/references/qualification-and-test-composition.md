@@ -32,7 +32,7 @@ public dispatch. Do not move orchestration into recipes, workflow YAML, or a rel
 
 ## Hosted lanes own release qualification
 
-Capsem has exactly two release-facing Just commands:
+The public release command forms are defined by root `RELEASE.md`:
 
 ```bash
 just release-binaries <channel> <source-commit>

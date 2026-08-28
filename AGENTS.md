@@ -195,78 +195,24 @@ timeouts, journal, resource teardown, and resumable graph remain authoritative.
 
 ## Serialized Orthogonal Releases
 
-The governing contract is `tmp/release-spec.md`. Capsem has exactly two release
-commands:
+Release authority is [RELEASE.md](RELEASE.md). Start there, then load
+`/release-process` for operational routing and hard-won implementation lessons.
+The public entrypoints are:
 
 ```text
 just release-binaries <channel> <source-commit>
 just release-profile <channel> <profile> <source-commit>
 ```
 
-- Each release command freezes and validates the exact lowercase commit,
-  creates or verifies `capsem-source-<commit>`, and dispatches the hosted lane
-  that qualifies its artifact family before publication. No channel consumes
-  a developer-machine candidate journal.
-- `just test-clean` is the exceptional cold complete diagnostic. It rebuilds
-  packages and every configured profile, then runs audits, lint, frontend,
-  Rust/Python coverage, all VM suites, Winterfell/MCP lifecycle, IronBank,
-  injection, integration, benchmarks, full `capsem-doctor`, native install,
-  and glow-up.
-- The private `_test-fast` module runs before Docker/Colima or artifact work
-  and is reused whole by `just fast-test`, `just test-clean`, ordinary CI, and both
-  release lanes. It owns YAML/source syntax, source contracts, Clippy,
-  Python/JavaScript checks, web builds, and all dependency audits.
-- Release CI calls the same checked-in private test modules but builds only the
-  artifact family owned by its lane. Binary CI pulls every selected profile;
-  profile CI pulls the selected channel's package. Pulled inputs are verified
-  by immutable identity and digest.
-- Which lane a run is in is **one indivisible value**, not a set of variables
-  each module reads for itself. `capsem.gate.qualification` parses it once, and
-  the only legal shapes are local (nothing set), binary release (input
-  directory and exact package), and profile release (those plus the profile).
-  Every other combination is refused during plan construction. Do not add a
-  module that reads `CAPSEM_RELEASE_*` directly — a half-exported environment
-  used to build a plausible hybrid that proved source-built bytes in one family
-  and manifest-selected bytes in the other.
-- `capsem-gate` re-execs under a per-invocation bytecode cache before importing
-  any of its own package, and the complete gate refuses to start without the
-  marker that says so. A same-size edit inside one timestamp tick otherwise
-  leaves a valid-looking `.pyc`, and the source guard digests the bytes on disk
-  rather than the bytes being executed.
-- Candidate, both release commands, and every directly invoked private test
-  module execute under the host kernel's network boundary: Bubblewrap with
-  loopback only on Linux, Seatbelt on macOS. Only the three live advisory
-  queries (RustSec, npm bulk, and OSV) and a local release's manifest
-  resolution, remote-main validation, immutable source-ref publication, and
-  workflow dispatch run outside that
-  boundary through the authenticated one-time egress resource; those commands
-  still pass through the same `GuardedRunner` and run journal. Release
-  CI materializes locked dependencies and immutable manifest-selected inputs
-  before entering its module boundary. Never widen the whole release process
-  merely because one edge needs the network.
-- Guest kernel/rootfs bases are per-platform child manifests pinned by digest.
-  Their guarded prefetch uses the Docker daemon's existing container-fetch
-  boundary and never widens the host-process release egress helper.
-- Every pairing that becomes public must pass the complete functional and
-  glow-up modules. Saving build time never means skipping tests.
-- Binary and profile releases share the workflow-level
-  `capsem-release-${channel}` lock from source-manifest resolution through
-  production deployment. Different channels remain independent.
-- A profile requiring new code is published immutably but remains inactive.
-  The following binary release consumes that staged profile without rebuilding
-  it and activates only the fully tested compatible graph.
-- The manifest is the bible: if an artifact is not selected by it, it does not
-  exist for release, update, cache, test, or boot. Fetch mutable manifests
-  fresh. Cache immutable bytes only under their manifest-recorded digests,
-  independently of channel, and verify every hit before use. Existing SBOM,
-  OBOM, attestations, and GitHub logs are the evidence; do not add a parallel
-  release ledger or result file.
-- All first-party and corporate manifest/profile authoring goes through
-  `capsem-admin`. Corporations select official Capsem packages; they do not
-  build or replace them.
-- Exact publishable packages must be installed on macOS and Linux before
-  publication. Public polling, channel switching, binary/profile transitions,
-  tamper rejection, Winterfell, and doctor remain mandatory glow-up proof.
+Agents use these entrypoints rather than dispatching release workflows or
+authoring manifests directly. `just test-clean <source-commit>` is the
+exceptional local diagnostic and is not publication authority. Direct release
+commands and `just test-clean` own their timeouts, journal, teardown, and
+network boundary; do not wrap or nest them.
+
+Implementation-specific invariants belong beside their executable tests and in
+the routed release references. If prose here disagrees with `RELEASE.md`, fix
+the routing instead of creating another release model.
 
 ## Logger DB Boundary
 

@@ -5,20 +5,19 @@ description: Capsem's release process: orthogonal binary/profile CI, signing, no
 
 # Release Process
 
-## Manifest Authority
+## Manifest handling
 
-The selected manifest is the bible: if an artifact is not recorded in it, it
-does not exist for a release lane. Fetch the mutable manifest fresh after the
-channel lock is acquired. Large immutable inputs may be cached only under the
-artifact digests already recorded in that manifest, independently of channel,
-and every cache hit must be digest-verified before use. Cache contents,
-filenames, GitHub Releases, and prior workflow runs never add membership.
+Read the manifest model in `RELEASE.md`, then use
+`references/release-graph.md` for concrete paths, authoring tools, retirement,
+and verification mechanics. Do not infer a selection from ambient cache or
+workflow state while diagnosing a release.
 
-## Governing contract
+## Release authority
 
-Read `tmp/release-spec.md` before changing release commands, manifests,
-workflows, test composition, artifact publication, or update behavior. It is
-the normative contract when older repository text disagrees.
+Read root [`RELEASE.md`](../../RELEASE.md) before changing release commands,
+manifests, workflows, test composition, artifact publication, or update
+behavior. This skill routes implementation work and preserves operational
+lessons; it does not restate product policy.
 
 ## Reference routing
 
@@ -46,52 +45,28 @@ the normative contract when older repository text disagrees.
   notes, binary/profile versions, compatibility bounds, profile revision
   advancement, release-set identities, or release commit practice.
 
-## Core release contract
+## Operational entrypoints
 
-Capsem has exactly two release-facing commands:
+Use the public command forms defined by `RELEASE.md`:
 
 ```bash
 just release-binaries <channel> <source-commit>
 just release-profile <channel> <profile> <source-commit>
 ```
 
-They freeze and validate a committed full lowercase commit on local `main`,
-publish its immutable `capsem-source-<commit>` ref, and dispatch the hosted
-lane that qualifies its owned artifact family before publication. They do not
-consume a developer-machine candidate journal. Do not add a third release
-command or dispatch the workflows directly.
+Do not dispatch downstream workflows or author source manifests by hand. Use
+`just test-clean <source-commit>` only as the exceptional cold diagnostic; use
+focused tests during ordinary development. The release commands and complete
+diagnostic own their sandbox, egress, machine lock, journal, and teardown, so
+do not nest or wrap them.
 
-`just test-clean <commit>` remains the exceptional cold complete diagnostic.
-Its resumable journal is useful for reproducing stale-cache and physical Mac
-defects, but it is not publication authority and agents must not run it after
-each source edit.
+For failures, select the reference matching the affected boundary above.
+Diagnostic continuation, CI-only `--force`, graph retirement, signing,
+Cloudflare recovery, and installed transition checks all have narrower rules
+in those references. When a reference appears to change product behavior,
+reconcile it against `RELEASE.md` and the executable contract tests first.
 
-A failed run archives its journal and retains the full-SHA prefix. A repeat may
-use only its deepest proven frontier; the child records carried steps and a
-content-addressed parent. Manual continuation must match the derived prefix,
-frontier, and carried set. Reuse-only success cannot extend the chain.
-
-The complete candidate remains inside the host-kernel network boundary.
-Bubblewrap on Linux and Seatbelt on macOS provide loopback only; the one-time
-authenticated egress helper serves only marked advisory queries, fresh
-manifest/version-ref resolution, remote-main validation, source-ref
-publication, and final dispatch. Every brokered command remains runner-guarded
-and journaled. Never widen the whole release because one edge needs network.
-
-Candidate and both release commands accept only the enforcing sandbox mode;
-`off` and `report` are diagnostic modes for incomplete modules and can never
-produce complete qualification evidence.
-
-Exceptional local `just test-clean` rebuilds every package/profile and runs
-the six release modules: `_test-fast`, `_test-static`, `_test-artifacts`,
-`_test-functional`, `_test-glowup`, and `_test-release-contracts`.
-
-Release CI saves construction time, never test quality. The binary lane builds
-packages and digest-resolves profiles; the profile lane builds exactly one
-channel/profile and digest-resolves the selected package. Both stage the exact
-complementary family into the shared modules; source-built substitutes and
-ambient release-variable assertion forks are forbidden. `just fast-test` is
-developer feedback and the exact `_test-fast` module, not qualification.
+## Tested operational handoffs
 
 Assets and materialized configuration travel as one `ProfileContent` root.
 Package construction, Debian proof, macOS Tart/physical-VZ proof, and final
@@ -100,61 +75,16 @@ before Docker or Colima. Release CI stages raw manifest inputs into the paired
 root on the host; the sealed proof never rematerializes them or falls back to
 checkout `assets`/`target/config` selectors.
 
-Binary and profile workflows share the exact
-`capsem-release-${{ inputs.channel }}` lock from fresh manifest read through
-deployment. Stable and nightly remain independent. The binary lane may mutate
-only package/per-binary/host-SBOM/existing-attestation fields and never builds a
-profile. The profile lane may mutate only one channel/profile and never builds
-a package. Binary inventory is nested under its owning package. Profiles own
-their config, images, software inventory, OBOM/evidence. `capsem-admin` is the
-sole first-party and corporate manifest/profile
-author; corporations never build or mutate Capsem-owned binaries or channels.
-
-A legacy public graph is never inferred dead from a 404. Use only the exact,
-config-owned retirement rail in `references/release-graph.md`, then publish the
-replacement profile before the binary lane activates a new package cohort.
-
-If a profile needs newer code, publish its immutable bytes once as staged
-source state, then run the binary command. That lane resolves the staged
-profile by digest, proves the complete pairing, and activates only after full
-functional, native-install, Winterfell/MCP, IronBank, doctor, and glow-up
-success. Neither artifact family is rebuilt twice; the prior public working
-pair survives every failure.
-
-Native installation proves function, not existence. macOS CI owns signing,
-notarization, stapling, exact-package installation, and structural checks;
-Linux owns exact native `.deb` installation and the guest shell where KVM is
-available. Local Apple Silicon `just test-clean` owns that VZ proof. Neither platform
-boundary substitutes for another, and skipped or inspect-only checks do not
-count.
-
-Linux binary qualification includes the public-before to candidate-after
-self-update because the previous service launches the first package transition.
-Candidate `DEBIAN/preinst` detects its `dpkg` in `capsem.service` through
-`/proc/self/cgroup` and preserves the old cohort. Candidate `DEBIAN/postinst` defers
-hydration, status refresh, registration, and readiness so the updater can activate
-the candidate and restart. Ordinary replacement stops stale helpers and completes.
-
-The exact verified `assets/manifest.json` remains the installed source of truth
-byte-for-byte. `assets/manifest-metadata.json` is its only metadata sidecar;
-runtime may derive an in-memory boot view. CLI and UI consume the same
-`GET /system/status` contract and must not synthesize publication state.
-
-A red release lane stops publication. Fix forward without moving tags or
-history, then invoke the owning release command for the corrected commit.
-`just test-clean <commit>` may reuse its diagnostic journal when reproducing a
-local-only defect; release commands reject continuation flags and qualify in
-their hosted lanes.
+Linux package replacement embeds `deb-preinst.sh` as `DEBIAN/preinst`.
+Ordinary replacement uses `systemctl --user stop capsem.service` and retires
+the stale helper cohort before package replacement. When `/proc/self/cgroup`
+proves that the old service owns the update, preinstall preserves the old
+cohort and postinstall defers manifest hydration, status refresh, service
+registration, and readiness so that service can activate the verified
+candidate and request its managed restart.
 
 ## Version and commit essentials
 
-Keep user-visible binary release notes under `## [Unreleased]`. They are
-bookkeeping, not a qualification prerequisite: the immutable version tag is
-the release event, and the GitHub release name records the full qualified
-source commit. Binary and profile versions are orthogonal strict semver.
-`min_capsem_version` and `max_capsem_version` bound the binary, not a profile's
-own revision.
-`parse_profile_revision` rejects non-semver revisions; `ensure_revision_advances`
-rejects non-advancing publication. Mixed sets use `profiles-<hash>`.
-
-Stage explicitly with conventional commits; never stage release secrets.
+Read `references/versions-and-commit-discipline.md` for release-note,
+versioning, compatibility, and commit mechanics. Stage explicitly with a
+conventional subject and never stage release secrets.

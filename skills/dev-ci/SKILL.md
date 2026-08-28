@@ -141,7 +141,7 @@ contract move together.
 
 ## Release CI is orthogonal
 
-Release rules live in `AGENTS.md`, `tmp/release-spec.md`, and
+Release rules live in root `RELEASE.md`; agent routing lives in `AGENTS.md` and
 `/release-process`.
 
 - `just test-clean` is the complete local all-artifact proof.
