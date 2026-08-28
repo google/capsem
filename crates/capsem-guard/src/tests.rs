@@ -256,6 +256,23 @@ fn watch_parent_or_exit_accepts_real_parent() {
 }
 
 #[test]
+fn watcher_spawn_failure_returns_a_structured_error() {
+    let result = spawn_watcher_with(
+        current_ppid(),
+        PARENT_POLL_INTERVAL,
+        || {},
+        |_builder, _task| Err(std::io::Error::from_raw_os_error(libc::EAGAIN)),
+    );
+
+    match result {
+        Err(GuardError::WatcherSpawn { source }) => {
+            assert_eq!(source.raw_os_error(), Some(libc::EAGAIN));
+        }
+        other => panic!("expected WatcherSpawn error, got {other:?}"),
+    }
+}
+
+#[test]
 fn install_rejects_missing_parent() {
     let dir = tempfile::tempdir().unwrap();
     let r = install(None, &dir.path().join("x.lock"));

@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Parent-watch thread creation failures now return a structured guard error
+  instead of panicking during companion startup.
 - Companion singleton guards now retain stable in-process lock identity when a
   lockfile is replaced during acquisition.
 - Guest terminal output now appends to `serial.log` on a dedicated writer

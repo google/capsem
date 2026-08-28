@@ -42,6 +42,11 @@ pub enum GuardError {
     NoParent,
     #[error("parent pid {0} is not alive at startup")]
     ParentDead(u32),
+    #[error("failed to spawn parent-watch thread: {source}")]
+    WatcherSpawn {
+        #[source]
+        source: std::io::Error,
+    },
     #[error("io error on {path}: {source}")]
     Io {
         path: PathBuf,
@@ -106,7 +111,7 @@ pub fn watch_parent_or_exit(parent_pid: Option<u32>) -> Result<(), GuardError> {
     if !parent_is_expected(ppid) {
         return Err(GuardError::ParentDead(ppid));
     }
-    spawn_watcher(ppid, PARENT_POLL_INTERVAL, || std::process::exit(0));
+    spawn_watcher(ppid, PARENT_POLL_INTERVAL, || std::process::exit(0))?;
     info!(parent_pid = ppid, "parent watch armed");
     Ok(())
 }
@@ -114,25 +119,48 @@ pub fn watch_parent_or_exit(parent_pid: Option<u32>) -> Result<(), GuardError> {
 /// Internal helper used by the real `watch_parent_or_exit` and by tests.
 /// Tests inject a custom terminator so they can observe the effect without
 /// exiting the test runner.
-fn spawn_watcher<F>(parent_pid: u32, interval: Duration, terminator: F)
+type WatcherTask = Box<dyn FnOnce() + Send + 'static>;
+
+fn spawn_watcher<F>(parent_pid: u32, interval: Duration, terminator: F) -> Result<(), GuardError>
 where
     F: Fn() + Send + 'static,
 {
-    thread::Builder::new()
-        .name(format!("capsem-guard-watch-{parent_pid}"))
-        .spawn(move || loop {
-            if !parent_is_expected(parent_pid) {
-                warn!(
-                    parent_pid,
-                    current_ppid = current_ppid(),
-                    "parent gone or reparented; terminating companion"
-                );
-                terminator();
-                return;
-            }
-            thread::sleep(interval);
-        })
-        .expect("failed to spawn parent-watch thread");
+    spawn_watcher_with(parent_pid, interval, terminator, |builder, task| {
+        builder.spawn(task)
+    })
+}
+
+fn spawn_watcher_with<F, S>(
+    parent_pid: u32,
+    interval: Duration,
+    terminator: F,
+    spawn: S,
+) -> Result<(), GuardError>
+where
+    F: Fn() + Send + 'static,
+    S: FnOnce(thread::Builder, WatcherTask) -> std::io::Result<thread::JoinHandle<()>>,
+{
+    let task: WatcherTask = Box::new(move || loop {
+        if !parent_is_expected(parent_pid) {
+            warn!(
+                parent_pid,
+                current_ppid = current_ppid(),
+                "parent gone or reparented; terminating companion"
+            );
+            terminator();
+            return;
+        }
+        thread::sleep(interval);
+    });
+    let handle = spawn(
+        thread::Builder::new().name(format!("capsem-guard-watch-{parent_pid}")),
+        task,
+    )
+    .map_err(|source| GuardError::WatcherSpawn { source })?;
+    // The watcher intentionally owns its process-lifetime execution. Dropping
+    // JoinHandle detaches it; it does not stop or cancel the created thread.
+    drop(handle);
+    Ok(())
 }
 
 /// Process-wide registry of in-flight Singleton paths. Covers the window
