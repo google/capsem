@@ -44,7 +44,9 @@ OBSOLETE_ROOT_FILES = ("entitlements.plist", "pyproject.toml", "uv.lock")
 EXCLUDED_POLICY_FILES = frozenset(
     {
         "tests/citadel/repository_path_debt.toml",
+        "tests/citadel/repository_surface_ownership.toml",
         "tests/citadel/test_repository_path_ownership.py",
+        "tests/citadel/test_repository_surface_ownership.py",
     }
 )
 PATH_LITERAL = re.compile(

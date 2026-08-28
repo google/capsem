@@ -1,0 +1,281 @@
+version = 1
+
+# This is the transition join table. `current` classifies every tracked path;
+# `targets` is the approved final layout. Evidence names are deliberately
+# concrete so a move cannot erase its checker while keeping a vague owner.
+
+[[surface]]
+id = "repository-metadata"
+state = "retained"
+current = [".dockerignore", ".gitignore", "AGENTS.md", "CHANGELOG.md", "CITATION.cff", "CLAUDE.md", "CONTRIBUTING.md", "Cargo.lock", "Cargo.toml", "GEMINI.md", "LATEST_RELEASE.md", "LICENSE", "README.md", "RELEASE.md", "SECURITY.md", "audit.toml", "bootstrap.sh", "codecov.yml", "justfile", "rust-toolchain.toml", "test-dev-null.sh"]
+targets = ["<root-files>"]
+lint = ["fast.audit.source-syntax", "fast.audit.markdown", "fast.audit.shell", "fast.citadel"]
+tests = ["tests/citadel/test_repository_root_ownership.py", "tests/test_release_contract_architecture.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "docs-build", "site-build", "release-site-build", "pr-gate"]
+coverage = "not-applicable: repository contracts are source guards, not executable product code"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "Conventional root files remain authoritative and are checked by content type."
+
+[[surface]]
+id = "agent-and-tool-adapters"
+state = "retained"
+current = [".agents/", ".cargo/", ".claude/", ".codex/", ".config/", ".cursor/", ".gemini/"]
+targets = [".agents/", ".cargo/", ".claude/", ".codex/", ".config/", ".cursor/", ".gemini/"]
+lint = ["fast.audit.skills", "fast.audit.source-syntax", "fast.citadel"]
+tests = ["tests/test_skills.py", "tests/citadel/test_agent_contract_is_one_file.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "not-applicable: adapters and tool configuration contain no runtime code"
+debt = "none: paths are retained"
+reason = "Agent adapters remain thin links to the canonical skills and contract sources."
+
+[[surface]]
+id = "repository-automation"
+state = "retained"
+current = [".github/"]
+targets = [".github/"]
+lint = ["fast.audit.source-syntax", "fast.citadel"]
+tests = ["tests/test_fast_gate_ci_contract.py", "tests/citadel/test_ci_scope_ownership.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "docs-build", "site-build", "release-site-build", "pr-gate"]
+coverage = "not-applicable: workflow behavior is contract-tested"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "Workflow edits fail closed into every required CI owner."
+
+[[surface]]
+id = "build-system-builder"
+state = "migrating"
+current = ["src/", "pyproject.toml", "uv.lock"]
+targets = ["build_system/builder/"]
+lint = ["python.ruff", "python.ty.strict", "python.ty.relaxed"]
+tests = ["build_system/tests/builder/", "build_system/tests/gate/", "build_system/tests/policy/", "build_system/tests/release/"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "codecov unit flag; Python floor remains 85 percent"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "The capsem-builder distribution moves atomically and retains capsem-builder and capsem-gate commands."
+
+[[surface]]
+id = "build-system-docker"
+state = "migrating"
+current = ["docker/"]
+targets = ["build_system/docker/"]
+lint = ["fast.audit.docker", "fast.audit.shell"]
+tests = ["build_system/tests/scripts/", "tests/test_docker.py", "tests/test_guest_rust_builder_hermetic.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "not-applicable: Docker and shell boundaries are exercised by build and install acceptance"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "Host build and package containers move; product profile templates stay in config/docker."
+
+[[surface]]
+id = "build-system-packaging"
+state = "migrating"
+current = ["packages/", "security/keys/", "entitlements.plist"]
+targets = ["build_system/packaging/"]
+lint = ["fast.audit.shell", "fast.audit.source-syntax", "fast.citadel"]
+tests = ["build_system/tests/release/", "tests/capsem-install/", "tests/test_build_pkg.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "not-applicable: native packaging is proven by exact-package install acceptance"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "Packaging resources move by platform; crate-owned key resources move during the held Rust slice."
+
+[[surface]]
+id = "build-system-release-site"
+state = "migrating"
+current = ["release-site/"]
+targets = ["build_system/release_site/"]
+lint = ["fast.audit.source-syntax", "fast.audit.markdown"]
+tests = ["build_system/tests/release_site/", "tests/test_release_site_generation_contract.py"]
+ci = ["fast-gate", "release-site-build", "pr-gate"]
+coverage = "codecov unit flag and release-site component"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "The release site is release-distribution machinery, not a product website."
+
+[[surface]]
+id = "build-system-scripts"
+state = "migrating"
+current = ["scripts/"]
+targets = ["build_system/scripts/"]
+lint = ["python.ruff", "python.ty.relaxed", "fast.audit.shell", "fast.citadel"]
+tests = ["build_system/tests/scripts/", "tests/test_path_and_log_wrappers_are_mandatory.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "codecov unit flag for Python modules; shell boundaries use contract and acceptance proof"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "Only thin executable boundaries remain scripts; reusable behavior belongs in builder modules."
+
+[[surface]]
+id = "build-system-tests"
+state = "migrating"
+current = []
+targets = ["build_system/tests/"]
+lint = ["python.ruff", "python.ty.strict", "fast.citadel"]
+tests = ["build_system/tests/"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "codecov unit flag; Python floor remains 85 percent"
+debt = "migration selection is owned by Sprinty T2"
+reason = "Builder, gate, release, release-site, and script unit tests move with their subjects."
+
+[[surface]]
+id = "benchmarks"
+state = "migrating"
+current = ["bench/", "benchmarks/"]
+targets = ["benchmarks/collectors/", "benchmarks/baselines/"]
+lint = ["python.ruff", "python.ty.relaxed", "fast.audit.source-syntax"]
+tests = ["tests/test_benchmark_retention_contract.py", "tests/test_capsem_bench_gates.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "not-applicable: collectors and reviewed evidence are contract-tested; Rust harness coverage stays crate-owned"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "Collectors and reviewed baselines converge under one benchmark owner."
+
+[[surface]]
+id = "product-config"
+state = "retained"
+current = ["config/"]
+targets = ["config/"]
+lint = ["fast.audit.source-syntax", "fast.citadel"]
+tests = ["tests/test_config.py", "tests/test_public_surface_contract.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "not-applicable: product configuration is schema- and acceptance-tested"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "Product source contracts retain their existing five authorities."
+
+[[surface]]
+id = "native-product"
+state = "retained"
+current = ["crates/"]
+targets = ["crates/"]
+lint = ["fast.clippy"]
+tests = ["static.rust-coverage", "static.rust-doctests", "tests/test_rust_test_inventory.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "codecov unit integration and e2e flags; Rust workspace floor remains 63 percent"
+debt = "tests/citadel/repository_path_debt.toml; all crate edits held until user confirmation and pull of main"
+reason = "Crates retain their ownership; only path callers change after the explicit Rust checkpoint."
+
+[[surface]]
+id = "guest"
+state = "retained"
+current = ["guest/"]
+targets = ["guest/"]
+lint = ["fast.audit.shell", "fast.audit.source-syntax"]
+tests = ["tests/capsem-guest/", "tests/capsem-e2e/", "tests/ironbank/"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "not-applicable: guest artifacts require in-VM diagnostics and acceptance proof"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "Guest filesystem artifacts and diagnostics remain product-owned."
+
+[[surface]]
+id = "developer-skills"
+state = "retained"
+current = ["skills/"]
+targets = ["skills/"]
+lint = ["fast.audit.skills", "fast.audit.markdown", "fast.citadel"]
+tests = ["tests/test_skills.py", "tests/citadel/test_agent_contract_is_one_file.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "not-applicable: skills are validated as structured guidance"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "The checked-in skill library remains the canonical developer guidance source."
+
+[[surface]]
+id = "cross-system-tests"
+state = "migrating"
+current = ["tests/", "data/fixtures/"]
+targets = ["tests/"]
+lint = ["python.ruff", "python.ty.strict", "fast.audit.source-syntax", "fast.citadel"]
+tests = ["tests/citadel/", "tests/ironbank/", "tests/capsem-e2e/"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "test code is excluded; owned product coverage is emitted by the exercised subsystem"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "Cross-process, installed-product, VM, security, and acceptance tests remain at root."
+
+[[surface]]
+id = "web-app"
+state = "migrating"
+current = ["frontend/"]
+targets = ["web/app/"]
+lint = ["fast.web.frontend-verify", "fast.audit.source-syntax"]
+tests = ["frontend vitest coverage", "tests/frontend/"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "codecov unit flag and UI component"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "The desktop dashboard moves intact and remains embedded by the Tauri app."
+
+[[surface]]
+id = "web-docs"
+state = "migrating"
+current = ["docs/"]
+targets = ["web/docs/"]
+lint = ["fast.audit.markdown", "fast.audit.source-syntax"]
+tests = ["docs build", "tests/test_docs_holding_contract.py"]
+ci = ["fast-gate", "docs-build", "pr-gate"]
+coverage = "not-applicable: documentation is build- and link-verified"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "The documentation site moves under the web product owner."
+
+[[surface]]
+id = "web-marketing"
+state = "migrating"
+current = ["site/"]
+targets = ["web/marketing/"]
+lint = ["fast.audit.source-syntax", "fast.audit.markdown"]
+tests = ["marketing site build", "tests/test_marketing_download_contract.py"]
+ci = ["fast-gate", "site-build", "pr-gate"]
+coverage = "not-applicable: marketing is build- and browser-verified"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "The public marketing site moves under the web product owner."
+
+[[surface]]
+id = "web-graphics"
+state = "migrating"
+current = ["graphics/"]
+targets = ["web/graphics/"]
+lint = ["fast.citadel"]
+tests = ["graphics reference guards", "T5 visual browser verification"]
+ci = ["fast-gate", "site-build", "pr-gate"]
+coverage = "not-applicable: binary graphics require reference and visual verification"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "Shared web and native brand sources move together."
+
+[[surface]]
+id = "generated-output"
+state = "generated"
+current = ["data/.gitkeep"]
+targets = ["target/"]
+lint = ["fast.citadel"]
+tests = ["tests/test_gate_artifact_ownership.py", "tests/test_preserve_artifacts.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "not-applicable: generated output is ignored and never a source surface"
+debt = "root data placeholder is removed in T4"
+reason = "Generated assets, packages, test evidence, and configuration converge under ignored target."
+
+[[surface]]
+id = "legacy-sprint-records"
+state = "retiring"
+current = ["sprints/"]
+targets = []
+lint = ["fast.audit.markdown", "fast.citadel"]
+tests = ["tests/citadel/test_repository_path_ownership.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "not-applicable: historical plans are removed after live fixtures are extracted"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "Git preserves historical records; Sprinty is the only active sprint system."
+
+[[surface]]
+id = "temporary-release-contract"
+state = "retiring"
+current = ["tmp/"]
+targets = ["<root-files>"]
+lint = ["fast.audit.markdown", "fast.citadel"]
+tests = ["tests/test_release_contract_architecture.py", "tests/citadel/test_repository_path_ownership.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "not-applicable: normative text merges into RELEASE.md before tmp is removed"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "RELEASE.md becomes the sole release specification; operating-system temporary storage replaces root tmp."
+
+[[surface]]
+id = "sdk-reservation"
+state = "reserved"
+current = []
+targets = ["sdk/"]
+lint = ["next SDK sprint must install a declared fast checker before adding files"]
+tests = ["next SDK sprint must install unit and integration owners before adding files"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "next SDK sprint must install a Codecov component and threshold before adding files"
+debt = "none: sdk/ must remain absent throughout repository cleanup"
+reason = "The SDK is the immediately following product sprint, enabled by freeing the capsem package name first."
