@@ -7,11 +7,11 @@ use crate::security_engine::{
 
 const RULE_FIXTURE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../sprints/security-event-rule-spine/fixtures/enforcement.toml"
+    "/../../tests/fixtures/config/security-rule-profile/enforcement.toml"
 ));
 const SIGMA_FIXTURE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../sprints/security-event-rule-spine/fixtures/detection.yaml"
+    "/../../tests/fixtures/config/security-rule-profile/detection.yaml"
 ));
 const DEFAULT_PROVIDER_RULES: &str = include_str!("../default_provider_rules.toml");
 

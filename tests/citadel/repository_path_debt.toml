@@ -104,7 +104,6 @@ version = 1
 "docs/src/content/docs/releases/0-14.md" = "2c6b4dc8475409c77fef80c71936f2345761374a2a2b9d0d4aed55b5e2d0d4f9"
 "docs/src/content/docs/releases/0-16.md" = "0a8610244ef6f4ba4eb08a2507c4ede1456b908be85bd14159b2734f4f983684"
 "docs/src/content/docs/security/build-verification.md" = "3c35c9190a1fc3858b9223d05dd952546beae7e13bbb3c3c29db7c4915e59218"
-"docs/src/content/docs/security/policy.md" = "1dbab5f3b6a1f5240651946ed420e04cfe5d04c7df36aa85c1f543a8473804eb"
 "frontend/astro.config.mjs" = "f8138c6a8a5900bae2fe710699f7be531fe6e268f3ee7889812933653ce9b3b4"
 "frontend/src/lib/terminal/themes.ts" = "02ef611c1c30e01252fcb23290c2f91835131eeb032566520268845c3a60eaed"
 "justfile" = "f22e74c118097aabc6e23e54c37c2ccaf0c74dea829a9ecc191b73e2faf6af0b"

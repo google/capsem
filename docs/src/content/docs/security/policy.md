@@ -320,7 +320,7 @@ Do not use old callback-local roots such as `request.host` or
 ## Parser-Tested Examples
 
 The rule fixture used by Rust tests lives at
-`sprints/security-event-rule-spine/fixtures/enforcement.toml`. It includes:
+`tests/fixtures/config/security-rule-profile/enforcement.toml`. It includes:
 
 ```toml
 [ai.openai.rule]
@@ -375,7 +375,7 @@ Sigma import requires `logsource.product = capsem` and
 defaults to `allow` when omitted.
 
 The fixture used by tests lives at
-`sprints/security-event-rule-spine/fixtures/detection.yaml`, and is checked by
+`tests/fixtures/config/security-rule-profile/detection.yaml`, and is checked by
 both the Rust importer and the Python Sigma parser compatibility gate.
 
 ## Ledger
