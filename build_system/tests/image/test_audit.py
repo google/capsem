@@ -1,4 +1,4 @@
-"""Tests for capsem.builder.audit -- vulnerability scanner output parsing.
+"""Tests for capsem_builder.image.audit -- vulnerability scanner output parsing.
 
 TDD: tests written first (RED), then audit.py makes them pass (GREEN).
 """
@@ -8,8 +8,7 @@ from __future__ import annotations
 import json
 
 import pytest
-
-from capsem.builder.audit import (
+from capsem_builder.image.audit import (
     parse_audit_output,
     parse_grype_json,
     parse_trivy_json,

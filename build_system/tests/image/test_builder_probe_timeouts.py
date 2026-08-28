@@ -7,18 +7,17 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from capsem_builder.policy.dockerpolicy import ContainerNetwork
-
-from capsem.builder.docker import (
+from capsem_builder.image.docker import (
     CONTAINER_PROBE_CLEANUP_TIMEOUT_SECONDS,
     CONTAINER_PROBE_TIMEOUT_SECONDS,
     OBOM_COMMAND_TIMEOUT_SECONDS,
     _container_output,
     generate_cyclonedx_obom,
 )
+from capsem_builder.policy.dockerpolicy import ContainerNetwork
 
 
-@patch("capsem.builder.docker.run_cmd")
+@patch("capsem_builder.image.docker.run_cmd")
 def test_container_probe_timeout_force_removes_named_container(mock_run) -> None:
     mock_run.side_effect = [
         subprocess.TimeoutExpired(["docker", "run"], CONTAINER_PROBE_TIMEOUT_SECONDS),
@@ -51,7 +50,7 @@ def test_container_probe_timeout_force_removes_named_container(mock_run) -> None
     }
 
 
-@patch("capsem.builder.docker.run_cmd")
+@patch("capsem_builder.image.docker.run_cmd")
 def test_successful_container_probe_is_bounded_without_cleanup(mock_run) -> None:
     mock_run.return_value = MagicMock(stdout="inventory\n")
 
@@ -68,9 +67,9 @@ def test_successful_container_probe_is_bounded_without_cleanup(mock_run) -> None
     assert mock_run.call_args.kwargs["timeout"] == CONTAINER_PROBE_TIMEOUT_SECONDS
 
 
-@patch("capsem.builder.docker._validate_cyclonedx_obom")
-@patch("capsem.builder.docker._normalize_cyclonedx_obom")
-@patch("capsem.builder.docker.run_cmd")
+@patch("capsem_builder.image.docker._validate_cyclonedx_obom")
+@patch("capsem_builder.image.docker._normalize_cyclonedx_obom")
+@patch("capsem_builder.image.docker.run_cmd")
 def test_obom_subprocesses_are_all_bounded(
     mock_run,
     _mock_normalize,

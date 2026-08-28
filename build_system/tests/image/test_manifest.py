@@ -1,4 +1,4 @@
-"""Tests for capsem.builder.manifest -- BOM models, parsers, and renderer.
+"""Tests for capsem_builder.image.manifest -- BOM models, parsers, and renderer.
 
 TDD: tests written first (RED), then manifest.py makes them pass (GREEN).
 """
@@ -8,9 +8,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from pydantic import ValidationError
-
-from capsem.builder.manifest import (
+from capsem_builder.image.manifest import (
     ArchManifest,
     AssetEntry,
     ImageManifest,
@@ -23,6 +21,7 @@ from capsem.builder.manifest import (
     parse_pip_list,
     render,
 )
+from pydantic import ValidationError
 
 # ---------------------------------------------------------------------------
 # Inline fixtures

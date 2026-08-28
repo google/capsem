@@ -8,15 +8,16 @@ by just/CI and do not create a second product authoring rail.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import click
 
-from capsem.builder.config import load_guest_config
+from .config import load_guest_config
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(package_name="capsem", prog_name="capsem-builder")
+@click.version_option(package_name="capsem-builder", prog_name="capsem-builder")
 @click.pass_context
 def cli(ctx: click.Context) -> None:
     """Capsem builder -- backend helper tooling."""
@@ -37,7 +38,7 @@ def cli(ctx: click.Context) -> None:
               help="Config root containing profiles and rule files.")
 def doctor(profile_id: str, config_root: str) -> None:
     """Check build prerequisites and the profile-derived build contract."""
-    from capsem.builder.doctor import format_results, run_all_checks
+    from .doctor import format_results, run_all_checks
 
     repo_root = Path.cwd()
     results = run_all_checks(
@@ -56,7 +57,7 @@ def doctor(profile_id: str, config_root: str) -> None:
 @click.option("--json", "json_output", is_flag=True, help="Output validation report as JSON.")
 def validate_skills(skills_dir: str, json_output: bool) -> None:
     """Validate the canonical Capsem skill library."""
-    from capsem.builder.skills import validate_skill_library
+    from .skills import validate_skill_library
 
     path = Path(skills_dir)
     try:
@@ -107,7 +108,7 @@ def agent(
 
     out = Path(output_dir) / arch_name
 
-    from capsem.builder.docker import cross_compile_agent
+    from .docker import cross_compile_agent
     try:
         cross_compile_agent(config.build, arch_name, repo_root, out)
     except Exception as e:
@@ -130,9 +131,9 @@ def agent(
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def audit(scanner: str, input_file: str | None, json_output: bool) -> None:
     """Parse vulnerability scan results."""
-    from capsem.builder.audit import parse_audit_output, summarize_vulns
+    from .audit import parse_audit_output, summarize_vulns
 
-    text = Path(input_file).read_text() if input_file else click.get_text_stream("stdin").read()
+    text = Path(input_file).read_text() if input_file else sys.stdin.read()
 
     if not text.strip():
         click.echo("error: no input (provide --input or pipe via stdin)", err=True)

@@ -1156,7 +1156,7 @@ fn image_plan_is_profile_derived_and_uses_erofs_lz4hc() {
             "run",
             "python",
             "-m",
-            "capsem.builder.image_build_backend",
+            "capsem_builder.image.image_build_backend",
         ]
     );
     assert!(!plan.commands[0]
@@ -1174,7 +1174,7 @@ fn image_plan_is_profile_derived_and_uses_erofs_lz4hc() {
             "run",
             "python",
             "-m",
-            "capsem.builder.image_build_backend",
+            "capsem_builder.image.image_build_backend",
         ]
     );
     assert!(!plan.commands[1]

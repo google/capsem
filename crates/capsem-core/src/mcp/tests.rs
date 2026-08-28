@@ -486,7 +486,7 @@ fn all_guest_binaries_in_dockerfile_rootfs() {
 
     // Also verify that prepare_build_context includes all agent binaries
     // by checking the Python build context function lists them.
-    let docker_py = std::fs::read_to_string(root.join("src/capsem/builder/docker.py"))
+    let docker_py = std::fs::read_to_string(root.join("build_system/builder/image/docker.py"))
         .expect("cannot read docker.py");
     for bin in &bins {
         assert!(

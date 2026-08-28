@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import cast
 
-from capsem.builder.docker import create_erofs, docker_build
+from capsem_builder.image.docker import create_erofs, docker_build
 from capsem.gate.docker import Docker
 from capsem.gate.config import GateConfig
 from capsem.gate.installimage import _step_label, source_image_tag

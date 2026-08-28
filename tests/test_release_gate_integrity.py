@@ -399,7 +399,8 @@ def test_host_builder_base_images_are_immutable() -> None:
 
 def test_every_guest_builder_base_is_an_exact_platform_child_manifest() -> None:
     """A mutable tag lets a warm host and a cold release runner build different bytes."""
-    from capsem.builder.config import load_guest_config
+    from capsem_builder.image.config import load_guest_config
+
     from capsem.gate import config as gate_config
 
     root = Path(__file__).resolve().parents[1]

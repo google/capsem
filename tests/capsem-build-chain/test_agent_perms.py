@@ -9,8 +9,7 @@ read-only invariant (CLAUDE.md) holds for every caller.
 from pathlib import Path
 
 import pytest
-
-from capsem.builder.docker import GUEST_BINARIES, enforce_guest_binary_perms
+from capsem_builder.image.docker import GUEST_BINARIES, enforce_guest_binary_perms
 
 pytestmark = pytest.mark.build_chain
 

@@ -9,14 +9,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from capsem_builder.image import guestbuilder
+from capsem_builder.image.config import load_guest_config
+from capsem_builder.image.docker import GUEST_BINARIES, container_compile_agent
+from capsem_builder.image.guestbuilder import image_repository, image_tag
+from capsem_builder.image.models import ArchConfig
 from helpers.gate import RecordingRunner
 from pydantic import ValidationError
 
-from capsem.builder import guestbuilder
-from capsem.builder.config import load_guest_config
-from capsem.builder.docker import GUEST_BINARIES, container_compile_agent
-from capsem.builder.guestbuilder import image_repository, image_tag
-from capsem.builder.models import ArchConfig
 from capsem.gate import config as gate_config
 from capsem.gate import imagebases, imagebuild, initrd
 from capsem.gate.errors import GateError
@@ -325,8 +325,8 @@ def test_macos_check_assets_proves_execution_before_materializing_helper(
         previous = label
 
 
-@patch("capsem.builder.docker.run_cmd")
-@patch("capsem.builder.docker.detect_runtime", return_value="docker")
+@patch("capsem_builder.image.docker.run_cmd")
+@patch("capsem_builder.image.docker.detect_runtime", return_value="docker")
 def test_cross_build_fails_closed_when_the_materialized_helper_is_missing(
     _detect: MagicMock, run: MagicMock, tmp_path: Path
 ) -> None:
@@ -348,8 +348,8 @@ def test_cross_build_fails_closed_when_the_materialized_helper_is_missing(
     assert "build" not in inspected
 
 
-@patch("capsem.builder.docker.run_cmd")
-@patch("capsem.builder.docker.detect_runtime", return_value="docker")
+@patch("capsem_builder.image.docker.run_cmd")
+@patch("capsem_builder.image.docker.detect_runtime", return_value="docker")
 def test_cross_build_refuses_a_materialized_helper_for_the_wrong_platform(
     _detect: MagicMock, run: MagicMock, tmp_path: Path
 ) -> None:
@@ -366,8 +366,8 @@ def test_cross_build_refuses_a_materialized_helper_for_the_wrong_platform(
     assert run.call_count == 1
 
 
-@patch("capsem.builder.docker.run_cmd")
-@patch("capsem.builder.docker.detect_runtime", return_value="docker")
+@patch("capsem_builder.image.docker.run_cmd")
+@patch("capsem_builder.image.docker.detect_runtime", return_value="docker")
 def test_cross_build_runs_from_materialized_inputs_with_network_denied(
     _detect: MagicMock, run: MagicMock, tmp_path: Path
 ) -> None:

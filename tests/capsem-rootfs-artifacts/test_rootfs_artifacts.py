@@ -53,8 +53,8 @@ class TestBuildContext:
     def test_prepare_build_context_copies_all(self):
         """prepare_build_context copies all required artifacts to context dir."""
         try:
-            from capsem.builder.config import load_guest_config
-            from capsem.builder.docker import prepare_build_context
+            from capsem_builder.image.config import load_guest_config
+            from capsem_builder.image.docker import prepare_build_context
         except ImportError:
             pytest.skip("capsem-builder not installed")
 
@@ -86,7 +86,7 @@ class TestDoctorConsistency:
     def test_doctor_check_source_files_passes(self):
         """doctor check_source_files passes on this repo."""
         try:
-            from capsem.builder.doctor import check_source_files
+            from capsem_builder.image.doctor import check_source_files
         except ImportError:
             pytest.skip("capsem-builder not installed")
 
@@ -100,8 +100,8 @@ class TestDoctorConsistency:
         validate all reference the same artifacts.
         """
         # Read the three source files and check they reference the same artifacts
-        docker_src = (PROJECT_ROOT / "src/capsem/builder/docker.py").read_text()
-        doctor_src = (PROJECT_ROOT / "src/capsem/builder/doctor.py").read_text()
+        docker_src = (PROJECT_ROOT / "build_system/builder/image/docker.py").read_text()
+        doctor_src = (PROJECT_ROOT / "build_system/builder/image/doctor.py").read_text()
 
         # Both should reference capsem-bashrc, banner.txt, snapshots, etc.
         for name in ["capsem-bashrc", "banner.txt", "capsem-init", "snapshots"]:

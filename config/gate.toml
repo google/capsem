@@ -665,7 +665,7 @@ profiles_glob = "config/profiles/*/profile.toml"
 identity_roots = [
     "guest",
     "config",
-    "src/capsem/builder",
+    "build_system/builder/image",
     "crates/capsem-admin",
     "crates/capsem-core",
     "crates/capsem-logger",
@@ -1401,11 +1401,11 @@ freshness_inputs = [
     "Cargo.lock",
     "rust-toolchain.toml",
     "config/gate.toml",
-    "src/capsem/builder/config.py",
-    "src/capsem/builder/models.py",
-    "src/capsem/builder/cli.py",
-    "src/capsem/builder/docker.py",
-    "src/capsem/builder/guestbuilder.py",
+    "build_system/builder/image/config.py",
+    "build_system/builder/image/models.py",
+    "build_system/builder/image/cli.py",
+    "build_system/builder/image/docker.py",
+    "build_system/builder/image/guestbuilder.py",
     "config/docker/image/build.toml",
     "docker/Dockerfile.guest-rust-builder",
 ]
@@ -1633,7 +1633,7 @@ cli = "target/debug/capsem"
 # the same in all four.
 admin = ["cargo", "run", "-p", "capsem-admin", "--", "image", "build"]
 workspace_admin = ["cargo", "run", "-p", "capsem-admin", "--", "image", "workspace"]
-dependency_backend = ["uv", "run", "python", "-m", "capsem.builder.image_build_backend"]
+dependency_backend = ["uv", "run", "python", "-m", "capsem_builder.image.image_build_backend"]
 # The profile materializer copies this directory byte-for-byte. It is also the
 # one authority the gate uses to prefetch exact per-platform base manifests.
 source_config = "config/docker/image"
@@ -1882,9 +1882,9 @@ source_contract = [
     "tests/test_python_filesystem_chokepoint.py",
     "tests/test_authoritative_values_are_not_restated.py",
     "tests/test_build_assets_profile.py",
-    "tests/test_asset_network_guardrail.py",
+    "build_system/tests/image/test_asset_network_guardrail.py",
     "tests/test_build_provenance.py",
-    "tests/test_builder_probe_timeouts.py",
+    "build_system/tests/image/test_builder_probe_timeouts.py",
     "tests/test_cargo_audit_gate.py",
     "tests/test_check_cargo_audit.py",
     "tests/test_complete_release_channel.py",
@@ -1919,7 +1919,8 @@ source_contract = [
     "tests/test_gate_hostimage_composition.py",
     "tests/test_linux_workspace_prerequisites.py",
     "tests/test_host_builder_materializer.py",
-    "tests/test_image_build_backend.py",
+    "build_system/tests/image/test_image_build_backend.py",
+    "build_system/tests/image/test_image_module_boundary.py",
     "tests/test_gate_install_container.py",
     "tests/test_gate_install_image_identity.py",
     "tests/test_gate_no_nested_commands.py",
@@ -1981,7 +1982,7 @@ source_contract = [
     "tests/test_retired_version_formats.py",
     "tests/test_rust_test_layout.py",
     "tests/test_rust_test_name_assertions.py",
-    "tests/test_skills.py",
+    "build_system/tests/image/test_skills.py",
     "tests/test_source_syntax_gate.py",
     "tests/test_sync_container_clock.py",
 ]

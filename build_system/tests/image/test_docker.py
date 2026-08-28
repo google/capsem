@@ -18,11 +18,9 @@ from typing import Any, ClassVar, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-from capsem_builder.policy.dockerpolicy import BuildNetwork, ContainerNetwork
-
-from capsem.builder import assetdependencies, guestbuilder
-from capsem.builder.config import load_guest_config
-from capsem.builder.docker import (
+from capsem_builder.image import assetdependencies, guestbuilder
+from capsem_builder.image.config import load_guest_config
+from capsem_builder.image.docker import (
     BUILD_LEDGER_NAME,
     GUEST_BINARIES,
     ROOTFS_SCRIPTS,
@@ -64,7 +62,7 @@ from capsem.builder.docker import (
     validate_erofs_size,
     validate_rootfs_export,
 )
-from capsem.builder.models import (
+from capsem_builder.image.models import (
     AssetDependencyArchitectureConfig,
     AssetDependencyConfig,
     AssetToolBinaryConfig,
@@ -77,8 +75,9 @@ from capsem.builder.models import (
     RootfsConfig,
     VersionedDownloadConfig,
 )
+from capsem_builder.policy.dockerpolicy import BuildNetwork, ContainerNetwork
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 EXACT_EROFS_BASE = "registry.example/debian@sha256:" + "e" * 64
 
 
@@ -140,7 +139,7 @@ def test_run_cmd_surfaces_captured_subprocess_stderr(monkeypatch, capsys):
 def test_software_inventory_uses_one_profile_local_npm_document(tmp_path):
     npm_document = json.dumps({"dependencies": {"fixture": {"version": "1.2.3"}}})
     with patch(
-        "capsem.builder.docker._container_output",
+        "capsem_builder.image.docker._container_output",
         side_effect=["", "[]", npm_document],
     ) as container_output:
         extract_software_inventory(
@@ -789,7 +788,7 @@ def test_asset_dependency_require_returns_only_exact_matching_platform_image(
             argv, 0, stdout=f"linux/arm64\t{exact}\t{tag}\n", stderr=""
         )
 
-    monkeypatch.setattr("capsem.builder.docker.run_cmd", inspect)
+    monkeypatch.setattr("capsem_builder.image.docker.run_cmd", inspect)
 
     assert require_asset_dependencies(
         "docker", real_config, "arm64", "kernel"
@@ -797,8 +796,8 @@ def test_asset_dependency_require_returns_only_exact_matching_platform_image(
     assert seen[0][-1] == tag
 
 
-@patch("capsem.builder.docker.require_asset_dependencies")
-@patch("capsem.builder.docker.docker_build")
+@patch("capsem_builder.image.docker.require_asset_dependencies")
+@patch("capsem_builder.image.docker.docker_build")
 def test_asset_dependency_materializer_is_the_only_network_open_build(
     docker_build_mock,
     require_mock,
@@ -806,8 +805,8 @@ def test_asset_dependency_materializer_is_the_only_network_open_build(
     monkeypatch: pytest.MonkeyPatch,
 ):
     missing = subprocess.CalledProcessError(1, ["docker", "image", "inspect"])
-    monkeypatch.setattr("capsem.builder.docker.detect_runtime", lambda: "docker")
-    monkeypatch.setattr("capsem.builder.docker.run_cmd", MagicMock(side_effect=missing))
+    monkeypatch.setattr("capsem_builder.image.docker.detect_runtime", lambda: "docker")
+    monkeypatch.setattr("capsem_builder.image.docker.run_cmd", MagicMock(side_effect=missing))
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     exact = "sha256:" + "e" * 64
     resolved = assetdependencies.AssetDependencyImage(
@@ -990,7 +989,7 @@ class TestEdgeCases:
 
     def test_no_python_packages(self, real_config):
         """Removing python package set still renders."""
-        from capsem.builder.models import GuestImageConfig
+        from capsem_builder.image.models import GuestImageConfig
 
         minimal = GuestImageConfig(
             build=real_config.build,
@@ -1004,7 +1003,7 @@ class TestEdgeCases:
 
     def test_no_npm_package_set(self, real_config):
         """No npm package set means no npm install section."""
-        from capsem.builder.models import GuestImageConfig
+        from capsem_builder.image.models import GuestImageConfig
 
         minimal = GuestImageConfig(
             build=real_config.build,
@@ -1033,18 +1032,18 @@ class TestEdgeCases:
 
 
 class TestDetectRuntime:
-    @patch("capsem.builder.docker.check_container_runtime")
+    @patch("capsem_builder.image.docker.check_container_runtime")
     def test_docker_found(self, mock_check):
-        from capsem.builder.doctor import CheckResult
+        from capsem_builder.image.doctor import CheckResult
 
         mock_check.return_value = CheckResult(
             name="container-runtime", passed=True, detail="Docker version 27.1.1"
         )
         assert detect_runtime() == "docker"
 
-    @patch("capsem.builder.docker.check_container_runtime")
+    @patch("capsem_builder.image.docker.check_container_runtime")
     def test_not_found_raises(self, mock_check):
-        from capsem.builder.doctor import CheckResult
+        from capsem_builder.image.doctor import CheckResult
 
         mock_check.return_value = CheckResult(
             name="container-runtime",
@@ -1072,8 +1071,8 @@ class TestIsCi:
 
 
 class TestSyncContainerClock:
-    @patch("capsem.builder.docker.sys")
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.sys")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_syncs_via_bounded_shared_primitive(self, mock_run, mock_sys):
         mock_sys.platform = "darwin"
         mock_sys.executable = sys.executable
@@ -1083,15 +1082,15 @@ class TestSyncContainerClock:
         assert cmd[1].endswith("/scripts/sync-container-clock.py")
         assert mock_run.call_args.kwargs["timeout"] == 15
 
-    @patch("capsem.builder.docker.sys")
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.sys")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_noop_on_linux(self, mock_run, mock_sys):
         mock_sys.platform = "linux"
         sync_container_clock()
         mock_run.assert_not_called()
 
-    @patch("capsem.builder.docker.sys")
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.sys")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_propagates_errors(self, mock_run, mock_sys):
         mock_sys.platform = "darwin"
         mock_run.side_effect = Exception("VM not running")
@@ -1105,7 +1104,7 @@ class TestSyncContainerClock:
 
 
 class TestDockerBuild:
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_builder_boundaries_reject_raw_network_strings(self, mock_run):
         with pytest.raises(TypeError, match="BuildNetwork enum"):
             cast(Any, docker_build)(
@@ -1128,7 +1127,7 @@ class TestDockerBuild:
 
         mock_run.assert_not_called()
 
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_regular_build(self, mock_run):
         docker_build(
             runtime="docker",
@@ -1146,7 +1145,7 @@ class TestDockerBuild:
         assert "-t" in cmd
         assert "test-image" in cmd
 
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_ci_docker_uses_buildx(self, mock_run):
         docker_build(
             runtime="docker",
@@ -1163,7 +1162,7 @@ class TestDockerBuild:
         assert "--cache-to" in cmd
         assert "--load" in cmd
 
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_build_args(self, mock_run):
         docker_build(
             runtime="docker",
@@ -1186,7 +1185,7 @@ class TestDockerBuild:
 
 
 class TestExtractKernelAssets:
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_create_cp_rm_sequence(self, mock_run):
         mock_run.return_value = MagicMock(stdout="container123\n")
         out = Path("/tmp/test-assets")
@@ -1201,7 +1200,7 @@ class TestExtractKernelAssets:
 
 
 class TestExportContainerFs:
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_create_export_rm_sequence(self, mock_run):
         mock_run.return_value = MagicMock(stdout="container456\n")
         export_container_fs("docker", "rootfs-img", "linux/arm64", Path("/tmp/rootfs.tar"))
@@ -1244,7 +1243,7 @@ class TestBuildVersionScript:
         assert "pytest=" not in script
 
     def test_empty_config_produces_empty_script(self):
-        from capsem.builder.models import BuildConfig, GuestImageConfig
+        from capsem_builder.image.models import BuildConfig, GuestImageConfig
 
         config = GuestImageConfig(
             build=BuildConfig(
@@ -1318,7 +1317,7 @@ def dependency_architecture() -> AssetDependencyArchitectureConfig:
 
 def real_arch():
     """Minimal ArchConfig for test configs."""
-    from capsem.builder.models import ArchConfig
+    from capsem_builder.image.models import ArchConfig
 
     return ArchConfig(
         base_image="registry.example/debian@sha256:" + "a" * 64,
@@ -1333,7 +1332,7 @@ def real_arch():
 class TestExtractToolVersionsValidation:
     """extract_tool_versions() writes version output from configured commands."""
 
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_valid_output_passes(self, mock_run, real_config):
         mock_run.return_value = MagicMock(
             stdout=(
@@ -1353,7 +1352,7 @@ class TestExtractToolVersionsValidation:
             real_config,
         )
 
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_na_values_do_not_raise(self, mock_run, real_config):
         mock_run.return_value = MagicMock(stdout=("# System\nnode=24.1.0\n# Python\npytest=N/A\n"))
         extract_tool_versions(
@@ -1364,7 +1363,7 @@ class TestExtractToolVersionsValidation:
             real_config,
         )
 
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_validate_false_skips_check(self, mock_run, real_config):
         mock_run.return_value = MagicMock(stdout=("# Python\npytest=N/A\n"))
         # Should not raise when validate=False
@@ -1411,7 +1410,7 @@ class TestAptClockSkewOptions:
                 "builds will fail when container clock drifts"
             )
 
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_create_erofs_is_post_materialization_and_cannot_run_apt(self, mock_run):
         create_erofs(
             "docker",
@@ -1501,7 +1500,7 @@ class TestCreateErofs:
             ("aarch64", "linux/arm64"),
         ],
     )
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_helper_container_uses_host_native_platform_and_bounded_output(
         self,
         mock_run,
@@ -1509,7 +1508,7 @@ class TestCreateErofs:
         expected_platform,
         monkeypatch,
     ):
-        monkeypatch.setattr("capsem.builder.docker.platform.machine", lambda: host_machine)
+        monkeypatch.setattr("capsem_builder.image.docker.platform.machine", lambda: host_machine)
 
         create_erofs(
             "docker",
@@ -1526,9 +1525,9 @@ class TestCreateErofs:
         assert command[command.index("--platform") + 1] == expected_platform
         assert mock_run.call_args.kwargs["capture"] is True
 
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_helper_container_rejects_unknown_host_architecture(self, mock_run, monkeypatch):
-        monkeypatch.setattr("capsem.builder.docker.platform.machine", lambda: "riscv64")
+        monkeypatch.setattr("capsem_builder.image.docker.platform.machine", lambda: "riscv64")
 
         with pytest.raises(RuntimeError, match="unsupported Docker host architecture: riscv64"):
             create_erofs(
@@ -1544,7 +1543,7 @@ class TestCreateErofs:
 
         mock_run.assert_not_called()
 
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_zstd_is_not_an_erofs_release_format(self, mock_run):
         with pytest.raises(ValueError, match="unsupported EROFS compression"):
             create_erofs(
@@ -1559,7 +1558,7 @@ class TestCreateErofs:
 
         mock_run.assert_not_called()
 
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_lz4hc_uses_release_erofs_utils_image(self, mock_run):
         create_erofs(
             "docker",
@@ -1578,7 +1577,7 @@ class TestCreateErofs:
         assert "-zlz4hc,level=12" in cmd_str
         assert "-C65536" in cmd_str
 
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_preserves_output_subdirectory(self, mock_run):
         create_erofs(
             "docker",
@@ -1600,7 +1599,7 @@ class TestCreateErofs:
         assert "tar xf /assets/rootfs.tar -C /rootfs" in cmd_str
         assert " /assets/out/rootfs.erofs /rootfs" in cmd_str
 
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_chowns_output_to_invoking_user(self, mock_run):
         create_erofs(
             "docker",
@@ -1686,7 +1685,7 @@ class TestBuildLedger:
         assert "installed_packages" not in record
         assert "installed_versions" not in record
 
-    @patch("capsem.builder.docker.run_cmd")
+    @patch("capsem_builder.image.docker.run_cmd")
     def test_generate_cyclonedx_obom_extracts_rootfs_and_runs_cdxgen(self, mock_run, tmp_path):
         repo_root = tmp_path
         (repo_root / "target" / "tmp").mkdir(parents=True)
@@ -1933,16 +1932,16 @@ class TestBuildLedger:
 
         assert first.read_bytes() == second.read_bytes()
 
-    @patch("capsem.builder.docker.remove_image")
-    @patch("capsem.builder.docker.extract_software_inventory")
-    @patch("capsem.builder.docker.extract_tool_versions")
-    @patch("capsem.builder.docker.generate_cyclonedx_obom")
-    @patch("capsem.builder.docker.create_erofs")
-    @patch("capsem.builder.docker.export_container_fs")
-    @patch("capsem.builder.docker.docker_build")
-    @patch("capsem.builder.docker.cross_compile_agent")
-    @patch("capsem.builder.docker.sync_container_clock")
-    @patch("capsem.builder.docker.detect_runtime")
+    @patch("capsem_builder.image.docker.remove_image")
+    @patch("capsem_builder.image.docker.extract_software_inventory")
+    @patch("capsem_builder.image.docker.extract_tool_versions")
+    @patch("capsem_builder.image.docker.generate_cyclonedx_obom")
+    @patch("capsem_builder.image.docker.create_erofs")
+    @patch("capsem_builder.image.docker.export_container_fs")
+    @patch("capsem_builder.image.docker.docker_build")
+    @patch("capsem_builder.image.docker.cross_compile_agent")
+    @patch("capsem_builder.image.docker.sync_container_clock")
+    @patch("capsem_builder.image.docker.detect_runtime")
     def test_rootfs_build_records_export_erofs_and_versions(
         self,
         mock_runtime,
@@ -2020,7 +2019,7 @@ class TestBuildLedger:
             image_id=dependency_id,
         )
         with patch(
-            "capsem.builder.docker.require_asset_dependencies",
+            "capsem_builder.image.docker.require_asset_dependencies",
             return_value=dependency,
         ):
             build_image(
@@ -2066,11 +2065,11 @@ class TestBuildLedger:
         assert obom_record["generator"] == "cdxgen"
         assert obom_record["outputs"][0]["path"] == "obom.cdx.json"
 
-    @patch("capsem.builder.docker.remove_image")
-    @patch("capsem.builder.docker.extract_kernel_assets")
-    @patch("capsem.builder.docker.docker_build")
-    @patch("capsem.builder.docker.sync_container_clock")
-    @patch("capsem.builder.docker.detect_runtime")
+    @patch("capsem_builder.image.docker.remove_image")
+    @patch("capsem_builder.image.docker.extract_kernel_assets")
+    @patch("capsem_builder.image.docker.docker_build")
+    @patch("capsem_builder.image.docker.sync_container_clock")
+    @patch("capsem_builder.image.docker.detect_runtime")
     def test_kernel_build_records_assets(
         self,
         mock_runtime,
@@ -2099,7 +2098,7 @@ class TestBuildLedger:
             image_id=dependency_id,
         )
         with patch(
-            "capsem.builder.docker.require_asset_dependencies",
+            "capsem_builder.image.docker.require_asset_dependencies",
             return_value=dependency,
         ) as require_mock:
             build_image(
@@ -2684,11 +2683,11 @@ class TestBuildAllArchitectures:
     ):
         """Kernel-only CI primitive must not require rootfs.erofs before rootfs build runs."""
         with (
-            patch("capsem.builder.docker.build_image") as build_image_mock,
-            patch("capsem.builder.docker.detect_runtime", return_value="docker"),
-            patch("capsem.builder.docker.run_cmd"),
-            patch("capsem.builder.docker.generate_checksums") as checksums,
-            patch("capsem.builder.docker.get_project_version", return_value="0.13.0"),
+            patch("capsem_builder.image.docker.build_image") as build_image_mock,
+            patch("capsem_builder.image.docker.detect_runtime", return_value="docker"),
+            patch("capsem_builder.image.docker.run_cmd"),
+            patch("capsem_builder.image.docker.generate_checksums") as checksums,
+            patch("capsem_builder.image.docker.get_project_version", return_value="0.13.0"),
         ):
             build_all_architectures(
                 real_config,
@@ -2702,11 +2701,11 @@ class TestBuildAllArchitectures:
 
     def test_rootfs_template_generates_full_asset_manifest(self, real_config, tmp_path):
         with (
-            patch("capsem.builder.docker.build_image"),
-            patch("capsem.builder.docker.detect_runtime", return_value="docker"),
-            patch("capsem.builder.docker.run_cmd"),
-            patch("capsem.builder.docker.generate_checksums") as checksums,
-            patch("capsem.builder.docker.get_project_version", return_value="0.13.0"),
+            patch("capsem_builder.image.docker.build_image"),
+            patch("capsem_builder.image.docker.detect_runtime", return_value="docker"),
+            patch("capsem_builder.image.docker.run_cmd"),
+            patch("capsem_builder.image.docker.generate_checksums") as checksums,
+            patch("capsem_builder.image.docker.get_project_version", return_value="0.13.0"),
         ):
             build_all_architectures(
                 real_config,
@@ -2726,8 +2725,8 @@ class TestBuildAllArchitectures:
 class TestContainerCompileAgent:
     """Tests for container_compile_agent() -- single-container build."""
 
-    @patch("capsem.builder.docker.run_cmd")
-    @patch("capsem.builder.docker.detect_runtime")
+    @patch("capsem_builder.image.docker.run_cmd")
+    @patch("capsem_builder.image.docker.detect_runtime")
     def test_arm64_uses_correct_platform_and_volumes(
         self, mock_detect, mock_run, real_config, tmp_path
     ):
@@ -2780,8 +2779,8 @@ class TestContainerCompileAgent:
         assert "capsem-rustup" not in str(run_cmd)
         assert "-v" in run_cmd, "the build directory left the container"
 
-    @patch("capsem.builder.docker.run_cmd")
-    @patch("capsem.builder.docker.detect_runtime")
+    @patch("capsem_builder.image.docker.run_cmd")
+    @patch("capsem_builder.image.docker.detect_runtime")
     def test_x86_64_uses_correct_platform_and_volumes(
         self, mock_detect, mock_run, real_config, tmp_path
     ):
@@ -2815,8 +2814,8 @@ class TestContainerCompileAgent:
         assert "capsem-agent-target" not in str(cmd)
         assert "capsem-cargo" not in str(cmd)
 
-    @patch("capsem.builder.docker.run_cmd")
-    @patch("capsem.builder.docker.detect_runtime")
+    @patch("capsem_builder.image.docker.run_cmd")
+    @patch("capsem_builder.image.docker.detect_runtime")
     def test_missing_binary_raises(self, mock_detect, mock_run, real_config, tmp_path):
         mock_detect.return_value = "docker"
         repo_root = tmp_path / "repo"
@@ -2837,8 +2836,8 @@ class TestContainerCompileAgent:
                 output_dir,
             )
 
-    @patch("capsem.builder.docker.run_cmd")
-    @patch("capsem.builder.docker.detect_runtime")
+    @patch("capsem_builder.image.docker.run_cmd")
+    @patch("capsem_builder.image.docker.detect_runtime")
     def test_empty_binary_raises(self, mock_detect, mock_run, real_config, tmp_path):
         mock_detect.return_value = "docker"
         repo_root = tmp_path / "repo"
@@ -2898,36 +2897,36 @@ class TestContainerCompileAgentShellScript:
                 return cmd[-1]  # sh -c argument is the last element
         raise AssertionError("no `docker run` call recorded")
 
-    @patch("capsem.builder.docker.run_cmd")
-    @patch("capsem.builder.docker.detect_runtime", return_value="docker")
+    @patch("capsem_builder.image.docker.run_cmd")
+    @patch("capsem_builder.image.docker.detect_runtime", return_value="docker")
     def test_shell_excludes_crates_from_symlinks(self, _det, mock_run, real_config, tmp_path):
         (tmp_path / "repo").mkdir()
         script = self._extract_shell_script(mock_run, real_config, tmp_path)
         assert '[ "$b" != crates ]' in script
 
-    @patch("capsem.builder.docker.run_cmd")
-    @patch("capsem.builder.docker.detect_runtime", return_value="docker")
+    @patch("capsem_builder.image.docker.run_cmd")
+    @patch("capsem_builder.image.docker.detect_runtime", return_value="docker")
     def test_shell_copies_crates_with_cp(self, _det, mock_run, real_config, tmp_path):
         (tmp_path / "repo").mkdir()
         script = self._extract_shell_script(mock_run, real_config, tmp_path)
         assert "cp -r /src/crates /build/crates" in script
 
-    @patch("capsem.builder.docker.run_cmd")
-    @patch("capsem.builder.docker.detect_runtime", return_value="docker")
+    @patch("capsem_builder.image.docker.run_cmd")
+    @patch("capsem_builder.image.docker.detect_runtime", return_value="docker")
     def test_shell_excludes_target_from_symlinks(self, _det, mock_run, real_config, tmp_path):
         (tmp_path / "repo").mkdir()
         script = self._extract_shell_script(mock_run, real_config, tmp_path)
         assert '[ "$b" != target ]' in script
 
-    @patch("capsem.builder.docker.run_cmd")
-    @patch("capsem.builder.docker.detect_runtime", return_value="docker")
+    @patch("capsem_builder.image.docker.run_cmd")
+    @patch("capsem_builder.image.docker.detect_runtime", return_value="docker")
     def test_shell_includes_checked_in_cargo_lock(self, _det, mock_run, real_config, tmp_path):
         (tmp_path / "repo").mkdir()
         script = self._extract_shell_script(mock_run, real_config, tmp_path)
         assert '[ "$b" != Cargo.lock ]' not in script
 
-    @patch("capsem.builder.docker.run_cmd")
-    @patch("capsem.builder.docker.detect_runtime", return_value="docker")
+    @patch("capsem_builder.image.docker.run_cmd")
+    @patch("capsem_builder.image.docker.detect_runtime", return_value="docker")
     def test_shell_copies_all_binaries_to_output(self, _det, mock_run, real_config, tmp_path):
         (tmp_path / "repo").mkdir()
         script = self._extract_shell_script(mock_run, real_config, tmp_path)
@@ -2936,16 +2935,16 @@ class TestContainerCompileAgentShellScript:
                 f"cp target/aarch64-unknown-linux-musl/release/{binary} /output/{binary}" in script
             )
 
-    @patch("capsem.builder.docker.run_cmd")
-    @patch("capsem.builder.docker.detect_runtime", return_value="docker")
+    @patch("capsem_builder.image.docker.run_cmd")
+    @patch("capsem_builder.image.docker.detect_runtime", return_value="docker")
     def test_shell_lists_all_binaries_for_verification(self, _det, mock_run, real_config, tmp_path):
         (tmp_path / "repo").mkdir()
         script = self._extract_shell_script(mock_run, real_config, tmp_path)
         for binary in GUEST_BINARIES:
             assert f"ls -l /output/{binary}" in script
 
-    @patch("capsem.builder.docker.run_cmd")
-    @patch("capsem.builder.docker.detect_runtime", return_value="docker")
+    @patch("capsem_builder.image.docker.run_cmd")
+    @patch("capsem_builder.image.docker.detect_runtime", return_value="docker")
     def test_shell_builds_capsem_agent_package(self, _det, mock_run, real_config, tmp_path):
         (tmp_path / "repo").mkdir()
         script = self._extract_shell_script(mock_run, real_config, tmp_path)
@@ -3034,7 +3033,7 @@ class TestRootfsArtifactConstants:
         assert len(ROOTFS_SCRIPTS) == len(set(ROOTFS_SCRIPTS))
 
     def test_rootfs_artifact_dirs_no_duplicates(self):
-        from capsem.builder.docker import ROOTFS_SCRIPT_DIRS
+        from capsem_builder.image.docker import ROOTFS_SCRIPT_DIRS
 
         assert len(ROOTFS_SCRIPT_DIRS) == len(set(ROOTFS_SCRIPT_DIRS))
 
@@ -3056,8 +3055,8 @@ class TestRootfsArtifactConstants:
 class TestCrossCompileAgent:
     """Tests for host/target-aware guest binary compilation dispatch."""
 
-    @patch("capsem.builder.docker.sys")
-    @patch("capsem.builder.docker.container_compile_agent")
+    @patch("capsem_builder.image.docker.sys")
+    @patch("capsem_builder.image.docker.container_compile_agent")
     def test_delegates_to_container_on_darwin(
         self, mock_container, mock_sys, real_config, tmp_path
     ):
@@ -3071,7 +3070,7 @@ class TestCrossCompileAgent:
             tmp_path / "out",
         )
 
-    @patch("capsem.builder.docker.container_compile_agent")
+    @patch("capsem_builder.image.docker.container_compile_agent")
     def test_native_on_linux_uses_sealed_container(
         self,
         mock_container,
@@ -3098,8 +3097,8 @@ class TestCrossCompileAgent:
             ("arm64", "x86_64-unknown-linux-musl"),
         ],
     )
-    @patch("capsem.builder.docker.container_compile_agent")
-    @patch("capsem.builder.docker.sys")
+    @patch("capsem_builder.image.docker.container_compile_agent")
+    @patch("capsem_builder.image.docker.sys")
     def test_foreign_target_on_linux_delegates_to_architecture_matched_container(
         self,
         mock_sys,
@@ -3113,7 +3112,7 @@ class TestCrossCompileAgent:
         mock_container.return_value = []
 
         arch_name = "arm64" if rust_target.startswith("aarch64-") else "x86_64"
-        with patch("capsem.builder.docker.platform.machine", return_value=host_machine):
+        with patch("capsem_builder.image.docker.platform.machine", return_value=host_machine):
             result = cross_compile_agent(
                 real_config.build,
                 arch_name,
@@ -3138,7 +3137,7 @@ class TestCrossCompileAgent:
             ("amd64", "x86_64-unknown-linux-musl"),
         ],
     )
-    @patch("capsem.builder.docker.container_compile_agent")
+    @patch("capsem_builder.image.docker.container_compile_agent")
     def test_native_host_aliases_still_use_sealed_container(
         self,
         mock_container,
@@ -3151,7 +3150,7 @@ class TestCrossCompileAgent:
         output_dir = tmp_path / "out"
 
         arch_name = "arm64" if rust_target.startswith("aarch64-") else "x86_64"
-        with patch("capsem.builder.docker.platform.machine", return_value=host_machine):
+        with patch("capsem_builder.image.docker.platform.machine", return_value=host_machine):
             cross_compile_agent(real_config.build, arch_name, tmp_path, output_dir)
 
         mock_container.assert_called_once_with(

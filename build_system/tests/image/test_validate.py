@@ -1,4 +1,4 @@
-"""Tests for capsem.builder.validate -- compiler-style config linter."""
+"""Tests for capsem_builder.image.validate -- compiler-style config linter."""
 
 from __future__ import annotations
 
@@ -6,14 +6,13 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
-from capsem.builder.validate import (
+from capsem_builder.image.validate import (
     Severity,
     find_toml_line,
     validate_guest,
 )
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 MINIMAL_BUILD_TOML = """\
 [build]

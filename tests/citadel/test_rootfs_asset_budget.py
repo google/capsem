@@ -7,7 +7,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BUILD_CONFIG = PROJECT_ROOT / "config/docker/image/build.toml"
-BUILDER = PROJECT_ROOT / "src/capsem/builder/docker.py"
+BUILDER = PROJECT_ROOT / "build_system/builder/image/docker.py"
 DEPENDENCY_TEMPLATE = PROJECT_ROOT / "config/docker/Dockerfile.rootfs-dependencies.j2"
 PROFILE_BUILD_SCRIPTS = (
     PROJECT_ROOT / "config/profiles/code/build.sh",

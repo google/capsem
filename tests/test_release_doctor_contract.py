@@ -5796,10 +5796,11 @@ def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:
     assert "tests/ironbank" not in coverage_step
     assert "tests/capsem-mcp" not in coverage_step
     assert "tests/capsem-service" not in coverage_step
-    assert "tests/test_config.py" in coverage_step
-    assert "tests/test_manifest.py" in coverage_step
-    assert "tests/test_models.py" in coverage_step
-    assert "tests/test_skills.py" in coverage_step
+    assert "build_system/tests/image/test_config.py" in coverage_step
+    assert "build_system/tests/image/test_manifest.py" in coverage_step
+    assert "build_system/tests/image/test_models.py" in coverage_step
+    assert "build_system/tests/image/test_skills.py" in coverage_step
+    assert "--cov=build_system/builder" in coverage_step
     assert "--cov=src/capsem" in coverage_step
 
 

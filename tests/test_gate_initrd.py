@@ -24,11 +24,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
 DIRECT_BUILDER_INPUTS = {
     "config/gate.toml",
-    "src/capsem/builder/config.py",
-    "src/capsem/builder/models.py",
-    "src/capsem/builder/cli.py",
-    "src/capsem/builder/docker.py",
-    "src/capsem/builder/guestbuilder.py",
+    "build_system/builder/image/config.py",
+    "build_system/builder/image/models.py",
+    "build_system/builder/image/cli.py",
+    "build_system/builder/image/docker.py",
+    "build_system/builder/image/guestbuilder.py",
     "config/docker/image/build.toml",
     "docker/Dockerfile.guest-rust-builder",
 }

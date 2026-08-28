@@ -11,9 +11,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from capsem.builder import guestbuilder
-from capsem.builder.config import load_guest_config
-from capsem.builder.docker import GUEST_BINARIES, container_compile_agent
+from capsem_builder.image import guestbuilder
+from capsem_builder.image.config import load_guest_config
+from capsem_builder.image.docker import GUEST_BINARIES, container_compile_agent
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BUILD = load_guest_config(PROJECT_ROOT / "config/docker/image").build
@@ -70,8 +70,8 @@ def _seed_identity(root: Path) -> None:
         shutil.copy2(PROJECT_ROOT / relative, destination)
 
 
-@patch("capsem.builder.docker.run_cmd")
-@patch("capsem.builder.docker.detect_runtime", return_value="docker")
+@patch("capsem_builder.image.docker.run_cmd")
+@patch("capsem_builder.image.docker.detect_runtime", return_value="docker")
 def test_container_workspace_excludes_dotfiles(
     _detect: MagicMock, run: MagicMock, tmp_path: Path
 ) -> None:

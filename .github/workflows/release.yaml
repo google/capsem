@@ -353,7 +353,7 @@ jobs:
       - name: Validate build context completeness
         run: |
           uv run python3 -c "
-          from capsem.builder.doctor import check_source_files
+          from capsem_builder.image.doctor import check_source_files
           from pathlib import Path
           result = check_source_files(Path('.'))
           if not result.passed:

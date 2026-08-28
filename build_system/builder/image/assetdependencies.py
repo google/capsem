@@ -6,7 +6,7 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
-from capsem.builder.models import GuestImageConfig
+from .models import GuestImageConfig
 
 INPUT_KEY_LABEL = "org.capsem.asset-dependencies.input-key"
 

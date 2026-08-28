@@ -19,7 +19,7 @@ import platform
 from dataclasses import dataclass
 from pathlib import Path
 
-from capsem.builder.models import BuildConfig
+from .models import BuildConfig
 
 # Every spelling `platform.machine()` returns for the two supported CPUs.
 _HOST_ALIASES = {

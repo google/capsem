@@ -11,7 +11,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from capsem.builder.models import (
+from .models import (
     BuildConfig,
     GuestImageConfig,
     ImageManifestConfig,

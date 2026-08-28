@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from capsem.builder.models import ArchConfig, BuildConfig
+from .models import ArchConfig, BuildConfig
 
 INPUT_KEY_LABEL = "org.capsem.asset-tools.input-key"
 

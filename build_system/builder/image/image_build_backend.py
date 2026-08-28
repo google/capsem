@@ -10,8 +10,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from capsem.builder.config import load_guest_config
-from capsem.builder.docker import (
+from .config import load_guest_config
+from .docker import (
     build_image,
     detect_runtime,
     materialize_asset_dependencies,
@@ -21,7 +21,7 @@ from capsem.builder.docker import (
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="python -m capsem.builder.image_build_backend",
+        prog="python -m capsem_builder.image.image_build_backend",
         description="Private Capsem image build backend.",
     )
     parser.add_argument("guest_dir", type=Path)

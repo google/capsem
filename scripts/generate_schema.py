@@ -11,12 +11,12 @@ import argparse
 import json
 from pathlib import Path
 
-from capsem.builder.config import (
+from capsem_builder.image.config import (
     generate_defaults_json,
     generate_mock_ts,
     load_guest_config,
 )
-from capsem.builder.schema import export_json_schema
+from capsem_builder.image.schema import export_json_schema
 
 PROJECT_ROOT = Path(__file__).parent.parent
 SCHEMA_PATH = PROJECT_ROOT / "config" / "settings" / "schema.generated.json"

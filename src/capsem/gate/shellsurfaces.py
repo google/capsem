@@ -170,8 +170,8 @@ def dockerfile_bodies(checked_in: Path, templates: Path, render) -> dict[str, st
 
 def rendered_templates(templates: Path, guest_config: Path):
     """Yield `(template, architecture, rendered)` for every guest template."""
-    from capsem.builder.config import load_guest_config
-    from capsem.builder.docker import render_dockerfile
+    from capsem_builder.image.config import load_guest_config
+    from capsem_builder.image.docker import render_dockerfile
 
     guest = load_guest_config(guest_config)
     for template in sorted(path.name for path in templates.glob("*.j2")):

@@ -11,10 +11,10 @@ from enum import Enum
 from pathlib import PurePosixPath
 from typing import Literal
 
-from capsem_builder.policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from capsem.builder.schema import McpTransport
+from ..policy.dockerpolicy import BuildNetwork, ContainerNetwork
+from .schema import McpTransport
 
 # ---------------------------------------------------------------------------
 # Enums

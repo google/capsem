@@ -1,4 +1,4 @@
-"""Tests for capsem.builder.models -- Pydantic models for guest image config.
+"""Tests for capsem_builder.image.models -- Pydantic models for guest image config.
 
 TDD: these tests are written first (RED), then models.py makes them pass (GREEN).
 """
@@ -8,10 +8,7 @@ from __future__ import annotations
 from typing import cast
 
 import pytest
-from capsem_builder.policy.dockerpolicy import BuildNetwork, ContainerNetwork
-from pydantic import ValidationError
-
-from capsem.builder.models import (
+from capsem_builder.image.models import (
     ArchConfig,
     AssetDependencyArchitectureConfig,
     AssetDependencyConfig,
@@ -39,7 +36,9 @@ from capsem.builder.models import (
     WebSecurityConfig,
     WebServiceConfig,
 )
-from capsem.builder.schema import McpTransport
+from capsem_builder.image.schema import McpTransport
+from capsem_builder.policy.dockerpolicy import BuildNetwork, ContainerNetwork
+from pydantic import ValidationError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -559,7 +558,7 @@ class TestMcpServerConfig:
 
     def test_mcptransport_reused_from_schema(self):
         """McpTransport is imported from schema.py, not duplicated."""
-        from capsem.builder.schema import McpTransport as SchemaMcpTransport
+        from capsem_builder.image.schema import McpTransport as SchemaMcpTransport
 
         assert McpTransport is SchemaMcpTransport
 

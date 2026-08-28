@@ -8339,7 +8339,7 @@ fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> {
                     "run".to_string(),
                     "python".to_string(),
                     "-m".to_string(),
-                    "capsem.builder.image_build_backend".to_string(),
+                    "capsem_builder.image.image_build_backend".to_string(),
                     args.guest_dir.display().to_string(),
                     "--arch".to_string(),
                     arch.clone(),
@@ -8376,7 +8376,7 @@ fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> {
                     "run".to_string(),
                     "python".to_string(),
                     "-m".to_string(),
-                    "capsem.builder.image_build_backend".to_string(),
+                    "capsem_builder.image.image_build_backend".to_string(),
                     args.guest_dir.display().to_string(),
                     "--arch".to_string(),
                     arch.clone(),
@@ -8899,7 +8899,7 @@ fn manifest_generate_command_report(args: &ManifestGenerateArgs) -> CommandRepor
             "python3".to_string(),
             "-c".to_string(),
             format!(
-                "from pathlib import Path; from capsem.builder.docker import generate_checksums, get_project_version; v = {version_expr}; generate_checksums(Path({:?}), v); print(f'manifest.json generated (v{{v}})')",
+                "from pathlib import Path; from capsem_builder.image.docker import generate_checksums, get_project_version; v = {version_expr}; generate_checksums(Path({:?}), v); print(f'manifest.json generated (v{{v}})')",
                 args.assets_dir.display().to_string()
             ),
         ],

@@ -21,21 +21,21 @@ import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from capsem_builder.policy.dockerpolicy import (
+from capsem.gate import auditfs
+from jinja2 import Environment, FileSystemLoader
+
+from ..policy.dockerpolicy import (
     BuildNetwork,
     ContainerNetwork,
     require_build_network,
     require_container_network,
 )
-from capsem_builder.release.obom import validate_exported_rootfs_obom
-from jinja2 import Environment, FileSystemLoader
-
-from capsem.builder import assetdependencies, guestbuilder
-from capsem.builder.assettools import image_tag as asset_tools_image_tag
-from capsem.builder.doctor import check_container_runtime
-from capsem.builder.guestbuilder import image_tag
-from capsem.builder.models import BuildConfig, ErofsConfig, GuestImageConfig, RootfsConfig
-from capsem.gate import auditfs
+from ..release.obom import validate_exported_rootfs_obom
+from . import assetdependencies, guestbuilder
+from .assettools import image_tag as asset_tools_image_tag
+from .doctor import check_container_runtime
+from .guestbuilder import image_tag
+from .models import BuildConfig, ErofsConfig, GuestImageConfig, RootfsConfig
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "config" / "docker"
 CLOCK_SYNC_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "sync-container-clock.py"
@@ -1011,7 +1011,7 @@ def extract_software_inventory(
     output_dir: Path,
 ) -> Path:
     """Write installed package inventory captured from the built rootfs image."""
-    from capsem.builder.manifest import collect_bom
+    from .manifest import collect_bom
 
     dpkg_output = _container_output(
         runtime,

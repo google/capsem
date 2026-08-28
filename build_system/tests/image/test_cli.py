@@ -12,9 +12,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from capsem_builder.image.cli import cli
 from click.testing import CliRunner
-
-from capsem.builder.cli import cli
 
 
 def test_help_exposes_only_backend_helper_commands() -> None:
@@ -73,10 +72,10 @@ def test_version() -> None:
 
 
 def test_doctor_runs_profile_contract() -> None:
-    from capsem.builder.doctor import CheckResult
+    from capsem_builder.image.doctor import CheckResult
 
     runner = CliRunner()
-    with patch("capsem.builder.doctor.run_all_checks") as mock:
+    with patch("capsem_builder.image.doctor.run_all_checks") as mock:
         mock.return_value = [
             CheckResult(name="profile-contract", passed=True, detail="profile code")
         ]
@@ -90,10 +89,10 @@ def test_doctor_runs_profile_contract() -> None:
 
 
 def test_doctor_fails_when_any_check_fails() -> None:
-    from capsem.builder.doctor import CheckResult
+    from capsem_builder.image.doctor import CheckResult
 
     runner = CliRunner()
-    with patch("capsem.builder.doctor.run_all_checks") as mock:
+    with patch("capsem_builder.image.doctor.run_all_checks") as mock:
         mock.return_value = [
             CheckResult(
                 name="profile-contract",
@@ -131,7 +130,7 @@ def test_validate_skills_json_output() -> None:
     )
     runner = CliRunner()
 
-    with patch("capsem.builder.skills.validate_skill_library", return_value=report) as validate:
+    with patch("capsem_builder.image.skills.validate_skill_library", return_value=report) as validate:
         result = runner.invoke(cli, ["validate-skills", "skills", "--json"])
 
     assert result.exit_code == 0
@@ -146,7 +145,7 @@ def test_validate_skills_reports_validation_error() -> None:
     runner = CliRunner()
 
     with patch(
-        "capsem.builder.skills.validate_skill_library",
+        "capsem_builder.image.skills.validate_skill_library",
         side_effect=ValueError("broken skill contract"),
     ):
         result = runner.invoke(cli, ["validate-skills", "skills"])
@@ -163,8 +162,8 @@ def test_agent_uses_profile_materialized_architecture(tmp_path: Path) -> None:
 
     runner = CliRunner()
     with (
-        patch("capsem.builder.cli.load_guest_config", return_value=config) as load_config,
-        patch("capsem.builder.docker.cross_compile_agent") as cross_compile,
+        patch("capsem_builder.image.cli.load_guest_config", return_value=config) as load_config,
+        patch("capsem_builder.image.docker.cross_compile_agent") as cross_compile,
     ):
         result = runner.invoke(cli, ["agent", str(guest), "--arch", "arm64"])
 
@@ -180,8 +179,8 @@ def test_agent_defaults_to_current_image_config() -> None:
 
     runner = CliRunner()
     with (
-        patch("capsem.builder.cli.load_guest_config", return_value=config) as load_config,
-        patch("capsem.builder.docker.cross_compile_agent") as cross_compile,
+        patch("capsem_builder.image.cli.load_guest_config", return_value=config) as load_config,
+        patch("capsem_builder.image.docker.cross_compile_agent") as cross_compile,
         patch("os.uname", return_value=SimpleNamespace(machine="arm64")),
     ):
         result = runner.invoke(cli, ["agent", "--arch", "arm64"])
@@ -209,7 +208,7 @@ def test_agent_fails_for_arch_not_in_materialized_config(tmp_path: Path) -> None
     config = SimpleNamespace(build=SimpleNamespace(architectures={"arm64": arch}))
     runner = CliRunner()
 
-    with patch("capsem.builder.cli.load_guest_config", return_value=config):
+    with patch("capsem_builder.image.cli.load_guest_config", return_value=config):
         result = runner.invoke(cli, ["agent", str(guest), "--arch", "x86_64"])
 
     assert result.exit_code == 1
@@ -224,9 +223,9 @@ def test_agent_reports_cross_compile_error(tmp_path: Path) -> None:
     runner = CliRunner()
 
     with (
-        patch("capsem.builder.cli.load_guest_config", return_value=config),
+        patch("capsem_builder.image.cli.load_guest_config", return_value=config),
         patch(
-            "capsem.builder.docker.cross_compile_agent",
+            "capsem_builder.image.docker.cross_compile_agent",
             side_effect=RuntimeError("toolchain exploded"),
         ),
     ):

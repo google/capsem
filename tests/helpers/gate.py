@@ -74,7 +74,8 @@ def _image_repository(reference: str) -> str:
 
 def _recorded_image_platform(root: Path, reference: str) -> str:
     """Answer an identity probe from the checked-in architecture authority."""
-    from capsem.builder import guestbuilder
+    from capsem_builder.image import guestbuilder
+
     from capsem.gate import config as gate_config
     from capsem.gate import host, imagebases
 

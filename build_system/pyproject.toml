@@ -10,12 +10,20 @@ dependencies = [
     "blake3>=1.0.8",
 ]
 
+[project.scripts]
+capsem-builder = "capsem_builder.image.cli:main"
+
 [build-system]
 requires = ["setuptools>=80"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["capsem_builder", "capsem_builder.policy", "capsem_builder.release"]
+packages = [
+    "capsem_builder",
+    "capsem_builder.image",
+    "capsem_builder.policy",
+    "capsem_builder.release",
+]
 include-package-data = true
 
 [tool.setuptools.package-dir]

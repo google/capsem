@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from capsem.builder.config import load_guest_config
+from capsem_builder.image.config import load_guest_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -79,7 +79,7 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
 
 
 def test_builder_emits_obom_and_keeps_build_ledger_debug_scoped() -> None:
-    builder = _read("src/capsem/builder/docker.py")
+    builder = _read("build_system/builder/image/docker.py")
     evidence = _read("build_system/builder/release/obom.py")
     syntax = ast.parse(builder)
     cdxgen_calls: list[ast.Call] = []

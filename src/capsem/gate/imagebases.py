@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from capsem.builder import assettools, guestbuilder
-from capsem.builder.config import load_guest_config
-from capsem.builder.guestbuilder import build_arguments, image_repository, image_tag
-from capsem.builder.models import ArchConfig, BuildConfig
+from capsem_builder.image import assettools, guestbuilder
+from capsem_builder.image.config import load_guest_config
+from capsem_builder.image.guestbuilder import build_arguments, image_repository, image_tag
+from capsem_builder.image.models import ArchConfig, BuildConfig
 
 from .actions import Action
 from .config import GateConfig

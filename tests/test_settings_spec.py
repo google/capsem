@@ -12,9 +12,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
-from pydantic import ValidationError
-
-from capsem.builder.schema import (
+from capsem_builder.image.schema import (
     ActionKind,
     FileValue,
     GroupNode,
@@ -35,6 +33,7 @@ from capsem.builder.schema import (
     to_json,
     validate_settings,
 )
+from pydantic import ValidationError
 
 FIXTURE_DIR = Path(__file__).parent / "settings_spec"
 

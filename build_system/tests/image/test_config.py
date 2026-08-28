@@ -1,4 +1,4 @@
-"""Tests for capsem.builder.config -- TOML config directory loader + JSON generator.
+"""Tests for capsem_builder.image.config -- TOML config directory loader + JSON generator.
 
 TDD: tests written first (RED), then config.py makes them pass (GREEN).
 Uses tmp_path fixtures with inline TOML strings, not checked-in backend config.
@@ -12,18 +12,17 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
-
-from capsem.builder.config import (
+from capsem_builder.image.config import (
     generate_defaults_json,
     generate_mock_ts,
     load_guest_config,
     parse_toml,
 )
-from capsem.builder.models import ErofsCompression, GuestImageConfig, PackageManager
-from capsem.builder.schema import McpTransport
+from capsem_builder.image.models import ErofsCompression, GuestImageConfig, PackageManager
+from capsem_builder.image.schema import McpTransport
+from pydantic import ValidationError
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def generated_settings_guest(tmp_path: Path) -> Path:

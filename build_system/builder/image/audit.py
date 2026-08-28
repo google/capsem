@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from capsem.builder.manifest import VulnEntry
+from .manifest import VulnEntry
 
 # ---------------------------------------------------------------------------
 # Trivy

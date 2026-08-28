@@ -24,8 +24,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from capsem.builder.config import load_guest_config
-from capsem.builder.models import GuestImageConfig
+from .config import load_guest_config
+from .models import GuestImageConfig
 
 # ---------------------------------------------------------------------------
 # Core types
@@ -296,7 +296,7 @@ def _validate_artifacts(
     Uses the canonical lists from docker.py so there is one place to add
     a new artifact.
     """
-    from capsem.builder.docker import (
+    from .docker import (
         ROOTFS_SCRIPT_DIRS,
     )
 

@@ -40,6 +40,7 @@ flags:
       - frontend/src/**
       - release-site/scripts/**
       - release-site/src/**
+      - build_system/builder/**
       - src/capsem/**
     carryforward: true
   integration:
@@ -269,6 +270,7 @@ component_management:
     - component_id: builder
       name: Builder
       paths:
+        - build_system/builder/**
         - src/capsem/**
 
     # Local fixture server used for doctor, benchmark, recorder, and Ironbank proof.

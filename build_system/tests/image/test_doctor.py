@@ -1,4 +1,4 @@
-"""Tests for capsem.builder.doctor -- composable build prerequisite checks.
+"""Tests for capsem_builder.image.doctor -- composable build prerequisite checks.
 
 TDD: tests written first (RED), then doctor.py makes them pass (GREEN).
 All subprocess/shutil calls are mocked -- no real tools needed to run tests.
@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from capsem.builder.doctor import (
+from capsem_builder.image.doctor import (
     CheckResult,
     check_b3sum,
     check_container_clock,
@@ -57,8 +57,8 @@ class TestCheckResult:
 
 
 class TestCheckContainerRuntime:
-    @patch("capsem.builder.doctor.shutil.which")
-    @patch("capsem.builder.doctor.subprocess.run")
+    @patch("capsem_builder.image.doctor.shutil.which")
+    @patch("capsem_builder.image.doctor.subprocess.run")
     def test_docker_found(self, mock_run, mock_which):
         mock_which.side_effect = lambda name: "/usr/local/bin/docker" if name == "docker" else None
         mock_run.return_value = MagicMock(
@@ -68,7 +68,7 @@ class TestCheckContainerRuntime:
         assert result.passed is True
         assert "docker" in result.detail.lower()
 
-    @patch("capsem.builder.doctor.shutil.which")
+    @patch("capsem_builder.image.doctor.shutil.which")
     def test_not_found(self, mock_which):
         mock_which.return_value = None
         result = check_container_runtime()
@@ -83,15 +83,15 @@ class TestCheckContainerRuntime:
 
 
 class TestCheckRustToolchain:
-    @patch("capsem.builder.doctor.shutil.which")
-    @patch("capsem.builder.doctor.subprocess.run")
+    @patch("capsem_builder.image.doctor.shutil.which")
+    @patch("capsem_builder.image.doctor.subprocess.run")
     def test_all_present(self, mock_run, mock_which):
         mock_which.side_effect = lambda name: f"/usr/local/bin/{name}"
         mock_run.return_value = MagicMock(stdout="rustup 1.27.1\n", returncode=0)
         result = check_rust_toolchain()
         assert result.passed is True
 
-    @patch("capsem.builder.doctor.shutil.which")
+    @patch("capsem_builder.image.doctor.shutil.which")
     def test_rustup_missing(self, mock_which):
         mock_which.side_effect = lambda name: None if name == "rustup" else f"/usr/local/bin/{name}"
         result = check_rust_toolchain()
@@ -99,7 +99,7 @@ class TestCheckRustToolchain:
         assert "rustup" in result.detail.lower()
         assert result.fix is not None
 
-    @patch("capsem.builder.doctor.shutil.which")
+    @patch("capsem_builder.image.doctor.shutil.which")
     def test_cargo_missing(self, mock_which):
         mock_which.side_effect = lambda name: None if name == "cargo" else f"/usr/local/bin/{name}"
         result = check_rust_toolchain()
@@ -113,7 +113,7 @@ class TestCheckRustToolchain:
 
 
 class TestCheckCrossTarget:
-    @patch("capsem.builder.doctor.subprocess.run")
+    @patch("capsem_builder.image.doctor.subprocess.run")
     def test_target_installed(self, mock_run):
         mock_run.return_value = MagicMock(
             stdout="aarch64-unknown-linux-musl\nx86_64-unknown-linux-musl\n",
@@ -122,7 +122,7 @@ class TestCheckCrossTarget:
         result = check_cross_target("aarch64-unknown-linux-musl")
         assert result.passed is True
 
-    @patch("capsem.builder.doctor.subprocess.run")
+    @patch("capsem_builder.image.doctor.subprocess.run")
     def test_target_not_installed(self, mock_run):
         mock_run.return_value = MagicMock(
             stdout="aarch64-apple-darwin\n",
@@ -132,7 +132,7 @@ class TestCheckCrossTarget:
         assert result.passed is False
         assert "rustup target add" in result.fix
 
-    @patch("capsem.builder.doctor.subprocess.run")
+    @patch("capsem_builder.image.doctor.subprocess.run")
     def test_rustup_not_available(self, mock_run):
         mock_run.side_effect = FileNotFoundError("rustup not found")
         result = check_cross_target("aarch64-unknown-linux-musl")
@@ -145,15 +145,15 @@ class TestCheckCrossTarget:
 
 
 class TestCheckB3sum:
-    @patch("capsem.builder.doctor.shutil.which")
-    @patch("capsem.builder.doctor.subprocess.run")
+    @patch("capsem_builder.image.doctor.shutil.which")
+    @patch("capsem_builder.image.doctor.subprocess.run")
     def test_found(self, mock_run, mock_which):
         mock_which.return_value = "/usr/local/bin/b3sum"
         mock_run.return_value = MagicMock(stdout="b3sum 1.5.4\n", returncode=0)
         result = check_b3sum()
         assert result.passed is True
 
-    @patch("capsem.builder.doctor.shutil.which")
+    @patch("capsem_builder.image.doctor.shutil.which")
     def test_missing(self, mock_which):
         mock_which.return_value = None
         result = check_b3sum()
@@ -167,14 +167,14 @@ class TestCheckB3sum:
 
 
 class TestCheckContainerClock:
-    @patch("capsem.builder.doctor.sys")
+    @patch("capsem_builder.image.doctor.sys")
     def test_returns_none_on_linux(self, mock_sys):
         mock_sys.platform = "linux"
         assert check_container_clock() is None
 
-    @patch("capsem.builder.doctor.shutil.which")
-    @patch("capsem.builder.doctor.subprocess.run")
-    @patch("capsem.builder.doctor.sys")
+    @patch("capsem_builder.image.doctor.shutil.which")
+    @patch("capsem_builder.image.doctor.subprocess.run")
+    @patch("capsem_builder.image.doctor.sys")
     def test_passes_when_clock_in_sync(self, mock_sys, mock_run, mock_which):
         mock_sys.platform = "darwin"
         mock_which.side_effect = lambda name: "/usr/local/bin/docker" if name == "docker" else None
@@ -187,9 +187,9 @@ class TestCheckContainerClock:
         assert result.passed is True
         assert "ok" in result.detail
 
-    @patch("capsem.builder.doctor.shutil.which")
-    @patch("capsem.builder.doctor.subprocess.run")
-    @patch("capsem.builder.doctor.sys")
+    @patch("capsem_builder.image.doctor.shutil.which")
+    @patch("capsem_builder.image.doctor.subprocess.run")
+    @patch("capsem_builder.image.doctor.sys")
     def test_fails_when_clock_behind(self, mock_sys, mock_run, mock_which):
         mock_sys.platform = "darwin"
         mock_which.side_effect = lambda name: "/usr/local/bin/docker" if name == "docker" else None
@@ -202,9 +202,9 @@ class TestCheckContainerClock:
         assert result.passed is False
         assert "behind" in result.detail
 
-    @patch("capsem.builder.doctor.shutil.which")
-    @patch("capsem.builder.doctor.subprocess.run")
-    @patch("capsem.builder.doctor.sys")
+    @patch("capsem_builder.image.doctor.shutil.which")
+    @patch("capsem_builder.image.doctor.subprocess.run")
+    @patch("capsem_builder.image.doctor.sys")
     def test_fails_when_clock_ahead(self, mock_sys, mock_run, mock_which):
         mock_sys.platform = "darwin"
         mock_which.side_effect = lambda name: "/usr/local/bin/docker" if name == "docker" else None
@@ -217,16 +217,16 @@ class TestCheckContainerClock:
         assert result.passed is False
         assert "ahead" in result.detail
 
-    @patch("capsem.builder.doctor.shutil.which")
-    @patch("capsem.builder.doctor.sys")
+    @patch("capsem_builder.image.doctor.shutil.which")
+    @patch("capsem_builder.image.doctor.sys")
     def test_returns_none_when_no_docker(self, mock_sys, mock_which):
         mock_sys.platform = "darwin"
         mock_which.return_value = None
         assert check_container_clock() is None
 
-    @patch("capsem.builder.doctor.shutil.which")
-    @patch("capsem.builder.doctor.subprocess.run")
-    @patch("capsem.builder.doctor.sys")
+    @patch("capsem_builder.image.doctor.shutil.which")
+    @patch("capsem_builder.image.doctor.subprocess.run")
+    @patch("capsem_builder.image.doctor.sys")
     def test_returns_none_on_command_failure(self, mock_sys, mock_run, mock_which):
         mock_sys.platform = "darwin"
         mock_which.side_effect = lambda name: "/usr/local/bin/docker" if name == "docker" else None
@@ -240,7 +240,7 @@ class TestCheckContainerClock:
 
 
 class TestCheckProfileContract:
-    @patch("capsem.builder.doctor.subprocess.run")
+    @patch("capsem_builder.image.doctor.subprocess.run")
     def test_profile_contract_uses_capsem_admin_profile_check(self, mock_run, tmp_path):
         config_root = tmp_path / "config"
         profile = config_root / "profiles" / "code" / "profile.toml"
@@ -268,7 +268,7 @@ class TestCheckProfileContract:
         assert str(config_root) in argv
         assert "--json" in argv
 
-    @patch("capsem.builder.doctor.subprocess.run")
+    @patch("capsem_builder.image.doctor.subprocess.run")
     def test_profile_contract_reports_capsem_admin_failure(self, mock_run, tmp_path):
         config_root = tmp_path / "config"
         profile = config_root / "profiles" / "code" / "profile.toml"
@@ -294,7 +294,7 @@ class TestCheckProfileContract:
 def _create_all_source_files(tmp_path, *, skip=None):
     """Create all required source files for check_source_files(), optionally
     skipping one by name so tests can verify detection of that missing file."""
-    from capsem.builder.docker import (
+    from capsem_builder.image.docker import (
         ROOTFS_SCRIPT_DIRS,
         ROOTFS_SCRIPTS,
         ROOTFS_SUPPORT_FILES,
@@ -456,14 +456,14 @@ class TestCheckSourceFiles:
 
 
 class TestRunAllChecks:
-    @patch("capsem.builder.doctor.check_container_runtime")
-    @patch("capsem.builder.doctor.check_container_resources")
-    @patch("capsem.builder.doctor.check_container_clock")
-    @patch("capsem.builder.doctor.check_rust_toolchain")
-    @patch("capsem.builder.doctor.check_cross_target")
-    @patch("capsem.builder.doctor.check_b3sum")
-    @patch("capsem.builder.doctor.check_profile_contract")
-    @patch("capsem.builder.doctor.check_source_files")
+    @patch("capsem_builder.image.doctor.check_container_runtime")
+    @patch("capsem_builder.image.doctor.check_container_resources")
+    @patch("capsem_builder.image.doctor.check_container_clock")
+    @patch("capsem_builder.image.doctor.check_rust_toolchain")
+    @patch("capsem_builder.image.doctor.check_cross_target")
+    @patch("capsem_builder.image.doctor.check_b3sum")
+    @patch("capsem_builder.image.doctor.check_profile_contract")
+    @patch("capsem_builder.image.doctor.check_source_files")
     def test_composes_all(
         self, mock_src, mock_profile, mock_b3, mock_cross, mock_rust,
         mock_clock, mock_resources, mock_runtime,
@@ -479,14 +479,14 @@ class TestRunAllChecks:
         assert all(r.passed for r in results)
         mock_profile.assert_called_once()
 
-    @patch("capsem.builder.doctor.check_container_runtime")
-    @patch("capsem.builder.doctor.check_container_resources")
-    @patch("capsem.builder.doctor.check_container_clock")
-    @patch("capsem.builder.doctor.check_rust_toolchain")
-    @patch("capsem.builder.doctor.check_cross_target")
-    @patch("capsem.builder.doctor.check_b3sum")
-    @patch("capsem.builder.doctor.check_profile_contract")
-    @patch("capsem.builder.doctor.check_source_files")
+    @patch("capsem_builder.image.doctor.check_container_runtime")
+    @patch("capsem_builder.image.doctor.check_container_resources")
+    @patch("capsem_builder.image.doctor.check_container_clock")
+    @patch("capsem_builder.image.doctor.check_rust_toolchain")
+    @patch("capsem_builder.image.doctor.check_cross_target")
+    @patch("capsem_builder.image.doctor.check_b3sum")
+    @patch("capsem_builder.image.doctor.check_profile_contract")
+    @patch("capsem_builder.image.doctor.check_source_files")
     def test_counts_failures(
         self, mock_src, mock_profile, mock_b3, mock_cross, mock_rust,
         mock_clock, mock_resources, mock_runtime,

@@ -22,21 +22,20 @@ from pathlib import Path
 
 import pytest
 import yaml
-from helpers.gate import RecordingRunner
-from helpers.workflow_contract import canonical_shell_commands
-
-from capsem.builder import assettools
-from capsem.builder import docker as asset_docker
-from capsem.builder.config import load_guest_config
 from capsem.gate import config as gate_config
 from capsem.gate import imagebases
 from capsem.gate.errors import GateError
+from capsem_builder.image import assettools
+from capsem_builder.image import docker as asset_docker
+from capsem_builder.image.config import load_guest_config
+from helpers.gate import RecordingRunner
+from helpers.workflow_contract import canonical_shell_commands
 
 SEALED_MACOS = (
     sys.platform == "darwin" and os.environ.get("CAPSEM_GATE_COMMAND_SANDBOX_MODE") == "enforce"
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 BUILD = load_guest_config(PROJECT_ROOT / "config/docker/image").build
 
 # Package managers, language installers/runners, and direct download clients.
@@ -346,7 +345,9 @@ def test_rootfs_binary_inputs_are_versioned_and_digest_bound_per_architecture() 
 
 
 def test_asset_python_has_no_unclassified_mutable_tool_commands() -> None:
-    inventory = _function_string_inventory(PROJECT_ROOT / "src/capsem/builder/docker.py")
+    inventory = _function_string_inventory(
+        PROJECT_ROOT / "build_system/builder/image/docker.py"
+    )
 
     # `_rootfs_context` declares commands inserted into the network-open rootfs
     # Dockerfile. `container_compile_agent` is the one sealed compiler client.

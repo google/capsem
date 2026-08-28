@@ -344,7 +344,7 @@ def test_the_lane_identity_covers_everything_an_asset_is_built_from() -> None:
     for required in (
         "guest",                  # guest scripts and files the images contain
         "config",                 # profiles, packages, VM values, and templates
-        "src/capsem/builder",     # the image build implementation
+        "build_system/builder/image",     # the image build implementation
         "crates/capsem-admin",    # the profile-owned public build rail
         "crates/capsem-core",     # profile/config semantics used by admin
         "crates/capsem-logger",   # capsem-core's local dependency closure

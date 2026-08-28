@@ -8,42 +8,50 @@ description: Python test infrastructure for capsem-builder. Use when running Pyt
 ## Quick reference
 
 ```bash
-uv run python -m pytest tests/                                    # All tests
-uv run python -m pytest tests/ --cov=src/capsem --cov-fail-under=85  # With coverage
-uv run python -m pytest tests/test_validate.py -k "test_E001"     # Single test
-just test-clean                                                          # Full suite (Rust + Python + frontend)
-just schema                                                        # Regenerate JSON schema + defaults
+PYTHONPATH=src:tests uv run --project build_system pytest \
+  build_system/tests/image/                                      # Image-builder tests
+PYTHONPATH=src:tests uv run --project build_system pytest build_system/tests/image/ \
+  --cov=capsem_builder.image --cov-fail-under=85                 # With coverage
+PYTHONPATH=src:tests uv run --project build_system pytest \
+  build_system/tests/image/test_validate.py -k "test_E001"      # Single test
+just test-clean                                                  # Full suite
+just _generate-settings                                          # Regenerate settings outputs
 ```
 
 ## Package config
 
-`pyproject.toml`:
-- Package: `capsem`, entry point `capsem-builder = capsem.builder.cli:main`
-- Build: hatchling, wheel packages `src/capsem`
-- Test deps: `pytest>=8.0`, `pytest-cov>=6.0` (in `[dependency-groups] dev`)
-- `testpaths = ["tests"]`
+`build_system/pyproject.toml`:
+- Distribution: `capsem-builder`
+- Import: direct `build_system/builder/` mapping to `capsem_builder`
+- Entry point: `capsem-builder = capsem_builder.image.cli:main`
+- Build: setuptools, with no nested `src/` or compatibility package tree
+- Tests: `build_system/tests/`, using the locked `build_system/uv.lock`
 
-## Test directory: `tests/`
+During the staged migration, `PYTHONPATH=src:tests` supplies the not-yet-moved
+gate package and retained cross-system test helpers. Remove that temporary test
+environment edge when `builder/gate/` lands; do not add a compatibility package.
 
-| File | Tests | What it covers |
-|------|-------|----------------|
-| `test_validate.py` | 96 | TOML config linting, error codes E001-E305, warnings W001-W012 |
-| `test_models.py` | 80 | Pydantic models (GuestImageConfig, ArchConfig, all sub-models) |
-| `test_cli.py` | 18 | Backend-only Click CLI surface; product build/validate/inspect commands stay burned |
-| `test_docker.py` | 75 | Jinja Dockerfile rendering, conformance with legacy Dockerfiles |
-| `test_settings_spec.py` | 73 | Settings schema conformance (golden fixture round-trip) |
-| `test_manifest.py` | 48 | BOM collection, manifest rendering, dpkg/pip/npm parsers |
-| `test_config.py` | 41 | TOML config loading, defaults generation, roundtrip |
-| `test_doctor.py` | 27 | Build doctor checks (Docker, tools, disk, permissions) |
-| `test_mcp.py` | 20 | JSON-RPC 2.0 MCP stdio server |
-| `test_audit.py` | 20 | Trivy/grype JSON parsing, severity summary |
+## Test directory: `build_system/tests/image/`
+
+| File | What it covers |
+|------|----------------|
+| `test_validate.py` | TOML config linting, error codes E001-E305, warnings W001-W012 |
+| `test_models.py` | Pydantic image and profile-workspace models |
+| `test_cli.py` | Backend-only Click CLI surface |
+| `test_docker.py` | Jinja rendering and image-build execution primitives |
+| `test_manifest.py` | BOM collection, manifest rendering, package parsers |
+| `test_config.py` | TOML loading, defaults generation, roundtrip |
+| `test_doctor.py` | Build prerequisite and source-completeness checks |
+| `test_audit.py` | Trivy/grype parsing and severity summaries |
+| `test_image_build_backend.py` | Private capsem-admin backend command |
+| `test_image_module_boundary.py` | Exact source, package, and entrypoint ownership |
 
 ## Coverage
 
 - Floor: 85% enforced by `--cov-fail-under=85` in `just test-clean`
 - Report: `codecov-python.xml` (XML for CI upload)
-- codecov.yml: builder component at `src/capsem/**`, included in `unit` flag
-- Current: ~97% (as of Phase 7 completion)
+- `codecov.yml`: builder component includes `build_system/builder/**`
+- Current image package: 91.12% (551 tests, measured during the repository move)
 
 ## Golden fixtures and cross-language conformance
 
@@ -74,10 +82,12 @@ config/settings/settings.toml -> Pydantic models -> config/settings/schema.gener
 
 ## Source layout
 
-```
-src/capsem/
-    __init__.py
-    builder/
+```text
+build_system/
+  pyproject.toml
+  uv.lock
+  builder/                 # installs as capsem_builder
+    image/
         __init__.py
         cli.py           Backend-only Click CLI entry point
         config.py         TOML config loading, defaults generation
@@ -89,7 +99,9 @@ src/capsem/
         audit.py          Trivy/grype output parsing
         image_build_backend.py Private capsem-admin image build backend
         doctor.py         Build environment doctor checks
-        templates/
-            Dockerfile.rootfs.j2
-            Dockerfile.kernel.j2
+  tests/
+    image/
 ```
+
+Product/profile image templates remain under `config/docker/`; they are not
+Python package data and do not move into `build_system/`.

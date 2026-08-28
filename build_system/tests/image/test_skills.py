@@ -5,12 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from capsem_builder.image.cli import cli
+from capsem_builder.image.skills import parse_skill_document, validate_skill_library
 from click.testing import CliRunner
 
-from capsem.builder.cli import cli
-from capsem.builder.skills import parse_skill_document, validate_skill_library
-
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _write_skill(

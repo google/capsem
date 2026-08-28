@@ -5,9 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from capsem.builder import image_build_backend
-from capsem.builder.assetdependencies import AssetDependencyImage
+from capsem_builder.image import image_build_backend
+from capsem_builder.image.assetdependencies import AssetDependencyImage
 
 
 def test_private_backend_loads_guest_config_and_delegates_to_build_image(
@@ -42,7 +41,7 @@ def test_private_backend_loads_guest_config_and_delegates_to_build_image(
     monkeypatch.setattr(
         "sys.argv",
         [
-            "python -m capsem.builder.image_build_backend",
+            "python -m capsem_builder.image.image_build_backend",
             str(guest_dir),
             "--arch",
             "arm64",
@@ -101,7 +100,7 @@ def test_private_backend_materializes_dependencies_and_prints_exact_image(
     monkeypatch.setattr(
         "sys.argv",
         [
-            "python -m capsem.builder.image_build_backend",
+            "python -m capsem_builder.image.image_build_backend",
             str(guest_dir),
             "--arch",
             "arm64",
@@ -158,7 +157,7 @@ def test_private_backend_requires_dependencies_through_detected_runtime(
     monkeypatch.setattr(
         "sys.argv",
         [
-            "python -m capsem.builder.image_build_backend",
+            "python -m capsem_builder.image.image_build_backend",
             str(guest_dir),
             "--arch",
             "x86_64",
@@ -189,7 +188,7 @@ def test_private_backend_refuses_ambiguous_dependency_operation(
     monkeypatch.setattr(
         "sys.argv",
         [
-            "python -m capsem.builder.image_build_backend",
+            "python -m capsem_builder.image.image_build_backend",
             str(guest_dir),
             "--arch",
             "x86_64",
