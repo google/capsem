@@ -979,19 +979,7 @@ fn dispatch_aux_connection(
                     }
                 };
                 info!("audit port: connected, reading audit records");
-                let mut len_buf = [0u8; 4];
-                loop {
-                    if std::io::Read::read_exact(&mut file, &mut len_buf).is_err() {
-                        break;
-                    }
-                    let len = u32::from_be_bytes(len_buf) as usize;
-                    if len > capsem_proto::MAX_FRAME_SIZE as usize {
-                        break;
-                    }
-                    let mut payload = vec![0u8; len];
-                    if std::io::Read::read_exact(&mut file, &mut payload).is_err() {
-                        break;
-                    }
+                while let Ok(Some(payload)) = read_audit_frame(&mut file) {
                     if let Ok(record) = capsem_proto::decode_audit_record(&payload) {
                         let timestamp = std::time::SystemTime::UNIX_EPOCH
                             + std::time::Duration::from_micros(record.timestamp_us);
@@ -1126,6 +1114,30 @@ fn read_exec_output(reader: &mut impl std::io::Read) -> (Vec<u8>, u64) {
         }
     }
     (output, total_seen)
+}
+
+/// Read one length-prefixed audit payload without allocating beyond the
+/// protocol frame limit. EOF while reading the next prefix ends the stream;
+/// malformed lengths and truncated payloads are framing errors.
+fn read_audit_frame(reader: &mut impl std::io::Read) -> std::io::Result<Option<Vec<u8>>> {
+    let mut len_buf = [0u8; 4];
+    match reader.read_exact(&mut len_buf) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(error) => return Err(error),
+    }
+
+    let len = u32::from_be_bytes(len_buf) as usize;
+    if len > capsem_proto::MAX_FRAME_SIZE as usize {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("audit frame too large ({len} > MAX_FRAME_SIZE)"),
+        ));
+    }
+
+    let mut payload = vec![0u8; len];
+    reader.read_exact(&mut payload)?;
+    Ok(Some(payload))
 }
 
 /// Persistent DNS query handler over the vsock DNS port (T3.2).
