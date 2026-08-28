@@ -41,6 +41,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
 
 mod asset_background;
+mod instance_reaper;
 mod proctable;
 mod profile_status_cache;
 mod session_cleanup;
@@ -1796,20 +1797,14 @@ impl ServiceState {
                         env: env.clone(),
                     });
             if let Err(error) = registration {
-                let _ = child.start_kill();
-                tokio::spawn(async move {
-                    let _ = child.wait().await;
-                });
+                instance_reaper::kill_and_reap(child);
                 return Err(error);
             }
         }
 
         if session_db_path_for_session_dir(&session_dir).exists() {
             if let Err(error) = self.register_session_db_handle(id, &session_dir) {
-                let _ = child.start_kill();
-                tokio::spawn(async move {
-                    let _ = child.wait().await;
-                });
+                instance_reaper::kill_and_reap(child);
                 return Err(error);
             }
         } else {
@@ -1821,11 +1816,6 @@ impl ServiceState {
             );
         }
 
-        let id_clone = id.to_string();
-        let name_clone = name.to_string();
-        let state_clone = Arc::clone(self);
-        let uds_clone = uds_path.clone();
-        let session_dir_clone = session_dir.clone();
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
             id.to_string(),
@@ -1837,7 +1827,7 @@ impl ServiceState {
                 profile_payload_hash,
                 asset_pins,
                 pid,
-                uds_path,
+                uds_path: uds_path.clone(),
                 session_dir: session_dir.clone(),
                 ram_mb,
                 cpus,
@@ -1849,112 +1839,14 @@ impl ServiceState {
             },
         );
         drop(instances);
-        tokio::spawn(async move {
-            let exit_status = child.wait().await.ok();
-            info!(id_clone, ?exit_status, "capsem-process exited, cleaning up");
-
-            // An ephemeral VM's removal from the instances map below is
-            // the trigger for preserve_failed_session_dir; if `removed`
-            // is Some, the child exited without an explicit
-            // capsem-service-side shutdown removing it first.
-            //
-            // BUT: a guest-initiated shutdown via `capsem-sysutil
-            // shutdown` (vsock:5004 -> ProcessToService::Shutdown
-            // Requested) also leaves the instance in the map -- the
-            // service has no listener for ShutdownRequested, the
-            // process just sends Shutdown to itself and exits cleanly
-            // with code 0. Treating that as "unexpected" flips the
-            // persistent registry to `defunct` so `capsem list` shows
-            // the VM as Defunct instead of Stopped, and the next
-            // `capsem resume` is misleadingly blocked.
-            //
-            // Distinguish: a clean exit (code 0) from the process is a
-            // graceful shutdown regardless of who initiated it. Any
-            // non-zero exit code or signal-kill is a crash.
-            let removed = state_clone.instances.lock().unwrap().remove(&id_clone);
-            state_clone.unregister_session_db_handle(&id_clone);
-            let clean_exit = exit_status.as_ref().is_some_and(|s| s.success());
-            let unexpected_exit = removed.is_some() && !clean_exit;
-            if removed.is_some() {
-                let status = if clean_exit { "stopped" } else { "crashed" };
-                if let Err(error) = state_clone.record_session_index_stop(
-                    &id_clone, status, Some(&session_dir_clone),
-                ) {
-                    error!(
-                        id_clone,
-                        status,
-                        error = %error,
-                        "failed to record main.db session stop after child exit"
-                    );
-                }
-            }
-
-            // Persistent-VM registry bookkeeping. A checkpoint only takes
-            // precedence when the process wrote the completion marker after
-            // save_state + fsync. A bare checkpoint file can be a partial
-            // failed suspend and must never become registry truth.
-            {
-                let mut registry = state_clone.persistent_registry.lock().unwrap();
-                if let Some(entry) = registry.data.vms.get_mut(&name_clone) {
-                    let checkpoint_path = session_dir_clone.join(RESUME_CHECKPOINT_NAME);
-                    let checkpoint_complete_path = checkpoint_complete_path(&checkpoint_path);
-                    if checkpoint_path.exists() && checkpoint_complete_path.exists() {
-                        info!(id_clone, "Checkpoint file found, marking VM as suspended");
-                        entry.suspended = true;
-                        entry.checkpoint_path = Some(RESUME_CHECKPOINT_NAME.to_string());
-                        entry.defunct = false;
-                        entry.last_error = None;
-                    } else {
-                        entry.suspended = false;
-                        entry.checkpoint_path = None;
-                        if unexpected_exit {
-                            entry.defunct = true;
-                            let tail = read_process_log_tail(&session_dir_clone, 20);
-                            warn!(
-                                id_clone,
-                                cause = capsem_core::session::boot_failure_summary(&tail),
-                                "persistent VM marked defunct after unexpected exit"
-                            );
-                            entry.last_error = Some(tail);
-                        } else {
-                            // Graceful stop / delete path -- not a crash.
-                            entry.defunct = false;
-                            entry.last_error = None;
-                        }
-                    }
-                    if let Err(e) = registry.save() {
-                        error!(id_clone, error = %e, "failed to save persistent registry");
-                    }
-                }
-            }
-
-            // Ephemeral session dirs: preserve on unexpected exit so
-            // process.log / mcp-aggregator.stderr.log / serial.log /
-            // session.db survive for post-mortem. `find_failed_session_dir`
-            // + handle_logs surface them to `capsem logs`.
-            if let Some(info) = removed {
-                if unexpected_exit {
-                    tracing::warn!(
-                        id_clone,
-                        ?exit_status,
-                        "child exited unexpectedly, preserving session dir"
-                    );
-                    if !info.persistent {
-                        let _ =
-                            state_clone.preserve_failed_session_dir(&info.session_dir, &id_clone);
-                    }
-                } else {
-                    tracing::info!(id_clone, "child exited cleanly (guest-initiated shutdown)");
-                }
-            } else {
-                tracing::debug!(
-                    id_clone,
-                    "child exited after explicit service-side shutdown"
-                );
-            }
-            let _ = std::fs::remove_file(&uds_clone);
-            let _ = std::fs::remove_file(uds_clone.with_extension("ready"));
-        });
+        instance_reaper::spawn_provision(
+            child,
+            id.to_string(),
+            name.to_string(),
+            Arc::clone(self),
+            uds_path,
+            session_dir,
+        );
 
         Ok(())
     }
@@ -2085,7 +1977,7 @@ impl ServiceState {
             boot_mode = "resume",
             status = tracing::field::Empty,
         );
-        let mut child = match process_spawn_span.in_scope(|| {
+        let child = match process_spawn_span.in_scope(|| {
             child_cmd
                 .env(
                     "RUST_LOG",
@@ -2146,10 +2038,7 @@ impl ServiceState {
 
         if session_db_path_for_session_dir(&entry.session_dir).exists() {
             if let Err(error) = self.register_session_db_handle(&vm_id, &entry.session_dir) {
-                let _ = child.start_kill();
-                tokio::spawn(async move {
-                    let _ = child.wait().await;
-                });
+                instance_reaper::kill_and_reap(child);
                 return Err(error);
             }
         } else {
@@ -2161,9 +2050,6 @@ impl ServiceState {
             );
         }
 
-        let vm_id_clone = vm_id.clone();
-        let state_clone = Arc::clone(self);
-        let uds_clone = uds_path.clone();
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
             vm_id.clone(),
@@ -2175,7 +2061,7 @@ impl ServiceState {
                 profile_payload_hash: entry.profile_payload_hash.clone(),
                 asset_pins: entry.asset_pins.clone(),
                 pid,
-                uds_path,
+                uds_path: uds_path.clone(),
                 session_dir: entry.session_dir.clone(),
                 ram_mb,
                 cpus,
@@ -2187,16 +2073,7 @@ impl ServiceState {
             },
         );
         drop(instances);
-        tokio::spawn(async move {
-            let exit_status = child.wait().await;
-            info!(vm_id_clone, exit_status = ?exit_status, "capsem-process (resume) exited, cleaning up");
-            // Persistent VMs: remove from instances but keep session dir.
-            tracing::warn!(vm_id_clone, exit_status = ?exit_status, "resume_sandbox child exit handler removing instance");
-            state_clone.instances.lock().unwrap().remove(&vm_id_clone);
-            state_clone.unregister_session_db_handle(&vm_id_clone);
-            let _ = std::fs::remove_file(&uds_clone);
-            let _ = std::fs::remove_file(uds_clone.with_extension("ready"));
-        });
+        instance_reaper::spawn_resume(child, vm_id.clone(), Arc::clone(self), uds_path);
 
         Ok(vm_id)
     }
