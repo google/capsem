@@ -460,7 +460,7 @@ impl ManifestV2 {
                 .entry(version.clone())
                 .or_insert_with(|| entry.clone());
         }
-        if other.assets.current > self.assets.current {
+        if compare_versions(&other.assets.current, &self.assets.current).is_gt() {
             self.assets.current = other.assets.current.clone();
         }
         for (version, entry) in &other.binaries.releases {
@@ -469,7 +469,7 @@ impl ManifestV2 {
                 .entry(version.clone())
                 .or_insert_with(|| entry.clone());
         }
-        if other.binaries.current > self.binaries.current {
+        if compare_versions(&other.binaries.current, &self.binaries.current).is_gt() {
             self.binaries.current = other.binaries.current.clone();
         }
     }
@@ -1625,12 +1625,13 @@ fn version_at_least(actual: &str, minimum: &str) -> bool {
     if minimum.is_empty() {
         return true;
     }
-    match (
-        numeric_version_parts(actual),
-        numeric_version_parts(minimum),
-    ) {
-        (Some(actual), Some(minimum)) => compare_numeric_versions(&actual, &minimum).is_ge(),
-        _ => actual >= minimum,
+    compare_versions(actual, minimum).is_ge()
+}
+
+fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
+    match (numeric_version_parts(left), numeric_version_parts(right)) {
+        (Some(left), Some(right)) => compare_numeric_versions(&left, &right),
+        _ => left.cmp(right),
     }
 }
 

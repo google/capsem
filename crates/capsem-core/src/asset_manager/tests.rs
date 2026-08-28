@@ -506,6 +506,22 @@ fn manifest_merge() {
 }
 
 #[test]
+fn manifest_merge_compares_numeric_version_components() {
+    let older = SAMPLE_V2_MANIFEST
+        .replace("2026.0415.1", "2026.0415.2")
+        .replace("1.0.1776269479", "1.0.2");
+    let newer = SAMPLE_V2_MANIFEST
+        .replace("2026.0415.1", "2026.0415.10")
+        .replace("1.0.1776269479", "1.0.10");
+    let mut merged = ManifestV2::from_json(&older).unwrap();
+
+    merged.merge(&ManifestV2::from_json(&newer).unwrap());
+
+    assert_eq!(merged.assets.current, "2026.0415.10");
+    assert_eq!(merged.binaries.current, "1.0.10");
+}
+
+#[test]
 fn manifest_resolve_finds_files_in_arch_subdir() {
     // Simulates installed/dev layout: base_dir/arm64/vmlinuz-{hash}
     let dir = tempfile::tempdir().unwrap();
