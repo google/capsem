@@ -1,0 +1,148 @@
+version = 1
+root_reads = [
+  'crates/capsem-core/src/mcp/builtin_tools/tests.rs:"{}/data/fixtures/html/{name}",',
+  'crates/capsem-logger/tests/roundtrip.rs:/// Open the shared test fixture at data/fixtures/test.db (read-only).',
+  'crates/capsem-logger/tests/roundtrip.rs:path.push("data/fixtures/test.db");',
+]
+
+[[fixture]]
+source = "data/.gitkeep"
+target = "[delete]"
+disposition = "delete"
+owner = "empty obsolete root marker"
+item = "S05-010"
+consumer = ""
+symbols = []
+
+[[fixture]]
+source = "data/fixtures/.gitkeep"
+target = "[delete]"
+disposition = "delete"
+owner = "empty mixed-fixture marker"
+item = "S05-003"
+consumer = ""
+symbols = []
+
+[[fixture]]
+source = "data/fixtures/anthropic_messages_non_streaming.json"
+target = "[delete]"
+disposition = "delete"
+owner = "zero tracked callers by exact basename proof"
+item = "S05-003"
+consumer = ""
+symbols = []
+
+[[fixture]]
+source = "data/fixtures/anthropic_messages_streaming.json"
+target = "[delete]"
+disposition = "delete"
+owner = "zero tracked callers by exact basename proof"
+item = "S05-003"
+consumer = ""
+symbols = []
+
+[[fixture]]
+source = "data/fixtures/google_gemini_generate_content.json"
+target = "[delete]"
+disposition = "delete"
+owner = "zero tracked callers by exact basename proof"
+item = "S05-003"
+consumer = ""
+symbols = []
+
+[[fixture]]
+source = "data/fixtures/google_gemini_stream_generate_content.json"
+target = "[delete]"
+disposition = "delete"
+owner = "zero tracked callers by exact basename proof"
+item = "S05-003"
+consumer = ""
+symbols = []
+
+[[fixture]]
+source = "data/fixtures/html/elie_about.html"
+target = "tests/fixtures/mcp/html/elie_about.html"
+disposition = "retain"
+owner = "MCP built-in HTML extraction test owner"
+item = "S05-004"
+consumer = "crates/capsem-core/src/mcp/builtin_tools/tests.rs"
+symbols = [
+  "extract_elie_about_has_real_content",
+  "grep_elie_about_finds_bursztein",
+  "markdown_elie_about_has_structure",
+  "raw_mode_paginate_works_on_html",
+  "raw_vs_content_mode_differ",
+]
+
+[[fixture]]
+source = "data/fixtures/html/wiki_rust_excerpt.html"
+target = "tests/fixtures/mcp/html/wiki_rust_excerpt.html"
+disposition = "retain"
+owner = "MCP built-in HTML extraction test owner"
+item = "S05-004"
+consumer = "crates/capsem-core/src/mcp/builtin_tools/tests.rs"
+symbols = ["extract_wiki_rust_has_real_content"]
+
+[[fixture]]
+source = "data/fixtures/html/wiki_turing_excerpt.html"
+target = "tests/fixtures/mcp/html/wiki_turing_excerpt.html"
+disposition = "retain"
+owner = "MCP built-in HTML extraction test owner"
+item = "S05-004"
+consumer = "crates/capsem-core/src/mcp/builtin_tools/tests.rs"
+symbols = [
+  "extract_wiki_turing_has_real_content",
+  "grep_wiki_turing_finds_turing",
+  "markdown_wiki_turing_has_structure",
+]
+
+[[fixture]]
+source = "data/fixtures/html/wiki_unicode_excerpt.html"
+target = "tests/fixtures/mcp/html/wiki_unicode_excerpt.html"
+disposition = "retain"
+owner = "MCP built-in HTML extraction test owner"
+item = "S05-004"
+consumer = "crates/capsem-core/src/mcp/builtin_tools/tests.rs"
+symbols = [
+  "extract_wiki_unicode_preserves_multibyte",
+  "grep_wiki_unicode_finds_pattern",
+  "paginate_real_wiki_unicode_content",
+]
+
+[[fixture]]
+source = "data/fixtures/manifest_per_arch.json"
+target = "[delete]"
+disposition = "delete"
+owner = "zero tracked callers by exact basename proof"
+item = "S05-003"
+consumer = ""
+symbols = []
+
+[[fixture]]
+source = "data/fixtures/test.db"
+target = "tests/fixtures/session/test.db"
+disposition = "retain"
+owner = "logger roundtrip/session fixture owner"
+item = "S05-004"
+consumer = "crates/capsem-logger/tests/roundtrip.rs"
+symbols = [
+  "fixture_query_raw_select",
+  "fixture_recent_traces_non_empty",
+  "fixture_token_usage_non_empty",
+  "fixture_top_domains_non_empty",
+  "fixture_trace_detail_loads_tools",
+  "query_raw_aggregate",
+  "query_raw_empty_result",
+  "query_raw_integer_and_null_types",
+  "query_raw_null_values",
+  "query_raw_real_type",
+  "query_raw_returns_columns_and_rows",
+  "query_raw_syntax_error",
+  "query_raw_timeout_on_slow_query",
+  "reader_rejects_create_table",
+  "reader_rejects_drop_table",
+  "reader_rejects_insert",
+  "reader_rejects_semicolon_injection",
+  "test_file_events_fixture_search",
+  "test_file_events_in_fixture",
+]
