@@ -4,15 +4,12 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tomllib
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,63 +17,34 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_POLICY = ROOT / "config" / "storage-policy.toml"
 
-# Prefer the installed owner when this controller is copied out of its source
-# tree. Before any project environment exists, fall back to that same canonical
-# module by exact checkout path; S04-003 will move the controller into the
-# installed build-system package and remove this bootstrap seam.
-try:
-    from capsem_builder.policy.storagepolicyretention import (
-        cache_violations,
-        protect_generations,
-        resource_decision,
-        superseded_generations,
-        validate_bounds,
-    )
-except ModuleNotFoundError as error:
-    if error.name != "capsem_builder":
-        raise
-    _RETENTION_PATH = (
-        ROOT / "build_system" / "builder" / "policy" / "storagepolicyretention.py"
-    )
-    _RETENTION_SPEC = importlib.util.spec_from_file_location(
-        "capsem_storagepolicyretention", _RETENTION_PATH
-    )
-    if _RETENTION_SPEC is None or _RETENTION_SPEC.loader is None:
-        raise RuntimeError(
-            f"cannot load storage policy module: {_RETENTION_PATH}"
-        ) from error
-    _RETENTION = importlib.util.module_from_spec(_RETENTION_SPEC)
-    _RETENTION_SPEC.loader.exec_module(_RETENTION)
-    cache_violations = _RETENTION.cache_violations
-    protect_generations = _RETENTION.protect_generations
-    resource_decision = _RETENTION.resource_decision
-    superseded_generations = _RETENTION.superseded_generations
-    validate_bounds = _RETENTION.validate_bounds
+def _policy_dependencies(root: Path):
+    try:
+        from capsem_builder.policy import storagepolicycommand, storagepolicyretention
+    except ModuleNotFoundError as error:
+        if error.name != "capsem_builder":
+            raise
+        sys.path.insert(0, str(root / "build_system" / "builder"))
+        from bootstrap import mount_builder_package
+
+        mount_builder_package(root)
+        from capsem_builder.policy import storagepolicycommand, storagepolicyretention
+    return storagepolicycommand, storagepolicyretention
+
+
+_command, _retention = _policy_dependencies(ROOT)
+CommandResult = _command.CommandResult
+parse_size_bytes = _command.parse_size_bytes
+parse_system_df = _command.parse_system_df
+parse_volume_sizes = _command.parse_volume_sizes
+run_command = _command.run_command
+run_text = _command.run_text
+cache_violations = _retention.cache_violations
+protect_generations = _retention.protect_generations
+resource_decision = _retention.resource_decision
+superseded_generations = _retention.superseded_generations
+validate_bounds = _retention.validate_bounds
 
 POSITIVE_FIELDS = ("minimum_free_gib", "buildkit_keep_gib", "linked_keep_gib")
-SIZE_UNITS = {
-    "B": 1,
-    "KB": 1000,
-    "MB": 1000**2,
-    "GB": 1000**3,
-    "TB": 1000**4,
-    "KIB": 1024,
-    "MIB": 1024**2,
-    "GIB": 1024**3,
-    "TIB": 1024**4,
-}
-
-
-@dataclass(frozen=True)
-class CommandResult:
-    command: list[str]
-    returncode: int
-    stdout: str
-    stderr: str
-
-    @property
-    def output(self) -> str:
-        return "\n".join(part for part in (self.stdout, self.stderr) if part).strip()
 
 
 def utc_now() -> str:
@@ -148,80 +116,6 @@ def resolve_rail(policy: dict[str, Any], rail_name: str) -> dict[str, int]:
     defaults = policy["docker"]
     rail = rails[rail_name]
     return {field: int(rail.get(field, defaults[field])) for field in POSITIVE_FIELDS}
-
-
-def run_command(command: list[str], *, timeout: int = 120) -> CommandResult:
-    try:
-        result = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired as error:
-        stdout = error.stdout if isinstance(error.stdout, str) else ""
-        stderr = error.stderr if isinstance(error.stderr, str) else ""
-        return CommandResult(command, 124, stdout, f"{stderr}\ncommand timed out")
-    except FileNotFoundError as error:
-        return CommandResult(command, 127, "", str(error))
-    return CommandResult(
-        command,
-        result.returncode,
-        (result.stdout or "").strip(),
-        (result.stderr or "").strip(),
-    )
-
-
-def run_text(command: list[str]) -> str:
-    return run_command(command).output
-
-
-def parse_size_bytes(value: str) -> int:
-    token = value.strip().split()[0].replace(",", "")
-    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)([A-Za-z]+)", token)
-    if not match:
-        raise ValueError(f"unsupported Docker size: {value!r}")
-    number, unit = match.groups()
-    multiplier = SIZE_UNITS.get(unit.upper())
-    if multiplier is None:
-        raise ValueError(f"unsupported Docker size unit: {unit!r}")
-    return int(float(number) * multiplier)
-
-
-def parse_system_df(output: str) -> dict[str, dict[str, Any]]:
-    rows: dict[str, dict[str, Any]] = {}
-    for line in output.splitlines():
-        if not line.strip():
-            continue
-        value = json.loads(line)
-        name = re.sub(r"[^a-z0-9]+", "_", value["Type"].lower()).strip("_")
-        rows[name] = {
-            "count": int(value["TotalCount"]),
-            "active": int(value["Active"]),
-            "size_bytes": parse_size_bytes(value["Size"]),
-            "reclaimable_bytes": parse_size_bytes(value["Reclaimable"]),
-        }
-    return rows
-
-
-def parse_volume_sizes(output: str) -> dict[str, dict[str, int]]:
-    rows: dict[str, dict[str, int]] = {}
-    in_volumes = False
-    for line in output.splitlines():
-        if line == "Local Volumes space usage:":
-            in_volumes = True
-            continue
-        if in_volumes and line == "Build cache usage:":
-            break
-        if not in_volumes or not line or line.startswith("VOLUME NAME"):
-            continue
-        match = re.match(r"^(\S+)\s+(\d+)\s+(\S+)$", line)
-        if not match:
-            continue
-        name, links, size = match.groups()
-        rows[name] = {"links": int(links), "size_bytes": parse_size_bytes(size)}
-    return rows
 
 
 def image_generations(repository: str) -> list[dict[str, Any]]:

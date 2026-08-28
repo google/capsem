@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import sys
 import time
 from pathlib import Path
@@ -19,6 +18,8 @@ def _release_dependencies(root: Path):
     sys.path.insert(0, str(root / "scripts"))
     from bootstrap import mount_builder_package
     from release_site_snapshot import (
+        load_readiness_checker,
+        normalize_release_site,
         retain_successful_external_fetches,
         snapshot_distribution_bytes,
     )
@@ -27,6 +28,8 @@ def _release_dependencies(root: Path):
     from capsem_builder.release import runtime_preflight_manifest as channel_resolver
 
     return (
+        load_readiness_checker,
+        normalize_release_site,
         retain_successful_external_fetches,
         snapshot_distribution_bytes,
         channel_resolver,
@@ -34,7 +37,9 @@ def _release_dependencies(root: Path):
 
 
 (
-    retain_successful_external_fetches,
+    load_readiness_checker,
+    normalize_release_site,
+    clear_checker_fetch_cache,
     snapshot_distribution_bytes,
     channel_resolver,
 ) = _release_dependencies(ROOT)
@@ -283,28 +288,6 @@ def validate_release_channels(
     for channel, failure in last_failures:
         print(f"FAIL: {channel}: {failure.name}: {failure.detail}", file=sys.stderr)
     return 1
-
-
-def clear_checker_fetch_cache(checker: Any, release_site: str) -> None:
-    retain_successful_external_fetches(checker, release_site)
-
-
-def normalize_release_site(release_site: str) -> str:
-    parsed = urlparse(release_site)
-    if parsed.scheme:
-        return release_site
-    return Path(release_site).resolve().as_uri()
-
-
-def load_readiness_checker() -> Any:
-    module_path = Path(__file__).resolve().with_name("check-remote-release-readiness.py")
-    spec = importlib.util.spec_from_file_location("check_remote_release_readiness", module_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load {module_path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 if __name__ == "__main__":

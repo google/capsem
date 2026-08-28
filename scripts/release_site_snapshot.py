@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -14,9 +16,21 @@ from urllib.parse import quote, urljoin, urlparse
 CLOUDFLARE_CONTROL_FILES = frozenset({"_headers", "_redirects", "_routes.json"})
 
 
-def _normalize_release_site(release_site: str) -> str:
+def normalize_release_site(release_site: str) -> str:
     parsed = urlparse(release_site)
     return release_site if parsed.scheme else Path(release_site).resolve().as_uri()
+
+
+def load_readiness_checker() -> Any:
+    """Load the hyphenated readiness checker as one stable module identity."""
+    module_path = Path(__file__).resolve().with_name("check-remote-release-readiness.py")
+    spec = importlib.util.spec_from_file_location("check_remote_release_readiness", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def retain_successful_external_fetches(checker: Any, release_site: str) -> None:
@@ -25,7 +39,7 @@ def retain_successful_external_fetches(checker: Any, release_site: str) -> None:
     cache = getattr(checker, "_FETCH_BYTES_CACHE", None)
     if not isinstance(cache, dict):
         return
-    site = urlparse(_normalize_release_site(release_site))
+    site = urlparse(normalize_release_site(release_site))
     retained: dict[str, Any] = {}
     for url, fetched in cache.items():
         if not isinstance(url, str):
@@ -44,7 +58,7 @@ def _fetch_complete_distribution(checker: Any, release_site: str, dist: Path) ->
     fetch = getattr(checker, "fetch_bytes", None)
     if not callable(fetch):
         raise RuntimeError("release validator does not expose its byte fetcher")
-    site = _normalize_release_site(release_site).rstrip("/") + "/"
+    site = normalize_release_site(release_site).rstrip("/") + "/"
     for path in sorted(candidate for candidate in dist.rglob("*") if candidate.is_file()):
         relative = path.relative_to(dist).as_posix()
         if relative in CLOUDFLARE_CONTROL_FILES:
@@ -80,7 +94,7 @@ def release_fetch_snapshot(
     cache = getattr(checker, "_FETCH_BYTES_CACHE", None)
     if not isinstance(cache, dict) or not cache:
         raise RuntimeError("release validator produced no fetched-byte evidence")
-    site = urlparse(_normalize_release_site(release_site))
+    site = urlparse(normalize_release_site(release_site))
     entries: dict[str, dict[str, int | str]] = {}
     for url, fetched in sorted(cache.items()):
         if not isinstance(url, str):
