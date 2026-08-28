@@ -8,7 +8,6 @@ mkdir -p "$(dirname "$AUDIT_REQUIREMENTS")"
 cd "$ROOT"
 uv export \
     --project build_system \
-    --frozen \
     --quiet \
     --format requirements-txt \
     --locked \
