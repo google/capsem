@@ -600,7 +600,11 @@ pub struct ToolResponseEntry {
     pub credential_ref: Option<String>,
 }
 
-/// A single MCP tool call event (one row per tools/call or tools/list request).
+/// A normalized MCP request/response event.
+///
+/// `tools/call` persists in the canonical tool ledger. Protocol-only methods
+/// such as `tools/list` feed security-rule evidence without claiming a user
+/// tool invocation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpCall {
     #[serde(default)]

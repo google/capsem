@@ -624,9 +624,9 @@ fn writer_loop(
             );
         } else {
             match span.in_scope(|| execute_memory_batch(&conn, &batch)) {
-                Ok(affected) => {
-                    dirty_tables.extend(affected);
-                    dirty_ops += batch_size;
+                Ok(outcome) => {
+                    dirty_tables.extend(outcome.tables);
+                    dirty_ops += outcome.written;
                     record_batch(
                         started,
                         batch_size,
@@ -794,9 +794,10 @@ fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'static str>) {
             tables.insert("tool_calls");
             tables.insert("tool_responses");
         }
-        WriteOp::McpCall(_) => {
+        WriteOp::McpCall(call) if call.method == "tools/call" => {
             tables.insert("tool_calls");
         }
+        WriteOp::McpCall(_) => {}
         WriteOp::FileEvent(_) => {
             tables.insert("fs_events");
         }
@@ -827,10 +828,14 @@ fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'static str>) {
     }
 }
 
-/// Outcome of re-running a failed batch one operation at a time.
-struct SalvagedBatch {
+/// Storage work completed by a batch or by its per-operation salvage pass.
+struct BatchWriteOutcome {
     tables: BTreeSet<&'static str>,
     written: usize,
+}
+
+fn write_op_affects_storage(op: &WriteOp) -> bool {
+    !matches!(op, WriteOp::McpCall(call) if call.method != "tools/call")
 }
 
 /// Re-run a failed batch one op at a time so a single rejected row cannot
@@ -842,17 +847,24 @@ struct SalvagedBatch {
 /// arbitrary window of unrelated events, so the batch failure path pays for a
 /// second pass. Nothing here runs when the batch commits.
 ///
-fn retry_batch_ops_individually(conn: &Connection, batch: &[WriteOp]) -> SalvagedBatch {
-    let mut salvaged = SalvagedBatch {
+fn retry_batch_ops_individually(conn: &Connection, batch: &[WriteOp]) -> BatchWriteOutcome {
+    let expected_writes = batch
+        .iter()
+        .filter(|op| write_op_affects_storage(op))
+        .count();
+    let mut salvaged = BatchWriteOutcome {
         tables: BTreeSet::new(),
         written: 0,
     };
     for op in batch {
+        if !write_op_affects_storage(op) {
+            continue;
+        }
         let op_kind = op.kind();
         match execute_memory_batch(conn, std::slice::from_ref(op)) {
-            Ok(tables) => {
-                salvaged.tables.extend(tables);
-                salvaged.written += 1;
+            Ok(outcome) => {
+                salvaged.tables.extend(outcome.tables);
+                salvaged.written += outcome.written;
             }
             Err(error) => {
                 // Loud on purpose: a rejected op is a producer bug, and a
@@ -868,9 +880,9 @@ fn retry_batch_ops_individually(conn: &Connection, batch: &[WriteOp]) -> Salvage
             }
         }
     }
-    if salvaged.written < batch.len() {
+    if salvaged.written < expected_writes {
         warn!(
-            rejected = batch.len() - salvaged.written,
+            rejected = expected_writes - salvaged.written,
             salvaged = salvaged.written,
             "db batch retry completed with rejected ops"
         );
@@ -881,11 +893,25 @@ fn retry_batch_ops_individually(conn: &Connection, batch: &[WriteOp]) -> Salvage
 fn execute_memory_batch(
     conn: &Connection,
     batch: &[WriteOp],
-) -> rusqlite::Result<BTreeSet<&'static str>> {
+) -> rusqlite::Result<BatchWriteOutcome> {
+    let stored_ops = batch
+        .iter()
+        .filter(|op| write_op_affects_storage(op))
+        .count();
+    if stored_ops == 0 {
+        return Ok(BatchWriteOutcome {
+            tables: BTreeSet::new(),
+            written: 0,
+        });
+    }
+
     let tx = conn.unchecked_transaction()?;
     let mut affected_tables = BTreeSet::new();
     let mut op_counts = std::collections::BTreeMap::<&'static str, usize>::new();
     for op in batch {
+        if !write_op_affects_storage(op) {
+            continue;
+        }
         *op_counts.entry(op.kind()).or_default() += 1;
         affected_memory_tables(op, &mut affected_tables);
         match op {
@@ -916,7 +942,10 @@ fn execute_memory_batch(
     for (kind, count) in op_counts {
         ::metrics::counter!(DB_WRITE_OPS_TOTAL, "insert_type" => kind).increment(count as u64);
     }
-    Ok(affected_tables)
+    Ok(BatchWriteOutcome {
+        tables: affected_tables,
+        written: stored_ops,
+    })
 }
 
 fn flush_dirty_tables_to_disk(
