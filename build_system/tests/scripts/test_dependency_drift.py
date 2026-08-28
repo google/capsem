@@ -2,16 +2,7 @@
 
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_SPEC = importlib.util.spec_from_file_location(
-    "check_dependency_drift", PROJECT_ROOT / "scripts" / "check-dependency-drift.py"
-)
-assert _SPEC is not None and _SPEC.loader is not None
-DRIFT = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(DRIFT)
+from capsem_builder.gate.tools.audit import dependency_drift as DRIFT
 
 
 def _pkg(deps: tuple[str, ...] = (), build: bool = False) -> dict:

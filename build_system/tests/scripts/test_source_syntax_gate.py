@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+
+from capsem_builder.gate.tools.audit import source_syntax
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CHECKER = PROJECT_ROOT / "scripts" / "check-source-syntax.py"
@@ -36,14 +37,10 @@ def test_source_syntax_checker_ignores_a_tracked_deletion(tmp_path: Path) -> Non
     tracked.write_text("value = 1\n", encoding="utf-8")
     subprocess.run(("git", "add", "tracked.py"), cwd=tmp_path, check=True)
 
-    spec = importlib.util.spec_from_file_location("check_source_syntax", CHECKER)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    assert module._tracked_sources(tmp_path) == [tracked]
+    assert source_syntax._tracked_sources(tmp_path) == [tracked]
 
     tracked.unlink()
-    assert module._tracked_sources(tmp_path) == []
+    assert source_syntax._tracked_sources(tmp_path) == []
 
 
 def test_source_syntax_checker_rejects_malformed_yaml(tmp_path: Path) -> None:

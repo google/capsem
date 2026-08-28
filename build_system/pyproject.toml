@@ -25,6 +25,8 @@ build-backend = "setuptools.build_meta"
 packages = [
     "capsem_builder",
     "capsem_builder.gate",
+    "capsem_builder.gate.tools",
+    "capsem_builder.gate.tools.audit",
     "capsem_builder.image",
     "capsem_builder.policy",
     "capsem_builder.release",

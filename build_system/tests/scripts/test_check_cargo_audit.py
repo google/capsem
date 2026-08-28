@@ -1,18 +1,11 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate.tools.audit import cargo_audit as AUDIT
 
 ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = ROOT / "scripts" / "check-cargo-audit.py"
-SPEC = importlib.util.spec_from_file_location("check_cargo_audit_function_guard", SCRIPT)
-assert SPEC is not None and SPEC.loader is not None
-AUDIT = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = AUDIT
-SPEC.loader.exec_module(AUDIT)
 
 
 def _package(root: Path, name: str, version: str, source: str) -> dict[str, str]:
