@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Guest network attribution now checks recently active processes before
+  scanning every process file descriptor for each outbound connection.
+
 - Guest process attribution now handles long Unicode process names without
   crashing MCP or network relay tasks.
 
