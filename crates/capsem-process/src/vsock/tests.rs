@@ -318,12 +318,12 @@ async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
     js.jobs.lock().unwrap().insert(id, tx);
 
     // Simulate the dispatch path: the ServiceToProcess::Exec handler has
-    // set active_exec, and the EXEC-port reader thread has already
+    // installed the active exec slot, and the EXEC-port reader has already
     // deposited its (empty) local_buf and signalled completion. ExecDone
     // arriving after that must return immediately -- no blanket stall.
-    let active = crate::job_store::ActiveExec::new(id);
+    let active = crate::job_store::ActiveExec::new();
     active.deposited.notify_one();
-    *js.active_exec.lock().unwrap() = Some(active);
+    js.active_execs.lock().unwrap().insert(id, active);
 
     let start = std::time::Instant::now();
     handle_guest_msg(
@@ -373,7 +373,10 @@ async fn exec_done_waits_for_delayed_output_deposit_without_truncation() {
     let id: u64 = 43;
     let (tx, rx) = oneshot::channel::<JobResult>();
     js.jobs.lock().unwrap().insert(id, tx);
-    *js.active_exec.lock().unwrap() = Some(crate::job_store::ActiveExec::new(id));
+    js.active_execs
+        .lock()
+        .unwrap()
+        .insert(id, crate::job_store::ActiveExec::new());
 
     // Reproduce a loaded runner after resume: the serialized control channel
     // delivers ExecDone promptly, while the dedicated EXEC-port reader does
@@ -382,10 +385,9 @@ async fn exec_done_waits_for_delayed_output_deposit_without_truncation() {
     let deposit = tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         let notify = {
-            let mut guard = js_for_deposit.active_exec.lock().unwrap();
+            let mut guard = js_for_deposit.active_execs.lock().unwrap();
             let active = guard
-                .as_mut()
-                .filter(|active| active.id == id)
+                .get_mut(&id)
                 .expect("ExecDone must not discard the capture slot before deposit");
             active.captured = b"/run/capsem-venv\n".to_vec();
             Arc::clone(&active.deposited)
@@ -412,6 +414,69 @@ async fn exec_done_waits_for_delayed_output_deposit_without_truncation() {
         }
         other => panic!("expected Exec result, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn concurrent_exec_completions_keep_each_stdout() {
+    use crate::job_store::{ActiveExec, JobResult, JobStore};
+    use capsem_proto::GuestToHost;
+    use std::sync::Arc;
+    use tokio::sync::oneshot;
+
+    let js = Arc::new(JobStore::new());
+    let db = Arc::new(capsem_logger::DbWriter::open_in_memory(16).unwrap());
+    let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(
+        capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
+    )));
+    let plugin_policy = empty_plugin_policy();
+    let first_id = 501;
+    let second_id = 502;
+    let (first_tx, first_rx) = oneshot::channel();
+    let (second_tx, second_rx) = oneshot::channel();
+    js.jobs.lock().unwrap().insert(first_id, first_tx);
+    js.jobs.lock().unwrap().insert(second_id, second_tx);
+
+    {
+        let mut active = js.active_execs.lock().unwrap();
+        active.insert(first_id, ActiveExec::new());
+        active.insert(second_id, ActiveExec::new());
+    }
+    if let Some(notify) = deposit_exec_output(&js, first_id, b"first\n".to_vec(), 6) {
+        notify.notify_one();
+    }
+    if let Some(notify) = deposit_exec_output(&js, second_id, b"second\n".to_vec(), 7) {
+        notify.notify_one();
+    }
+
+    handle_guest_msg(
+        GuestToHost::ExecDone {
+            id: first_id,
+            exit_code: 0,
+        },
+        &js,
+        &db,
+        &security_rules,
+        &plugin_policy,
+    )
+    .await;
+    handle_guest_msg(
+        GuestToHost::ExecDone {
+            id: second_id,
+            exit_code: 0,
+        },
+        &js,
+        &db,
+        &security_rules,
+        &plugin_policy,
+    )
+    .await;
+
+    let stdout = |result| match result {
+        JobResult::Exec { stdout, .. } => stdout,
+        other => panic!("expected Exec result, got {other:?}"),
+    };
+    assert_eq!(stdout(first_rx.await.unwrap()), b"first\n");
+    assert_eq!(stdout(second_rx.await.unwrap()), b"second\n");
 }
 
 #[tokio::test]

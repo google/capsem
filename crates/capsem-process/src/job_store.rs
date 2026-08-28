@@ -8,12 +8,9 @@ use tracing::{info, warn};
 
 pub(crate) struct JobStore {
     pub(crate) jobs: Mutex<HashMap<u64, oneshot::Sender<JobResult>>>,
-    /// Currently active exec job: the id, captured stdout, and a notifier
-    /// the EXEC-port reader thread fires once it has finished depositing
-    /// captured bytes. The ExecDone handler awaits this before reading
-    /// captured, so no-output commands don't pay a blanket timeout to
-    /// cover the deposit race.
-    pub(crate) active_exec: Mutex<Option<ActiveExec>>,
+    /// Active exec jobs keyed by id, each with captured stdout and a notifier
+    /// the EXEC-port reader thread fires after depositing captured bytes.
+    pub(crate) active_execs: Mutex<HashMap<u64, ActiveExec>>,
     /// In-flight explicit file operations keyed by service job id. The guest
     /// response only carries enough context for reads; writes need the original
     /// path and payload to emit the security-event ledger row after success.
@@ -35,10 +32,9 @@ pub(crate) struct JobStore {
 
 /// State for an in-flight exec. `deposited` is notified once by the
 /// EXEC-port reader thread after it has written `captured` under the
-/// active_exec lock; ExecDone uses it to distinguish "empty stdout" from
+/// active_execs lock; ExecDone uses it to distinguish "empty stdout" from
 /// "deposit still in flight" without sleeping unconditionally.
 pub(crate) struct ActiveExec {
-    pub(crate) id: u64,
     pub(crate) started_at: Instant,
     pub(crate) event_id: Option<capsem_core::security_engine::SecurityEventId>,
     pub(crate) captured: Vec<u8>,
@@ -50,9 +46,8 @@ pub(crate) struct ActiveExec {
 }
 
 impl ActiveExec {
-    pub(crate) fn new(id: u64) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            id,
             started_at: Instant::now(),
             event_id: None,
             captured: Vec::new(),
@@ -66,7 +61,7 @@ impl JobStore {
     pub(crate) fn new() -> Self {
         Self {
             jobs: Mutex::new(HashMap::new()),
-            active_exec: Mutex::new(None),
+            active_execs: Mutex::new(HashMap::new()),
             active_file_ops: Mutex::new(HashMap::new()),
             snapshot_ready: Mutex::new(None),
             pending_acks: Mutex::new(HashMap::new()),
@@ -90,9 +85,9 @@ impl JobStore {
         if let Some(tx) = self.snapshot_ready.lock().unwrap().take() {
             capsem_core::try_send!("snapshot_ready_fail_all", tx.send(()));
         }
-        // Wake any ExecDone handler parked on the deposit notifier -- it
-        // will then take an empty captured and drop the stale entry.
-        if let Some(active) = self.active_exec.lock().unwrap().take() {
+        // Wake every ExecDone handler parked on a deposit notifier. Each will
+        // then observe its removed slot and complete without hanging.
+        for (_, active) in self.active_execs.lock().unwrap().drain() {
             active.deposited.notify_waiters();
         }
         self.active_file_ops.lock().unwrap().clear();

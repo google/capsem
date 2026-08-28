@@ -35,33 +35,40 @@ fn job_store_concurrent_ids_unique() {
 #[test]
 fn job_store_active_exec_set_and_clear() {
     let store = JobStore::new();
-    assert!(store.active_exec.lock().unwrap().is_none());
+    assert!(store.active_execs.lock().unwrap().is_empty());
 
-    *store.active_exec.lock().unwrap() = Some(ActiveExec::new(42));
+    store
+        .active_execs
+        .lock()
+        .unwrap()
+        .insert(42, ActiveExec::new());
     {
-        let guard = store.active_exec.lock().unwrap();
-        let active = guard.as_ref().unwrap();
-        assert_eq!(active.id, 42);
+        let guard = store.active_execs.lock().unwrap();
+        let active = guard.get(&42).unwrap();
         assert!(active.captured.is_empty());
     }
 
-    *store.active_exec.lock().unwrap() = None;
-    assert!(store.active_exec.lock().unwrap().is_none());
+    store.active_execs.lock().unwrap().remove(&42);
+    assert!(store.active_execs.lock().unwrap().is_empty());
 }
 
 #[test]
 fn job_store_active_exec_captures_data() {
     let store = JobStore::new();
-    *store.active_exec.lock().unwrap() = Some(ActiveExec::new(1));
-    if let Some(ref mut active) = *store.active_exec.lock().unwrap() {
+    store
+        .active_execs
+        .lock()
+        .unwrap()
+        .insert(1, ActiveExec::new());
+    if let Some(active) = store.active_execs.lock().unwrap().get_mut(&1) {
         active.captured.extend_from_slice(b"hello ");
         active.captured.extend_from_slice(b"world");
     }
     let captured = store
-        .active_exec
+        .active_execs
         .lock()
         .unwrap()
-        .as_ref()
+        .get(&1)
         .unwrap()
         .captured
         .clone();
@@ -210,11 +217,23 @@ async fn fail_all_resolves_every_pending_oneshot() {
         jobs.insert(3, tx3);
     }
     *job_store.snapshot_ready.lock().unwrap() = Some(snap_tx);
-    {
-        let mut active = ActiveExec::new(1);
-        active.captured = b"buffered".to_vec();
-        *job_store.active_exec.lock().unwrap() = Some(active);
-    }
+    let first_deposited = {
+        let mut active = ActiveExec::new();
+        active.captured = b"first".to_vec();
+        let deposited = Arc::clone(&active.deposited);
+        job_store.active_execs.lock().unwrap().insert(1, active);
+        deposited
+    };
+    let second_deposited = {
+        let mut active = ActiveExec::new();
+        active.captured = b"second".to_vec();
+        let deposited = Arc::clone(&active.deposited);
+        job_store.active_execs.lock().unwrap().insert(2, active);
+        deposited
+    };
+    let first_waiter = tokio::spawn(async move { first_deposited.notified().await });
+    let second_waiter = tokio::spawn(async move { second_deposited.notified().await });
+    tokio::task::yield_now().await;
 
     // Regression guard: this is the crucial behavior -- callers awaiting
     // these oneshots must see an immediate result, not hang forever and
@@ -233,8 +252,16 @@ async fn fail_all_resolves_every_pending_oneshot() {
         snap_rx.await.is_ok(),
         "snapshot_ready waiter must be resolved"
     );
-    assert!(job_store.active_exec.lock().unwrap().is_none());
+    assert!(job_store.active_execs.lock().unwrap().is_empty());
     assert!(job_store.jobs.lock().unwrap().is_empty());
+    tokio::time::timeout(std::time::Duration::from_millis(100), first_waiter)
+        .await
+        .expect("first exec waiter must be notified")
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_millis(100), second_waiter)
+        .await
+        .expect("second exec waiter must be notified")
+        .unwrap();
 }
 
 // -----------------------------------------------------------------------

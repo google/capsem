@@ -445,10 +445,10 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     );
                 }
                 ServiceToProcess::Exec { id, command } => {
-                    // active_exec is owned by ipc.rs's Exec handler -- it
+                    // active_execs is owned by ipc.rs's Exec handler -- it
                     // creates the capture slot *before* sending here. The
                     // control bridge owns delivery/replay, so this layer just
-                    // forwards without replacing the active_exec slot.
+                    // forwards without replacing the per-id capture slot.
                     let trace_id =
                         capsem_core::telemetry::ambient_capsem_trace_id().or_else(|| {
                             capsem_core::telemetry::child_trace_env(&format!(
@@ -481,11 +481,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     // network and file boundaries: withhold the dispatch and
                     // fail the caller's job.
                     if let Some(refusal) = exec_boundary_refusal(id, &boundary) {
-                        js_for_cmd
-                            .active_exec
-                            .lock()
-                            .unwrap()
-                            .take_if(|active| active.id == id);
+                        js_for_cmd.active_execs.lock().unwrap().remove(&id);
                         if let Some(tx) = js_for_cmd.jobs.lock().unwrap().remove(&id) {
                             capsem_core::try_send!(
                                 "job_result_exec_blocked",
@@ -495,13 +491,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         continue;
                     }
                     if let Ok(Some(emission)) = &boundary {
-                        if let Some(active) = js_for_cmd
-                            .active_exec
-                            .lock()
-                            .unwrap()
-                            .as_mut()
-                            .filter(|active| active.id == id)
-                        {
+                        if let Some(active) = js_for_cmd.active_execs.lock().unwrap().get_mut(&id) {
                             active.event_id = Some(emission.event_id.clone());
                         }
                     }
@@ -969,20 +959,7 @@ fn dispatch_aux_connection(
                     // proceed. notify_one stores a permit if ExecDone is
                     // not yet parked, so the common "deposit finishes
                     // first" path wakes ExecDone immediately.
-                    let notify = {
-                        let mut guard = js.active_exec.lock().unwrap();
-                        if let Some(ref mut active) = *guard {
-                            if active.id == id {
-                                active.captured = local_buf;
-                                active.total_bytes = total_seen;
-                                Some(active.deposited.clone())
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    };
+                    let notify = deposit_exec_output(&js, id, local_buf, total_seen);
                     if let Some(n) = notify {
                         n.notify_one();
                     }
@@ -1473,6 +1450,19 @@ fn rewritten_file_content(
     }
 }
 
+fn deposit_exec_output(
+    job_store: &JobStore,
+    id: u64,
+    captured: Vec<u8>,
+    total_bytes: u64,
+) -> Option<Arc<tokio::sync::Notify>> {
+    let mut guard = job_store.active_execs.lock().unwrap();
+    let active = guard.get_mut(&id)?;
+    active.captured = captured;
+    active.total_bytes = total_bytes;
+    Some(Arc::clone(&active.deposited))
+}
+
 async fn handle_guest_msg(
     msg: GuestToHost,
     js: &Arc<JobStore>,
@@ -1491,16 +1481,15 @@ async fn handle_guest_msg(
             // a transport-loss bound, not a scheduler-latency assumption: a
             // loaded runner can delay the reader for hundreds of milliseconds.
             let notify = js
-                .active_exec
+                .active_execs
                 .lock()
                 .unwrap()
-                .as_ref()
-                .filter(|a| a.id == id)
+                .get(&id)
                 .map(|a| a.deposited.clone());
             if let Some(n) = notify {
                 let _ = tokio::time::timeout(EXEC_OUTPUT_DEPOSIT_TIMEOUT, n.notified()).await;
             }
-            let active_exec = js.active_exec.lock().unwrap().take().filter(|a| a.id == id);
+            let active_exec = js.active_execs.lock().unwrap().remove(&id);
             let (event_id, duration_ms, stdout, total_bytes) = active_exec
                 .map(|active| {
                     (

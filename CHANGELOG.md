@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Concurrent exec commands now keep independent output capture and completion
+  state instead of overwriting one shared active slot.
 - HTTP, DNS, MCP, process, and file security paths now share immutable plugin
   policy snapshots instead of deep-cloning the policy map for each event.
 - The MCP aggregator now exits its request reader after a framing error instead
