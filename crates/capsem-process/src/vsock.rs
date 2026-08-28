@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use capsem_core::{read_control_msg, write_control_msg, VsockConnection};
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
 use capsem_proto::{GuestToHost, HostToGuest, HostVsockService};
-use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,8 +13,7 @@ use crate::helpers::clone_fd;
 use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
 
 type SecurityRulesHandle = Arc<RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>;
-type PluginPolicyHandle =
-    Arc<RwLock<BTreeMap<String, capsem_core::net::policy_config::SecurityPluginConfig>>>;
+type PluginPolicyHandle = capsem_core::net::policy_config::SharedPluginPolicy;
 
 /// Maximum attempts for the initial handshake before giving up.
 ///

@@ -24,7 +24,10 @@ fn local_nxdomain_handler() -> DnsHandler {
     let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User)
         .expect("empty rule profile compiles");
     let security_rules = Arc::new(RwLock::new(Arc::new(rules)));
-    let plugin_policy = Arc::new(RwLock::new(BTreeMap::<String, SecurityPluginConfig>::new()));
+    let plugin_policy = Arc::new(RwLock::new(Arc::new(BTreeMap::<
+        String,
+        SecurityPluginConfig,
+    >::new())));
     let resolver = Arc::new(DnsResolver::with_upstreams(Vec::new()));
     DnsHandler::new(policy, security_rules, plugin_policy, resolver)
 }

@@ -109,7 +109,9 @@ fn make_conn(port: u32) -> VsockConnection {
 }
 
 fn empty_plugin_policy() -> PluginPolicyHandle {
-    Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new()))
+    Arc::new(std::sync::RwLock::new(
+        std::collections::BTreeMap::new().into(),
+    ))
 }
 
 fn file_import_event_with_content(content: &str) -> capsem_core::security_engine::SecurityEvent {

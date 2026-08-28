@@ -410,7 +410,9 @@ async fn run_async_main_loop(
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(
         runtime_config.security_rules.clone(),
     )));
-    let plugin_policy = Arc::new(std::sync::RwLock::new(runtime_config.plugins.clone()));
+    let plugin_policy = Arc::new(std::sync::RwLock::new(Arc::new(
+        runtime_config.plugins.clone(),
+    )));
     let model_trace_state = Arc::new(std::sync::Mutex::new(
         capsem_core::net::ai_traffic::TraceState::new(),
     ));

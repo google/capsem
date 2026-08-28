@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- HTTP, DNS, MCP, process, and file security paths now share immutable plugin
+  policy snapshots instead of deep-cloning the policy map for each event.
 - The MCP aggregator now exits its request reader after a framing error instead
   of parsing subsequent bytes from a desynchronized stream.
 - Built-in HTTP tools now bound connection setup and the complete request,

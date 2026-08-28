@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeMap;
 
 use hickory_proto::op::{Message, MessageType, OpCode, Query};
 use hickory_proto::rr::{Name, RecordType};
@@ -26,7 +27,7 @@ fn security_rules(toml: &str) -> SharedSecurityRules {
 }
 
 fn plugin_policy() -> SharedPluginPolicy {
-    Arc::new(std::sync::RwLock::new(BTreeMap::new()))
+    Arc::new(std::sync::RwLock::new(Arc::new(BTreeMap::new())))
 }
 
 #[tokio::test]

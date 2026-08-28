@@ -477,7 +477,7 @@ pub async fn emit_explicit_file_security_write_and_rules(
 async fn emit_security_boundary_with_plugins(
     db: &DbWriter,
     rules: &SecurityRuleSet,
-    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
     primary: WriteOp,
     event_type: RuntimeSecurityEventType,
     security_event: SecurityEvent,
@@ -537,7 +537,7 @@ fn apply_plugin_decision_to_emission(
 pub async fn emit_explicit_file_security_write_and_rules_with_plugins(
     db: &DbWriter,
     rules: &SecurityRuleSet,
-    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
     event: ExplicitFileSecurityEvent,
 ) -> Result<Option<SecurityRuleEmission>, String> {
     let primary = FileEvent {
@@ -575,7 +575,7 @@ pub async fn emit_explicit_file_security_write_and_rules_with_plugins(
 pub async fn emit_process_exec_security_boundary(
     db: &DbWriter,
     rules: &SecurityRuleSet,
-    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
     event: ExecEvent,
 ) -> Result<Option<SecurityRuleEmission>, String> {
     let security_event = security_event_from_exec_event(&event);
@@ -994,7 +994,7 @@ pub async fn emit_matching_security_rules_for_evaluated_event(
     event_id: SecurityEventId,
     event_type: RuntimeSecurityEventType,
     rules: &SecurityRuleSet,
-    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
     event: SecurityEvent,
     timestamp_unix_ms: i64,
 ) -> Result<usize, String> {
@@ -1008,7 +1008,7 @@ pub fn delegate_matching_security_rules_for_evaluated_event(
     event_id: SecurityEventId,
     event_type: RuntimeSecurityEventType,
     rules: Arc<SecurityRuleSet>,
-    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: Arc<BTreeMap<String, SecurityPluginConfig>>,
     event: SecurityEvent,
     timestamp_unix_ms: i64,
     context: &'static str,
@@ -1031,7 +1031,7 @@ pub fn delegate_matching_security_rules_for_evaluated_event(
 }
 
 fn prepare_event_for_security_rule_ledger(
-    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
     mut event: SecurityEvent,
 ) -> Result<SecurityEvent, String> {
     let action_registry =
@@ -1049,7 +1049,7 @@ fn prepare_event_for_security_rule_ledger(
 }
 
 fn prepare_evaluated_event_for_security_rule_ledger(
-    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
     mut event: SecurityEvent,
 ) -> Result<SecurityEvent, String> {
     let action_registry =
@@ -1463,7 +1463,7 @@ fn security_enforcement_decision(
 
 pub fn evaluate_security_boundary(
     rules: &SecurityRuleSet,
-    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
     mut event: SecurityEvent,
 ) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
     let action_registry =
@@ -2882,7 +2882,7 @@ pub trait SecurityPlugin: Send + Sync {
 #[derive(Default)]
 pub struct SecurityActionRegistry {
     plugins: BTreeMap<String, Arc<dyn SecurityPlugin>>,
-    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: Arc<BTreeMap<String, SecurityPluginConfig>>,
 }
 
 impl SecurityActionRegistry {
@@ -2904,9 +2904,9 @@ impl SecurityActionRegistry {
 
     pub fn with_plugin_policy(
         mut self,
-        plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+        plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
     ) -> Self {
-        self.plugin_policy = plugin_policy;
+        self.plugin_policy = plugin_policy.into();
         self
     }
 
@@ -2929,7 +2929,7 @@ impl SecurityActionRegistry {
         stage: SecurityPluginStage,
         mut event: SecurityEvent,
     ) -> Result<SecurityEvent, SecurityActionError> {
-        for (plugin_id, config) in &self.plugin_policy {
+        for (plugin_id, config) in self.plugin_policy.iter() {
             if config.mode != SecurityPluginMode::Disable && !self.plugins.contains_key(plugin_id) {
                 return Err(SecurityActionError::new(format!(
                     "security plugin '{plugin_id}' is not registered"

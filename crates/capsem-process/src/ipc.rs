@@ -707,7 +707,7 @@ pub(crate) async fn handle_ipc_connection(
 
                 let new_network = Arc::new(runtime_config.network);
                 let new_security_rules = Arc::new(runtime_config.security_rules);
-                let new_plugin_policy = runtime_config.plugins;
+                let new_plugin_policy = Arc::new(runtime_config.plugins);
                 let new_model_endpoints = Arc::new(runtime_config.model_endpoints);
                 let security_rule_ids = new_security_rules
                     .rules()

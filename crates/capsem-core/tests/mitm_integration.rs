@@ -189,7 +189,7 @@ fn make_proxy_config_with_mechanics(
             capsem_core::net::ai_traffic::TraceState::new(),
         )),
         security_rules: Arc::new(std::sync::RwLock::new(Arc::new(security_rules))),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     });
     let pipeline =
         mitm_proxy::make_production_pipeline(Arc::clone(&policy), Arc::clone(&telemetry));

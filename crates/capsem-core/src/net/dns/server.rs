@@ -20,7 +20,6 @@
 //! NXDOMAIN gate. Redirect and cache policy still use the network-policy
 //! snapshot because those are resolver mechanics, not allow/block authority.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -34,7 +33,7 @@ use crate::net::parsers::dns_parser::{
     build_nxdomain, build_redirect_response, build_servfail, parse_query, DnsQuery,
 };
 use crate::net::policy::NetworkMechanics;
-use crate::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
+use crate::net::policy_config::{snapshot_plugin_policy, SecurityRuleSet, SharedPluginPolicy};
 use crate::security_engine::{
     evaluate_security_boundary, DnsSecurityEvent, RuntimeSecurityEventType,
     SecurityEnforcementDecision, SecurityEvent,
@@ -179,7 +178,6 @@ fn apply_security_enforcement_fields(
 /// checks so we never hold the read lock across an await point.
 pub type SharedPolicy = Arc<std::sync::RwLock<Arc<NetworkMechanics>>>;
 pub type SharedSecurityRules = Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>;
-pub type SharedPluginPolicy = Arc<std::sync::RwLock<BTreeMap<String, SecurityPluginConfig>>>;
 
 /// Async DNS handler shared across vsock connections.
 ///
@@ -333,7 +331,7 @@ impl DnsHandler {
                 qtype: Some(query.qtype.to_string()),
             });
         let rules = self.security_rules.read().unwrap().clone();
-        let plugin_policy = self.plugin_policy.read().unwrap().clone();
+        let plugin_policy = snapshot_plugin_policy(&self.plugin_policy);
         let dns_evaluation = match evaluate_security_boundary(
             &rules,
             plugin_policy,

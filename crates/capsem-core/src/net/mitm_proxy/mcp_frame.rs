@@ -16,7 +16,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, warn};
 
 use crate::mcp::types::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
-use crate::net::policy_config::SecurityRuleSet;
+use crate::net::policy_config::{snapshot_plugin_policy, SecurityRuleSet};
 use crate::security_engine::{
     emit_matching_security_rules_for_evaluated_event, emit_security_write,
     evaluate_security_boundary, McpSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType,
@@ -762,7 +762,7 @@ fn evaluate_mcp_security_event(
     event: SecurityEvent,
 ) -> SecurityEnforcementDecision {
     let rules = endpoint.security_rules.read().unwrap().clone();
-    let plugin_policy = endpoint.plugin_policy.read().unwrap().clone();
+    let plugin_policy = snapshot_plugin_policy(&endpoint.plugin_policy);
     match evaluate_security_boundary(&rules, plugin_policy, event) {
         Ok(evaluation) => evaluation.enforcement,
         Err(error) => {

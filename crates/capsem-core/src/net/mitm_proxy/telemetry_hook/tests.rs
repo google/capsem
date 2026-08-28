@@ -561,7 +561,7 @@ fn fake_deps() -> Arc<TelemetryDeps> {
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
         security_rules: empty_security_rules(),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     })
 }
 
@@ -626,7 +626,7 @@ async fn hook_accepts_primary_net_event_before_returning() {
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
         security_rules: empty_security_rules(),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     });
     let hook = TelemetryHook::new(deps);
 
@@ -734,7 +734,7 @@ async fn hook_writes_substitution_event_and_shared_credential_ref() {
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
         security_rules: empty_security_rules(),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     });
     let hook = TelemetryHook::new(deps);
     let raw = "sk-ant-hook-test";
@@ -815,7 +815,7 @@ async fn hook_does_not_repay_capture_ledger_for_repeated_identical_credential() 
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
         security_rules: empty_security_rules(),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     });
     let hook = TelemetryHook::new(deps);
     let raw = "sk-ant-hook-repeat-test";
@@ -923,7 +923,7 @@ match = 'http.host == "api.anthropic.com" && http.path == "/v1/messages" && tcp.
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
         security_rules: Arc::new(std::sync::RwLock::new(Arc::new(rules))),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     });
     let hook = TelemetryHook::new(deps);
 
@@ -994,7 +994,7 @@ match = 'model.provider == "anthropic" && model.name == "claude-test"'
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
         security_rules: Arc::new(std::sync::RwLock::new(Arc::new(rules))),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     });
     let hook = TelemetryHook::new(deps);
 
@@ -1058,7 +1058,7 @@ async fn hook_writes_injected_substitution_event_for_broker_ref_replay() {
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
         security_rules: empty_security_rules(),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     });
     let hook = TelemetryHook::new(deps);
     let raw = "sk-ant-replayed-hook-test";
@@ -1131,7 +1131,7 @@ async fn hook_detects_response_body_token_exchange_and_redacts_preview() {
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
         security_rules: empty_security_rules(),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     });
     let hook = TelemetryHook::new(deps);
     let raw = "github_pat_exchange_secret";
