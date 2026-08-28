@@ -77,11 +77,21 @@ def main() -> int:
         type=Path,
         help="Fetch every public deploy-root file and require its exact local bytes.",
     )
+    parser.add_argument(
+        "--dist-verification-only",
+        action="store_true",
+        help=(
+            "Verify every dist file on this host without binding routed files into "
+            "the cross-host activation snapshot."
+        ),
+    )
     args = parser.parse_args()
     if args.snapshot_only and args.snapshot_out is None and args.expect_snapshot is None:
         parser.error("--snapshot-only requires --snapshot-out or --expect-snapshot")
     if args.snapshot_only and args.dist is not None:
         parser.error("--snapshot-only cannot be combined with --dist")
+    if args.dist_verification_only and args.dist is None:
+        parser.error("--dist-verification-only requires --dist")
     if args.catalog_members and args.channels:
         parser.error("--catalog-members cannot be combined with --channel")
     checker = load_readiness_checker()
@@ -116,6 +126,7 @@ def main() -> int:
                 require_valid=not args.snapshot_only,
                 same_origin_only=args.snapshot_only,
                 dist=args.dist,
+                include_dist_in_snapshot=not args.dist_verification_only,
             )
         except (OSError, RuntimeError, ValueError) as error:
             print(error, file=sys.stderr)

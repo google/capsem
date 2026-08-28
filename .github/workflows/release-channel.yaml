@@ -209,6 +209,7 @@ jobs:
             --base-url "$PREVIEW_URL" \
             "${CHANNEL_ARGS[@]}" \
             --dist "$DIST_DIR" \
+            --dist-verification-only \
             --snapshot-out target/release-channel-deployment/candidate-release.json
 
       - name: Activate verified production distribution
@@ -240,7 +241,6 @@ jobs:
           uv run python scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
             "${CHANNEL_ARGS[@]}" \
-            --dist "$DIST_DIR" \
             --attempts 30 \
             --delay-seconds 20 \
             --expect-snapshot target/release-channel-deployment/candidate-release.json

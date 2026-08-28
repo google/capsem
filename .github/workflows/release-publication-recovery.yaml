@@ -112,79 +112,18 @@ jobs:
             --generated-at "$generated_at" \
             --out-dir target/release-channel
 
-      - name: Select the declared digest tool
-        id: gate_tools
-        run: |
-          list=$(python3 scripts/gate-tool-list.py --sets digest)
-          echo "list=$list" >> "$GITHUB_OUTPUT"
-      - name: Install prebuilt digest tool
-        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
-        with:
-          tool: ${{ steps.gate_tools.outputs.list }}
-
       - name: Verify public package storage from recovered candidate
         run: |
-          manifest="target/release-channel/assets/$RELEASE_CHANNEL/manifest.json"
-          expected_prefix="https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/"
-          mkdir -p /tmp/candidate-packages
-          count=0
-          while IFS=$'\t' read -r name version sha256 blake3 url; do
-            count=$((count + 1))
-            test "$version" = "${RELEASE_TAG#v}"
-            case "$url" in
-              "$expected_prefix"*) ;;
-              *) echo "::error::$name URL is outside $expected_prefix: $url"; exit 1 ;;
-            esac
-            curl -fsSL "$url" -o "/tmp/candidate-packages/$name"
-            printf '%s  %s\n' "$sha256" "/tmp/candidate-packages/$name" | sha256sum -c -
-            printf '%s  %s\n' "$blake3" "/tmp/candidate-packages/$name" | b3sum -c -
-          done < <(python3 - "$manifest" <<'PY'
-          import json
-          import sys
-
-          manifest = json.load(open(sys.argv[1]))
-          for package in manifest.get("packages", []):
-              if package.get("status") != "current":
-                  continue
-              digest = package.get("digest", {})
-              print(
-                  package.get("name", ""),
-                  package.get("version", ""),
-                  digest.get("sha256", ""),
-                  digest.get("blake3", ""),
-                  package.get("url", ""),
-                  sep="\t",
-              )
-          PY
-          )
-          test "$count" -eq 3
+          uv run python scripts/release-package-contract.py verify-storage \
+            --manifest "target/release-channel/assets/$RELEASE_CHANNEL/manifest.json" \
+            --expected-prefix "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
+            --expected-version "${RELEASE_TAG#v}" \
+            --work-dir /tmp/candidate-packages
 
       - name: Prove install.sh selects recovered candidate Linux package
-        run: |
-          python3 -m http.server 8765 --directory target/release-channel >/tmp/candidate-http.log 2>&1 &
-          server_pid=$!
-          trap 'kill "$server_pid" 2>/dev/null || true; cat /tmp/candidate-http.log' EXIT
-          for _ in $(seq 1 20); do
-            curl -fsSL "http://127.0.0.1:8765/assets/$RELEASE_CHANNEL/manifest.json" >/dev/null && break
-            sleep 0.25
-          done
-          candidate_manifest="http://127.0.0.1:8765/assets/$RELEASE_CHANNEL/manifest.json"
-          docker run --rm --network host \
-            -e CAPSEM_MANIFEST_URL="$candidate_manifest" \
-            -e CAPSEM_CHANNEL="$RELEASE_CHANNEL" \
-            -e EXPECTED_VERSION="${RELEASE_TAG#v}" \
-            ubuntu:24.04 bash -lc '
-              set -euo pipefail
-              export DEBIAN_FRONTEND=noninteractive
-              apt-get update
-              apt-get install -y ca-certificates curl sudo
-              useradd -m -s /bin/bash capsemtest
-              printf "%s\n" "capsemtest ALL=(ALL) NOPASSWD:ALL" >/etc/sudoers.d/capsemtest
-              chmod 0440 /etc/sudoers.d/capsemtest
-              su capsemtest -c "curl -fsSL https://capsem.org/install.sh | CAPSEM_MANIFEST_URL=$CAPSEM_MANIFEST_URL CAPSEM_CHANNEL=$CAPSEM_CHANNEL sh"
-              dpkg-query -W -f="\${Version}" capsem | grep -Fx "$EXPECTED_VERSION"
-              su capsemtest -c "\$HOME/.capsem/bin/capsem --version" | grep -F "$EXPECTED_VERSION"
-            '
+        run: >
+          scripts/prove-candidate-installer.sh target/release-channel
+          "$RELEASE_CHANNEL" "${RELEASE_TAG#v}"
 
       - name: Persist recovered source manifest on immutable release
         env:
@@ -262,44 +201,6 @@ jobs:
           test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
 
       - name: Install live public Linux release and prove guest shell execution
-        run: |
-          EXPECTED_VERSION="$(python3 - <<'PY'
-          import json
-
-          manifest = json.load(open('/tmp/verify/manifest.json'))
-          matches = [
-              package
-              for package in manifest.get('packages', [])
-              if package.get('platform') == 'linux'
-              and package.get('architecture') == 'amd64'
-          ]
-          if len(matches) != 1 or not isinstance(matches[0].get('version'), str):
-              raise SystemExit('manifest must contain exactly one versioned linux/amd64 package')
-          print(matches[0]['version'])
-          PY
-          )"
-          curl -fsSL https://capsem.org/install.sh | CAPSEM_CHANNEL="$RELEASE_CHANNEL" sh
-          test -x "$HOME/.capsem/bin/capsem"
-          test -x /usr/bin/capsem-app
-          "$HOME/.capsem/bin/capsem" --version | grep -F "$EXPECTED_VERSION"
-          dpkg-query -W -f='${Version}' capsem | grep -Fx "$EXPECTED_VERSION"
-          for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
-            test -x "$HOME/.capsem/bin/$bin"
-            "$HOME/.capsem/bin/$bin" --version | grep -F "$EXPECTED_VERSION"
-          done
-          grep -F "$ASSET_MANIFEST_URL" "$HOME/.capsem/assets/manifest-metadata.json"
-          "$HOME/.capsem/bin/capsem" status | tee /tmp/capsem-live-status.txt
-          grep -F "Installed: true" /tmp/capsem-live-status.txt
-          grep -F "Running:   true" /tmp/capsem-live-status.txt
-          grep -F "Service:   ok" /tmp/capsem-live-status.txt
-          grep -F "Gateway:   ok" /tmp/capsem-live-status.txt
-          python3 scripts/verify-installed-release.py \
-            --capsem "$HOME/.capsem/bin/capsem" \
-            --manifest-url "$ASSET_MANIFEST_URL" \
-            --channel "$RELEASE_CHANNEL" \
-            --package-version "$EXPECTED_VERSION"
-          python3 scripts/prove-installed-shell.py \
-            --capsem "$HOME/.capsem/bin/capsem" \
-            --marker CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK \
-            --session-name release-live-public-shell-x86_64 \
-            --timeout 300
+        run: >
+          scripts/prove-live-public-install.sh /tmp/verify/manifest.json
+          "$ASSET_MANIFEST_URL" "$RELEASE_CHANNEL"

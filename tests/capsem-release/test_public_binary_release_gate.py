@@ -25,9 +25,7 @@ def _workflow_job_blocks(workflow: str) -> dict[str, str]:
     document = yaml.safe_load(workflow) or {}
     jobs = document.get("jobs") or {}
     assert isinstance(jobs, dict)
-    return {
-        str(name): workflow_job_source(workflow, str(name)) for name in jobs
-    }
+    return {str(name): workflow_job_source(workflow, str(name)) for name in jobs}
 
 
 def _load_release_gate() -> ModuleType:
@@ -383,6 +381,7 @@ def test_public_binary_release_gate_rejects_manifest_metadata_package_version_dr
 def test_release_workflow_runs_public_package_gate_and_native_install() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text(encoding="utf-8")
     verify_downloads = workflow.split("  verify-release-downloads:", maxsplit=1)[1]
+    live_proof = (PROJECT_ROOT / "scripts/prove-live-public-install.sh").read_text(encoding="utf-8")
 
     assert "scripts/check-public-binary-release.py" in verify_downloads
     assert '--channel "$RELEASE_CHANNEL"' in verify_downloads
@@ -397,13 +396,11 @@ def test_release_workflow_runs_public_package_gate_and_native_install() -> None:
     assert "--site-url https://capsem.org/" in verify_downloads
     assert "--docker-linux-install" not in verify_downloads
     assert "Enable KVM for live public-install VM proof" in verify_downloads
-    assert (
-        'curl -fsSL https://capsem.org/install.sh | CAPSEM_CHANNEL="$RELEASE_CHANNEL" sh'
-        in verify_downloads
-    )
-    assert "scripts/prove-installed-shell.py" in verify_downloads
-    assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in verify_downloads
-    assert "scripts/verify-installed-release.py" in verify_downloads
+    assert "scripts/prove-live-public-install.sh" in verify_downloads
+    assert 'curl -fsSL https://capsem.org/install.sh | CAPSEM_CHANNEL="$channel" sh' in live_proof
+    assert '"$script_dir/prove-installed-shell.py"' in live_proof
+    assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in live_proof
+    assert '"$script_dir/verify-installed-release.py"' in live_proof
     assert '"$HOME/.capsem/bin/capsem" run' not in verify_downloads
 
 
@@ -517,7 +514,10 @@ def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> N
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
     assert "name: binary-channel-before" in workflow
     assert "target/binary-channel/*/manifest.before.json" in workflow
-    assert '--docker-transition-from-manifest "/tmp/binary-channel-before/$RELEASE_CHANNEL/manifest.before.json"' in workflow
+    assert (
+        '--docker-transition-from-manifest "/tmp/binary-channel-before/$RELEASE_CHANNEL/manifest.before.json"'
+        in workflow
+    )
 
 
 def test_public_binary_transition_gate_uses_two_real_manifests_and_downgrades(
@@ -532,6 +532,7 @@ def test_public_binary_transition_gate_uses_two_real_manifests_and_downgrades(
         "run",
         lambda args, **_kwargs: calls.append(args) or subprocess.CompletedProcess(args, 0),
     )
+
     def package(version: str) -> dict[str, object]:
         return {
             "name": f"Capsem_{version}_amd64.deb",
@@ -544,6 +545,7 @@ def test_public_binary_transition_gate_uses_two_real_manifests_and_downgrades(
             "bytes": 100,
             "digest": {"sha256": "1" * 64, "blake3": "2" * 64},
         }
+
     older = {"version": "1.0.1", "packages": [package("1.5.100")], "profiles": {}}
     newer = {"version": "1.0.2", "packages": [package("1.5.101")], "profiles": {}}
 
@@ -706,25 +708,23 @@ def _write_minimal_deb(
         gzip.GzipFile(fileobj=data_tar, mode="wb", mtime=0) as gz,
         tarfile.open(fileobj=gz, mode="w") as tar,
     ):
-            for member_path, contents in members.items():
-                info = tarfile.TarInfo(member_path)
-                info.mode = 0o755
-                info.size = len(contents)
-                info.mtime = 0
-                tar.addfile(info, io.BytesIO(contents))
+        for member_path, contents in members.items():
+            info = tarfile.TarInfo(member_path)
+            info.mode = 0o755
+            info.size = len(contents)
+            info.mtime = 0
+            tar.addfile(info, io.BytesIO(contents))
     control_tar = io.BytesIO()
     with (
         gzip.GzipFile(fileobj=control_tar, mode="wb", mtime=0) as gz,
         tarfile.open(fileobj=gz, mode="w") as tar,
     ):
-            control = (
-                f"Package: capsem\nVersion: {package_version}\nArchitecture: amd64\n"
-            ).encode()
-            info = tarfile.TarInfo("control")
-            info.mode = 0o644
-            info.size = len(control)
-            info.mtime = 0
-            tar.addfile(info, io.BytesIO(control))
+        control = (f"Package: capsem\nVersion: {package_version}\nArchitecture: amd64\n").encode()
+        info = tarfile.TarInfo("control")
+        info.mode = 0o644
+        info.size = len(control)
+        info.mtime = 0
+        tar.addfile(info, io.BytesIO(control))
     deb = (
         b"!<arch>\n"
         + _ar_member("debian-binary", b"2.0\n")

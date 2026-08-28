@@ -479,16 +479,18 @@ def test_public_release_storage_is_verified_before_channel_deployment() -> None:
     candidate = _job_block(workflow, "verify-release-candidate")
     deploy = _job_block(workflow, "deploy-release-channel")
     public = _job_block(workflow, "verify-release-downloads")
+    candidate_proof = _read("scripts/prove-candidate-installer.sh")
 
     assert "scripts/publish-immutable-release-assets.sh" in create
     assert "gh release create" not in create
     assert "--draft" not in create
     assert "needs: [create-release, assemble-release-channel]" in candidate
     assert "binary-channel-preview" in candidate
-    assert "https://capsem.org/install.sh" in candidate
-    assert "CAPSEM_MANIFEST_URL" in candidate
+    assert "https://capsem.org/install.sh" in candidate_proof
+    assert "CAPSEM_MANIFEST_URL" in candidate_proof
     assert "github.com/${{ github.repository }}/releases/download" in candidate
-    assert "b3sum -c -" in candidate
+    assert "scripts/release-package-contract.py verify-storage" in candidate
+    assert "scripts/prove-candidate-installer.sh" in candidate
     assert "needs: [verify-release-candidate]" in deploy
     assert "needs: [deploy-release-channel]" in public
 
@@ -498,6 +500,7 @@ def test_assembly_recovery_reuses_qualified_artifacts_and_keeps_public_proof() -
     recover = _job_block(workflow, "recover-release-channel")
     deploy = _job_block(workflow, "deploy-release-channel")
     public = _job_block(workflow, "verify-release-downloads")
+    candidate_proof = _read("scripts/prove-candidate-installer.sh")
 
     assert "workflow_dispatch:" in workflow
     assert "group: capsem-release-${{ inputs.channel }}" in workflow
@@ -505,7 +508,7 @@ def test_assembly_recovery_reuses_qualified_artifacts_and_keeps_public_proof() -
     assert "binary-channel-candidate" in recover
     assert "run-id: ${{ inputs.failed_run_id }}" in recover
     assert "scripts/build-complete-release-channel.py" in recover
-    assert "CAPSEM_MANIFEST_URL" in recover
+    assert "CAPSEM_MANIFEST_URL" in candidate_proof
     assert "scripts/publish-immutable-release-assets.sh" in recover
     assert "binary-channel-preview" in recover
     assert "binary-channel-before" in recover
@@ -520,4 +523,6 @@ def test_assembly_recovery_reuses_qualified_artifacts_and_keeps_public_proof() -
     assert "scripts/verify-channel-downloads.py" in public
     assert "scripts/check-public-binary-release.py" in public
     assert "Enable KVM for live public-install VM proof" in public
-    assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in public
+    assert "scripts/prove-live-public-install.sh" in public
+    live_proof = _read("scripts/prove-live-public-install.sh")
+    assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in live_proof

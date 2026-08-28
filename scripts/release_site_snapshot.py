@@ -64,10 +64,17 @@ def release_fetch_snapshot(
     release_site: str,
     *,
     dist: Path | None = None,
+    include_dist_in_snapshot: bool = True,
     same_origin_only: bool = False,
 ) -> dict[str, object]:
     """Bind every body consumed by the validator to a location-independent path."""
 
+    cache = getattr(checker, "_FETCH_BYTES_CACHE", None)
+    contract_urls = (
+        set(cache)
+        if dist is not None and not include_dist_in_snapshot and isinstance(cache, dict)
+        else None
+    )
     if dist is not None:
         _fetch_complete_distribution(checker, release_site, dist)
     cache = getattr(checker, "_FETCH_BYTES_CACHE", None)
@@ -77,6 +84,8 @@ def release_fetch_snapshot(
     entries: dict[str, dict[str, int | str]] = {}
     for url, fetched in sorted(cache.items()):
         if not isinstance(url, str):
+            continue
+        if contract_urls is not None and url not in contract_urls:
             continue
         parsed = urlparse(url)
         if same_origin_only and (parsed.scheme, parsed.netloc) != (site.scheme, site.netloc):
@@ -153,6 +162,7 @@ def snapshot_distribution_bytes(
     require_valid: bool = False,
     same_origin_only: bool = True,
     dist: Path | None = None,
+    include_dist_in_snapshot: bool = True,
 ) -> None:
     """Retry validation and exact bytes as one propagation boundary."""
     last_error: OSError | RuntimeError | ValueError | None = None
@@ -167,6 +177,7 @@ def snapshot_distribution_bytes(
                 checker,
                 release_site,
                 dist=dist,
+                include_dist_in_snapshot=include_dist_in_snapshot,
                 same_origin_only=same_origin_only,
             )
             if snapshot_out is not None:

@@ -1736,9 +1736,6 @@ max_lines = 20
 "release.yaml:test-binary-pairing:21:Activate exact candidate package binaries for functional tests" = 25
 "release.yaml:test-native-linux-package:5:Install and verify exact release deb" = 27
 "release.yaml:test-native-macos-package:5:Install and verify exact notarized package" = 31
-"release.yaml:verify-release-candidate:5:Verify public GitHub package storage from the candidate manifest" = 34
-"release.yaml:verify-release-candidate:6:Prove install.sh selects and installs the candidate Linux package" = 25
-"release.yaml:verify-release-downloads:7:Install live public Linux release and prove guest shell execution" = 40
 
 # ---------------------------------------------------------------------------
 # Lint coverage: every first-party surface has an enforcing check

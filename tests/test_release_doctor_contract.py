@@ -1127,9 +1127,7 @@ def test_release_site_contract_retries_refresh_site_cache_but_reuse_external_byt
         BLAKE3_IMPORT_ERROR = None
         _FETCH_BYTES_CACHE = CountingCache(
             {
-                f"{site}/assets/nightly/manifest.json": SimpleNamespace(
-                    data=b"old", error=None
-                ),
+                f"{site}/assets/nightly/manifest.json": SimpleNamespace(data=b"old", error=None),
                 external: SimpleNamespace(data=b"immutable graph bytes", error=None),
             }
         )
@@ -1145,9 +1143,9 @@ def test_release_site_contract_retries_refresh_site_cache_but_reuse_external_byt
             assert external in FakeChecker._FETCH_BYTES_CACHE
             checks.append((cache_clears, channel))
             if channel == "nightly" and cache_clears == 1:
-                FakeChecker._FETCH_BYTES_CACHE[
-                    f"{site}/assets/nightly/manifest.json"
-                ] = SimpleNamespace(data=b"stale", error=None)
+                FakeChecker._FETCH_BYTES_CACHE[f"{site}/assets/nightly/manifest.json"] = (
+                    SimpleNamespace(data=b"stale", error=None)
+                )
                 return SimpleNamespace(
                     ok=False,
                     name="release.capsem.org contract",
@@ -1763,9 +1761,7 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     assert "tar --sort" not in artifact_builder
     assert "dpkg-deb" not in artifact_builder
     assert "macOS release portability preflight" in macos_ci
-    assert (
-        "test_binary_staging_artifacts_are_deterministic_and_recordable" in macos_ci
-    )
+    assert "test_binary_staging_artifacts_are_deterministic_and_recordable" in macos_ci
     assert macos_ci.index("macOS release portability preflight") < macos_ci.index(
         "Unit tests with coverage"
     )
@@ -1796,9 +1792,9 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     assert '--channel "$ASSET_CHANNEL"' in assemble_channel
     assert "--require-profile-membership" in assemble_channel
     assert "scripts/write-binary-staging-artifacts.sh" in assemble_channel
-    assert 'Capsem-${VERSION}.pkg' in artifact_builder
-    assert 'Capsem_${VERSION}_arm64.deb' in artifact_builder
-    assert 'capsem-sbom.spdx.json' in artifact_builder
+    assert "Capsem-${VERSION}.pkg" in artifact_builder
+    assert "Capsem_${VERSION}_arm64.deb" in artifact_builder
+    assert "capsem-sbom.spdx.json" in artifact_builder
     assert "Record binary release metadata in channel manifest" in assemble_channel
     assert "assets channel record-binary" in assemble_channel
     assert "ref: ${{ github.sha }}" in assemble_channel
@@ -2674,17 +2670,16 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
     assert "--docker-linux-install" not in verify_downloads
     assert "Enable KVM for live public-install VM proof" in verify_downloads
     assert "Install live public Linux release and prove guest shell execution" in verify_downloads
-    assert (
-        'curl -fsSL https://capsem.org/install.sh | CAPSEM_CHANNEL="$RELEASE_CHANNEL" sh'
-        in verify_downloads
-    )
-    assert "dpkg-query -W -f='${Version}' capsem" in verify_downloads
-    assert 'grep -F "Running:   true" /tmp/capsem-live-status.txt' in verify_downloads
-    assert 'grep -F "Service:   ok" /tmp/capsem-live-status.txt' in verify_downloads
-    assert 'grep -F "Gateway:   ok" /tmp/capsem-live-status.txt' in verify_downloads
-    assert "scripts/prove-installed-shell.py" in verify_downloads
-    assert "scripts/verify-installed-release.py" in verify_downloads
-    assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in verify_downloads
+    assert "scripts/prove-live-public-install.sh" in verify_downloads
+    live_proof = (PROJECT_ROOT / "scripts/prove-live-public-install.sh").read_text()
+    assert 'curl -fsSL https://capsem.org/install.sh | CAPSEM_CHANNEL="$channel" sh' in live_proof
+    assert "dpkg-query -W -f='${Version}' capsem" in live_proof
+    assert 'grep -F "Running:   true" /tmp/capsem-live-status.txt' in live_proof
+    assert 'grep -F "Service:   ok" /tmp/capsem-live-status.txt' in live_proof
+    assert 'grep -F "Gateway:   ok" /tmp/capsem-live-status.txt' in live_proof
+    assert '"$script_dir/prove-installed-shell.py"' in live_proof
+    assert '"$script_dir/verify-installed-release.py"' in live_proof
+    assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in live_proof
     assert '"$HOME/.capsem/bin/capsem" run' not in verify_downloads
     assert "skipping binary e2e" not in verify_downloads
     assert "::warning::no .deb" not in verify_downloads
@@ -4748,9 +4743,7 @@ def test_installer_codesigns_helpers_with_stable_identifiers() -> None:
 
 def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort() -> None:
     preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
-    retire_cohort = (
-        PROJECT_ROOT / "scripts" / "pkg-scripts" / "retire-cohort"
-    ).read_text()
+    retire_cohort = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "retire-cohort").read_text()
     postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
     deb_preinst = (PROJECT_ROOT / "scripts" / "deb-preinst.sh").read_text()
     deb_postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()

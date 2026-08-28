@@ -73,6 +73,7 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     assert "default: true" in workflow
     assert "scripts/check-release-site-contract.py" in workflow
     assert workflow.count("CHANNEL_ARGS=(--catalog-members)") == 2
+    assert "--dist-verification-only" in workflow
     assert "CHANNEL_ARGS=(--channel stable --channel nightly)" not in workflow
     assert '--base-url "$RELEASE_SITE_URL"' in workflow
     assert "--attempts 30" in workflow
@@ -124,8 +125,13 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     rollback_step = workflow[rollback_check:verdict]
     assert "--snapshot-only" in prior_step
     assert "--snapshot-only" in rollback_step
-    assert "--snapshot-only" not in workflow[preview_check:activation]
-    assert "--snapshot-only" not in workflow[activation_check:decision]
+    preview_step = workflow[preview_check:activation]
+    activation_step = workflow[activation_check:decision]
+    assert '--dist "$DIST_DIR"' in preview_step
+    assert "--dist-verification-only" in preview_step
+    assert '--dist "$DIST_DIR"' not in activation_step
+    assert "--snapshot-only" not in preview_step
+    assert "--snapshot-only" not in activation_step
     assert (
         "PRODUCTION_DEPLOYMENT_ID: ${{ steps.production.outputs.pages-deployment-id }}" in workflow
     )
@@ -587,6 +593,131 @@ def test_strict_snapshot_retries_a_lagging_deploy_file(tmp_path: Path) -> None:
     )
 
     assert attempts == 2
+
+
+def test_preview_checks_all_dist_bytes_but_snapshots_only_contract_evidence(
+    tmp_path: Path,
+) -> None:
+    dist = tmp_path / "dist"
+    manifest = dist / "assets" / "stable" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    (dist / "channels.json").write_bytes(b'{"channels":{}}\n')
+    (dist / "404.html").write_bytes(b"candidate 404")
+    manifest.write_bytes(b'{"version":"1"}\n')
+    site = "https://preview.release.pages.dev"
+    cache: dict[str, Any] = {}
+
+    def fetch(url: str) -> Any:
+        relative = url.removeprefix(f"{site}/")
+        result = SimpleNamespace(data=(dist / relative).read_bytes(), error=None)
+        cache[url] = result
+        return result
+
+    def populate() -> int:
+        fetch(f"{site}/channels.json")
+        fetch(f"{site}/assets/stable/manifest.json")
+        return 0
+
+    snapshot_path = tmp_path / "candidate.json"
+    checker = SimpleNamespace(_FETCH_BYTES_CACHE=cache, fetch_bytes=fetch)
+    SNAPSHOT.snapshot_distribution_bytes(
+        checker,
+        site,
+        populate=populate,
+        attempts=1,
+        delay_seconds=0,
+        snapshot_out=snapshot_path,
+        expect_snapshot=None,
+        require_valid=True,
+        same_origin_only=False,
+        dist=dist,
+        include_dist_in_snapshot=False,
+    )
+
+    entries = json.loads(snapshot_path.read_text(encoding="utf-8"))["entries"]
+    assert set(entries) == {"/channels.json", "/assets/stable/manifest.json"}
+
+
+def test_contract_only_snapshot_still_rejects_wrong_preview_dist_bytes(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    manifest = dist / "assets" / "stable" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    (dist / "channels.json").write_bytes(b'{"channels":{}}\n')
+    (dist / "404.html").write_bytes(b"candidate 404")
+    manifest.write_bytes(b'{"version":"1"}\n')
+    site = "https://preview.release.pages.dev"
+    cache: dict[str, Any] = {}
+
+    def fetch(url: str) -> Any:
+        relative = url.removeprefix(f"{site}/")
+        body = b"wrong 404" if relative == "404.html" else (dist / relative).read_bytes()
+        result = SimpleNamespace(data=body, error=None)
+        cache[url] = result
+        return result
+
+    checker = SimpleNamespace(_FETCH_BYTES_CACHE=cache, fetch_bytes=fetch)
+    with pytest.raises(RuntimeError, match=r"served bytes differ.*404\.html"):
+        SNAPSHOT.snapshot_distribution_bytes(
+            checker,
+            site,
+            populate=lambda: 0,
+            attempts=1,
+            delay_seconds=0,
+            snapshot_out=tmp_path / "candidate.json",
+            expect_snapshot=None,
+            require_valid=True,
+            same_origin_only=False,
+            dist=dist,
+            include_dist_in_snapshot=False,
+        )
+
+
+def test_contract_only_snapshot_does_not_absorb_dist_files_after_retry(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    manifest = dist / "assets" / "stable" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    (dist / "channels.json").write_bytes(b'{"channels":{}}\n')
+    (dist / "404.html").write_bytes(b"candidate 404")
+    manifest.write_bytes(b'{"version":"1"}\n')
+    site = "https://preview.release.pages.dev"
+    cache: dict[str, Any] = {}
+    attempts = 0
+
+    def fetch(url: str) -> Any:
+        relative = url.removeprefix(f"{site}/")
+        body = (dist / relative).read_bytes()
+        if attempts == 1 and relative == "404.html":
+            body = b"lagging 404"
+        result = SimpleNamespace(data=body, error=None)
+        cache[url] = result
+        return result
+
+    def populate() -> int:
+        nonlocal attempts
+        attempts += 1
+        fetch(f"{site}/channels.json")
+        fetch(f"{site}/assets/stable/manifest.json")
+        return 0
+
+    snapshot_path = tmp_path / "candidate.json"
+    checker = SimpleNamespace(_FETCH_BYTES_CACHE=cache, fetch_bytes=fetch)
+    SNAPSHOT.snapshot_distribution_bytes(
+        checker,
+        site,
+        populate=populate,
+        attempts=2,
+        delay_seconds=0,
+        snapshot_out=snapshot_path,
+        expect_snapshot=None,
+        require_valid=True,
+        same_origin_only=False,
+        dist=dist,
+        include_dist_in_snapshot=False,
+    )
+
+    entries = json.loads(snapshot_path.read_text(encoding="utf-8"))["entries"]
+    assert attempts == 2
+    assert set(entries) == {"/channels.json", "/assets/stable/manifest.json"}
 
 
 def test_snapshot_retry_reuses_successful_external_graph_bytes(tmp_path: Path) -> None:
