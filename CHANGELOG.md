@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The MCP aggregator now exits its request reader after a framing error instead
+  of parsing subsequent bytes from a desynchronized stream.
 - Built-in HTTP tools now bound connection setup and the complete request,
   including response-body reads, so stalled upstreams cannot occupy handlers
   indefinitely.

@@ -28,6 +28,35 @@ fn manager(defs: Vec<McpServerDef>) -> Arc<RwLock<McpServerManager>> {
     )))
 }
 
+#[tokio::test]
+async fn framing_error_stops_before_following_bytes_are_reinterpreted() {
+    use tokio::io::AsyncWriteExt;
+
+    let (mut writer, mut reader) = tokio::io::duplex(1024);
+    tokio::spawn(async move {
+        writer
+            .write_all(&u32::MAX.to_be_bytes())
+            .await
+            .expect("write oversized prefix");
+        write_frame(
+            &mut writer,
+            &AggregatorRequest {
+                id: 42,
+                method: AggregatorMethod::ListServers,
+            },
+        )
+        .await
+        .expect("write bytes following corrupt prefix");
+    });
+
+    let request = read_next_request(&mut reader).await;
+
+    assert!(
+        request.is_none(),
+        "bytes after a framing error have unknowable alignment and must not be parsed"
+    );
+}
+
 async fn dispatch(
     mgr: &Arc<RwLock<McpServerManager>>,
     id: u64,
@@ -89,7 +118,10 @@ async fn list_servers_reports_definitions_as_disconnected_before_initialize() {
     assert_eq!(s.source, "test");
     assert!(s.enabled);
     assert!(!s.is_stdio);
-    assert!(!s.connected, "never initialized, so it must not read connected");
+    assert!(
+        !s.connected,
+        "never initialized, so it must not read connected"
+    );
     assert_eq!(s.tool_count, 0);
     assert_eq!(s.resource_count, 0);
     assert_eq!(s.prompt_count, 0);
