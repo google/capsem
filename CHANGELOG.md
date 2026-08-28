@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Truncated gzip response headers are now forwarded intact instead of being
+  silently dropped when the upstream stream ends during classification.
 - Malformed model-request fallbacks now reuse their compiled field matcher
   instead of rebuilding it for every request.
 - MCP catalogs now ignore duplicate namespaced tool definitions instead of

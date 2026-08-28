@@ -2,7 +2,9 @@ use super::super::hooks::{ChunkCtx, ChunkHook, ConnMeta, HookState};
 use super::*;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use http_body_util::{BodyExt, Full};
 use std::io::Write;
+use std::sync::Arc;
 
 fn ctx_for<'a>(state: &'a mut HookState, conn: &'a ConnMeta) -> ChunkCtx<'a> {
     ChunkCtx {
@@ -29,6 +31,28 @@ fn gzip(input: &[u8]) -> Vec<u8> {
 
 fn mark_gzip(state: &mut HookState) {
     state.set(DecompressionConfig { gzip: true });
+}
+
+#[tokio::test]
+async fn truncated_gzip_header_is_emitted_on_eof() {
+    let truncated = Bytes::from_static(&[0x1f, 0x8b, 0x08]);
+    let pipeline = Arc::new(
+        super::super::pipeline::Pipeline::builder()
+            .register_chunk(Arc::new(DecompressionHook::new()))
+            .build(),
+    );
+    let body = super::super::body::ChunkDispatchBody::new(
+        Full::new(truncated.clone()),
+        pipeline,
+        any_conn(),
+        None,
+    )
+    .seed(DecompressionConfig { gzip: true })
+    .without_size_hint();
+
+    let received = body.collect().await.unwrap().to_bytes();
+
+    assert_eq!(received, truncated);
 }
 
 /// Single-chunk gzip body decompresses in place.

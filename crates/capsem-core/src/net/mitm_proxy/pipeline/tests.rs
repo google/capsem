@@ -417,6 +417,18 @@ impl super::super::hooks::ChunkHook for UppercaseHook {
     }
 }
 
+struct TailProducer;
+
+impl super::super::hooks::ChunkHook for TailProducer {
+    fn name(&self) -> &'static str {
+        "tail_producer"
+    }
+
+    fn take_response_tail(&self, _ctx: &mut super::super::hooks::ChunkCtx<'_>) -> bytes::Bytes {
+        bytes::Bytes::from_static(b"tail")
+    }
+}
+
 /// Sync chunk hook that counts chunks + bytes via ChunkCtx::state.
 struct CountChunks;
 
@@ -473,6 +485,25 @@ fn chunk_hooks_run_in_registration_order_and_can_rewrite() {
     // here but a length-changing hook would propagate to count's view.
     assert_eq!(cs.bytes, 5 + 6);
     assert!(cs.ended, "on_response_end fired after the last chunk");
+}
+
+#[test]
+fn response_tail_runs_through_later_hooks_before_their_end_callbacks() {
+    let pipeline = Pipeline::builder()
+        .register_chunk(Arc::new(TailProducer))
+        .register_chunk(Arc::new(UppercaseHook))
+        .register_chunk(Arc::new(CountChunks))
+        .build();
+    let mut state = super::super::hooks::HookState::default();
+    let conn = super::super::hooks::ConnMeta::default();
+
+    let tail = pipeline.dispatch_response_end(&mut state, &conn, None);
+
+    assert_eq!(tail.as_ref(), b"TAIL");
+    let counted = state.peek::<CountState>().unwrap();
+    assert_eq!(counted.chunks, 1);
+    assert_eq!(counted.bytes, 4);
+    assert!(counted.ended);
 }
 
 #[test]

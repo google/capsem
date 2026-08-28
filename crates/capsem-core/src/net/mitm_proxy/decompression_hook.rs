@@ -259,6 +259,16 @@ impl ChunkHook for DecompressionHook {
         // way.
         state.decoder = None;
     }
+
+    fn take_response_tail(&self, ctx: &mut ChunkCtx<'_>) -> Bytes {
+        let state = ctx.state::<DecompressionState>(DecompressionState::default);
+        if state.initialized {
+            return Bytes::new();
+        }
+        state.initialized = true;
+        state.is_gzip = false;
+        Bytes::from(std::mem::take(&mut state.header_buf))
+    }
 }
 
 #[cfg(test)]
