@@ -48,12 +48,16 @@ class Suite:
     profile: str = ""
     assets_dir: str = ""
     profiles_dir: str = ""
+    project: str = ""
     require_artifacts: bool = True
     contends: tuple[Exclusive, ...] = field(default_factory=tuple)
 
     def argv(self, config: GateConfig) -> list[str]:
         settings = config.suites.pytest
-        argv = ["uv", "run", "python", "-m", "pytest", *self.paths, *settings.base_flags]
+        argv = ["uv", "run"]
+        if self.project:
+            argv += ["--project", self.project, "--frozen"]
+        argv += ["python", "-m", "pytest", *self.paths, *settings.base_flags]
 
         if self.stop_at_first_failure:
             argv.append(settings.stop_at_first)
@@ -139,6 +143,30 @@ def collection(config: GateConfig) -> Step:
                 "-m",
                 "pytest",
                 settings.root,
+                *settings.collection_flags,
+            ]
+        ),
+        kind=Kind.STATIC_TEST,
+        speed=Speed.FAST,
+    )
+
+
+def build_system_collection(config: GateConfig) -> Step:
+    """Collect build-system tests through their own locked project."""
+    settings = config.suites.pytest
+    return step(
+        "pytest.build-system-collection",
+        Run(
+            [
+                "uv",
+                "run",
+                "--project",
+                settings.build_system_project,
+                "--frozen",
+                "python",
+                "-m",
+                "pytest",
+                settings.build_system_root,
                 *settings.collection_flags,
             ]
         ),

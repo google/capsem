@@ -8,7 +8,7 @@ version built from `$(date +%s)`, a log stream read by a name that rotation had
 already moved. Each was a decision no test could reach.
 
 The rule now is that the justfile dispatches and this package decides.
-`tests/test_gate_boundary.py` holds both halves: the justfile to a body it
+`build_system/tests/gate/test_gate_boundary.py` holds both halves: the justfile to a body it
 cannot grow logic into, and this package to modules small enough to keep
 reading.
 """

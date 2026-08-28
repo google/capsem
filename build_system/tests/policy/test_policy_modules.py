@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import cast
 
 import pytest
 from capsem_builder.policy.cachepolicy import (
@@ -58,7 +59,11 @@ def test_cache_limits_require_positive_bounds(field: str, message: str) -> None:
     values[field] = 0
 
     with pytest.raises(ValueError, match=message):
-        CacheLimits(**values)  # type: ignore[arg-type]
+        CacheLimits(
+            maximum_count=int(values["maximum_count"]),
+            maximum_age_seconds=float(values["maximum_age_seconds"]),
+            maximum_bytes=int(values["maximum_bytes"]),
+        )
 
 
 def test_cache_products_reject_invalid_identity_size_and_time() -> None:
@@ -101,9 +106,9 @@ def test_docker_network_boundaries_reject_the_other_enum_family() -> None:
     assert require_build_network(BuildNetwork.NONE) == "none"
     assert require_container_network(ContainerNetwork.NONE) == "none"
     with pytest.raises(TypeError, match="BuildNetwork"):
-        require_build_network(ContainerNetwork.NONE)  # type: ignore[arg-type]
+        require_build_network(cast(BuildNetwork, ContainerNetwork.NONE))
     with pytest.raises(TypeError, match="ContainerNetwork"):
-        require_container_network(BuildNetwork.NONE)  # type: ignore[arg-type]
+        require_container_network(cast(ContainerNetwork, BuildNetwork.NONE))
 
 
 def test_storage_policy_keeps_pinned_generations_out_of_removal() -> None:

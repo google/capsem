@@ -203,6 +203,8 @@ class WebSurfacesConfig(Strict):
 
 class PytestConfig(Strict):
     root: str
+    build_system_root: str
+    build_system_project: str
     citadel: str
     collection_flags: tuple[str, ...]
     base_flags: tuple[str, ...]

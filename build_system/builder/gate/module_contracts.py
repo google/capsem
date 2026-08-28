@@ -92,14 +92,20 @@ def release_contracts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]
     # having been run after another one.
     installed = phase.add(toolchain.node(config), after=after)
 
-    return phase.add(
+    build_root = config.suites.pytest.build_system_root.rstrip("/") + "/"
+    root_contracts = tuple(
+        path
+        for path in _once(
+            *settings.release_suites,
+            *contracts,
+            *config.suites.source_contract,
+        )
+        if not path.startswith(build_root)
+    )
+    root = phase.add(
         pytestsuite.Suite(
             label="release",
-            paths=_once(
-                *settings.release_suites,
-                *contracts,
-                *config.suites.source_contract,
-            ),
+            paths=root_contracts,
             ignores=settings.build_chain_artifact_tests,
             stop_at_first_failure=False,
             require_artifacts=False,
@@ -119,4 +125,19 @@ def release_contracts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]
             ),
         ).as_step(config),
         after=(installed,),
+    )
+    return phase.add(
+        pytestsuite.Suite(
+            label="build-system",
+            paths=(config.suites.pytest.build_system_root,),
+            project=config.suites.pytest.build_system_project,
+            stop_at_first_failure=False,
+            require_artifacts=False,
+            parallel=True,
+            contends=(
+                config.exclusive("astro_build"),
+                config.exclusive("node_modules"),
+            ),
+        ).as_step(config),
+        after=(installed, root),
     )

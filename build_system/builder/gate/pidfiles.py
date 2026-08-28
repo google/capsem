@@ -12,7 +12,7 @@ part of the data, not a convention this module remembers.
 Two rules follow, and both are enforced here rather than remembered:
 
   a pidfile this stops must be one some binary writes
-      `tests/test_pidfile_cleanup_is_wired.py` checks that against the crates,
+      `build_system/tests/scripts/test_pidfile_cleanup_is_wired.py` checks that against the crates,
       so a typo in a filename fails a test instead of leaking a process.
 
   a process that will not die is a failure, not a warning

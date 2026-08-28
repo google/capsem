@@ -11,7 +11,7 @@ before the race resolved, so its shutdown guard deleted the *winner's* pid on
 the way out. The winner then survived every subsequent cleanup, reparented to
 launchd with its gateway and tray, while the gate reported success.
 
-`tests/test_pidfile_cleanup_is_wired.py` proves the reaping is wired to a
+`build_system/tests/scripts/test_pidfile_cleanup_is_wired.py` proves the reaping is wired to a
 pidfile something writes. This proves the pidfile still names the live service
 once the startup race has been run.
 """

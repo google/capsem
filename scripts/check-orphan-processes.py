@@ -1,6 +1,6 @@
 """Fail a gate run that ends with capsem processes it started still alive.
 
-`tests/test_pidfile_cleanup_is_wired.py` proves the reaping is *wired*: every
+`build_system/tests/scripts/test_pidfile_cleanup_is_wired.py` proves the reaping is *wired*: every
 pidfile the gate stops is one some binary actually writes. It cannot prove the
 reaping *worked*. Those are different claims, and the gap between them is where
 this bug lived: a losing service starter deleted the winner's pidfile on its way

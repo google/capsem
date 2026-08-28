@@ -589,7 +589,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[architectures]` already owned them -- a second list of exactly the kind
   centralising that table was meant to end. Its members now hold no value, and
   a new contract holds their names to the config.
-- `tests/test_gate_scheduling_analysis.py` was never registered in
+- `build_system/tests/gate/test_gate_scheduling_analysis.py` was never registered in
   `[suites] source_contract`, so nothing scheduled it.
 
 ### Added
@@ -2301,7 +2301,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The hand-built-`docker`-argv ratchet had stopped being one. `UNMIGRATED` in
-  `tests/test_gate_docker_boundary.py` still carried the original nine sites
+  `build_system/tests/gate/test_gate_docker_boundary.py` still carried the original nine sites
   while the real count was six, so `hostimage.py` was allowed 5 against an
   actual 2 -- three new hand-built `docker` argv could have been added to it
   with every guard staying green, in the module the packaging work is about to
@@ -3814,7 +3814,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `tests/test_pidfile_cleanup_is_wired.py` fails when the gate stops a pidfile
+- `build_system/tests/scripts/test_pidfile_cleanup_is_wired.py` fails when the gate stops a pidfile
   no binary writes.
 - The retired-version guard now reads the justfile, shell scripts, and
   workflows, not only Python string literals. The stamper survived the semver
@@ -3840,7 +3840,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `tests/test_path_and_log_wrappers_are_mandatory.py` fails when a log path is
+- `build_system/tests/gate/test_path_and_log_wrappers_are_mandatory.py` fails when a log path is
   opened as a file, or when a Capsem path variable is set outside
   `CapsemPathsGuard`. Wrappers nobody must use are suggestions.
 
@@ -3874,7 +3874,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `block` catch-all with higher-precedence `allow` exceptions, which holds even
   when the field the exception reads is absent.
 
-- `tests/test_exit_status_integrity.py` keeps a gate's result from being read out
+- `build_system/tests/gate/test_exit_status_integrity.py` keeps a gate's result from being read out
   of the last line of a multi-part output. Two shapes of one mistake: `$?` after
   a pipe reports the pipe's status, and `tail -n1` across a multi-part result
   returns the last part -- `cargo test -p capsem-service` runs three test
@@ -10369,7 +10369,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     iterator open. Wrapped each in `with os.scandir(...) as entries:`
     so the underlying fd is released on scope exit regardless of
     return path.
-  - `tests/test_exec_lock.py` -- the `_spawn_holder` helper returned
+  - `build_system/tests/policy/test_exec_lock.py` -- the `_spawn_holder` helper returned
     a `subprocess.Popen` with `stdout=PIPE, stderr=PIPE`; tests
     `.wait()`'d but never closed the pipe fds. Hoisted the two
     callers into `with ... as holder:` blocks so Popen's own
@@ -10671,7 +10671,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   match.
 
 ### Added
-- **`tests/test_repack_deb.py` -- 6 pytests that exercise
+- **`build_system/tests/packaging/test_repack_deb.py` -- 6 pytests that exercise
   `scripts/repack-deb.sh` directly in under a second.** Previously the
   repack step was only validated through `just test-install`, which
   takes minutes (Tauri build + systemd container + pnpm install)
@@ -10934,7 +10934,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inline copies in the justfile (`dev`, `shell`, `run`, `test`,
   `smoke`, `build-gateway`, `bench`, `release`) with two-line
   `source + acquire_exec_lock <path>` calls. Added
-  `tests/test_exec_lock.py` (3 tests: concurrent blocker, reacquire
+  `build_system/tests/policy/test_exec_lock.py` (3 tests: concurrent blocker, reacquire
   after release, parent-dir creation) so this regression can't sneak
   back in.
 - **`cargo test -p capsem-guard --lib` is deterministic again.** The

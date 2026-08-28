@@ -78,7 +78,7 @@ before changing either release plan.
 A recipe is a dispatch or a single command. Nothing else, and this is checked
 rather than advised:
 
-- no shell body (no `#!/bin/bash`) -- `tests/test_gate_boundary.py`
+- no shell body (no `#!/bin/bash`) -- `build_system/tests/gate/test_gate_boundary.py`
 - at most five executable lines
 - no `if`, `for`, `while`, `case`, `until` or `trap`
 

@@ -178,7 +178,7 @@ class GateCommand(Recorded, ABC):
     def execute(self) -> None:
         """Planned, asserted, locked, held, recorded, then run.
 
-        Never overridden: `tests/test_gate_command.py` fails if a subclass
+        Never overridden: `build_system/tests/gate/test_gate_command.py` fails if a subclass
         defines it, because a command that bypasses this bypasses teardown, the
         machine lock, the run log and every invariant below at once.
 

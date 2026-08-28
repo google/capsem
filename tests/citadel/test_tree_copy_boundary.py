@@ -56,7 +56,7 @@ So there is one implementation, in `capsem_builder.gate.filesystem`:
 Reach for those. A second hand-rolled `copytree` is a second place for this
 decision to be made differently, and the first one was made wrong.
 
-See build_system/builder/gate/filesystem.py and tests/test_gate_prefix.py.
+See build_system/builder/gate/filesystem.py and build_system/tests/gate/test_gate_prefix.py.
 """
 
 

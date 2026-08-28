@@ -11,7 +11,7 @@ semver and the reason `min_capsem_version` can mean anything. Nothing here
 invents a version, and in particular nothing here derives one from the clock: a
 previous scheme appended `$(date +%s)`, which ordered releases but described
 none of them, and left every version above every compatibility floor by
-accident. `tests/test_retired_version_formats.py` scans this package for that
+accident. `build_system/tests/release/test_retired_version_formats.py` scans this package for that
 shape.
 """
 

@@ -461,7 +461,7 @@ def test_release_contract_module_does_not_reenter_source_build_suites() -> None:
     # module would pass vacuously.
     for pattern in CONFIG.modules.contract_globs:
         assert pattern not in release_contracts
-    assert "tests/test_bootstrap_contract.py" in release_contracts
+    assert "build_system/tests/scripts/test_bootstrap_contract.py" in release_contracts
 
     for source_test in SOURCE_CONTRACT_TESTS:
         assert source_test in release_contracts

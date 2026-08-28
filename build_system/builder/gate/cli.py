@@ -3,7 +3,7 @@
 Every command is contributed by the module that implements it, by subclassing
 `GateCommand`, so this file never grows a branch about what a command means. If
 a rule appears here, it is in the wrong file --
-`test_the_cli_only_parses_and_dispatches` in `tests/test_gate_boundary.py`
+`test_the_cli_only_parses_and_dispatches` in `build_system/tests/gate/test_gate_boundary.py`
 says so.
 
 The three inspection flags are declared once, on a shared parent parser, so
@@ -165,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
     # `gate_command`, not `command`: a subcommand storing its own positional in
     # `command` overwrote the subcommand name, and registry lookup then indexed
     # a dict with a list. `exec` did exactly that, and could not dispatch at
-    # all. A guard in `tests/test_gate_exec_boundary.py` keeps the slot free.
+    # all. A guard in `build_system/tests/gate/test_gate_exec_boundary.py` keeps the slot free.
     subparsers = parser.add_subparsers(dest="gate_command", required=True)
     shared = _inspection()
 

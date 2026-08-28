@@ -136,7 +136,7 @@ structurally cannot help during a burst of same-day runs — everything is young
 than the threshold. Expect `gc` to return near-zero after a heavy session; that
 is the policy working, not failing. Provision headroom instead of pruning harder.
 
-Thresholds are asserted in `tests/test_docker_storage_policy.py`, so config and
+Thresholds are asserted in `build_system/tests/policy/test_docker_storage_policy.py`, so config and
 contract move together.
 
 ## Release CI is orthogonal
@@ -174,7 +174,7 @@ Stable has no scheduled trigger. Neither scheduler nor operators dispatch
 ## Editing workflows
 
 - Every workflow step that invokes `just` is a declared enforcement edge in
-  `tests/test_exit_status_integrity.py`. The contract parses YAML and shell
+  `build_system/tests/gate/test_exit_status_integrity.py`. The contract parses YAML and shell
   argv structurally: equivalent quoting, whitespace, comments, and line
   continuations remain green, while `continue-on-error`, `|| true`, disabled
   steps/jobs, command removal, and unclassified new `just` steps fail in the

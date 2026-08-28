@@ -1,0 +1,885 @@
+version = 1
+
+# Exact package-owned test/support migration ledger. Root product, VM,
+# security, installed-product, and release acceptance tests are intentionally
+# absent and remain under tests/.
+
+[[owned]]
+owner = "gate"
+source = "tests/helpers/embedded_shell.py"
+target = "build_system/tests/gate/embedded_shell.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/fixtures/typecheck/gate_vocabulary_strings.py.txt"
+target = "build_system/tests/gate/fixtures/typecheck/gate_vocabulary_strings.py.txt"
+
+[[owned]]
+owner = "gate"
+source = "tests/helpers/profile_content.py"
+target = "build_system/tests/gate/profile_content.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/helpers/runlog_worker.py"
+target = "build_system/tests/gate/runlog_worker.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_build_assets_profile.py"
+target = "build_system/tests/gate/test_build_assets_profile.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_ci_coverage_contract.py"
+target = "build_system/tests/gate/test_ci_coverage_contract.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/capsem-cleanup-script/test_colima_lifecycle.py"
+target = "build_system/tests/gate/test_colima_lifecycle.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_exit_status_integrity.py"
+target = "build_system/tests/gate/test_exit_status_integrity.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_fast_gate_ci_contract.py"
+target = "build_system/tests/gate/test_fast_gate_ci_contract.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_focus_test_contract.py"
+target = "build_system/tests/gate/test_focus_test_contract.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_actions.py"
+target = "build_system/tests/gate/test_gate_actions.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_artifact_ownership.py"
+target = "build_system/tests/gate/test_gate_artifact_ownership.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_asset_recovery.py"
+target = "build_system/tests/gate/test_gate_asset_recovery.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_assetlanes.py"
+target = "build_system/tests/gate/test_gate_assetlanes.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_assets.py"
+target = "build_system/tests/gate/test_gate_assets.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_bench.py"
+target = "build_system/tests/gate/test_gate_bench.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_boundary.py"
+target = "build_system/tests/gate/test_gate_boundary.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_cancellation.py"
+target = "build_system/tests/gate/test_gate_cancellation.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_candidate.py"
+target = "build_system/tests/gate/test_gate_candidate.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_candidate_composition.py"
+target = "build_system/tests/gate/test_gate_candidate_composition.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_cli.py"
+target = "build_system/tests/gate/test_gate_cli.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_command.py"
+target = "build_system/tests/gate/test_gate_command.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_complete_gate_policy.py"
+target = "build_system/tests/gate/test_gate_complete_gate_policy.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_config.py"
+target = "build_system/tests/gate/test_gate_config.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_crosscompile.py"
+target = "build_system/tests/gate/test_gate_crosscompile.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_debproof.py"
+target = "build_system/tests/gate/test_gate_debproof.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_disk.py"
+target = "build_system/tests/gate/test_gate_disk.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_docker.py"
+target = "build_system/tests/gate/test_gate_docker.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_docker_boundary.py"
+target = "build_system/tests/gate/test_gate_docker_boundary.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_doctor.py"
+target = "build_system/tests/gate/test_gate_doctor.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_exec_boundary.py"
+target = "build_system/tests/gate/test_gate_exec_boundary.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_execute_funnel.py"
+target = "build_system/tests/gate/test_gate_execute_funnel.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_fileactions.py"
+target = "build_system/tests/gate/test_gate_fileactions.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_git_worktree_mount.py"
+target = "build_system/tests/gate/test_gate_git_worktree_mount.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_hardening.py"
+target = "build_system/tests/gate/test_gate_hardening.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_has_no_literal_data.py"
+target = "build_system/tests/gate/test_gate_has_no_literal_data.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_hostimage_composition.py"
+target = "build_system/tests/gate/test_gate_hostimage_composition.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_initrd.py"
+target = "build_system/tests/gate/test_gate_initrd.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_install_container.py"
+target = "build_system/tests/gate/test_gate_install_container.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_install_image_identity.py"
+target = "build_system/tests/gate/test_gate_install_image_identity.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_install_ordering.py"
+target = "build_system/tests/gate/test_gate_install_ordering.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_lifecycle.py"
+target = "build_system/tests/gate/test_gate_lifecycle.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_linuxrust_hermetic.py"
+target = "build_system/tests/gate/test_gate_linuxrust_hermetic.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_locks.py"
+target = "build_system/tests/gate/test_gate_locks.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_module_prerequisites.py"
+target = "build_system/tests/gate/test_gate_module_prerequisites.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_no_nested_commands.py"
+target = "build_system/tests/gate/test_gate_no_nested_commands.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_observation.py"
+target = "build_system/tests/gate/test_gate_observation.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_observation_propagation.py"
+target = "build_system/tests/gate/test_gate_observation_propagation.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_pidfiles.py"
+target = "build_system/tests/gate/test_gate_pidfiles.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_plan.py"
+target = "build_system/tests/gate/test_gate_plan.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_plan_purity.py"
+target = "build_system/tests/gate/test_gate_plan_purity.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_prefix.py"
+target = "build_system/tests/gate/test_gate_prefix.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_primitives_are_the_only_way.py"
+target = "build_system/tests/gate/test_gate_primitives_are_the_only_way.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_proc.py"
+target = "build_system/tests/gate/test_gate_proc.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_pytestsuite.py"
+target = "build_system/tests/gate/test_gate_pytestsuite.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_qualification.py"
+target = "build_system/tests/gate/test_gate_qualification.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_qualification_evidence.py"
+target = "build_system/tests/gate/test_gate_qualification_evidence.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_qualification_flow.py"
+target = "build_system/tests/gate/test_gate_qualification_flow.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_recording_policy.py"
+target = "build_system/tests/gate/test_gate_recording_policy.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_release_head.py"
+target = "build_system/tests/gate/test_gate_release_head.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_release_isolation.py"
+target = "build_system/tests/gate/test_gate_release_isolation.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_release_source_commit.py"
+target = "build_system/tests/gate/test_gate_release_source_commit.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_resource_evidence.py"
+target = "build_system/tests/gate/test_gate_resource_evidence.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_resume.py"
+target = "build_system/tests/gate/test_gate_resume.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_run_history_contention.py"
+target = "build_system/tests/gate/test_gate_run_history_contention.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_run_ledger.py"
+target = "build_system/tests/gate/test_gate_run_ledger.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_run_status_agrees.py"
+target = "build_system/tests/gate/test_gate_run_status_agrees.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_runlog.py"
+target = "build_system/tests/gate/test_gate_runlog.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_runlog_evidence.py"
+target = "build_system/tests/gate/test_gate_runlog_evidence.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_sandbox.py"
+target = "build_system/tests/gate/test_gate_sandbox.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_sandbox_report.py"
+target = "build_system/tests/gate/test_gate_sandbox_report.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_scheduling.py"
+target = "build_system/tests/gate/test_gate_scheduling.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_scheduling_analysis.py"
+target = "build_system/tests/gate/test_gate_scheduling_analysis.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_secrets.py"
+target = "build_system/tests/gate/test_gate_secrets.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_shared_contention.py"
+target = "build_system/tests/gate/test_gate_shared_contention.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_smoke_lifecycle.py"
+target = "build_system/tests/gate/test_gate_smoke_lifecycle.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_socket_length.py"
+target = "build_system/tests/gate/test_gate_socket_length.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_source_checks.py"
+target = "build_system/tests/gate/test_gate_source_checks.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_source_identity.py"
+target = "build_system/tests/gate/test_gate_source_identity.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_step_output.py"
+target = "build_system/tests/gate/test_gate_step_output.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_storage.py"
+target = "build_system/tests/gate/test_gate_storage.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_storage_consumers.py"
+target = "build_system/tests/gate/test_gate_storage_consumers.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_storage_ordering.py"
+target = "build_system/tests/gate/test_gate_storage_ordering.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_testmodules.py"
+target = "build_system/tests/gate/test_gate_testmodules.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_timing.py"
+target = "build_system/tests/gate/test_gate_timing.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_toolchain.py"
+target = "build_system/tests/gate/test_gate_toolchain.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_typecheck.py"
+target = "build_system/tests/gate/test_gate_typecheck.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_versions.py"
+target = "build_system/tests/gate/test_gate_versions.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_vm_cache.py"
+target = "build_system/tests/gate/test_gate_vm_cache.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_gate_workspace.py"
+target = "build_system/tests/gate/test_gate_workspace.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_guest_rust_builder_hermetic.py"
+target = "build_system/tests/gate/test_guest_rust_builder_hermetic.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_host_builder_materializer.py"
+target = "build_system/tests/gate/test_host_builder_materializer.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_just_argument_boundary.py"
+target = "build_system/tests/gate/test_just_argument_boundary.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_just_contract.py"
+target = "build_system/tests/gate/test_just_contract.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_linux_workspace_prerequisites.py"
+target = "build_system/tests/gate/test_linux_workspace_prerequisites.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_orphan_process_gate.py"
+target = "build_system/tests/gate/test_orphan_process_gate.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_path_and_log_wrappers_are_mandatory.py"
+target = "build_system/tests/gate/test_path_and_log_wrappers_are_mandatory.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_python_filesystem_chokepoint.py"
+target = "build_system/tests/gate/test_python_filesystem_chokepoint.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/capsem-recipes/test_run_doctor.py"
+target = "build_system/tests/gate/test_run_doctor.py"
+
+[[owned]]
+owner = "gate"
+source = "tests/test_rust_test_inventory.py"
+target = "build_system/tests/gate/test_rust_test_inventory.py"
+
+[[owned]]
+owner = "image"
+source = "tests/test_asset_network_guardrail.py"
+target = "build_system/tests/image/test_asset_network_guardrail.py"
+
+[[owned]]
+owner = "image"
+source = "tests/test_audit.py"
+target = "build_system/tests/image/test_audit.py"
+
+[[owned]]
+owner = "image"
+source = "tests/test_builder_probe_timeouts.py"
+target = "build_system/tests/image/test_builder_probe_timeouts.py"
+
+[[owned]]
+owner = "image"
+source = "tests/test_cli.py"
+target = "build_system/tests/image/test_cli.py"
+
+[[owned]]
+owner = "image"
+source = "tests/test_config.py"
+target = "build_system/tests/image/test_config.py"
+
+[[owned]]
+owner = "image"
+source = "tests/test_docker.py"
+target = "build_system/tests/image/test_docker.py"
+
+[[owned]]
+owner = "image"
+source = "tests/test_doctor.py"
+target = "build_system/tests/image/test_doctor.py"
+
+[[owned]]
+owner = "image"
+source = "tests/test_image_build_backend.py"
+target = "build_system/tests/image/test_image_build_backend.py"
+
+[[owned]]
+owner = "image"
+source = "tests/test_manifest.py"
+target = "build_system/tests/image/test_manifest.py"
+
+[[owned]]
+owner = "image"
+source = "tests/test_models.py"
+target = "build_system/tests/image/test_models.py"
+
+[[owned]]
+owner = "image"
+source = "tests/test_skills.py"
+target = "build_system/tests/image/test_skills.py"
+
+[[owned]]
+owner = "image"
+source = "tests/test_validate.py"
+target = "build_system/tests/image/test_validate.py"
+
+[[owned]]
+owner = "packaging"
+source = "tests/test_build_pkg.py"
+target = "build_system/tests/packaging/test_build_pkg.py"
+
+[[owned]]
+owner = "packaging"
+source = "tests/test_derive_deb_libc_floor.py"
+target = "build_system/tests/packaging/test_derive_deb_libc_floor.py"
+
+[[owned]]
+owner = "packaging"
+source = "tests/test_install_failure_diagnostics.py"
+target = "build_system/tests/packaging/test_install_failure_diagnostics.py"
+
+[[owned]]
+owner = "packaging"
+source = "tests/test_install_handoff_survives_retry.py"
+target = "build_system/tests/packaging/test_install_handoff_survives_retry.py"
+
+[[owned]]
+owner = "packaging"
+source = "tests/test_install_manifest_request.py"
+target = "build_system/tests/packaging/test_install_manifest_request.py"
+
+[[owned]]
+owner = "packaging"
+source = "tests/test_install_sh.py"
+target = "build_system/tests/packaging/test_install_sh.py"
+
+[[owned]]
+owner = "packaging"
+source = "tests/test_local_install_contract.py"
+target = "build_system/tests/packaging/test_local_install_contract.py"
+
+[[owned]]
+owner = "packaging"
+source = "tests/test_macos_install_user.py"
+target = "build_system/tests/packaging/test_macos_install_user.py"
+
+[[owned]]
+owner = "packaging"
+source = "tests/test_macos_tart_glowup.py"
+target = "build_system/tests/packaging/test_macos_tart_glowup.py"
+
+[[owned]]
+owner = "packaging"
+source = "tests/test_prove_installed_shell.py"
+target = "build_system/tests/packaging/test_prove_installed_shell.py"
+
+[[owned]]
+owner = "packaging"
+source = "tests/test_repack_deb.py"
+target = "build_system/tests/packaging/test_repack_deb.py"
+
+[[owned]]
+owner = "policy"
+source = "tests/test_docker_storage_policy.py"
+target = "build_system/tests/policy/test_docker_storage_policy.py"
+
+[[owned]]
+owner = "policy"
+source = "tests/test_exec_lock.py"
+target = "build_system/tests/policy/test_exec_lock.py"
+
+[[owned]]
+owner = "release"
+source = "tests/fixtures/release_source_environment_probe.py"
+target = "build_system/tests/release/fixtures/release_source_environment_probe.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_complete_release_channel.py"
+target = "build_system/tests/release/test_complete_release_channel.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_gen_manifest.py"
+target = "build_system/tests/release/test_gen_manifest.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_generate_host_binary_sbom.py"
+target = "build_system/tests/release/test_generate_host_binary_sbom.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_live_channel_watch.py"
+target = "build_system/tests/release/test_live_channel_watch.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_profile_revision_semver.py"
+target = "build_system/tests/release/test_profile_revision_semver.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_channel_contract.py"
+target = "build_system/tests/release/test_release_channel_contract.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_channel_page_contract.py"
+target = "build_system/tests/release/test_release_channel_page_contract.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_contract_architecture.py"
+target = "build_system/tests/release/test_release_contract_architecture.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_doctor_contract.py"
+target = "build_system/tests/release/test_release_doctor_contract.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_evidence_collector.py"
+target = "build_system/tests/release/test_release_evidence_collector.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_fixture_server.py"
+target = "build_system/tests/release/test_release_fixture_server.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_gate_integrity.py"
+target = "build_system/tests/release/test_release_gate_integrity.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_glowup.py"
+target = "build_system/tests/release/test_release_glowup.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_graph_variable_split.py"
+target = "build_system/tests/release/test_release_graph_variable_split.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_hash_evidence_contract.py"
+target = "build_system/tests/release/test_release_hash_evidence_contract.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_independence_contract.py"
+target = "build_system/tests/release/test_release_independence_contract.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_lane_independence.py"
+target = "build_system/tests/release/test_release_lane_independence.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_manifest_assets.py"
+target = "build_system/tests/release/test_release_manifest_assets.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_notes.py"
+target = "build_system/tests/release/test_release_notes.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_package_binary_contract.py"
+target = "build_system/tests/release/test_release_package_binary_contract.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_package_install_contract.py"
+target = "build_system/tests/release/test_release_package_install_contract.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_profile_architecture_contract.py"
+target = "build_system/tests/release/test_release_profile_architecture_contract.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_profile_contract.py"
+target = "build_system/tests/release/test_release_profile_contract.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_refuses_a_dirty_tree.py"
+target = "build_system/tests/release/test_release_refuses_a_dirty_tree.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_release_summary.py"
+target = "build_system/tests/release/test_release_summary.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_retired_version_formats.py"
+target = "build_system/tests/release/test_retired_version_formats.py"
+
+[[owned]]
+owner = "release"
+source = "tests/capsem-release/test_runtime_preflight_manifest.py"
+target = "build_system/tests/release/test_runtime_preflight_manifest.py"
+
+[[owned]]
+owner = "release"
+source = "tests/test_verify_channel_downloads.py"
+target = "build_system/tests/release/test_verify_channel_downloads.py"
+
+[[owned]]
+owner = "release_site"
+source = "tests/test_release_site_build_wrapper_is_mandatory.py"
+target = "build_system/tests/release_site/test_release_site_build_wrapper_is_mandatory.py"
+
+[[owned]]
+owner = "release_site"
+source = "tests/test_release_site_generated_from_json.py"
+target = "build_system/tests/release_site/test_release_site_generated_from_json.py"
+
+[[owned]]
+owner = "release_site"
+source = "tests/test_release_site_generation_contract.py"
+target = "build_system/tests/release_site/test_release_site_generation_contract.py"
+
+[[owned]]
+owner = "release_site"
+source = "tests/capsem-release/test_release_site_graph_loader.py"
+target = "build_system/tests/release_site/test_release_site_graph_loader.py"
+
+[[owned]]
+owner = "release_site"
+source = "tests/test_release_site_html_contract.py"
+target = "build_system/tests/release_site/test_release_site_html_contract.py"
+
+[[owned]]
+owner = "release_site"
+source = "tests/capsem-release/test_release_site_rendering.py"
+target = "build_system/tests/release_site/test_release_site_rendering.py"
+
+[[owned]]
+owner = "release_site"
+source = "tests/test_release_site_review_regressions.py"
+target = "build_system/tests/release_site/test_release_site_review_regressions.py"
+
+[[owned]]
+owner = "scripts"
+source = "tests/test_bootstrap_contract.py"
+target = "build_system/tests/scripts/test_bootstrap_contract.py"
+
+[[owned]]
+owner = "scripts"
+source = "tests/test_cargo_audit_gate.py"
+target = "build_system/tests/scripts/test_cargo_audit_gate.py"
+
+[[owned]]
+owner = "scripts"
+source = "tests/test_check_cargo_audit.py"
+target = "build_system/tests/scripts/test_check_cargo_audit.py"
+
+[[owned]]
+owner = "scripts"
+source = "tests/capsem-cleanup-script/test_clean_stale.py"
+target = "build_system/tests/scripts/test_clean_stale.py"
+
+[[owned]]
+owner = "scripts"
+source = "tests/test_dependency_drift.py"
+target = "build_system/tests/scripts/test_dependency_drift.py"
+
+[[owned]]
+owner = "scripts"
+source = "tests/test_doctor_session_script.py"
+target = "build_system/tests/scripts/test_doctor_session_script.py"
+
+[[owned]]
+owner = "scripts"
+source = "tests/test_injection_script.py"
+target = "build_system/tests/scripts/test_injection_script.py"
+
+[[owned]]
+owner = "scripts"
+source = "tests/test_integration_script_profiles.py"
+target = "build_system/tests/scripts/test_integration_script_profiles.py"
+
+[[owned]]
+owner = "scripts"
+source = "tests/test_mock_server_launcher.py"
+target = "build_system/tests/scripts/test_mock_server_launcher.py"
+
+[[owned]]
+owner = "scripts"
+source = "tests/test_pidfile_cleanup_is_wired.py"
+target = "build_system/tests/scripts/test_pidfile_cleanup_is_wired.py"
+
+[[owned]]
+owner = "scripts"
+source = "tests/test_pnpm_bulk_audit.py"
+target = "build_system/tests/scripts/test_pnpm_bulk_audit.py"
+
+[[owned]]
+owner = "scripts"
+source = "tests/test_protocol_fixture_recorder.py"
+target = "build_system/tests/scripts/test_protocol_fixture_recorder.py"
+
+[[owned]]
+owner = "scripts"
+source = "tests/test_shell_parse.py"
+target = "build_system/tests/scripts/test_shell_parse.py"
+
+[[owned]]
+owner = "scripts"
+source = "tests/test_source_syntax_gate.py"
+target = "build_system/tests/scripts/test_source_syntax_gate.py"
+
+[[owned]]
+owner = "scripts"
+source = "tests/test_sync_container_clock.py"
+target = "build_system/tests/scripts/test_sync_container_clock.py"

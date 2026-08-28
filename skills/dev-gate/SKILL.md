@@ -166,7 +166,7 @@ when the gate failed, because the failure is the report.
 ## Everything is data
 
 Every path, filename, architecture, channel **and environment variable name**
-comes from `config/gate.toml`. `tests/test_gate_has_no_literal_data.py` catches
+comes from `config/gate.toml`. `build_system/tests/gate/test_gate_has_no_literal_data.py` catches
 literals on both sides — a name read *and* a name used as a key in an
 environment you hand to a process. Standard conventions (`HOME`, `TMPDIR`,
 `PKG_CONFIG_PATH`, `HOST_UID`) are allowlisted; Capsem rails are not.
@@ -427,7 +427,7 @@ raw templates on the first attempt and reported a correctly chained
 `make && ls` as two unguarded statements.
 
 Its suite found four bugs in it before any consumer did. Add cases to
-`tests/test_shell_parse.py` when you extend it.
+`build_system/tests/scripts/test_shell_parse.py` when you extend it.
 
 This applies to tests too: a workflow is parsed as YAML, its `run:` value is
 then passed to `shelllex`/`shellparse`, and heredocs come from the lexer's

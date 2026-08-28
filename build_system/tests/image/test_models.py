@@ -635,13 +635,13 @@ class TestWebSecurityConfig:
 
     def test_retired_decision_fields_forbidden(self):
         with pytest.raises(ValidationError):
-            # ty: ignore[unknown-argument] -- passing the retired fields is the
-            # point: the model must reject them rather than accept and ignore.
-            WebSecurityConfig(
-                allow_read=True,
-                allow_write=True,
-                custom_allow=["elie.net", "*.elie.net"],
-                custom_block=["evil.com"],
+            WebSecurityConfig.model_validate(
+                {
+                    "allow_read": True,
+                    "allow_write": True,
+                    "custom_allow": ["elie.net", "*.elie.net"],
+                    "custom_block": ["evil.com"],
+                }
             )
 
     def test_roundtrip(self):

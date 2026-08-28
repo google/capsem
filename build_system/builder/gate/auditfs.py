@@ -9,7 +9,7 @@ not changed.
 
 That offender was Rust and is guarded by `tests/test_rust_filesystem_chokepoint.py`.
 This is the same guarantee on the Python side: `stage` classifies its source
-before choosing, and `tests/test_python_filesystem_chokepoint.py` refuses a raw
+before choosing, and `build_system/tests/gate/test_python_filesystem_chokepoint.py` refuses a raw
 `os.link` anywhere else.
 
 **It fails closed.** A source it cannot classify is copied, not linked. The

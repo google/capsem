@@ -21,9 +21,9 @@ import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from capsem_builder.gate import auditfs
 from jinja2 import Environment, FileSystemLoader
 
+from ..gate import auditfs
 from ..policy.dockerpolicy import (
     BuildNetwork,
     ContainerNetwork,

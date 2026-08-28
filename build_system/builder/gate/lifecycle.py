@@ -77,7 +77,7 @@ class Resource(ABC):
         """
         return {}
 
-    def preserve(self, error: BaseException) -> None:  # noqa: B027
+    def preserve(self, error: BaseException) -> None:
         """Copy out anything `release` is about to destroy.
 
         Deliberately concrete and deliberately empty: most resources have no
@@ -88,6 +88,7 @@ class Resource(ABC):
         reported and swallowed: evidence collection must never replace the
         failure the operator actually needs to read.
         """
+        return
 
 
 @contextmanager

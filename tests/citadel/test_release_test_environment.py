@@ -10,7 +10,7 @@ from pathlib import Path
 from capsem_builder.gate import config as gate_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PROBE = PROJECT_ROOT / "tests/fixtures/release_source_environment_probe.py"
+PROBE = PROJECT_ROOT / "build_system/tests/release/fixtures/release_source_environment_probe.py"
 
 
 def test_pytest_strips_the_parent_release_source_from_every_test() -> None:

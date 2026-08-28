@@ -235,30 +235,35 @@ jobs:
         run: |
           uv run python -m pytest \
             tests/citadel/test_agent_skill_index.py \
-            build_system/tests/image/test_audit.py \
-            tests/test_build_pkg.py \
             tests/test_capsem_bench_mock_server_protocol.py \
             tests/test_capsem_bench_storage.py \
+            tests/test_settings_spec.py \
+            tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py \
+            --cov=src/capsem \
+            --cov-report= \
+            --cov-fail-under=0 \
+            --junitxml=python-junit.xml
+          uv run --project build_system --frozen python -m pytest \
+            build_system/tests/image/test_audit.py \
+            build_system/tests/packaging/test_build_pkg.py \
             build_system/tests/image/test_cli.py \
             build_system/tests/image/test_config.py \
             build_system/tests/image/test_docker.py \
             build_system/tests/image/test_doctor.py \
             build_system/tests/image/test_image_build_backend.py \
             build_system/tests/image/test_manifest.py \
-            tests/test_mock_server_launcher.py \
+            build_system/tests/scripts/test_mock_server_launcher.py \
             build_system/tests/image/test_models.py \
-            tests/test_protocol_fixture_recorder.py \
-            tests/test_repack_deb.py \
-            tests/test_settings_spec.py \
+            build_system/tests/scripts/test_protocol_fixture_recorder.py \
+            build_system/tests/packaging/test_repack_deb.py \
             build_system/tests/image/test_skills.py \
             build_system/tests/image/test_validate.py \
-            tests/capsem-cleanup-script/test_clean_stale.py \
-            tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py \
+            build_system/tests/scripts/test_clean_stale.py \
             --cov=build_system/builder \
-            --cov=src/capsem \
+            --cov-append \
             --cov-report= \
             --cov-fail-under=0 \
-            --junitxml=python-junit.xml
+            --junitxml=build-system-python-junit.xml
 
       # Python integration tests that need no VM
       - name: Python integration tests (non-VM suites)
@@ -333,7 +338,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3
         with:
-          files: target/nextest/ci/junit.xml,frontend-junit.xml,python-junit.xml
+          files: target/nextest/ci/junit.xml,frontend-junit.xml,python-junit.xml,build-system-python-junit.xml
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 

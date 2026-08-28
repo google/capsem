@@ -42,6 +42,10 @@ default = true
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
 filterwarnings = ["error"]
+pythonpath = ["../tests", "tests/gate", "tests/release", "tests/release_site"]
+markers = [
+    "recipe: Just recipe and gate-dispatch contract tests",
+]
 
 [tool.ruff]
 line-length = 100

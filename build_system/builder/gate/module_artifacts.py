@@ -18,7 +18,7 @@ from .command import GateCommand
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
 from .plan import Plan
-from .qualification import BinaryQualification, Qualification
+from .qualification import BinaryQualification, ProfileQualification, Qualification
 from .testmodules import InWorkspace
 
 
@@ -86,7 +86,7 @@ def artifacts(
     phase = plan.phase("artifacts")
     settings = config.modules
 
-    if isinstance(qualification, BinaryQualification):
+    if isinstance(qualification, (BinaryQualification, ProfileQualification)):
         return pulled_artifacts(
             plan,
             config,

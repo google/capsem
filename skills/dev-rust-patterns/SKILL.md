@@ -258,7 +258,7 @@ reaches the others.
 | Any `~/.capsem/...` path | a `paths::` helper | `home.join(".capsem")` |
 | Checkpoint marker | `paths::checkpoint_complete_path(cp)` | rebuilding `<name>.complete` |
 
-`tests/test_path_and_log_wrappers_are_mandatory.py` enforces the first three.
+`build_system/tests/gate/test_path_and_log_wrappers_are_mandatory.py` enforces the first three.
 
 **When unifying, take the better implementation, not the first one.**
 `support_bundle`'s tail reader seeked to each file's end; the shared one read

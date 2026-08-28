@@ -102,11 +102,18 @@ class BinaryQualification(Strict):
         return True
 
 
-class ProfileQualification(BinaryQualification):
+class ProfileQualification(Strict):
     """One profile is the candidate; the package arrives by digest."""
 
-    mode: Literal[Mode.PROFILE_RELEASE] = Mode.PROFILE_RELEASE  # type: ignore[assignment]
-    profile: ProfileName  # type: ignore[assignment]
+    mode: Literal[Mode.PROFILE_RELEASE] = Mode.PROFILE_RELEASE
+    input_dir: GatePath
+    package: GatePath
+    bin_dir: GatePath
+    profile: ProfileName
+
+    @property
+    def pulled(self) -> bool:
+        return True
 
 
 Qualification = Annotated[

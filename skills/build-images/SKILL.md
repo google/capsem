@@ -428,7 +428,7 @@ settings and receives them as environment on the `docker run`, never by reading
 them out of the tree. If a container build needs a linker or a `CC`, pass it
 explicitly.
 
-`tests/test_guest_rust_builder_hermetic.py::test_container_workspace_excludes_dotfiles`
+`build_system/tests/gate/test_guest_rust_builder_hermetic.py::test_container_workspace_excludes_dotfiles`
 fails if the glob is widened, so this cannot be rediscovered the slow way.
 
 ## Cross-compiling guest binaries instead of emulating

@@ -534,7 +534,7 @@ can emit more than one verdict, read them all.
 
 Read the *first* real error, not the recipe cascade under it — `grep -aE "^FAILED|^E "` lands on the cause, while the trailing `error: Recipe ... failed` lines are only the unwind.
 
-`tests/test_exit_status_integrity.py` keeps this out of committed recipes,
+`build_system/tests/gate/test_exit_status_integrity.py` keeps this out of committed recipes,
 scripts, and workflows, and requires `set -o pipefail` in any bash recipe that
 pipes. It cannot see an agent's ad-hoc shell — that part is on you.
 
@@ -548,7 +548,7 @@ Read logs with `telemetry::read_log_tail`, including in assertions: a test that
 opens a `*.log` path directly stops exercising what the product does the moment
 that stream rotates.
 
-Both are enforced by `tests/test_path_and_log_wrappers_are_mandatory.py`. See
+Both are enforced by `build_system/tests/gate/test_path_and_log_wrappers_are_mandatory.py`. See
 `/dev-rust-patterns` "One rule, one function" for why.
 
 ### Verify with the gate's environment, not a bare shell
