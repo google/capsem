@@ -1,0 +1,33 @@
+version = 1
+
+approved_output_probes = [
+  "target/assets/.boundary-probe",
+  "target/packages/.boundary-probe",
+  "target/distribution/.boundary-probe",
+  "target/test-artifacts/.boundary-probe",
+  "target/config/.boundary-probe",
+  "target/test-benchmarks/.boundary-probe",
+  "target/gate-runs/.boundary-probe",
+  "target/coverage/.boundary-probe",
+]
+
+allowed_generated_support = [
+  "config/settings/schema.generated.json",
+  "config/settings/ui-metadata.generated.json",
+]
+
+# Exact shrinking transition inventory captured after the adversarial RED run.
+producer_count = 6
+producer_sha256 = "b5461353d26c6755eb8cf582f0a05f2c387371fd54227e5ba5f7e6454cab7187"
+ambient_asset_count = 10
+ambient_asset_sha256 = "d8d3b4969e2ba940eb787d65226a4e2485a782da980f00040584015ca88cd553"
+ci_transfer_count = 12
+ci_transfer_sha256 = "954abd1459c4db5cc83b4ef5820fa65127ed3e80a6c76077f7b2c67227bbca6b"
+prefix_exports = [
+  "dist",
+  "packages",
+  "assets",
+  "target/config",
+  "target/gate-runs",
+  "test-artifacts",
+]
