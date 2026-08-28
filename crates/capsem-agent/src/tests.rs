@@ -509,6 +509,47 @@ fn bridge_loop_transfers_multi_chunk_data_both_directions() {
     assert_eq!(master_out, test_data);
 }
 
+#[test]
+fn bridge_loop_shuts_down_vsock_before_returning() {
+    use std::os::unix::io::IntoRawFd;
+    use std::os::unix::net::UnixStream;
+
+    let (master_host, master_guest) = UnixStream::pair().unwrap();
+    let (mut vsock_host, vsock_guest) = UnixStream::pair().unwrap();
+    vsock_host
+        .set_read_timeout(Some(std::time::Duration::from_millis(250)))
+        .unwrap();
+
+    let master_fd = master_guest.into_raw_fd();
+    let vsock_fd = vsock_guest.into_raw_fd();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let bridge = std::thread::spawn(move || {
+        bridge_loop(master_fd, vsock_fd);
+        done_tx.send(()).unwrap();
+    });
+
+    drop(master_host);
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("bridge loop did not return after the PTY disconnected");
+
+    let mut byte = [0u8; 1];
+    let peer_read = std::io::Read::read(&mut vsock_host, &mut byte);
+
+    unsafe {
+        libc::shutdown(vsock_fd, libc::SHUT_RDWR);
+        libc::close(master_fd);
+        libc::close(vsock_fd);
+    }
+    bridge.join().unwrap();
+
+    assert_eq!(
+        peer_read.unwrap(),
+        0,
+        "bridge_loop returned while its vsock reader was still alive"
+    );
+}
+
 // -----------------------------------------------------------------------
 // Exec over vsock
 // -----------------------------------------------------------------------

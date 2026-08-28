@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Agent terminal reconnects now shut down and join the previous terminal
+  reader before reusing its file descriptor, preventing stale readers from
+  corrupting input or spinning after a disconnect.
+
 - Release transitions now always begin from the latest verified stable
   manifest. Stable releases no longer depend on mutable nightly state, and a
   nightly release explicitly switches from stable to the candidate nightly
