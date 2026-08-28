@@ -31,9 +31,9 @@ from pathlib import Path
 from typing import Any, cast, get_type_hints
 
 import pytest
+from capsem_builder.policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from helpers.gate import RecordingRunner
 
-from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
 from capsem.gate.docker import Docker
 from capsem.gate.errors import GateError
 

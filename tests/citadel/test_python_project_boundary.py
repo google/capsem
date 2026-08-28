@@ -167,8 +167,18 @@ def _direct_mapping_problems(project: dict[str, Any]) -> list[str]:
     if project.get("build-system", {}).get("build-backend") != "setuptools.build_meta":
         problems.append("backend cannot provide the reviewed editable path mapping")
     setuptools = project.get("tool", {}).get("setuptools", {})
-    if setuptools.get("packages") != ["capsem_builder"]:
-        problems.append("installed package list is not exactly capsem_builder")
+    packages = setuptools.get("packages")
+    if (
+        not isinstance(packages, list)
+        or "capsem_builder" not in packages
+        or any(
+            not isinstance(package, str)
+            or not (package == "capsem_builder" or package.startswith("capsem_builder."))
+            for package in packages
+        )
+        or len(packages) != len(set(packages))
+    ):
+        problems.append("installed package list escapes capsem_builder ownership")
     if setuptools.get("package-dir") != {"capsem_builder": "builder"}:
         problems.append("builder/ is not mapped directly to capsem_builder")
     return problems

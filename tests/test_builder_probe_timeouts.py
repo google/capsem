@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from capsem_builder.policy.dockerpolicy import ContainerNetwork
 
 from capsem.builder.docker import (
     CONTAINER_PROBE_CLEANUP_TIMEOUT_SECONDS,
@@ -15,7 +16,6 @@ from capsem.builder.docker import (
     _container_output,
     generate_cyclonedx_obom,
 )
-from capsem.dockerpolicy import ContainerNetwork
 
 
 @patch("capsem.builder.docker.run_cmd")

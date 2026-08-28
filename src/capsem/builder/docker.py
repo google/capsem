@@ -21,6 +21,12 @@ import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from capsem_builder.policy.dockerpolicy import (
+    BuildNetwork,
+    ContainerNetwork,
+    require_build_network,
+    require_container_network,
+)
 from jinja2 import Environment, FileSystemLoader
 
 from capsem.builder import assetdependencies, guestbuilder
@@ -28,12 +34,6 @@ from capsem.builder.assettools import image_tag as asset_tools_image_tag
 from capsem.builder.doctor import check_container_runtime
 from capsem.builder.guestbuilder import image_tag
 from capsem.builder.models import BuildConfig, ErofsConfig, GuestImageConfig, RootfsConfig
-from capsem.dockerpolicy import (
-    BuildNetwork,
-    ContainerNetwork,
-    require_build_network,
-    require_container_network,
-)
 from capsem.gate import auditfs
 from capsem.obom import validate_exported_rootfs_obom
 

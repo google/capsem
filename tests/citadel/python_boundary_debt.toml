@@ -12,6 +12,6 @@ entrypoints = [
   "pyproject.toml:capsem-builder=capsem.builder.cli:main",
   "pyproject.toml:capsem-gate=capsem.gatelaunch:main",
 ]
-old_import_count = 1159
-old_import_sha256 = "9b69882b7e099d7a91dd854d7468c7c080b32c3ca2f70e7521b5f42f3d143915"
+old_import_count = 1143
+old_import_sha256 = "ef2ca93ce2cf6840bc37e2c3c40f4e34a8c7ca46e28d8fc8c8515be707a47b8f"
 python_source_roots = ["build_system", "guest", "scripts", "sprints", "src", "tests"]

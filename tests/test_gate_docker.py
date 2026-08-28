@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from capsem_builder.policy.dockerpolicy import ContainerNetwork
 from helpers.gate import RecordingRunner
 
-from capsem.dockerpolicy import ContainerNetwork
 from capsem.gate import config as gate_config
 from capsem.gate.docker import Docker
 from capsem.gate.dockermount import Mount, container_path

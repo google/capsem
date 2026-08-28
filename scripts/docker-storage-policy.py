@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -16,17 +17,42 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from capsem.storagepolicyretention import (
-    cache_violations,
-    protect_generations,
-    resource_decision,
-    superseded_generations,
-    validate_bounds,
-)
-
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_POLICY = ROOT / "config" / "storage-policy.toml"
+
+# Prefer the installed owner when this controller is copied out of its source
+# tree. Before any project environment exists, fall back to that same canonical
+# module by exact checkout path; S04-003 will move the controller into the
+# installed build-system package and remove this bootstrap seam.
+try:
+    from capsem_builder.policy.storagepolicyretention import (
+        cache_violations,
+        protect_generations,
+        resource_decision,
+        superseded_generations,
+        validate_bounds,
+    )
+except ModuleNotFoundError as error:
+    if error.name != "capsem_builder":
+        raise
+    _RETENTION_PATH = (
+        ROOT / "build_system" / "builder" / "policy" / "storagepolicyretention.py"
+    )
+    _RETENTION_SPEC = importlib.util.spec_from_file_location(
+        "capsem_storagepolicyretention", _RETENTION_PATH
+    )
+    if _RETENTION_SPEC is None or _RETENTION_SPEC.loader is None:
+        raise RuntimeError(
+            f"cannot load storage policy module: {_RETENTION_PATH}"
+        ) from error
+    _RETENTION = importlib.util.module_from_spec(_RETENTION_SPEC)
+    _RETENTION_SPEC.loader.exec_module(_RETENTION)
+    cache_violations = _RETENTION.cache_violations
+    protect_generations = _RETENTION.protect_generations
+    resource_decision = _RETENTION.resource_decision
+    superseded_generations = _RETENTION.superseded_generations
+    validate_bounds = _RETENTION.validate_bounds
+
 POSITIVE_FIELDS = ("minimum_free_gib", "buildkit_keep_gib", "linked_keep_gib")
 SIZE_UNITS = {
     "B": 1,

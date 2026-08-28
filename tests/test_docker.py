@@ -18,6 +18,7 @@ from typing import Any, ClassVar, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+from capsem_builder.policy.dockerpolicy import BuildNetwork, ContainerNetwork
 
 from capsem.builder import assetdependencies, guestbuilder
 from capsem.builder.config import load_guest_config
@@ -76,7 +77,6 @@ from capsem.builder.models import (
     RootfsConfig,
     VersionedDownloadConfig,
 )
-from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 EXACT_EROFS_BASE = "registry.example/debian@sha256:" + "e" * 64

@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 
-from capsem.dockerpolicy import (
+from capsem_builder.policy.dockerpolicy import (
     BuildNetwork,
     ContainerNetwork,
     require_build_network,

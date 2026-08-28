@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import cast
 
 import pytest
+from capsem_builder.policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from pydantic import ValidationError
 
 from capsem.builder.models import (
@@ -39,7 +40,6 @@ from capsem.builder.models import (
     WebServiceConfig,
 )
 from capsem.builder.schema import McpTransport
-from capsem.dockerpolicy import BuildNetwork, ContainerNetwork
 
 # ---------------------------------------------------------------------------
 # Helpers

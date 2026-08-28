@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from capsem_builder.policy.dockerpolicy import ContainerNetwork
 from pydantic import field_validator, model_validator
-
-from capsem.dockerpolicy import ContainerNetwork
 
 from .configschema import Strict
 

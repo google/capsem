@@ -8,9 +8,9 @@ import time
 from pathlib import Path
 
 import pytest
+from capsem_builder.policy.cachepolicy import CacheLimits, CacheProduct, plan_reclaim
 from helpers.gate import RECORDED_IMAGE_ID, RecordingRunner
 
-from capsem.cachepolicy import CacheLimits, CacheProduct, plan_reclaim
 from capsem.gate import config as gate_config
 from capsem.gate.errors import GateError
 

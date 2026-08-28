@@ -127,6 +127,7 @@ version = "0.6.2"
 source = { editable = "." }
 dependencies = [
     { name = "blake3" },
+    { name = "capsem-builder" },
     { name = "click" },
     { name = "jinja2" },
     { name = "pydantic" },
@@ -147,6 +148,43 @@ dev = [
     { name = "ty" },
     { name = "watchdog" },
     { name = "websockets" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "blake3", specifier = ">=1.0.8" },
+    { name = "capsem-builder", directory = "build_system" },
+    { name = "click", specifier = ">=8.0" },
+    { name = "jinja2", specifier = ">=3.0" },
+    { name = "pydantic", specifier = ">=2.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "hadolint-py", specifier = "==2.14.0.1" },
+    { name = "pip-audit", specifier = ">=2.9.0" },
+    { name = "psutil", specifier = ">=7.2.2" },
+    { name = "pygments", specifier = ">=2.20.0" },
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pytest-cov", specifier = ">=6.0" },
+    { name = "pytest-xdist", specifier = ">=3.8.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "ruff", specifier = ">=0.15.16" },
+    { name = "shellcheck-py", specifier = ">=0.11.0.1" },
+    { name = "ty", specifier = ">=0.0.46" },
+    { name = "watchdog", specifier = ">=6.0.0" },
+    { name = "websockets", specifier = ">=16.0" },
+]
+
+[[package]]
+name = "capsem-builder"
+version = "0.6.2"
+source = { directory = "build_system" }
+dependencies = [
+    { name = "blake3" },
+    { name = "click" },
+    { name = "jinja2" },
+    { name = "pydantic" },
 ]
 
 [package.metadata]
