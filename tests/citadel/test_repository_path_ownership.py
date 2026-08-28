@@ -45,11 +45,13 @@ EXCLUDED_POLICY_FILES = frozenset(
     {
         "tests/citadel/release_authority_debt.toml",
         "tests/citadel/repository_path_debt.toml",
+        "tests/citadel/build_system_boundary_debt.toml",
         "tests/citadel/python_boundary_debt.toml",
         "tests/citadel/fixture_ownership.toml",
         "tests/citadel/generated_output_debt.toml",
         "tests/citadel/repository_surface_ownership.toml",
         "tests/citadel/test_python_project_boundary.py",
+        "tests/citadel/test_build_system_boundary.py",
         "tests/citadel/test_fixture_ownership.py",
         "tests/citadel/test_generated_output_boundary.py",
         "tests/citadel/test_release_authority_is_canonical.py",
