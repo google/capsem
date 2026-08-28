@@ -1098,13 +1098,31 @@ fn try_write_on_open_writer_succeeds() {
 }
 
 #[test]
+fn writer_channel_capacity_applies_backpressure() {
+    let (tx, _rx) = writer_channel(1);
+    tx.try_send(WriterMessage::write(file_event_with_credential(
+        "/queued",
+        None,
+    )))
+    .unwrap();
+
+    assert!(matches!(
+        tx.try_send(WriterMessage::write(file_event_with_credential(
+            "/full",
+            None,
+        ))),
+        Err(std::sync::mpsc::TrySendError::Full(_))
+    ));
+}
+
+#[test]
 fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
     use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 
     let recorder = DebuggingRecorder::new();
     let snapshotter = recorder.snapshotter();
-    let (tx, rx) = std::sync::mpsc::channel();
-    tx.send(super::WriterMessage::Batch(vec![WriteOp::FileEvent(
+    let (tx, rx) = writer_channel(16);
+    tx.send(super::WriterMessage::write(WriteOp::FileEvent(
         crate::events::FileEvent {
             event_id: None,
             timestamp: std::time::SystemTime::now(),
@@ -1114,7 +1132,7 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
             trace_id: None,
             credential_ref: None,
         },
-    )]))
+    )))
     .unwrap();
     drop(tx);
 
@@ -1128,7 +1146,7 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
     )
     .unwrap();
 
-    metrics::with_local_recorder(&recorder, || writer_loop(conn, rx, None));
+    metrics::with_local_recorder(&recorder, || writer_loop(conn, rx, None, 16));
 
     let snapshot = snapshotter.snapshot().into_vec();
     assert!(snapshot.iter().any(
@@ -1183,21 +1201,6 @@ fn db_writer_records_enqueue_metrics() {
     }));
     assert!(snapshot.iter().any(|(key, _, _, value)| {
         key.key().name() == DB_ENQUEUE_TOTAL && matches!(value, DebugValue::Counter(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_ENQUEUE_LOCK_WAIT_MS && matches!(value, DebugValue::Histogram(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_PRODUCER_BUFFER_SIZE && matches!(value, DebugValue::Gauge(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_PRODUCER_BUFFER_CAPACITY && matches!(value, DebugValue::Gauge(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_PRODUCER_BATCH_SENT_TOTAL && matches!(value, DebugValue::Counter(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_PRODUCER_BATCH_SEND_MS && matches!(value, DebugValue::Histogram(_))
     }));
 }
 

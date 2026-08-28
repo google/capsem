@@ -2899,33 +2899,28 @@ async fn test_file_event_limit_zero() {
     assert!(search.is_empty());
 }
 
-// ── DB-owned producer buffer preserves try_write bursts ─────────────
+// ── Bounded writer queue backpressure ───────────────────────────────
 
-/// Proves try_write() accepts a burst into the DB-owned producer buffer
-/// instead of silently dropping rows when a tiny channel would have filled.
+/// Proves every operation accepted by non-blocking try_write() is persisted.
 #[tokio::test]
-async fn try_write_accepts_burst_into_db_owned_buffer() {
+async fn try_write_persists_every_accepted_operation() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("try-write-burst.db");
 
-    // Capacity of 1 used to make try_write unreliable. The DB now owns a
-    // producer buffer and channelizes whole batches internally.
     let writer = DbWriter::open(&path, 1).unwrap();
 
-    let ok1 = writer.try_write(WriteOp::FileEvent(sample_file_event(
+    let mut accepted = usize::from(writer.try_write(WriteOp::FileEvent(sample_file_event(
         "first.rs",
         FileAction::Created,
         Some(10),
-    )));
-    assert!(ok1, "first try_write should be accepted");
+    ))));
 
     for i in 0..20 {
-        let ok = writer.try_write(WriteOp::FileEvent(sample_file_event(
+        accepted += usize::from(writer.try_write(WriteOp::FileEvent(sample_file_event(
             &format!("burst{i}.rs"),
             FileAction::Modified,
             Some(100),
-        )));
-        assert!(ok, "DB-owned producer buffer must accept burst item {i}");
+        ))));
     }
 
     writer.flush().await;
@@ -2936,8 +2931,8 @@ async fn try_write_accepts_burst_into_db_owned_buffer() {
 
     assert_eq!(
         events.len(),
-        21,
-        "DB-owned producer buffer must preserve every accepted try_write row"
+        accepted,
+        "try_write must persist exactly the operations it reports as accepted"
     );
 }
 
@@ -2985,8 +2980,8 @@ async fn async_write_never_drops_events() {
     );
 }
 
-/// Simulates a production burst of file events via try_write. The writer
-/// must accept the whole burst and persist it after the explicit DB barrier.
+/// Simulates a production-sized burst and proves try_write's acceptance count
+/// matches the rows visible after the explicit DB barrier.
 #[tokio::test]
 async fn try_write_production_burst_preserves_events() {
     let dir = tempfile::tempdir().unwrap();
@@ -2995,13 +2990,13 @@ async fn try_write_production_burst_preserves_events() {
     let writer = DbWriter::open(&path, 256).unwrap();
 
     let total = 500;
+    let mut accepted = 0;
     for i in 0..total {
-        let ok = writer.try_write(WriteOp::FileEvent(sample_file_event(
+        accepted += usize::from(writer.try_write(WriteOp::FileEvent(sample_file_event(
             &format!("burst{i}.rs"),
             FileAction::Modified,
             Some(i as u64),
-        )));
-        assert!(ok, "production burst try_write {i} must be accepted");
+        ))));
     }
 
     writer.flush().await;
@@ -3010,40 +3005,7 @@ async fn try_write_production_burst_preserves_events() {
     let reader = DbReader::open(&path).unwrap();
     let events = reader.recent_file_events(1000).unwrap();
 
-    assert_eq!(events.len(), total);
-}
-
-/// Ignoring try_write's return value must no longer create a silent-loss
-/// footgun for accepted rows. The DB object owns buffering and flushes the
-/// accepted burst as a unit.
-#[tokio::test]
-async fn ignored_try_write_return_value_preserves_accepted_rows() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("ignored-return.db");
-
-    let writer = DbWriter::open(&path, 1).unwrap();
-
-    writer.try_write(WriteOp::FileEvent(sample_file_event(
-        "a.rs",
-        FileAction::Created,
-        Some(1),
-    )));
-
-    for i in 0..10 {
-        writer.try_write(WriteOp::FileEvent(sample_file_event(
-            &format!("kept{i}.rs"),
-            FileAction::Created,
-            Some(1),
-        )));
-    }
-
-    writer.flush().await;
-    drop(writer);
-
-    let reader = DbReader::open(&path).unwrap();
-    let events = reader.recent_file_events(100).unwrap();
-
-    assert_eq!(events.len(), 11);
+    assert_eq!(events.len(), accepted);
 }
 
 // ========================================================================

@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Logger writes now use a bounded operation queue with real async and blocking
+  backpressure instead of accumulating unbounded batches in memory.
 - Model-item deduplication now stays database-owned instead of retaining every
   item key in process memory for the lifetime of a session.
 - The gateway proxy now removes hop-by-hop and connection-nominated request

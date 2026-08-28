@@ -353,7 +353,7 @@ async fn db_handle_ready_query_write() {
 }
 
 #[tokio::test]
-async fn db_write_accepts_before_flush_and_flush_makes_visible() {
+async fn db_write_accepts_without_disk_flush_and_barrier_makes_durable() {
     let p = temp_db_path("memory-before-disk-flush");
     let db = DbHandle::open(&p).expect("open handle");
     db.ready().await.expect("db ready");
@@ -363,29 +363,21 @@ async fn db_write_accepts_before_flush_and_flush_makes_visible() {
         Decision::Allowed,
     )))
     .await
-    .expect("write must acknowledge after DB-owned buffer accepts the event");
+    .expect("write must acknowledge after the DB-owned queue accepts the event");
 
     assert_eq!(
         disk_net_event_count(&p, "memory-first.example"),
         0,
-        "db.write() must not force a disk flush. S08 contract: write accepts into DB-owned batching, and flush controls visibility/durability."
-    );
-    let buffered_raw = db
-        .query(
-            "SELECT domain, decision, bytes_sent FROM net_events WHERE domain = ?",
-            &[json!("memory-first.example")],
-        )
-        .await
-        .expect("query before flush");
-    let buffered_value: serde_json::Value =
-        serde_json::from_str(&buffered_raw).expect("query JSON");
-    assert_eq!(
-        buffered_value["rows"],
-        json!([]),
-        "write() accepts into the DB-owned batch buffer; query visibility starts at flush(). {DB_BOUNDARY_RATIONALE}"
+        "db.write() must not force a disk flush; the explicit barrier controls durability"
     );
 
     db.flush_for_tests().await;
+
+    assert_eq!(
+        disk_net_event_count(&p, "memory-first.example"),
+        1,
+        "the DB-owned flush barrier must make every earlier accepted write durable"
+    );
 
     let raw = db
         .query(

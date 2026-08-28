@@ -22,7 +22,6 @@ const MAX_FIELD_BYTES: usize = 256 * 1024;
 const MAX_BODY_BLOB_BYTES: usize = 10 * 1024 * 1024;
 const DEFAULT_BATCH_CAPACITY: usize = 10_000;
 const DISK_FLUSH_THRESHOLD_OPS: usize = 1_000_000;
-const PRODUCER_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const DISK_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 
 pub const DB_ENQUEUE_SPAN: &str = "capsem.db.enqueue";
@@ -30,10 +29,7 @@ pub const DB_WRITE_BATCH_SPAN: &str = "capsem.db.write_batch";
 pub const DB_SHUTDOWN_FLUSH_SPAN: &str = "capsem.db.shutdown_flush";
 
 pub const DB_ENQUEUE_WAIT_MS: &str = "db.enqueue_wait_ms";
-pub const DB_ENQUEUE_LOCK_WAIT_MS: &str = "db.enqueue_lock_wait_ms";
 pub const DB_ENQUEUE_TOTAL: &str = "db.enqueue_total";
-pub const DB_PRODUCER_BATCH_SEND_MS: &str = "db.producer_batch_send_ms";
-pub const DB_PRODUCER_BATCH_SENT_TOTAL: &str = "db.producer_batch_sent_total";
 pub const DB_WRITE_BATCH_TOTAL: &str = "db.write_batch_total";
 pub const DB_WRITE_BATCH_DURATION_MS: &str = "db.write_batch_duration_ms";
 pub const DB_WRITE_OP_REJECTED_TOTAL: &str = "db.write_op_rejected_total";
@@ -41,8 +37,6 @@ pub const DB_WRITE_BATCH_SIZE: &str = "db.write_batch_size";
 pub const DB_WRITE_BATCH_CAPACITY: &str = "db.write_batch_capacity";
 pub const DB_WRITE_BATCH_ROWS_PER_SEC: &str = "db.write_batch_rows_per_sec";
 pub const DB_WRITE_OPS_TOTAL: &str = "db.write_ops_total";
-pub const DB_PRODUCER_BUFFER_SIZE: &str = "db.producer_buffer_size";
-pub const DB_PRODUCER_BUFFER_CAPACITY: &str = "db.producer_buffer_capacity";
 pub const DB_SHUTDOWN_FLUSH_MS: &str = "db.shutdown_flush_ms";
 
 static IN_MEMORY_WRITER_ID: AtomicU64 = AtomicU64::new(0);
@@ -148,9 +142,39 @@ pub enum WriteOp {
 }
 
 #[derive(Debug)]
-enum WriterMessage {
-    Batch(Vec<WriteOp>),
-    Flush(tokio::sync::oneshot::Sender<()>),
+struct WriterMessage {
+    write: Option<WriteOp>,
+    flush_reply: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl WriterMessage {
+    fn write(op: WriteOp) -> Self {
+        Self {
+            write: Some(op),
+            flush_reply: None,
+        }
+    }
+
+    fn flush(reply: tokio::sync::oneshot::Sender<()>) -> Self {
+        Self {
+            write: None,
+            flush_reply: Some(reply),
+        }
+    }
+
+    fn into_write_or_flush(self) -> Result<WriteOp, tokio::sync::oneshot::Sender<()>> {
+        match (self.write, self.flush_reply) {
+            (Some(op), None) => Ok(op),
+            (None, Some(reply)) => Err(reply),
+            _ => unreachable!("writer messages have exactly one payload"),
+        }
+    }
+}
+
+type WriterSender = mpsc::SyncSender<WriterMessage>;
+
+fn writer_channel(capacity: usize) -> (WriterSender, mpsc::Receiver<WriterMessage>) {
+    mpsc::sync_channel(capacity.max(1))
 }
 
 impl WriteOp {
@@ -234,12 +258,8 @@ fn ensure_option_event_id(event_id: &mut Option<String>) -> Option<String> {
 pub struct DbWriter {
     /// Stored sender. `shutdown_blocking` takes it out; `write` clones it
     /// under the lock and releases the lock before touching the producer
-    /// buffer so hot-path latency is unaffected.
-    tx: std::sync::Mutex<Option<mpsc::Sender<WriterMessage>>>,
-    producer_buffer: std::sync::Arc<std::sync::Mutex<Vec<WriteOp>>>,
-    batch_capacity: usize,
-    sweeper_shutdown_tx: std::sync::Mutex<Option<mpsc::Sender<()>>>,
-    sweeper_join_handle: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// channel so hot-path latency is unaffected.
+    tx: std::sync::Mutex<Option<WriterSender>>,
     join_handle: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
     db_path: PathBuf,
 }
@@ -291,30 +311,17 @@ impl DbWriter {
         } else {
             capacity
         };
-        let (tx, rx) = mpsc::channel();
-        let producer_buffer =
-            std::sync::Arc::new(std::sync::Mutex::new(Vec::with_capacity(batch_capacity)));
-        let (sweeper_shutdown_tx, sweeper_shutdown_rx) = mpsc::channel();
+        let (tx, rx) = writer_channel(batch_capacity);
         let db_path = path.to_path_buf();
         let writer_loop_db_path = Some(db_path.clone());
 
-        let sweeper_join_handle = spawn_producer_sweeper(
-            producer_buffer.clone(),
-            tx.clone(),
-            sweeper_shutdown_rx,
-            PRODUCER_SWEEP_INTERVAL,
-        );
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
-            .spawn(move || writer_loop(conn, rx, writer_loop_db_path))
+            .spawn(move || writer_loop(conn, rx, writer_loop_db_path, batch_capacity))
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
             tx: std::sync::Mutex::new(Some(tx)),
-            producer_buffer,
-            batch_capacity,
-            sweeper_shutdown_tx: std::sync::Mutex::new(Some(sweeper_shutdown_tx)),
-            sweeper_join_handle: std::sync::Mutex::new(Some(sweeper_join_handle)),
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path,
         })
@@ -341,56 +348,33 @@ impl DbWriter {
         } else {
             capacity
         };
-        let (tx, rx) = mpsc::channel();
-        let producer_buffer =
-            std::sync::Arc::new(std::sync::Mutex::new(Vec::with_capacity(batch_capacity)));
-        let (sweeper_shutdown_tx, sweeper_shutdown_rx) = mpsc::channel();
-
-        let sweeper_join_handle = spawn_producer_sweeper(
-            producer_buffer.clone(),
-            tx.clone(),
-            sweeper_shutdown_rx,
-            PRODUCER_SWEEP_INTERVAL,
-        );
+        let (tx, rx) = writer_channel(batch_capacity);
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
-            .spawn(move || writer_loop(conn, rx, None))
+            .spawn(move || writer_loop(conn, rx, None, batch_capacity))
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
             tx: std::sync::Mutex::new(Some(tx)),
-            producer_buffer,
-            batch_capacity,
-            sweeper_shutdown_tx: std::sync::Mutex::new(Some(sweeper_shutdown_tx)),
-            sweeper_join_handle: std::sync::Mutex::new(Some(sweeper_join_handle)),
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path: PathBuf::from(":memory:"),
         })
     }
 
     /// Clone the stored sender so async work can happen outside the lock.
-    fn clone_sender(&self) -> Option<mpsc::Sender<WriterMessage>> {
+    fn clone_sender(&self) -> Option<WriterSender> {
         self.tx.lock().unwrap().clone()
     }
 
-    /// Non-blocking send. Reports a full or closed queue rather than waiting:
-    /// the "yields if channel full (backpressure)" this used to claim was
-    /// never possible, since nothing below it awaits.
+    /// Enqueue one operation, yielding while the bounded writer channel is full.
     pub async fn write(&self, op: WriteOp) {
         if let Err(error) = self.write_checked(op).await {
             warn!(error = %error, "db writer dropped write op");
         }
     }
 
-    /// Non-blocking send that reports closed or missing writer channels
-    /// instead of silently dropping the operation.
-    ///
-    /// The docstring used to promise it "yields if channel full
-    /// (backpressure)". It cannot: the body is entirely synchronous, so there
-    /// is no await point at which to yield, and a full queue is reported
-    /// rather than waited on. `blocking_write` is the call that waits for
-    /// capacity. The signature stays `async` because `Db::write` above it is
-    /// the logger's public boundary and every caller awaits it.
+    /// Enqueue one operation, yielding while the bounded writer channel is full.
+    /// Reports a closed or missing writer instead of silently dropping the op.
     pub async fn write_checked(&self, op: WriteOp) -> Result<(), String> {
         let span = tracing::debug_span!(
             target: "capsem.db",
@@ -399,18 +383,20 @@ impl DbWriter {
             queue_result = tracing::field::Empty,
         );
         let started = Instant::now();
-        if self.clone_sender().is_none() {
+        let Some(tx) = self.clone_sender() else {
             record_enqueue(started, "missing_sender", &span);
             return Err("db writer sender missing".to_string());
-        }
-        self.accept_op(op).inspect_err(|_| {
-            record_enqueue(started, "closed", &span);
-        })?;
+        };
+        send_with_backpressure(&tx, WriterMessage::write(op))
+            .await
+            .inspect_err(|_| {
+                record_enqueue(started, "closed", &span);
+            })?;
         record_enqueue(started, "queued", &span);
         Ok(())
     }
 
-    /// Try to accept without blocking. Returns false only when the writer is closed.
+    /// Try to enqueue without blocking. Returns false when the queue is full or closed.
     pub fn try_write(&self, op: WriteOp) -> bool {
         let span = tracing::debug_span!(
             target: "capsem.db",
@@ -419,9 +405,16 @@ impl DbWriter {
             queue_result = tracing::field::Empty,
         );
         let started = Instant::now();
-        let accepted = self.clone_sender().is_some() && self.accept_op(op).is_ok();
-        record_enqueue(started, if accepted { "queued" } else { "closed" }, &span);
-        accepted
+        let queue_result = match self.clone_sender() {
+            Some(tx) => match tx.try_send(WriterMessage::write(op)) {
+                Ok(()) => "queued",
+                Err(mpsc::TrySendError::Full(_)) => "full",
+                Err(mpsc::TrySendError::Disconnected(_)) => "closed",
+            },
+            None => "missing_sender",
+        };
+        record_enqueue(started, queue_result, &span);
+        queue_result == "queued"
     }
 
     /// Blocking send for synchronous producer paths that must not drop
@@ -437,7 +430,14 @@ impl DbWriter {
             queue_result = tracing::field::Empty,
         );
         let started = Instant::now();
-        match self.accept_op(op) {
+        let result = self
+            .clone_sender()
+            .ok_or_else(|| "db writer sender missing".to_string())
+            .and_then(|tx| {
+                tx.send(WriterMessage::write(op))
+                    .map_err(|error| format!("db writer channel closed: {error}"))
+            });
+        match result {
             Ok(()) => record_enqueue(started, "queued", &span),
             Err(error) => {
                 record_enqueue(started, "closed", &span);
@@ -451,12 +451,8 @@ impl DbWriter {
     /// the writer alive for future events.
     pub async fn flush(&self) {
         if let Some(tx) = self.clone_sender() {
-            if let Err(error) = self.flush_producer_buffer_to_channel(&tx) {
-                warn!(error = %error, "db writer failed to flush producer buffer");
-                return;
-            }
             let (reply, rx) = tokio::sync::oneshot::channel();
-            if let Err(e) = tx.send(WriterMessage::Flush(reply)) {
+            if let Err(e) = send_with_backpressure(&tx, WriterMessage::flush(reply)).await {
                 warn!(error = %e, "db writer channel closed, dropping flush barrier");
                 return;
             }
@@ -483,20 +479,8 @@ impl DbWriter {
     /// no-ops. Idempotent. Blocks until the writer thread drains its queue
     /// and runs the final `PRAGMA wal_checkpoint(TRUNCATE)`. Call from a
     /// blocking thread (e.g. via `tokio::task::spawn_blocking`).
-    ///
-    /// Outstanding `write` callers that cloned the sender before this
-    /// method ran may still have Sender clones in flight; the join waits
-    /// for those clones to drop naturally as their `send().await` returns.
     pub fn shutdown_blocking(&self) {
-        let _ = self.sweeper_shutdown_tx.lock().unwrap().take();
-        let sweeper_handle = self.sweeper_join_handle.lock().unwrap().take();
-        if let Some(handle) = sweeper_handle {
-            let _ = handle.join();
-        }
-        if let Some(tx) = self.tx.lock().unwrap().take() {
-            let _ = self.flush_producer_buffer_to_channel(&tx);
-            drop(tx);
-        }
+        let _ = self.tx.lock().unwrap().take();
         let handle = self.join_handle.lock().unwrap().take();
         if let Some(handle) = handle {
             let _ = handle.join();
@@ -516,38 +500,6 @@ impl DbWriter {
     pub fn path(&self) -> &Path {
         &self.db_path
     }
-
-    fn accept_op(&self, op: WriteOp) -> Result<(), String> {
-        let tx = self
-            .clone_sender()
-            .ok_or_else(|| "db writer sender missing".to_string())?;
-        let mut ready_batch = None;
-        {
-            let lock_started = Instant::now();
-            let mut buffer = self.producer_buffer.lock().unwrap();
-            record_enqueue_lock_wait(lock_started);
-            buffer.push(op);
-            record_producer_buffer(buffer.len(), buffer.capacity());
-            if buffer.len() >= self.batch_capacity {
-                ready_batch = Some(take_buffer_batch(&mut buffer, self.batch_capacity));
-            }
-        }
-        if let Some(batch) = ready_batch {
-            send_nonempty_batch(&tx, batch)?;
-        }
-        Ok(())
-    }
-
-    fn flush_producer_buffer_to_channel(
-        &self,
-        tx: &mpsc::Sender<WriterMessage>,
-    ) -> Result<(), String> {
-        let batch = {
-            let mut buffer = self.producer_buffer.lock().unwrap();
-            take_buffer_batch(&mut buffer, self.batch_capacity)
-        };
-        send_nonempty_batch(tx, batch)
-    }
 }
 
 impl Drop for DbWriter {
@@ -564,66 +516,31 @@ fn is_sqlite_busy(error: &rusqlite::Error) -> bool {
     )
 }
 
-fn take_buffer_batch(buffer: &mut Vec<WriteOp>, capacity: usize) -> Vec<WriteOp> {
-    if buffer.is_empty() {
-        Vec::new()
-    } else {
-        std::mem::replace(buffer, Vec::with_capacity(capacity))
-    }
-}
-
-fn send_nonempty_batch(
-    tx: &mpsc::Sender<WriterMessage>,
-    batch: Vec<WriteOp>,
+async fn send_with_backpressure(
+    tx: &WriterSender,
+    mut message: WriterMessage,
 ) -> Result<(), String> {
-    if batch.is_empty() {
-        return Ok(());
-    }
-    let batch_size = batch.len();
-    let batch_bucket = batch_size_bucket(batch_size);
-    let started = Instant::now();
-    tx.send(WriterMessage::Batch(batch)).map_err(|error| {
-        record_producer_batch_send(started, batch_size, batch_bucket, "closed");
-        format!("db writer channel closed: {error}")
-    })?;
-    record_producer_batch_send(started, batch_size, batch_bucket, "queued");
-    Ok(())
-}
-
-fn spawn_producer_sweeper(
-    producer_buffer: std::sync::Arc<std::sync::Mutex<Vec<WriteOp>>>,
-    tx: mpsc::Sender<WriterMessage>,
-    shutdown_rx: mpsc::Receiver<()>,
-    interval: Duration,
-) -> std::thread::JoinHandle<()> {
-    std::thread::Builder::new()
-        .name("capsem-db-producer-sweeper".into())
-        .spawn(move || loop {
-            match shutdown_rx.recv_timeout(interval) {
-                Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    let batch = {
-                        let mut buffer = producer_buffer.lock().unwrap();
-                        let capacity = buffer.capacity().max(1);
-                        take_buffer_batch(&mut buffer, capacity)
-                    };
-                    let _ = send_nonempty_batch(&tx, batch);
-                    break;
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    let batch = {
-                        let mut buffer = producer_buffer.lock().unwrap();
-                        let capacity = buffer.capacity().max(1);
-                        take_buffer_batch(&mut buffer, capacity)
-                    };
-                    let _ = send_nonempty_batch(&tx, batch);
-                }
+    loop {
+        match tx.try_send(message) {
+            Ok(()) => return Ok(()),
+            Err(mpsc::TrySendError::Full(returned)) => {
+                message = returned;
+                tokio::task::yield_now().await;
             }
-        })
-        .expect("failed to spawn db producer sweeper thread")
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                return Err("db writer channel closed".to_string());
+            }
+        }
+    }
 }
 
 /// The writer thread loop: block-then-drain batching.
-fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Option<PathBuf>) {
+fn writer_loop(
+    conn: Connection,
+    rx: mpsc::Receiver<WriterMessage>,
+    db_path: Option<PathBuf>,
+    batch_capacity: usize,
+) {
     let mut flush_watermarks = schema::with_memory_schema_lock(|| {
         schema::initial_memory_flush_watermarks(&conn, schema::hot_ledger_tables())
     })
@@ -664,26 +581,23 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
             break;
         };
 
-        let mut batch = Vec::with_capacity(DISK_FLUSH_THRESHOLD_OPS);
+        let mut batch = Vec::with_capacity(batch_capacity);
         let mut flush_barriers = Vec::new();
-        match first_message {
-            WriterMessage::Batch(ops) => batch.extend(ops),
-            WriterMessage::Flush(reply) => flush_barriers.push(reply),
+        match first_message.into_write_or_flush() {
+            Ok(op) => batch.push(op),
+            Err(reply) => flush_barriers.push(reply),
         }
 
         // 2. Drain any ops already queued (non-blocking).
-        while flush_barriers.is_empty() {
+        while flush_barriers.is_empty() && batch.len() < batch_capacity {
             match rx.try_recv() {
-                Ok(WriterMessage::Batch(ops)) => {
-                    batch.extend(ops);
-                    if batch.len() >= DISK_FLUSH_THRESHOLD_OPS {
+                Ok(message) => match message.into_write_or_flush() {
+                    Ok(op) => batch.push(op),
+                    Err(reply) => {
+                        flush_barriers.push(reply);
                         break;
                     }
-                }
-                Ok(WriterMessage::Flush(reply)) => {
-                    flush_barriers.push(reply);
-                    break;
-                }
+                },
                 Err(_) => break,
             }
         }
@@ -809,45 +723,6 @@ fn record_enqueue(started: Instant, queue_result: &'static str, span: &tracing::
         },
     );
     span.record("queue_result", queue_result);
-}
-
-fn record_enqueue_lock_wait(started: Instant) {
-    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-    ::metrics::histogram!(DB_ENQUEUE_LOCK_WAIT_MS).record(elapsed_ms);
-}
-
-fn record_producer_buffer(len: usize, capacity: usize) {
-    ::metrics::gauge!(DB_PRODUCER_BUFFER_SIZE).set(len as f64);
-    ::metrics::gauge!(DB_PRODUCER_BUFFER_CAPACITY).set(capacity as f64);
-}
-
-fn record_producer_batch_send(
-    started: Instant,
-    batch_size: usize,
-    batch_size_bucket: &'static str,
-    queue_result: &'static str,
-) {
-    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-    ::metrics::counter!(
-        DB_PRODUCER_BATCH_SENT_TOTAL,
-        "queue_result" => queue_result,
-        "batch_size_bucket" => batch_size_bucket,
-    )
-    .increment(1);
-    ::metrics::histogram!(
-        DB_PRODUCER_BATCH_SEND_MS,
-        "queue_result" => queue_result,
-        "batch_size_bucket" => batch_size_bucket,
-    )
-    .record(elapsed_ms);
-    tracing::trace!(
-        target: "capsem.db",
-        queue_result,
-        batch_size,
-        batch_size_bucket,
-        elapsed_ms,
-        "db producer batch sent"
-    );
 }
 
 fn record_batch(
