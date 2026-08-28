@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Gateway status reads now bound their service response time, body size, and
+  background connection lifetime so a stalled or oversized response cannot
+  block status polling indefinitely.
 - Apple VZ serial consoles now close their duplicated pipe descriptors when a
   VM handle is dropped instead of leaking descriptors across VM lifecycles.
 - Security decision rows now record the same first matching enforcement rule

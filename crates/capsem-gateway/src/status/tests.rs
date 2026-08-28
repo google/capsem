@@ -237,6 +237,65 @@ async fn mock_uds(app: axum::Router) -> (String, tokio::task::JoinHandle<()>, te
     (path_str, handle, dir)
 }
 
+async fn mock_stalled_body_uds() -> (String, tokio::task::JoinHandle<()>, tempfile::TempDir) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("stalled.sock");
+    let path_str = sock_path.to_str().unwrap().to_string();
+    let uds = tokio::net::UnixListener::bind(&sock_path).unwrap();
+    let handle = tokio::spawn(async move {
+        let (mut stream, _) = uds.accept().await.unwrap();
+        let mut request = [0_u8; 1024];
+        let request_len = stream.read(&mut request).await.unwrap();
+        assert!(request_len > 0, "status client must send an HTTP request");
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 8\r\n\r\nx")
+            .await
+            .unwrap();
+        std::future::pending::<()>().await;
+    });
+    (path_str, handle, dir)
+}
+
+#[tokio::test]
+async fn uds_get_times_out_while_reading_a_stalled_body() {
+    let (path, handle, _dir) = mock_stalled_body_uds().await;
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(6),
+        uds_get(std::path::Path::new(&path), "/vms/list"),
+    )
+    .await
+    .expect("uds_get must enforce its own five-second deadline");
+
+    assert!(result.unwrap_err().to_string().contains("timed out"));
+    handle.abort();
+}
+
+#[tokio::test]
+async fn uds_get_rejects_an_oversized_status_body() {
+    let mock = axum::Router::new().route(
+        "/vms/list",
+        axum::routing::get(|| async { Bytes::from(vec![b'x'; STATUS_RESPONSE_MAX_BODY_SIZE + 1]) }),
+    );
+    let (path, handle, _dir) = mock_uds(mock).await;
+
+    let error = uds_get(std::path::Path::new(&path), "/vms/list")
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("length limit"), "{error:#}");
+    handle.abort();
+}
+
+#[test]
+fn status_uds_timeouts_bound_the_request_and_connection_driver() {
+    assert_eq!(STATUS_REQUEST_TIMEOUT, Duration::from_secs(5));
+    assert!(STATUS_CONN_DRIVER_TIMEOUT > STATUS_REQUEST_TIMEOUT);
+    assert!(STATUS_CONN_DRIVER_TIMEOUT <= Duration::from_secs(300));
+}
+
 #[tokio::test]
 async fn fetch_status_empty_vm_list() {
     let mock = axum::Router::new().route(
