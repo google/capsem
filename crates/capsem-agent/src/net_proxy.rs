@@ -205,14 +205,11 @@ async fn get_process_name(client_port: u16) -> Option<String> {
 fn sanitize_process_name(name: &str) -> String {
     // Replace newlines, control characters, and spaces with underscores.
     // Limit to 128 chars.
-    let mut s = name
+    name
         .chars()
         .map(|c| if c.is_control() || c == ' ' { '_' } else { c })
-        .collect::<String>();
-    if s.len() > 128 {
-        s.truncate(128);
-    }
-    s
+        .take(128)
+        .collect()
 }
 
 async fn handle_connection(mut tcp_stream: TcpStream) {

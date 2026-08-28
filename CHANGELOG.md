@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Guest process attribution now handles long Unicode process names without
+  crashing MCP or network relay tasks.
+
 - Agent terminal reconnects now shut down and join the previous terminal
   reader before reusing its file descriptor, preventing stale readers from
   corrupting input or spinning after a disconnect.

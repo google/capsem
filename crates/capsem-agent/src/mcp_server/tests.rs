@@ -105,6 +105,15 @@ fn sanitize_truncates_long_names() {
 }
 
 #[test]
+fn sanitize_truncates_multibyte_names_on_a_character_boundary() {
+    let name = format!("{}é", "a".repeat(127));
+    let result = sanitize_process_name(&name);
+
+    assert_eq!(result.chars().count(), 128);
+    assert!(result.ends_with('é'));
+}
+
+#[test]
 fn sanitize_preserves_slashes_and_dashes() {
     assert_eq!(
         sanitize_process_name("claude/code-v4.0"),

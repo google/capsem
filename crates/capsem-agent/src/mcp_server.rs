@@ -97,14 +97,11 @@ fn get_parent_process_name() -> String {
 /// Replaces control characters (including newlines and NUL) and spaces with
 /// underscores, and truncates to 128 chars to match the frame envelope.
 fn sanitize_process_name(name: &str) -> String {
-    let mut s = name
+    name
         .chars()
         .map(|c| if c.is_control() || c == ' ' { '_' } else { c })
-        .collect::<String>();
-    if s.len() > 128 {
-        s.truncate(128);
-    }
-    s
+        .take(128)
+        .collect()
 }
 
 fn main() {

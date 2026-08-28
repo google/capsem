@@ -54,6 +54,15 @@ fn test_sanitize_process_name() {
 }
 
 #[test]
+fn sanitize_truncates_multibyte_names_on_a_character_boundary() {
+    let name = format!("{}é", "a".repeat(127));
+    let result = sanitize_process_name(&name);
+
+    assert_eq!(result.chars().count(), 128);
+    assert!(result.ends_with('é'));
+}
+
+#[test]
 fn sanitize_blocks_meta_line_injection() {
     // Newline in process name would split the \0CAPSEM_META:...\n frame
     let evil = "evil\nCAPS_META:spoof";
