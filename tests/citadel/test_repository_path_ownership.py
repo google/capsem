@@ -144,7 +144,7 @@ def _reconcile(found: Mapping[str, str], expected: Mapping[str, str]) -> list[st
     ("surface", "source", "expected"),
     [
         ("python", 'Path("scripts/check.py")', "scripts/check.py"),
-        ("rust-parent-relative", 'include_str!("../../security/keys/capsem-ca.key")', "security/keys/capsem-ca.key"),
+        ("rust-parent-relative", 'include_str!("../../security/keys/old.key")', "security/keys/old.key"),
         ("toml", 'source = "src/capsem/gate/cli.py"', "src/capsem/gate/cli.py"),
         ("yaml", "path: frontend/src/lib/api.ts", "frontend/src/lib/api.ts"),
         ("markdown", "See [the plan](docs/architecture.md).", "docs/architecture.md"),

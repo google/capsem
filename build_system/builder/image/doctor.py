@@ -320,7 +320,9 @@ def check_source_files(repo_root: Path) -> CheckResult:
         "guest/artifacts/snapshots": repo_root / "guest" / "artifacts" / "snapshots",
         "guest/artifacts/capsem_bench/": repo_root / "guest" / "artifacts" / "capsem_bench",
         "guest/artifacts/diagnostics/": repo_root / "guest" / "artifacts" / "diagnostics",
-        "security/keys/capsem-ca.crt": repo_root / "security" / "keys" / "capsem-ca.crt",
+        "crates/capsem-core/resources/ca/capsem-ca.crt": (
+            repo_root / "crates" / "capsem-core" / "resources" / "ca" / "capsem-ca.crt"
+        ),
     }
 
     missing = []
@@ -337,7 +339,10 @@ def check_source_files(repo_root: Path) -> CheckResult:
             name="source-files",
             passed=False,
             detail=f"missing: {', '.join(missing)}",
-            fix="files missing from guest/artifacts/ or security/keys/ -- check your checkout",
+            fix=(
+                "files missing from guest/artifacts/ or "
+                "crates/capsem-core/resources/ca/ -- check your checkout"
+            ),
         )
 
     total = len(required)

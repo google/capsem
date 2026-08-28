@@ -76,7 +76,7 @@ columns are schema-contract failures, not empty data.
 
 ### MITM CA
 
-- Static CA: `config/capsem-ca.key` + `config/capsem-ca.crt` (ECDSA P-256)
+- Static CA: `crates/capsem-core/resources/ca/capsem-ca.key` + `crates/capsem-core/resources/ca/capsem-ca.crt` (ECDSA P-256)
 - Baked into rootfs via `update-ca-certificates` + certifi patch
 - Guest trusts it via system store + env vars (`REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`)
 

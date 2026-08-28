@@ -7,7 +7,7 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 ARTIFACTS_DIR = PROJECT_ROOT / "guest" / "artifacts"
-SECURITY_KEYS_DIR = PROJECT_ROOT / "security" / "keys"
+CA_RESOURCES_DIR = PROJECT_ROOT / "crates" / "capsem-core" / "resources" / "ca"
 
 pytestmark = pytest.mark.rootfs
 
@@ -43,8 +43,8 @@ class TestArtifactsExist:
         assert path.is_dir(), f"Missing artifact directory: {path}"
 
     def test_ca_cert_exists(self):
-        """CA certificate exists with other security key material."""
-        ca = SECURITY_KEYS_DIR / "capsem-ca.crt"
+        """CA certificate exists under capsem-core resource ownership."""
+        ca = CA_RESOURCES_DIR / "capsem-ca.crt"
         assert ca.is_file(), f"Missing CA certificate: {ca}"
 
 

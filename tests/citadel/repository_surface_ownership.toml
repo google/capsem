@@ -67,7 +67,7 @@ reason = "Host build and package containers move; product profile templates stay
 [[surface]]
 id = "build-system-packaging"
 state = "migrating"
-current = ["packages/", "security/keys/", "entitlements.plist"]
+current = ["packages/", "entitlements.plist"]
 targets = ["build_system/packaging/"]
 lint = ["fast.audit.shell", "fast.audit.source-syntax", "fast.citadel"]
 tests = ["build_system/tests/release/", "tests/capsem-install/", "build_system/tests/packaging/test_build_pkg.py"]

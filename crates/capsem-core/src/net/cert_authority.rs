@@ -20,7 +20,7 @@ pub struct CertAuthority {
 impl CertAuthority {
     /// Load a CA from PEM-encoded private key and certificate.
     ///
-    /// Typically called with `include_str!("../../../../security/keys/capsem-ca.key")`.
+    /// Typically called with `include_str!("../../resources/ca/capsem-ca.key")`.
     pub fn load(key_pem: &str, cert_pem: &str) -> anyhow::Result<Self> {
         let ca_key = KeyPair::from_pem(key_pem)?;
 

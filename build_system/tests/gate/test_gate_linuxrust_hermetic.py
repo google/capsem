@@ -276,9 +276,8 @@ def test_the_lane_image_carries_no_release_credentials() -> None:
 
     Derived from `[package.signing] directory` rather than a literal path, so
     moving the signing material cannot silently leave this guard checking
-    somewhere nobody keeps keys. `security/keys/capsem-ca.key` is deliberately
-    not covered: that is the MITM CA, committed and public by design, and the
-    guest needs it.
+    somewhere nobody keeps keys. The crate-owned MITM CA is deliberately not
+    covered: it is committed and public by design, and the guest needs it.
     """
     from capsem_builder.gate import config as gate_config
 

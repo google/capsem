@@ -13,7 +13,7 @@ version = 1
 "pyproject.toml" = { item = "S03-002", reason = "Python project metadata moves under build_system ownership." }
 "release-site/" = { item = "S04-009", reason = "Release distribution generator moves under build_system." }
 "scripts/" = { item = "S04-004", reason = "Thin engineering boundaries move to functional script owners." }
-"security/keys/" = { item = "S05-006", reason = "Static CA resources move into capsem-core after the Rust hold." }
+"security/keys/" = { item = "S05-006", reason = "Static CA resources are crate-owned; new legacy-root literals are forbidden after migration." }
 "site/" = { item = "S06-006", reason = "Marketing source moves under web/marketing ownership." }
 "sprints/" = { item = "S02-009", reason = "Legacy benchmark inputs move to benchmark ownership before the obsolete root is removed." }
 "src/capsem/" = { item = "S03-003", reason = "Python source moves to build_system/builder and capsem_builder." }
@@ -24,7 +24,6 @@ version = 1
 [files]
 ".cargo/config.toml" = "39d28b5d9c616510c212448c10d8856af2b7f9541e8079da56fabeb9fdb596e0"
 ".claude/settings.json" = "da82a60ac19b96544bb09e4b212e7e5191db1024fe26a87ac6532598b6c9d531"
-".dockerignore" = "df4aa17c19a05521efca8376cb9b23fbbd55c9f71f51208999d9976d4117ebb2"
 ".github/actions/fetch-release-inputs/action.yaml" = "6ce1cd6d10c5eadc1e0ff27cbc0297c0d296de73bf33cf07bf89774de00e204b"
 ".github/workflows/ci.yaml" = "1bdc3d199f10d3dfa20c684c0c2daeb2e91a1947dd0cbb751311125a9adc297b"
 ".github/workflows/docs.yaml" = "3f931941efe9312dd46fd8f223df12b633f26b47ec30dc2477766571d48c33bb"
@@ -49,7 +48,6 @@ version = 1
 "build_system/tests/image/test_asset_network_guardrail.py" = "73f8f16523efd2e700a1cbddb188ada24835928f1cba073c8d561b3d395922f9"
 "build_system/tests/image/test_config.py" = "70a4774daa6cfc2c9e5862dd1b9c6a843a77a00f5758f990591957c336d09f88"
 "build_system/tests/image/test_docker.py" = "b81f662a532cdd268ebc921fe4d22ed2c07ca214929392f598214240dcda54c4"
-"build_system/tests/image/test_doctor.py" = "6f3af01848cb9d1133fa1affd64aeeb11bad263d2f8e53de12ee977d79a8193a"
 "build_system/tests/image/test_image_module_boundary.py" = "50c86b7ed8ac2cf95bd48334961bf0530cdc77b5a56f852c5c61b89d735fd711"
 "build_system/tests/image/test_models.py" = "b81f662a532cdd268ebc921fe4d22ed2c07ca214929392f598214240dcda54c4"
 "build_system/tests/image/test_validate.py" = "b81f662a532cdd268ebc921fe4d22ed2c07ca214929392f598214240dcda54c4"
@@ -70,10 +68,6 @@ version = 1
 "crates/capsem-core/src/hypervisor/fuse/inode_table.rs" = "24f97ccf71678eca206d0021827b4e4f70c82821cd89012347b545e2d417519d"
 "crates/capsem-core/src/hypervisor/kvm/mod.rs" = "b53197982ad168708c6dfa1d0b3500ada1794431b3f458e41c5b57f4aac11103"
 "crates/capsem-core/src/hypervisor/kvm/sys.rs" = "b53197982ad168708c6dfa1d0b3500ada1794431b3f458e41c5b57f4aac11103"
-"crates/capsem-core/src/net/cert_authority.rs" = "df4aa17c19a05521efca8376cb9b23fbbd55c9f71f51208999d9976d4117ebb2"
-"crates/capsem-core/src/net/cert_authority/tests.rs" = "74a217dab84643278af0bc553655e6eda7f76db966709f0b6fd0629eb24c8e07"
-"crates/capsem-core/src/vm/boot.rs" = "74a217dab84643278af0bc553655e6eda7f76db966709f0b6fd0629eb24c8e07"
-"crates/capsem-core/tests/mitm_integration.rs" = "74a217dab84643278af0bc553655e6eda7f76db966709f0b6fd0629eb24c8e07"
 "crates/capsem-core/tests/vm_integration.rs" = "8ef7d72155eb053bc67da1073f77f81210acfd5439301b59f8abf22afee3cbb3"
 "crates/capsem-logger/tests/roundtrip.rs" = "93475489aadd305f212e677ff937ef08b393acd85618595744d5132152c434cb"
 "crates/capsem-service/src/main.rs" = "c2aa4979348fae598feaa7a248e819266944dbfe507e3eac32b08366d5571b12"
@@ -93,7 +87,6 @@ version = 1
 "docs/src/content/docs/architecture/asset-pipeline.md" = "20f3e40960f759b147ed01dfed1c0a83c6b7cb65773f8cbd4f30310af48ed5f0"
 "docs/src/content/docs/architecture/build-system.md" = "6d9268a1e2c7286e0fa1fa162f8017d5d1671a43807c220b622c7c8eab49e0ae"
 "docs/src/content/docs/architecture/custom-images.md" = "85ac9041c97e31cad03becd38984d72a5f5bc8bc9f1f9b09f143c964a5552ee9"
-"docs/src/content/docs/architecture/mitm-proxy.md" = "274788bdfc0e7b3c56fe22f084190268a5cfbbafcea6f1d7f893e32460b36b21"
 "docs/src/content/docs/architecture/release-output.md" = "8ef7d72155eb053bc67da1073f77f81210acfd5439301b59f8abf22afee3cbb3"
 "docs/src/content/docs/architecture/service-architecture.md" = "822ec368793f49195ba489b7cc4873c4c507496dd3708a753d5e63798669041b"
 "docs/src/content/docs/architecture/settings-schema.md" = "12a8931148db77d25f802a05ee4f334b428614793669ee79fb233348e3745d22"
@@ -164,7 +157,7 @@ version = 1
 "skills/dev-installation/SKILL.md" = "f27df47954a1603d96c1c41eb2a15dc1a60893bd1be1decf62eb385a31fe627b"
 "skills/dev-just/SKILL.md" = "3f25c070e58289f7bad0353dcc575d999f9ead762c84d24154c705cd0d2bb70d"
 "skills/dev-mcp/SKILL.md" = "400d9d5471476ba6fca29f39236498ae0f4dfcd36a17a1a253b8bc811c4e210a"
-"skills/dev-mitm-proxy/SKILL.md" = "0d2fb0b33d81a864d4ba2bfe5409e120a5720be5c944edb92d262a0be01b2cb9"
+"skills/dev-mitm-proxy/SKILL.md" = "400d9d5471476ba6fca29f39236498ae0f4dfcd36a17a1a253b8bc811c4e210a"
 "skills/dev-rust-patterns/SKILL.md" = "7e288739265cb81b042d007d1c0c0cb48a4d43fb3f072e7f7760002b20e19383"
 "skills/dev-session-debug/SKILL.md" = "8b81ad574edacc6e04c305be815ee0744af9e1e266036705db05ae837cb23963"
 "skills/dev-setup/SKILL.md" = "00802b6aca24fc061fb50815e8021c9db84f0fb4e064b6f6cb446a7cfb8750af"
@@ -194,7 +187,6 @@ version = 1
 "skills/site-marketing/SKILL.md" = "3887c44e5e8b4214372b81c31e1f2e2dcda67ec5c0e8f95b522908ff3a5cf483"
 "build_system/builder/image/config.py" = "3f5f527babc4855d5c1da98d86d18e737c8d9fc907dd40b2a5cc841f508ef9d5"
 "build_system/builder/image/docker.py" = "b24bfaf0ac1cd1075a5348370d727d8386a1e8094f7b69e63166a4b2b445cd33"
-"build_system/builder/image/doctor.py" = "6e8d947a058d87ba308c228b09d774de89842642db1208b434c364f1abeba288"
 "build_system/builder/image/models.py" = "1eeecc17c2556ac4d39f0483b959451dfc448ce91957d343d0086f2200d4c643"
 "build_system/builder/gate/assetidentity.py" = "8ef7d72155eb053bc67da1073f77f81210acfd5439301b59f8abf22afee3cbb3"
 "build_system/builder/gate/audits.py" = "737abe7de3c642ef131f53304589c7f21b02a911cba601966538a084094b0e34"
@@ -305,7 +297,6 @@ version = 1
 "build_system/tests/gate/test_gate_has_no_literal_data.py" = "50c86b7ed8ac2cf95bd48334961bf0530cdc77b5a56f852c5c61b89d735fd711"
 "build_system/tests/gate/test_gate_initrd.py" = "cc1e336d0274e93347577a6d0a1ccc4f0ea313bfad08b6c1c10bf7480c846d06"
 "build_system/tests/gate/test_gate_install_ordering.py" = "b802e771309b229b0854abcf3d8a0a58c74326b070d9902e96300bf501cbc636"
-"build_system/tests/gate/test_gate_linuxrust_hermetic.py" = "df4aa17c19a05521efca8376cb9b23fbbd55c9f71f51208999d9976d4117ebb2"
 "build_system/tests/gate/test_gate_locks.py" = "95cf58dbabed6f526075caa72eb1300c27bd55289547f68333b2e5eadba57c67"
 "build_system/tests/gate/test_gate_observation.py" = "72fb5704848209611421221585b1a7b831ff031c30da68944003530663f1ef62"
 "build_system/tests/gate/test_gate_prefix.py" = "fa227d7177fd1da9873f8bed9b3059b3b93adb9bbbf33f68ef06488591a59d60"

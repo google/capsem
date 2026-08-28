@@ -1792,7 +1792,14 @@ def prepare_build_context(
     elif template_name == "Dockerfile.rootfs.j2":
         # CA cert
         shutil.copy2(
-            str(repo_root / "security" / "keys" / "capsem-ca.crt"),
+            str(
+                repo_root
+                / "crates"
+                / "capsem-core"
+                / "resources"
+                / "ca"
+                / "capsem-ca.crt"
+            ),
             str(context_dir / "capsem-ca.crt"),
         )
         artifacts = guest_dir / "artifacts"

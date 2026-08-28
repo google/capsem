@@ -96,7 +96,7 @@ Only emit `model_calls` telemetry for actual LLM API paths (e.g., `/v1/messages`
 
 ## Certificate authority
 
-- Static CA keypair: `security/keys/capsem-ca.key` + `security/keys/capsem-ca.crt`
+- Static CA keypair: `crates/capsem-core/resources/ca/capsem-ca.key` + `crates/capsem-core/resources/ca/capsem-ca.crt`
   (ECDSA P-256), compiled in via `include_str!` from `net/cert_authority.rs`
 - Certs minted on-demand per domain, cached in `RwLock<HashMap>`
 - CA baked into guest rootfs via `update-ca-certificates` + certifi patch + env vars

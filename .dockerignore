@@ -29,6 +29,7 @@
 # after every gate. The lane compiles and runs Rust tests; it signs nothing and
 # needs none of them.
 #
-# `security/keys/capsem-ca.key` is deliberately absent from this list: that one
-# is the MITM CA, committed and public by design, and the guest needs it.
+# `crates/capsem-core/resources/ca/capsem-ca.key` is deliberately absent from
+# this list: that one is the MITM CA, committed and public by design, and the
+# guest needs it.
 **/private

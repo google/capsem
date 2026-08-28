@@ -313,8 +313,10 @@ def test_test_assertions_are_not_production_fallbacks() -> None:
         }
     )
     assert records == (
-        'build_system/builder/image/doctor.py:1:fallback = root / "capsem-ca.crt" '
-        "if alternate.exists() else primary",
+        (
+            'build_system/builder/image/doctor.py:1:fallback = root / "capsem-ca.crt" '
+            "if alternate.exists() else primary"
+        ),
     )
 
 
@@ -326,6 +328,6 @@ def test_missing_policy_fails_closed() -> None:
 def test_current_static_ca_boundary_is_exact() -> None:
     policy = tomllib.loads(POLICY.read_text(encoding="utf-8"))
     assert policy.get("version") == 1, RATIONALE
-    assert policy.get("transition_item") == "S05-004", RATIONALE
+    assert policy.get("transition_item") == "S05-006", RATIONALE
     problems = _problems(policy, _observe(policy))
     assert not problems, RATIONALE + "\n" + "\n".join(problems)

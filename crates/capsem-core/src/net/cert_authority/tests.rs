@@ -1,7 +1,7 @@
 use super::*;
 
-const CA_KEY: &str = include_str!("../../../../../security/keys/capsem-ca.key");
-const CA_CERT: &str = include_str!("../../../../../security/keys/capsem-ca.crt");
+const CA_KEY: &str = include_str!("../../../resources/ca/capsem-ca.key");
+const CA_CERT: &str = include_str!("../../../resources/ca/capsem-ca.crt");
 
 fn load_ca() -> CertAuthority {
     CertAuthority::load(CA_KEY, CA_CERT).expect("failed to load CA")

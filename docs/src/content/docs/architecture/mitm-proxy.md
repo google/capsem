@@ -98,7 +98,7 @@ sequenceDiagram
 | SAN | DNS name of the target domain |
 | Extended key usage | ServerAuth |
 | Chain | `[leaf, CA]` (2 certificates) |
-| CA key source | `security/keys/capsem-ca.key` (committed, compile-time `include_str!`) |
+| CA key source | `crates/capsem-core/resources/ca/capsem-ca.key` (committed, compile-time `include_str!`) |
 
 ### Cache behavior
 
@@ -276,4 +276,4 @@ The `TelemetryBody` wrapper around the hyper response body triggers `tokio::spaw
 | `capsem-core/src/security_engine/` | `SecurityEvent`, `SecurityRuleSet`/CEL evaluation, plugins, endpoint DTOs |
 | `capsem-core/src/net/ai_traffic/` | SSE parsing, provider parsers, events, pricing |
 | `capsem-core/src/net/ai_traffic/mod.rs` | TraceState for multi-turn linking |
-| `security/keys/capsem-ca.key`, `security/keys/capsem-ca.crt` | Static ECDSA P-256 CA keypair |
+| `crates/capsem-core/resources/ca/capsem-ca.key`, `crates/capsem-core/resources/ca/capsem-ca.crt` | Static ECDSA P-256 CA keypair |
