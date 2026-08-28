@@ -212,6 +212,10 @@ jobs:
             --dist-verification-only \
             --snapshot-out target/release-channel-deployment/candidate-release.json
 
+      - name: Prove release hostname cache purge
+        if: ${{ inputs.activate_production }}
+        run: python scripts/cloudflare_cache_purge.py --project release
+
       - name: Activate verified production distribution
         id: production
         if: ${{ inputs.activate_production }}
@@ -234,6 +238,7 @@ jobs:
           VALIDATE_COMPLETE_PUBLIC_CHANNELS: ${{ inputs.validate_complete_public_channels }}
           PRODUCTION_DEPLOYMENT_ID: ${{ steps.production.outputs.pages-deployment-id }}
         run: |
+          python scripts/cloudflare_cache_purge.py --project release
           CHANNEL_ARGS=(--channel "$CHANNEL")
           if [ "$VALIDATE_COMPLETE_PUBLIC_CHANNELS" = "true" ]; then
             CHANNEL_ARGS=(--catalog-members)
@@ -278,6 +283,7 @@ jobs:
         env:
           RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
         run: |
+          python scripts/cloudflare_cache_purge.py --project release
           uv run python scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
             --catalog-members \

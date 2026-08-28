@@ -60,6 +60,13 @@ ROLLBACK_SPEC = importlib.util.spec_from_file_location(
 assert ROLLBACK_SPEC is not None and ROLLBACK_SPEC.loader is not None
 ROLLBACK = importlib.util.module_from_spec(ROLLBACK_SPEC)
 ROLLBACK_SPEC.loader.exec_module(ROLLBACK)
+CACHE_PURGE_SPEC = importlib.util.spec_from_file_location(
+    "cloudflare_cache_purge",
+    PROJECT_ROOT / "scripts" / "cloudflare_cache_purge.py",
+)
+assert CACHE_PURGE_SPEC is not None and CACHE_PURGE_SPEC.loader is not None
+CACHE_PURGE = importlib.util.module_from_spec(CACHE_PURGE_SPEC)
+CACHE_PURGE_SPEC.loader.exec_module(CACHE_PURGE)
 
 pytestmark = pytest.mark.build_chain
 
@@ -89,6 +96,7 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     preview = workflow.index("      - name: Deploy immutable preview")
     preview_check = workflow.index("      - name: Validate preview distribution")
     activation = workflow.index("      - name: Activate verified production distribution")
+    purge_preflight = workflow.index("      - name: Prove release hostname cache purge")
     activation_check = workflow.index("      - name: Validate activated production bytes")
     decision = workflow.index("      - name: Decide production recovery")
     rollback = workflow.index("      - name: Restore prior production deployment")
@@ -100,6 +108,7 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
         < prior_snapshot
         < preview
         < preview_check
+        < purge_preflight
         < activation
         < activation_check
         < decision
@@ -138,6 +147,9 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     assert '--deployment-id "$PRODUCTION_DEPLOYMENT_ID"' in workflow
     assert "steps.recovery.outputs.restore == 'true'" in workflow
     assert "continue-on-error: true" in workflow[activation:decision]
+    assert workflow.count("python scripts/cloudflare_cache_purge.py --project release") == 3
+    assert "cloudflare_cache_purge.py" in workflow[activation_check:decision]
+    assert "cloudflare_cache_purge.py" in workflow[rollback_check:verdict]
 
     staging = (PROJECT_ROOT / ".github" / "workflows" / "release-channel-staging.yaml").read_text(
         encoding="utf-8"
@@ -962,6 +974,90 @@ def test_cloudflare_activation_identity_refuses_a_different_canonical_deployment
             attempts=1,
             delay_seconds=0,
             sleep=lambda _delay: None,
+        )
+
+
+def test_purge_release_hostname_uses_pages_domain_zone_and_exact_host() -> None:
+    zone_tag = "a" * 32
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+    def request(method: str, path: str, body: dict[str, object] | None) -> dict[str, object]:
+        calls.append((method, path, body))
+        if method == "GET":
+            return {
+                "success": True,
+                "result": {
+                    "name": CACHE_PURGE.RELEASE_HOSTNAME,
+                    "status": "active",
+                    "zone_tag": zone_tag,
+                },
+            }
+        return {"success": True, "result": {"id": zone_tag}}
+
+    assert CACHE_PURGE.purge_release_hostname(request, "account", "release") == zone_tag
+    assert calls == [
+        (
+            "GET",
+            "/accounts/account/pages/projects/release/domains/release.capsem.org",
+            None,
+        ),
+        (
+            "POST",
+            f"/zones/{zone_tag}/purge_cache",
+            {"hosts": ["release.capsem.org"]},
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("domain", "message"),
+    [
+        (
+            {"name": "capsem.org", "status": "active", "zone_tag": "a" * 32},
+            "not 'release.capsem.org'",
+        ),
+        (
+            {"name": "release.capsem.org", "status": "pending", "zone_tag": "a" * 32},
+            "not active",
+        ),
+        (
+            {"name": "release.capsem.org", "status": "active", "zone_tag": "not-a-zone"},
+            "invalid zone tag",
+        ),
+    ],
+)
+def test_purge_release_hostname_refuses_unproven_domain(
+    domain: dict[str, object], message: str
+) -> None:
+    with pytest.raises(CACHE_PURGE.CachePurgeError) as caught:
+        CACHE_PURGE.purge_release_hostname(
+            lambda _method, _path, _body: {"success": True, "result": domain},
+            "account",
+            "release",
+        )
+    assert message in str(caught.value)
+
+
+def test_purge_release_hostname_requires_successful_zone_purge() -> None:
+    responses = iter(
+        [
+            {
+                "success": True,
+                "result": {
+                    "name": CACHE_PURGE.RELEASE_HOSTNAME,
+                    "status": "active",
+                    "zone_tag": "a" * 32,
+                },
+            },
+            {"success": False, "errors": [{"message": "missing Cache Purge permission"}]},
+        ]
+    )
+
+    with pytest.raises(CACHE_PURGE.CachePurgeError, match="missing Cache Purge permission"):
+        CACHE_PURGE.purge_release_hostname(
+            lambda _method, _path, _body: next(responses),
+            "account",
+            "release",
         )
 
 
