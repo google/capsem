@@ -167,6 +167,10 @@ jobs:
           python scripts/check-cloudflare-pages-project.py \
             --project "$RELEASE_CHANNEL_PROJECT"
 
+      - name: Prove release hostname cache purge
+        if: ${{ inputs.activate_production }}
+        run: python scripts/cloudflare_cache_purge.py --project release
+
       - name: Capture current production deployment
         if: ${{ inputs.activate_production }}
         run: |
@@ -211,10 +215,6 @@ jobs:
             --dist "$DIST_DIR" \
             --dist-verification-only \
             --snapshot-out target/release-channel-deployment/candidate-release.json
-
-      - name: Prove release hostname cache purge
-        if: ${{ inputs.activate_production }}
-        run: python scripts/cloudflare_cache_purge.py --project release
 
       - name: Activate verified production distribution
         id: production
@@ -293,7 +293,7 @@ jobs:
             --expect-snapshot target/release-channel-deployment/prior-release.json
 
       - name: Require successful production activation
-        if: ${{ !cancelled() && inputs.activate_production }}
+        if: ${{ !cancelled() && inputs.activate_production && steps.production.outcome != 'skipped' }}
         env:
           ACTIVATION_SUCCESS: ${{ steps.recovery.outputs.activation-success }}
         run: |

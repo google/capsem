@@ -91,12 +91,12 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
         "        if: ${{ inputs.activate_production }}"
     ) in workflow
     freshness = workflow.index("check-channel-deploy-freshness.py")
+    purge_preflight = workflow.index("      - name: Prove release hostname cache purge")
     capture = workflow.index("      - name: Capture current production deployment")
     prior_snapshot = workflow.index("      - name: Snapshot current production distribution")
     preview = workflow.index("      - name: Deploy immutable preview")
     preview_check = workflow.index("      - name: Validate preview distribution")
     activation = workflow.index("      - name: Activate verified production distribution")
-    purge_preflight = workflow.index("      - name: Prove release hostname cache purge")
     activation_check = workflow.index("      - name: Validate activated production bytes")
     decision = workflow.index("      - name: Decide production recovery")
     rollback = workflow.index("      - name: Restore prior production deployment")
@@ -104,11 +104,11 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     verdict = workflow.index("      - name: Require successful production activation")
     assert (
         freshness
+        < purge_preflight
         < capture
         < prior_snapshot
         < preview
         < preview_check
-        < purge_preflight
         < activation
         < activation_check
         < decision
@@ -147,6 +147,7 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     assert '--deployment-id "$PRODUCTION_DEPLOYMENT_ID"' in workflow
     assert "steps.recovery.outputs.restore == 'true'" in workflow
     assert "continue-on-error: true" in workflow[activation:decision]
+    assert "steps.production.outcome != 'skipped'" in workflow[verdict:]
     assert workflow.count("python scripts/cloudflare_cache_purge.py --project release") == 3
     assert "cloudflare_cache_purge.py" in workflow[activation_check:decision]
     assert "cloudflare_cache_purge.py" in workflow[rollback_check:verdict]
