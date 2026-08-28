@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Built-in HTTP tools now bound connection setup and the complete request,
+  including response-body reads, so stalled upstreams cannot occupy handlers
+  indefinitely.
 - MCP discovery protocol events no longer trigger unnecessary tool-ledger
   flushes or inflate persisted logger-write metrics.
 - Logger writes now use a bounded operation queue with real async and blocking

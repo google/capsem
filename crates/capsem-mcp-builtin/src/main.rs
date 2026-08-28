@@ -12,6 +12,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use rmcp::handler::server::{router::Router, wrapper::Parameters, ServerHandler};
@@ -27,6 +28,19 @@ use capsem_core::mcp::types::JsonRpcResponse;
 use capsem_core::mcp::{builtin_tools, file_tools};
 use capsem_core::net::policy_config::{ActiveProfileFile, SecurityPluginConfig, SecurityRuleSet};
 use capsem_logger::DbWriter;
+
+const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn build_http_client(
+    request_timeout: Duration,
+    connect_timeout: Duration,
+) -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(request_timeout)
+        .connect_timeout(connect_timeout)
+        .build()
+}
 
 // -- Tool parameter types --
 
@@ -538,7 +552,8 @@ async fn main() -> Result<()> {
     };
 
     let handler = BuiltinHandler {
-        http_client: reqwest::Client::new(),
+        http_client: build_http_client(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT)
+            .context("failed to build builtin HTTP client")?,
         db,
         security_rules,
         plugin_policy,
