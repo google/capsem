@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- File validation now rejects `..` only as a parent-directory component, so
+  legitimate filenames such as `data..backup.txt` are accepted.
 - Handshake peers now decode legacy `Hello` messages that predate the optional
   trace context field, preserving typed schema/version mismatch diagnostics.
 - Parent-watch thread creation failures now return a structured guard error

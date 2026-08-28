@@ -1146,6 +1146,8 @@ fn validate_file_path_accepts_normal() {
     assert!(validate_file_path("/workspace/test.txt").is_ok());
     assert!(validate_file_path("/etc/ssl/certs/ca-certificates.crt").is_ok());
     assert!(validate_file_path("/root/.bashrc").is_ok());
+    assert!(validate_file_path("/workspace/data..backup.txt").is_ok());
+    assert!(validate_file_path("report..v2.csv").is_ok());
 }
 
 #[test]

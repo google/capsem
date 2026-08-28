@@ -737,7 +737,7 @@ pub fn validate_env_value(value: &str) -> Result<()> {
 
 /// Validate a file path for boot file injection.
 ///
-/// Rejects: empty paths, paths containing NUL bytes, paths containing `..`.
+/// Rejects: empty paths, paths containing NUL bytes, parent-directory components.
 pub fn validate_file_path(path: &str) -> Result<()> {
     if path.is_empty() {
         bail!("file path is empty");
@@ -745,8 +745,11 @@ pub fn validate_file_path(path: &str) -> Result<()> {
     if path.contains('\0') {
         bail!("file path contains NUL byte: {path:?}");
     }
-    if path.contains("..") {
-        bail!("file path contains '..': {path:?}");
+    if Path::new(path)
+        .components()
+        .any(|component| component == std::path::Component::ParentDir)
+    {
+        bail!("file path contains a parent-directory component: {path:?}");
     }
     Ok(())
 }
@@ -754,7 +757,7 @@ pub fn validate_file_path(path: &str) -> Result<()> {
 /// Validate a file path for runtime file I/O inside the guest workspace.
 ///
 /// Extends [`validate_file_path`] with symlink and containment checks:
-/// 1. String-level validation (empty, NUL, `..`)
+/// 1. String-level validation (empty, NUL, parent-directory components)
 /// 2. Rejects paths that are themselves symlinks
 /// 3. Canonicalizes the resolved path and verifies it stays within `workspace_root`
 ///
