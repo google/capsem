@@ -13,6 +13,14 @@ ACTIVATION_RATIONALE = (
     "33144251618 then proved that a branch-shaped Direct Upload can update canonical metadata "
     "without moving the project production alias."
 )
+
+NO_MANUAL_PURGE_RATIONALE = (
+    "Cloudflare Pages activation changes the production deployment behind its custom hostname. "
+    "A separate zone purge adds a second credential and failure rail without selecting different "
+    "bytes; production and rollback must prove the selected deployment directly."
+)
+
+
 def test_production_identity_precedes_custom_hostname_byte_proof() -> None:
     steps = workflow_job(WORKFLOW, "deploy")["steps"]
     names = [step.get("name") for step in steps]
@@ -54,3 +62,22 @@ def test_direct_upload_branches_only_the_immutable_preview() -> None:
     assert not any(
         argument.startswith("--branch=") for argument in production_commands[0].argv
     ), ACTIVATION_RATIONALE
+
+
+def test_pages_activation_never_manually_purges_cloudflare_cache() -> None:
+    commands = []
+    for index, step in enumerate(workflow_job(WORKFLOW, "deploy")["steps"]):
+        run = step.get("run")
+        if isinstance(run, str):
+            commands.extend(parsed_commands(run, origin=f"Pages step {index} run"))
+        options = step.get("with")
+        if isinstance(options, dict) and isinstance(options.get("command"), str):
+            commands.extend(
+                parsed_commands(options["command"], origin=f"Pages step {index} command")
+            )
+
+    assert not any(
+        argument.endswith("cloudflare_cache_purge.py")
+        for command in commands
+        for argument in command.argv
+    ), NO_MANUAL_PURGE_RATIONALE
