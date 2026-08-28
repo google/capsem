@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Apple VZ serial consoles now close their duplicated pipe descriptors when a
+  VM handle is dropped instead of leaking descriptors across VM lifecycles.
 - Security decision rows now record the same first matching enforcement rule
   that the runtime actually applies.
 - Truncated gzip response headers are now forwarded intact instead of being

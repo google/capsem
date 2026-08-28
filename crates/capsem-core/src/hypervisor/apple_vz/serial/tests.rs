@@ -9,6 +9,10 @@ fn make_pipe() -> (RawFd, RawFd) {
     (fds[0], fds[1])
 }
 
+fn fd_is_open(fd: RawFd) -> bool {
+    (unsafe { libc::fcntl(fd, libc::F_GETFD) }) >= 0
+}
+
 /// Collect all broadcast chunks into a single byte vector.
 fn collect_all(rx: &mut broadcast::Receiver<Vec<u8>>) -> Vec<u8> {
     let mut out = Vec::new();
@@ -127,10 +131,7 @@ fn create_serial_port_returns_valid_config() {
     let attachment = unsafe { config.attachment() };
     assert!(attachment.is_some());
     // input_fd should be a valid file descriptor
-    assert!(console.input_fd >= 0);
-    unsafe {
-        libc::close(console.input_fd);
-    }
+    assert!(crate::hypervisor::SerialConsole::input_fd(&console) >= 0);
 }
 
 #[test]
@@ -139,4 +140,22 @@ fn serial_console_trait_input_fd() {
     let console = create_console_from_fd(read_fd, write_fd);
     let trait_ref: &dyn crate::hypervisor::SerialConsole = &console;
     assert_eq!(trait_ref.input_fd(), write_fd);
+}
+
+#[test]
+fn dropping_console_closes_owned_file_descriptors() {
+    let (read_fd, output_write_fd) = make_pipe();
+    let (input_read_fd, input_fd) = make_pipe();
+    let console = create_console_from_fd(read_fd, input_fd);
+    assert!(fd_is_open(read_fd));
+    assert!(fd_is_open(input_fd));
+
+    drop(console);
+
+    assert!(!fd_is_open(read_fd), "drop must close the output reader");
+    assert!(!fd_is_open(input_fd), "drop must close the input writer");
+    unsafe {
+        libc::close(output_write_fd);
+        libc::close(input_read_fd);
+    }
 }
