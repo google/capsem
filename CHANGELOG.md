@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Guest terminal output now appends to `serial.log` on a dedicated writer
+  thread instead of blocking a Tokio worker on synchronous disk I/O.
 - Concurrent exec commands now keep independent output capture and completion
   state instead of overwriting one shared active slot.
 - HTTP, DNS, MCP, process, and file security paths now share immutable plugin

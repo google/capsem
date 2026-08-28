@@ -28,6 +28,46 @@ fn exec_output_read_retries_interrupted_socket_reads() {
     assert_eq!(total, captured.len() as u64, "nothing was dropped");
 }
 
+#[test]
+fn serial_log_writer_runs_on_a_dedicated_thread() {
+    struct TrackingWriter {
+        bytes: Arc<std::sync::Mutex<Vec<u8>>>,
+        writer_thread: Arc<std::sync::Mutex<Option<std::thread::ThreadId>>>,
+    }
+
+    impl std::io::Write for TrackingWriter {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            *self.writer_thread.lock().unwrap() = Some(std::thread::current().id());
+            self.bytes.lock().unwrap().extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let caller_thread = std::thread::current().id();
+    let bytes = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer_thread = Arc::new(std::sync::Mutex::new(None));
+    let bytes_for_writer = Arc::clone(&bytes);
+    let thread_for_writer = Arc::clone(&writer_thread);
+    let (tx, handle) = spawn_serial_log_writer(move || {
+        Ok(TrackingWriter {
+            bytes: bytes_for_writer,
+            writer_thread: thread_for_writer,
+        })
+    });
+
+    tx.blocking_send(b"first".to_vec()).unwrap();
+    tx.blocking_send(b"second".to_vec()).unwrap();
+    drop(tx);
+    handle.join().unwrap();
+
+    assert_eq!(*bytes.lock().unwrap(), b"firstsecond");
+    assert_ne!(*writer_thread.lock().unwrap(), Some(caller_thread));
+}
+
 // -----------------------------------------------------------------------
 // Vsock port classification
 // -----------------------------------------------------------------------

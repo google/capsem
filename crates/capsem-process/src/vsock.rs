@@ -35,6 +35,7 @@ const HANDSHAKE_RETRY_MAX: usize = 3;
 /// especially just after resume. Keep a generous transport-loss bound without
 /// imposing any delay on already-deposited or genuinely empty commands.
 const EXEC_OUTPUT_DEPOSIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const SERIAL_LOG_QUEUE_CAPACITY: usize = 8;
 
 use capsem_core::paths::checkpoint_complete_path;
 
@@ -175,14 +176,14 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let term_out = Arc::clone(&terminal_output);
     let serial_log_path = session_dir.join("serial.log");
     let pty_log_out = pty_log.clone();
-
-    tokio::spawn(async move {
-        let mut log_file = std::fs::OpenOptions::new()
+    let (serial_log_tx, serial_log_handle) = spawn_serial_log_writer(move || {
+        std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&serial_log_path)
-            .ok();
+            .open(serial_log_path)
+    });
 
+    tokio::spawn(async move {
         let mut current_conn = terminal_rekey_rx.recv().await;
         loop {
             let conn = match current_conn.take() {
@@ -232,12 +233,10 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                         _ => break,
                                     }
                                 }
-                                coalesce.flush_to(|batch| {
-                                    let b = batch.to_vec();
-                                    if let Some(ref mut f) = log_file { let _ = f.write_all(&b); }
-                                    if let Some(ref pl) = pty_log_out { pl.record_output(&b); }
-                                    term_out.push(b);
-                                });
+                                let batch = coalesce.flush_to(<[u8]>::to_vec);
+                                let _ = serial_log_tx.send(batch.clone()).await;
+                                if let Some(ref pl) = pty_log_out { pl.record_output(&batch); }
+                                term_out.push(batch);
                             }
                             None => break, // FD closed
                         }
@@ -256,6 +255,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             }
             let _ = read_handle.join();
         }
+        drop(serial_log_tx);
+        let _ = tokio::task::spawn_blocking(move || serial_log_handle.join()).await;
         term_out.close();
     });
 
@@ -1114,6 +1115,28 @@ fn read_exec_output(reader: &mut impl std::io::Read) -> (Vec<u8>, u64) {
         }
     }
     (output, total_seen)
+}
+
+fn spawn_serial_log_writer<W, F>(open: F) -> (mpsc::Sender<Vec<u8>>, std::thread::JoinHandle<()>)
+where
+    W: std::io::Write + Send + 'static,
+    F: FnOnce() -> std::io::Result<W> + Send + 'static,
+{
+    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(SERIAL_LOG_QUEUE_CAPACITY);
+    let handle = std::thread::spawn(move || {
+        let mut writer = match open() {
+            Ok(writer) => writer,
+            Err(error) => {
+                warn!(error = %error, "failed to open serial log");
+                return;
+            }
+        };
+        while let Some(batch) = rx.blocking_recv() {
+            let _ = writer.write_all(&batch);
+        }
+        let _ = writer.flush();
+    });
+    (tx, handle)
 }
 
 /// Read one length-prefixed audit payload without allocating beyond the
