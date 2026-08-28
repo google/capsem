@@ -860,10 +860,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert workflow.index("Verify Cloudflare Pages project") < workflow.index(
         "cloudflare/wrangler-action@"
     )
-    assert (
-        "pages deploy target/release-channel/ --project-name=release --branch=${{ inputs.deploy_branch || 'main' }}"
-        in workflow
-    )
+    assert "pages deploy target/release-channel/ --project-name=release" in workflow
     assert "assets/stable/manifest.json" not in workflow
     assert (
         "RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}"

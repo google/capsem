@@ -228,7 +228,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy target/release-channel/ --project-name=release --branch=${{ inputs.deploy_branch || 'main' }}
+          command: pages deploy target/release-channel/ --project-name=release
 
       - name: Verify canonical production deployment
         id: production_identity

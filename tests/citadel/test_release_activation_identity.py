@@ -9,7 +9,9 @@ WORKFLOW = PROJECT_ROOT / ".github/workflows/release-channel.yaml"
 ACTIVATION_RATIONALE = (
     "A successful Pages upload is not proof that the custom hostname selected it. "
     "Run 33141871462 spent fourteen minutes comparing candidate JSON with prior-deployment "
-    "HTML because canonical deployment identity was checked only after the byte poll."
+    "HTML because canonical deployment identity was checked only after the byte poll. Run "
+    "33144251618 then proved that a branch-shaped Direct Upload can update canonical metadata "
+    "without moving the project production alias."
 )
 def test_production_identity_precedes_custom_hostname_byte_proof() -> None:
     steps = workflow_job(WORKFLOW, "deploy")["steps"]
@@ -37,3 +39,18 @@ def test_pages_preflight_binds_the_deploy_branch_to_cloudflare_production() -> N
     assert '--production-branch "${{ inputs.deploy_branch || \'main\' }}"' in preflight, (
         ACTIVATION_RATIONALE
     )
+
+
+def test_direct_upload_branches_only_the_immutable_preview() -> None:
+    preview = workflow_step(WORKFLOW, "deploy", "Deploy immutable preview")
+    production = workflow_step(WORKFLOW, "deploy", "Activate verified production distribution")
+    preview_commands = parsed_commands(preview["with"]["command"], origin="Pages preview")
+    production_commands = parsed_commands(production["with"]["command"], origin="Pages production")
+
+    assert len(preview_commands) == len(production_commands) == 1, ACTIVATION_RATIONALE
+    assert any(argument.startswith("--branch=") for argument in preview_commands[0].argv), (
+        ACTIVATION_RATIONALE
+    )
+    assert not any(
+        argument.startswith("--branch=") for argument in production_commands[0].argv
+    ), ACTIVATION_RATIONALE
