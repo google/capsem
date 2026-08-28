@@ -12,7 +12,8 @@ import os
 import stat
 
 import pytest
-from conftest import run
+
+from .diagnostic_support import run
 
 MANIFEST_PATH = "/tmp/capsem-injection-manifest.json"
 

@@ -7,7 +7,8 @@ import tomllib
 from urllib.parse import urlsplit
 
 import pytest
-from conftest import run
+
+from .diagnostic_support import run
 
 LOCAL_MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
 SECRET_PATTERN = re.compile(

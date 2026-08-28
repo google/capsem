@@ -3,7 +3,7 @@
 import json
 import os
 
-from conftest import run
+from .diagnostic_support import run
 
 
 def test_file_write_read(output_dir):

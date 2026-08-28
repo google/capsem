@@ -3,7 +3,8 @@
 import pathlib
 
 import pytest
-from conftest import run
+
+from .diagnostic_support import run
 
 
 @pytest.mark.parametrize(

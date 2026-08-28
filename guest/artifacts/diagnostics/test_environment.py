@@ -2,8 +2,8 @@
 
 import os
 
-from boot_timing import MAX_BOOT_STAGE_MS, assess_boot_timing
-from conftest import run
+from .boot_timing import MAX_BOOT_STAGE_MS, assess_boot_timing
+from .diagnostic_support import run
 
 # -- Environment variables --
 

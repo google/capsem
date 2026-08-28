@@ -3,7 +3,8 @@
 import os
 
 import pytest
-from conftest import run
+
+from .diagnostic_support import run
 
 # -- Lifecycle binary symlinks --
 

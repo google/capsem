@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import importlib
 import os
 import stat
 import subprocess
@@ -66,6 +67,18 @@ def _extract(archive: Path, destination: Path) -> None:
 def _config(staging: Path):
     initrd = CONFIG.initrd.model_copy(update={"staging": str(staging)})
     return CONFIG.model_copy(update={"initrd": initrd})
+
+
+def test_guest_diagnostics_have_one_importable_support_module(monkeypatch) -> None:
+    """The shipped tests must not depend on pytest's ambiguous conftest name."""
+    monkeypatch.syspath_prepend(str(PROJECT_ROOT / "guest" / "artifacts"))
+    support = importlib.import_module("diagnostics.diagnostic_support")
+    environment = importlib.import_module("diagnostics.test_environment")
+
+    result = support.run("printf capsem-diagnostics")
+
+    assert environment.run is support.run
+    assert result.stdout == "capsem-diagnostics"
 
 
 @pytest.mark.parametrize("arch", tuple(CONFIG.architectures))
