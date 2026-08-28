@@ -151,13 +151,13 @@ pub struct Singleton {
     // Kept alive for its Drop: closing the fd releases the flock.
     _file: File,
     path: PathBuf,
-    canonical: PathBuf,
+    registry_key: PathBuf,
 }
 
 impl Drop for Singleton {
     fn drop(&mut self) {
         if let Ok(mut held) = held_locks().lock() {
-            held.remove(&self.canonical);
+            held.remove(&self.registry_key);
         }
     }
 }
@@ -170,6 +170,21 @@ impl Singleton {
     /// * `Err(_)` -- a real IO error (permissions, missing parent dir we could
     ///   not create, etc.). The caller should fail loudly.
     pub fn try_acquire(lock_path: &Path) -> Result<Option<Self>, GuardError> {
+        Self::try_acquire_after_open(lock_path, || {})
+    }
+
+    fn try_acquire_after_open<F>(
+        lock_path: &Path,
+        after_open: F,
+    ) -> Result<Option<Self>, GuardError>
+    where
+        F: FnOnce(),
+    {
+        let registry_key = std::path::absolute(lock_path).map_err(|e| GuardError::Io {
+            path: lock_path.to_path_buf(),
+            source: e,
+        })?;
+
         if let Some(parent) = lock_path.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent).map_err(|e| GuardError::Io {
@@ -211,24 +226,25 @@ impl Singleton {
         }
         // SAFETY: we just opened this fd successfully.
         let file: File = unsafe { File::from_raw_fd(raw_fd) };
+        // The hook makes lockfile replacement between open and reservation
+        // deterministic in the regression test; production supplies a no-op.
+        after_open();
 
         // In-process exclusion: if another thread in this process already
-        // holds a Singleton on the canonical path, refuse without touching
+        // holds a Singleton for this path, refuse without touching
         // the file lock. flock alone is not sufficient for same-process
         // mutual exclusion: a subprocess spawn in another thread can cause
         // our fd to briefly leak through the fork-to-exec window and keep
         // the kernel lock alive after we close our copy, causing spurious
         // reacquire failures.
-        let canonical =
-            std::fs::canonicalize(lock_path).unwrap_or_else(|_| lock_path.to_path_buf());
         {
             let mut held = held_locks().lock().expect("held-locks mutex poisoned");
-            if held.contains(&canonical) {
+            if held.contains(&registry_key) {
                 return Ok(None);
             }
             // Reserve the slot before the syscall so racing threads in this
             // process see "taken" even before flock returns.
-            held.insert(canonical.clone());
+            held.insert(registry_key.clone());
         }
 
         // Kernel-level cross-process exclusion via flock(2). CLOEXEC above
@@ -242,7 +258,7 @@ impl Singleton {
             held_locks()
                 .lock()
                 .expect("held-locks mutex poisoned")
-                .remove(&canonical);
+                .remove(&registry_key);
             if errno == libc::EWOULDBLOCK {
                 return Ok(None);
             }
@@ -263,7 +279,7 @@ impl Singleton {
         Ok(Some(Self {
             _file: file,
             path: lock_path.to_path_buf(),
-            canonical,
+            registry_key,
         }))
     }
 

@@ -89,6 +89,33 @@ fn singleton_blocks_same_process_second_call() {
     assert!(b.is_none(), "second must return None while first is held");
 }
 
+#[cfg(unix)]
+#[test]
+fn singleton_unlink_after_open_does_not_bypass_same_process_registry() {
+    let dir = tempfile::tempdir().unwrap();
+    let real_parent = dir.path().join("real");
+    let alias_parent = dir.path().join("alias");
+    std::fs::create_dir(&real_parent).unwrap();
+    std::os::unix::fs::symlink(&real_parent, &alias_parent).unwrap();
+    let lock = alias_parent.join("race.lock");
+    let lock_to_unlink = lock.clone();
+
+    let first = Singleton::try_acquire_after_open(&lock, move || {
+        std::fs::remove_file(&lock_to_unlink).unwrap();
+    })
+    .unwrap()
+    .expect("first acquire");
+    assert!(!lock.exists(), "test hook must unlink the first lock inode");
+
+    let second = Singleton::try_acquire(&lock).unwrap();
+
+    assert!(
+        second.is_none(),
+        "the in-process reservation must survive lockfile replacement"
+    );
+    drop(first);
+}
+
 #[test]
 fn singleton_reacquires_after_drop_in_isolated_process() {
     // Drop-then-reacquire must work. Rather than doing it in the test
