@@ -1,8 +1,5 @@
 """System-overlay EXT4 must remain healthy across suspend/resume.
 
-Closes sprints/done/virtio-blk-overlay-migration/ISSUE.md (which
-itself closes sprints/done/loop-device-io-after-resume/ISSUE.md).
-
 Pre-virtio-blk-migration the guest mounted the system overlay through
 a loop device on top of a VirtioFS-served file. After heavy directory
 churn + suspend/resume the kernel logged
@@ -127,8 +124,7 @@ class TestLoopDeviceAfterResume:
             post = _dmesg_offending_lines(client, resumed)
             new_errors = [line for line in post if line not in pre]
             assert not new_errors, (
-                "System-overlay EXT4 errors NEW after suspend/resume "
-                "(see sprints/done/virtio-blk-overlay-migration/ISSUE.md):\n"
+                "System-overlay EXT4 errors NEW after suspend/resume:\n"
                 + "\n".join(f"  {line}" for line in new_errors[:10])
             )
         finally:

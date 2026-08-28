@@ -90,7 +90,6 @@ def _violations(
 def _load_debt() -> dict[str, str]:
     policy = tomllib.loads(DEBT.read_text(encoding="utf-8"))
     files = policy.get("files", {})
-    assert files, RELEASE_AUTHORITY_RATIONALE + "\nrelease authority debt is empty"
     debt: dict[str, str] = {}
     for path, entry in files.items():
         assert entry.get("digest") and entry.get("item") and entry.get("reason"), (

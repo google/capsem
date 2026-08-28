@@ -61,6 +61,7 @@ EXCLUDED_POLICY_FILES = frozenset(
         "tests/citadel/test_release_authority_is_canonical.py",
         "tests/citadel/test_repository_path_ownership.py",
         "tests/citadel/test_repository_surface_ownership.py",
+        "tests/citadel/test_sprint_system_is_sprinty.py",
     }
 )
 PATH_LITERAL = re.compile(

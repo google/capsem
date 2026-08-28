@@ -1080,13 +1080,13 @@ fn cleanup_rejects_unsafe_architecture_directory_before_removing_files() {
 
 #[test]
 fn copy_missing_local_assets_hydrates_every_profiles_images() {
-    // A channel's profiles own their images (`tmp/release-spec.md` §5
-    // invariant 7), and the release graph turns each into its own asset
-    // release -- `current` can name only one of them. Hydration resolved that
-    // one and copied its assets alone, so installing a channel whose profiles
-    // pin different kernels left the other profile's kernel absent. Readiness
-    // still reported every profile ready, and if the absent one sorted first
-    // it became the default: a fresh install that cannot boot a sandbox.
+    // A channel's profiles own their images (RELEASE.md), and the release graph
+    // turns each into its own asset release -- `current` can name only one of
+    // them. Hydration resolved that one and copied its assets alone, so
+    // installing a channel whose profiles pin different kernels left the
+    // other profile's kernel absent. Readiness still reported every profile
+    // ready, and if the absent one sorted first it became the default: a fresh
+    // install that cannot boot a sandbox.
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("source");
     let install = dir.path().join("install");

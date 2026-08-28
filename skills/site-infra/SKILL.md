@@ -168,9 +168,10 @@ sips -z 192 192 graphics/icon/1024w/capsem-logo-color.png --out docs/public/andr
 sips -z 512 512 graphics/icon/1024w/capsem-logo-color.png --out docs/public/android-chrome-512x512.png
 ```
 
-## Drafts
+## Custom images
 
-`tmp/build_sprint/custom-images.md` -- 443-line draft for the custom images doc. Covers quick start, config reference, CLI reference, manifest, corporate deployment, troubleshooting.
+The maintained custom-image documentation lives at
+`docs/src/content/docs/architecture/custom-images.md`.
 
 ## Page scope boundaries
 

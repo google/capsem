@@ -1,218 +1,139 @@
 ---
 name: dev-sprint
-description: Running a multi-step development sprint. Use when starting a feature or work spanning several changes: plan, track, commit at milestones, finish with tests.
+description: Run multi-step Capsem development in Sprinty. Use for features, refactors, migrations, release preparation, or any work spanning several commits and verification gates.
 ---
 
 # Development Sprint
 
-Every non-trivial task follows this workflow. No shortcuts.
+Sprinty is the sole active sprint ledger. Git owns source and permanent
+history; Sprinty owns the goal, dependency graph, work items, notes, evidence,
+coverage, gates, and closeout. Do not create repository planning directories
+or parallel Markdown trackers.
 
-## 1. Plan
+## Start or resume
 
-Create a sprint directory and write the plan before touching code:
+Call `mcp__sprinty.info()` first on every new session or continuation.
 
-```bash
-mkdir -p sprints/<sprint-name>
-```
+- If a matching active sprint exists, bind it with
+  `mcp__sprinty.sprint_resume()` using the explicit repository `git_dir` and
+  its worktree-scoped, ignored `data_dir`.
+- If no matching sprint exists, call `mcp__sprinty.sprint_new()` with the
+  concrete goal, explicit `git_dir`, ignored `data_dir`, and durable context
+  notes.
+- Show the dashboard URL to the user. Use `overview()` for sprint shape and
+  `next()` for the current work window; do not reconstruct state from memory.
 
-Write `sprints/<sprint-name>/plan.md`:
-- What we're building and why
-- Key decisions and trade-offs
-- Files to create/modify
-- Dependencies and ordering
-- What "done" looks like
-- The testing proof matrix for each functional slice: unit/contract,
-  functional, adversarial, E2E/VM, telemetry, and performance
-- For Capsem release, VM, network, model, MCP, credential broker,
-  package-manager, doctor, benchmark, or security acceptance work, load
-  `/ironbank` and add an Ironbank entry to the proof matrix before coding
+Never start a replacement sprint because the work is difficult or context was
+compacted. Resume the existing ledger and inspect its artifacts.
 
-The plan is a living document. Update it as the sprint evolves -- crossed-out items, new discoveries, changed approach. The plan is evidence of thinking, not a contract.
+## Plan the dependency graph
 
-## 2. Track
+Use `mcp__sprinty.subsprint_new()` for independently reviewable features or
+phases. Each subsprint names:
 
-Create `sprints/<sprint-name>/tracker.md` as a checklist:
+- the outcome and why it matters;
+- ordered dependencies;
+- explicit goals;
+- executable or manual gates that prove the complete behavior.
 
-```markdown
-# Sprint: <name>
+Use `mcp__sprinty.item_add()` before editing files or mutating another system.
+An item owns one revertable outcome and records:
 
-## Tasks
-- [x] Task 1 -- description
-- [x] Task 2 -- description
-- [ ] Task 3 -- description
-- [ ] Testing gate
-- [ ] Changelog
-- [ ] Commit
+- a specific title and complete description;
+- exact code locations;
+- dependency edges;
+- focused tests, type checks, builds, or manual evidence gates.
 
-## Notes
-- Discovery: found that X needs Y
-- Changed approach: Z instead of W because...
+Adjacent notes are not a substitute for a dedicated item when work has its
+own files, risk, or outcome. Split broad items instead of hiding multiple
+commits behind one checkbox.
 
-## Coverage Ledger
-- Unit/contract:
-- Functional:
-- Adversarial:
-- E2E/VM:
-- Telemetry:
-- Performance:
-- Missing/deferred:
-```
+For Capsem release, VM, network, model, MCP, credential broker,
+package-manager, doctor, benchmark, or security acceptance work, load
+`/ironbank` and include its black-box proof in the owning item before coding.
 
-Update the tracker as you go. Check items off. Add notes about surprises, blockers, and changed approaches. This is your scratchpad -- future you (or the next conversation) reads this to understand what happened.
+## Keep durable evidence in Sprinty
 
-For every functional milestone, keep the coverage ledger current. Do not mark a task complete with only implementation notes and a command list. Name the actual tests or manual VM checks that prove the feature, and name the missing categories honestly. A benchmark can prove performance, not functional correctness. A Rust unit suite can prove contracts, not the user-visible VM path.
+- Use notes for short discoveries, decisions, blockers, and user checkpoints.
+- Use artifacts for audits, manifests, proof matrices, command output
+  summaries, or handoffs that must survive compaction.
+- Attach each artifact to the item or items it proves.
+- Keep coverage honest: name unit/contract, functional, adversarial, E2E/VM,
+  telemetry, and performance evidence, and explicitly record categories that
+  do not apply.
 
-For Ironbank slices, the focused verification must be the relevant
-`tests/ironbank/` case or a documented RED test that currently fails. Do not
-mark Ironbank tests `skip`, `skipif`, `slow`, or optional; if a dependency is
-missing, the product or harness is missing.
+Do not treat a benchmark as functional proof or a Rust unit test as proof of a
+user-visible VM path. Ironbank gates cannot be closed with status-only replay,
+row-exists checks, internal-only expectations, or skipped tests.
 
-## 3. Build
+## Build with project rules
 
-Write code. Follow the project skills:
-- `/dev-debugging` for bug investigation (reproduce first, diagnose, then fix)
-- `/dev-testing` for TDD (write test, see it fail, implement, refactor)
-- `/ironbank` for full black-box ledger acceptance; never close those gates
-  with Rust internals, status-only replay, row-exists checks, `skip`, or
-  `slow`
-- `/dev-rust-patterns` for async/cross-compile patterns
-- `/dev-mitm-proxy`, `/dev-mcp` for subsystem-specific guidance
+Load the relevant project skills before coding:
 
-### Profile Source vs Generated Runtime Config
+- `/dev-debugging` for reproduce-first bug investigation;
+- `/dev-testing` for RED, GREEN, and refactor discipline;
+- `/dev-rust-patterns` for Rust, async, and cross-platform work;
+- `/dev-mitm-proxy`, `/dev-mcp`, `/build-images`, and other owning skills for
+  their subsystems;
+- `/ironbank` for release-critical black-box acceptance.
 
-Keep profile/config ownership crisp:
+Keep profile and config ownership crisp:
 
-- Read `config/README.md` and `tests/README.md` before changing config layout,
-  profile payloads, generated settings artifacts, or config test fixtures.
-- Checked-in `config/profiles/<id>/profile.toml` is source contract, not a
-  scratchpad for local asset or payload hashes.
-- Profile sibling files are source inputs. Do not add `hash` or `size` fields
-  to source `profile.toml` after changing `build.sh`, package files, rules,
-  MCP files, tips, or root seed manifests. Generated hashes belong in
-  `target/config`, asset manifests, OBOMs, or root manifests, never in the
-  checked-in profile source.
-- Current asset URLs/hashes from `assets/manifest.json` are materialized into
-  `target/config` through the same `capsem-admin`/just rail used by CI and
-  release. Do not commit ad hoc `target/config` output.
-- `config/skills` does not exist. Developer skills live in repository-level
-  `skills/`. User/profile skills, when implemented, are profile-owned payloads
-  with their own contract, not Codex development instructions.
-- Any sprint that changes profile payloads must prove the profile-derived build rail, not a
-  manual TOML patch.
+- Read `config/README.md` and `tests/README.md` before changing profile source,
+  generated config, or config fixtures.
+- Checked-in profile files are source contracts. Generated hashes and
+  materialized config belong under `target/` and are produced by the same
+  `capsem-admin` rail CI and release use.
+- Developer skills live in repository-level `skills/`; product configuration
+  must not mirror them.
+- Prefer functional names that state ownership over temporary or origin-story
+  names.
 
-Names are part of the architecture contract. Prefer boring,
-self-explanatory names that state what a thing is (`mock_server`,
-`profile_loader`, `security_rule`) over origin-story names, lore names, or
-names tied to the first caller (`debug_upstream`, benchmark-only labels,
-temporary sprint names). If a developer cannot infer the contract from the
-name before opening the file, rename it before the pattern spreads.
+## Commit at functional milestones
 
-## 4. Commit at functional milestones
+Commit when one logical item or milestone is complete, its focused evidence is
+green, and the tree is not half-migrated. Each commit must be self-contained
+and revertable.
 
-Do NOT commit after every file edit. Do NOT batch everything into one giant commit at the end. Commit when:
+- Stage files explicitly; never use broad staging.
+- Follow the repository conventional subject and author rules.
+- Update `CHANGELOG.md` in the same commit only for user-visible behavior.
+- Preserve a clean status before moving to the next item.
 
-- A logical unit of work is complete and functional
-- Tests pass for that unit
-- The codebase is in a good state (not half-refactored)
-- The tracker has an explicit coverage ledger for that milestone,
-  including missing/deferred functional, adversarial, E2E/VM, telemetry,
-  or performance coverage
+After the commit, call `mcp__sprinty.item_done()` with the exact commit id, a
+SemVer changelog verb and line, and evidence for every manual gate. Sprinty
+runs executable gates itself where configured. Do not close an item against
+uncommitted work or a commit that does not contain its files.
 
-Each commit should:
-- Be self-contained (revertable without breaking things)
-- Include its CHANGELOG.md entry
-- Stage files explicitly (no `git add -A`)
-- Use conventional messages: `feat:`, `fix:`, `chore:`, `docs:`
+## Verify proportionally, then verify completely
 
-Bad: 20 tiny commits for each file touched. Also bad: 1 commit with 40 files after hours of work.
-Good: 3-5 commits per sprint, each representing a meaningful milestone.
+Every item gets the smallest focused proof that fully covers its outcome.
+Every sprint ends with the repository-authoritative final gates required by
+its scope.
 
-## 5. Changelog
+The proof matrix should consider:
 
-Update `CHANGELOG.md` under `## [Unreleased]` as part of each commit. Write from the user's perspective:
-- Added: new capability
-- Changed: modified behavior
-- Fixed: bug fix
-- Security: security improvement
+- unit and contract tests;
+- production-facing functional behavior;
+- malformed input, denial, timeout, race, and leak adversaries;
+- real CLI, service, MCP, network, package, or VM paths when crossed;
+- session database or external-state evidence when auditability is claimed;
+- performance measurements only when performance is part of the claim.
 
-Do not batch changelog entries at the end. Each commit carries its own entry.
+Run direct commands through the repository's bounded-command wrapper. Read the
+current gate digest before claiming a gate passes. Keep release holds active
+until focused checks and the final required gates are green.
 
-## 6. Testing gate
+## Close
 
-Every sprint ends with testing. No exceptions.
+Before closeout:
 
-```bash
-just test-clean                           # ALL tests: unit + integration + cross-compile + frontend + bench
-just exec "capsem-doctor"            # VM smoke test
-```
+1. Use `overview()` and `next()` to prove no item or subsprint remains open.
+2. Reconcile notes, artifacts, coverage, changelog entries, and commit ids.
+3. Run the final required gates on the exact final source state.
+4. Verify the worktree is clean and no temporary compatibility path remains.
+5. Call `mcp__sprinty.sprint_close()` only after Sprinty accepts the complete
+   evidence ledger.
 
-If the sprint touched telemetry:
-```bash
-python3 scripts/check_session.py                # Verify telemetry after a real session
-```
-
-If tests fail, fix them before considering the sprint done. See `/dev-debugging` for the methodology.
-
-The testing gate must cover the story, not just the code that was easiest to test. For each shipped behavior, verify:
-- Unit/contract tests for the smallest meaningful logic boundary
-- Functional tests through the production-facing API
-- Adversarial tests for malformed input, denials, timeouts, races, and leak prevention
-- E2E/VM tests for the real user path when the behavior crosses a VM, CLI, MCP, service, telemetry, or network boundary
-- Session DB or external-state checks when the behavior claims auditability
-- Benchmarks only when performance is part of the claim
-- Package-manager proof must be functional: apt, npm, uv, pip, node, and
-  profile package rails must prove the installed package runs and performs its
-  intended job, not merely that a package manager recorded it.
-
-If one of those is missing, keep the sprint open or record the exact debt in the tracker with a follow-up task. Do not bury the gap in prose like "covered later"; make it visible.
-
-## 7. Clean up
-
-- Verify no debug prints, TODO comments, or temporary hacks remain
-- Run `/simplify` if significant code was written
-
-## Sprint artifacts
-
-```
-sprints/<sprint-name>/
-  plan.md           What we're building, key decisions
-  tracker.md        Checklist + notes
-  changelog.md      Draft changelog entries (optional, can go straight to CHANGELOG.md)
-```
-
-The `sprints/` directory is git-tracked. Sprint plans and trackers are committed alongside the code they describe.
-
-## Meta sprints (sub-sprints)
-
-Large efforts use a meta sprint with sub-sprints. The meta sprint has a `MASTER.md` that tracks overall status, and each sub-sprint gets its own file:
-
-```
-sprints/<meta-name>/
-  MASTER.md                 Overall status table, phase groupings, just recipes
-  T0-infrastructure.md      Sub-sprint 0
-  T1-service-unit-tests.md  Sub-sprint 1
-  T2-process-unit-tests.md  Sub-sprint 2
-  ...
-  implementation-tasks.md   What code must change for tests to pass (optional)
-  tracker.md                Active execution tracker (current sub-sprint progress)
-```
-
-`MASTER.md` is the entry point. It contains:
-- A status table with every sub-sprint, its status (Done / In Progress / Not Started), test count, and dependencies
-- Phase groupings (Foundation, Integration, E2E, etc.)
-- Relevant just recipes
-
-When executing a meta sprint, create a `tracker.md` for the active work. Update `MASTER.md` status as sub-sprints complete.
-
-## Anti-patterns
-
-- **No plan**: jumping straight to code leads to rework and wrong abstractions
-- **Commit per file**: noise in git history, impossible to revert cleanly
-- **One mega commit**: can't bisect, can't review, can't cherry-pick
-- **Skip testing**: "I'll test later" means "I'll ship bugs now"
-- **Stale tracker**: if the tracker doesn't match reality, it's useless
-- **Benchmark-as-proof**: performance numbers do not prove the feature is correct
-- **Silent coverage debt**: missing E2E, functional, or adversarial tests must be named before a milestone can be called done
-- **Ironbank theater**: status-code-only replay, row-exists checks,
-  parser-only proof, Rust-internal expectations, public-network fixtures,
-  `skip`, `skipif`, or `slow` cannot close release-critical VM/security work
+If work is blocked, keep the owning item open and record the exact external
+condition. Do not shrink the goal or declare completion around the blocker.

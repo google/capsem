@@ -89,6 +89,7 @@ rather than a sibling benchmark stealing the same VZ launch budget.
 
 ## Related past bugs
 
-- `sprints/vsock-resume-reconnect/` -- vsock half-open + VZ path
-  canonicalization. Closed earlier modes, left the loop-device tail.
-- `sprints/loop-device-io-after-resume/` -- this gotcha's sprint home.
+- Vsock half-open handling and VZ path canonicalization closed earlier failure
+  modes before the loop-device tail was isolated.
+- The system-overlay regression test now owns the loop-device failure history;
+  the retired investigation records remain available in Git history.

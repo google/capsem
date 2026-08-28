@@ -4,7 +4,7 @@
 # Usage: sync-dev-assets.sh <src_assets_dir> <dst_assets_dir>
 #
 # `just install` ships a .pkg/.deb with only manifest.json (binaries and assets
-# are on independent shipping cadences -- see sprints/orthogonal-ci). For the
+# are on independent shipping cadences -- see RELEASE.md). For the
 # local dev install we short-circuit the network download by copying the
 # authoritative, freshly-built local files into the installed tree. The
 # service's ManifestV2::resolve() reads $dst/$arch/{hash_filename}, which is

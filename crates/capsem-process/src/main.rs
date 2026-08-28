@@ -27,9 +27,8 @@ use vsock::VsockOptions;
 /// Owns the background-thread resources that MUST drain before the main
 /// run loop stops. Populated by `run_async_main_loop` once DbWriter and
 /// FsMonitor are constructed, drained by the SIGTERM handler before it
-/// calls `CFRunLoopStop`. See the sprint doc at
-/// `sprints/explicit-shutdown-cleanup/` and /dev-rust-patterns
-/// "Signal-driven explicit cleanup".
+/// calls `CFRunLoopStop`. See /dev-rust-patterns, "Signal-driven explicit
+/// cleanup".
 #[derive(Default)]
 pub(crate) struct Shutdown {
     db: Option<Arc<DbWriter>>,

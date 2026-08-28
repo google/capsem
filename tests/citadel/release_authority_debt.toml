@@ -1,3 +1,1 @@
 [files]
-"crates/capsem-core/src/asset_manager/tests.rs" = { digest = "0c8941ce2c2c6e68e49cf4dc9f2679250b62f3d3929fb19886c9c5db9e449282", item = "S02-006", reason = "Rust-owned test rationale remains frozen until the user confirms concurrent crate work is merged and latest main is pulled." }
-"sprints/orthogonal-ci/plan.md" = { digest = "9cfd77358d05f2dc3e1560928be3f39d815b3ee0d3937b7a3bc480f6f0cd0d79", item = "S02-008", reason = "Historical plan is removed with the tracked sprints root rather than rewritten in place." }
