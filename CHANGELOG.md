@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The gateway proxy now removes hop-by-hop and connection-nominated request
+  headers before forwarding requests to the service.
 - Gateway status reads now bound their service response time, body size, and
   background connection lifetime so a stalled or oversized response cannot
   block status polling indefinitely.

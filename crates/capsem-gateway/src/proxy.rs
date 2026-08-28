@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use axum::extract::{Request, State};
 use axum::http::{
     header::{CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING},
-    HeaderMap, HeaderValue, Method, StatusCode,
+    HeaderMap, HeaderName, HeaderValue, Method, StatusCode,
 };
 use axum::response::{IntoResponse, Response};
 use http_body_util::BodyExt;
@@ -23,6 +23,19 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// Safety timeout for the background HTTP connection driver. Prevents orphaned
 /// tasks if neither side closes the connection cleanly.
 const CONN_DRIVER_TIMEOUT: Duration = Duration::from_secs(300);
+
+const HOP_BY_HOP_REQUEST_HEADERS: [&str; 10] = [
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "proxy-connection",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    "http2-settings",
+];
 
 /// Forward an allowlisted gateway route to capsem-service over UDS.
 pub async fn handle_proxy(State(state): State<Arc<AppState>>, req: Request) -> Response {
@@ -117,6 +130,7 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
     let headers = req.headers_mut();
     headers.remove(http::header::HOST);
     headers.remove(http::header::AUTHORIZATION);
+    strip_hop_by_hop_request_headers(headers);
 
     // Connect to UDS
     let stream = UnixStream::connect(&state.uds_path).await?;
@@ -163,6 +177,23 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
         return Ok(Response::from_parts(parts, axum::body::Body::from(body)));
     }
     Ok(Response::from_parts(parts, axum::body::Body::new(body)))
+}
+
+fn strip_hop_by_hop_request_headers(headers: &mut HeaderMap) {
+    let connection_headers = headers
+        .get_all(http::header::CONNECTION)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .filter_map(|name| HeaderName::from_bytes(name.trim().as_bytes()).ok())
+        .collect::<Vec<_>>();
+
+    for name in connection_headers {
+        headers.remove(name);
+    }
+    for name in HOP_BY_HOP_REQUEST_HEADERS {
+        headers.remove(name);
+    }
 }
 
 fn should_buffer_json_response(method: &Method, path: &str, headers: &HeaderMap) -> bool {

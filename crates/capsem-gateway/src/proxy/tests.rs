@@ -383,6 +383,62 @@ async fn preserves_client_headers_except_auth_and_host() {
     h.abort();
 }
 
+#[tokio::test]
+async fn strips_hop_by_hop_request_headers_before_forwarding() {
+    let mock = axum::Router::new().route(
+        "/headers",
+        axum::routing::get(|req: axum::extract::Request| async move {
+            let forwarded = [
+                "connection",
+                "http2-settings",
+                "keep-alive",
+                "proxy-authenticate",
+                "proxy-authorization",
+                "proxy-connection",
+                "te",
+                "trailer",
+                "transfer-encoding",
+                "upgrade",
+                "x-remove-me",
+            ]
+            .into_iter()
+            .filter(|name| req.headers().contains_key(*name))
+            .collect::<Vec<_>>();
+            axum::Json(serde_json::json!({"forwarded": forwarded}))
+        }),
+    );
+    let (path, h, _d) = mock_uds(mock).await;
+
+    let app = proxy_app(&path);
+    let resp = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/headers")
+                .header("connection", "keep-alive, x-remove-me")
+                .header("http2-settings", "fixture")
+                .header("keep-alive", "timeout=5")
+                .header("proxy-authenticate", "Basic")
+                .header("proxy-authorization", "Basic fixture")
+                .header("proxy-connection", "keep-alive")
+                .header("te", "trailers")
+                .header("trailer", "x-checksum")
+                .header("transfer-encoding", "chunked")
+                .header("upgrade", "websocket")
+                .header("x-remove-me", "true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["forwarded"], serde_json::json!([]));
+    h.abort();
+}
+
 // --- Status codes ---
 
 #[tokio::test]
