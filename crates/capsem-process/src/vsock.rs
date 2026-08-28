@@ -980,7 +980,7 @@ fn dispatch_aux_connection(
                     }
                 };
                 info!("audit port: connected, reading audit records");
-                while let Ok(Some(payload)) = read_audit_frame(&mut file) {
+                while let Ok(Some(payload)) = read_bounded_frame(&mut file) {
                     if let Ok(record) = capsem_proto::decode_audit_record(&payload) {
                         let timestamp = std::time::SystemTime::UNIX_EPOCH
                             + std::time::Duration::from_micros(record.timestamp_us);
@@ -1139,10 +1139,10 @@ where
     (tx, handle)
 }
 
-/// Read one length-prefixed audit payload without allocating beyond the
-/// protocol frame limit. EOF while reading the next prefix ends the stream;
-/// malformed lengths and truncated payloads are framing errors.
-fn read_audit_frame(reader: &mut impl std::io::Read) -> std::io::Result<Option<Vec<u8>>> {
+/// Read one length-prefixed payload without allocating beyond the protocol
+/// frame limit. EOF while reading the next prefix ends the stream; malformed
+/// lengths and truncated payloads are framing errors.
+fn read_bounded_frame(reader: &mut impl std::io::Read) -> std::io::Result<Option<Vec<u8>>> {
     let mut len_buf = [0u8; 4];
     match reader.read_exact(&mut len_buf) {
         Ok(()) => {}
@@ -1154,7 +1154,7 @@ fn read_audit_frame(reader: &mut impl std::io::Read) -> std::io::Result<Option<V
     if len > capsem_proto::MAX_FRAME_SIZE as usize {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("audit frame too large ({len} > MAX_FRAME_SIZE)"),
+            format!("frame too large ({len} > MAX_FRAME_SIZE)"),
         ));
     }
 
@@ -1179,7 +1179,7 @@ async fn serve_dns_session(
     db: Arc<capsem_logger::DbWriter>,
     security_rules: Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
 ) {
-    use std::io::{Read as _, Write as _};
+    use std::io::Write as _;
 
     let conn_fd = conn.fd;
     loop {
@@ -1189,24 +1189,7 @@ async fn serve_dns_session(
         // write one response.
         let read_res = tokio::task::spawn_blocking(move || -> Result<Option<Vec<u8>>> {
             let mut file = clone_fd(conn_fd)?;
-            let mut len_buf = [0u8; 4];
-            match file.read_exact(&mut len_buf) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    return Ok(None);
-                }
-                Err(error) => {
-                    return Err(error).context("DNS port: failed to read length prefix");
-                }
-            }
-            let len = u32::from_be_bytes(len_buf) as usize;
-            if len > capsem_proto::MAX_FRAME_SIZE as usize {
-                anyhow::bail!("DNS port: frame too large ({len} > MAX_FRAME_SIZE)");
-            }
-            let mut payload = vec![0u8; len];
-            file.read_exact(&mut payload)
-                .context("DNS port: failed to read payload")?;
-            Ok(Some(payload))
+            read_bounded_frame(&mut file).context("DNS port: failed to read frame")
         })
         .await;
 

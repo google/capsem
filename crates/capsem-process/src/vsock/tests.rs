@@ -121,12 +121,12 @@ fn classify_audit_port() {
 }
 
 #[test]
-fn audit_frame_reader_returns_one_complete_payload() {
+fn bounded_frame_reader_returns_one_complete_payload() {
     let payload = b"audit-record";
     let mut frame = Vec::from((payload.len() as u32).to_be_bytes());
     frame.extend_from_slice(payload);
 
-    let decoded = read_audit_frame(&mut std::io::Cursor::new(frame))
+    let decoded = read_bounded_frame(&mut std::io::Cursor::new(frame))
         .unwrap()
         .expect("complete frame");
 
@@ -134,24 +134,31 @@ fn audit_frame_reader_returns_one_complete_payload() {
 }
 
 #[test]
-fn audit_frame_reader_rejects_oversized_length_before_payload_read() {
+fn bounded_frame_reader_rejects_oversized_length_before_payload_read() {
     let oversized = capsem_proto::MAX_FRAME_SIZE + 1;
     let mut reader = std::io::Cursor::new(oversized.to_be_bytes().to_vec());
 
-    let error = read_audit_frame(&mut reader).unwrap_err();
+    let error = read_bounded_frame(&mut reader).unwrap_err();
 
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     assert_eq!(reader.position(), 4, "only the length prefix may be read");
 }
 
 #[test]
-fn audit_frame_reader_rejects_truncated_payload() {
+fn bounded_frame_reader_rejects_truncated_payload() {
     let mut frame = Vec::from(5u32.to_be_bytes());
     frame.extend_from_slice(b"no");
 
-    let error = read_audit_frame(&mut std::io::Cursor::new(frame)).unwrap_err();
+    let error = read_bounded_frame(&mut std::io::Cursor::new(frame)).unwrap_err();
 
     assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+}
+
+#[test]
+fn bounded_frame_reader_returns_none_on_clean_eof() {
+    let frame = read_bounded_frame(&mut std::io::Cursor::new(Vec::new())).unwrap();
+
+    assert!(frame.is_none());
 }
 
 #[test]
