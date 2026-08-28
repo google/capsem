@@ -15,51 +15,6 @@ consumer = ""
 symbols = []
 
 [[fixture]]
-source = "data/fixtures/.gitkeep"
-target = "[delete]"
-disposition = "delete"
-owner = "empty mixed-fixture marker"
-item = "S05-003"
-consumer = ""
-symbols = []
-
-[[fixture]]
-source = "data/fixtures/anthropic_messages_non_streaming.json"
-target = "[delete]"
-disposition = "delete"
-owner = "zero tracked callers by exact basename proof"
-item = "S05-003"
-consumer = ""
-symbols = []
-
-[[fixture]]
-source = "data/fixtures/anthropic_messages_streaming.json"
-target = "[delete]"
-disposition = "delete"
-owner = "zero tracked callers by exact basename proof"
-item = "S05-003"
-consumer = ""
-symbols = []
-
-[[fixture]]
-source = "data/fixtures/google_gemini_generate_content.json"
-target = "[delete]"
-disposition = "delete"
-owner = "zero tracked callers by exact basename proof"
-item = "S05-003"
-consumer = ""
-symbols = []
-
-[[fixture]]
-source = "data/fixtures/google_gemini_stream_generate_content.json"
-target = "[delete]"
-disposition = "delete"
-owner = "zero tracked callers by exact basename proof"
-item = "S05-003"
-consumer = ""
-symbols = []
-
-[[fixture]]
 source = "data/fixtures/html/elie_about.html"
 target = "tests/fixtures/mcp/html/elie_about.html"
 disposition = "retain"
@@ -108,15 +63,6 @@ symbols = [
   "grep_wiki_unicode_finds_pattern",
   "paginate_real_wiki_unicode_content",
 ]
-
-[[fixture]]
-source = "data/fixtures/manifest_per_arch.json"
-target = "[delete]"
-disposition = "delete"
-owner = "zero tracked callers by exact basename proof"
-item = "S05-003"
-consumer = ""
-symbols = []
 
 [[fixture]]
 source = "data/fixtures/test.db"
