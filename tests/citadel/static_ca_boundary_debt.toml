@@ -5,7 +5,7 @@ transition_item = "S05-004"
 # final-owner current-state RED run. S05-004 must move these paths and reduce
 # the legacy caller inventory to zero without changing either reviewed digest.
 legacy_caller_count = 15
-legacy_caller_sha256 = "7b4ffdcb8ef9566042caff24e1411e3c2685ee6474710cc89b1c056e1b36ce5d"
+legacy_caller_sha256 = "5db20834659d30e107dc93e512959345c722cb3541b6a979fb3f29e01b4057ea"
 ambient_fallback_count = 0
 ambient_fallback_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
