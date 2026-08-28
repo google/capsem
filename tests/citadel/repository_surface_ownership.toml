@@ -245,18 +245,6 @@ debt = "root data placeholder is removed in T4"
 reason = "Generated assets, packages, test evidence, and configuration converge under ignored target."
 
 [[surface]]
-id = "temporary-release-contract"
-state = "retiring"
-current = ["tmp/"]
-targets = ["<root-files>"]
-lint = ["fast.audit.markdown", "fast.citadel"]
-tests = ["tests/test_release_contract_architecture.py", "tests/citadel/test_repository_path_ownership.py"]
-ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
-coverage = "not-applicable: normative text merges into RELEASE.md before tmp is removed"
-debt = "tests/citadel/repository_path_debt.toml"
-reason = "RELEASE.md becomes the sole release specification; operating-system temporary storage replaces root tmp."
-
-[[surface]]
 id = "sdk-reservation"
 state = "reserved"
 current = []

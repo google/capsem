@@ -30,7 +30,6 @@ APPROVED_DIRECTORIES = frozenset(
         ".gemini",
         ".github",
         "assets",
-        "bench",
         "benchmarks",
         "build_system",
         "config",
@@ -49,12 +48,10 @@ APPROVED_DIRECTORIES = frozenset(
         "security",
         "site",
         "skills",
-        "sprints",
         "src",
         "target",
         "test-artifacts",
         "tests",
-        "tmp",
         "web",
     }
 )
@@ -91,7 +88,6 @@ APPROVED_ROOT_FILES = frozenset(
 MIGRATING_DIRECTORIES = frozenset(
     {
         "assets",
-        "bench",
         "data",
         "dist",
         "docker",
@@ -103,12 +99,12 @@ MIGRATING_DIRECTORIES = frozenset(
         "scripts",
         "security",
         "site",
-        "sprints",
         "src",
         "test-artifacts",
-        "tmp",
     }
 )
+
+RETIRED_DIRECTORIES = frozenset({"bench", "sprints", "tmp"})
 
 
 @dataclass(frozen=True)
@@ -219,3 +215,8 @@ def test_ignored_tool_state_is_outside_the_tracked_surface(tmp_path: Path) -> No
 def test_current_tracked_repository_roots_are_owned() -> None:
     violations = _violations(_tracked_entries())
     assert not violations, ROOT_OWNERSHIP_RATIONALE + "\n" + "\n".join(violations)
+
+
+def test_retired_repository_roots_are_absent() -> None:
+    present = sorted(name for name in RETIRED_DIRECTORIES if (ROOT / name).exists())
+    assert not present, ROOT_OWNERSHIP_RATIONALE + "\nretired roots: " + ", ".join(present)
