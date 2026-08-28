@@ -81,7 +81,7 @@ def _extract_series(path: Path, data: dict[str, Any]) -> list[LoadSeries]:
                 )
             )
 
-    # Direct artifact files under benchmarks/{mcp,dns,mitm}-load often have the
+    # Direct artifact files under benchmarks/baselines/{mcp,dns,mitm}-load often have the
     # section itself at the document root.
     if not series and isinstance(data.get("concurrency_levels"), list):
         series.append(

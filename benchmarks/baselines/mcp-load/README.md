@@ -1,7 +1,7 @@
 # mcp-load baselines
 
 Pre-rewrite baseline at `baseline.json`. Sister bench to
-`benchmarks/mitm-load/baseline.json`. T5's CI gate compares against
+`benchmarks/baselines/mitm-load/baseline.json`. T5's CI gate compares against
 this file: any concurrency level showing >2x p99 regression on the MCP
 path fails the build.
 
@@ -54,7 +54,7 @@ target/debug/capsem exec <name> "capsem-bench mcp-load && \
 
 # Pull via capsem cp
 target/debug/capsem cp <name>:mcp-baseline.json \
-  benchmarks/mcp-load/baseline.json
+  benchmarks/baselines/mcp-load/baseline.json
 
 # Clean up
 target/debug/capsem delete <name>

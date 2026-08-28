@@ -7826,8 +7826,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the existing aggregator/policy/MCP telemetry path so the wire
   comparison stays fair. Fresh same-hardware `mcp-load` artifacts
   are recorded at
-  `benchmarks/mcp-load/baseline-pre-mitm-unification.json` and
-  `benchmarks/mcp-load/baseline-framed-mitm-unification-t0.json`.
+  `benchmarks/baselines/mcp-load/baseline-pre-mitm-unification.json` and
+  `benchmarks/baselines/mcp-load/baseline-framed-mitm-unification-t0.json`.
   Framed selected: rps +8.6% / +4.8% / -6.4% / +5.4% and p99
   -31.9% / -23.9% / +7.8% / -31.0% at concurrency 1/10/50/200,
   with zero errors on both transports.
@@ -8622,7 +8622,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Performance has improved" with p<0.05).** Sync ChunkHooks are
   structurally faster than the async wrappers they replace.
   `capsem-bench mitm-load` against
-  `benchmarks/mitm-load/baseline.json` is the integration gate;
+  `benchmarks/baselines/mitm-load/baseline.json` is the integration gate;
   it requires a built VM image and is run on a real-machine
   session (this commit's verification rests on the criterion
   micro-bench + the 8 in-tree integration tests through the
@@ -9126,7 +9126,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added (mitm-redesign)
 - **Pre-rewrite `mitm-load` baseline captured.** T0 closes:
-  `benchmarks/mitm-load/baseline.json` holds the live numbers from
+  `benchmarks/baselines/mitm-load/baseline.json` holds the live numbers from
   `capsem-bench mitm-load` against the un-redesigned proxy at
   concurrency 1/10/50/200 (10s per level). Highlights: rps
   1109/2862/2995/2701, p99 2.2/8.4/45.4/175.2 ms, 0 errors,
@@ -9142,7 +9142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the guest with concurrent fastmcp Client calls (asyncio.gather over
   N workers per concurrency level) so we get a number for the MCP
   path's scaling shape, isolated from the MITM path. Pre-rewrite
-  baseline at `benchmarks/mcp-load/baseline.json`: rps
+  baseline at `benchmarks/baselines/mcp-load/baseline.json`: rps
   2162/3792/4061/3965 across concurrency 1/10/50/200, p99
   1.1/4.4/17.4/70.8 ms, 0 errors. Sub-linear scaling -- plateaus at
   ~4000 rps from concurrency 10 onwards. There IS a serialization
@@ -9169,7 +9169,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added (mitm-redesign)
 - **Pre-rewrite `mitm-load` baseline captured.** T0 closes:
-  `benchmarks/mitm-load/baseline.json` holds the live numbers from
+  `benchmarks/baselines/mitm-load/baseline.json` holds the live numbers from
   `capsem-bench mitm-load` against the un-redesigned proxy at
   concurrency 1/10/50/200 (10s per level). Extracted via the new
   `capsem cp` command (write bench output to `/root/baseline.json`
@@ -9252,7 +9252,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request fails fast at upstream-dial, isolating proxy cost from
   upstream variance). Reports per-level rps, p50/p95/p99/p99.9 latency,
   RSS peak, and error count. T5's CI gate compares to
-  `benchmarks/mitm-load/baseline.json`: any concurrency level >2x p99
+  `benchmarks/baselines/mitm-load/baseline.json`: any concurrency level >2x p99
   regression fails the build. Baseline JSON itself is deferred --
   requires `just run "capsem-bench mitm-load"` against the
   un-redesigned proxy and commit of the result.
@@ -10695,10 +10695,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`tests/capsem-serial/test_capsem_bench_baseline.py`) that provisions
   a fresh VM, runs `capsem-bench all` inside it, pulls
   `/tmp/capsem-benchmark.json` out via `/exec cat`, and archives it to
-  `benchmarks/capsem-bench/data_<version>_<arch>.json` with host-side
+  `benchmarks/baselines/capsem-bench/data_<version>_<arch>.json` with host-side
   timestamp + arch stamp. Mirrors the `_save_benchmark` pattern used by
   the existing `test_lifecycle_benchmark.py` host-side archives
-  (`benchmarks/lifecycle/`, `benchmarks/fork/`). No regression gate
+  (`benchmarks/baselines/lifecycle/`, `benchmarks/baselines/fork/`). No regression gate
   yet -- once ~5-10 clean archives land per arch, per-category
   tolerances can be picked and promoted to pytest asserts, mirroring
   `OP_GATE_MS` / `FORK_GATE_MS` / `IMAGE_SIZE_GATE_MB` in the

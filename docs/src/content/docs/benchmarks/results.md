@@ -20,16 +20,16 @@ set used by the release gate.
 
 - macOS arm64: `1.3.1782571508`
 - Linux KVM x86_64: `1.5.1783712334`, July 10, 2026
-- Linux artifacts: `benchmarks/capsem-bench/data_1.5.1783712334_x86_64.json`,
-  `benchmarks/mock-server-protocol/data_1.5.1783712334_x86_64.json`,
-  `benchmarks/lifecycle/data_1.5.1783712334.json`,
-  `benchmarks/fork/data_1.5.1783712334.json`,
-  `benchmarks/parallel/data_1.0.json`,
-  `benchmarks/route-latency/data_1.5.1783712334.json`
-- macOS artifacts: `benchmarks/capsem-bench/data_1.3.1782571508_arm64.json`,
-  `benchmarks/lifecycle/data_1.3.1782571508.json`,
-  `benchmarks/fork/data_1.3.1782571508.json`,
-  `benchmarks/route-latency/data_1.3.1782571508.json`
+- Linux artifacts: `benchmarks/baselines/capsem-bench/data_1.5.1783712334_x86_64.json`,
+  `benchmarks/baselines/mock-server-protocol/data_1.5.1783712334_x86_64.json`,
+  `benchmarks/baselines/lifecycle/data_1.5.1783712334.json`,
+  `benchmarks/baselines/fork/data_1.5.1783712334.json`,
+  `benchmarks/baselines/parallel/data_1.0.json`,
+  `benchmarks/baselines/route-latency/data_1.5.1783712334.json`
+- macOS artifacts: `benchmarks/baselines/capsem-bench/data_1.3.1782571508_arm64.json`,
+  `benchmarks/baselines/lifecycle/data_1.3.1782571508.json`,
+  `benchmarks/baselines/fork/data_1.3.1782571508.json`,
+  `benchmarks/baselines/route-latency/data_1.3.1782571508.json`
 
 ## VM lifecycle
 

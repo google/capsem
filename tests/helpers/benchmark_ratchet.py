@@ -64,7 +64,7 @@ def latest_checked_in_benchmark(
     # retention contract builds a fixture repository with no `config/` at all --
     # have no reason to need the project's profile set to read a directory.
     base = base_profile(project_root) if profile is not None else None
-    evidence_dir = Path("benchmarks") / category.value
+    evidence_dir = Path("benchmarks") / "baselines" / category.value
     tracked = subprocess.run(
         ["git", "ls-files", "-z", "--", str(evidence_dir)],
         cwd=project_root,

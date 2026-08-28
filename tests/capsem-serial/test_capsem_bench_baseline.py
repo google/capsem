@@ -1,7 +1,8 @@
 """Record in-VM capsem-bench output as a time-series baseline.
 
 Provisions a fresh VM, runs `capsem-bench all`, pulls /tmp/capsem-benchmark.json
-out via /exec, and archives it to benchmarks/capsem-bench/data_<version>_<arch>.json.
+out via /exec, and archives it to
+benchmarks/baselines/capsem-bench/data_<version>_<arch>.json.
 
 No gates yet -- we lack a stable baseline. Once 5-10 clean runs are on
 disk per arch, per-category tolerances can be picked and promoted to

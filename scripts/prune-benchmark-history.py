@@ -29,7 +29,7 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BENCHMARKS = ROOT / "benchmarks"
+BENCHMARKS = ROOT / "benchmarks" / "baselines"
 
 # <series>_<major>.<minor>.<ordinal>[_<arch>].json -- a version-shaped name is
 # what makes a file routine output rather than a curated baseline.

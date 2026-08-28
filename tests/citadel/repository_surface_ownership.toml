@@ -114,8 +114,8 @@ reason = "Builder, gate, release, release-site, and script unit tests move with 
 
 [[surface]]
 id = "benchmarks"
-state = "migrating"
-current = ["bench/", "benchmarks/"]
+state = "retained"
+current = ["benchmarks/collectors/", "benchmarks/baselines/"]
 targets = ["benchmarks/collectors/", "benchmarks/baselines/"]
 lint = ["python.ruff", "python.ty.relaxed", "fast.audit.source-syntax"]
 tests = ["tests/test_benchmark_retention_contract.py", "tests/test_capsem_bench_gates.py"]
@@ -243,18 +243,6 @@ ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
 coverage = "not-applicable: generated output is ignored and never a source surface"
 debt = "root data placeholder is removed in T4"
 reason = "Generated assets, packages, test evidence, and configuration converge under ignored target."
-
-[[surface]]
-id = "legacy-benchmark-inputs"
-state = "migrating"
-current = ["sprints/done/mcp-concurrency/bench-results/"]
-targets = ["benchmarks/collectors/", "benchmarks/baselines/"]
-lint = ["fast.audit.markdown", "fast.citadel"]
-tests = ["tests/citadel/test_repository_path_ownership.py", "tests/citadel/test_web_benchmark_boundary.py"]
-ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
-coverage = "not-applicable: reviewed benchmark evidence and its collector move without executable product coverage"
-debt = "tests/citadel/repository_path_debt.toml"
-reason = "Historical planning is gone; the remaining reviewed MCP benchmark inputs move to benchmark ownership."
 
 [[surface]]
 id = "temporary-release-contract"

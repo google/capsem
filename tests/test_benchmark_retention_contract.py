@@ -35,6 +35,10 @@ def _pruner():
 PRUNE = _pruner()
 
 
+def test_checked_in_baselines_have_a_dedicated_source_root() -> None:
+    assert PRUNE.BENCHMARKS == PROJECT_ROOT / "benchmarks" / "baselines"
+
+
 def _write(directory: Path, *names: str) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     for name in names:
@@ -157,12 +161,16 @@ def test_fork_duration_ratchet_uses_the_least_contended_sample() -> None:
 
 def test_latest_benchmark_evidence_ignores_untracked_results(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    evidence = tmp_path / "benchmarks" / "fork"
+    evidence = tmp_path / "benchmarks" / "baselines" / "fork"
     evidence.mkdir(parents=True)
     (evidence / "tracked.json").write_text(
         json.dumps({"timestamp": 1, "identity": "tracked"}), encoding="utf-8"
     )
-    subprocess.run(["git", "add", "benchmarks/fork/tracked.json"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "add", "benchmarks/baselines/fork/tracked.json"],
+        cwd=tmp_path,
+        check=True,
+    )
     (evidence / "untracked.json").write_text(
         json.dumps({"timestamp": 2, "identity": "untracked"}), encoding="utf-8"
     )
@@ -207,11 +215,15 @@ def test_release_benchmarks_use_typed_evidence_instead_of_authored_limits() -> N
 def _evidence_repo(tmp_path: Path, files: dict[str, dict]) -> Path:
     """A tracked evidence directory, plus the config the lane names come from."""
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    evidence = tmp_path / "benchmarks" / "fork"
+    evidence = tmp_path / "benchmarks" / "baselines" / "fork"
     evidence.mkdir(parents=True)
     for name, document in files.items():
         (evidence / name).write_text(json.dumps(document), encoding="utf-8")
-        subprocess.run(["git", "add", f"benchmarks/fork/{name}"], cwd=tmp_path, check=True)
+        subprocess.run(
+            ["git", "add", f"benchmarks/baselines/fork/{name}"],
+            cwd=tmp_path,
+            check=True,
+        )
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "gate.toml").write_text(
         '[suites.pytest]\nbase_profile = "code"\n', encoding="utf-8"
