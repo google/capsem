@@ -13,7 +13,7 @@ reaped none of the per-VM `capsem-process` children it exists to reap; they
 outlived the gate by half an hour, still holding their run directories, and
 `orphan-accounting` failed the run at teardown with no hint of the cause.
 
-This is the third copy of one defect. `capsem.gate.pidfiles` shelled out to
+This is the third copy of one defect. `capsem_builder.gate.pidfiles` shelled out to
 `ps` and was moved to `proc_pidinfo`; the tray-singleton test carried its own
 copy; this was the third. Duplicated knowledge diverges, and the copy is
 always the one nobody rechecks -- so the invariant is a test rather than three

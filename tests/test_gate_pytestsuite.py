@@ -16,8 +16,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from capsem.gate import config as gate_config
-from capsem.gate import pytestsuite
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import pytestsuite
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)

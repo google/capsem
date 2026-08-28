@@ -52,11 +52,10 @@ def test_fast_feedback_is_explicitly_incomplete_and_release_owns_qualification()
     # machine-specific journal from the developer feedback command.
     import argparse
 
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
+    from capsem_builder.gate.sourcecommit import SourceCommit
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
-    from capsem.gate.sourcecommit import SourceCommit
 
     for name, extra in (
         ("release-binaries", {"channel": "stable"}),

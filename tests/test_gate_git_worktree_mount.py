@@ -21,8 +21,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from capsem.gate import config as gate_config
-from capsem.gate.packageinputs import package_environment
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.packageinputs import package_environment
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -62,10 +62,10 @@ def test_a_worktree_needs_no_special_handling_now() -> None:
     -- and `snapshot._materialize_repository` replaces either form with an
     independent repository owned by the prefix.
     """
-    from capsem.gate import snapshot
+    from capsem_builder.gate import snapshot
 
     assert hasattr(snapshot, "_materialize_repository")
-    assert not (PROJECT_ROOT / "src" / "capsem" / "gate" / "gitmetadata.py").exists(), (
+    assert not (PROJECT_ROOT / "build_system" / "builder" / "gate" / "gitmetadata.py").exists(), (
         "gitmetadata is back; if a lane needs Git identity again it should be "
         "passed in, not mounted"
     )
@@ -78,7 +78,7 @@ def test_no_lane_mounts_git_metadata() -> None:
     name -- it shares inodes with every host step in exactly the way that
     killed a release run.
     """
-    gate = PROJECT_ROOT / "src" / "capsem" / "gate"
+    gate = PROJECT_ROOT / "build_system" / "builder" / "gate"
     # Snapshot may inspect the common object store only to choose hardlink or
     # byte-copy cloning; it never hands that path to Docker or a build lane.
     offenders = [

@@ -39,7 +39,7 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-GATE_PACKAGE = PROJECT_ROOT / "src" / "capsem" / "gate"
+GATE_PACKAGE = PROJECT_ROOT / "build_system" / "builder" / "gate"
 
 # Calls whose first positional argument is a path. Split by call shape because
 # the signatures differ: builtin `open(path, mode)` takes one first, while
@@ -224,7 +224,7 @@ def test_the_architecture_enum_agrees_with_the_config() -> None:
     `HOST` and `ANY` are not architectures -- they are the absence of a
     concrete one -- so they are excluded rather than expected in config.
     """
-    from capsem.gate.execution import Arch
+    from capsem_builder.gate.execution import Arch
 
     concrete = {member.name.lower() for member in Arch} - {Arch.HOST.name.lower(), Arch.ANY.name.lower()}
     declared = set(_config()["architectures"])

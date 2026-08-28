@@ -17,8 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import host
+from capsem_builder.gate import host
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -74,7 +73,7 @@ def test_every_declared_artifact_is_owned_or_serialized() -> None:
     # reimplemented the rule, so the test agreed with the bug it was meant to
     # catch: two producers holding one name *shared* overlap by design, and a
     # name-only intersection called that serialized on both sides.
-    from capsem.gate.contention import can_overlap
+    from capsem_builder.gate.contention import can_overlap
 
     unguarded = {}
     for path, producers in owners.items():
@@ -104,7 +103,7 @@ def test_the_ownership_check_is_no_longer_running_over_nothing() -> None:
 @pytest.mark.parametrize("command", ["release-binaries", "release-profile"])
 def test_release_lanes_consume_evidence_without_rebuilding_producers(command: str) -> None:
     """Publication accepts the complete run instead of rerunning its graph."""
-    from capsem.gate.sourcecommit import SourceCommit
+    from capsem_builder.gate.sourcecommit import SourceCommit
 
     source_commit = SourceCommit("0" * 40)
     args = {
@@ -119,10 +118,9 @@ def test_release_lanes_consume_evidence_without_rebuilding_producers(command: st
     import sys as _sys
 
     _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
 
     plan = GateCommand.registry[command](
         RecordingRunner(PROJECT_ROOT),
@@ -142,9 +140,9 @@ def test_release_lanes_consume_evidence_without_rebuilding_producers(command: st
 
 def _two_producers(shared: tuple[bool, bool]):
     """Two steps writing one path, each claiming `docker_daemon`."""
-    from capsem.gate import config as gate_config
-    from capsem.gate.execution import step
-    from capsem.gate.plan import Plan
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.execution import step
+    from capsem_builder.gate.plan import Plan
 
     config = gate_config.load(PROJECT_ROOT)
     artifact = PROJECT_ROOT / "target" / "contested.bin"
@@ -163,7 +161,7 @@ def test_two_shared_claims_do_not_serialize_their_writers() -> None:
     overwrite one path concurrently. The name was common; the exclusion was
     never there.
     """
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate.errors import GateError
 
     plan, config = _two_producers((True, True))
 

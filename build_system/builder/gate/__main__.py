@@ -1,4 +1,4 @@
-"""`python -m capsem.gate`, for callers without the console script on PATH.
+"""`python -m capsem_builder.gate`, for callers without the console script on PATH.
 
 Through the launcher rather than straight to `cli`, so this spelling gets the
 same isolated bytecode cache the console script does -- and so the launcher's
@@ -8,6 +8,6 @@ instead of looping.
 
 from __future__ import annotations
 
-from capsem.gatelaunch import main
+from ..gatelaunch import main
 
 raise SystemExit(main())

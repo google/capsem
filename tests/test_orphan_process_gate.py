@@ -237,7 +237,7 @@ def _gate_issues(name: str | None = None) -> str:
 
 
 def _candidate_source() -> str:
-    return (ROOT / "src" / "capsem" / "gate" / "candidate.py").read_text(encoding="utf-8")
+    return (ROOT / "build_system" / "builder" / "gate" / "candidate.py").read_text(encoding="utf-8")
 
 
 def _accounting():
@@ -251,11 +251,10 @@ def _accounting():
     import sys as _sys
 
     _sys.path.insert(0, str(ROOT / "tests"))
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import sandbox
+    from capsem_builder.gate.gateresources import OrphanAccounting, gate_resources
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import config as gate_config
-    from capsem.gate import sandbox
-    from capsem.gate.gateresources import OrphanAccounting, gate_resources
 
     runner = RecordingRunner(ROOT)
     config = gate_config.load(ROOT)
@@ -275,7 +274,7 @@ def _accounting():
 # `exit "$status"` -- because `$?` inside a trap is the last command's, which
 # on Ctrl-C is 0, so exiting with it turned an abort into a pass.
 #
-# `capsem.gate.candidate` uses `try`/`finally`, which has no `$?` to misread,
+# `capsem_builder.gate.candidate` uses `try`/`finally`, which has no `$?` to misread,
 # and `tests/test_gate_candidate.py` asserts the resulting behaviour directly:
 # an interrupted run reports the interrupt, a leaked process fails an
 # otherwise-passing run, and a failing run keeps its own error rather than the
@@ -313,7 +312,7 @@ def test_the_count_runs_even_when_the_gate_aborts() -> None:
     import sys as _sys
 
     _sys.path.insert(0, str(ROOT / "tests"))
-    from capsem.gate.lifecycle import held
+    from capsem_builder.gate.lifecycle import held
 
     accounting, runner, _ = _accounting()
     with contextlib.suppress(RuntimeError), held(accounting):

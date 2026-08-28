@@ -25,8 +25,8 @@ def _macos_issued(monkeypatch: pytest.MonkeyPatch) -> str:
     import sys
 
     sys.path.insert(0, str(PROJECT_ROOT / "tests"))
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "arm64")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "arm64")
     from helpers.gate import gate_issued
 
     return gate_issued("linux-rust")
@@ -70,7 +70,7 @@ def _staged(tmp_path: Path):
     Small enough to mutate file by file, and real enough that `base_tag` reads
     it exactly as it reads the checkout.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     for name in _identity_files(config):
@@ -85,10 +85,9 @@ def _identity_files(config) -> tuple[str, ...]:
 
 
 def _docker(root: Path, parent: str):
+    from capsem_builder.gate.docker import Docker
+    from capsem_builder.gate.dockerimage import IMAGE_IDENTITY_FORMAT
     from helpers.gate import RecordingRunner, recorded_image_identity
-
-    from capsem.gate.docker import Docker
-    from capsem.gate.dockerimage import IMAGE_IDENTITY_FORMAT
 
     return Docker(
         RecordingRunner(
@@ -113,7 +112,7 @@ def test_every_input_that_defines_the_base_image_changes_its_tag(tmp_path: Path)
     ONNX Runtime version and every build argument's default, and the mutable
     `capsem-host-builder:latest` the image is `FROM`.
     """
-    from capsem.gate import linuxrust
+    from capsem_builder.gate import linuxrust
 
     config = _staged(tmp_path)
     docker = _docker(tmp_path, PARENT)
@@ -143,7 +142,7 @@ def test_rebuilding_the_parent_image_changes_the_tag(tmp_path: Path) -> None:
     against the toolchain, system packages and CA bundle of whatever the parent
     used to be -- the exact class of drift the base image exists to remove.
     """
-    from capsem.gate import linuxrust
+    from capsem_builder.gate import linuxrust
 
     config = _staged(tmp_path)
     before = linuxrust.base_tag(config, _docker(tmp_path, PARENT))
@@ -170,8 +169,8 @@ def test_the_lane_owns_its_base_image_instead_of_asking_the_operator(
     """
     from helpers.gate import gate_labels
 
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "arm64")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "arm64")
     labels = list(gate_labels("candidate"))
 
     assert "warm-base" in labels, (
@@ -187,8 +186,8 @@ def test_the_ownership_steps_are_gone(monkeypatch: pytest.MonkeyPatch) -> None:
     they are ceremony -- and a ratchet keeps them from coming back."""
     from helpers.gate import gate_labels
 
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "arm64")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "arm64")
     labels = set(gate_labels("test-static")) | set(gate_labels("linux-rust"))
     assert "cache-ownership" not in labels, sorted(labels)
     assert "output-ownership" not in labels, sorted(labels)
@@ -281,7 +280,7 @@ def test_the_lane_image_carries_no_release_credentials() -> None:
     not covered: that is the MITM CA, committed and public by design, and the
     guest needs it.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     ignored = (PROJECT_ROOT / ".dockerignore").read_text(encoding="utf-8").split()

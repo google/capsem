@@ -134,7 +134,7 @@ class RequireIsolatedBytecode(Action, name="require-isolated-bytecode"):
 
     CPython validates a `.pyc` against the source's mtime and size, so two
     edits of the same length inside one timestamp tick leave bytecode that
-    still looks current. `capsem.gatelaunch` closes that by re-execing under a
+    still looks current. `capsem_builder.gatelaunch` closes that by re-execing under a
     per-invocation cache prefix before importing any of this package -- and
     exports a marker saying so, which is the only thing a running gate can
     check about how it was started.
@@ -148,7 +148,7 @@ class RequireIsolatedBytecode(Action, name="require-isolated-bytecode"):
         return "check this interpreter cannot be running stale bytecode"
 
     def perform(self, context: Context) -> None:
-        from capsem.gatelaunch import MARKER, PYCACHE
+        from ..gatelaunch import MARKER, PYCACHE
 
         if context.observing:
             return

@@ -28,9 +28,9 @@ import ast
 import re
 from pathlib import Path
 
-from capsem.gate.shelllex import tokenize
-from capsem.gate.shellnodes import Function, arm_named, commands, suppressed, walk
-from capsem.gate.shellparse import parse
+from capsem_builder.gate.shelllex import tokenize
+from capsem_builder.gate.shellnodes import Function, arm_named, commands, suppressed, walk
+from capsem_builder.gate.shellparse import parse
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TESTS_ROOT = PROJECT_ROOT / "tests"

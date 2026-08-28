@@ -7,10 +7,9 @@ import subprocess
 from pathlib import Path
 
 import yaml
+from capsem_builder.gate.versions import workspace_version
 from helpers.workflow_contract import workflow_job_source, workflow_step_source
 from rust_sources import sibling_tests
-
-from capsem.gate.versions import workspace_version
 
 ROOT = Path(__file__).resolve().parents[2]
 ADMIN = ROOT / "crates" / "capsem-admin" / "src" / "main.rs"
@@ -37,10 +36,10 @@ def _release_plan(command: str, *arguments: str):
     """The plan a release command would run, without running any of it."""
     import argparse
 
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
-    from capsem.gate.proc import Runner
-    from capsem.gate.sourcecommit import SourceCommit
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
+    from capsem_builder.gate.proc import Runner
+    from capsem_builder.gate.sourcecommit import SourceCommit
 
     parsed = argparse.Namespace(
         dry_run=False,

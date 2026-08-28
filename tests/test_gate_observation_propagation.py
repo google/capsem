@@ -15,20 +15,19 @@ import sys
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import config as gate_config
-from capsem.gate.actions import Action, Launch, Run
-from capsem.gate.context import Context, NullJournal
-from capsem.gate.errors import GateError
-from capsem.gate.execution import step
-from capsem.gate.funnel import GuardedRunner
-from capsem.gate.observation import Watch
-from capsem.gate.observing import observing
-from capsem.gate.plan import Plan
-from capsem.gate.proc import Runner
-from capsem.gate.processgroup import StopPolicy
-from capsem.gate.runhistory import read
-from capsem.gate.runlog import RunLog
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.actions import Action, Launch, Run
+from capsem_builder.gate.context import Context, NullJournal
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.execution import step
+from capsem_builder.gate.funnel import GuardedRunner
+from capsem_builder.gate.observation import Watch
+from capsem_builder.gate.observing import observing
+from capsem_builder.gate.plan import Plan
+from capsem_builder.gate.proc import Runner
+from capsem_builder.gate.processgroup import StopPolicy
+from capsem_builder.gate.runhistory import read
+from capsem_builder.gate.runlog import RunLog
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)

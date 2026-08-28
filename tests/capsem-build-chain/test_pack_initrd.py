@@ -6,8 +6,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import config as gate_config
+from capsem_builder.gate import config as gate_config
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 ASSETS_DIR = PROJECT_ROOT / "assets"

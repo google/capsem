@@ -29,21 +29,20 @@ import os
 from pathlib import Path
 
 import pytest
-from helpers import gate as gate_helpers
-from helpers.gate import RecordingJournal, RecordingRunner, gate_issued
-
-from capsem.gate import cli  # noqa: F401 - imported so every command registers
-from capsem.gate import config as gate_config
-from capsem.gate.candidate import CandidateCommand, keep_awake
-from capsem.gate.command import GateCommand
-from capsem.gate.context import Context
-from capsem.gate.errors import GateError
-from capsem.gate.lifecycle import held
-from capsem.gate.sourcestate import (
+from capsem_builder.gate import cli  # noqa: F401 - imported so every command registers
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.candidate import CandidateCommand, keep_awake
+from capsem_builder.gate.command import GateCommand
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.lifecycle import held
+from capsem_builder.gate.sourcestate import (
     RecordSourceState,
     RequireIsolatedBytecode,
     RequireSourceUnchanged,
 )
+from helpers import gate as gate_helpers
+from helpers.gate import RecordingJournal, RecordingRunner, gate_issued
 
 # The Colima lifecycle has its own home in
 # tests/capsem-cleanup-script/test_colima_lifecycle.py, where it is driven
@@ -183,7 +182,7 @@ def test_a_verification_with_nothing_recorded_refuses(tmp_path: Path) -> None:
 
 
 def _accounting(root: Path, **kwargs):
-    from capsem.gate.gateresources import OrphanAccounting
+    from capsem_builder.gate.gateresources import OrphanAccounting
 
     runner = Running(root, **kwargs)
     return OrphanAccounting(gate_config.for_root(root), runner), runner
@@ -250,7 +249,7 @@ def test_failure_evidence_is_captured_and_labelled_with_the_head(
 ) -> None:
     """`preserve` runs only on failure and before release, because release is
     what destroys the evidence."""
-    from capsem.gate.gateresources import FailureEvidence
+    from capsem_builder.gate.gateresources import FailureEvidence
 
     root = _checkout(tmp_path)
     RecordSourceState().perform(_context(root))
@@ -268,7 +267,7 @@ def test_failure_evidence_is_captured_and_labelled_with_the_head(
 def test_release_failure_evidence_keeps_attempt_and_source_identities(
     tmp_path: Path,
 ) -> None:
-    from capsem.gate.gateresources import FailureEvidence
+    from capsem_builder.gate.gateresources import FailureEvidence
 
     root = _checkout(tmp_path)
     config = gate_config.for_root(root)
@@ -294,7 +293,7 @@ def test_release_failure_evidence_keeps_attempt_and_source_identities(
 
 
 def test_a_passing_run_captures_no_failure_evidence(tmp_path: Path) -> None:
-    from capsem.gate.gateresources import FailureEvidence
+    from capsem_builder.gate.gateresources import FailureEvidence
 
     root = _checkout(tmp_path)
     runner = Running(root)
@@ -327,7 +326,7 @@ def test_the_gate_holds_everything_that_must_be_given_back() -> None:
 def test_macos_wraps_the_gate_so_the_machine_cannot_sleep_through_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/caffeinate")
     monkeypatch.delenv(CONFIG.candidate.keep_awake_marker, raising=False)
 
@@ -340,14 +339,14 @@ def test_macos_wraps_the_gate_so_the_machine_cannot_sleep_through_it(
 
 def test_the_wrapper_is_applied_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Without the marker it would re-exec itself forever."""
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
     monkeypatch.setenv(CONFIG.candidate.keep_awake_marker, "1")
 
     assert keep_awake(Running(_checkout(tmp_path))) is None
 
 
 def test_linux_needs_no_wrapper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
 
     assert keep_awake(Running(_checkout(tmp_path))) is None
 
@@ -355,7 +354,7 @@ def test_linux_needs_no_wrapper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 def test_a_macos_host_without_caffeinate_is_told_why_it_matters(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
     monkeypatch.setattr("shutil.which", lambda _name: None)
     monkeypatch.delenv(CONFIG.candidate.keep_awake_marker, raising=False)
 
@@ -394,7 +393,7 @@ def test_an_observed_plan_touches_nothing(tmp_path: Path, monkeypatch: pytest.Mo
 
     # An inspector is not executing the gate, so requiring its launcher marker
     # would stop observation at source.record and hide every later command.
-    from capsem.gatelaunch import MARKER
+    from capsem_builder.gatelaunch import MARKER
 
     monkeypatch.delenv(MARKER, raising=False)
     RequireIsolatedBytecode().perform(observed)
@@ -414,8 +413,8 @@ def test_observation_reaches_past_a_step_that_claims_an_output(
     not a file` and the observation ended three steps in. Every contract that
     reads back issued argv was reading a prefix.
     """
-    from capsem.gate.execution import step
-    from capsem.gate.fileactions import MakeDir
+    from capsem_builder.gate.execution import step
+    from capsem_builder.gate.fileactions import MakeDir
 
     absent = tmp_path / "never-built.bin"
     journal = RecordingJournal()
@@ -491,7 +490,7 @@ def test_exact_release_dispatcher_inspects_its_immutable_prefix_without_candidat
     monkeypatch.setenv(config.locks.gate.run_marker, "test-gate")
     monkeypatch.setenv(config.environment.qualified_source_commit, commit)
     monkeypatch.setattr(
-        "capsem.gate.sourcecommit.require_detached_checkout",
+        "capsem_builder.gate.sourcecommit.require_detached_checkout",
         lambda found_root, found_commit: validated.append((found_root, str(found_commit))),
     )
 
@@ -511,9 +510,8 @@ def test_exact_plan_inspection_derives_from_the_recorded_source_snapshot(
     Synthetic checkouts created by tests remain their own subjects even though
     they inherit the parent gate's run marker.
     """
+    from capsem_builder.gate import snapshot, sourcecapture
     from helpers import gate as gate_helpers
-
-    from capsem.gate import snapshot, sourcecapture
 
     frozen = tmp_path / "frozen-source"
     frozen.mkdir()
@@ -561,7 +559,7 @@ def test_issued_command_introspection_cannot_clear_live_asset_outputs(
     the live ``target/ironbank-assets`` tree halfway through broad pytest,
     deleting the exact profile catalog the same pytest process was consuming.
     """
-    from capsem.gate import snapshot
+    from capsem_builder.gate import snapshot
 
     checkout = tmp_path / "checkout"
     snapshot.populate(PROJECT_ROOT, checkout, gate_config.load(PROJECT_ROOT))

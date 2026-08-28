@@ -1,4 +1,4 @@
-"""Unsandboxed process half of :mod:`capsem.gate.egress`.
+"""Unsandboxed process half of :mod:`capsem_builder.gate.egress`.
 
 Kept separate so the resource/capability protocol stays below the gate module
 ceiling.  This process owns no orchestration state; it accepts one authenticated

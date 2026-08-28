@@ -25,10 +25,9 @@ def _source_text(relative: str) -> str:
 def _command(command: str, **args):
     import argparse
 
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
 
     return GateCommand.registry[command](
         RecordingRunner(PROJECT_ROOT),
@@ -69,8 +68,8 @@ def test_build_assets_requires_profile_and_uses_capsem_admin() -> None:
     catch an empty string. Building the argv from the profile means an image
     build without one cannot be expressed.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate.imagebuild import build_argv
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.imagebuild import build_argv
 
     config = gate_config.load(PROJECT_ROOT)
     argv = build_argv(config, profile="code", arch="arm64", template="all")
@@ -131,7 +130,7 @@ def test_rootfs_asset_build_repacks_then_regenerates_its_manifest() -> None:
 
 
 def test_unscoped_rootfs_asset_build_repacks_every_architecture() -> None:
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     plan = _command("build-assets", profile="code", arch=None, template="all").plan()
     packed = plan.step_named("pack-initrds")
@@ -177,8 +176,8 @@ def test_asset_build_primitives_accept_an_isolated_output_root() -> None:
     right and the recipe was wrong; asserting on the argv the builder receives
     is what makes the difference visible.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate.imagebuild import build_argv
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.imagebuild import build_argv
 
     config = gate_config.load(PROJECT_ROOT)
 
@@ -199,11 +198,11 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
     stays here is that `just test-clean` still owns the gate and that the gate still
     does each of these things at all.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    assets = _source_text("src/capsem/gate/assets.py")
-    lanes = _source_text("src/capsem/gate/assetlanes.py")
+    assets = _source_text("build_system/builder/gate/assets.py")
+    lanes = _source_text("build_system/builder/gate/assetlanes.py")
 
     # `just test-clean` still owns the gate -- as a composed phase now rather than a
     # recipe that dispatched to another recipe, so it is read from the plan.
@@ -247,7 +246,7 @@ def test_a_failed_boot_preserves_only_host_side_evidence() -> None:
     The snapshots duplicate that workspace once per generation, and the same
     name filter is what keeps the VM disk image and session.db out.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
 
@@ -266,8 +265,8 @@ def test_asset_gate_runs_architecture_lanes_in_parallel_before_boot_proofs() -> 
     build concurrently -- and merging before both finish would publish a
     manifest for assets that do not exist yet.
     """
-    assets = _source_text("src/capsem/gate/assets.py")
-    lanes = _source_text("src/capsem/gate/assetlanes.py")
+    assets = _source_text("build_system/builder/gate/assets.py")
+    lanes = _source_text("build_system/builder/gate/assetlanes.py")
 
     assert "ThreadPoolExecutor" in lanes
     # The lanes are plan steps now, not a call inside this module: `sweep`
@@ -294,10 +293,10 @@ def test_asset_gate_reaps_gateway_and_service_between_profile_proofs() -> None:
     outlives its service attaches the next profile to a UDS pointing at a run
     directory that has already been deleted.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    assets = _source_text("src/capsem/gate/assets.py")
+    assets = _source_text("build_system/builder/gate/assets.py")
 
     assert config.pidfiles.names == ("gateway.pid", "service.pid")
     assert "pidfiles.stop_gate_service" in assets
@@ -311,7 +310,7 @@ def test_asset_gate_reaps_gateway_and_service_between_profile_proofs() -> None:
 
 def test_asset_ci_uses_primitives_owned_by_just_test() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text()
-    lanes = _source_text("src/capsem/gate/assetlanes.py")
+    lanes = _source_text("build_system/builder/gate/assetlanes.py")
 
     assert 'just build-assets ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
     assert "pack-initrds" in _planned(
@@ -350,11 +349,11 @@ def test_asset_matrix_preflights_once_and_reuses_the_public_build_primitive() ->
     single spelling, without a second gate process between the lane and the
     builder.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate.imagebuild import build_argv
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.imagebuild import build_argv
 
     config = gate_config.load(PROJECT_ROOT)
-    lanes = (PROJECT_ROOT / "src/capsem/gate/assetlanes.py").read_text(encoding="utf-8")
+    lanes = (PROJECT_ROOT / "build_system/builder/gate/assetlanes.py").read_text(encoding="utf-8")
 
     # Every stage the lanes build goes through the one primitive.
     assert "imagebuild.build_argv(" in lanes
@@ -377,15 +376,15 @@ def test_check_assets_recovers_by_iterating_checked_in_profiles() -> None:
     does the same glob from config and raises when it matches nothing, so a
     checkout with no profiles fails loudly instead of building none of them.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate.imagebuild import profiles
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.imagebuild import profiles
 
     config = gate_config.load(PROJECT_ROOT)
     found = profiles(config)
 
     assert len(found) > 1, "the recovery path must cover every profile, not one"
     assert "code" in found
-    lanes = (PROJECT_ROOT / "src/capsem/gate/imagebuild.py").read_text(encoding="utf-8")
+    lanes = (PROJECT_ROOT / "build_system/builder/gate/imagebuild.py").read_text(encoding="utf-8")
     assert 'profile="code"' not in lanes, "a profile is named rather than discovered"
 
 
@@ -396,12 +395,12 @@ def test_in_container_commands_write_only_where_the_container_user_owns() -> Non
     CI ever sees it. Four separate release-gate failures came from this one
     shape: the builder's git, the staging rm, pytest's cache, and the
     unmaterialized profile catalog."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     guest = config.install.guest_user
-    container = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installcontainer.py").read_text()
-    proof = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installproof.py").read_text()
+    container = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installcontainer.py").read_text()
+    proof = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installproof.py").read_text()
 
     # Removing target/install-test-* needs write permission on their parent.
     # Granted as the one directory entry: recursive here would walk every
@@ -487,10 +486,10 @@ def test_ensure_service_uses_generated_profiles() -> None:
     had never been through `capsem-admin profile materialize`, which is a
     different product from the one being tested.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    service = (PROJECT_ROOT / "src/capsem/gate/service.py").read_text(encoding="utf-8")
+    service = (PROJECT_ROOT / "build_system/builder/gate/service.py").read_text(encoding="utf-8")
 
     assert config.service.generated_profiles == "target/config/profiles"
     # The variable name has one owner now, so asserting the literal appeared
@@ -515,14 +514,13 @@ def test_isolated_test_recipes_trap_test_home_service_cleanup() -> None:
     """
     import argparse
 
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
 
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate import config as gate_config
-    from capsem.gate.command import GateCommand
-
-    workspace_source = (PROJECT_ROOT / "src/capsem/gate/workspace.py").read_text(encoding="utf-8")
-    pidfile_source = (PROJECT_ROOT / "src/capsem/gate/pidfiles.py").read_text(encoding="utf-8")
+    workspace_source = (PROJECT_ROOT / "build_system/builder/gate/workspace.py").read_text(encoding="utf-8")
+    pidfile_source = (PROJECT_ROOT / "build_system/builder/gate/pidfiles.py").read_text(encoding="utf-8")
 
     assert "stop_gate_service" in workspace_source
     assert gate_config.load(PROJECT_ROOT).pidfiles.names == ("gateway.pid", "service.pid")

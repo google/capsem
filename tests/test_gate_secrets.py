@@ -19,15 +19,14 @@ import json
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.context import NullJournal
+from capsem_builder.gate.dockerimage import IMAGE_IDENTITY_FORMAT
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.funnel import GuardedRunner
+from capsem_builder.gate.invocation import Command
+from capsem_builder.gate.proc import Runner
 from helpers.gate import recorded_image_identity
-
-from capsem.gate import config as gate_config
-from capsem.gate.context import NullJournal
-from capsem.gate.dockerimage import IMAGE_IDENTITY_FORMAT
-from capsem.gate.errors import GateError
-from capsem.gate.funnel import GuardedRunner
-from capsem.gate.invocation import Command
-from capsem.gate.proc import Runner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -238,8 +237,8 @@ def test_the_docker_argv_names_the_variable_and_carries_the_value_in_the_child_e
     reaches argv -- and therefore never reaches `ps`, which is readable by
     every user on the machine and which no amount of log redaction covers.
     """
-    from capsem.gate.content import ProfileContent
-    from capsem.gate.packagerail import PackageRail
+    from capsem_builder.gate.content import ProfileContent
+    from capsem_builder.gate.packagerail import PackageRail
 
     _rail_with_keys(tmp_path, monkeypatch)
     runner = _Recording(tmp_path)
@@ -280,9 +279,9 @@ def test_no_byte_of_a_recorded_run_holds_the_signing_material(
     Asserted over every file the run wrote, because the leak reached four
     different ones and a check per file is a check that misses the fifth.
     """
-    from capsem.gate.content import ProfileContent
-    from capsem.gate.packagerail import PackageRail
-    from capsem.gate.runlog import RunLog
+    from capsem_builder.gate.content import ProfileContent
+    from capsem_builder.gate.packagerail import PackageRail
+    from capsem_builder.gate.runlog import RunLog
 
     _rail_with_keys(tmp_path, monkeypatch)
     config = gate_config.load(tmp_path)

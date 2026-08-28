@@ -23,10 +23,10 @@ from helpers.workflow_contract import workflow_reachable_text
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "tests"))
 
-from capsem.gate import config as gate_config  # noqa: E402
-from capsem.gate.errors import GateError  # noqa: E402
-from capsem.gate.qualification import Mode, Qualification  # noqa: E402
-from capsem.gate.qualification import from_environment as qualification_for  # noqa: E402
+from capsem_builder.gate import config as gate_config  # noqa: E402
+from capsem_builder.gate.errors import GateError  # noqa: E402
+from capsem_builder.gate.qualification import Mode, Qualification  # noqa: E402
+from capsem_builder.gate.qualification import from_environment as qualification_for  # noqa: E402
 
 CONFIG = gate_config.load(PROJECT_ROOT)
 SETTINGS = CONFIG.modules
@@ -119,10 +119,9 @@ def test_the_profile_release_carries_its_profile_and_the_binary_release_does_not
 
 def planned(module: str, qualification: Qualification) -> str:
     """One module's plan under an explicit qualification, freshly built."""
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
 
     command = GateCommand.registry[module](
         RecordingRunner(PROJECT_ROOT),
@@ -175,10 +174,9 @@ def test_a_deferred_profile_proves_assets_without_inventing_a_package() -> None:
     a package-less pairing, and the complete three-state release union stays
     fail-closed.
     """
+    from capsem_builder.gate import cli
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli
-    from capsem.gate.command import GateCommand
 
     assert cli.COMMAND_MODULES  # importing the CLI registers every command
 
@@ -230,10 +228,9 @@ def test_a_dropped_workflow_line_cannot_build_a_hybrid_plan(
     The refusal has to arrive while the plan is being built. Reached any later
     and the release has already spent the gate proving the wrong bytes.
     """
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
 
     for name in VALUES:
         monkeypatch.delenv(name, raising=False)
@@ -289,10 +286,9 @@ INSPECTION = (
 
 
 def _construct(name: str, args: dict):
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
 
     namespace = argparse.Namespace(dry_run=False, graph=False, timing=False)
     for key, value in args.items():
@@ -345,8 +341,8 @@ def test_the_capability_is_declared_rather_than_guessed() -> None:
     release script -- puts the answer somewhere nobody looks when adding the
     next module.
     """
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
 
     qualifying = {name for name, cls in GateCommand.registry.items() if cls.uses_qualification}
 
@@ -382,8 +378,7 @@ def test_a_local_state_cannot_carry_release_inputs() -> None:
     function rather than in the type.
     """
     import pydantic
-
-    from capsem.gate.qualification import LocalQualification
+    from capsem_builder.gate.qualification import LocalQualification
 
     # Through a named mapping, so the type checker does not report the very
     # error this asserts happens at *runtime*. It would be right -- that is
@@ -396,8 +391,7 @@ def test_a_local_state_cannot_carry_release_inputs() -> None:
 
 def test_a_binary_release_cannot_be_built_without_its_package() -> None:
     import pydantic
-
-    from capsem.gate.qualification import BinaryQualification
+    from capsem_builder.gate.qualification import BinaryQualification
 
     without_package = {"input_dir": VALUES[INPUT_DIR], "bin_dir": "target/debug"}
 
@@ -412,8 +406,7 @@ def test_a_release_path_may_not_be_empty_or_whitespace() -> None:
     that depends on the machine it is describing.
     """
     import pydantic
-
-    from capsem.gate.qualification import BinaryQualification
+    from capsem_builder.gate.qualification import BinaryQualification
 
     with pytest.raises(pydantic.ValidationError):
         BinaryQualification(input_dir="   ", package=VALUES[PACKAGE], bin_dir="target/debug")
@@ -421,8 +414,7 @@ def test_a_release_path_may_not_be_empty_or_whitespace() -> None:
 
 def test_a_profile_name_follows_the_configured_grammar() -> None:
     import pydantic
-
-    from capsem.gate.qualification import ProfileQualification
+    from capsem_builder.gate.qualification import ProfileQualification
 
     with pytest.raises(pydantic.ValidationError):
         ProfileQualification(

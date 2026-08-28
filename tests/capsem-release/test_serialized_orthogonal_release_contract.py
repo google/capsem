@@ -68,10 +68,10 @@ def _release_plan(command: str, *arguments: str):
     """The plan a release command would run, without running any of it."""
     import argparse
 
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
-    from capsem.gate.proc import Runner
-    from capsem.gate.sourcecommit import SourceCommit
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
+    from capsem_builder.gate.proc import Runner
+    from capsem_builder.gate.sourcecommit import SourceCommit
 
     names = ("channel", "profile")
     parsed = argparse.Namespace(
@@ -106,8 +106,8 @@ def _context(runner):
     file of whichever gate was running, and that gate died forty minutes later
     in `source.verify` reporting a HEAD change on a tree nobody had touched.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate.context import Context
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.context import Context
 
     return Context(runner, gate_config.load(ROOT), observing=True)
 

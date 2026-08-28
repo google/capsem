@@ -9,6 +9,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import imagebases, imagebuild, initrd
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.plan import Plan
 from capsem_builder.image import guestbuilder
 from capsem_builder.image.config import load_guest_config
 from capsem_builder.image.docker import GUEST_BINARIES, container_compile_agent
@@ -16,11 +20,6 @@ from capsem_builder.image.guestbuilder import image_repository, image_tag
 from capsem_builder.image.models import ArchConfig
 from helpers.gate import RecordingRunner
 from pydantic import ValidationError
-
-from capsem.gate import config as gate_config
-from capsem.gate import imagebases, imagebuild, initrd
-from capsem.gate.errors import GateError
-from capsem.gate.plan import Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BUILD = load_guest_config(PROJECT_ROOT / "config/docker/image").build
@@ -262,8 +261,8 @@ def test_materialization_fails_closed_without_its_exact_rust_base() -> None:
 
 def test_linux_helpers_cover_every_requested_target(monkeypatch: pytest.MonkeyPatch) -> None:
     config = gate_config.load(PROJECT_ROOT)
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "x86_64")
 
     assert imagebases.required_rust_builder_names(config) == ("arm64", "x86_64")
     assert imagebases.required_rust_builder_names(config, ("x86_64",)) == ("x86_64",)
@@ -271,8 +270,8 @@ def test_linux_helpers_cover_every_requested_target(monkeypatch: pytest.MonkeyPa
 
 def test_macos_helpers_cover_every_requested_target(monkeypatch: pytest.MonkeyPatch) -> None:
     config = gate_config.load(PROJECT_ROOT)
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "arm64")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "arm64")
 
     assert imagebases.required_rust_builder_names(config) == ("arm64", "x86_64")
     assert imagebases.required_rust_builder_names(config, ("x86_64",)) == ("x86_64",)
@@ -283,7 +282,7 @@ def test_standalone_macos_initrd_build_materializes_its_guest_rust_builder(
 ) -> None:
     config = gate_config.load(PROJECT_ROOT)
     plan = Plan("standalone-initrd")
-    monkeypatch.setattr("capsem.gate.initrd.host.on_macos", lambda: True)
+    monkeypatch.setattr("capsem_builder.gate.initrd.host.on_macos", lambda: True)
 
     initrd.pack(plan, config)
 
@@ -306,8 +305,8 @@ def test_macos_check_assets_proves_execution_before_materializing_helper(
 ) -> None:
     config = gate_config.load(PROJECT_ROOT)
     plan = Plan("standalone-check-assets")
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
-    monkeypatch.setattr("capsem.gate.imagebuild.missing", lambda *_args: ["initrd.img"])
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem_builder.gate.imagebuild.missing", lambda *_args: ["initrd.img"])
 
     imagebuild.check_assets(plan, config)
 

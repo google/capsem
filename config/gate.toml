@@ -1,6 +1,6 @@
 # The build and release gate's data, in one place.
 #
-# `src/capsem/gate/` holds the decisions; this holds the values those decisions
+# `build_system/builder/gate/` holds the decisions; this holds the values those decisions
 # are made from -- container names, scratch paths, timeouts, the boundary/rail
 # pairs the storage policy accepts, the artifacts an asset build must produce.
 #
@@ -847,9 +847,9 @@ unused-type-ignore-comment = 3
 # policy change. This is historical debt, not capacity: every value may shrink
 # and no value may grow.
 [lint.suppression_budget]
-noqa = 67
-type_ignore = 22
-ty_ignore = 6
+noqa = 66
+type_ignore = 23
+ty_ignore = 5
 ruff_global_ignore = 1
 ruff_per_file_ignore = 2
 justification = "Existing repository-wide debt baseline; additions are forbidden and removals must ratchet these counts down."

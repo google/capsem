@@ -33,9 +33,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from capsem_builder.gate import config as gate_config
 from helpers.constants import ASSETS_DIR as _SELECTED_ASSETS_DIR
-
-from capsem.gate import config as gate_config
 
 # Every service this suite starts spawns a real capsem-tray: the spawn falls
 # back to `find_sibling_binary("capsem-tray")` when --tray-binary is omitted,

@@ -19,8 +19,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from capsem.gate import buildcache, prefix
-from capsem.gate import config as gate_config
+from capsem_builder.gate import buildcache, prefix
+from capsem_builder.gate import config as gate_config
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -177,9 +177,9 @@ def _sequenced(monkeypatch, config, tmp_path: Path, status: int = 0) -> _Runner:
     global _LENT
     _LENT = config.prefix.lent
     monkeypatch.setattr(
-        "capsem.gate.snapshot.populate", lambda source, target, cfg: target.mkdir(parents=True)
+        "capsem_builder.gate.snapshot.populate", lambda source, target, cfg: target.mkdir(parents=True)
     )
-    monkeypatch.setattr("capsem.gate.buildcache.export", lambda path, destination, cfg: None)
+    monkeypatch.setattr("capsem_builder.gate.buildcache.export", lambda path, destination, cfg: None)
     return _Runner(status)
 
 
@@ -211,7 +211,7 @@ def test_a_finished_run_leaves_its_work_for_the_one_after_it(tmp_path, monkeypat
 
     second = _Runner(0)
     monkeypatch.setattr(
-        "capsem.gate.snapshot.populate",
+        "capsem_builder.gate.snapshot.populate",
         lambda source, target, cfg: target.mkdir(parents=True),
     )
     lent: list[str] = []
@@ -224,7 +224,7 @@ def test_a_finished_run_leaves_its_work_for_the_one_after_it(tmp_path, monkeypat
             assert (path / relative / "x86_64" / "rootfs.erofs").read_bytes() == PAYLOAD
         return found
 
-    monkeypatch.setattr("capsem.gate.buildcache.lend", watched)
+    monkeypatch.setattr("capsem_builder.gate.buildcache.lend", watched)
     assert prefix.run_from_private_copy(second, config, ["candidate"]) == 0
 
     assert sorted(lent) == sorted(config.prefix.lent), (
@@ -305,7 +305,7 @@ def test_the_very_first_run_is_lent_what_the_checkout_exported(tmp_path, monkeyp
     runner = _sequenced(monkeypatch, config, tmp_path)
     received: list[Path] = []
     monkeypatch.setattr(
-        "capsem.gate.buildcache.export",
+        "capsem_builder.gate.buildcache.export",
         lambda path, destination, cfg: received.append(path),
     )
 

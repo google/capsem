@@ -7,19 +7,17 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from helpers.gate import RecordingRunner
-
-from capsem.gate import cli, qualificationevidence, qualificationflow
-from capsem.gate import config as gate_config
-from capsem.gate.candidate import CandidateCommand
-from capsem.gate.errors import GateError
-from capsem.gate.execution import ResumePolicy, step
-from capsem.gate.plan import Plan
-from capsem.gate.qualification import LocalQualification
-from capsem.gate.qualificationevidence import QualificationPolicy
-from capsem.gate.runhistory import read, runs
-from capsem.gate.runlog import RunLog
-from capsem.gate.runlogschema import (
+from capsem_builder.gate import cli, qualificationevidence, qualificationflow
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.candidate import CandidateCommand
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.execution import ResumePolicy, step
+from capsem_builder.gate.plan import Plan
+from capsem_builder.gate.qualification import LocalQualification
+from capsem_builder.gate.qualificationevidence import QualificationPolicy
+from capsem_builder.gate.runhistory import read, runs
+from capsem_builder.gate.runlog import RunLog
+from capsem_builder.gate.runlogschema import (
     FAILED,
     OK,
     SKIPPED,
@@ -29,7 +27,8 @@ from capsem.gate.runlogschema import (
     RunEnd,
     StepEnd,
 )
-from capsem.gate.sourcecommit import SourceCommit
+from capsem_builder.gate.sourcecommit import SourceCommit
+from helpers.gate import RecordingRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 COMMIT = SourceCommit("3" * 40)
@@ -76,7 +75,7 @@ def _plan() -> Plan:
 
 def _record_complete(config, monkeypatch: pytest.MonkeyPatch) -> Path:
     plan = _plan()
-    monkeypatch.setattr("capsem.gate.runlog.head_revision", lambda _root: str(COMMIT))
+    monkeypatch.setattr("capsem_builder.gate.runlog.head_revision", lambda _root: str(COMMIT))
     with RunLog.open(config, "candidate", source_commit=str(COMMIT)) as log:
         log.qualification_attempt(COMMIT)
         log.shape(plan.labels, plan.edges)
@@ -117,7 +116,7 @@ def test_exact_candidate_reuses_completed_journal(config, monkeypatch, capsys) -
     monkeypatch.setattr(qualificationflow, "require_local_main", lambda *_args: None)
     monkeypatch.setattr(command, "reexec", lambda *_args: pytest.fail("re-exec reached"))
     monkeypatch.setattr(command, "resources", lambda *_args: pytest.fail("resources reached"))
-    monkeypatch.setattr("capsem.gate.command.prefix.active", lambda *_args: pytest.fail("prefix"))
+    monkeypatch.setattr("capsem_builder.gate.command.prefix.active", lambda *_args: pytest.fail("prefix"))
 
     command.execute()
 
@@ -160,7 +159,7 @@ def _write_partial(config, plan: Plan) -> None:
             "machine": "x86_64",
             "cores": 16,
             "free_gb": 100.0,
-            "gate_source": "/exact/src/capsem/gate",
+            "gate_source": "/exact/build_system/builder/gate",
             "pycache": "/exact/cache",
         },
         PlanShape(steps=plan.labels, edges=plan.edges).model_dump(),

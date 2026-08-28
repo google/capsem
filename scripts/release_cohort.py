@@ -12,9 +12,8 @@ import json
 import shutil
 from pathlib import Path
 
+from capsem_builder.gate import config as gate_config
 from release_channel_author import author_and_fetch, glowup_helpers, run
-
-from capsem.gate import config as gate_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 

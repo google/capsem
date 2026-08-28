@@ -25,16 +25,15 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.actions import Run, Script
+from capsem_builder.gate.command import GateCommand
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.execution import step
+from capsem_builder.gate.lifecycle import Resource
+from capsem_builder.gate.plan import Plan
+from capsem_builder.gate.sourcecommit import qualified_commit
 from helpers.gate import RecordingJournal, RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate.actions import Run, Script
-from capsem.gate.command import GateCommand
-from capsem.gate.errors import GateError
-from capsem.gate.execution import step
-from capsem.gate.lifecycle import Resource
-from capsem.gate.plan import Plan
-from capsem.gate.sourcecommit import qualified_commit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -98,8 +97,8 @@ def journal(monkeypatch) -> RecordingJournal:
         assert source_commit is None
         yield recording
 
-    monkeypatch.setattr("capsem.gate.runlog.RunLog.open", _open)
-    monkeypatch.setattr("capsem.gate.recording.RunLog.open", _open)
+    monkeypatch.setattr("capsem_builder.gate.runlog.RunLog.open", _open)
+    monkeypatch.setattr("capsem_builder.gate.recording.RunLog.open", _open)
     return recording
 
 
@@ -337,7 +336,7 @@ def test_plan_construction_cannot_escape_by_building_its_own_runner(journal) -> 
     So the seal is ambient rather than per-instance. Any runner, however it was
     obtained, refuses while a plan is being built.
     """
-    from capsem.gate.proc import Runner
+    from capsem_builder.gate.proc import Runner
 
     def _own_runner(_ignored) -> None:
         Runner(PROJECT_ROOT).capture(["git", "rev-parse", "HEAD"])
@@ -433,8 +432,8 @@ def _recorded_command_policy(command: GateCommand, monkeypatch) -> str:
 
 def test_candidate_overwrites_a_forged_ambient_sandbox_policy(journal, monkeypatch) -> None:
     """Doctor learns policy from the command, never from the invoking shell."""
-    from capsem.gate import candidate, sandbox
-    from capsem.gate.qualification import LocalQualification
+    from capsem_builder.gate import candidate, sandbox
+    from capsem_builder.gate.qualification import LocalQualification
 
     command = candidate.CandidateCommand(
         RecordingRunner(PROJECT_ROOT),
@@ -457,7 +456,7 @@ def test_build_assets_exports_its_effective_sandbox_policy(
     journal, monkeypatch, requested: str | None, ambient: str, expected: str
 ) -> None:
     """Default build-assets stays open; an explicit enforcing override wins."""
-    from capsem.gate import imagebuild, sandbox
+    from capsem_builder.gate import imagebuild, sandbox
 
     parsed = None if requested is None else sandbox.SandboxMode(requested)
     command = imagebuild.BuildAssetsCommand(
@@ -626,7 +625,7 @@ def test_a_failed_acquire_runs_no_command_at_all(journal) -> None:
 def test_a_step_may_not_claim_an_undeclared_exclusive(journal) -> None:
     """`[execution.exclusives]` carries the reason each one exists; a claim on
     something absent from it excludes nothing and reads as though it does."""
-    from capsem.gate.harnessschema import Exclusive
+    from capsem_builder.gate.harnessschema import Exclusive
 
     runner = RecordingRunner(PROJECT_ROOT)
     command = _probe(
@@ -659,13 +658,13 @@ def test_every_real_resource_satisfies_the_environment_protocol() -> None:
     """
     import inspect
 
-    from capsem.gate import cli  # noqa: F401 - imports every module
-    from capsem.gate.lifecycle import Resource, environment_of
+    from capsem_builder.gate import cli  # noqa: F401 - imports every module
+    from capsem_builder.gate.lifecycle import Resource, environment_of
 
     concrete = [
         cls
         for cls in _descendants(Resource)
-        if cls.__module__.startswith("capsem.gate.") and not inspect.isabstract(cls)
+        if cls.__module__.startswith("capsem_builder.gate.") and not inspect.isabstract(cls)
     ]
     assert len(concrete) >= 4, f"scanned too few resources: {concrete}"
 
@@ -688,7 +687,7 @@ def _descendants(root: type) -> list[type]:
 
 
 def _workspace():
-    from capsem.gate.workspace import Workspace
+    from capsem_builder.gate.workspace import Workspace
 
     return Workspace(CONFIG)
 

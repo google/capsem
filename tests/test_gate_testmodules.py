@@ -16,11 +16,10 @@ import argparse
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.staticmodule import StaticModule
+from capsem_builder.gate.testmodules import FastModule
 from helpers.gate import RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate.staticmodule import StaticModule
-from capsem.gate.testmodules import FastModule
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 

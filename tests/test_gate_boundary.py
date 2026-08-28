@@ -1,4 +1,4 @@
-"""The justfile dispatches; `capsem.gate` decides. Both halves are held here.
+"""The justfile dispatches; `capsem_builder.gate` decides. Both halves are held here.
 
 The justfile reached 2457 lines, of which roughly 2070 were `bash` inside
 recipe bodies. Nothing in that shell could be unit tested, so every defect in
@@ -12,7 +12,7 @@ Moving that logic into Python is only half the fix. The other half is making
 the old shape unavailable, in both directions:
 
   the justfile        may not grow a shell body back
-  `capsem.gate`       may not become one 2000-line file in a new language
+  `capsem_builder.gate`       may not become one 2000-line file in a new language
 
 `remaining_shell_recipes` in `config/gate.toml` is a ratchet, not an
 exemption list. A recipe may
@@ -31,12 +31,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
 from helpers import embedded_shell
 
-from capsem.gate import config as gate_config
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-GATE_PACKAGE = PROJECT_ROOT / "src" / "capsem" / "gate"
+GATE_PACKAGE = PROJECT_ROOT / "build_system" / "builder" / "gate"
 
 CONFIG = gate_config.load(PROJECT_ROOT)
 BOUNDARY = CONFIG.boundary
@@ -89,7 +88,7 @@ def test_no_recipe_has_a_shell_body() -> None:
 
     assert not inline, (
         "these recipes carry inline shell that no test can reach; put the "
-        f"logic in src/capsem/gate/ and dispatch to it: {inline}"
+        f"logic in build_system/builder/gate/ and dispatch to it: {inline}"
     )
 
 
@@ -103,7 +102,7 @@ def test_a_dispatching_recipe_stays_short_enough_to_read() -> None:
 
     assert not oversized, (
         f"a recipe body over {ceiling} executable lines is a program; move it "
-        f"into src/capsem/gate/: {oversized}"
+        f"into build_system/builder/gate/: {oversized}"
     )
 
 
@@ -187,7 +186,7 @@ def test_the_cli_only_parses_and_dispatches() -> None:
     the registry and has no reason to name a command, run one, or branch on
     what one means.
     """
-    from capsem.gate.command import GateCommand
+    from capsem_builder.gate.command import GateCommand
 
     cli = (GATE_PACKAGE / "cli.py").read_text(encoding="utf-8")
 
@@ -205,7 +204,7 @@ def test_the_cli_only_parses_and_dispatches() -> None:
 @pytest.mark.parametrize("module", sorted(p.name for p in GATE_PACKAGE.glob("*.py")))
 def test_every_gate_module_imports_on_its_own(module: str) -> None:
     """Independently importable, so it can be independently unit tested."""
-    name = f"capsem.gate.{module.removesuffix('.py')}"
+    name = f"capsem_builder.gate.{module.removesuffix('.py')}"
     if module in {"__init__.py", "__main__.py"}:
         pytest.skip("package entry points, exercised through the CLI")
 
@@ -235,7 +234,7 @@ def test_the_strict_python_tree_needs_no_rules_held_back() -> None:
     assert set(settings.strict_roots) <= set(settings.python_roots)
     assert "src" in settings.strict_roots
 
-    from capsem.gate.sourcechecks import ty_argv
+    from capsem_builder.gate.sourcechecks import ty_argv
 
     strict = subprocess.run(
         ty_argv(CONFIG, settings.strict_roots),
@@ -254,7 +253,7 @@ def test_the_strict_python_tree_needs_no_rules_held_back() -> None:
 def _call_sites() -> dict[str, list[ast.Call]]:
     """Every production `Call(...)`, by the module that builds it."""
     found: dict[str, list[ast.Call]] = {}
-    for module in sorted((PROJECT_ROOT / "src/capsem/gate").glob("*.py")):
+    for module in sorted((PROJECT_ROOT / "build_system/builder/gate").glob("*.py")):
         if module.name == "actions.py":
             continue  # where `Call` is defined, not where one is built
         tree = ast.parse(module.read_text(encoding="utf-8"))
@@ -280,9 +279,8 @@ def test_every_opaque_call_declares_a_real_reason() -> None:
     import sys as _sys
 
     _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from capsem_builder.gate.actions import Call
     from helpers.gate import gate_plan
-
-    from capsem.gate.actions import Call
 
     placeholders = ("temporary", "misc", "legacy", "todo", "for now", "tbd")
     calls = [
@@ -311,10 +309,9 @@ def test_secret_bearing_work_is_only_the_package_build() -> None:
     import sys as _sys
 
     _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from capsem_builder.gate.actions import Call
+    from capsem_builder.gate.opacity import OpaqueKind
     from helpers.gate import gate_plan
-
-    from capsem.gate.actions import Call
-    from capsem.gate.opacity import OpaqueKind
 
     secretive = sorted(
         step.label
@@ -330,8 +327,8 @@ def test_closed_gate_vocabularies_refuse_raw_strings_at_runtime() -> None:
     """Untyped callers cannot bypass the enum-only constructor seams."""
     from typing import Any, cast
 
-    from capsem.gate.installimage import _step_label
-    from capsem.gate.opacity import machine_effects
+    from capsem_builder.gate.installimage import _step_label
+    from capsem_builder.gate.opacity import machine_effects
 
     dynamic_effects = cast(Any, machine_effects)
     dynamic_label = cast(Any, _step_label)
@@ -354,9 +351,8 @@ def test_install_lifecycle_labels_flow_through_the_enum_converter() -> None:
     comes from the closed enum, and every member appears. A literal string
     label would show up as a plan label with no enum member behind it.
     """
+    from capsem_builder.gate.installimage import InstallImageStep, _step_label
     from helpers.gate import gate_plan
-
-    from capsem.gate.installimage import InstallImageStep, _step_label
 
     expected = {_step_label(member) for member in InstallImageStep}
     built = {label for label in gate_plan("candidate").labels if label.startswith("install.")}

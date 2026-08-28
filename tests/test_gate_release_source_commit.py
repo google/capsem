@@ -66,7 +66,7 @@ def committed_source(tmp_path: Path) -> tuple[Path, str, str]:
     ],
 )
 def test_source_commit_is_one_canonical_full_git_identity(invalid: str) -> None:
-    from capsem.gate.sourcecommit import SourceCommit
+    from capsem_builder.gate.sourcecommit import SourceCommit
 
     with pytest.raises(ValueError, match="40-character lowercase hexadecimal"):
         SourceCommit(invalid)
@@ -78,7 +78,7 @@ def test_source_commit_is_one_canonical_full_git_identity(invalid: str) -> None:
 def test_release_commit_must_already_belong_to_local_main(
     committed_source: tuple[Path, str, str],
 ) -> None:
-    from capsem.gate.sourcecommit import SourceCommit, require_local_main
+    from capsem_builder.gate.sourcecommit import SourceCommit, require_local_main
 
     source, first, second = committed_source
     require_local_main(source, SourceCommit(first))
@@ -92,7 +92,7 @@ def test_release_commit_must_already_belong_to_local_main(
 def test_checkout_source_identity_uses_the_same_typed_full_commit(
     committed_source: tuple[Path, str, str],
 ) -> None:
-    from capsem.gate.sourcecommit import SourceCommit, source_commit_for_checkout
+    from capsem_builder.gate.sourcecommit import SourceCommit, source_commit_for_checkout
 
     source, _first, second = committed_source
     assert source_commit_for_checkout(source) == SourceCommit(second)
@@ -101,9 +101,9 @@ def test_checkout_source_identity_uses_the_same_typed_full_commit(
 def test_exact_commit_snapshot_ignores_newer_and_dirty_outer_source(
     committed_source: tuple[Path, str, str], tmp_path: Path
 ) -> None:
-    from capsem.gate import config as gate_config
-    from capsem.gate import snapshot
-    from capsem.gate.sourcecommit import SourceCommit
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import snapshot
+    from capsem_builder.gate.sourcecommit import SourceCommit
 
     source, first, _second = committed_source
     target = tmp_path / "prefix"
@@ -124,9 +124,9 @@ def test_exact_commit_snapshot_ignores_newer_and_dirty_outer_source(
 def test_relative_origin_is_canonicalized_before_the_prefix_moves(
     committed_source: tuple[Path, str, str], tmp_path: Path
 ) -> None:
-    from capsem.gate import config as gate_config
-    from capsem.gate import snapshot
-    from capsem.gate.sourcecommit import SourceCommit
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import snapshot
+    from capsem_builder.gate.sourcecommit import SourceCommit
 
     source, first, _second = committed_source
     _git(source, "remote", "set-url", "origin", "../origin.git")
@@ -138,9 +138,9 @@ def test_relative_origin_is_canonicalized_before_the_prefix_moves(
 
 
 def test_release_prefix_name_is_the_complete_commit_not_a_truncation() -> None:
-    from capsem.gate import config as gate_config
-    from capsem.gate import prefix
-    from capsem.gate.sourcecommit import SourceCommit
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import prefix
+    from capsem_builder.gate.sourcecommit import SourceCommit
 
     commit = SourceCommit("0123456789abcdef" * 2 + "01234567")
     config = gate_config.load(PROJECT_ROOT)
@@ -156,8 +156,8 @@ def test_release_prefix_name_is_the_complete_commit_not_a_truncation() -> None:
     ],
 )
 def test_release_cli_requires_the_explicit_source_commit(argv: list[str], slot: int) -> None:
-    from capsem.gate import cli
-    from capsem.gate.sourcecommit import SourceCommit
+    from capsem_builder.gate import cli
+    from capsem_builder.gate.sourcecommit import SourceCommit
 
     with pytest.raises(SystemExit):
         cli.build_parser().parse_args(argv)
@@ -171,9 +171,9 @@ def test_release_cli_requires_the_explicit_source_commit(argv: list[str], slot: 
 def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate import buildcache, cargotarget, prefix
-    from capsem.gate import config as gate_config
-    from capsem.gate.sourcecommit import SourceCommit
+    from capsem_builder.gate import buildcache, cargotarget, prefix
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.sourcecommit import SourceCommit
 
     commit = SourceCommit("0123456789abcdef" * 2 + "01234567")
     original = gate_config.load(PROJECT_ROOT)
@@ -221,9 +221,9 @@ def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
 
 
 def test_exact_commit_prefix_has_a_nonblocking_cross_process_lease(tmp_path: Path) -> None:
-    from capsem.gate import config as gate_config
-    from capsem.gate import prefix
-    from capsem.gate.sourcecommit import SourceCommit
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import prefix
+    from capsem_builder.gate.sourcecommit import SourceCommit
 
     commit = SourceCommit("0123456789abcdef" * 2 + "01234567")
     original = gate_config.load(PROJECT_ROOT)
@@ -235,9 +235,9 @@ def test_exact_commit_prefix_has_a_nonblocking_cross_process_lease(tmp_path: Pat
     probe = (
         "import sys\n"
         "from pathlib import Path\n"
-        "from capsem.gate import config as gate_config\n"
-        "from capsem.gate.errors import PrefixBusy\n"
-        "from capsem.gate.prefixlease import lease\n"
+        "from capsem_builder.gate import config as gate_config\n"
+        "from capsem_builder.gate.errors import PrefixBusy\n"
+        "from capsem_builder.gate.prefixlease import lease\n"
         "base = gate_config.load(Path(sys.argv[1]))\n"
         "config = base.model_copy(update={'prefix': base.prefix.model_copy("
         "update={'parent': sys.argv[2]})})\n"
@@ -262,9 +262,9 @@ def test_exact_commit_prefix_has_a_nonblocking_cross_process_lease(tmp_path: Pat
 def test_forged_source_marker_cannot_bypass_exact_prefix_materialization(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate import config as gate_config
-    from capsem.gate import prefix
-    from capsem.gate.sourcecommit import SourceCommit
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import prefix
+    from capsem_builder.gate.sourcecommit import SourceCommit
 
     commit = SourceCommit("0123456789abcdef" * 2 + "01234567")
     original = gate_config.load(PROJECT_ROOT)
@@ -292,9 +292,9 @@ def test_ty_refuses_a_raw_string_at_source_commit_seams() -> None:
 def test_source_transport_ref_is_create_or_verify_not_mutable(
     committed_source: tuple[Path, str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate import config as gate_config
-    from capsem.gate import snapshot
-    from capsem.gate.sourcecommit import SourceCommit
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import snapshot
+    from capsem_builder.gate.sourcecommit import SourceCommit
 
     source, first, second = committed_source
     target = tmp_path / "qualified"

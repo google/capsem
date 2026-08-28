@@ -159,7 +159,7 @@ def run_from_private_copy(
     it produced, and give the copy back.
 
     Through `uv run` in the prefix rather than this interpreter, deliberately.
-    Re-execing `sys.executable -m capsem.gate` would keep the *parent's*
+    Re-execing `sys.executable -m capsem_builder.gate` would keep the *parent's*
     `sys.path`, so the child would run the outer checkout's code while sitting
     in the copy -- measuring one tree and qualifying another, which is the
     exact confusion `sourcestate.gate_source()` exists to catch.

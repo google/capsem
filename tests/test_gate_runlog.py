@@ -22,24 +22,23 @@ from argparse import Namespace
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import cancellation
-from capsem.gate import config as gate_config
-from capsem.gate.actions import Run
-from capsem.gate.errors import GateError
-from capsem.gate.execution import step
-from capsem.gate.proc import Runner
-from capsem.gate.recording import Recorded
-from capsem.gate.runhistory import live, read, rotate, runs
-from capsem.gate.runlog import RunLog
-from capsem.gate.runlogschema import (
+from capsem_builder.gate import cancellation
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.actions import Run
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.execution import step
+from capsem_builder.gate.proc import Runner
+from capsem_builder.gate.recording import Recorded
+from capsem_builder.gate.runhistory import live, read, rotate, runs
+from capsem_builder.gate.runlog import RunLog
+from capsem_builder.gate.runlogschema import (
     PAYLOADS,
     QualificationComplete,
     QualificationResume,
     QualificationReuse,
     QualificationRun,
 )
-from capsem.gate.sourcecommit import SourceCommit
+from capsem_builder.gate.sourcecommit import SourceCommit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
@@ -248,7 +247,7 @@ def test_sigterm_archives_a_terminal_exact_source_attempt(
     """A supervisor stop must leave graph-safe continuation evidence."""
     config = _checkout(tmp_path)
     commit = SourceCommit("1" * 40)
-    monkeypatch.setattr("capsem.gate.auditfs.tracked", lambda _path: False)
+    monkeypatch.setattr("capsem_builder.gate.auditfs.tracked", lambda _path: False)
 
     with (
         pytest.raises(cancellation.Terminated),
@@ -390,7 +389,7 @@ def test_a_checkout_without_git_still_records_a_run(tmp_path: Path) -> None:
 
 def test_measuring_a_directory_that_is_gone_is_not_an_error(tmp_path: Path) -> None:
     """Rotation and `gc` both measure trees that another run may have taken."""
-    from capsem.gate.runhistory import tree_size
+    from capsem_builder.gate.runhistory import tree_size
 
     assert tree_size(tmp_path / "never-existed") == 0
 
@@ -571,7 +570,7 @@ def test_rotation_of_an_empty_root_is_harmless(tmp_path: Path) -> None:
 def test_a_run_directory_with_no_events_counts_as_unfinished(tmp_path: Path) -> None:
     """A run killed before its first write is the least finished of all, and
     rotation must not read it as complete and give it up first."""
-    from capsem.gate.runhistory import finished
+    from capsem_builder.gate.runhistory import finished
 
     config = _checkout(tmp_path)
     bare = config.path(config.runlog.root) / "20260101-000000-test"
@@ -626,8 +625,8 @@ def test_rotation_does_not_claim_a_run_it_could_not_delete(tmp_path, monkeypatch
     a permission the gate does not have -- and reporting it as removed means
     the next capacity decision is made against a number that is wrong.
     """
-    from capsem.gate import fileactions, runhistory
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate import fileactions, runhistory
+    from capsem_builder.gate.errors import GateError
 
     def refuses(path, *args, **kwargs):
         raise PermissionError(13, "Permission denied", str(path))
@@ -653,8 +652,8 @@ def test_rotation_does_not_claim_a_run_it_could_not_delete(tmp_path, monkeypatch
 def _recorded_argv(raw: list[str], tmp_path: Path) -> tuple[str, ...]:
     """Drive the real CLI construction path, and read back what it recorded."""
 
-    from capsem.gate import cli
-    from capsem.gate.command import GateCommand
+    from capsem_builder.gate import cli
+    from capsem_builder.gate.command import GateCommand
 
     parsed = cli.build_parser().parse_args(raw)
     command = GateCommand.registry[parsed.gate_command](
@@ -758,7 +757,7 @@ def test_a_run_is_protected_before_its_directory_becomes_visible(
     run is becoming visible.
     """
     config = _tight(tmp_path)
-    from capsem.gate import runlog as module
+    from capsem_builder.gate import runlog as module
 
     real = module.hold_active
     observed: list[bool] = []
@@ -799,7 +798,7 @@ def test_a_run_stays_protected_until_its_summary_is_written(
     otherwise successful release into a logging failure after publication.
     """
     config = _tight(tmp_path)
-    from capsem.gate import runlog as module
+    from capsem_builder.gate import runlog as module
 
     real = module.write_summary
     ran: list[bool] = []
@@ -831,7 +830,7 @@ def test_retention_measures_each_remaining_run_once(
     Same answer each time -- a directory that was not removed has not changed
     size -- at a cost that grows with runs times files.
     """
-    from capsem.gate import runhistory
+    from capsem_builder.gate import runhistory
 
     config = _checkout(tmp_path, keep_runs=1, keep_bytes=1)
     root = config.path(config.runlog.root)

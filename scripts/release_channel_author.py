@@ -19,8 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from capsem.gate.releaseauthoring import author_native_candidate
-from capsem.gate.sourcecommit import source_commit_for_checkout
+from capsem_builder.gate.releaseauthoring import author_native_candidate
+from capsem_builder.gate.sourcecommit import source_commit_for_checkout
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 

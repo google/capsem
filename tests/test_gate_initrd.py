@@ -9,16 +9,15 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import initrd
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.initrd import repack_step
+from capsem_builder.gate.initrdactions import _Repack
+from capsem_builder.gate.plan import Plan
+from capsem_builder.gate.proc import Runner
 from helpers.gate import RecordingJournal, RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate import initrd
-from capsem.gate.context import Context
-from capsem.gate.errors import GateError
-from capsem.gate.initrd import repack_step
-from capsem.gate.initrdactions import _Repack
-from capsem.gate.plan import Plan
-from capsem.gate.proc import Runner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)

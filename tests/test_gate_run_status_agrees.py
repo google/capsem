@@ -19,9 +19,8 @@ import json
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import config as gate_config
-from capsem.gate.timing import Timing, measure, report
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.timing import Timing, measure, report
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -88,7 +87,7 @@ def recorded(tmp_path, monkeypatch):
 
 def test_run_selection_finds_a_run_that_failed_outside_its_steps(recorded) -> None:
     """`runs last --failed` is how an operator reaches the failure."""
-    from capsem.gate.runs import runs as recorded_runs
+    from capsem_builder.gate.runs import runs as recorded_runs
 
     settings = CONFIG.model_copy(update={"root": recorded})
     found = recorded_runs(settings)

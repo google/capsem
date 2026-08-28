@@ -6,12 +6,11 @@ import sys
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import hostimage
+from capsem_builder.gate.configschema import Arch as ArchConfig
+from capsem_builder.gate.toolchainschema import LinuxWorkspaceConfig
 from pydantic import ValidationError
-
-from capsem.gate import config as gate_config
-from capsem.gate import hostimage
-from capsem.gate.configschema import Arch as ArchConfig
-from capsem.gate.toolchainschema import LinuxWorkspaceConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROVISIONER = PROJECT_ROOT / "scripts" / "provision-linux-workspace.py"
@@ -235,7 +234,7 @@ def test_ci_and_host_builder_consume_the_same_prerequisite_authority() -> None:
     ci = (PROJECT_ROOT / ".github/workflows/ci.yaml").read_text(encoding="utf-8")
     fast = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(encoding="utf-8")
     host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text(encoding="utf-8")
-    hostimage = (PROJECT_ROOT / "src/capsem/gate/hostimage.py").read_text(encoding="utf-8")
+    hostimage = (PROJECT_ROOT / "build_system/builder/gate/hostimage.py").read_text(encoding="utf-8")
     invocation = "sudo python3 scripts/provision-linux-workspace.py --install apt"
 
     assert invocation in ci

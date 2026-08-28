@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from capsem.gate import config as gate_config
+from capsem_builder.gate import config as gate_config
 
 ROOT = Path(__file__).resolve().parents[2]
 

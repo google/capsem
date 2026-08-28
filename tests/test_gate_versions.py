@@ -13,10 +13,9 @@ import re
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import versions
+from capsem_builder.gate.errors import GateError
 from helpers.gate import RecordingRunner
-
-from capsem.gate import versions
-from capsem.gate.errors import GateError
 
 WORKSPACE = """\
 [workspace]

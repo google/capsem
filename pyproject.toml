@@ -11,10 +11,10 @@ dependencies = [
 ]
 
 [project.scripts]
-# Not `capsem.gate.cli:main`: the launcher re-execs under an isolated bytecode
-# cache *before* importing anything from `capsem.gate`, so a same-size edit
+# Not `capsem_builder.gate.cli:main`: the launcher re-execs under an isolated bytecode
+# cache *before* importing anything from `capsem_builder.gate`, so a same-size edit
 # within one timestamp tick cannot leave the gate running last version's code.
-capsem-gate = "capsem.gatelaunch:main"
+capsem-gate = "capsem_builder.gatelaunch:main"
 
 [build-system]
 requires = ["hatchling"]

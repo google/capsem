@@ -9,10 +9,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.errors import GateError
 from helpers.gate import RECORDED_IMAGE_ID, RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate.errors import GateError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -52,7 +51,7 @@ def _source(tmp_path: Path):
 
 
 def _capture(config):
-    from capsem.gate import snapshot, sourcecapture
+    from capsem_builder.gate import snapshot, sourcecapture
 
     expected = sourcecapture.SourceDigest(snapshot.digest(config.root, config))
     receipt = config.path(config.candidate.source_state_file)
@@ -62,7 +61,7 @@ def _capture(config):
 
 
 def test_source_record_captures_an_immutable_docker_subject(tmp_path: Path) -> None:
-    from capsem.gate import snapshot, sourcecapture
+    from capsem_builder.gate import snapshot, sourcecapture
 
     config, tracked = _source(tmp_path)
     expected = sourcecapture.SourceDigest(snapshot.digest(config.root, config))
@@ -78,8 +77,8 @@ def test_source_record_captures_an_immutable_docker_subject(tmp_path: Path) -> N
 def test_build_and_smoke_share_the_persisted_frozen_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate import installbuilder, installimage
-    from capsem.gate.installbuilder import InstallBuilderIdentity
+    from capsem_builder.gate import installbuilder, installimage
+    from capsem_builder.gate.installbuilder import InstallBuilderIdentity
 
     config, tracked = _source(tmp_path)
     frozen = _capture(config)
@@ -112,8 +111,8 @@ def test_build_and_smoke_share_the_persisted_frozen_identity(
 def test_malformed_image_receipt_fails_before_smoke(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate import installbuilder, installimage
-    from capsem.gate.installbuilder import InstallBuilderIdentity
+    from capsem_builder.gate import installbuilder, installimage
+    from capsem_builder.gate.installbuilder import InstallBuilderIdentity
 
     config, _ = _source(tmp_path)
     frozen = _capture(config)
@@ -141,8 +140,8 @@ def test_malformed_image_receipt_fails_before_smoke(
 def test_source_drift_during_build_leaves_no_success_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate import installbuilder, installimage, sourcecapture
-    from capsem.gate.installbuilder import InstallBuilderIdentity
+    from capsem_builder.gate import installbuilder, installimage, sourcecapture
+    from capsem_builder.gate.installbuilder import InstallBuilderIdentity
 
     config, _ = _source(tmp_path)
     frozen = _capture(config)
@@ -178,9 +177,9 @@ def test_source_drift_during_build_leaves_no_success_receipt(
 
 
 def test_install_image_receipt_is_a_resume_checked_product() -> None:
-    from capsem.gate.command import GateCommand
+    from capsem_builder.gate.command import GateCommand
 
-    importlib.import_module("capsem.gate.cli")
+    importlib.import_module("capsem_builder.gate.cli")
     plan = GateCommand.registry["install-image"](
         RecordingRunner(PROJECT_ROOT),
         argparse.Namespace(dry_run=False, graph=False, timing=False),

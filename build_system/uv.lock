@@ -122,7 +122,10 @@ dependencies = [
     { name = "blake3" },
     { name = "click" },
     { name = "jinja2" },
+    { name = "psutil" },
     { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "watchdog" },
 ]
 
 [package.dev-dependencies]
@@ -147,7 +150,10 @@ requires-dist = [
     { name = "blake3", specifier = ">=1.0.8" },
     { name = "click", specifier = ">=8.0" },
     { name = "jinja2", specifier = ">=3.0" },
+    { name = "psutil", specifier = ">=7.2.2" },
     { name = "pydantic", specifier = ">=2.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "watchdog", specifier = ">=6.0.0" },
 ]
 
 [package.metadata.requires-dev]

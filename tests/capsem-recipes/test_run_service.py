@@ -42,7 +42,7 @@ def test_ensure_service_detaches_from_recipe_shell():
     """
     assert "capsem-gate ensure-service" in _recipe_block("_ensure-service:")
 
-    launch = (PROJECT_ROOT / "src/capsem/gate/proc.py").read_text(encoding="utf-8")
+    launch = (PROJECT_ROOT / "build_system/builder/gate/proc.py").read_text(encoding="utf-8")
     assert "start_new_session=True" in launch
     assert "stdout=subprocess.DEVNULL" in launch
     assert "stderr=subprocess.DEVNULL" in launch

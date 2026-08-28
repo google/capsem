@@ -13,16 +13,15 @@ from pathlib import Path
 
 import pytest
 import variables
+from capsem_builder.gate import candidate, cli, sandbox  # noqa: F401 - importing registers commands
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.command import GateCommand
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.qualification import LocalQualification
+from capsem_builder.gate.sourcecommit import SourceCommit
+from capsem_builder.gate.sourcestate import RequireSourceUnchanged
+from capsem_builder.gate.timingratchet import EnforceTimingRegression, TimingBoundary
 from helpers.gate import RecordingRunner
-
-from capsem.gate import candidate, cli, sandbox  # noqa: F401 - importing registers commands
-from capsem.gate import config as gate_config
-from capsem.gate.command import GateCommand
-from capsem.gate.errors import GateError
-from capsem.gate.qualification import LocalQualification
-from capsem.gate.sourcecommit import SourceCommit
-from capsem.gate.sourcestate import RequireSourceUnchanged
-from capsem.gate.timingratchet import EnforceTimingRegression, TimingBoundary
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -77,7 +76,7 @@ def test_every_complete_gate_keeps_the_enforcing_policy(name: str) -> None:
 
 @pytest.mark.parametrize("name", sorted(RELEASES))
 def test_every_release_dispatches_qualification_under_enforcement(name: str) -> None:
-    from capsem.gate.qualificationevidence import QualificationPolicy
+    from capsem_builder.gate.qualificationevidence import QualificationPolicy
 
     command = GateCommand.registry[name]
 
@@ -288,7 +287,7 @@ def test_an_unqualified_channel_still_publishes_under_enforcement(name: str) -> 
     Enforcement keyed on the qualification policy alone would let the channel
     with *less* human scrutiny publish from a permissive sandbox.
     """
-    from capsem.gate.qualificationevidence import QualificationPolicy
+    from capsem_builder.gate.qualificationevidence import QualificationPolicy
 
     arguments = {**RELEASES[name], "channel": "nightly"}
     command = _command(name, **arguments)
@@ -303,9 +302,9 @@ def test_an_unqualified_channel_still_publishes_under_enforcement(name: str) -> 
 
 @pytest.fixture
 def macos(monkeypatch):
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/caffeinate")
-    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: False)
+    monkeypatch.setattr("capsem_builder.gate.sandbox.active", lambda _config: False)
     monkeypatch.delenv(CONFIG.candidate.keep_awake_marker, raising=False)
 
 
@@ -333,7 +332,7 @@ def test_the_wrapper_preserves_the_operators_exact_invocation(name, macos) -> No
     """A wrapper wraps what it was given. Substituting a recipe drops flags.
 
     The *arguments*, not `sys.argv` whole. `capsem-gate` re-execs itself with
-    `-m capsem.gate` to get an isolated bytecode cache, so `sys.argv[0]` here
+    `-m capsem_builder.gate` to get an isolated bytecode cache, so `sys.argv[0]` here
     is the path of `__main__.py`. Asserting the tail equalled `sys.argv`
     endorsed passing that to `caffeinate`, which cannot execute a `.py` file --
     `env: __main__.py: Permission denied`, three seconds into a gate.
@@ -361,7 +360,7 @@ def test_the_wrapper_preserves_the_operators_exact_invocation(name, macos) -> No
 def test_the_wrapper_is_applied_exactly_once(name, macos, monkeypatch) -> None:
     """Kernel state, not a forgeable environment marker, stops rewrapping."""
     monkeypatch.setenv(CONFIG.candidate.keep_awake_marker, "1")
-    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: True)
+    monkeypatch.setattr("capsem_builder.gate.sandbox.active", lambda _config: True)
 
     assert _command(name, **COMPLETE_GATE[name]).reexec() is None
 
@@ -376,9 +375,9 @@ def test_forging_the_keep_awake_marker_cannot_disable_the_macos_sandbox(macos, m
 
 
 def test_linux_candidate_gets_the_kernel_enforced_network_wrapper(monkeypatch) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/bwrap")
-    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: False)
+    monkeypatch.setattr("capsem_builder.gate.sandbox.active", lambda _config: False)
 
     replacement = _command("candidate").reexec()
 
@@ -389,10 +388,10 @@ def test_linux_candidate_gets_the_kernel_enforced_network_wrapper(monkeypatch) -
 
 @pytest.mark.parametrize("name", ["release-binaries", "release-profile"])
 def test_linux_release_dispatch_gets_the_kernel_wrapper(name, monkeypatch) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/bwrap")
-    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: False)
-    monkeypatch.setattr("capsem.gate.sandbox.prepare_egress", lambda *_args: None)
+    monkeypatch.setattr("capsem_builder.gate.sandbox.active", lambda _config: False)
+    monkeypatch.setattr("capsem_builder.gate.sandbox.prepare_egress", lambda *_args: None)
 
     replacement = _command(name, **RELEASES[name]).reexec()
 
@@ -407,8 +406,8 @@ def test_release_ci_modules_declare_the_same_kernel_boundary(name) -> None:
 
 
 def test_linux_kernel_wrapper_is_applied_exactly_once(monkeypatch) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: True)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.sandbox.active", lambda _config: True)
 
     assert _command("candidate").reexec() is None
 
@@ -418,7 +417,7 @@ def test_the_policy_is_stated_as_policy_not_as_one_command_name() -> None:
     replacing = sorted(
         name
         for name, cls in GateCommand.registry.items()
-        if "reexec" in vars(cls) and cls.__module__.startswith("capsem.gate.")
+        if "reexec" in vars(cls) and cls.__module__.startswith("capsem_builder.gate.")
     )
 
     assert set(replacing) <= set(COMPLETE_GATE), (

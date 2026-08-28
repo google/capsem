@@ -18,14 +18,13 @@ import time
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.actions import Action, Run
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.execution import step
+from capsem_builder.gate.plan import Plan
 from helpers.gate import RecordingJournal, RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate.actions import Action, Run
-from capsem.gate.context import Context
-from capsem.gate.errors import GateError
-from capsem.gate.execution import step
-from capsem.gate.plan import Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -627,7 +626,7 @@ def test_a_shared_step_cannot_hide_a_different_resume_policy() -> None:
     second said it must be re-measured, returning whichever was registered
     first would make continuation safety depend on composition order.
     """
-    from capsem.gate.execution import ResumePolicy
+    from capsem_builder.gate.execution import ResumePolicy
 
     plan = Plan("example")
     plan.shared(step("identity", Run(["git", "rev-parse", "HEAD"])))

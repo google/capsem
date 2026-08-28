@@ -10,9 +10,8 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate.command import GateCommand
 from helpers.gate import RecordingRunner
-
-from capsem.gate.command import GateCommand
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -23,8 +22,8 @@ def _executable(path: Path, body: str) -> None:
 
 
 def _plan(monkeypatch: pytest.MonkeyPatch):
-    importlib.import_module("capsem.gate.cli")
-    monkeypatch.setattr("capsem.gate.localinstall.host.on_macos", lambda: True)
+    importlib.import_module("capsem_builder.gate.cli")
+    monkeypatch.setattr("capsem_builder.gate.localinstall.host.on_macos", lambda: True)
     return GateCommand.registry["local-install"](
         RecordingRunner(ROOT),
         argparse.Namespace(dry_run=False, graph=False, timing=False),

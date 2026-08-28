@@ -21,14 +21,13 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import cli  # noqa: F401 - imported so every command registers
-from capsem.gate import config as gate_config
-from capsem.gate.command import GateCommand
-from capsem.gate.funnel import ENTRYPOINTS, program
+from capsem_builder.gate import cli  # noqa: F401 - imported so every command registers
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.command import GateCommand
+from capsem_builder.gate.funnel import ENTRYPOINTS, program
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-GATE_PACKAGE = PROJECT_ROOT / "src" / "capsem" / "gate"
+GATE_PACKAGE = PROJECT_ROOT / "build_system" / "builder" / "gate"
 
 CONFIG = gate_config.load(PROJECT_ROOT)
 

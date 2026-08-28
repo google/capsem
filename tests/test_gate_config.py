@@ -19,10 +19,9 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.errors import GateError
 from pydantic import ValidationError
-
-from capsem.gate import config as gate_config
-from capsem.gate.errors import GateError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -431,7 +430,7 @@ def test_the_free_space_floor_exceeds_what_one_run_is_warned_about(
 def test_the_schema_version_is_the_one_this_code_understands(tmp_path) -> None:
     """Pydantic accepted any integer, so a file written for a later schema
     loaded happily and was then read with the wrong meaning."""
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate.errors import GateError
 
     root = _checkout(tmp_path)
     source = root / "config" / "gate.toml"
@@ -451,7 +450,7 @@ def test_the_schema_version_is_the_one_this_code_understands(tmp_path) -> None:
 def test_a_retention_policy_that_keeps_nothing_is_refused(tmp_path, field: str, value: int) -> None:
     """`keep_runs = 0` prunes every run including the one being written, and
     the failure surfaces as a missing directory rather than as a bad policy."""
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate.errors import GateError
 
     root = _checkout(tmp_path)
     source = root / "config" / "gate.toml"
@@ -472,7 +471,7 @@ def test_the_default_channel_is_one_of_the_declared_channels() -> None:
 def test_the_base_profile_is_a_checked_in_profile() -> None:
     """The broad suite runs against it, so a name nobody built is a gate that
     proves nothing about anything."""
-    from capsem.gate import imagebuild
+    from capsem_builder.gate import imagebuild
 
     assert CONFIG.suites.pytest.base_profile in imagebuild.profiles(CONFIG)
 

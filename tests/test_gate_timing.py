@@ -16,14 +16,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import config as gate_config
-from capsem.gate.errors import GateError
-from capsem.gate.harnessschema import TimingRegressionConfig
-from capsem.gate.runlog import RunLog
-from capsem.gate.runlogschema import PlanShape, RunStart, StepEnd
-from capsem.gate.timing import measure, report
-from capsem.gate.timingratchet import (
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.harnessschema import TimingRegressionConfig
+from capsem_builder.gate.runlog import RunLog
+from capsem_builder.gate.runlogschema import PlanShape, RunStart, StepEnd
+from capsem_builder.gate.timing import measure, report
+from capsem_builder.gate.timingratchet import (
     TimingBoundary,
     comparable,
     enforce_current,
@@ -239,7 +238,7 @@ def _start(*, head: str = "new", cores: int = 16) -> RunStart:
         machine="x86_64",
         cores=cores,
         free_gb=100.0,
-        gate_source="/checkout/src/capsem/gate/__init__.py",
+        gate_source="/checkout/build_system/builder/gate/__init__.py",
         pycache="/tmp/pycache",
     )
 

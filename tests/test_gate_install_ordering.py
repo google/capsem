@@ -18,19 +18,18 @@ import json
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.content import LocalInstallContent, ProfileContent, SelectedInstallContent
+from capsem_builder.gate.docker import Docker
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.install import InstallGate
+from capsem_builder.gate.installproof import InstallProof
+from capsem_builder.gate.productschema import ProfileRevisionPolicy
+from capsem_builder.gate.releaseauthoring import author_binary_graph, author_native_candidate
+from capsem_builder.gate.releasegraph import ReleaseGraph
+from capsem_builder.gate.sourcecommit import SourceCommit
 from helpers.gate import RecordingRunner
 from helpers.profile_content import materialize_required_artifacts
-
-from capsem.gate import config as gate_config
-from capsem.gate.content import LocalInstallContent, ProfileContent, SelectedInstallContent
-from capsem.gate.docker import Docker
-from capsem.gate.errors import GateError
-from capsem.gate.install import InstallGate
-from capsem.gate.installproof import InstallProof
-from capsem.gate.productschema import ProfileRevisionPolicy
-from capsem.gate.releaseauthoring import author_binary_graph, author_native_candidate
-from capsem.gate.releasegraph import ReleaseGraph
-from capsem.gate.sourcecommit import SourceCommit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -230,13 +229,13 @@ def gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[InstallGate, 
 
 def _macos_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A checkout on a macOS host with no colima, the local-proof shape."""
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
     monkeypatch.setattr("shutil.which", lambda _name: None)
     # Image identity/materialization has its own focused contracts. These
     # tests own only the transaction order after that graph prerequisite has
     # produced an exact image.
     monkeypatch.setattr(
-        "capsem.gate.installimage.require_local_image",
+        "capsem_builder.gate.installimage.require_local_image",
         lambda _runner, _config: "sha256:" + "1" * 64,
     )
     return _checkout(tmp_path, dpkg_arch=CONFIG.host_arch().dpkg)
@@ -534,7 +533,7 @@ def test_a_missing_package_names_the_rail_that_builds_it(
 ) -> None:
     """The install gate proves the release-mode package the package rail made.
     Building a debug one here would prove bytes that can never be published."""
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
     root = _checkout_without_package(tmp_path)
 
     with pytest.raises(GateError, match="just _cross-compile"):
@@ -756,8 +755,8 @@ def test_the_macos_report_is_found_where_the_tart_step_writes_it(tmp_path) -> No
     there, so a complete local gate always failed at the last step with
     "requires the native glow-up report from this module".
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate.install import macos_report
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.install import macos_report
 
     config = gate_config.load(PROJECT_ROOT)
     written = config.path(config.modules.macos_glowup_report)
@@ -774,8 +773,8 @@ def test_the_macos_report_is_found_where_the_tart_step_writes_it(tmp_path) -> No
 
 def test_a_release_lane_may_hand_the_report_over_by_variable(tmp_path) -> None:
     """CI produces it in another job, so the variable still wins."""
-    from capsem.gate import config as gate_config
-    from capsem.gate.install import macos_report
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.install import macos_report
 
     config = gate_config.load(PROJECT_ROOT)
     handed = str(tmp_path / "elsewhere.json")
@@ -785,8 +784,8 @@ def test_a_release_lane_may_hand_the_report_over_by_variable(tmp_path) -> None:
 
 def test_neither_present_still_refuses(tmp_path) -> None:
     """The refusal is right when the proof genuinely did not run."""
-    from capsem.gate import config as gate_config
-    from capsem.gate.install import macos_report
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.install import macos_report
 
     config = gate_config.load(PROJECT_ROOT).model_copy(update={"root": tmp_path})
 

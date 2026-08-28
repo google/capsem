@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from capsem.gate import config as gate_config
+from capsem_builder.gate import config as gate_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SETTINGS = gate_config.load(PROJECT_ROOT).audits

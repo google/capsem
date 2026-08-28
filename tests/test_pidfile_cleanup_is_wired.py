@@ -25,10 +25,10 @@ def _pidfiles_the_gate_stops() -> set[str]:
 
     They were spelled inside the asset recipe when this was shell, so the guard
     parsed them out of the recipe text. They are `[pidfiles] names` in
-    `config/gate.toml` now, which is also what `capsem.gate.pidfiles` iterates
+    `config/gate.toml` now, which is also what `capsem_builder.gate.pidfiles` iterates
     -- so this checks the same list the gate uses rather than a copy of it.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     return set(gate_config.load(PROJECT_ROOT).pidfiles.names)
 

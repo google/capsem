@@ -7,10 +7,9 @@ from pathlib import Path
 
 import pytest
 import variables
+from capsem_builder.gate import cli, focus, module_contracts
+from capsem_builder.gate.qualification import LocalQualification
 from helpers.gate import RecordingRunner
-
-from capsem.gate import cli, focus, module_contracts
-from capsem.gate.qualification import LocalQualification
 
 ROOT = Path(__file__).resolve().parents[1]
 

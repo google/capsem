@@ -21,15 +21,14 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate.actions import Run
+from capsem_builder.gate.command import GateCommand
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.execution import step
+from capsem_builder.gate.lifecycle import Resource
+from capsem_builder.gate.plan import Plan
+from capsem_builder.gate.proc import Runner
 from helpers.gate import RecordingJournal, RecordingRunner
-
-from capsem.gate.actions import Run
-from capsem.gate.command import GateCommand
-from capsem.gate.errors import GateError
-from capsem.gate.execution import step
-from capsem.gate.lifecycle import Resource
-from capsem.gate.plan import Plan
-from capsem.gate.proc import Runner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -75,8 +74,8 @@ def journal(monkeypatch) -> RecordingJournal:
         assert source_commit is None
         yield recording
 
-    monkeypatch.setattr("capsem.gate.runlog.RunLog.open", _open)
-    monkeypatch.setattr("capsem.gate.recording.RunLog.open", _open)
+    monkeypatch.setattr("capsem_builder.gate.runlog.RunLog.open", _open)
+    monkeypatch.setattr("capsem_builder.gate.recording.RunLog.open", _open)
     return recording
 
 

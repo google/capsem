@@ -21,18 +21,17 @@ import argparse
 from pathlib import Path
 
 import pytest
-from helpers.gate import RecordingRunner
-
-from capsem.gate import (
+from capsem_builder.gate import (
     cli,  # noqa: F401 - imported so every command registers
     hostimage,
 )
-from capsem.gate import config as gate_config
-from capsem.gate.command import GateCommand
-from capsem.gate.content import ProfileContent
-from capsem.gate.execution import Requires
-from capsem.gate.installimage import InstallImageStep
-from capsem.gate.plan import Plan
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.command import GateCommand
+from capsem_builder.gate.content import ProfileContent
+from capsem_builder.gate.execution import Requires
+from capsem_builder.gate.installimage import InstallImageStep
+from capsem_builder.gate.plan import Plan
+from helpers.gate import RecordingRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -149,7 +148,7 @@ def test_the_builder_needs_no_repository_to_identify_a_build() -> None:
     it was given.
     """
     assert CONFIG.environment.package.build_revision == "CAPSEM_BUILD_REVISION"
-    assert not (PROJECT_ROOT / "src/capsem/gate/gitmetadata.py").exists()
+    assert not (PROJECT_ROOT / "build_system/builder/gate/gitmetadata.py").exists()
 
 
 def test_only_the_lane_that_needs_git_provenance_still_carries_it() -> None:
@@ -173,19 +172,19 @@ def test_only_the_lane_that_needs_git_provenance_still_carries_it() -> None:
     fallback. Asserting only the first half would let the mount quietly come
     back; asserting only the second would let provenance quietly leave.
     """
-    from capsem.gate import linuxrust
+    from capsem_builder.gate import linuxrust
 
     # Asserted against behaviour, not against the rail's source text. The
     # previous version required the string `docker_git_metadata_mount` to
     # appear -- which pinned a mechanism, so replacing the mount with a passed
     # revision broke a contract that should not have noticed.
-    rail = (PROJECT_ROOT / "src/capsem/gate/packagerail.py").read_text(encoding="utf-8")
+    rail = (PROJECT_ROOT / "build_system/builder/gate/packagerail.py").read_text(encoding="utf-8")
     assert "revision=" in rail, (
         "the package rail stopped supplying a revision, so a published binary "
         "would embed an 'unknown' build hash without anything failing"
     )
 
-    lane = (PROJECT_ROOT / "src/capsem/gate/linuxrust.py").read_text(encoding="utf-8")
+    lane = (PROJECT_ROOT / "build_system/builder/gate/linuxrust.py").read_text(encoding="utf-8")
     assert "revision=" not in lane
     for flag in ("-v", "--volume", "--user"):
         assert flag not in lane, f"the parity lane grew a {flag}, so it shares state again"
@@ -208,9 +207,9 @@ def test_the_lane_has_somewhere_to_put_its_output_before_it_runs() -> None:
     failure path too, since a lane that failed is exactly when its coverage is
     worth having.
     """
-    from capsem.gate import linuxrust
+    from capsem_builder.gate import linuxrust
 
-    source = (PROJECT_ROOT / "src/capsem/gate/linuxrust.py").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "build_system/builder/gate/linuxrust.py").read_text(encoding="utf-8")
     body = source[source.index("def perform") :]
 
     assert body.index("make_dir(destination)") < body.index("copy_out("), (
@@ -238,7 +237,7 @@ def test_chained_lanes_do_not_make_the_builder_depend_on_them() -> None:
     The builder image has no ordering requirement of its own. Only the package
     that runs inside it does.
     """
-    from capsem.gate import crosscompile
+    from capsem_builder.gate import crosscompile
 
     plan = Plan("chained")
     content = ProfileContent.standalone(CONFIG)

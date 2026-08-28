@@ -12,14 +12,13 @@ import time
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import cancellation
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.invocation import Command
+from capsem_builder.gate.proc import Runner
+from capsem_builder.gate.processgroup import StopPolicy
 from helpers.gate import RecordingRunner
-
-from capsem.gate import cancellation
-from capsem.gate import config as gate_config
-from capsem.gate.errors import GateError
-from capsem.gate.invocation import Command
-from capsem.gate.proc import Runner
-from capsem.gate.processgroup import StopPolicy
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)

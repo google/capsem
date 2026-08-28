@@ -28,10 +28,10 @@ GATEWAY_SUFFIX = len("instances/") + 36 + len("-ws.sock")
 
 def test_the_asset_lane_creates_its_run_dir_where_it_was_configured_to() -> None:
     """The template names a directory, not just a prefix."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     template = Path(gate_config.load(PROJECT_ROOT).assets.run_dir_template)
-    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "assets.py").read_text()
+    source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "assets.py").read_text()
 
     assert "mkdtemp" in source
     assert "dir=" in source, (
@@ -45,7 +45,7 @@ def test_the_longest_terminal_socket_path_fits_in_sun_path() -> None:
     """The claim the template exists to satisfy, checked as arithmetic."""
     import tempfile
 
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     template = Path(gate_config.load(PROJECT_ROOT).assets.run_dir_template)
     prefix = template.name.split(".")[0] + "."

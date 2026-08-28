@@ -190,7 +190,7 @@ def _direct_mapping_problems(project: dict[str, Any]) -> list[str]:
         (_synthetic(obsolete_root_paths=("pyproject.toml",)), "obsolete_root_paths"),
         (_synthetic(distributions=("pyproject.toml=capsem",)), "distributions"),
         (
-            _synthetic(entrypoints=("pyproject.toml:capsem-gate=capsem.gatelaunch:main",)),
+            _synthetic(entrypoints=("pyproject.toml:capsem-gate=capsem_builder.gatelaunch:main",)),
             "entrypoints",
         ),
         (_synthetic(old_import_count=1, old_import_sha256="legacy"), "old_import_count"),

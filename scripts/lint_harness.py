@@ -12,7 +12,7 @@ an instruction, and for a `.j2` template it does not exist until rendered.
 harness never learns which kind it was holding.
 
 This lives under ``scripts/`` deliberately. It stages files and invokes tools,
-so putting it inside ``capsem.gate`` would bypass that package's action-only
+so putting it inside ``capsem_builder.gate`` would bypass that package's action-only
 machine boundary. The gate records this whole program as one ``Run`` action.
 
 Nothing here spells a source path, tool name or rule code. They come from

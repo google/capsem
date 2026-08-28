@@ -11,11 +11,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import shellsurfaces
 from helpers.script_modules import load_script
 from helpers.shelltokens import UnterminatedQuote, tokenize
 from helpers.workflow_contract import workflow_reachable_text
-
-from capsem.gate import shellsurfaces
 
 lint_harness = load_script(
     "citadel_shell_lint_harness",

@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-GATE = PROJECT_ROOT / "src" / "capsem" / "gate"
+GATE = PROJECT_ROOT / "build_system" / "builder" / "gate"
 
 #: The one module allowed to spell `shutil.copytree`. Everything else goes
 #: through `copy_tree` / `merge_tree`, which is where the rule is enforced and
@@ -48,7 +48,7 @@ a broken one: it stops the dereference and then raises `FileExistsError`
 because the destination link is already there, failing every export. A
 destination symlink has to be *replaced*.
 
-So there is one implementation, in `capsem.gate.filesystem`:
+So there is one implementation, in `capsem_builder.gate.filesystem`:
 
   copy_tree   replaces the target outright
   merge_tree  copies into an existing tree, never following a link either side
@@ -56,7 +56,7 @@ So there is one implementation, in `capsem.gate.filesystem`:
 Reach for those. A second hand-rolled `copytree` is a second place for this
 decision to be made differently, and the first one was made wrong.
 
-See src/capsem/gate/filesystem.py and tests/test_gate_prefix.py.
+See build_system/builder/gate/filesystem.py and tests/test_gate_prefix.py.
 """
 
 
@@ -95,7 +95,7 @@ def test_only_the_owner_spells_copytree(module: Path) -> None:
         TREE_COPY_RATIONALE
         + f"\n{module.name} calls shutil.copytree at line(s) "
         + ", ".join(str(call.lineno) for call in found)
-        + "; use capsem.gate.filesystem.copy_tree or merge_tree instead"
+        + "; use capsem_builder.gate.filesystem.copy_tree or merge_tree instead"
     )
 
 

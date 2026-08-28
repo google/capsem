@@ -10,11 +10,11 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from capsem.gate import config as gate_config
-from capsem.gate.exclusions import canonical, reconcile
-from capsem.gate.shellnodes import suppressed
-from capsem.gate.shellparse import parse
-from capsem.gate.shellsurfaces import run_instructions, workflow_bodies
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.exclusions import canonical, reconcile
+from capsem_builder.gate.shellnodes import suppressed
+from capsem_builder.gate.shellparse import parse
+from capsem_builder.gate.shellsurfaces import run_instructions, workflow_bodies
 
 ROOT = Path(__file__).resolve().parents[2]
 LEDGER_ENTRIES = gate_config.load(ROOT).boundary.discarded_verdicts
@@ -52,7 +52,7 @@ Read with a parser, because the question is grammatical. `|| true` inside a
 quoted argument suppresses nothing, `a || b` is a fallback rather than a
 suppression, and `true && risky` is not a suppression at all.
 
-See src/capsem/gate/exclusions.py and skills/dev-gate/SKILL.md.
+See build_system/builder/gate/exclusions.py and skills/dev-gate/SKILL.md.
 """
 
 LEDGER = "[[boundary.discarded_verdicts]] in config/gate.toml"

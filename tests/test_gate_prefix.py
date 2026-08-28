@@ -28,7 +28,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _config():
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     return gate_config.load(PROJECT_ROOT)
 
@@ -41,7 +41,7 @@ def _context(config):
     claims to exercise. These two cases raise before anything reaches the
     runner; a recorder is there so that stops being true silently.
     """
-    from capsem.gate.context import Context
+    from capsem_builder.gate.context import Context
 
     return Context(RecordingRunner(PROJECT_ROOT), config)
 
@@ -128,7 +128,7 @@ def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
     nothing to do with isolation. Mutation: point `[assets] run_dir_template`
     at a relative path and this goes red.
     """
-    from capsem.gate import prefix
+    from capsem_builder.gate import prefix
 
     config = _config()
     root = prefix.socket_root(config)
@@ -147,12 +147,12 @@ def test_moving_the_run_into_a_prefix_cannot_lengthen_a_socket_path() -> None:
 
 def test_the_prefix_example_reserves_the_full_release_commit() -> None:
     """The longest identity is one full commit, not a random abbreviation."""
-    from capsem.gate import prefix
+    from capsem_builder.gate import prefix
 
     config = _config()
     assert prefix.example(config).name == "0" * 40
 
-    from capsem.gate.workspace import Workspace
+    from capsem_builder.gate.workspace import Workspace
 
     socket = Workspace(config).run_dir / config.service.socket
     assert len(os.fsencode(socket)) + 1 <= SUN_LEN
@@ -168,7 +168,7 @@ def test_the_prefix_carries_the_working_tree_and_not_build_output(source: Path) 
     and untracked non-ignored files are part of the subject. A prefix built
     from `HEAD` would qualify a different tree than the one being measured.
     """
-    from capsem.gate import snapshot
+    from capsem_builder.gate import snapshot
 
     target = source.parent / "prefix"
     snapshot.populate(source, target, _config())
@@ -188,7 +188,7 @@ def test_a_tracked_symlink_stays_a_symlink(source: Path) -> None:
     silently duplicates a tree and produces a prefix whose digest can never
     match its source.
     """
-    from capsem.gate import snapshot
+    from capsem_builder.gate import snapshot
 
     target = source.parent / "prefix"
     snapshot.populate(source, target, _config())
@@ -212,7 +212,7 @@ def test_refreshing_an_existing_prefix_matches_the_source(source: Path) -> None:
     resumed run compiled a tree the operator no longer had while its run log
     described the tree they thought they retried.
     """
-    from capsem.gate import snapshot
+    from capsem_builder.gate import snapshot
 
     target = source.parent / "prefix"
     snapshot.populate(source, target, _config())
@@ -237,7 +237,7 @@ def test_the_prefix_carries_the_gitignored_paths_a_release_signs_with(source: Pa
     first thing that notices is the package lane during a release. Declared in
     `[prefix] carried` for exactly this reason, alongside `.git`.
     """
-    from capsem.gate import snapshot
+    from capsem_builder.gate import snapshot
 
     target = source.parent / "prefix"
     snapshot.populate(source, target, _config())
@@ -253,7 +253,7 @@ def test_the_prefix_reports_the_same_revision_as_its_source(source: Path) -> Non
     it the copy is not a checkout, and the gate qualifies a revision it cannot
     name.
     """
-    from capsem.gate import snapshot
+    from capsem_builder.gate import snapshot
 
     target = source.parent / "prefix"
     snapshot.populate(source, target, _config())
@@ -273,7 +273,7 @@ def test_the_copy_is_the_source_at_one_instant(source: Path) -> None:
     subject of the whole run and passes `source.verify` happily, even though
     that combination of bytes never existed at any instant in the checkout.
     """
-    from capsem.gate import snapshot
+    from capsem_builder.gate import snapshot
 
     target = source.parent / "prefix"
     snapshot.populate(source, target, _config())
@@ -284,8 +284,8 @@ def test_the_copy_is_the_source_at_one_instant(source: Path) -> None:
 
 def test_a_source_digest_failure_keeps_its_diagnostic(monkeypatch) -> None:
     """A failed hash must name its cause, not only its child exit status."""
-    from capsem.gate import snapshot
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate import snapshot
+    from capsem_builder.gate.errors import GateError
 
     config = _config()
     failed = subprocess.CompletedProcess(
@@ -307,8 +307,8 @@ def test_a_copy_taken_while_the_source_moved_is_refused(source: Path, monkeypatc
     the copy has to be checked rather than assumed. Refused loudly: retrying
     costs seconds, and a torn subject costs the hour it takes to qualify it.
     """
-    from capsem.gate import snapshot
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate import snapshot
+    from capsem_builder.gate.errors import GateError
 
     faithful = snapshot._copy_files
 
@@ -336,7 +336,7 @@ def test_a_refresh_keeps_what_the_earlier_run_built(source: Path) -> None:
     never a candidate. That is one definition of "what this tree is", used by
     the digest, by the copy and now by the deletion pass.
     """
-    from capsem.gate import snapshot
+    from capsem_builder.gate import snapshot
 
     target = source.parent / "prefix"
     snapshot.populate(source, target, _config())
@@ -367,8 +367,8 @@ def test_a_refresh_that_did_not_converge_is_refused(source: Path, monkeypatch) -
     exactly the defect the deletion pass was added for -- and nothing but this
     would notice the pass regressing.
     """
-    from capsem.gate import snapshot
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate import snapshot
+    from capsem_builder.gate.errors import GateError
 
     target = source.parent / "prefix"
     snapshot.populate(source, target, _config())
@@ -390,7 +390,7 @@ def test_the_copy_is_independent_of_the_tree_it_came_from(source: Path) -> None:
     this file and still lets an outside edit reach into a running gate, which
     is the exact failure the prefix exists to make impossible.
     """
-    from capsem.gate import snapshot
+    from capsem_builder.gate import snapshot
 
     target = source.parent / "prefix"
     snapshot.populate(source, target, _config())
@@ -410,7 +410,7 @@ def test_export_materializes_the_selected_assets_without_copying_current(
     the self-contained ``assets/current`` architecture selector. Dereferencing
     both materializes a second multi-gigabyte asset tree.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     checkout = tmp_path / "checkout"
     private = tmp_path / "private"
@@ -442,7 +442,7 @@ def test_export_materializes_the_selected_assets_without_copying_current(
     old_config_manifest.write_text('{"stale":true}\n')
     (old_config / "retired").mkdir()
 
-    from capsem.gate import buildcache
+    from capsem_builder.gate import buildcache
 
     buildcache.export(private, checkout, gate_config.load(private))
 
@@ -464,8 +464,8 @@ def test_a_finished_run_leaves_no_prefix(tmp_path: Path, source: Path) -> None:
     Each run costs ~100 MB. Left behind, a fortnight of gates is a disk-full
     in the middle of the next release rather than at a point where it is cheap.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate import prefix, snapshot
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import prefix, snapshot
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
         update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path)})}
@@ -486,9 +486,9 @@ def test_reclaim_refuses_anything_that_is_not_a_prefix(tmp_path: Path) -> None:
     path had a parent, which is true of every path on the system and would
     have deleted a checkout as happily as a prefix.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate import prefix
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import prefix
+    from capsem_builder.gate.errors import GateError
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
         update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path)})}
@@ -516,7 +516,7 @@ def test_a_process_already_inside_a_prefix_builds_no_second_one(
     is what the command hook tests, and it doubles as the answer to "which tree
     was this copied from" that `require-source-unchanged` needs.
     """
-    from capsem.gate import prefix
+    from capsem_builder.gate import prefix
 
     config = _config()
     monkeypatch.delenv(config.environment.source_checkout, raising=False)
@@ -544,9 +544,9 @@ def test_the_release_guard_still_sees_the_real_branch_move(
     """
     import json
 
-    from capsem.gate import config as gate_config
-    from capsem.gate.errors import GateError
-    from capsem.gate.sourcestate import RequireSourceUnchanged
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.errors import GateError
+    from capsem_builder.gate.sourcestate import RequireSourceUnchanged
 
     config = gate_config.load(PROJECT_ROOT)
     record = tmp_path / "source-state.json"
@@ -565,8 +565,8 @@ def test_the_release_guard_still_sees_the_real_branch_move(
     # Everything a prefix can see is unchanged; only the tree it was copied
     # from moved.
     measured = {"head": "frozen", "source_head": "after", "digest": "same", "gate_source": "x"}
-    monkeypatch.setattr("capsem.gate.sourcestate._measure", lambda context: measured)
-    monkeypatch.setattr("capsem.gate.sourcestate._record_file", lambda context: record)
+    monkeypatch.setattr("capsem_builder.gate.sourcestate._measure", lambda context: measured)
+    monkeypatch.setattr("capsem_builder.gate.sourcestate._record_file", lambda context: record)
 
     with pytest.raises(GateError, match="copied from moved"):
         RequireSourceUnchanged().perform(_context(config))
@@ -586,9 +586,9 @@ def test_the_release_guard_still_sees_the_real_tree_edited(
     """
     import json
 
-    from capsem.gate import config as gate_config
-    from capsem.gate.errors import GateError
-    from capsem.gate.sourcestate import RequireSourceUnchanged
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.errors import GateError
+    from capsem_builder.gate.sourcestate import RequireSourceUnchanged
 
     config = gate_config.load(PROJECT_ROOT)
     record = tmp_path / "source-state.json"
@@ -596,8 +596,8 @@ def test_the_release_guard_still_sees_the_real_tree_edited(
     record.write_text(json.dumps({**frozen, "source_digest": "before"}), encoding="utf-8")
 
     measured = {**frozen, "source_digest": "after"}
-    monkeypatch.setattr("capsem.gate.sourcestate._measure", lambda context: measured)
-    monkeypatch.setattr("capsem.gate.sourcestate._record_file", lambda context: record)
+    monkeypatch.setattr("capsem_builder.gate.sourcestate._measure", lambda context: measured)
+    monkeypatch.setattr("capsem_builder.gate.sourcestate._record_file", lambda context: record)
 
     with pytest.raises(GateError, match="copied from was edited"):
         RequireSourceUnchanged().perform(_context(config))
@@ -679,8 +679,8 @@ def test_a_sweep_keeps_the_newest_and_reclaims_the_rest(tmp_path: Path) -> None:
     """
     import time
 
-    from capsem.gate import config as gate_config
-    from capsem.gate import prefix
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import prefix
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
         update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
@@ -722,8 +722,8 @@ def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
     success exports its evidence, while the tree remains until a later fresh
     run sweeps it.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate import prefix
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import prefix
 
     reused = tmp_path / "aaaaaaaa"
     reused.mkdir()
@@ -740,7 +740,7 @@ def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
         def run(self, *args, **kwargs) -> int:
             return 0
 
-    from capsem.gate import buildcache
+    from capsem_builder.gate import buildcache
 
     config = config.model_copy(update={"root": _own_checkout(tmp_path)})
     monkeypatch.setattr(prefix.snapshot, "refresh", lambda *args: None)
@@ -759,8 +759,8 @@ def test_a_fresh_successful_prefix_is_still_reclaimed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Successful fresh qualification has no continuation debt to retain."""
-    from capsem.gate import config as gate_config
-    from capsem.gate import prefix
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import prefix
 
     fresh = tmp_path / "bbbbbbbb"
     config = gate_config.load(PROJECT_ROOT).model_copy(
@@ -776,7 +776,7 @@ def test_a_fresh_successful_prefix_is_still_reclaimed(
         def run(self, *args, **kwargs) -> int:
             return 0
 
-    from capsem.gate import buildcache
+    from capsem_builder.gate import buildcache
 
     config = config.model_copy(update={"root": _own_checkout(tmp_path)})
     monkeypatch.setattr(prefix, "allocate", lambda *args: fresh)
@@ -795,9 +795,9 @@ def test_reclaim_does_not_report_success_on_a_tree_it_left_behind(
     """`ignore_errors=True` is right for a chmodded tree and wrong as the last
     word: a successful run that silently kept its copy is how the disk fills
     with nothing reporting it."""
-    from capsem.gate import config as gate_config
-    from capsem.gate import prefix
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import prefix
+    from capsem_builder.gate.errors import GateError
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
         update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
@@ -825,7 +825,7 @@ def test_a_linked_worktree_gets_a_repository_of_its_own(tmp_path: Path) -> None:
     previous version of this test wrote a pointer at a path that did not exist,
     which every git command rejected for the wrong reason.
     """
-    from capsem.gate import snapshot
+    from capsem_builder.gate import snapshot
 
     origin = tmp_path / "origin"
     origin.mkdir()
@@ -867,7 +867,7 @@ def test_repository_copy_does_not_hardlink_across_filesystems(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Inspection checkouts may live on a different device from the source."""
-    from capsem.gate import snapshot
+    from capsem_builder.gate import snapshot
 
     source = tmp_path / "source"
     source.mkdir()
@@ -941,7 +941,7 @@ def test_exporting_a_run_cannot_write_through_a_symlink(tmp_path: Path) -> None:
     (host / runs / "run-old" / "run.jsonl").write_text("an older, unrelated run\n")
     (host / runs / "latest").symlink_to("run-old")
 
-    from capsem.gate import buildcache
+    from capsem_builder.gate import buildcache
 
     buildcache.export(private, host, config)
 
@@ -998,7 +998,7 @@ def test_merging_a_tree_never_writes_through_a_link(case: str, tmp_path: Path) -
     defect; and `os.symlink` refuses *any* existing name, so a source link
     landing on a real file or directory raised instead of merging.
     """
-    from capsem.gate.filesystem import merge_tree
+    from capsem_builder.gate.filesystem import merge_tree
 
     source, target = _merge_case(tmp_path, case)
     merge_tree(source, target)
@@ -1013,7 +1013,7 @@ def test_merging_a_tree_never_writes_through_a_link(case: str, tmp_path: Path) -
 
 def test_merging_keeps_what_the_target_already_had(tmp_path: Path) -> None:
     """Merging is not replacing -- the sibling that arrived first stays."""
-    from capsem.gate.filesystem import merge_tree
+    from capsem_builder.gate.filesystem import merge_tree
 
     source, target = tmp_path / "src", tmp_path / "dst"
     source.mkdir()
@@ -1037,7 +1037,7 @@ def test_copying_a_tree_keeps_a_symlink_a_symlink(tmp_path: Path) -> None:
     This used to be a `symlinks=` argument defaulting to False that the only
     informed caller overrode, which is a trap set for the next caller.
     """
-    from capsem.gate.filesystem import copy_tree
+    from capsem_builder.gate.filesystem import copy_tree
 
     source = tmp_path / "src"
     (source / "arch").mkdir(parents=True)
@@ -1078,7 +1078,7 @@ def test_the_shared_build_directory_is_measured_and_kept_under_its_cap(
     is a floor on the filesystem rather than a bound on this, which means it
     reports that something already ate the disk instead of stopping the growth.
     """
-    from capsem.gate import cargotarget
+    from capsem_builder.gate import cargotarget
 
     config = _capped(tmp_path, cap_gb=1.0)
     shared = cargotarget.path(config)
@@ -1108,7 +1108,7 @@ def test_measuring_the_build_directory_does_not_follow_the_prefixes_into_it(
     followed links would bill the same bytes once per run on disk and discard a
     directory that had not grown at all.
     """
-    from capsem.gate import cargotarget
+    from capsem_builder.gate import cargotarget
 
     config = _capped(tmp_path, cap_gb=1.0)
     shared = cargotarget.path(config)
@@ -1130,7 +1130,7 @@ def test_a_lease_outlives_its_prefix_only_until_the_next_sweep(tmp_path: Path) -
     holding the prefixes stops being readable at a glance, and that listing is
     where a prefix nobody reclaimed gets noticed.
     """
-    from capsem.gate.prefixlease import reclaim_orphan_leases
+    from capsem_builder.gate.prefixlease import reclaim_orphan_leases
 
     config = _capped(tmp_path, cap_gb=1.0)
     root = Path(config.prefix.parent)
@@ -1155,7 +1155,7 @@ def test_a_held_lease_is_never_unlinked_from_under_its_owner(tmp_path: Path) -> 
     the next run creates a fresh file and locks that one too, and both would
     believe they owned the prefix.
     """
-    from capsem.gate.prefixlease import lease, reclaim_orphan_leases
+    from capsem_builder.gate.prefixlease import lease, reclaim_orphan_leases
 
     config = _capped(tmp_path, cap_gb=1.0)
     root = Path(config.prefix.parent)
@@ -1181,7 +1181,7 @@ def test_a_pulled_lane_finds_its_binaries_where_every_test_looks(tmp_path: Path)
     dispatches, each found one file at a time with `--maxfail=5` hiding the
     rest.
     """
-    from capsem.gate import cargotarget
+    from capsem_builder.gate import cargotarget
 
     config = _capped(tmp_path, cap_gb=1.0)
     pulled = tmp_path / "pulled-bin"
@@ -1198,8 +1198,8 @@ def test_a_pulled_lane_finds_its_binaries_where_every_test_looks(tmp_path: Path)
 
 def test_a_pulled_lane_refuses_to_read_binaries_it_built_itself(tmp_path: Path) -> None:
     """The point is the manifest's bytes, not whichever bytes are nearest."""
-    from capsem.gate import cargotarget
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate import cargotarget
+    from capsem_builder.gate.errors import GateError
 
     config = _capped(tmp_path, cap_gb=1.0)
     pulled = tmp_path / "pulled"
@@ -1222,7 +1222,7 @@ def test_a_pulled_lane_also_finds_the_config_it_was_handed(
     not consult `CAPSEM_PROFILES_DIR`, so in a prefix it saw an empty set after
     every binary had built and installed.
     """
-    from capsem.gate import cargotarget
+    from capsem_builder.gate import cargotarget
 
     checkout = tmp_path / "checkout"
     (checkout / "target" / "config" / "profiles" / "code").mkdir(parents=True)
@@ -1246,7 +1246,7 @@ def test_an_ordinary_run_still_compiles_into_the_shared_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No release variables means the build root, exactly as before."""
-    from capsem.gate import cargotarget
+    from capsem_builder.gate import cargotarget
 
     config = _capped(tmp_path, cap_gb=1.0)
     monkeypatch.delenv(config.modules.release_bin_dir, raising=False)
@@ -1270,8 +1270,8 @@ def test_export_does_not_carry_back_a_tree_the_run_was_handed(tmp_path: Path) ->
     The profile selector one directory up is a link *within* the prefix and
     must still be dereferenced; that is the case above.
     """
-    from capsem.gate import buildcache
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import buildcache
+    from capsem_builder.gate import config as gate_config
 
     checkout = tmp_path / "checkout"
     private = tmp_path / "private"

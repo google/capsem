@@ -16,15 +16,14 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+from capsem_builder.gate import cli
+from capsem_builder.gate.actions import Run
+from capsem_builder.gate.command import GateCommand
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.execution import step
+from capsem_builder.gate.lifecycle import Resource
+from capsem_builder.gate.plan import Plan
 from helpers.gate import RecordingRunner
-
-from capsem.gate import cli
-from capsem.gate.actions import Run
-from capsem.gate.command import GateCommand
-from capsem.gate.errors import GateError
-from capsem.gate.execution import step
-from capsem.gate.lifecycle import Resource
-from capsem.gate.plan import Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -298,7 +297,7 @@ def test_the_candidate_gate_only_reexecs_once() -> None:
     contain the same qualification graph and need the same wrapper, and while
     this asserted on `CandidateCommand` alone they silently ran without it.
     """
-    from capsem.gate.candidate import CandidateCommand, CompleteGate
+    from capsem_builder.gate.candidate import CandidateCommand, CompleteGate
 
     assert "reexec" in vars(CompleteGate), (
         "the keep-awake wrapper belongs in `reexec`, not in a step"
@@ -315,8 +314,8 @@ def test_a_reexec_becomes_the_same_command_it_replaced(monkeypatch, tmp_path) ->
     through `just` -- so a command that had already decided it was running
     started the dispatch chain again from the top.
     """
-    from capsem.gate import candidate
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import candidate
+    from capsem_builder.gate import config as gate_config
 
     marker = gate_config.load(Path(__file__).resolve().parents[1]).candidate.keep_awake_marker
     monkeypatch.setattr(candidate.host, "on_macos", lambda: True)
@@ -324,7 +323,7 @@ def test_a_reexec_becomes_the_same_command_it_replaced(monkeypatch, tmp_path) ->
     monkeypatch.setattr(candidate.sandbox, "active", lambda _config: False)
     monkeypatch.delenv(marker, raising=False)
     # The shape a real run has: `capsem-gate` re-execs itself under an
-    # isolated bytecode cache with `-m capsem.gate`, so argv[0] here is the
+    # isolated bytecode cache with `-m capsem_builder.gate`, so argv[0] here is the
     # path of `__main__.py`. This test used to set it to a plausible console
     # script, which is why it stayed green while the real thing died with
     # `env: __main__.py: Permission denied` three seconds into a gate.
@@ -359,13 +358,13 @@ def test_only_the_commands_that_must_replace_themselves_do() -> None:
     re-exec remains in the shared command funnel and does not make them
     complete gates.
     """
-    from capsem.gate.candidate import CompleteGate
+    from capsem_builder.gate.candidate import CompleteGate
 
     replacing = sorted(
         name
         for name, cls in GateCommand.registry.items()
         # Only the real ones: this file registers commands of its own.
-        if "reexec" in vars(cls) and cls.__module__.startswith("capsem.gate.")
+        if "reexec" in vars(cls) and cls.__module__.startswith("capsem_builder.gate.")
     )
     complete = sorted(
         name for name, cls in GateCommand.registry.items() if issubclass(cls, CompleteGate)

@@ -6,8 +6,7 @@ import os
 import time
 from pathlib import Path
 
-from capsem_builder.policy.cachepolicy import CacheLimits, CacheProduct, plan_reclaim
-
+from ..policy.cachepolicy import CacheLimits, CacheProduct, plan_reclaim
 from . import assetreceipt, prefix
 from .config import Arch, GateConfig
 from .errors import GateError

@@ -17,7 +17,7 @@ survived four dispatches reporting only `subprocess exited 1`; replayed here it
 was diagnosed in one pass.
 
 Not a plan action, so it may invoke the gate: `test_gate_no_nested_commands`
-scopes that rule to `src/capsem/gate`, where a nested command would deadlock on
+scopes that rule to `build_system/builder/gate`, where a nested command would deadlock on
 a lock its own parent holds. This is an operator tool, run deliberately.
 
 Needs a tree that has already built its assets and packages -- the same

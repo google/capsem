@@ -52,9 +52,8 @@ def test_just_doctor_dispatches_to_both_halves_of_the_check():
 def test_this_checkout_passes_the_doctor_it_dispatches_to():
     """The half that can fail, run for real -- in-process, so it never asks
     for a lock this suite's own gate is holding."""
+    from capsem_builder.gate import doctor
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import doctor
 
     assert doctor.check(RecordingRunner(PROJECT_ROOT)) == []
 
@@ -71,12 +70,11 @@ def test_launching_a_recipe_that_takes_the_machine_lock_is_refused(
     """
     import argparse
 
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.command import GateCommand
+    from capsem_builder.gate.errors import GateError
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate import config as gate_config
-    from capsem.gate.command import GateCommand
-    from capsem.gate.errors import GateError
 
     marker = gate_config.load(PROJECT_ROOT).locks.gate.run_marker
     monkeypatch.setenv(marker, "capsem-gate candidate")
@@ -96,10 +94,10 @@ def test_the_marker_is_what_a_running_gate_exports() -> None:
     `ExclusiveLock` exports it for the length of a run, which is what makes a
     child able to notice it is inside one.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     marker = gate_config.load(PROJECT_ROOT).locks.gate.run_marker
-    locks = (PROJECT_ROOT / "src/capsem/gate/locks.py").read_text(encoding="utf-8")
+    locks = (PROJECT_ROOT / "build_system/builder/gate/locks.py").read_text(encoding="utf-8")
 
     assert "run_marker" in locks
     assert marker == "CAPSEM_GATE_RUN"

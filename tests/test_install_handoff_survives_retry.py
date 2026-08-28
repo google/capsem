@@ -55,7 +55,7 @@ def test_the_gates_install_never_silently_falls_back_to_another_channel() -> Non
     Asserted on the proof that issues it, because the shape of that one
     command is the whole hazard.
     """
-    proof = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installproof.py").read_text(
+    proof = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installproof.py").read_text(
         encoding="utf-8"
     )
 

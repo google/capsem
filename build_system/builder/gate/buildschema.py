@@ -11,9 +11,9 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
-from capsem_builder.policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from pydantic import PositiveInt, StringConstraints, model_validator
 
+from ..policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from .configschema import Strict
 from .releaseschema import ReleasePairingEnvironment
 

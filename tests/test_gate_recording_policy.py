@@ -21,10 +21,9 @@ import argparse
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import cli  # noqa: F401 - importing registers every command
+from capsem_builder.gate.command import GateCommand
 from helpers.gate import RecordingRunner
-
-from capsem.gate import cli  # noqa: F401 - importing registers every command
-from capsem.gate.command import GateCommand
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -75,7 +74,7 @@ def test_every_mutating_command_records() -> None:
     silent = sorted(
         name
         for name, cls in GateCommand.registry.items()
-        if cls.__module__.startswith("capsem.gate.")
+        if cls.__module__.startswith("capsem_builder.gate.")
         and not _command_records(name, cls)
     )
 

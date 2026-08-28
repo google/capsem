@@ -24,9 +24,9 @@ from functools import cache
 from pathlib import Path
 from typing import TextIO
 
-from capsem.gate.invocation import Command
-from capsem.gate.proc import Runner
-from capsem.gate.runlogschema import OutputSpan
+from capsem_builder.gate.invocation import Command
+from capsem_builder.gate.proc import Runner
+from capsem_builder.gate.runlogschema import OutputSpan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -74,10 +74,9 @@ def _image_repository(reference: str) -> str:
 
 def _recorded_image_platform(root: Path, reference: str) -> str:
     """Answer an identity probe from the checked-in architecture authority."""
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import host, imagebases
     from capsem_builder.image import guestbuilder
-
-    from capsem.gate import config as gate_config
-    from capsem.gate import host, imagebases
 
     config_root = root if (root / "config/gate.toml").is_file() else PROJECT_ROOT
     config = gate_config.load(config_root)
@@ -139,7 +138,7 @@ def _cargo_tool_probe_replies(root: Path) -> dict[tuple[str, ...], str]:
     the test host. These answers let composition tests cross the same exact
     version boundary without copying the versions into test infrastructure.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config_root = root if (root / "config/gate.toml").is_file() else PROJECT_ROOT
     settings = gate_config.load(config_root).toolchain
@@ -198,8 +197,8 @@ class RecordingRunner(Runner):
                 stdout = RECORDED_IMAGE_ID
             elif IMAGE_LABEL_PROBE in rendered:
                 if "org.capsem.host-builder.input-key" in rendered:
-                    from capsem.gate import config as gate_config
-                    from capsem.gate import hostimage
+                    from capsem_builder.gate import config as gate_config
+                    from capsem_builder.gate import hostimage
 
                     config_root = (
                         self.root if (self.root / "config/gate.toml").is_file() else PROJECT_ROOT
@@ -439,12 +438,12 @@ WHOLE_GATE: tuple[tuple[str, dict[str, object]], ...] = (
 def _built(root: Path, name: str, args: tuple[tuple[str, object], ...], qualification=None):
     import argparse
 
-    from capsem.gate import cli  # noqa: F401 - importing registers every command
-    from capsem.gate.command import GateCommand
+    from capsem_builder.gate import cli  # noqa: F401 - importing registers every command
+    from capsem_builder.gate.command import GateCommand
 
     values = dict(args)
     if name in {"release-binaries", "release-profile"}:
-        from capsem.gate.sourcecommit import SourceCommit
+        from capsem_builder.gate.sourcecommit import SourceCommit
 
         values.setdefault("source_commit", SourceCommit("0" * 40))
     return GateCommand.registry[name](
@@ -515,8 +514,8 @@ def _inspection_checkout(source: Path) -> Iterator[Path]:
     """
     from unittest.mock import patch
 
-    from capsem.gate import config as gate_config
-    from capsem.gate import host, snapshot
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import host, snapshot
 
     config = gate_config.load(source)
     subject = _inspection_subject(source, config)
@@ -552,16 +551,16 @@ def _inspection_subject(source: Path, config) -> Path:
         return source
     receipt = config.path(config.candidate.source_state_file)
     if receipt.exists():
-        from capsem.gate import sourcecapture
+        from capsem_builder.gate import sourcecapture
 
         return sourcecapture.require_recorded(config).root
 
     selected = os.environ.get(config.environment.qualified_source_commit)
     if selected is None:
-        from capsem.gate import sourcecapture
+        from capsem_builder.gate import sourcecapture
 
         return sourcecapture.require_recorded(config).root
-    from capsem.gate import sourcecommit
+    from capsem_builder.gate import sourcecommit
 
     commit = sourcecommit.SourceCommit(selected)
     sourcecommit.require_detached_checkout(source, commit)
@@ -576,9 +575,9 @@ def _seed_observed_source(checkout: Path) -> None:
     product. Seed that product in the isolated checkout so observation can
     reach those callbacks without weakening either production requirement.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate import snapshot, sourcecapture
-    from capsem.gate.filesystem import write_text
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import snapshot, sourcecapture
+    from capsem_builder.gate.filesystem import write_text
 
     config = gate_config.load(checkout)
     digest = sourcecapture.SourceDigest(snapshot.digest(checkout, config))
@@ -591,8 +590,8 @@ def _seed_observed_source(checkout: Path) -> None:
 
 def _gate_issued_from(root: Path, name: str, args: tuple[tuple[str, object], ...]) -> str:
     """Run one plan against a recorder inside an already-isolated checkout."""
-    from capsem.gate import config as gate_config
-    from capsem.gate.context import Context
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.context import Context
 
     command = _built(root, name, args)
     runner = command._runner
@@ -633,8 +632,8 @@ def gate_issues(name: str | None = None, root: Path | None = None) -> str:
     ambient, because it changes the answer -- which is what a cache with only
     the name in its key was quietly denying.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate.qualification import from_environment
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.qualification import from_environment
 
     mode = from_environment(gate_config.load(root or PROJECT_ROOT)).mode
     return _issues(name, root, mode)

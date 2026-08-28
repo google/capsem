@@ -45,11 +45,10 @@ def _planned(command: str, **args) -> str:
     """
     import argparse
 
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
+    from capsem_builder.gate.sourcecommit import SourceCommit
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
-    from capsem.gate.sourcecommit import SourceCommit
 
     return (
         GateCommand.registry[command](
@@ -76,11 +75,11 @@ def test_version_stamp_propagates_cargo_toml_and_refreshes_both_frozen_locks() -
     recipe only fans it out, which is why the cohort files are read from, not
     written by, the release.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     justfile = _read_text_exact_case("justfile")
     config = gate_config.load(PROJECT_ROOT)
-    stamp = (PROJECT_ROOT / "src" / "capsem" / "gate" / "versions.py").read_text(encoding="utf-8")
+    stamp = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "versions.py").read_text(encoding="utf-8")
 
     assert "release_minor" not in justfile
 
@@ -109,9 +108,9 @@ def test_version_stamp_refuses_a_version_that_is_already_tagged() -> None:
     stopped being machine-generated: the cohort would agree, the notes would
     regenerate, and the tag collision would surface far later.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
-    versions = (PROJECT_ROOT / "src" / "capsem" / "gate" / "versions.py").read_text(
+    versions = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "versions.py").read_text(
         encoding="utf-8"
     )
     config = gate_config.load(PROJECT_ROOT)

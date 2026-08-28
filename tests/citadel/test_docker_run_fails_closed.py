@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from capsem.gate import config as gate_config
-from capsem.gate import shellsurfaces
-from capsem.gate.shellnodes import AndOr, Command, Pipeline, walk
-from capsem.gate.shellparse import parse
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import shellsurfaces
+from capsem_builder.gate.shellnodes import AndOr, Command, Pipeline, walk
+from capsem_builder.gate.shellparse import parse
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -43,7 +43,7 @@ Read with a parser. `set -eux` is a command with options, `; ` inside a quoted
 argument separates nothing, and a heredoc body is data -- three distinctions a
 pattern gets wrong in the direction that reports success.
 
-See src/capsem/gate/shellparse.py and skills/dev-gate/SKILL.md.
+See build_system/builder/gate/shellparse.py and skills/dev-gate/SKILL.md.
 """
 
 

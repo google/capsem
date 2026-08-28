@@ -928,8 +928,8 @@ def _pid_alive(pid: int) -> bool:
     copy, so the fix never reached it. A second implementation of a question
     production already answers is a second thing to get wrong.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate import pidfiles
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import pidfiles
 
     root = Path(__file__).resolve().parents[2]
     return pidfiles.running(pid, gate_config.load(root).pidfiles)

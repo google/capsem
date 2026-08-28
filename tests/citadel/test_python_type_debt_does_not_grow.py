@@ -13,8 +13,8 @@ import subprocess
 from collections import Counter
 from pathlib import Path
 
-from capsem.gate import config as gate_config
-from capsem.gate.sourcechecks import ty_inventory_argv
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.sourcechecks import ty_inventory_argv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = gate_config.load(PROJECT_ROOT)

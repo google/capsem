@@ -22,9 +22,9 @@ from pathlib import Path
 
 import pytest
 import yaml
-from capsem.gate import config as gate_config
-from capsem.gate import imagebases
-from capsem.gate.errors import GateError
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import imagebases
+from capsem_builder.gate.errors import GateError
 from capsem_builder.image import assettools
 from capsem_builder.image import docker as asset_docker
 from capsem_builder.image.config import load_guest_config

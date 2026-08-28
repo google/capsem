@@ -29,11 +29,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import cli
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.command import GateCommand
 from helpers.gate import RecordingRunner
-
-from capsem.gate import cli
-from capsem.gate import config as gate_config
-from capsem.gate.command import GateCommand
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -67,7 +66,7 @@ def _planned(payload: str) -> RecordingRunner:
 
 
 def _context(runner: RecordingRunner):
-    from capsem.gate.context import Context
+    from capsem_builder.gate.context import Context
 
     return Context(runner, CONFIG)
 

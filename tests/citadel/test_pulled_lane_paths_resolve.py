@@ -172,7 +172,7 @@ def test_every_resolved_target_tree_exists_in_a_pulled_lane() -> None:
 @pytest.mark.parametrize("tree", sorted(LINKED_FOR_A_PULLED_LANE))
 def test_the_prefix_actually_links_what_this_guard_claims(tree: str) -> None:
     """The allow list must describe the code, not replace it."""
-    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "cargotarget.py").read_text(
+    source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "cargotarget.py").read_text(
         encoding="utf-8"
     )
     linked = ast.parse(source)

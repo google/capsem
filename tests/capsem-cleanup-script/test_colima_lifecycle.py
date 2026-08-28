@@ -20,12 +20,11 @@ import os
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import config as gate_config
-from capsem.gate.errors import GateError
-from capsem.gate.gateresources import Colima
-from capsem.gate.lifecycle import held
-from capsem.gate.proc import Runner
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.gateresources import Colima
+from capsem_builder.gate.lifecycle import held
+from capsem_builder.gate.proc import Runner
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 

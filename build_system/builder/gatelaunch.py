@@ -13,16 +13,17 @@ commit and source digest, while each release freezes and dispatches that exact
 source to a hosted qualifying lane. A stale module could otherwise construct a
 plan that does not correspond to the source being diagnosed or published.
 
-So the entry point is this file rather than `capsem.gate.cli`: it re-execs with
-a per-invocation `pycache_prefix` before anything from `capsem.gate` is
-imported. `PYTHONPYCACHEPREFIX` goes into the environment as well as onto the
-command line, so every child -- pytest, the builders, the scripts -- inherits
-the same isolation.
+So the entry point is this file rather than `capsem_builder.gate.cli`: it
+re-execs with a per-invocation `pycache_prefix` before anything from
+`capsem_builder.gate` is imported. `PYTHONPYCACHEPREFIX` goes into the
+environment as well as onto the command line, so every child -- pytest, the
+builders, the scripts -- inherits the same isolation.
 
-Nothing here may import `capsem.gate`. Importing it is precisely what this
-file exists to do only after the cache is safe, and `capsem.gate.__init__`
-carries real code. Only the standard library, and only a few lines of it, so
-that this module's own bytecode is something that never changes.
+Nothing here may import `capsem_builder.gate`. Importing it is precisely what
+this file exists to do only after the cache is safe, and
+`capsem_builder.gate.__init__` carries real code. Only the standard library,
+and only a few lines of it, so that this module's own bytecode is something
+that never changes.
 """
 
 from __future__ import annotations
@@ -57,9 +58,9 @@ STALE_SECONDS = 6 * 3600
 def checkout() -> Path:
     """The checkout this launcher was installed from.
 
-    `capsem.gate.project_root` answers the same question and validates the
-    answer, which is the better version -- and unreachable from here, because
-    importing it is the thing being deferred.
+    `capsem_builder.gate.project_root` answers the same question and validates
+    the answer, which is the better version -- and unreachable from here,
+    because importing it is the thing being deferred.
     """
     return Path(__file__).resolve().parents[2]
 
@@ -94,7 +95,7 @@ def isolated_environment(root: Path | None = None) -> dict[str, str]:
 def main() -> int:
     """Re-exec under an isolated cache, then be the gate."""
     if os.environ.get(MARKER):
-        from capsem.gate.cli import main as gate
+        from .gate.cli import main as gate
 
         return gate()
 
@@ -109,5 +110,5 @@ def _reexec() -> NoReturn:
     itself.
     """
     os.environ.update(isolated_environment())
-    os.execv(sys.executable, [sys.executable, "-m", "capsem.gate", *sys.argv[1:]])
+    os.execv(sys.executable, [sys.executable, "-m", "capsem_builder.gate", *sys.argv[1:]])
     raise AssertionError("execv returned")  # pragma: no cover - execv does not

@@ -51,14 +51,14 @@ def test_no_module_hardlinks_outside_the_audited_place() -> None:
     ]
     assert not offenders, (
         f"these hardlink without classifying the source: {offenders}. Use "
-        "`capsem.gate.auditfs.stage`, which copies anything git tracks so "
+        "`capsem_builder.gate.auditfs.stage`, which copies anything git tracks so "
         "published output cannot alias the working tree."
     )
 
 
 def test_a_tracked_file_is_copied_not_linked(tmp_path: Path) -> None:
     """The defect itself, as an inode comparison."""
-    from capsem.gate import auditfs
+    from capsem_builder.gate import auditfs
 
     repo = tmp_path / "repo"
     (repo / "config").mkdir(parents=True)
@@ -82,7 +82,7 @@ def test_a_tracked_file_is_copied_not_linked(tmp_path: Path) -> None:
 
 def test_build_output_is_linked(tmp_path: Path) -> None:
     """Untracked output still shares an inode; that is what makes it cheap."""
-    from capsem.gate import auditfs
+    from capsem_builder.gate import auditfs
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -100,7 +100,7 @@ def test_build_output_is_linked(tmp_path: Path) -> None:
 
 def test_an_unclassifiable_source_is_copied(tmp_path: Path) -> None:
     """Fails closed: "cannot tell" must not take the linking branch."""
-    from capsem.gate import auditfs
+    from capsem_builder.gate import auditfs
 
     source = tmp_path / "loose.bin"
     source.write_bytes(b"payload")

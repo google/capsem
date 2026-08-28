@@ -15,10 +15,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import config as gate_config
-from capsem.gate.disk import ensure_space, footprint, reclaim, roots
-from capsem.gate.errors import GateError
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.disk import ensure_space, footprint, reclaim, roots
+from capsem_builder.gate.errors import GateError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
@@ -141,7 +140,7 @@ def test_a_tree_resolving_outside_the_checkout_is_refused(tmp_path: Path) -> Non
     Config validation rejects an absolute or upward-escaping entry; this
     catches the case where the string is innocent and the filesystem is not.
     """
-    from capsem.gate.disk import _remove_tree
+    from capsem_builder.gate.disk import _remove_tree
 
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -196,7 +195,7 @@ def test_reclaiming_enough_lets_the_phase_proceed(
     config = _checkout(tmp_path, required_free_gb=50)
     built = _occupy(config, "target/test-home")
     readings = iter([10.0, 10.0, 80.0, 80.0, 80.0])
-    monkeypatch.setattr("capsem.gate.disk.free_gb", lambda _root: next(readings))
+    monkeypatch.setattr("capsem_builder.gate.disk.free_gb", lambda _root: next(readings))
 
     recovered = ensure_space(config, "assets")
 
@@ -257,12 +256,11 @@ def test_a_reclaim_does_not_delete_the_run_it_is_writing(tmp_path: Path) -> None
     `ensure_space` already passed `keep=(runlog.root,)`. This is the caller
     that did not.
     """
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.context import Context
+    from capsem_builder.gate.gc import _trees
+    from capsem_builder.gate.runlog import RunLog
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import config as gate_config
-    from capsem.gate.context import Context
-    from capsem.gate.gc import _trees
-    from capsem.gate.runlog import RunLog
 
     (tmp_path / "config").mkdir(parents=True)
     (tmp_path / "config" / "gate.toml").write_text(
@@ -305,8 +303,8 @@ def test_a_full_scratch_filesystem_is_refused_even_with_a_roomy_checkout(
     # `gettempdir` caches, so the environment cannot steer it once something
     # has already asked. `tempfile.tempdir` is the supported override.
     monkeypatch.setattr("tempfile.tempdir", str(scratch))
-    monkeypatch.setattr("capsem.gate.disk._shares_device", lambda _a, _b: False)
-    monkeypatch.setattr("capsem.gate.disk.free_gb", lambda path: 0.5 if path == scratch else 500.0)
+    monkeypatch.setattr("capsem_builder.gate.disk._shares_device", lambda _a, _b: False)
+    monkeypatch.setattr("capsem_builder.gate.disk.free_gb", lambda path: 0.5 if path == scratch else 500.0)
 
     with pytest.raises(GateError) as failure:
         ensure_space(config, "assets")
@@ -326,7 +324,7 @@ def test_scratch_on_the_checkout_filesystem_is_not_measured_twice(
     """
     config = _checkout(tmp_path, required_free_gb=0, required_free_scratch_gb=10**9)
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
-    monkeypatch.setattr("capsem.gate.disk.free_gb", lambda _path: 500.0)
+    monkeypatch.setattr("capsem_builder.gate.disk.free_gb", lambda _path: 500.0)
 
     ensure_space(config, "assets")
 
@@ -344,8 +342,8 @@ def test_scratch_is_refused_before_anything_is_reclaimed(
     # `gettempdir` caches, so the environment cannot steer it once something
     # has already asked. `tempfile.tempdir` is the supported override.
     monkeypatch.setattr("tempfile.tempdir", str(scratch))
-    monkeypatch.setattr("capsem.gate.disk._shares_device", lambda _a, _b: False)
-    monkeypatch.setattr("capsem.gate.disk.free_gb", lambda path: 0.5 if path == scratch else 500.0)
+    monkeypatch.setattr("capsem_builder.gate.disk._shares_device", lambda _a, _b: False)
+    monkeypatch.setattr("capsem_builder.gate.disk.free_gb", lambda path: 0.5 if path == scratch else 500.0)
 
     with pytest.raises(GateError):
         ensure_space(config, "assets")

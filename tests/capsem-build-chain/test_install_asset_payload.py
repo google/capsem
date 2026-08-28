@@ -93,8 +93,8 @@ def _resolvable_package():
     it -- an empty `.deb` left in `dist/` is something a later lane would try
     to install.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate.versions import workspace_version
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.versions import workspace_version
 
     config = gate_config.load(PROJECT_ROOT)
     package = (
@@ -120,8 +120,8 @@ def _planned(command: str, **args) -> str:
 
 def _selected_content(tmp_path: Path) -> str:
     """A complete paired cohort for executing opaque install-plan callbacks."""
-    from capsem.gate import config as gate_config
-    from capsem.gate.content import ProfileContent
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.content import ProfileContent
 
     config = gate_config.load(PROJECT_ROOT)
     content = ProfileContent.isolated(config, tmp_path / "selected-content")
@@ -382,10 +382,9 @@ def _gate_order() -> list[str]:
     """
     import argparse
 
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
 
     return list(
         GateCommand.registry["candidate"](
@@ -409,10 +408,9 @@ def _gate_plan_step(label: str):
     """One step of the complete gate, by label."""
     import argparse
 
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
 
     return (
         GateCommand.registry["candidate"](
@@ -426,7 +424,7 @@ def _gate_plan_step(label: str):
 
 def _boundary(phase: str) -> str:
     """The boundary a named storage phase releases, from config."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     return gate_config.load(PROJECT_ROOT).storage.phases[phase].boundary
 
@@ -436,7 +434,7 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     # lanes rather than after them -- running out at minute thirty wastes the
     # thirty. The preflight is inside `AssetGate` now; what stays checkable
     # here is that it happens and that the policy it reads is the assets rail.
-    assets_source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "assets.py").read_text(
+    assets_source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "assets.py").read_text(
         encoding="utf-8"
     )
     assert "ensure_space" in assets_source
@@ -507,11 +505,11 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
 
 
 def test_native_install_reuses_the_release_package_builder() -> None:
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     justfile = (PROJECT_ROOT / "justfile").read_text()
     macos_glowup = (PROJECT_ROOT / "scripts" / "macos_release_glowup.py").read_text()
-    local_install = (PROJECT_ROOT / "src/capsem/gate/localinstall.py").read_text()
+    local_install = (PROJECT_ROOT / "build_system/builder/gate/localinstall.py").read_text()
     package_script = gate_config.load(PROJECT_ROOT).install.local_macos_package_script
 
     assert "\ninstall:" in justfile
@@ -531,7 +529,7 @@ def test_cross_compile_repacks_deb_before_exact_systemd_install_proof() -> None:
     checked-in script now, syntax-checked with the rest of the shell in the
     repository, so the order is read there.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     script = (PROJECT_ROOT / config.package.build_script).read_text(encoding="utf-8")
@@ -553,7 +551,7 @@ def test_cross_compile_repacks_deb_before_exact_systemd_install_proof() -> None:
     # since the split: `packagerail` runs the phases, `crosscompile` orders
     # them, and the claim is about the lane rather than about either file.
     rail = "\n".join(
-        (PROJECT_ROOT / "src/capsem/gate" / name).read_text(encoding="utf-8")
+        (PROJECT_ROOT / "build_system/builder/gate" / name).read_text(encoding="utf-8")
         for name in ("packagerail.py", "crosscompile.py")
     )
     assert config.package.proof_selector == "scripts/select-linux-deb-proof.sh"
@@ -578,12 +576,12 @@ def test_cross_compile_repacks_deb_before_exact_systemd_install_proof() -> None:
 def test_exact_linux_deb_proof_uses_systemd_and_proves_guest_shell() -> None:
     """The exact package, installed by dpkg in a real systemd container, and
     then proved by booting a guest shell rather than by checking files exist."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     proof = config.package.proof
-    source = (PROJECT_ROOT / "src/capsem/gate/debproof.py").read_text(encoding="utf-8")
-    graph = (PROJECT_ROOT / "src/capsem/gate/releasegraph.py").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "build_system/builder/gate/debproof.py").read_text(encoding="utf-8")
+    graph = (PROJECT_ROOT / "build_system/builder/gate/releasegraph.py").read_text(encoding="utf-8")
 
     assert config.install.systemd_command == "/usr/lib/systemd/systemd"
     assert config.install.vm_devices == ("/dev/kvm", "/dev/vhost-vsock")
@@ -621,11 +619,11 @@ def test_systemd_install_image_cannot_flush_host_binfmt_registrations(
     the container starts and again after it stops, and the run that removed it
     is the one that reports it.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     dockerfile = (PROJECT_ROOT / config.install.builder.dockerfile).read_text(encoding="utf-8")
-    container = (PROJECT_ROOT / "src/capsem/gate/installcontainer.py").read_text(encoding="utf-8")
+    container = (PROJECT_ROOT / "build_system/builder/gate/installcontainer.py").read_text(encoding="utf-8")
 
     assert "/etc/systemd/system/systemd-binfmt.service" in dockerfile
     assert "ln -s /dev/null" in dockerfile
@@ -639,17 +637,16 @@ def test_systemd_install_image_cannot_flush_host_binfmt_registrations(
     # active macOS Colima gets one probe before and one after the privileged
     # container. Exercise the decision rather than looking for a macOS argv in
     # whatever host happens to be running this suite.
+    from capsem_builder.gate.installcontainer import InstallContainer
     from helpers.gate import RecordingRunner
 
-    from capsem.gate.installcontainer import InstallContainer
-
-    monkeypatch.setattr("capsem.gate.installcontainer.shutil.which", lambda _name: "/colima")
+    monkeypatch.setattr("capsem_builder.gate.installcontainer.shutil.which", lambda _name: "/colima")
     for system, machine, expected_checks in (
         ("Linux", "x86_64", 0),
         ("Darwin", "arm64", 2),
     ):
-        monkeypatch.setattr("capsem.gate.host.system", lambda system=system: system)
-        monkeypatch.setattr("capsem.gate.host.machine", lambda machine=machine: machine)
+        monkeypatch.setattr("capsem_builder.gate.host.system", lambda system=system: system)
+        monkeypatch.setattr("capsem_builder.gate.host.machine", lambda machine=machine: machine)
         runner = RecordingRunner(PROJECT_ROOT)
         install = InstallContainer(runner)
 
@@ -746,10 +743,9 @@ def test_install_test_returns_configured_writable_paths_to_host_identity() -> No
     internal chown in a plan transcript proves nothing. Drive the production
     container boundary directly and keep the hand-back set config-owned.
     """
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.installcontainer import InstallContainer
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import config as gate_config
-    from capsem.gate.installcontainer import InstallContainer
 
     config = gate_config.load(PROJECT_ROOT)
     runner = RecordingRunner(PROJECT_ROOT)
@@ -774,10 +770,10 @@ def test_install_test_cleanup_preserves_the_original_gate_failure() -> None:
     and `_release` now attaches cleanup failures to the primary error instead
     of replacing it.
     """
-    lifecycle = (PROJECT_ROOT / "src" / "capsem" / "gate" / "lifecycle.py").read_text(
+    lifecycle = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "lifecycle.py").read_text(
         encoding="utf-8"
     )
-    install = (PROJECT_ROOT / "src" / "capsem" / "gate" / "install.py").read_text(encoding="utf-8")
+    install = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "install.py").read_text(encoding="utf-8")
 
     assert "primary" in lifecycle
     assert "add_note" in lifecycle
@@ -796,7 +792,7 @@ def test_install_test_does_not_rebuild_frontend_and_owns_release_site_scratch() 
     checkout and out of a reinstall on every run. The frontend is already built
     by the time this runs, and rebuilding it here would prove a different tree.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     issued = _planned("install")
@@ -826,11 +822,10 @@ def test_install_test_removes_stale_container_before_controller_preflight(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A predecessor is cleared before anything starts, not after it collides."""
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import installimage
+    from capsem_builder.gate.installcontainer import InstallContainer
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import config as gate_config
-    from capsem.gate import installimage
-    from capsem.gate.installcontainer import InstallContainer
 
     config = gate_config.load(PROJECT_ROOT)
     container = config.install.container
@@ -848,10 +843,10 @@ def test_install_test_removes_stale_container_before_controller_preflight(
 
 def test_install_test_runs_local_release_glowup_from_real_package() -> None:
     """The glow-up runs against the package this gate installed, not a rebuild."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    proof = (PROJECT_ROOT / "src/capsem/gate/installproof.py").read_text(encoding="utf-8")
+    proof = (PROJECT_ROOT / "build_system/builder/gate/installproof.py").read_text(encoding="utf-8")
 
     assert config.install.suite.glowup_script == "scripts/local-release-glowup.py"
     assert config.install.bin_dir == "/usr/bin"
@@ -869,12 +864,12 @@ def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> No
     half a channel behind; the graph built and checked around the site render,
     in that order, because the check reads what the render produced.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     layout = config.install.layout
-    proof = (PROJECT_ROOT / "src/capsem/gate/installproof.py").read_text(encoding="utf-8")
-    graph = (PROJECT_ROOT / "src/capsem/gate/releasegraph.py").read_text(encoding="utf-8")
+    proof = (PROJECT_ROOT / "build_system/builder/gate/installproof.py").read_text(encoding="utf-8")
+    graph = (PROJECT_ROOT / "build_system/builder/gate/releasegraph.py").read_text(encoding="utf-8")
 
     assert layout.assets == "target/install-test-assets"
     assert layout.config == "target/install-test-config"
@@ -910,7 +905,7 @@ def test_install_test_consumes_exact_publishable_package_without_rebuild() -> No
     commit be installed and proved. Selecting by version and refusing an empty
     or missing file is what makes "the exact publishable package" true.
     """
-    install = (PROJECT_ROOT / "src/capsem/gate/install.py").read_text(encoding="utf-8")
+    install = (PROJECT_ROOT / "build_system/builder/gate/install.py").read_text(encoding="utf-8")
 
     assert 'f"Capsem_{self.version}_{self.arch.dpkg}.deb"' in install
     assert "missing exact release-mode Debian package" in install
@@ -920,7 +915,7 @@ def test_install_test_consumes_exact_publishable_package_without_rebuild() -> No
 
 def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> None:
     script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
-    authoring = (PROJECT_ROOT / "src/capsem/gate/releaseauthoring.py").read_text()
+    authoring = (PROJECT_ROOT / "build_system/builder/gate/releaseauthoring.py").read_text()
     tree = ast.parse(script)
     clone_functions = [
         node
@@ -981,7 +976,7 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
 
 
 def test_local_release_glowup_has_zstd_extraction_support_in_install_image() -> None:
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     dockerfile = (PROJECT_ROOT / config.install.builder.dockerfile).read_text()
@@ -992,15 +987,15 @@ def test_local_release_glowup_has_zstd_extraction_support_in_install_image() -> 
 
 
 def test_install_image_has_one_network_open_materializer_and_no_runtime_repairs() -> None:
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     helper = (PROJECT_ROOT / config.install.builder.dockerfile).read_text(encoding="utf-8")
     image = (PROJECT_ROOT / config.install.dockerfile).read_text(encoding="utf-8")
-    image_gate = (PROJECT_ROOT / "src/capsem/gate/installimage.py").read_text(encoding="utf-8")
-    install = (PROJECT_ROOT / "src/capsem/gate/installproof.py").read_text(encoding="utf-8")
-    deb = (PROJECT_ROOT / "src/capsem/gate/debproof.py").read_text(encoding="utf-8")
-    graph = (PROJECT_ROOT / "src/capsem/gate/releasegraph.py").read_text(encoding="utf-8")
+    image_gate = (PROJECT_ROOT / "build_system/builder/gate/installimage.py").read_text(encoding="utf-8")
+    install = (PROJECT_ROOT / "build_system/builder/gate/installproof.py").read_text(encoding="utf-8")
+    deb = (PROJECT_ROOT / "build_system/builder/gate/debproof.py").read_text(encoding="utf-8")
+    graph = (PROJECT_ROOT / "build_system/builder/gate/releasegraph.py").read_text(encoding="utf-8")
 
     assert "uv sync --locked --no-install-project" in helper
     assert "pnpm fetch --frozen-lockfile" in helper
@@ -1038,7 +1033,7 @@ def test_installed_glowup_uses_the_materialized_python_without_project_sync(
 
 
 def test_install_transaction_does_not_rebuild_the_prequalified_image() -> None:
-    install = (PROJECT_ROOT / "src/capsem/gate/install.py").read_text(encoding="utf-8")
+    install = (PROJECT_ROOT / "build_system/builder/gate/install.py").read_text(encoding="utf-8")
 
     assert "installimage.prepare" not in install
 
@@ -1049,7 +1044,7 @@ def test_install_recipe_invokes_pytest_as_a_module_inside_container(tmp_path: Pa
     A bare `pytest` resolves to whatever is first on PATH, which inside this
     container is not the environment the lockfile pins.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     issued = _planned("install", selected_content_root=_selected_content(tmp_path))
@@ -1065,7 +1060,7 @@ def test_install_recipe_runs_release_glowup_in_clean_project_environment() -> No
     The interpreter on PATH is whatever the image happens to have; the one the
     lockfile pins is the one the product is tested against.
     """
-    proof = (PROJECT_ROOT / "src/capsem/gate/installproof.py").read_text(encoding="utf-8")
+    proof = (PROJECT_ROOT / "build_system/builder/gate/installproof.py").read_text(encoding="utf-8")
 
     assert "python3 scripts/local-release-glowup.py" not in proof
     assert "uv run" not in proof
@@ -1089,7 +1084,7 @@ def test_native_packages_make_full_doctor_mock_server_self_contained() -> None:
 
 def test_native_packages_include_the_release_functional_benchmark() -> None:
     """`capsem-bench-rs` ships in the native packages and is built for them."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     package_paths = [
@@ -1173,20 +1168,20 @@ def test_full_gate_runs_fast_checks_before_install_harness_preflight() -> None:
 
     # A sealed smoke failure is a materialization defect. It cannot repair
     # itself by rebuilding without the cache or reopening the network.
-    image = (PROJECT_ROOT / "src/capsem/gate/installimage.py").read_text(encoding="utf-8")
+    image = (PROJECT_ROOT / "build_system/builder/gate/installimage.py").read_text(encoding="utf-8")
     assert "no_cache=True" not in image
     assert "cacheless rebuild" not in image
 
 
 def test_install_source_image_prebuilds_fresh_cli_before_sealed_runtime() -> None:
     """Current-source update tests never compile inside the privileged runtime."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     helper = (PROJECT_ROOT / "docker/Dockerfile.install-builder").read_text()
     source = (PROJECT_ROOT / "docker/Dockerfile.install-test").read_text()
-    builder = (PROJECT_ROOT / "src/capsem/gate/installbuilder.py").read_text()
-    proof = (PROJECT_ROOT / "src/capsem/gate/installproof.py").read_text()
+    builder = (PROJECT_ROOT / "build_system/builder/gate/installbuilder.py").read_text()
+    proof = (PROJECT_ROOT / "build_system/builder/gate/installproof.py").read_text()
     tests = "\n".join(
         (PROJECT_ROOT / path).read_text()
         for path in (
@@ -1244,7 +1239,7 @@ def test_install_preflight_does_not_claim_asset_only_cdxgen() -> None:
 
 
 def test_cross_arch_tauri_swap_covers_every_native_dev_package() -> None:
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     swap_script = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text()
@@ -1278,7 +1273,7 @@ def test_cross_arch_tauri_swap_excludes_non_crossable_introspection_toolchain() 
 
 def test_cross_arch_frontend_fetch_is_isolated_from_the_dev_library_swap() -> None:
     """Both are materialization, in sibling stages, never qualification work."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     script = (PROJECT_ROOT / config.package.build_script).read_text(encoding="utf-8")
@@ -1300,8 +1295,8 @@ def test_cross_compile_reasserts_pinned_rust_target_before_expensive_work() -> N
     It was spelled three times inside one inline shell script -- three chances
     for a bump to leave the package rail behind.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate.packageinputs import pinned_toolchain
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.packageinputs import pinned_toolchain
 
     config = gate_config.load(PROJECT_ROOT)
     pinned = pinned_toolchain(PROJECT_ROOT)
@@ -1347,10 +1342,10 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     The builder image itself consumes the headroom, so a single check before it
     measures a number that is wrong by the time it matters.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    source = (PROJECT_ROOT / "src/capsem/gate/packagerail.py").read_text()
+    source = (PROJECT_ROOT / "build_system/builder/gate/packagerail.py").read_text()
     plan = _planned("cross-compile", arch="arm64")
 
     assert source.count('ensure_space("package")') == 2
@@ -1405,8 +1400,8 @@ def test_the_parity_lane_holds_no_build_tree_for_the_assets_to_wait_on(
         ("Linux", "x86_64", False),
         ("Darwin", "arm64", True),
     ):
-        monkeypatch.setattr("capsem.gate.host.system", lambda system=system: system)
-        monkeypatch.setattr("capsem.gate.host.machine", lambda machine=machine: machine)
+        monkeypatch.setattr("capsem_builder.gate.host.system", lambda system=system: system)
+        monkeypatch.setattr("capsem_builder.gate.host.machine", lambda machine=machine: machine)
         plan = gate_plan("candidate")
 
         assert ("linux-rust" in plan.labels) is expected
@@ -1415,7 +1410,7 @@ def test_the_parity_lane_holds_no_build_tree_for_the_assets_to_wait_on(
             "a step exists to release a volume the sealed lane never mounts"
         )
 
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     boundaries = {
         phase.boundary for phase in gate_config.load(PROJECT_ROOT).storage.phases.values()
@@ -1476,11 +1471,11 @@ def test_full_gate_releases_completed_buildkit_graph_after_packages() -> None:
 def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> None:
     """The whole gate's budget is taken once, up front, and reclaims nothing
     a rebuild would have to redo."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     order = _gate_order()
-    plan_source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "candidateplan.py").read_text(
+    plan_source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "candidateplan.py").read_text(
         encoding="utf-8"
     )
 
@@ -1500,9 +1495,8 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
 
 def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> None:
     """The whole storage arc, as one ordering rather than a dozen call sites."""
+    from capsem_builder.gate import host
     from helpers.gate import gate_plan
-
-    from capsem.gate import host
 
     plan = gate_plan("candidate")
     order = _gate_order()
@@ -1657,10 +1651,9 @@ def test_standalone_install_gate_preflights_privileged_helper(tmp_path: Path) ->
     """
     import argparse
 
+    from capsem_builder.gate import cli
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli
-    from capsem.gate.command import GateCommand
 
     assert cli is not None  # importing the command module registers the command
     plan = GateCommand.registry["install"](
@@ -1682,14 +1675,14 @@ def test_standalone_install_gate_preflights_privileged_helper(tmp_path: Path) ->
 def test_install_gate_passes_vm_devices_to_full_installed_proofs() -> None:
     """A host that can boot a guest passes the devices through; one that
     cannot proves packaging and says so rather than quietly proving less."""
-    from capsem.gate import config as gate_config
-    from capsem.gate.installcontainer import InstallContainer
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.installcontainer import InstallContainer
 
     config = gate_config.load(PROJECT_ROOT)
     assert config.install.vm_devices == ("/dev/kvm", "/dev/vhost-vsock")
     assert config.install.optional_vm_devices == ("/dev/vsock",)
 
-    container_source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installcontainer.py").read_text(
+    container_source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installcontainer.py").read_text(
         encoding="utf-8"
     )
     assert "seccomp=unconfined" in container_source
@@ -1700,11 +1693,11 @@ def test_install_gate_passes_vm_devices_to_full_installed_proofs() -> None:
 def test_macos_install_gate_consumes_native_full_probe_evidence() -> None:
     """A Mac cannot nest Apple VZ, so it proves the package natively and hands
     the report to the install rail rather than pretending it booted a guest."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     order = _gate_order()
-    proof = (PROJECT_ROOT / "src/capsem/gate/installproof.py").read_text(encoding="utf-8")
+    proof = (PROJECT_ROOT / "build_system/builder/gate/installproof.py").read_text(encoding="utf-8")
 
     assert config.install.suite.macos_report_check == "scripts/check-macos-native-glowup.py"
     assert "validate_macos_glowup" in proof
@@ -1720,7 +1713,7 @@ def test_macos_install_gate_missing_native_report_fails_before_cleanup() -> None
     `${VAR:?}` would have failed inside the shell's own expansion, before the
     diagnostic that explains what to do about it.
     """
-    proof = (PROJECT_ROOT / "src/capsem/gate/installproof.py").read_text(encoding="utf-8")
+    proof = (PROJECT_ROOT / "build_system/builder/gate/installproof.py").read_text(encoding="utf-8")
 
     assert "native glow-up report" in proof
     assert "GateError" in proof
@@ -1744,7 +1737,7 @@ def test_binary_release_sbom_jobs_install_zstd_for_deb_payloads() -> None:
 
 def test_local_release_glowup_channel_build_uses_local_release_urls() -> None:
     script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
-    authoring = (PROJECT_ROOT / "src/capsem/gate/releaseauthoring.py").read_text()
+    authoring = (PROJECT_ROOT / "build_system/builder/gate/releaseauthoring.py").read_text()
 
     assert "CAPSEM_RELEASE_URL" not in authoring
     assert "release_environment" in authoring
@@ -1755,7 +1748,7 @@ def test_local_release_glowup_channel_build_uses_local_release_urls() -> None:
 
 def test_local_release_glowup_uses_preserved_admin_binary_without_rebuild() -> None:
     script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
-    authoring = (PROJECT_ROOT / "src/capsem/gate/releaseauthoring.py").read_text()
+    authoring = (PROJECT_ROOT / "build_system/builder/gate/releaseauthoring.py").read_text()
 
     assert 'admin = args.bin_dir / "capsem-admin"' in script
     assert "os.access(admin, os.X_OK)" in script
@@ -2609,7 +2602,7 @@ def test_native_glowup_owns_exact_manifest_and_installed_shell_evidence() -> Non
     macos = (PROJECT_ROOT / "scripts" / "macos_release_glowup.py").read_text()
     linux = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
     installed_probe = (PROJECT_ROOT / "scripts" / "release_installed_probe.py").read_text()
-    authoring = (PROJECT_ROOT / "src/capsem/gate/releaseauthoring.py").read_text()
+    authoring = (PROJECT_ROOT / "build_system/builder/gate/releaseauthoring.py").read_text()
 
     assert "assert_manifest_artifact" in macos
     assert "assert_manifest_artifact" in linux
@@ -2622,7 +2615,7 @@ def test_native_glowup_owns_exact_manifest_and_installed_shell_evidence() -> Non
 
 def test_every_native_glowup_uses_graph_first_binary_authoring() -> None:
     """Linux and macOS must not stamp provenance into a legacy projection."""
-    gate = (PROJECT_ROOT / "src/capsem/gate/releasegraph.py").read_text()
+    gate = (PROJECT_ROOT / "build_system/builder/gate/releasegraph.py").read_text()
     linux = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
     macos = (PROJECT_ROOT / "scripts" / "macos_release_glowup.py").read_text()
 
@@ -2637,10 +2630,10 @@ def test_every_native_glowup_uses_graph_first_binary_authoring() -> None:
 def test_dev_service_does_not_replace_installed_assets_with_worktree_symlink() -> None:
     """The dev service syncs assets into its home; it does not symlink the
     worktree over an installed tree, which made the two indistinguishable."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    service = (PROJECT_ROOT / "src/capsem/gate/service.py").read_text(encoding="utf-8")
+    service = (PROJECT_ROOT / "build_system/builder/gate/service.py").read_text(encoding="utf-8")
 
     assert config.service.sync_assets_script.endswith("sync-dev-assets.sh")
     assert "sync_assets_script" in service
@@ -2692,10 +2685,10 @@ def test_native_postinstall_merges_fresh_check_into_manifest_metadata() -> None:
 
 def test_manifest_generation_public_path_is_capsem_admin() -> None:
     """One authority generates manifests, and the docs say the same one."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    initrd = (PROJECT_ROOT / "src/capsem/gate/initrd.py").read_text(encoding="utf-8")
+    initrd = (PROJECT_ROOT / "build_system/builder/gate/initrd.py").read_text(encoding="utf-8")
 
     assert "manifest" in " ".join(config.initrd.manifest)
     assert "capsem-admin" in " ".join(config.initrd.manifest)
@@ -3121,7 +3114,7 @@ def test_asset_build_recipes_skip_kvm_only_for_build_prereq_doctor() -> None:
     An asset build cannot pass an asset check before it has built the assets,
     and it does not need KVM to build them. Every *other* doctor run keeps both.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     doctor_probe = subprocess.run(
@@ -3165,11 +3158,11 @@ def test_only_systemd_package_proof_receives_kvm_devices() -> None:
     A builder with `/dev/kvm` is a builder that can be made to do more than
     build, and nothing in a cross-compile needs it.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     issued = _planned("cross-compile", arch="arm64")
-    container = (PROJECT_ROOT / "src/capsem/gate/installcontainer.py").read_text(encoding="utf-8")
+    container = (PROJECT_ROOT / "build_system/builder/gate/installcontainer.py").read_text(encoding="utf-8")
 
     for device in config.install.vm_devices:
         assert device not in issued, f"the package builder is handed {device}"
@@ -3181,11 +3174,10 @@ def test_only_systemd_package_proof_receives_kvm_devices() -> None:
 def test_cross_compile_clock_sync_uses_bounded_colima_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.content import ProfileContent
+    from capsem_builder.gate.packagerail import PackageRail
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import config as gate_config
-    from capsem.gate.content import ProfileContent
-    from capsem.gate.packagerail import PackageRail
 
     config = gate_config.load(PROJECT_ROOT)
     target = config.arch("arm64")
@@ -3197,8 +3189,8 @@ def test_cross_compile_clock_sync_uses_bounded_colima_command(
         ("Linux", "x86_64", False),
         ("Darwin", "arm64", True),
     ):
-        monkeypatch.setattr("capsem.gate.host.system", lambda system=system: system)
-        monkeypatch.setattr("capsem.gate.host.machine", lambda machine=machine: machine)
+        monkeypatch.setattr("capsem_builder.gate.host.system", lambda system=system: system)
+        monkeypatch.setattr("capsem_builder.gate.host.machine", lambda machine=machine: machine)
         runner = RecordingRunner(PROJECT_ROOT)
 
         PackageRail(runner, target, content=ProfileContent.standalone(config)).sync_clock()

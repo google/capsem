@@ -66,7 +66,7 @@ def keep_awake(runner: Runner) -> list[str] | None:
 #: What `python -m` runs to become the gate again. Spelled once: `gatelaunch`
 #: uses the same target, and a re-exec that names a different one is a re-exec
 #: that runs different code.
-MODULE = "capsem.gate"
+MODULE = "capsem_builder.gate"
 
 
 class CompleteGate:
@@ -133,7 +133,7 @@ class CompleteGate:
 
         The *program* is this interpreter running this module, not `sys.argv[0]`.
         `capsem-gate` re-execs itself under an isolated bytecode cache with
-        `-m capsem.gate`, so from here `sys.argv[0]` is the path of
+        `-m capsem_builder.gate`, so from here `sys.argv[0]` is the path of
         `__main__.py` -- a file that is not executable. Passing it to
         `caffeinate` gave `env: __main__.py: Permission denied` and a gate that
         stopped in three seconds.

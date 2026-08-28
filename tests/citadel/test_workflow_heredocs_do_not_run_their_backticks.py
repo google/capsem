@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from capsem.gate.shelllex import heredocs
-from capsem.gate.shellsurfaces import workflow_bodies
+from capsem_builder.gate.shelllex import heredocs
+from capsem_builder.gate.shellsurfaces import workflow_bodies
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = PROJECT_ROOT / ".github" / "workflows"

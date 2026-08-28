@@ -10,12 +10,11 @@ from types import ModuleType
 from typing import Any
 
 import yaml
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import hostimage
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.packageinputs import pinned_toolchain
 from helpers.gate import RecordingJournal, RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate import hostimage
-from capsem.gate.context import Context
-from capsem.gate.packageinputs import pinned_toolchain
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)

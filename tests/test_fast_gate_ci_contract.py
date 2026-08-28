@@ -33,9 +33,9 @@ def _planned(module: str) -> str:
     """
     import argparse
 
-    from capsem.gate import cli  # noqa: F401 - imports every command module
-    from capsem.gate.command import GateCommand
-    from capsem.gate.proc import Runner
+    from capsem_builder.gate import cli  # noqa: F401 - imports every command module
+    from capsem_builder.gate.command import GateCommand
+    from capsem_builder.gate.proc import Runner
 
     return (
         GateCommand.registry[module](

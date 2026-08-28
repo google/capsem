@@ -1,6 +1,6 @@
 """Hardlinking from Rust goes through one audited place.
 
-Python's primitives are proxied (`capsem.gate.observation.Instrument`), so
+Python's primitives are proxied (`capsem_builder.gate.observation.Instrument`), so
 every in-process effect is observable by construction rather than by
 remembering to log it. Rust cannot be monkeypatched; the equivalent is a
 chokepoint plus this test.

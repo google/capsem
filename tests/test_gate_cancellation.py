@@ -21,15 +21,14 @@ import time
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import cancellation
-from capsem.gate import config as gate_config
-from capsem.gate.actions import Action
-from capsem.gate.context import Context
-from capsem.gate.execution import step
-from capsem.gate.plan import Plan
-from capsem.gate.planrunner import execute
-from capsem.gate.proc import Runner
+from capsem_builder.gate import cancellation
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.actions import Action
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.execution import step
+from capsem_builder.gate.plan import Plan
+from capsem_builder.gate.planrunner import execute
+from capsem_builder.gate.proc import Runner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -257,7 +256,7 @@ def test_cancellation_is_off_outside_a_run() -> None:
 def test_a_copy_stops_between_files(tmp_path: Path) -> None:
     """Between files, never inside one: a half-written file is worse than a
     half-copied tree, which the caller's cleanup can see and redo."""
-    from capsem.gate.filesystem import copy_tree
+    from capsem_builder.gate.filesystem import copy_tree
 
     source = tmp_path / "source"
     source.mkdir()

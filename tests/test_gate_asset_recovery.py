@@ -7,14 +7,13 @@ from pathlib import Path
 
 import blake3
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import imagebuild
+from capsem_builder.gate.actions import Action
+from capsem_builder.gate.assetcondition import AssetRecovery
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.plan import Plan
 from helpers.gate import RecordingJournal, RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate import imagebuild
-from capsem.gate.actions import Action
-from capsem.gate.assetcondition import AssetRecovery
-from capsem.gate.context import Context
-from capsem.gate.plan import Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -113,7 +112,7 @@ def test_describing_recovery_never_reads_asset_presence(monkeypatch) -> None:
     def refuse_plan_time_read(*_args, **_kwargs):
         raise AssertionError("asset presence was read while describing the plan")
 
-    monkeypatch.setattr("capsem.gate.assetcondition.missing", refuse_plan_time_read)
+    monkeypatch.setattr("capsem_builder.gate.assetcondition.missing", refuse_plan_time_read)
 
     plan = _recovery_plan(config, monkeypatch)
 
@@ -258,8 +257,8 @@ def test_profile_recovery_builds_are_ordered_and_invalidate_completion_first(
 
 
 def _candidate_steps() -> dict:
-    from capsem.gate import candidateplan
-    from capsem.gate.qualification import LocalQualification
+    from capsem_builder.gate import candidateplan
+    from capsem_builder.gate.qualification import LocalQualification
 
     config = gate_config.load(PROJECT_ROOT)
     plan = Plan("candidate")
@@ -338,7 +337,7 @@ def test_the_lane_identity_covers_everything_an_asset_is_built_from() -> None:
     strictly needs to be. A path that can change what lands in a VM and is
     absent here is the bug this guard exists to catch.
     """
-    from capsem.gate import assetidentity
+    from capsem_builder.gate import assetidentity
 
     covered = set(assetidentity.roots(gate_config.load(PROJECT_ROOT)))
     for required in (
@@ -365,7 +364,7 @@ def test_the_lane_identity_covers_everything_an_asset_is_built_from() -> None:
 
 
 def test_a_lane_whose_inputs_are_unchanged_is_reused(tmp_path: Path) -> None:
-    from capsem.gate import assetidentity
+    from capsem_builder.gate import assetidentity
 
     (tmp_path / "guest").mkdir()
     (tmp_path / "guest" / "init").write_text("one", encoding="utf-8")
@@ -374,7 +373,7 @@ def test_a_lane_whose_inputs_are_unchanged_is_reused(tmp_path: Path) -> None:
 
 
 def test_a_lane_whose_inputs_moved_is_rebuilt(tmp_path: Path) -> None:
-    from capsem.gate import assetidentity
+    from capsem_builder.gate import assetidentity
 
     (tmp_path / "guest").mkdir()
     (tmp_path / "guest" / "init").write_text("one", encoding="utf-8")
@@ -385,7 +384,7 @@ def test_a_lane_whose_inputs_moved_is_rebuilt(tmp_path: Path) -> None:
 
 def test_a_new_file_changes_the_identity(tmp_path: Path) -> None:
     """Addition is a change. Hashing contents alone would miss it."""
-    from capsem.gate import assetidentity
+    from capsem_builder.gate import assetidentity
 
     (tmp_path / "guest").mkdir()
     (tmp_path / "guest" / "init").write_text("one", encoding="utf-8")
@@ -396,7 +395,7 @@ def test_a_new_file_changes_the_identity(tmp_path: Path) -> None:
 
 def test_an_executable_mode_change_changes_the_identity(tmp_path: Path) -> None:
     """Docker COPY preserves mode, so equal bytes can still build new output."""
-    from capsem.gate import assetidentity
+    from capsem_builder.gate import assetidentity
 
     script = tmp_path / "guest" / "build.sh"
     script.parent.mkdir()
@@ -411,7 +410,7 @@ def test_an_executable_mode_change_changes_the_identity(tmp_path: Path) -> None:
 
 def test_a_symlink_target_change_changes_the_identity(tmp_path: Path) -> None:
     """The path a build context exposes is an input even when bytes match."""
-    from capsem.gate import assetidentity
+    from capsem_builder.gate import assetidentity
 
     guest = tmp_path / "guest"
     guest.mkdir()
@@ -430,15 +429,15 @@ def test_a_symlink_target_change_changes_the_identity(tmp_path: Path) -> None:
 def test_an_absent_root_is_refused_rather_than_hashed_as_empty(tmp_path: Path) -> None:
     """A typo in the declared list would otherwise read as "nothing here",
     silently shrinking the identity to the roots that happen to exist."""
-    from capsem.gate import assetidentity
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate import assetidentity
+    from capsem_builder.gate.errors import GateError
 
     with pytest.raises(GateError, match="ghost"):
         assetidentity.digest_of(tmp_path, ("ghost",))
 
 
 def _seed_lane_receipt(tmp_path: Path, *, identity: str = "a" * 64):
-    from capsem.gate import assetreceipt
+    from capsem_builder.gate import assetreceipt
 
     base = gate_config.load(PROJECT_ROOT)
     prefix = base.prefix.model_copy(update={"parent": str(tmp_path / "prefixes")})
@@ -468,7 +467,7 @@ def test_the_lane_skips_a_build_only_when_its_receipt_and_bytes_match(tmp_path: 
     and the identity that justifies reusing it cannot be separated -- a stamp
     that outlives its assets is how a cache starts lying.
     """
-    from capsem.gate import assetreceipt
+    from capsem_builder.gate import assetreceipt
 
     config, arch, output, _produced = _seed_lane_receipt(tmp_path)
 
@@ -482,7 +481,7 @@ def test_a_receipt_never_accepts_mutated_or_partial_output(
     tmp_path: Path, mutation: str
 ) -> None:
     """Existence plus a matching input stamp is not reusable authority."""
-    from capsem.gate import assetreceipt
+    from capsem_builder.gate import assetreceipt
 
     config, arch, output, produced = _seed_lane_receipt(tmp_path)
     target = produced / config.artifacts.rootfs
@@ -500,8 +499,8 @@ def test_preflight_keeps_only_reusable_lane_roots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The cache is not real if preflight deletes it before the hit check."""
-    from capsem.gate import assetlanes
-    from capsem.gate.assetlanes import Profile
+    from capsem_builder.gate import assetlanes
+    from capsem_builder.gate.assetlanes import Profile
 
     config, arch, output, _produced = _seed_lane_receipt(tmp_path)
     profile_root = output.parent
@@ -511,7 +510,7 @@ def test_preflight_keeps_only_reusable_lane_roots(
     obsolete.mkdir()
     log = config.path(config.assets.test_root) / f"build-{arch.name}.log"
     log.write_text("old", encoding="utf-8")
-    monkeypatch.setattr("capsem.gate.assetidentity.lane_identity", lambda _config: "a" * 64)
+    monkeypatch.setattr("capsem_builder.gate.assetidentity.lane_identity", lambda _config: "a" * 64)
 
     assetlanes.prepare_workspace(
         config,
@@ -527,7 +526,7 @@ def test_preflight_keeps_only_reusable_lane_roots(
 
 def test_asset_plan_seals_receipts_before_packing_can_be_carried() -> None:
     """A journal may call packing complete only after its exact receipt exists."""
-    from capsem.gate.assetplan import fragment
+    from capsem_builder.gate.assetplan import fragment
 
     config = gate_config.load(PROJECT_ROOT)
     plan = Plan("asset-receipts")

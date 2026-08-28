@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """List and validate the exact profile axis for a functional release gate.
 
-The selection itself lives in `capsem.gate.profiles`, where the gate can build
+The selection itself lives in `capsem_builder.gate.profiles`, where the gate can build
 a plan from it without a subprocess. This stays as the command-line surface
 that CI workflows and the release scripts already call.
 """
@@ -14,8 +14,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from capsem.gate.errors import GateError
-from capsem.gate.profiles import declared, materialized
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.profiles import declared, materialized
 
 
 def release_test_profiles(profiles_dir: Path, manifest: Path) -> list[str]:

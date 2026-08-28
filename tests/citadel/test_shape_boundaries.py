@@ -15,8 +15,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import config as gate_config
+from capsem_builder.gate import config as gate_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BOUNDARY = gate_config.load(PROJECT_ROOT).boundary
@@ -252,14 +251,14 @@ The fix for an entry is a script under `scripts/`, which ShellCheck already
 lints and a test can call. Not a bigger parser: reaching for one is how four
 extraction bugs got written before this rule existed.
 
-Bodies come from `capsem.gate.shellsurfaces`, the same extractor the shell
+Bodies come from `capsem_builder.gate.shellsurfaces`, the same extractor the shell
 audit lints through, so the linter and the ceiling cannot disagree about what
 a body is.
 """
 
 
 def _shell_bodies() -> dict[str, str]:
-    from capsem.gate import shellsurfaces
+    from capsem_builder.gate import shellsurfaces
 
     bodies = dict(shellsurfaces.workflow_bodies(PROJECT_ROOT / ".github" / "workflows"))
     bodies.update(
@@ -280,7 +279,7 @@ def test_there_are_shell_bodies_to_measure() -> None:
 
 
 def test_oversized_shell_bodies_match_the_exact_debt_ratchet() -> None:
-    from capsem.gate import shellsurfaces
+    from capsem_builder.gate import shellsurfaces
 
     rule = BOUNDARY.shell_bodies
     actual = {

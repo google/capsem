@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from capsem.gate.architecture import Arch
+from capsem_builder.gate.architecture import Arch
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config/gate.toml"

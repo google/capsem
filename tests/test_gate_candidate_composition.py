@@ -26,12 +26,11 @@ import argparse
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import cli  # noqa: F401 - imported so every command registers
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.command import GateCommand
+from capsem_builder.gate.resume import ancestors
 from helpers.gate import RecordingRunner
-
-from capsem.gate import cli  # noqa: F401 - imported so every command registers
-from capsem.gate import config as gate_config
-from capsem.gate.command import GateCommand
-from capsem.gate.resume import ancestors
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -84,7 +83,7 @@ def test_linux_signing_steps_preserve_the_graph_without_launching_apple_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Linux still follows the same dependencies, but never execs codesign."""
-    from capsem.gate import host
+    from capsem_builder.gate import host
 
     monkeypatch.setattr(host, "on_macos", lambda: False)
     signing = [step for step in _plan().steps if step.label.endswith(".sign")]
@@ -97,7 +96,7 @@ def test_linux_signing_steps_preserve_the_graph_without_launching_apple_tools(
 def test_macos_signing_step_keeps_codesign_and_artifact_ownership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from capsem.gate import host, hostpackage
+    from capsem_builder.gate import host, hostpackage
 
     monkeypatch.setattr(host, "on_macos", lambda: True)
     signing = hostpackage.sign_step(CONFIG)
@@ -143,7 +142,7 @@ def test_the_phases_run_in_the_order_the_gate_depends_on() -> None:
 def test_every_local_functional_vm_step_selects_its_exact_ironbank_profile() -> None:
     """Diagnostic continuation may start at any VM step, so selection travels
     with every step rather than relying on one earlier mutable selector."""
-    from capsem.gate import profiles as gate_profiles
+    from capsem_builder.gate import profiles as gate_profiles
 
     plan = _plan()
     names = CONFIG.environment
@@ -276,7 +275,7 @@ def test_the_workspace_is_held_for_the_whole_gate() -> None:
 
 def test_nothing_in_the_plan_starts_another_gate() -> None:
     """The property the whole change exists for, asserted on the real plan."""
-    from capsem.gate.funnel import ENTRYPOINTS, program
+    from capsem_builder.gate.funnel import ENTRYPOINTS, program
 
     offences = [
         f"{label}: {rendered}"

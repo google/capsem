@@ -17,9 +17,9 @@ from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Literal
 
-from capsem_builder.policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from pydantic import model_validator
 
+from ..policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from .configschema import Strict
 
 

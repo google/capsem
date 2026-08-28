@@ -26,11 +26,10 @@ import time
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import config as gate_config
-from capsem.gate.errors import GateError
-from capsem.gate.locks import ExclusiveLock
-from capsem.gate.lockschema import LockConfig
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.locks import ExclusiveLock
+from capsem_builder.gate.lockschema import LockConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -168,8 +167,8 @@ def test_a_launched_daemon_does_not_inherit_the_lock(tmp_path: Path) -> None:
             textwrap.dedent("""
                 import json, os, subprocess, sys
                 sys.path.insert(0, "src")
-                from capsem.gate.lockschema import LockConfig
-                from capsem.gate.locks import ExclusiveLock
+                from capsem_builder.gate.lockschema import LockConfig
+                from capsem_builder.gate.locks import ExclusiveLock
 
                 ExclusiveLock(LockConfig(**json.loads(sys.argv[1])),
                               purpose="just test-clean").acquire()
@@ -358,7 +357,7 @@ def test_the_checked_in_lock_sits_outside_every_tree_the_gate_wipes() -> None:
 def test_the_lock_is_a_resource_so_teardown_is_not_optional() -> None:
     """Held through `held(...)` with everything else, released in reverse --
     so an interrupted gate drops it rather than wedging the machine."""
-    from capsem.gate.lifecycle import Resource
+    from capsem_builder.gate.lifecycle import Resource
 
     assert issubclass(ExclusiveLock, Resource)
 
@@ -421,7 +420,7 @@ def test_contention_is_never_resolved_by_signalling_the_holder() -> None:
     Checked as code rather than as text, so the prose above may say "killed".
     """
     tree = ast.parse(
-        (PROJECT_ROOT / "src" / "capsem" / "gate" / "locks.py").read_text(encoding="utf-8")
+        (PROJECT_ROOT / "build_system" / "builder" / "gate" / "locks.py").read_text(encoding="utf-8")
     )
     calls = {
         node.func.attr

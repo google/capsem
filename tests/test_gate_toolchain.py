@@ -1,13 +1,12 @@
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import toolchain
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.packageinputs import pinned_toolchain
 from helpers.gate import RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate import toolchain
-from capsem.gate.context import Context
-from capsem.gate.errors import GateError
-from capsem.gate.packageinputs import pinned_toolchain
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)

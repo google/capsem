@@ -12,10 +12,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import audits
+from capsem_builder.gate import config as gate_config
 from helpers.gate import gate_plan
-
-from capsem.gate import audits
-from capsem.gate import config as gate_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -57,7 +56,7 @@ whole purpose is to answer in seconds. What belongs in `fast` is this guard.
 Adding a Rust check means adding it here in the same change, or the shape stops
 being provable.
 
-See config/gate.toml [modules] and src/capsem/gate/rustinventory.py.
+See config/gate.toml [modules] and build_system/builder/gate/rustinventory.py.
 """
 
 

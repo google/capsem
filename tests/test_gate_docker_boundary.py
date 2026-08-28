@@ -31,14 +31,13 @@ from pathlib import Path
 from typing import Any, cast, get_type_hints
 
 import pytest
+from capsem_builder.gate.docker import Docker
+from capsem_builder.gate.errors import GateError
 from capsem_builder.policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from helpers.gate import RecordingRunner
 
-from capsem.gate.docker import Docker
-from capsem.gate.errors import GateError
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-GATE = PROJECT_ROOT / "src" / "capsem" / "gate"
+GATE = PROJECT_ROOT / "build_system" / "builder" / "gate"
 
 #: The one module allowed to spell `docker` as a command name. Everything else
 #: asks it, so that mounts and network mode have a single place to be decided.
@@ -143,10 +142,9 @@ def test_a_mount_cannot_point_at_the_checkout() -> None:
     that made a host step and a container step share inodes.
     """
     import pytest
-
-    from capsem.gate import config as gate_config
-    from capsem.gate.dockermount import Mount
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.dockermount import Mount
+    from capsem_builder.gate.errors import GateError
 
     root = gate_config.load(PROJECT_ROOT).root
 
@@ -214,7 +212,7 @@ def test_image_reference_refuses_a_digest_for_a_different_repository(tmp_path: P
 def test_exact_build_reference_accepts_a_locally_built_image_without_repo_digests(
     tmp_path: Path,
 ) -> None:
-    from capsem.gate.imageidentity import exact_image_reference
+    from capsem_builder.gate.imageidentity import exact_image_reference
 
     runner = RecordingRunner(
         tmp_path,
@@ -409,6 +407,6 @@ def test_no_module_mounts_the_checkout() -> None:
 
 def test_generated_mounts_are_read_only() -> None:
     """A lane that can write its inputs can change the next lane's inputs."""
-    from capsem.gate.dockermount import Mount
+    from capsem_builder.gate.dockermount import Mount
 
     assert Mount.generated("/x/assets", "/src/assets").options == "ro"

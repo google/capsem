@@ -14,13 +14,12 @@ import signal
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import cli, project_root
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.command import GateCommand
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.errors import GateError
 from helpers.gate import RecordingRunner
-
-from capsem.gate import cli, project_root
-from capsem.gate import config as gate_config
-from capsem.gate.command import GateCommand
-from capsem.gate.context import Context
-from capsem.gate.errors import GateError
 
 
 @pytest.fixture
@@ -97,7 +96,7 @@ def test_stamp_version_runs_against_this_checkout(
     runner = RecordingRunner(project_root())
     monkeypatch.setattr(cli, "Runner", lambda root: runner)
     monkeypatch.setattr(
-        "capsem.gate.versions.stamp", lambda root, runner: calls.append(root) or "9.9.9"
+        "capsem_builder.gate.versions.stamp", lambda root, runner: calls.append(root) or "9.9.9"
     )
 
     assert dispatch(["stamp-version"], runner) == 0
@@ -116,7 +115,7 @@ def test_a_gate_error_is_one_line_on_stderr_and_a_nonzero_exit(
         raise GateError("missing exact release-mode Debian package")
 
     monkeypatch.setattr(cli, "Runner", lambda root: RecordingRunner(root))
-    monkeypatch.setattr("capsem.gate.versions.workspace_version", explode)
+    monkeypatch.setattr("capsem_builder.gate.versions.workspace_version", explode)
 
     assert cli.main(["version"]) == 1
 
@@ -141,7 +140,7 @@ def test_an_interrupt_exits_130_rather_than_reporting_success(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(cli, "Runner", lambda root: RecordingRunner(root))
-    monkeypatch.setattr("capsem.gate.versions.workspace_version", interrupt)
+    monkeypatch.setattr("capsem_builder.gate.versions.workspace_version", interrupt)
 
     assert cli.main(["version"]) == 130
 
@@ -156,7 +155,7 @@ def test_sigterm_unwinds_the_command_and_exits_143(
         raise AssertionError("SIGTERM returned instead of unwinding the gate")
 
     monkeypatch.setattr(cli, "Runner", lambda root: RecordingRunner(root))
-    monkeypatch.setattr("capsem.gate.versions.workspace_version", terminate)
+    monkeypatch.setattr("capsem_builder.gate.versions.workspace_version", terminate)
 
     assert cli.main(["version"]) == 143
 

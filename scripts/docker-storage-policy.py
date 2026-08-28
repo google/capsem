@@ -1022,7 +1022,7 @@ def command_release(args: argparse.Namespace, policy: dict[str, Any]) -> int:
 def command_reclaim(args: argparse.Namespace, policy: dict[str, Any]) -> int:
     """Retire the generations of a content-keyed repository that nothing wants.
 
-    The tag to keep is passed in rather than derived here. `capsem.gate.
+    The tag to keep is passed in rather than derived here. `capsem_builder.gate.
     linuxrust.base_tag` computes it from the lockfiles that decide the image's
     contents, and recomputing that hash in this script would be a second source
     of truth for which image the lane is about to run -- the two could disagree,

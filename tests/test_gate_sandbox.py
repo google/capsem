@@ -25,19 +25,18 @@ from types import ModuleType
 import pytest
 import variables
 import yaml
+from capsem_builder.gate import cancellation, egress, sandbox
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.actions import Run, Script
+from capsem_builder.gate.config import GateConfig
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.harnessschema import SandboxConfig
+from capsem_builder.gate.proc import Runner
+from capsem_builder.gate.processgroup import StopPolicy
 from helpers.gate import RecordingRunner
 from helpers.workflow_contract import assert_unmasked_step
 from pydantic import ValidationError
-
-from capsem.gate import cancellation, egress, sandbox
-from capsem.gate import config as gate_config
-from capsem.gate.actions import Run, Script
-from capsem.gate.config import GateConfig
-from capsem.gate.context import Context
-from capsem.gate.errors import GateError
-from capsem.gate.harnessschema import SandboxConfig
-from capsem.gate.proc import Runner
-from capsem.gate.processgroup import StopPolicy
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -425,9 +424,9 @@ def test_docker_still_answers_through_its_unix_socket(tmp_path: Path) -> None:
 
 
 def test_linux_enforcement_uses_bubblewrap_network_namespace(monkeypatch) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/bwrap")
-    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: False)
+    monkeypatch.setattr("capsem_builder.gate.sandbox.active", lambda _config: False)
 
     wrapped = sandbox.applied(
         CONFIG,
@@ -489,8 +488,8 @@ def test_linux_sandbox_config_cannot_widen_the_hosted_repair(field: str, value: 
 
 
 def test_linux_report_mode_refuses_to_claim_unimplemented_observation(monkeypatch) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: False)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.sandbox.active", lambda _config: False)
 
     with pytest.raises(GateError, match="report mode"):
         sandbox.applied(
@@ -599,7 +598,7 @@ def test_the_sandbox_is_applied_before_any_resource_is_held() -> None:
     """
     import ast
 
-    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "command.py").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "command.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     execute = next(
         node
@@ -651,9 +650,8 @@ def test_off_is_the_default_so_a_short_command_keeps_its_network() -> None:
     everything means rediscovering which socket each one needed -- at the cost
     of a run each time.
     """
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import built_command
-
-    from capsem.gate.command import GateCommand
 
     # Through the helper, which is the one place that knows importing `cli` is
     # what fills the registry -- spelling that import here needs a suppression
@@ -699,7 +697,7 @@ def test_an_outside_action_uses_only_the_capability_runner() -> None:
 
 
 def test_an_outside_wrapper_moves_an_opaque_materializer_only() -> None:
-    from capsem.gate.outside import Outside
+    from capsem_builder.gate.outside import Outside
 
     ordinary = RecordingRunner(PROJECT_ROOT)
     capability = RecordingRunner(PROJECT_ROOT)
@@ -845,11 +843,11 @@ def test_every_fast_gate_entrypoint_prepares_one_scoped_egress_capability(
     from helpers.gate import built_command
 
     prepared: list[GateConfig] = []
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/bwrap")
-    monkeypatch.setattr("capsem.gate.sandbox.active", lambda _config: False)
+    monkeypatch.setattr("capsem_builder.gate.sandbox.active", lambda _config: False)
     monkeypatch.setattr(
-        "capsem.gate.sandbox.prepare_egress", lambda config: prepared.append(config)
+        "capsem_builder.gate.sandbox.prepare_egress", lambda config: prepared.append(config)
     )
 
     replacement = built_command(PROJECT_ROOT, name, args).reexec()

@@ -62,10 +62,10 @@ def test_pack_initrd_reasserts_cached_guest_binary_permissions():
     that the packer applies it to every staged binary -- not that a particular
     shell line still exists.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    packer = (PROJECT_ROOT / "src" / "capsem" / "gate" / "initrdactions.py").read_text(
+    packer = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "initrdactions.py").read_text(
         encoding="utf-8"
     )
 

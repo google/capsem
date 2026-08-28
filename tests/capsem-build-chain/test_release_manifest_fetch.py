@@ -33,11 +33,10 @@ def test_binary_release_fetches_fresh_source_without_bootstrapping_profiles() ->
     """
     import argparse
 
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
+    from capsem_builder.gate.sourcecommit import SourceCommit
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
-    from capsem.gate.sourcecommit import SourceCommit
 
     plan = GateCommand.registry["release-binaries"](
         RecordingRunner(ROOT),

@@ -17,14 +17,13 @@ from pathlib import Path
 
 import blake3
 import pytest
+from capsem_builder.gate import cli  # noqa: F401 - imported so every command registers
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.command import GateCommand
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.sourcecommit import SourceCommit
 from helpers.gate import RecordingJournal, RecordingRunner
-
-from capsem.gate import cli  # noqa: F401 - imported so every command registers
-from capsem.gate import config as gate_config
-from capsem.gate.command import GateCommand
-from capsem.gate.context import Context
-from capsem.gate.errors import GateError
-from capsem.gate.sourcecommit import SourceCommit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -104,7 +103,7 @@ def test_a_zero_length_required_asset_does_not_count_as_built(tmp_path: Path) ->
     An empty `vmlinuz` is what a build that ran out of disk leaves behind, and
     the check that follows it is the one meant to catch that.
     """
-    from capsem.gate import imagebuild
+    from capsem_builder.gate import imagebuild
 
     config = gate_config.load(PROJECT_ROOT)
     arch = config.host_arch()
@@ -117,7 +116,7 @@ def test_a_zero_length_required_asset_does_not_count_as_built(tmp_path: Path) ->
 
 def test_a_manifest_bound_complete_asset_cohort_counts(tmp_path: Path) -> None:
     """The other half, so the completion check cannot pass by always failing."""
-    from capsem.gate import imagebuild
+    from capsem_builder.gate import imagebuild
 
     config = gate_config.load(PROJECT_ROOT)
     arch = config.host_arch()
@@ -140,7 +139,7 @@ def test_a_symlink_is_verified_by_where_it_actually_points(
     against. Two lanes both leave something called `current`, and checking the
     name proves only that *a* link exists.
     """
-    from capsem.gate.fileactions import Symlink
+    from capsem_builder.gate.fileactions import Symlink
 
     wanted = tmp_path / "arm64"
     decoy = tmp_path / "nested" / "arm64"
@@ -156,7 +155,7 @@ def test_a_symlink_is_verified_by_where_it_actually_points(
 
 def test_a_symlink_refuses_to_replace_a_real_directory(tmp_path: Path, context: Context) -> None:
     """Replacing a directory with a link would delete whatever is in it."""
-    from capsem.gate.fileactions import Symlink
+    from capsem_builder.gate.fileactions import Symlink
 
     target = tmp_path / "arm64"
     target.mkdir()
@@ -245,7 +244,7 @@ def test_every_command_that_can_mutate_holds_the_machine_lock() -> None:
     read_only = {
         name
         for name, command in GateCommand.registry.items()
-        if not command.exclusive and command.__module__.startswith("capsem.gate.")
+        if not command.exclusive and command.__module__.startswith("capsem_builder.gate.")
     }
 
     # Only these, and each for a stated reason:
@@ -300,7 +299,7 @@ def test_no_command_touches_the_machine_while_building_its_plan() -> None:
     between being printed and being executed. The seal catches it at runtime;
     this catches it for every command at once, without a machine.
     """
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate.errors import GateError
 
     arguments = {
         "exec": {"guest_command": "true"},
@@ -329,7 +328,7 @@ def test_no_command_touches_the_machine_while_building_its_plan() -> None:
     }
 
     for name, command in sorted(GateCommand.registry.items()):
-        if not command.__module__.startswith("capsem.gate."):
+        if not command.__module__.startswith("capsem_builder.gate."):
             continue
         runner = RecordingRunner(PROJECT_ROOT)
         args = argparse.Namespace(
@@ -359,7 +358,7 @@ def test_guest_binary_freshness_covers_more_than_rust_sources() -> None:
     while every `.rs` file is older than it. The staged binary then ships into
     an initrd that does not match the source it claims to be built from.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     watched = set(config.initrd.freshness_inputs)

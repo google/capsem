@@ -22,11 +22,10 @@ import ast
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import config as gate_config
+from capsem_builder.gate import config as gate_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-GATE_PACKAGE = PROJECT_ROOT / "src" / "capsem" / "gate"
+GATE_PACKAGE = PROJECT_ROOT / "build_system" / "builder" / "gate"
 
 CONFIG = gate_config.load(PROJECT_ROOT)
 BOUNDARY = CONFIG.boundary
@@ -92,7 +91,7 @@ def test_only_the_primitives_touch_the_machine(module: Path) -> None:
 
     assert not found, (
         f"{module.name} reaches past the primitives; compose an action from "
-        "capsem.gate.actions or capsem.gate.fileactions so the dry run can "
+        "capsem_builder.gate.actions or capsem_builder.gate.fileactions so the dry run can "
         "show it and the run log can time it:\n  " + "\n  ".join(found)
     )
 

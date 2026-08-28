@@ -21,14 +21,13 @@ import time
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.actions import Call
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.execution import step
+from capsem_builder.gate.opacity import CallJustification, OpaqueKind
+from capsem_builder.gate.plan import Plan
 from helpers.gate import RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate.actions import Call
-from capsem.gate.context import Context
-from capsem.gate.execution import step
-from capsem.gate.opacity import CallJustification, OpaqueKind
-from capsem.gate.plan import Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -164,7 +163,7 @@ def test_exclusive_holders_still_exclude_each_other() -> None:
 
 def test_a_shared_claim_names_a_declared_exclusive() -> None:
     """Same rule as `exclusive`: inventing one contends with nothing."""
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate.errors import GateError
 
     with pytest.raises(GateError, match="unknown exclusive"):
         CONFIG.shared("not-a-real-resource")

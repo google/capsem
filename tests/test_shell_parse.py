@@ -12,9 +12,8 @@ from __future__ import annotations
 import warnings
 
 import pytest
-
-from capsem.gate.shelllex import Kind, heredocs, tokenize
-from capsem.gate.shellnodes import (
+from capsem_builder.gate.shelllex import Kind, heredocs, tokenize
+from capsem_builder.gate.shellnodes import (
     AndOr,
     Command,
     Compound,
@@ -25,8 +24,8 @@ from capsem.gate.shellnodes import (
     suppressed,
     walk,
 )
-from capsem.gate.shellparse import parse
-from capsem.gate.shellsniff import ForeignSourceWarning, sniff
+from capsem_builder.gate.shellparse import parse
+from capsem_builder.gate.shellsniff import ForeignSourceWarning, sniff
 
 
 def programs(source: str) -> list[str]:

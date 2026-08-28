@@ -5,12 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.sourcecommit import SourceCommit
+from capsem_builder.gate.storage import Storage
 from helpers.gate import RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate.errors import GateError
-from capsem.gate.sourcecommit import SourceCommit
-from capsem.gate.storage import Storage
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PHASES = gate_config.load(PROJECT_ROOT).storage.phases

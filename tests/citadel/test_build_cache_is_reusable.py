@@ -23,8 +23,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path, PurePosixPath
 
-from capsem.gate import buildcache, prefix
-from capsem.gate import config as gate_config
+from capsem_builder.gate import buildcache, prefix
+from capsem_builder.gate import config as gate_config
 
 ROOT = Path(__file__).resolve().parents[2]
 

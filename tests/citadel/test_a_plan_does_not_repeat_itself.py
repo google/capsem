@@ -26,10 +26,9 @@ from __future__ import annotations
 from collections import defaultdict
 from pathlib import Path
 
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import host
 from helpers.gate import gate_plan
-
-from capsem.gate import config as gate_config
-from capsem.gate import host
 
 ROOT = Path(__file__).resolve().parents[2]
 

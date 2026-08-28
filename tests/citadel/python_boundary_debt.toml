@@ -10,8 +10,9 @@ distributions = [
 ]
 entrypoints = [
   "build_system/pyproject.toml:capsem-builder=capsem_builder.image.cli:main",
-  "pyproject.toml:capsem-gate=capsem.gatelaunch:main",
+  "build_system/pyproject.toml:capsem-gate=capsem_builder.gatelaunch:main",
+  "pyproject.toml:capsem-gate=capsem_builder.gatelaunch:main",
 ]
-old_import_count = 1047
-old_import_sha256 = "d09a702ede5808b9582f588af5e92be0a1d98ae78b1bc6d0e49dd3b77d92e9f1"
+old_import_count = 0
+old_import_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 python_source_roots = ["benchmarks", "build_system", "guest", "scripts", "src", "tests"]

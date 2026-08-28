@@ -22,15 +22,14 @@ import time
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import config as gate_config
-from capsem.gate.actions import Run
-from capsem.gate.errors import GateError
-from capsem.gate.execution import step
-from capsem.gate.funnel import GuardedRunner
-from capsem.gate.invocation import ConsoleMode
-from capsem.gate.proc import Runner
-from capsem.gate.runlog import RunLog
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.actions import Run
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.execution import step
+from capsem_builder.gate.funnel import GuardedRunner
+from capsem_builder.gate.invocation import ConsoleMode
+from capsem_builder.gate.proc import Runner
+from capsem_builder.gate.runlog import RunLog
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
@@ -93,7 +92,7 @@ def test_each_command_can_be_read_back_on_its_own(tmp_path: Path) -> None:
     """
     import sys
 
-    from capsem.gate.runhistory import read
+    from capsem_builder.gate.runhistory import read
 
     config = _checkout(tmp_path)
     with RunLog.open(config, "test") as log:

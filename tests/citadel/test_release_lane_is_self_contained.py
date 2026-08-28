@@ -24,10 +24,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.qualification import from_environment
 from helpers.gate import built_command
-
-from capsem.gate import config as gate_config
-from capsem.gate.qualification import from_environment
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -324,7 +323,7 @@ def test_only_the_rehearsal_may_build_a_release_state_in_code() -> None:
     So `qualification.rehearsal` is the one constructor outside the parser, it
     says in its own docstring what it is for, and this holds the count at one.
     """
-    package = ROOT / "src/capsem/gate"
+    package = ROOT / "build_system/builder/gate"
     offenders = [
         f"{path.relative_to(ROOT)}: {line.strip()}"
         for path in sorted(package.glob("*.py"))

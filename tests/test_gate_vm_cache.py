@@ -8,11 +8,10 @@ import time
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.errors import GateError
 from capsem_builder.policy.cachepolicy import CacheLimits, CacheProduct, plan_reclaim
 from helpers.gate import RECORDED_IMAGE_ID, RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate.errors import GateError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -24,7 +23,7 @@ def _config(tmp_path: Path):
 
 
 def _source(tmp_path: Path):
-    from capsem.gate import sourcecapture
+    from capsem_builder.gate import sourcecapture
 
     root = tmp_path / "frozen-source"
     root.mkdir()
@@ -32,7 +31,7 @@ def _source(tmp_path: Path):
 
 
 def _helper():
-    from capsem.gate.installbuilder import InstallBuilderIdentity
+    from capsem_builder.gate.installbuilder import InstallBuilderIdentity
 
     return InstallBuilderIdentity(
         "capsem-install-builder:helper",
@@ -44,7 +43,7 @@ def _helper():
 def test_a_valid_warm_install_image_must_not_run_construction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate import installbuilder, installimage, sourcecapture
+    from capsem_builder.gate import installbuilder, installimage, sourcecapture
 
     config = _config(tmp_path)
     source = _source(tmp_path)
@@ -68,7 +67,7 @@ def test_a_valid_warm_install_image_must_not_run_construction(
 def test_a_corrupt_install_receipt_rebuilds_instead_of_claiming_a_hit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate import installbuilder, installimage, sourcecapture
+    from capsem_builder.gate import installbuilder, installimage, sourcecapture
 
     config = _config(tmp_path)
     source = _source(tmp_path)
@@ -90,7 +89,7 @@ def test_a_corrupt_install_receipt_rebuilds_instead_of_claiming_a_hit(
 
 
 def test_an_expired_install_image_is_rebuilt(tmp_path: Path, monkeypatch) -> None:
-    from capsem.gate import installbuilder, installimage, sourcecapture
+    from capsem_builder.gate import installbuilder, installimage, sourcecapture
 
     config = _config(tmp_path)
     source = _source(tmp_path)
@@ -112,7 +111,7 @@ def test_an_expired_install_image_is_rebuilt(tmp_path: Path, monkeypatch) -> Non
 
 
 def test_a_non_finite_install_receipt_is_rebuilt(tmp_path: Path, monkeypatch) -> None:
-    from capsem.gate import installbuilder, installimage, sourcecapture
+    from capsem_builder.gate import installbuilder, installimage, sourcecapture
 
     config = _config(tmp_path)
     source = _source(tmp_path)
@@ -139,7 +138,7 @@ def test_a_non_finite_install_receipt_is_rebuilt(tmp_path: Path, monkeypatch) ->
 def test_install_image_receipt_survives_a_successful_prefix(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from capsem.gate import buildcache, installbuilder, installimage, sourcecapture
+    from capsem_builder.gate import buildcache, installbuilder, installimage, sourcecapture
 
     base = _config(tmp_path)
     first_root = Path(base.prefix.parent) / "aaaaaaaa"
@@ -171,7 +170,7 @@ def test_install_image_receipt_survives_a_successful_prefix(
 
 
 def test_only_configured_tiny_authorities_are_duplicated_for_resume(tmp_path: Path) -> None:
-    from capsem.gate import buildcache
+    from capsem_builder.gate import buildcache
 
     config = _config(tmp_path)
     assert config.prefix.resumable == ("target/install-image",)
@@ -192,7 +191,7 @@ def test_only_configured_tiny_authorities_are_duplicated_for_resume(tmp_path: Pa
 
 
 def test_a_resumable_receipt_symlink_is_refused(tmp_path: Path) -> None:
-    from capsem.gate import buildcache
+    from capsem_builder.gate import buildcache
 
     config = _config(tmp_path)
     prefix_root = Path(config.prefix.parent) / "deadbeef"
@@ -209,8 +208,8 @@ def test_a_resumable_receipt_symlink_is_refused(tmp_path: Path) -> None:
 def test_vm_cache_roots_and_identities_cannot_escape_their_owned_sibling(
     tmp_path: Path,
 ) -> None:
-    from capsem.gate import assetcache
-    from capsem.gate.prefixschema import PrefixConfig
+    from capsem_builder.gate import assetcache
+    from capsem_builder.gate.prefixschema import PrefixConfig
 
     config = _config(tmp_path)
     fields = config.prefix.model_dump()
@@ -270,7 +269,7 @@ def test_future_cache_clocks_fail_closed() -> None:
 
 
 def test_asset_cache_evicts_unpinned_lru_before_a_current_vm_lane(tmp_path: Path) -> None:
-    from capsem.gate import assetcache
+    from capsem_builder.gate import assetcache
 
     config = _config(tmp_path)
     cache = config.assets.cache.model_copy(
@@ -293,7 +292,7 @@ def test_asset_cache_evicts_unpinned_lru_before_a_current_vm_lane(tmp_path: Path
 
 
 def test_a_resumable_prefix_pins_its_vm_image_generation(tmp_path: Path) -> None:
-    from capsem.gate import assetcache
+    from capsem_builder.gate import assetcache
 
     config = _config(tmp_path)
     policy = config.assets.cache.model_copy(
@@ -321,7 +320,7 @@ def test_a_resumable_prefix_pins_its_vm_image_generation(tmp_path: Path) -> None
 def test_an_asset_selector_outside_the_vm_cache_has_no_valid_metadata(
     tmp_path: Path,
 ) -> None:
-    from capsem.gate import assetreceipt
+    from capsem_builder.gate import assetreceipt
 
     config = _config(tmp_path)
     arch = config.arch("x86_64")
@@ -354,7 +353,7 @@ def test_an_asset_selector_outside_the_vm_cache_has_no_valid_metadata(
 
 
 def test_equal_inputs_in_two_prefixes_select_one_vm_image_generation(tmp_path: Path) -> None:
-    from capsem.gate import assetcache
+    from capsem_builder.gate import assetcache
 
     base = _config(tmp_path)
     identity = "a" * 64
@@ -377,7 +376,7 @@ def test_equal_inputs_in_two_prefixes_select_one_vm_image_generation(tmp_path: P
 def test_retained_prefix_receipts_pin_both_source_and_helper_images(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate import imagecache
+    from capsem_builder.gate import imagecache
 
     config = _config(tmp_path)
     monkeypatch.delenv(config.environment.source_checkout, raising=False)
@@ -416,7 +415,7 @@ def test_retained_prefix_receipts_pin_both_source_and_helper_images(
 def test_the_active_source_checkout_receipt_pins_its_docker_images(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate import imagecache
+    from capsem_builder.gate import imagecache
 
     config = _config(tmp_path)
     source = tmp_path / "active-source"
@@ -455,7 +454,7 @@ def test_the_active_source_checkout_receipt_pins_its_docker_images(
 def test_a_partial_or_malformed_receipt_cannot_pin_a_docker_image(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate import imagecache
+    from capsem_builder.gate import imagecache
 
     config = _config(tmp_path)
     monkeypatch.delenv(config.environment.source_checkout, raising=False)
@@ -481,7 +480,7 @@ def test_a_partial_or_malformed_receipt_cannot_pin_a_docker_image(
 
 
 def test_storage_reclaim_passes_protected_receipts_to_the_policy() -> None:
-    from capsem.gate.storage import Storage
+    from capsem_builder.gate.storage import Storage
 
     runner = RecordingRunner(PROJECT_ROOT)
     Storage(runner).reclaim(
@@ -497,7 +496,7 @@ def test_storage_reclaim_passes_protected_receipts_to_the_policy() -> None:
 
 
 def test_vm_and_asset_cache_bounds_are_declared() -> None:
-    from capsem.gate.storage import Storage
+    from capsem_builder.gate.storage import Storage
 
     assert CONFIG.assets.cache.maximum_count > len(CONFIG.architectures)
     assert CONFIG.assets.cache.maximum_age_hours > 0

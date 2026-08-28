@@ -21,13 +21,12 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import unquote, urljoin, urlparse
 
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.productschema import ProfileRevisionPolicy
+from capsem_builder.gate.releaseauthoring import author_native_candidate
+from capsem_builder.gate.sourcecommit import SourceCommit
 from marketing_install_surface import validate_checked_in_marketing_install_surface
 from release_pairing_baseline import exact_channel_catalog, validate_selected_profile_scope
-
-from capsem.gate import config as gate_config
-from capsem.gate.productschema import ProfileRevisionPolicy
-from capsem.gate.releaseauthoring import author_native_candidate
-from capsem.gate.sourcecommit import SourceCommit
 
 try:
     from release_glowup import (

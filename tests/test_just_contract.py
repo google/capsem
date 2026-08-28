@@ -21,7 +21,7 @@ def test_justfile_does_not_expose_legacy_guest_dir_knob() -> None:
 
     assert "--guest-dir" not in justfile
     assert "capsem-builder build guest" not in justfile
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     assert " ".join(gate_config.load(PROJECT_ROOT).initrd.build).endswith(
         "capsem-builder agent config/docker/image"
@@ -35,8 +35,8 @@ def test_justfile_routes_assets_through_profile_admin_rail() -> None:
 
     # An image build without a profile is unrepresentable now: the argv is
     # built from one, so there is nothing to guard against with an `echo`.
-    from capsem.gate import config as gate_config
-    from capsem.gate.imagebuild import build_argv
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.imagebuild import build_argv
 
     config = gate_config.load(PROJECT_ROOT)
     argv = " ".join(build_argv(config, profile="code", arch="arm64", template="all"))
@@ -135,7 +135,7 @@ def test_every_recipe_the_gate_tells_an_operator_to_run_exists() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
     defined = set(re.findall(r"^([a-z_][\w-]*)\s*[\w\"=]*.*:", justfile, re.MULTILINE))
 
-    gate = PROJECT_ROOT / "src" / "capsem" / "gate"
+    gate = PROJECT_ROOT / "build_system" / "builder" / "gate"
     named: dict[str, str] = {}
     for module in sorted(gate.glob("*.py")):
         tree = ast.parse(module.read_text(encoding="utf-8"))

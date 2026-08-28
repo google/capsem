@@ -19,9 +19,8 @@ destroys the evidence.
 from __future__ import annotations
 
 import pytest
-
-from capsem.gate.errors import GateError
-from capsem.gate.lifecycle import Resource, held
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.lifecycle import Resource, held
 
 
 class Recorder(Resource, name="recorder"):

@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from capsem.gate.config import GateConfig
-from capsem.gate.configschema import Arch
+from capsem_builder.gate.config import GateConfig
+from capsem_builder.gate.configschema import Arch
 
 
 def materialize_required_artifacts(

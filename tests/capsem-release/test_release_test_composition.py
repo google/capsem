@@ -8,9 +8,8 @@ import sys
 from pathlib import Path
 
 import yaml
+from capsem_builder.gate import config as _gate_config
 from helpers.workflow_contract import parsed_commands, workflow_job_source, workflow_jobs
-
-from capsem.gate import config as _gate_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 JUSTFILE = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
@@ -40,10 +39,9 @@ def _command(module: str):
     """The command object, for asking what it holds as well as what it does."""
     import argparse
 
+    from capsem_builder.gate import cli  # noqa: F401 - imports every command module
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - imports every command module
-    from capsem.gate.command import GateCommand
 
     return GateCommand.registry[module](
         RecordingRunner(PROJECT_ROOT),
@@ -59,7 +57,7 @@ def _qualification(**overrides):
     and a test that set one of the three was reproducing a hybrid the gate now
     refuses outright.
     """
-    from capsem.gate.qualification import from_environment as qualification_for
+    from capsem_builder.gate.qualification import from_environment as qualification_for
 
     return qualification_for(CONFIG, overrides)
 
@@ -86,10 +84,9 @@ def _planned(module: str, qualification=None) -> str:
     """
     import argparse
 
+    from capsem_builder.gate import cli  # noqa: F401 - imports every command module
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - imports every command module
-    from capsem.gate.command import GateCommand
 
     command = GateCommand.registry[module](
         RecordingRunner(PROJECT_ROOT),
@@ -103,10 +100,9 @@ def _planned_labels(module: str) -> tuple[str, ...]:
     """Every step a module's plan contains, in an order the graph permits."""
     import argparse
 
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
 
     return (
         GateCommand.registry[module](
@@ -378,7 +374,7 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
 
     assert "just _test-release-contracts" in fast
 
-    # The order lives in capsem.gate.candidate now; see
+    # The order lives in capsem_builder.gate.candidate now; see
     # test_local_test_composes_all_checked_in_modules_after_rebuilding_assets.
     assert "capsem-gate candidate" in public
     assert "_bootstrap" not in fast
@@ -505,7 +501,7 @@ def test_parallel_coverage_state_is_kept_out_of_the_source_tree() -> None:
     assert workspace.benchmark_root.startswith("target/")
     assert workspace.home.startswith("target/")
 
-    from capsem.gate.workspace import Workspace
+    from capsem_builder.gate.workspace import Workspace
 
     environment = Workspace(CONFIG).environment()
     assert environment["COVERAGE_FILE"].endswith(workspace.coverage_file)
@@ -518,7 +514,7 @@ def test_functional_coverage_replays_cheap_contracts_after_the_early_gate() -> N
     them once and repeating a constant per profile triples the slowest part of
     the gate.
     """
-    from capsem.gate import pytestsuite
+    from capsem_builder.gate import pytestsuite
 
     broad = pytestsuite.broad(CONFIG, profile=CONFIG.suites.pytest.base_profile)
     argv = broad.argv(CONFIG)
@@ -724,7 +720,7 @@ def test_functional_module_runs_every_selected_profile_without_rebuilding() -> N
     """Every selected profile gets the VM-owned suites; the base profile also
     gets the broad one. That is the compatibility axis, not a reduced
     release-only substitute."""
-    from capsem.gate import profiles
+    from capsem_builder.gate import profiles
 
     functional = _planned("test-functional")
     axis = profiles.selected(CONFIG)
@@ -752,7 +748,7 @@ def test_release_integration_follows_the_declared_staged_config_root(
     monkeypatch,
 ) -> None:
     """The legacy integration driver gets the same pulled catalog as pytest."""
-    from capsem.gate import vmproofs
+    from capsem_builder.gate import vmproofs
 
     config_root = PROJECT_ROOT / "target" / "synthetic-release-config"
     monkeypatch.setenv(CONFIG.functional.config_root_variable, str(config_root))

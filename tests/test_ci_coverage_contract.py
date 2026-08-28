@@ -84,8 +84,8 @@ def test_partial_macos_python_cohorts_aggregate_without_judging_the_complete_flo
 
 def test_complete_gate_broad_suite_inherits_the_authoritative_coverage_floor() -> None:
     """The all-source broad cohort owns the positive pyproject threshold."""
-    from capsem.gate import config as gate_config
-    from capsem.gate import pytestsuite
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import pytestsuite
 
     config = gate_config.load(PROJECT_ROOT)
     argv = pytestsuite.broad(config, profile="code").argv(config)

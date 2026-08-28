@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-from capsem.gate import config as gate_config
+from capsem_builder.gate import config as gate_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -17,6 +18,11 @@ def test_ty_refuses_raw_strings_including_source_commit(tmp_path: Path) -> None:
     fixture = PROJECT_ROOT / "tests" / "fixtures" / "typecheck" / "gate_vocabulary_strings.py.txt"
     probe = tmp_path / "gate_vocabulary_strings.py"
     probe.write_bytes(fixture.read_bytes())
+    shutil.copytree(
+        PROJECT_ROOT / "build_system" / "builder",
+        tmp_path / "capsem_builder",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+    )
 
     checked = subprocess.run(
         [
@@ -33,7 +39,7 @@ def test_ty_refuses_raw_strings_including_source_commit(tmp_path: Path) -> None:
             "--python",
             sys.executable,
             "--extra-search-path",
-            str(PROJECT_ROOT / "src"),
+            str(tmp_path),
             str(probe),
         ],
         cwd=PROJECT_ROOT,

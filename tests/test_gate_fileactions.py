@@ -20,12 +20,10 @@ from pathlib import Path
 
 import blake3
 import pytest
-from helpers.gate import RecordingJournal, RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate.context import Context
-from capsem.gate.errors import GateError
-from capsem.gate.fileactions import (
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.fileactions import (
     AtomicReplace,
     Copy,
     Hash,
@@ -36,7 +34,8 @@ from capsem.gate.fileactions import (
     Symlink,
     digest_of,
 )
-from capsem.gate.filesystem import write_text
+from capsem_builder.gate.filesystem import write_text
+from helpers.gate import RecordingJournal, RecordingRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 

@@ -22,9 +22,8 @@ import json
 import multiprocessing
 from pathlib import Path
 
+from capsem_builder.gate import config as gate_config
 from helpers.runlog_worker import open_and_hold
-
-from capsem.gate import config as gate_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -85,7 +84,7 @@ def test_a_live_run_is_never_rotated_away_by_another(tmp_path: Path) -> None:
 
 def test_the_history_lock_is_not_the_machine_lock(tmp_path: Path) -> None:
     """Allocation must not wait out a forty-minute gate to get a directory."""
-    from capsem.gate import runhistory
+    from capsem_builder.gate import runhistory
 
     settings = gate_config.load(_checkout(tmp_path, keep_runs=5))
 

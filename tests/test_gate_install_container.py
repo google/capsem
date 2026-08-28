@@ -15,13 +15,12 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.content import ProfileContent, SelectedInstallContent
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.installcontainer import InstallContainer
 from helpers.gate import RecordingRunner
 from helpers.profile_content import materialize_required_artifacts
-
-from capsem.gate import config as gate_config
-from capsem.gate.content import ProfileContent, SelectedInstallContent
-from capsem.gate.errors import GateError
-from capsem.gate.installcontainer import InstallContainer
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -31,10 +30,10 @@ ROSETTA_BINFMT = CONFIG.install.rosetta_binfmt
 @pytest.fixture(autouse=True)
 def _qualified_install_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Container behavior tests consume, rather than author, image identity."""
-    from capsem.gate import installimage, sourcecapture
+    from capsem_builder.gate import installimage, sourcecapture
 
     monkeypatch.setattr(
-        "capsem.gate.installimage.require_local_image",
+        "capsem_builder.gate.installimage.require_local_image",
         lambda _runner, _config: CONFIG.install.image,
     )
     monkeypatch.setattr(installimage, "_receipt_path", lambda _config: tmp_path / "image.json")
@@ -57,7 +56,7 @@ def _container(**kwargs) -> tuple[InstallContainer, RecordingRunner]:
 
 
 def _on(monkeypatch: pytest.MonkeyPatch, system: str) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: system)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: system)
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +68,7 @@ def test_a_linux_host_with_virtualisation_devices_boots_a_guest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _on(monkeypatch, "Linux")
-    monkeypatch.setattr("capsem.gate.host.device_available", lambda path: path != "/dev/vsock")
+    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda path: path != "/dev/vsock")
     container, runner = _container()
 
     options = container.runtime_options()
@@ -92,7 +91,7 @@ def test_an_available_vsock_device_is_passed_through(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _on(monkeypatch, "Linux")
-    monkeypatch.setattr("capsem.gate.host.device_available", lambda _path: True)
+    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda _path: True)
     container, _ = _container()
 
     assert "/dev/vsock" in container.runtime_options()
@@ -105,7 +104,7 @@ def test_a_linux_host_without_kvm_refuses_rather_than_proving_less(
     failing, because the gate would then report a pass for a proof it did not
     run."""
     _on(monkeypatch, "Linux")
-    monkeypatch.setattr("capsem.gate.host.device_available", lambda path: path != "/dev/kvm")
+    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda path: path != "/dev/kvm")
     container, _ = _container()
 
     with pytest.raises(GateError, match="/dev/kvm"):
@@ -367,7 +366,7 @@ def test_handing_paths_back_survives_a_container_that_already_died(
 def test_the_image_is_always_rebuilt_then_smoked(tmp_path: Path) -> None:
     """Checking whether the tag exists lets a stale local image hide a new CI
     prerequisite, and then the gate proves an environment nobody else has."""
-    from capsem.gate import installimage
+    from capsem_builder.gate import installimage
 
     runner = RecordingRunner(PROJECT_ROOT)
 
@@ -399,9 +398,9 @@ def test_install_dependency_materialization_is_the_only_network_open_phase() -> 
 def test_install_helper_materializes_locked_inputs_before_the_sealed_image(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from capsem.gate import installbuilder, installimage, snapshot, sourcecapture
+    from capsem_builder.gate import installbuilder, installimage, snapshot, sourcecapture
 
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "x86_64")
     runner = RecordingRunner(
         PROJECT_ROOT,
         failures=("docker image inspect capsem-install-builder:",),
@@ -451,9 +450,9 @@ def test_install_helper_materializes_locked_inputs_before_the_sealed_image(
 def test_install_helper_accepts_a_local_parent_without_repository_digests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from capsem.gate import installbuilder
+    from capsem_builder.gate import installbuilder
 
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "x86_64")
     runner = RecordingRunner(
         PROJECT_ROOT,
         failures=("docker image inspect capsem-install-builder:",),
@@ -473,7 +472,7 @@ def test_install_helper_accepts_a_local_parent_without_repository_digests(
 
 
 def test_install_source_image_and_smoke_are_sealed_without_retry() -> None:
-    from capsem.gate import installimage
+    from capsem_builder.gate import installimage
 
     runner = RecordingRunner(PROJECT_ROOT)
 
@@ -499,7 +498,7 @@ def test_install_source_image_and_smoke_are_sealed_without_retry() -> None:
 
 def test_generated_asset_selector_identity_is_stable(tmp_path: Path) -> None:
     """The exact image built before assets assemble is the one install uses."""
-    from capsem.gate import installimage, snapshot, sourcecapture
+    from capsem_builder.gate import installimage, snapshot, sourcecapture
 
     subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
     (tmp_path / ".gitignore").write_bytes((PROJECT_ROOT / ".gitignore").read_bytes())
@@ -548,11 +547,11 @@ def test_the_install_image_is_built_after_the_builder_it_derives_from() -> None:
     """
     import argparse
 
-    from capsem.gate import (
+    from capsem_builder.gate import (
         cli,  # noqa: F401 - registers every command
         hostimage,
     )
-    from capsem.gate.command import GateCommand
+    from capsem_builder.gate.command import GateCommand
 
     plan = GateCommand.registry["install-image"](
         RecordingRunner(PROJECT_ROOT),
@@ -567,7 +566,7 @@ def test_the_install_image_is_built_after_the_builder_it_derives_from() -> None:
 
 def test_a_failing_sealed_smoke_check_is_not_repaired_by_a_second_build() -> None:
     """Missing materialized input is a defect, not permission to fetch again."""
-    from capsem.gate import installimage
+    from capsem_builder.gate import installimage
 
     runner = RecordingRunner(PROJECT_ROOT, failures=["docker run --rm"])
 
@@ -584,7 +583,7 @@ def test_the_virtualisation_devices_are_reachable_from_inside(
     """Passing `--device` is not proof the container can use it; a container
     that starts without working KVM fails much later, inside a VM boot."""
     _on(monkeypatch, "Linux")
-    monkeypatch.setattr("capsem.gate.host.device_available", lambda _path: True)
+    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda _path: True)
     container, runner = _container()
 
     container.start(options=container.runtime_options())
@@ -663,7 +662,7 @@ def test_the_install_containers_tmpfs_can_execute_what_is_unpacked_into_it() -> 
     The Linux-Rust container already spells this out, for the same reason and
     with the same comment. This is the other one.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     paths = gate_config.load(PROJECT_ROOT).install.tmpfs_paths
 

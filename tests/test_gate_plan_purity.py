@@ -27,11 +27,10 @@ import shutil
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import cli  # noqa: F401 - imported so every command registers
-from capsem.gate import config as gate_config
-from capsem.gate.command import GateCommand
-from capsem.gate.sourcecommit import SourceCommit
+from capsem_builder.gate import cli  # noqa: F401 - imported so every command registers
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.command import GateCommand
+from capsem_builder.gate.sourcecommit import SourceCommit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 

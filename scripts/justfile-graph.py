@@ -21,14 +21,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 try:
-    from capsem.gate.shellnodes import commands
-    from capsem.gate.shellparse import parse as parse_shell
+    from capsem_builder.gate.shellnodes import commands
+    from capsem_builder.gate.shellparse import parse as parse_shell
 except ModuleNotFoundError:  # pragma: no cover - standalone script path
     import sys
 
     sys.path.insert(0, str(ROOT / "src"))
-    from capsem.gate.shellnodes import commands
-    from capsem.gate.shellparse import parse as parse_shell
+    from capsem_builder.gate.shellnodes import commands
+    from capsem_builder.gate.shellparse import parse as parse_shell
 
 # A recipe header is `name params: deps`, anchored at column zero so recipe
 # bodies (always indented) cannot match. `:(?![=])` keeps `foo := bar`
@@ -102,9 +102,9 @@ def gate_command_body(name: str) -> str:
     if str(root / "src") not in sys.path:
         sys.path.insert(0, str(root / "src"))
     try:
-        from capsem.gate import cli  # noqa: F401 - registers every command
-        from capsem.gate.command import GateCommand
-        from capsem.gate.proc import Runner
+        from capsem_builder.gate import cli  # noqa: F401 - registers every command
+        from capsem_builder.gate.command import GateCommand
+        from capsem_builder.gate.proc import Runner
 
         command = GateCommand.registry.get(name)
         if command is None:

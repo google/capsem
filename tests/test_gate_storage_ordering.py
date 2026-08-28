@@ -26,7 +26,7 @@ import ast
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-GATE = PROJECT_ROOT / "src" / "capsem" / "gate"
+GATE = PROJECT_ROOT / "build_system" / "builder" / "gate"
 
 #: The reclaim is spelled here, and a step is the only thing that may spell it.
 OWNER = "storage.py"

@@ -4,13 +4,13 @@ from pathlib import Path
 from typing import cast
 
 from capsem_builder.image.docker import create_erofs, docker_build
-from capsem.gate.docker import Docker
-from capsem.gate.config import GateConfig
-from capsem.gate.installimage import _step_label, source_image_tag
-from capsem.gate.opacity import machine_effects
-from capsem.gate.proc import Runner
-from capsem.gate.sandbox import mode
-from capsem.gate.sourcecommit import SourceCommit, require_local_main
+from capsem_builder.gate.docker import Docker
+from capsem_builder.gate.config import GateConfig
+from capsem_builder.gate.installimage import _step_label, source_image_tag
+from capsem_builder.gate.opacity import machine_effects
+from capsem_builder.gate.proc import Runner
+from capsem_builder.gate.sandbox import mode
+from capsem_builder.gate.sourcecommit import SourceCommit, require_local_main
 
 machine_effects("process")
 _step_label("install.capacity")

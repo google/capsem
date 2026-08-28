@@ -24,13 +24,12 @@ import time
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import config as gate_config
-from capsem.gate.actions import Action
-from capsem.gate.context import Context
-from capsem.gate.execution import step
-from capsem.gate.plan import Plan
-from capsem.gate.planrunner import execute
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.actions import Action
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.execution import step
+from capsem_builder.gate.plan import Plan
+from capsem_builder.gate.planrunner import execute
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -94,7 +93,7 @@ def _context() -> Context:
 
 def test_two_shared_claims_on_one_resource_may_overlap() -> None:
     """Which is the whole reason `shared` exists: the asset lanes have to."""
-    from capsem.gate.contention import can_overlap
+    from capsem_builder.gate.contention import can_overlap
 
     assert can_overlap(step("a", contends=(DOCKER_SHARED,)), step("b", contends=(DOCKER_SHARED,)))
 
@@ -108,13 +107,13 @@ def test_two_shared_claims_on_one_resource_may_overlap() -> None:
     ),
 )
 def test_an_exclusive_claim_excludes_both_kinds(first, second) -> None:
-    from capsem.gate.contention import can_overlap
+    from capsem_builder.gate.contention import can_overlap
 
     assert not can_overlap(step("a", contends=first), step("b", contends=second))
 
 
 def test_unrelated_resources_never_exclude_each_other() -> None:
-    from capsem.gate.contention import can_overlap
+    from capsem_builder.gate.contention import can_overlap
 
     assert can_overlap(step("a", contends=(DOCKER,)), step("b", contends=(VZ,)))
     assert can_overlap(step("a"), step("b", contends=(DOCKER,)))
@@ -122,7 +121,7 @@ def test_unrelated_resources_never_exclude_each_other() -> None:
 
 def test_the_validator_uses_the_same_predicate() -> None:
     """Two copies of this rule is how the guard came to agree with the bug."""
-    source = (PROJECT_ROOT / "src/capsem/gate/planchecks.py").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "build_system/builder/gate/planchecks.py").read_text(encoding="utf-8")
 
     assert "can_overlap" in source
 
@@ -230,12 +229,11 @@ def test_the_waits_reach_the_run_log_and_the_report(tmp_path: Path) -> None:
     long its own work took and nothing about how long it queued for a resource
     somebody else was holding.
     """
+    from capsem_builder.gate.context import Context as RunContext
+    from capsem_builder.gate.runhistory import read
+    from capsem_builder.gate.runlog import RunLog
+    from capsem_builder.gate.timing import measure, report
     from helpers.gate import RecordingRunner
-
-    from capsem.gate.context import Context as RunContext
-    from capsem.gate.runhistory import read
-    from capsem.gate.runlog import RunLog
-    from capsem.gate.timing import measure, report
 
     source = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     (tmp_path / "config").mkdir(parents=True)

@@ -5,9 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import resume
 from helpers.gate import built_command
-
-from capsem.gate import resume
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "0" * 40

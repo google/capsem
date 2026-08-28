@@ -11,14 +11,13 @@ import ast
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import config as gate_config
-from capsem.gate.execution import Arch, Kind, Needs, Speed
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.execution import Arch, Kind, Needs, Speed
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = gate_config.load(PROJECT_ROOT)
 LEDGER = CONFIG.boundary.step_attributes
-GATE = PROJECT_ROOT / "src" / "capsem" / "gate"
+GATE = PROJECT_ROOT / "build_system" / "builder" / "gate"
 
 #: The attributes that together make a step declared. `needs`, `arch` and
 #: `concurrency` have honest defaults -- no capability, any architecture, one
@@ -61,7 +60,7 @@ exemption list. The count may only fall. When it reaches zero the defaults come
 off `Step` and these become required arguments -- the point at which a new step
 cannot be added without saying what it is.
 
-See config/gate.toml [boundary.step_attributes] and src/capsem/gate/execution.py.
+See config/gate.toml [boundary.step_attributes] and build_system/builder/gate/execution.py.
 """
 
 

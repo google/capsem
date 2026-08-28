@@ -23,14 +23,13 @@ def _release_dependencies(root: Path):
     from bootstrap import mount_builder_package
 
     mount_builder_package(root)
+    from capsem_builder.gate.sourcecommit import SourceCommit
     from capsem_builder.release import release_retirement as retirement
     from capsem_builder.release.release_source_bootstrap import (
         bootstrap_source_manifest,
         validate_binary_source_manifest,
         validate_source_manifest,
     )
-
-    from capsem.gate.sourcecommit import SourceCommit
 
     return (
         retirement,

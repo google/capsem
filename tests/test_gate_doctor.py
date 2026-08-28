@@ -14,12 +14,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import doctor, sandbox
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.errors import GateError
 from helpers.gate import RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate import doctor, sandbox
-from capsem.gate.context import Context
-from capsem.gate.errors import GateError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -208,7 +207,7 @@ def test_every_declared_console_script_is_runnable() -> None:
     """`uv sync` succeeding is not the same as the entry points working.
 
     Run rather than read. The name it resolves to moved once already -- to
-    `capsem.gatelaunch:main`, which re-execs under an isolated bytecode cache
+    `capsem_builder.gatelaunch:main`, which re-execs under an isolated bytecode cache
     before importing the package -- and a string comparison would have been
     green for a launcher that never reached the CLI at the other end.
     """
@@ -229,7 +228,7 @@ def test_every_declared_console_script_is_runnable() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "capsem-gate" in result.stdout
-    # It got past the launcher: the subcommands only exist once `capsem.gate`
+    # It got past the launcher: the subcommands only exist once `capsem_builder.gate`
     # has been imported, which happens on the far side of the re-exec.
     assert "candidate" in result.stdout
 
@@ -264,7 +263,7 @@ def _lint_plan(tmp_path: Path):
     """
     import argparse
 
-    from capsem.gate.command import GateCommand
+    from capsem_builder.gate.command import GateCommand
 
     root = _checkout(tmp_path)
     for name in gate_config.load(root).lint.python_roots:
@@ -295,9 +294,8 @@ def test_lint_runs_ruff_and_both_ty_passes(tmp_path: Path) -> None:
 def test_lint_reports_every_failing_gate_not_just_the_first(tmp_path: Path) -> None:
     """Stopping at the first tool leaves the second's findings for the next
     push, which is how a gate takes three rounds to go green."""
+    from capsem_builder.gate.context import Context
     from helpers.gate import RecordingJournal
-
-    from capsem.gate.context import Context
 
     root = _checkout(tmp_path)
     for name in gate_config.load(root).lint.python_roots:

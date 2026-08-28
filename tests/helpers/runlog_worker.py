@@ -23,8 +23,8 @@ from __future__ import annotations
 from multiprocessing.queues import Queue
 from pathlib import Path
 
-from capsem.gate import config as gate_config
-from capsem.gate.runlog import RunLog
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.runlog import RunLog
 
 
 def open_and_hold(root: str, name: str, ready: Queue, go: Queue) -> None:

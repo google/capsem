@@ -18,15 +18,14 @@ import argparse
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import cli  # noqa: F401 - imported so every command registers
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.command import GateCommand
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.lifecycle import held
+from capsem_builder.gate.service import Service
+from capsem_builder.gate.workspace import Workspace
 from helpers.gate import RecordingRunner
-
-from capsem.gate import cli  # noqa: F401 - imported so every command registers
-from capsem.gate import config as gate_config
-from capsem.gate.command import GateCommand
-from capsem.gate.errors import GateError
-from capsem.gate.lifecycle import held
-from capsem.gate.service import Service
-from capsem.gate.workspace import Workspace
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -90,7 +89,7 @@ def test_acquiring_the_service_starts_it_and_waits_for_its_socket(tmp_path, monk
     runner = RecordingRunner(PROJECT_ROOT)
     workspace = Workspace(CONFIG)
     service = Service(CONFIG, workspace, runner)
-    monkeypatch.setattr("capsem.gate.service.WaitForSocket.perform", lambda self, context: None)
+    monkeypatch.setattr("capsem_builder.gate.service.WaitForSocket.perform", lambda self, context: None)
     # `acquire` copies the materialized profiles into the workspace, and a
     # `RecordingRunner` only stubs subprocesses -- filesystem actions still
     # run. This test is about starting a daemon and waiting for its socket, so
@@ -115,7 +114,7 @@ def test_the_service_is_stopped_by_its_own_pidfile(monkeypatch) -> None:
     parallel run with a different `CAPSEM_HOME`."""
     stopped: list[Path] = []
     monkeypatch.setattr(
-        "capsem.gate.pidfiles.stop_gate_service",
+        "capsem_builder.gate.pidfiles.stop_gate_service",
         lambda directory, settings: stopped.append(directory),
     )
     workspace = Workspace(CONFIG)
@@ -140,7 +139,7 @@ def test_the_service_is_released_before_its_run_directory_is_removed(
     workspace, service = command.resources(RUNNER_FOR_RESOURCES)
 
     monkeypatch.setattr(
-        "capsem.gate.pidfiles.stop_gate_service",
+        "capsem_builder.gate.pidfiles.stop_gate_service",
         lambda directory, settings: order.append("stop service"),
     )
     monkeypatch.setattr(type(workspace), "release", lambda self: order.append("remove run dir"))

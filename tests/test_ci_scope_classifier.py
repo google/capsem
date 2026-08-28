@@ -34,7 +34,7 @@ def _classifier():
         ("docs/public/install.sh",),
         ("later/release-note.md",),
         ("unknown-new-root/file.md",),
-        ("docs/index.md", "src/capsem/gate/command.py"),
+        ("docs/index.md", "build_system/builder/gate/command.py"),
     ],
 )
 def test_ambiguous_or_executable_changes_fail_closed(paths: tuple[str, ...]) -> None:
@@ -121,7 +121,7 @@ def test_unknown_empty_and_malformed_paths_fail_closed() -> None:
 
 def test_rename_classifies_both_old_and_new_owners() -> None:
     owners = _classifier().ci_owners(
-        ("src/capsem/gate/cli.py", "build_system/builder/gate/cli.py")
+        ("build_system/builder/gate/cli.py", "build_system/builder/gate/cli.py")
     )
     assert {"fast-gate", "test-linux", "test", "test-install", "pr-gate"} == owners
 

@@ -26,7 +26,7 @@ def _job_block(workflow: str, name: str) -> str:
 
 def test_install_test_inherits_uv_through_its_exact_local_helper() -> None:
     """One parent owns uv; neither sealed child resolves a second image."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     parent = _read("docker/Dockerfile.host-builder")
     helper = _read("docker/Dockerfile.install-builder")
@@ -127,8 +127,8 @@ def test_every_runner_of_the_broad_suite_installs_what_that_suite_shells_out_to(
 
 
 def test_host_builder_installs_the_same_exact_nextest() -> None:
-    from capsem.gate import config as gate_config
-    from capsem.gate import hostimage
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import hostimage
 
     config = gate_config.load(PROJECT_ROOT)
     host_builder = _read("docker/Dockerfile.host-builder")
@@ -149,10 +149,10 @@ def test_just_test_holds_source_state_stable_without_archiving_benchmarks() -> N
     through, proved nothing about any particular version."""
     import argparse
 
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate import config as gate_config
-    from capsem.gate.command import GateCommand
-    from capsem.gate.proc import Runner
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.command import GateCommand
+    from capsem_builder.gate.proc import Runner
 
     root = Path(__file__).resolve().parents[1]
     config = gate_config.load(root)
@@ -182,12 +182,12 @@ def test_just_test_holds_source_state_stable_without_archiving_benchmarks() -> N
     # This asserted the literal was spelled in `workspace.py`; both spelled it
     # separately, so an isolated workspace could export one name while the
     # daemon inside it honoured another.
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     names = gate_config.load(PROJECT_ROOT).environment
     assert names.benchmark_root == "CAPSEM_BENCHMARK_OUTPUT_ROOT"
-    assert "environment.benchmark_root" in _read("src/capsem/gate/workspace.py") or (
-        "names.benchmark_root" in _read("src/capsem/gate/workspace.py")
+    assert "environment.benchmark_root" in _read("build_system/builder/gate/workspace.py") or (
+        "names.benchmark_root" in _read("build_system/builder/gate/workspace.py")
     )
     assert config.workspace.benchmark_root == "target/test-benchmarks"
     assert "benchmarks/**/data_*.json" in _read(".gitignore")
@@ -203,10 +203,9 @@ def _gate_plan():
     """
     import argparse
 
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
 
     return GateCommand.registry["candidate"](
         RecordingRunner(Path(__file__).resolve().parents[1]),
@@ -229,12 +228,12 @@ def test_gate_run_retains_the_vm_performance_recordings_it_produces() -> None:
     most of it away. It is cleared exactly once, in the preparation phase,
     before any module runs.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     root = Path(__file__).resolve().parents[1]
     config = gate_config.load(root)
     labels = list(_gate_plan().labels)
-    workspace = (root / "src/capsem/gate/workspace.py").read_text(encoding="utf-8")
+    workspace = (root / "build_system/builder/gate/workspace.py").read_text(encoding="utf-8")
 
     assert config.workspace.benchmark_root == "target/test-benchmarks"
     # The workspace deliberately does not clear it on acquire: one gate runs
@@ -252,8 +251,8 @@ def test_full_gate_runs_capsem_bench_baseline_for_every_selected_profile() -> No
     Two files launching VMs at once measure each other rather than Capsem,
     which is why the baseline claims `apple_vz` and runs alone.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate import profiles
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import profiles
 
     root = Path(__file__).resolve().parents[1]
     config = gate_config.load(root)
@@ -274,8 +273,8 @@ def test_full_gate_serializes_host_snapshot_files_without_dropping_coverage() ->
     xdist worker per service does not reproduce that. Run in both places they
     would run twice, once in the way that proves nothing.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate import pytestsuite
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import pytestsuite
 
     root = Path(__file__).resolve().parents[1]
     config = gate_config.load(root)
@@ -310,17 +309,17 @@ def test_local_gate_bootstraps_docker_before_storage_preflight() -> None:
 def test_macos_full_gate_holds_a_system_sleep_assertion() -> None:
     """A forty-minute run that dies at minute thirty because the machine slept
     proves nothing, and by then it is usually unattended."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     settings = gate_config.load(PROJECT_ROOT).candidate
 
     assert settings.keep_awake_command[0] == "caffeinate"
     assert settings.keep_awake_marker == "CAPSEM_TEST_CAFFEINATED"
-    assert "keep_awake" in _read("src/capsem/gate/candidate.py")
+    assert "keep_awake" in _read("build_system/builder/gate/candidate.py")
 
 
 def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     toolchain = tomllib.loads(_read("rust-toolchain.toml"))
     assert toolchain["toolchain"]["channel"] == PINNED_RUST
@@ -381,7 +380,7 @@ def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
 
 def test_host_builder_base_images_are_immutable() -> None:
     """A sealed rebuild must resolve exact bytes, not refresh mutable tags."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
     builder = _read("docker/Dockerfile.host-builder")
@@ -399,9 +398,8 @@ def test_host_builder_base_images_are_immutable() -> None:
 
 def test_every_guest_builder_base_is_an_exact_platform_child_manifest() -> None:
     """A mutable tag lets a warm host and a cold release runner build different bytes."""
+    from capsem_builder.gate import config as gate_config
     from capsem_builder.image.config import load_guest_config
-
-    from capsem.gate import config as gate_config
 
     root = Path(__file__).resolve().parents[1]
     config = gate_config.load(root)
@@ -430,7 +428,7 @@ def test_host_builder_trusts_the_bind_mounted_source_checkout() -> None:
     The mount path is config now, and the probe that reproduces the condition
     is a step rather than a hope.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     root = Path(__file__).resolve().parents[1]
     config = gate_config.load(root)

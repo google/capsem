@@ -19,9 +19,8 @@ import sys
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import sandbox, sandboxreport
 from helpers.gate import RecordingRunner
-
-from capsem.gate import sandbox, sandboxreport
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 macos_only = pytest.mark.skipif(sys.platform != "darwin", reason="Seatbelt log stream is macOS")
@@ -134,7 +133,7 @@ def test_report_mode_captures_and_summarizes(tmp_path: Path) -> None:
 def test_the_collector_is_part_of_the_complete_gate() -> None:
     """A resource nothing constructs measures nothing, which is the shape the
     original defect had: mechanism present, never reached."""
-    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "gateresources.py").read_text()
+    source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "gateresources.py").read_text()
     assert "SandboxReport(config, runner, mode=mode)" in source
 
 

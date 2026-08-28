@@ -29,7 +29,7 @@ def project_root() -> Path:
     """
     root = Path(__file__).resolve().parents[3]
     if not (root / "justfile").is_file():
-        raise GateError(f"capsem.gate must run from a checkout; {root} has no justfile")
+        raise GateError(f"capsem_builder.gate must run from a checkout; {root} has no justfile")
     return root
 
 

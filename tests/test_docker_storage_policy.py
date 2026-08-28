@@ -65,7 +65,7 @@ def load_policy() -> dict:
 
 def test_every_checked_in_storage_release_uses_a_configured_release_phase() -> None:
     """A removed release phase must fail in the fast source gate, not hosted CI."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     configured = set(gate_config.load(ROOT).storage.phases)
     release_command = re.compile(r"capsem-gate\s+storage\s+release\s+([\w-]+)")
@@ -228,8 +228,8 @@ def test_the_install_rails_reserve_headroom_before_and_during_the_proof() -> Non
     They are the reason ENOSPC surfaces here, with a disk recommendation,
     rather than hours later inside a fixture on an otherwise-green run.
     """
-    install_image = (ROOT / "src" / "capsem" / "gate" / "installplan.py").read_text()
-    install = (ROOT / "src" / "capsem" / "gate" / "install.py").read_text()
+    install_image = (ROOT / "build_system" / "builder" / "gate" / "installplan.py").read_text()
+    install = (ROOT / "build_system" / "builder" / "gate" / "install.py").read_text()
 
     assert 'ensure_space("install-preflight")' in install_image
     assert 'ensure_space("install")' in install
@@ -240,11 +240,11 @@ def test_the_install_rails_reserve_headroom_before_and_during_the_proof() -> Non
     # `packagerail` since the rail's runtime operations were split from the
     # adapter that orders them; the pair has to sit in one file either way,
     # which is what the count is really asserting.
-    package = (ROOT / "src" / "capsem" / "gate" / "packagerail.py").read_text()
+    package = (ROOT / "build_system" / "builder" / "gate" / "packagerail.py").read_text()
     assert package.count('ensure_space("package")') == 2
 
     # The asset rail reserves its own before the dual-architecture lanes start.
-    assets = (ROOT / "src" / "capsem" / "gate" / "assets.py").read_text()
+    assets = (ROOT / "build_system" / "builder" / "gate" / "assets.py").read_text()
     assert 'ensure_space("assets")' in assets
 
 
@@ -256,7 +256,7 @@ def test_both_package_architectures_release_their_own_install_headroom() -> None
     in `config/gate.toml`, validated at load, which is where a typo can be
     caught before any storage is touched.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     phases = gate_config.load(ROOT).storage.phases
 
@@ -409,11 +409,10 @@ def test_candidate_failure_captures_storage_and_asset_logs_before_next_cleanup(
     import sys as _sys
 
     _sys.path.insert(0, str(ROOT / "tests"))
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.gateresources import FailureEvidence
+    from capsem_builder.gate.lifecycle import held
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import config as gate_config
-    from capsem.gate.gateresources import FailureEvidence
-    from capsem.gate.lifecycle import held
 
     # It is a resource now, so the ordering is the lifecycle's guarantee rather
     # than the shape of one `try` block: `preserve` runs on the failure path,
@@ -874,11 +873,10 @@ def test_warming_the_base_image_is_what_retires_the_superseded_tags() -> None:
     import sys as _sys
 
     _sys.path.insert(0, str(ROOT / "tests"))
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.docker import Docker
+    from capsem_builder.gate.linuxrust import base_repository, base_tag
     from helpers.gate import RecordingRunner, gate_issued
-
-    from capsem.gate import config as gate_config
-    from capsem.gate.docker import Docker
-    from capsem.gate.linuxrust import base_repository, base_tag
 
     config = gate_config.load(ROOT)
     repository = base_repository(config)
@@ -896,8 +894,8 @@ def test_warming_the_base_image_is_what_retires_the_superseded_tags() -> None:
 
 def test_the_repository_the_gate_reclaims_is_the_one_the_policy_declares() -> None:
     """Two files, one name. A drift here deletes nothing and says nothing."""
-    from capsem.gate import config as gate_config
-    from capsem.gate.linuxrust import base_repository
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.linuxrust import base_repository
 
     repository = base_repository(gate_config.load(ROOT))
     declared = load_policy()["resources"].get(repository)

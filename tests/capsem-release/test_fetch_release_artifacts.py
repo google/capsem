@@ -1462,8 +1462,8 @@ def test_selected_install_transport_keeps_the_verified_source_graph(
     those generated URLs rejected the real stable channel only after the
     package and sealed install image had spent nearly an hour building.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate.content import ProfileContent, SelectedInstallContent
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.content import ProfileContent, SelectedInstallContent
 
     manifest, _ = _write_manifest(tmp_path)
     _add_distinct_profile(manifest, tmp_path)

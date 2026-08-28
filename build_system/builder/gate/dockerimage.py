@@ -15,13 +15,12 @@ from __future__ import annotations
 import json
 import re
 
-from capsem_builder.policy.dockerpolicy import (
+from ..policy.dockerpolicy import (
     BuildNetwork,
     ContainerNetwork,
     require_build_network,
     require_container_network,
 )
-
 from .errors import GateError
 from .invocation import ConsoleMode
 from .proc import Runner

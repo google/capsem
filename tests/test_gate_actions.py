@@ -17,12 +17,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.actions import Action, Run, Script, Shell
+from capsem_builder.gate.context import Context, NullJournal
+from capsem_builder.gate.errors import GateError
 from helpers.gate import RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate.actions import Action, Run, Script, Shell
-from capsem.gate.context import Context, NullJournal
-from capsem.gate.errors import GateError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 

@@ -76,7 +76,7 @@ def test_an_ordinary_interpreter_runs_the_stale_bytecode(tmp_path: Path) -> None
 
 
 def test_the_launcher_environment_runs_the_current_source(tmp_path: Path) -> None:
-    from capsem.gatelaunch import isolated_environment
+    from capsem_builder.gatelaunch import isolated_environment
 
     module = _probe(tmp_path, BEFORE)
     _observed(tmp_path)
@@ -87,7 +87,7 @@ def test_the_launcher_environment_runs_the_current_source(tmp_path: Path) -> Non
 
 def test_each_invocation_gets_its_own_prefix(tmp_path: Path) -> None:
     """Reusing one alternate prefix recreates the same timestamp problem."""
-    from capsem.gatelaunch import MARKER, PYCACHE, isolated_environment
+    from capsem_builder.gatelaunch import MARKER, PYCACHE, isolated_environment
 
     first = isolated_environment(tmp_path)
     second = isolated_environment(tmp_path)
@@ -104,7 +104,7 @@ def test_children_inherit_the_isolation(tmp_path: Path) -> None:
     The 74 false failures came from a pytest run, not from the gate's own
     import, so isolating only this interpreter would fix the smaller half.
     """
-    from capsem.gatelaunch import PYCACHE, isolated_environment
+    from capsem_builder.gatelaunch import PYCACHE, isolated_environment
 
     environment = isolated_environment(tmp_path)
     assert PYCACHE in environment, "the variable CPython reads must be exported"
@@ -138,16 +138,18 @@ def test_the_console_script_is_the_launcher() -> None:
     """Otherwise the isolation is a function nobody calls."""
     manifest = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
-    assert manifest["project"]["scripts"]["capsem-gate"] == "capsem.gatelaunch:main"
+    assert manifest["project"]["scripts"]["capsem-gate"] == (
+        "capsem_builder.gatelaunch:main"
+    )
 
 
 def test_the_launcher_imports_nothing_from_the_package_it_protects() -> None:
-    """An import at module scope compiles `capsem.gate` before the fix runs.
+    """An import at module scope compiles `capsem_builder.gate` before the fix runs.
 
-    `capsem.gate.__init__` carries real code, so its own stale bytecode is
+    `capsem_builder.gate.__init__` carries real code, so its own stale bytecode is
     exactly the failure this exists to prevent.
     """
-    source = (PROJECT_ROOT / "src/capsem/gatelaunch.py").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "build_system/builder/gatelaunch.py").read_text(encoding="utf-8")
 
     top_level = [
         line
@@ -161,14 +163,14 @@ def test_the_launcher_runs_the_gate_once_the_cache_is_isolated(
     monkeypatch: object,
 ) -> None:
     """With the marker set it must dispatch, not re-exec forever."""
-    import capsem.gatelaunch as launcher
+    import capsem_builder.gatelaunch as launcher
 
     calls: list[str] = []
     monkeypatch.setattr(os, "execv", lambda *a: calls.append("execv"))  # type: ignore[attr-defined]
     monkeypatch.setenv(launcher.MARKER, "/tmp/whatever")  # type: ignore[attr-defined]
     monkeypatch.setattr(sys, "argv", ["capsem-gate", "--help"])  # type: ignore[attr-defined]
 
-    from capsem.gate import cli
+    from capsem_builder.gate import cli
 
     monkeypatch.setattr(cli, "main", lambda: 0)  # type: ignore[attr-defined]
     assert launcher.main() == 0
@@ -178,7 +180,7 @@ def test_the_launcher_runs_the_gate_once_the_cache_is_isolated(
 def test_the_launcher_re_execs_when_the_cache_is_not_isolated(
     monkeypatch: object, tmp_path: Path
 ) -> None:
-    import capsem.gatelaunch as launcher
+    import capsem_builder.gatelaunch as launcher
 
     issued: list[list[str]] = []
 
@@ -198,7 +200,7 @@ def test_the_launcher_re_execs_when_the_cache_is_not_isolated(
         launcher.main()
 
     (argv,) = issued
-    assert argv[1:] == ["-m", "capsem.gate", "candidate", "--dry-run"]
+    assert argv[1:] == ["-m", "capsem_builder.gate", "candidate", "--dry-run"]
     assert os.environ[launcher.PYCACHE].startswith(str(tmp_path))
 
 
@@ -210,9 +212,9 @@ def test_the_launcher_re_execs_when_the_cache_is_not_isolated(
 def test_the_recorded_source_state_names_the_tree_the_gate_is_running_from() -> None:
     """`HEAD` and the digest describe a checkout; nothing said which code
     read them. Recorded, so a run can be read back and answered."""
-    from capsem.gate import sourcestate
+    from capsem_builder.gate import sourcestate
 
-    assert sourcestate.gate_source() == PROJECT_ROOT / "src/capsem/gate"
+    assert sourcestate.gate_source() == PROJECT_ROOT / "build_system/builder/gate"
 
 
 def test_the_complete_gate_refuses_an_unisolated_interpreter(
@@ -224,13 +226,12 @@ def test_the_complete_gate_refuses_an_unisolated_interpreter(
     executing those bytes is a different question, and the only evidence a
     running gate has is that it was entered through the launcher.
     """
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.context import Context
+    from capsem_builder.gate.errors import GateError
+    from capsem_builder.gate.sourcestate import RequireIsolatedBytecode
+    from capsem_builder.gatelaunch import MARKER
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import config as gate_config
-    from capsem.gate.context import Context
-    from capsem.gate.errors import GateError
-    from capsem.gate.sourcestate import RequireIsolatedBytecode
-    from capsem.gatelaunch import MARKER
 
     context = Context(RecordingRunner(PROJECT_ROOT), gate_config.load(PROJECT_ROOT))
 
@@ -262,10 +263,10 @@ def test_a_run_records_what_built_its_plan(tmp_path: Path) -> None:
     two identities that answer it are written down: where the gate was
     imported from, and which bytecode cache it ran under.
     """
-    from capsem.gate import config as gate_config
-    from capsem.gate.runhistory import read
-    from capsem.gate.runlog import RunLog
-    from capsem.gatelaunch import PYCACHE
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.runhistory import read
+    from capsem_builder.gate.runlog import RunLog
+    from capsem_builder.gatelaunch import PYCACHE
 
     (tmp_path / "config").mkdir(parents=True)
     (tmp_path / "config" / "gate.toml").write_text(
@@ -277,5 +278,5 @@ def test_a_run_records_what_built_its_plan(tmp_path: Path) -> None:
         directory = log.directory
 
     (start,) = [e for e in read(directory, config.runlog) if e["event"] == "run.start"]
-    assert start["gate_source"] == str(PROJECT_ROOT / "src/capsem/gate")
+    assert start["gate_source"] == str(PROJECT_ROOT / "build_system/builder/gate")
     assert start["pycache"] == os.environ.get(PYCACHE, "")

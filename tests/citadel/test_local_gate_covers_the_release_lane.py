@@ -27,10 +27,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.qualification import from_environment
 from helpers.gate import built_command
-
-from capsem.gate import config as gate_config
-from capsem.gate.qualification import from_environment
 
 ROOT = Path(__file__).resolve().parents[2]
 

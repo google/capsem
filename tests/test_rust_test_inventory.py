@@ -8,8 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
-
-from capsem.gate.rustinventory import (
+from capsem_builder.gate.rustinventory import (
     InventoryMismatch,
     RustTarget,
     RustTestInventory,

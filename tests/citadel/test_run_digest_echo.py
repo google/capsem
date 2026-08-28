@@ -13,14 +13,13 @@ import shutil
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.digestreport import RefreshDigest
+from capsem_builder.gate.execution import step as make_step
+from capsem_builder.gate.plan import Plan
+from capsem_builder.gate.runledger import LedgerRow, StepRow
 from helpers.gate import RecordingRunner, gate_plan
-
-from capsem.gate import config as gate_config
-from capsem.gate.context import Context
-from capsem.gate.digestreport import RefreshDigest
-from capsem.gate.execution import step as make_step
-from capsem.gate.plan import Plan
-from capsem.gate.runledger import LedgerRow, StepRow
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = gate_config.load(PROJECT_ROOT)

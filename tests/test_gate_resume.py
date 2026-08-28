@@ -23,7 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _config():
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     return gate_config.load(PROJECT_ROOT)
 
@@ -32,9 +32,8 @@ def _candidate_plan():
     # Through the helper, which is the one place that knows importing `cli` is
     # what fills the registry. Spelling that import here needed a suppression
     # for a name nothing reads.
+    from capsem_builder.gate.qualification import from_environment
     from helpers.gate import built_command
-
-    from capsem.gate.qualification import from_environment
 
     command = built_command(
         PROJECT_ROOT,
@@ -55,7 +54,7 @@ def test_from_a_step_carries_exactly_its_ancestors() -> None:
     is the same every time -- what comes before a step is a property of the
     plan, not of what happened to succeed last night.
     """
-    from capsem.gate import resume
+    from capsem_builder.gate import resume
 
     plan = _candidate_plan()
     carried = resume.ancestors(plan, "artifacts.build-chain")
@@ -80,8 +79,8 @@ def test_a_refreshed_prefix_reruns_source_identity_before_carried_work() -> None
     step, not a label exception in the resolver, so any future identity
     boundary can make the same declaration.
     """
-    from capsem.gate import resume
-    from capsem.gate.execution import ResumePolicy
+    from capsem_builder.gate import resume
+    from capsem_builder.gate.execution import ResumePolicy
 
     plan = _candidate_plan()
     carried = resume.carried(
@@ -103,12 +102,11 @@ def test_always_run_resume_policy_executes_before_carried_dependants() -> None:
     before the refreshed receipt exists.  The graph still orders the always-
     run step; only its downstream reusable work is skipped.
     """
+    from capsem_builder.gate.actions import Action
+    from capsem_builder.gate.context import Context
+    from capsem_builder.gate.execution import ResumePolicy, step
+    from capsem_builder.gate.plan import Plan
     from helpers.gate import RecordingRunner
-
-    from capsem.gate.actions import Action
-    from capsem.gate.context import Context
-    from capsem.gate.execution import ResumePolicy, step
-    from capsem.gate.plan import Plan
 
     seen: list[str] = []
 
@@ -165,8 +163,8 @@ def test_a_source_fix_before_functional_rebuilds_the_exact_install_image() -> No
     The lifecycle is independent work that may run alongside functional proof,
     but the install transaction must still wait for its exact smoke result.
     """
-    from capsem.gate import resume
-    from capsem.gate.installimage import InstallImageStep
+    from capsem_builder.gate import resume
+    from capsem_builder.gate.installimage import InstallImageStep
 
     plan = _candidate_plan()
     carried = resume.ancestors(plan, "functional.pytest.timing.code")
@@ -182,8 +180,8 @@ def test_a_misspelled_step_is_refused_with_a_suggestion() -> None:
     `--dry-run --from <step>` resolves the name, so a typo costs a suggestion
     rather than twenty minutes and a held lock.
     """
-    from capsem.gate import resume
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate import resume
+    from capsem_builder.gate.errors import GateError
 
     plan = _candidate_plan()
     with pytest.raises(GateError, match=re.escape("artifacts.build-chain")):
@@ -192,7 +190,7 @@ def test_a_misspelled_step_is_refused_with_a_suggestion() -> None:
 
 def test_carrying_nothing_is_the_default() -> None:
     """A run without `--from` proves the whole graph."""
-    from capsem.gate import resume
+    from capsem_builder.gate import resume
 
     plan = _candidate_plan()
     assert resume.carried(plan, _config(), None, qualifying=False) == frozenset()
@@ -210,8 +208,8 @@ def test_release_qualification_refuses_a_frontier_derived_only_from_graph_shape(
     shape alone could skip qualification acceptance or a fresh mutable channel
     fetch. They must run every release-attempt edge.
     """
-    from capsem.gate import resume
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate import resume
+    from capsem_builder.gate.errors import GateError
 
     plan = _candidate_plan()
     with pytest.raises(GateError, match="--from cannot be used while qualifying a release"):
@@ -224,8 +222,8 @@ def test_release_qualification_refuses_a_frontier_derived_only_from_graph_shape(
 
 def test_scratch_carries_nothing_however_much_is_proven() -> None:
     """The escape hatch, for when a local pass must mean a cold pass."""
-    from capsem.gate import resume
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate import resume
+    from capsem_builder.gate.errors import GateError
 
     plan = _candidate_plan()
     assert resume.carried(plan, _config(), resume.SCRATCH, qualifying=False) == frozenset()
@@ -239,7 +237,7 @@ def test_auto_leaves_the_frontier_to_the_gate() -> None:
     Resume has to be the default, or it is a flag people remember only after
     paying for not remembering it.
     """
-    from capsem.gate import resume
+    from capsem_builder.gate import resume
 
     plan = _candidate_plan()
     assert resume.carried(plan, _config(), resume.AUTO, qualifying=False) == frozenset()
@@ -255,8 +253,8 @@ def test_a_prefix_outside_the_configured_root_is_refused(tmp_path: Path) -> None
     Same fence as `prefix.reclaim`, for the mirror-image reason: that one must
     not delete a checkout, this one must not fill one with build output.
     """
-    from capsem.gate import resume
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate import resume
+    from capsem_builder.gate.errors import GateError
 
     outsider = tmp_path / "not-a-prefix"
     outsider.mkdir()
@@ -267,8 +265,8 @@ def test_a_prefix_outside_the_configured_root_is_refused(tmp_path: Path) -> None
 def test_a_named_prefix_that_does_not_exist_is_refused() -> None:
     """Better than silently making one: the operator asked for a specific
     tree because they wanted its build output, and a fresh copy has none."""
-    from capsem.gate import prefix, resume
-    from capsem.gate.errors import GateError
+    from capsem_builder.gate import prefix, resume
+    from capsem_builder.gate.errors import GateError
 
     missing = prefix.parent_dir(_config()) / ("0" * 8)
     with pytest.raises(GateError, match="does not exist"):
@@ -286,10 +284,9 @@ def test_a_named_prefix_moves_a_focused_command_into_that_checkout(
     existing prefix is different: every compatible focused command must run
     there so its products and evidence have one location.
     """
+    from capsem_builder.gate import prefix, resume
+    from capsem_builder.gate.plan import Plan
     from helpers.gate import built_command
-
-    from capsem.gate import prefix, resume
-    from capsem.gate.plan import Plan
 
     reused = tmp_path / "retained-prefix"
     reused.mkdir()
@@ -340,7 +337,7 @@ def test_a_carried_step_is_not_recorded_as_one_that_ran() -> None:
     carried step recorded `ok`, a resumed run would be indistinguishable from a
     clean proof of the whole graph -- which is precisely what it is not.
     """
-    from capsem.gate.runlogschema import CARRIED, OK, SKIPPED
+    from capsem_builder.gate.runlogschema import CARRIED, OK, SKIPPED
 
     assert CARRIED not in {OK, SKIPPED}
 
@@ -356,13 +353,12 @@ def test_a_carried_step_is_not_recorded_as_one_that_ran() -> None:
 
 def test_a_carried_runtime_dependency_is_checked_before_any_plan_work() -> None:
     """A retained prefix cannot retain a Docker image another rail reclaimed."""
+    from capsem_builder.gate.actions import Action
+    from capsem_builder.gate.context import Context
+    from capsem_builder.gate.errors import GateError
+    from capsem_builder.gate.execution import Requires, step
+    from capsem_builder.gate.plan import Plan
     from helpers.gate import RecordingJournal, RecordingRunner
-
-    from capsem.gate.actions import Action
-    from capsem.gate.context import Context
-    from capsem.gate.errors import GateError
-    from capsem.gate.execution import Requires, step
-    from capsem.gate.plan import Plan
 
     ran: list[str] = []
 
@@ -414,12 +410,11 @@ def test_a_carried_runtime_dependency_released_after_its_consumers_is_not_checke
     reclaimed product makes an otherwise valid retained prefix impossible to
     resume.
     """
+    from capsem_builder.gate.actions import Action
+    from capsem_builder.gate.context import Context
+    from capsem_builder.gate.execution import Requires, step
+    from capsem_builder.gate.plan import Plan
     from helpers.gate import RecordingJournal, RecordingRunner
-
-    from capsem.gate.actions import Action
-    from capsem.gate.context import Context
-    from capsem.gate.execution import Requires, step
-    from capsem.gate.plan import Plan
 
     checked: list[str] = []
     ran: list[str] = []
@@ -463,13 +458,12 @@ def test_a_carried_runtime_dependency_released_after_its_consumers_is_not_checke
 
 def test_a_carried_check_without_artifact_consumers_remains_fail_closed() -> None:
     """Durable evidence checks are never inferred to have expired."""
+    from capsem_builder.gate.actions import Action
+    from capsem_builder.gate.context import Context
+    from capsem_builder.gate.errors import GateError
+    from capsem_builder.gate.execution import step
+    from capsem_builder.gate.plan import Plan
     from helpers.gate import RecordingJournal, RecordingRunner
-
-    from capsem.gate.actions import Action
-    from capsem.gate.context import Context
-    from capsem.gate.errors import GateError
-    from capsem.gate.execution import step
-    from capsem.gate.plan import Plan
 
     class Missing(Action, name="missing-durable-evidence"):
         def render(self) -> str:
@@ -504,7 +498,7 @@ def test_every_command_can_be_told_to_resume() -> None:
     subcommand parsers and the top-level help does not mention them -- a text
     search would have passed against a parser that accepted neither.
     """
-    from capsem.gate import cli
+    from capsem_builder.gate import cli
 
     for command in ("candidate", "test-fast", "test-static"):
         parsed = cli.build_parser().parse_args(
@@ -534,10 +528,9 @@ def test_until_carries_a_step_and_everything_after_it() -> None:
     """
     from argparse import Namespace
 
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import resume
     from helpers.gate import gate_plan
-
-    from capsem.gate import config as gate_config
-    from capsem.gate import resume
 
     plan = gate_plan("candidate")
     config = gate_config.load(PROJECT_ROOT)
@@ -556,11 +549,10 @@ def test_a_release_refuses_until_for_the_reason_it_refuses_from() -> None:
     from argparse import Namespace
 
     import pytest
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import resume
+    from capsem_builder.gate.errors import GateError
     from helpers.gate import gate_plan
-
-    from capsem.gate import config as gate_config
-    from capsem.gate import resume
-    from capsem.gate.errors import GateError
 
     with pytest.raises(GateError, match="--until cannot be used while qualifying"):
         resume.resolve(
@@ -575,11 +567,10 @@ def test_a_release_refuses_a_named_prefix_even_with_the_default_frontier() -> No
     """A retained directory is continuation authority only for candidate evidence."""
     from argparse import Namespace
 
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import resume
+    from capsem_builder.gate.errors import GateError
     from helpers.gate import gate_plan
-
-    from capsem.gate import config as gate_config
-    from capsem.gate import resume
-    from capsem.gate.errors import GateError
 
     with pytest.raises(GateError, match="--prefix cannot be used while qualifying a release"):
         resume.resolve(
@@ -599,11 +590,10 @@ def test_until_names_the_step_and_the_plan_it_is_missing_from() -> None:
     from argparse import Namespace
 
     import pytest
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import resume
+    from capsem_builder.gate.errors import GateError
     from helpers.gate import gate_plan
-
-    from capsem.gate import config as gate_config
-    from capsem.gate import resume
-    from capsem.gate.errors import GateError
 
     with pytest.raises(GateError, match=r"no step named 'glowup.package' in the candidate plan"):
         resume.resolve(

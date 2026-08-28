@@ -11,12 +11,11 @@ import ast
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.execution import Kind
+from capsem_builder.gate.shellnodes import Command, arm_named, commands
+from capsem_builder.gate.shellparse import parse
 from helpers.gate import gate_plan
-
-from capsem.gate import config as gate_config
-from capsem.gate.execution import Kind
-from capsem.gate.shellnodes import Command, arm_named, commands
-from capsem.gate.shellparse import parse
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -77,7 +76,7 @@ Python script the shell invoked; one checked `kind`, which was already right by
 accident; one matched `cargo` textually and could not tell a command from a
 filename, a comment, or the left side of an assignment.
 
-See src/capsem/gate/shellparse.py and skills/dev-gate/SKILL.md.
+See build_system/builder/gate/shellparse.py and skills/dev-gate/SKILL.md.
 """
 
 

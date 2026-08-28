@@ -221,7 +221,7 @@ def prepare(config, directory: Path) -> Path:
         [
             sys.executable,
             "-m",
-            "capsem.gate.egressbroker",
+            "capsem_builder.gate.egressbroker",
             str(endpoint),
             str(os.getpid()),
             str(settings.egress_max_message_bytes),

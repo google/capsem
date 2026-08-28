@@ -29,11 +29,10 @@ import time
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import config as gate_config
-from capsem.gate.faultlog import FaultLog
-from capsem.gate.faults import Event, Facts, Fault
-from capsem.gate.observation import Watch
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.faultlog import FaultLog
+from capsem_builder.gate.faults import Event, Facts, Fault
+from capsem_builder.gate.observation import Watch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -280,7 +279,7 @@ def test_one_live_step_is_still_attributed_exactly() -> None:
 
 
 def test_interception_names_the_exact_step_among_live_candidates() -> None:
-    from capsem.gate.interception import CURRENT_STEP
+    from capsem_builder.gate.interception import CURRENT_STEP
 
     watch = Watch([], source_root=Path("/repo"))
     watch.entered("a")
@@ -369,7 +368,7 @@ def test_rmtree_of_build_output_is_not_reported_as_a_source_mutation(
     tmp_path: Path, monkeypatch
 ) -> None:
     """The production shape end to end, through the real interception."""
-    from capsem.gate.interception import Instrument
+    from capsem_builder.gate.interception import Instrument
 
     root = tmp_path / "checkout"
     (root / "target" / "config" / "profiles" / "code").mkdir(parents=True)
@@ -395,7 +394,7 @@ def test_an_intercepted_fault_names_an_absolute_path(tmp_path: Path, monkeypatch
     build-output set would silence the false positives and leave every real
     fault still reported as a bare basename.
     """
-    from capsem.gate.interception import Instrument
+    from capsem_builder.gate.interception import Instrument
 
     root = tmp_path / "checkout"
     (root / "config" / "profiles").mkdir(parents=True)
@@ -452,7 +451,7 @@ def test_copying_a_hardlinked_alias_tree_is_a_real_duplicate_fault(tmp_path: Pat
     detector honest: the producer must use a pointer rather than teaching the
     observer that two newly materialized files are somehow one artifact.
     """
-    from capsem.gate.interception import CURRENT_STEP, Instrument
+    from capsem_builder.gate.interception import CURRENT_STEP, Instrument
 
     source = tmp_path / "assets" / "x86_64"
     source.mkdir(parents=True)
@@ -491,7 +490,7 @@ def test_interception_sees_a_hardlink_with_no_watcher_at_all(tmp_path: Path) -> 
     """
     import subprocess
 
-    from capsem.gate.interception import CURRENT_STEP, Instrument
+    from capsem_builder.gate.interception import CURRENT_STEP, Instrument
 
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     (tmp_path / "config").mkdir()
@@ -524,7 +523,7 @@ def test_interception_catches_the_mode_that_a_watcher_arrives_too_late_for(
     has happened and both samples read `0644`. Wrapping `chmod` has the old
     mode in hand before the call returns.
     """
-    from capsem.gate.interception import Instrument
+    from capsem_builder.gate.interception import Instrument
 
     target = tmp_path / "target" / "artifact"
     target.parent.mkdir()
@@ -551,7 +550,7 @@ def test_every_mutating_primitive_the_stdlib_offers_is_intercepted() -> None:
     """
     import shutil as _shutil
 
-    from capsem.gate.interception import Instrument
+    from capsem_builder.gate.interception import Instrument
 
     intercepted = {(module, name) for module, name, _ in Instrument.TARGETS}
     mutating = {
@@ -577,7 +576,7 @@ def test_every_mutating_primitive_the_stdlib_offers_is_intercepted() -> None:
 def test_the_primitives_are_restored_afterwards() -> None:
     """A gate that leaves the standard library patched has broken every
     process that outlives it."""
-    from capsem.gate.interception import Instrument
+    from capsem_builder.gate.interception import Instrument
 
     before = (os.link, os.chmod, shutil.copytree)
     with Instrument(Watch([], source_root=Path("/repo")), fd_path_template=FD_PATH_TEMPLATE):
@@ -621,7 +620,7 @@ def test_a_nested_ignored_tree_is_not_reported_as_source(tmp_path: Path) -> None
     """
     import subprocess
 
-    from capsem.gate.observation import Watch
+    from capsem_builder.gate.observation import Watch
 
     root = tmp_path / "checkout"
     (root / "crates" / "app").mkdir(parents=True)
@@ -663,7 +662,7 @@ def test_a_symlink_is_recorded_where_it_was_created(tmp_path: Path) -> None:
     Harmless while faults were only logged. Once a source-tree fault began
     aborting releases, it stopped one at `assets.assemble`.
     """
-    from capsem.gate.interception import Instrument
+    from capsem_builder.gate.interception import Instrument
 
     output = tmp_path / "target" / "assets"
     output.mkdir(parents=True)

@@ -12,10 +12,9 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from capsem_builder.gate.shellnodes import Command, commands
+from capsem_builder.gate.shellparse import parse as parse_shell
 from yaml.nodes import MappingNode, Node, SequenceNode
-
-from capsem.gate.shellnodes import Command, commands
-from capsem.gate.shellparse import parse as parse_shell
 
 from .shelltokens import OPERATORS, REDIRECTS, tokenize
 

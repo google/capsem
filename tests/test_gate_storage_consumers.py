@@ -54,7 +54,7 @@ def _schedule() -> dict[str, int]:
 
 def _release_positions(schedule: dict[str, int]) -> dict[str, list[int]]:
     """Every point in the plan at which each boundary is released."""
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     phases = gate_config.load(PROJECT_ROOT).storage.phases
     positions: dict[str, list[int]] = {}
@@ -99,7 +99,7 @@ def test_every_release_boundary_reclaims_something() -> None:
     is only correct if that leaves the boundary genuinely empty -- in which
     case the phase and its step go too, rather than staying as ceremony.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     claimed = {
         phase.boundary for phase in gate_config.load(PROJECT_ROOT).storage.phases.values()

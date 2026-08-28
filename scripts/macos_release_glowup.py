@@ -15,6 +15,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.content import ProfileContent
+from capsem_builder.gate.releaseauthoring import author_native_candidate
+from capsem_builder.gate.sourcecommit import SourceCommit, source_commit_for_checkout
 from macos_candidate_content import (
     hardlink_or_copy as hardlink_or_copy,
 )
@@ -23,11 +27,6 @@ from macos_candidate_content import (
     stage_candidate_assets,
 )
 from marketing_install_surface import validate_checked_in_marketing_install_surface
-
-from capsem.gate import config as gate_config
-from capsem.gate.content import ProfileContent
-from capsem.gate.releaseauthoring import author_native_candidate
-from capsem.gate.sourcecommit import SourceCommit, source_commit_for_checkout
 
 try:
     from release_glowup import (

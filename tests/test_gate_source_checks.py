@@ -22,9 +22,8 @@ from pathlib import Path
 
 import pydantic
 import pytest
-
-from capsem.gate import config as gate_config
-from capsem.gate.lintschema import LintConfig
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.lintschema import LintConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -110,10 +109,9 @@ def test_the_semantic_option_is_configuration_and_the_flag_is_code() -> None:
 def _plan():
     import argparse
 
+    from capsem_builder.gate import cli  # noqa: F401 - registers every command
+    from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
-
-    from capsem.gate import cli  # noqa: F401 - registers every command
-    from capsem.gate.command import GateCommand
 
     return GateCommand.registry["lint"](
         RecordingRunner(PROJECT_ROOT),
@@ -200,10 +198,9 @@ def test_two_failing_tools_both_report() -> None:
     The sequential version collected failures by hand into a list, which is
     the same thing done once, by hand, in a place the graph cannot see.
     """
+    from capsem_builder.gate.context import Context
+    from capsem_builder.gate.errors import GateError
     from helpers.gate import RecordingJournal, RecordingRunner
-
-    from capsem.gate.context import Context
-    from capsem.gate.errors import GateError
 
     runner = RecordingRunner(PROJECT_ROOT, failures=["ruff check", "ty check"])
     plan = _plan()
@@ -219,7 +216,7 @@ def test_two_failing_tools_both_report() -> None:
 def test_no_source_check_hides_behind_an_opaque_call() -> None:
     """Two `Call` wrappers delegated to one sequential function."""
     for module in ("lint.py", "audits.py"):
-        source = (PROJECT_ROOT / "src/capsem/gate" / module).read_text(encoding="utf-8")
+        source = (PROJECT_ROOT / "build_system/builder/gate" / module).read_text(encoding="utf-8")
         assert "Call(" not in source, f"{module} still wraps a source check in one call"
 
 
@@ -305,7 +302,7 @@ def test_no_step_forces_a_rebuild_by_touching_tracked_source() -> None:
     """
     import ast
 
-    gate = PROJECT_ROOT / "src" / "capsem" / "gate"
+    gate = PROJECT_ROOT / "build_system" / "builder" / "gate"
     tracked = {
         line.split("\t", 1)[-1]
         for line in subprocess.run(

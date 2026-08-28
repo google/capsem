@@ -7,10 +7,9 @@ repeated. This one records the largest: asking a graph question of a string.
 from __future__ import annotations
 
 import pytest
+from capsem_builder.gate.execution import Arch, Kind, Needs
+from capsem_builder.gate.workgraph import WorkGraph, from_plan
 from helpers.gate import gate_plan
-
-from capsem.gate.execution import Arch, Kind, Needs
-from capsem.gate.workgraph import WorkGraph, from_plan
 
 #: The commands whose graphs every invariant below must hold for. `candidate`
 #: is the whole gate; the two release lanes are what actually ships.
@@ -37,7 +36,7 @@ between modules, and any insertion of an intermediate step -- because none of
 those change the graph. It fails when the graph changes, which is when somebody
 wants to know.
 
-See src/capsem/gate/workgraph.py and skills/dev-gate/SKILL.md.
+See build_system/builder/gate/workgraph.py and skills/dev-gate/SKILL.md.
 """
 
 

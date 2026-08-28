@@ -13,11 +13,10 @@ import json
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.assetlanes import AssetLanes, Profile, discover_profiles
+from capsem_builder.gate.errors import GateError
 from helpers.gate import RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate.assetlanes import AssetLanes, Profile, discover_profiles
-from capsem.gate.errors import GateError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -175,8 +174,8 @@ def test_a_second_lane_run_reuses_the_exact_receipted_output(tmp_path: Path) -> 
 
 
 def test_asset_plan_repacks_every_private_lane_before_assembly() -> None:
-    from capsem.gate.assetplan import fragment
-    from capsem.gate.plan import Plan
+    from capsem_builder.gate.assetplan import fragment
+    from capsem_builder.gate.plan import Plan
 
     plan = Plan("assets")
     fragment(plan, CONFIG)
@@ -249,11 +248,11 @@ def test_both_lanes_are_awaited_even_when_the_first_fails(tmp_path: Path) -> Non
     them both run, and a failure skips only what *depends* on it. Asserted
     through a plan, because that is where the guarantee lives.
     """
-    from capsem.gate.actions import Call
-    from capsem.gate.context import Context
-    from capsem.gate.execution import step
-    from capsem.gate.opacity import CallJustification, OpaqueKind
-    from capsem.gate.plan import Plan
+    from capsem_builder.gate.actions import Call
+    from capsem_builder.gate.context import Context
+    from capsem_builder.gate.execution import step
+    from capsem_builder.gate.opacity import CallJustification, OpaqueKind
+    from capsem_builder.gate.plan import Plan
 
     root = _checkout(tmp_path)
     runner = Building(root, omit="vmlinuz")

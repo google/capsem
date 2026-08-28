@@ -25,17 +25,16 @@ import threading
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import cli  # noqa: F401 - imported so every command registers
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.actions import Action
+from capsem_builder.gate.command import GateCommand
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.execution import step
+from capsem_builder.gate.plan import Plan
+from capsem_builder.gate.runlog import RunLog
 from helpers.gate import RecordingRunner
-
-from capsem.gate import cli  # noqa: F401 - imported so every command registers
-from capsem.gate import config as gate_config
-from capsem.gate.actions import Action
-from capsem.gate.command import GateCommand
-from capsem.gate.context import Context
-from capsem.gate.errors import GateError
-from capsem.gate.execution import step
-from capsem.gate.plan import Plan
-from capsem.gate.runlog import RunLog
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -102,8 +101,8 @@ def test_concurrent_steps_do_not_steal_each_others_events(tmp_path: Path) -> Non
 
 def test_a_subprocess_is_attributed_to_the_step_that_ran_it(tmp_path: Path) -> None:
     """The same hazard for `exec`, which the runner emits from another thread."""
-    from capsem.gate.actions import Run
-    from capsem.gate.funnel import GuardedRunner
+    from capsem_builder.gate.actions import Run
+    from capsem_builder.gate.funnel import GuardedRunner
 
     config = _checkout(tmp_path)
     plan = Plan("attributed")
@@ -135,7 +134,7 @@ def test_a_run_that_failed_outside_any_step_is_not_reported_as_ok(
     Classifying by steps alone meant a run whose every step passed and whose
     workspace then refused to release was reported as a success.
     """
-    from capsem.gate.timing import measure
+    from capsem_builder.gate.timing import measure
 
     config = _checkout(tmp_path)
     with pytest.raises(GateError, match="teardown"), RunLog.open(config, "outside"):
@@ -149,7 +148,7 @@ def test_a_run_that_failed_outside_any_step_is_not_reported_as_ok(
 
 def test_a_run_that_passed_is_reported_as_such(tmp_path: Path) -> None:
     """The other half, so the check above cannot pass by always failing."""
-    from capsem.gate.timing import measure
+    from capsem_builder.gate.timing import measure
 
     config = _checkout(tmp_path)
     with RunLog.open(config, "clean") as log:
@@ -213,7 +212,7 @@ def test_every_command_that_changes_something_still_records(tmp_path: Path) -> N
 
     silent = []
     for name, command in GateCommand.registry.items():
-        if not command.__module__.startswith("capsem.gate."):
+        if not command.__module__.startswith("capsem_builder.gate."):
             continue
         extra = {"aggressive": False} if name == "gc" else {}
         try:
@@ -260,7 +259,7 @@ def test_the_recorded_revision_survives_a_linked_worktree(tmp_path: Path) -> Non
     """
     import subprocess
 
-    from capsem.gate.runhistory import head_revision
+    from capsem_builder.gate.runhistory import head_revision
 
     origin = tmp_path / "origin"
     origin.mkdir()
@@ -298,7 +297,7 @@ def test_the_recorded_revision_survives_a_packed_ref(tmp_path: Path) -> None:
     """A ref that has been packed away has no loose file to read."""
     import subprocess
 
-    from capsem.gate.runhistory import head_revision
+    from capsem_builder.gate.runhistory import head_revision
 
     root = tmp_path / "packed"
     root.mkdir()
@@ -328,7 +327,7 @@ def test_a_checkout_with_no_git_at_all_records_nothing_rather_than_raising(
     tmp_path: Path,
 ) -> None:
     """A tarball is a real way to receive a source tree."""
-    from capsem.gate.runhistory import head_revision
+    from capsem_builder.gate.runhistory import head_revision
 
     assert head_revision(tmp_path) == ""
 

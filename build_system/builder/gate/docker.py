@@ -11,8 +11,7 @@ The disk budget those containers consume is `storage.py`.
 
 from __future__ import annotations
 
-from capsem_builder.policy.dockerpolicy import ContainerNetwork, require_container_network
-
+from ..policy.dockerpolicy import ContainerNetwork, require_container_network
 from .dockerimage import ImageOperations
 from .dockermount import Mount
 from .errors import GateError

@@ -17,12 +17,11 @@ import shutil
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import imagebases
+from capsem_builder.gate.assets import AssetGate
+from capsem_builder.gate.errors import GateError
 from helpers.gate import RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate import imagebases
-from capsem.gate.assets import AssetGate
-from capsem.gate.errors import GateError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -140,9 +139,9 @@ def _gate(
     profiles: tuple[str, ...] = ("code",),
     **kwargs,
 ) -> tuple[AssetGate, Gating]:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
-    monkeypatch.setattr("capsem.gate.pidfiles.stop_gate_service", lambda *_a: None)
-    monkeypatch.setattr("capsem.gate.assets.WaitForSocket.perform", lambda _self, _context: None)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem_builder.gate.pidfiles.stop_gate_service", lambda *_a: None)
+    monkeypatch.setattr("capsem_builder.gate.assets.WaitForSocket.perform", lambda _self, _context: None)
     runner = runner_class(_checkout(tmp_path, profiles=profiles), **kwargs)
     return AssetGate(runner), runner
 
@@ -243,7 +242,7 @@ def test_a_linux_host_is_told_about_binfmt_instead(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     gate, _ = _gate(tmp_path, monkeypatch, failures=["docker run"])
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
 
     with pytest.raises(GateError, match="binfmt QEMU"):
         _run_all(gate)

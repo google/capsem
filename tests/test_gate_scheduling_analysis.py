@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from capsem.gate import scheduling
-from capsem.gate.execution import Arch, Kind, Speed
-from capsem.gate.runledger import LedgerRow, StepRow
-from capsem.gate.workgraph import Node, Origin, Requires, WorkGraph
+from capsem_builder.gate import scheduling
+from capsem_builder.gate.execution import Arch, Kind, Speed
+from capsem_builder.gate.runledger import LedgerRow, StepRow
+from capsem_builder.gate.workgraph import Node, Origin, Requires, WorkGraph
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 

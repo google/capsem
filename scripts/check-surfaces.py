@@ -16,9 +16,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import lint_harness as lintharness
+from capsem_builder.gate import shellsurfaces
 from lint_harness import Outcome, Tool
-
-from capsem.gate import shellsurfaces
 
 SHELLCHECK_LINE = re.compile(
     r"^(?P<file>[^:]+):(?P<line>\d+):\d+: \w+: (?P<message>.*) \[(?P<code>SC\d+)\]$"

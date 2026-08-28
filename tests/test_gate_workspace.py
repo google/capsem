@@ -17,11 +17,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import config as gate_config
-from capsem.gate.errors import GateError
-from capsem.gate.lifecycle import held
-from capsem.gate.workspace import Workspace
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.lifecycle import held
+from capsem_builder.gate.workspace import Workspace
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
@@ -115,7 +114,7 @@ def test_the_service_is_stopped_before_the_run_directory_goes(
     def stopped(run_dir, settings):
         order.append(f"stop {run_dir.is_dir()}")
 
-    monkeypatch.setattr("capsem.gate.pidfiles.stop_gate_service", stopped)
+    monkeypatch.setattr("capsem_builder.gate.pidfiles.stop_gate_service", stopped)
 
     workspace.release()
 

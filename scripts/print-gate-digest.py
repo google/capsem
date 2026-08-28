@@ -10,7 +10,7 @@ behind a running gate, and a session that hangs on startup is a session nobody
 debugs -- they delete the hook. This reads the file the gate already wrote.
 
 It must not need the project's environment. Bare `python3` has no pydantic, so
-importing `capsem.gate.config` fails on exactly the machines where a hook is
+importing `capsem_builder.gate.config` fails on exactly the machines where a hook is
 least welcome to be picky. The only thing needed from config is one path, and
 `tomllib` is in the standard library.
 

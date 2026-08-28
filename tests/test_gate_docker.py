@@ -5,13 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.docker import Docker
+from capsem_builder.gate.dockermount import Mount, container_path
+from capsem_builder.gate.errors import GateError
 from capsem_builder.policy.dockerpolicy import ContainerNetwork
 from helpers.gate import RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate.docker import Docker
-from capsem.gate.dockermount import Mount, container_path
-from capsem.gate.errors import GateError
 
 MOUNT = gate_config.load(Path(__file__).resolve().parents[1]).install.mount
 

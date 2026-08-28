@@ -15,8 +15,7 @@ from __future__ import annotations
 
 import tomllib
 
-from capsem_builder.policy.cachepolicy import CacheLimits
-
+from ..policy.cachepolicy import CacheLimits
 from . import config as gate_config
 from .actions import Call
 from .command import GateCommand

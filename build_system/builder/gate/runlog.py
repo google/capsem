@@ -26,8 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from capsem.gatelaunch import PYCACHE
-
+from ..gatelaunch import PYCACHE
 from . import digestreport, runledger
 from .config import GateConfig
 from .harnessschema import RunLogConfig

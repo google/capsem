@@ -21,16 +21,15 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import crosscompile
+from capsem_builder.gate.content import ProfileContent
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.packageinputs import pinned_toolchain, resolve_channel
+from capsem_builder.gate.packagerail import PackageRail
+from capsem_builder.gate.packagesigning import signing_key
+from capsem_builder.gate.plan import Plan
 from helpers.gate import RecordingRunner
-
-from capsem.gate import config as gate_config
-from capsem.gate import crosscompile
-from capsem.gate.content import ProfileContent
-from capsem.gate.errors import GateError
-from capsem.gate.packageinputs import pinned_toolchain, resolve_channel
-from capsem.gate.packagerail import PackageRail
-from capsem.gate.packagesigning import signing_key
-from capsem.gate.plan import Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -187,8 +186,8 @@ def test_profile_content_refuses_an_architecture_not_declared_by_the_manifest(
 def test_profile_content_refuses_missing_required_evidence_before_docker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
     missing = CONFIG.assets.evidence_artifacts[0]
     (root / "assets" / TARGET.name / missing).unlink()
@@ -209,8 +208,8 @@ def _assert_no_package_docker_started(runner: RecordingRunner) -> None:
 def test_standalone_package_refuses_the_relative_assets_selector_before_docker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
     selected = root / "selected-assets"
     (root / "assets").rename(selected)
@@ -227,8 +226,8 @@ def test_standalone_package_refuses_the_relative_assets_selector_before_docker(
 def test_explicit_package_content_refuses_a_symlink_root_before_docker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     checkout = _checkout(tmp_path / "checkout")
     config = gate_config.load(checkout)
     real = tmp_path / "real-content"
@@ -247,8 +246,8 @@ def test_explicit_package_content_refuses_a_symlink_root_before_docker(
 def test_package_content_refuses_a_symlink_config_directory_before_docker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
     config = gate_config.load(root)
     selected = root / "selected-config"
@@ -267,8 +266,8 @@ def test_package_content_refuses_a_symlink_config_directory_before_docker(
 def test_package_mounts_only_the_concrete_paired_content_dirs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
     config = gate_config.load(root)
     isolated = root / "target" / "ironbank-assets" / "code"
@@ -525,10 +524,10 @@ def test_package_helper_final_stage_contains_only_materialized_dependency_stores
 def test_source_only_bytes_do_not_change_the_dependency_helper_input_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate.docker import Docker
-    from capsem.gate.packagebuilder import image_tag
+    from capsem_builder.gate.docker import Docker
+    from capsem_builder.gate.packagebuilder import image_tag
 
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "x86_64")
     root = _checkout(tmp_path)
     config = gate_config.load(root)
     source = root / "crates" / "capsem" / "src" / "main.rs"
@@ -545,10 +544,10 @@ def test_source_only_bytes_do_not_change_the_dependency_helper_input_key(
 def test_cross_dev_package_authority_changes_the_dependency_helper_input_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate.docker import Docker
-    from capsem.gate.packagebuilder import image_tag
+    from capsem_builder.gate.docker import Docker
+    from capsem_builder.gate.packagebuilder import image_tag
 
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "x86_64")
     root = _checkout(tmp_path)
     config = gate_config.load(root)
     docker = Docker(RecordingRunner(root))
@@ -570,10 +569,10 @@ def test_cross_dev_package_authority_changes_the_dependency_helper_input_key(
 def test_cross_host_package_authority_changes_the_dependency_helper_input_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate.docker import Docker
-    from capsem.gate.packagebuilder import image_tag
+    from capsem_builder.gate.docker import Docker
+    from capsem_builder.gate.packagebuilder import image_tag
 
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "x86_64")
     root = _checkout(tmp_path)
     config = gate_config.load(root)
     docker = Docker(RecordingRunner(root))
@@ -842,9 +841,9 @@ def test_package_helper_is_host_native_and_target_specific(
     host_name: str,
     target_name: str,
 ) -> None:
-    from capsem.gate.packagebuilder import materialize
+    from capsem_builder.gate.packagebuilder import materialize
 
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: host_name)
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: host_name)
     root = _checkout(tmp_path)
     config = gate_config.load(root)
     host = config.arch(host_name)
@@ -890,7 +889,7 @@ def test_package_helper_is_host_native_and_target_specific(
     assert runner.last_index_of(
         r"--format '\{\{\.Os\}\}/\{\{\.Architecture\}\}.*capsem-host-builder@sha256:"
     ) > runner.index_of(r"docker build .*Dockerfile\.package-builder")
-    from capsem.gate.invocation import ConsoleMode
+    from capsem_builder.gate.invocation import ConsoleMode
 
     assert build_command.console is ConsoleMode.LOG_ONLY
 
@@ -898,10 +897,10 @@ def test_package_helper_is_host_native_and_target_specific(
 def test_package_helper_key_uses_the_platform_child_not_the_provenance_index(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate.docker import Docker
-    from capsem.gate.packagebuilder import image_tag
+    from capsem_builder.gate.docker import Docker
+    from capsem_builder.gate.packagebuilder import image_tag
 
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "x86_64")
     root = _checkout(tmp_path)
     config = gate_config.load(root)
     child = "sha256:" + "c" * 64
@@ -922,9 +921,9 @@ def test_package_helper_key_uses_the_platform_child_not_the_provenance_index(
 def test_package_helper_refuses_a_parent_tag_move_before_docker_build(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate.packagebuilder import materialize
+    from capsem_builder.gate.packagebuilder import materialize
 
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "x86_64")
     root = _checkout(tmp_path)
     config = gate_config.load(root)
     runner = RecordingRunner(
@@ -957,10 +956,10 @@ def test_package_helper_snapshot_authority_changes_the_input_key(
     monkeypatch: pytest.MonkeyPatch,
     changed_authority: dict[str, str],
 ) -> None:
-    from capsem.gate.docker import Docker
-    from capsem.gate.packagebuilder import image_tag
+    from capsem_builder.gate.docker import Docker
+    from capsem_builder.gate.packagebuilder import image_tag
 
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "x86_64")
     root = _checkout(tmp_path)
     config = gate_config.load(root)
     renamed = {"apt_snapshot_id": "id", "apt_snapshot_base": "base"}
@@ -978,9 +977,9 @@ def test_package_helper_snapshot_authority_changes_the_input_key(
 def test_package_helper_reuses_a_matching_warm_snapshot_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate.packagebuilder import materialize
+    from capsem_builder.gate.packagebuilder import materialize
 
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "x86_64")
     root = _checkout(tmp_path)
     config = gate_config.load(root)
     runner = RecordingRunner(root)
@@ -995,9 +994,9 @@ def test_package_helper_reuses_a_matching_warm_snapshot_key(
 def test_package_helper_refuses_a_warm_tag_with_the_wrong_input_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from capsem.gate.packagebuilder import materialize
+    from capsem_builder.gate.packagebuilder import materialize
 
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "x86_64")
     root = _checkout(tmp_path)
     config = gate_config.load(root)
     runner = RecordingRunner(root, replies={"index .Config.Labels": "forged-input-key"})
@@ -1009,11 +1008,10 @@ def test_package_helper_refuses_a_warm_tag_with_the_wrong_input_key(
 def test_package_helper_exact_identity_is_written_to_the_run_journal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from capsem_builder.gate.context import Context
     from helpers.gate import RecordingJournal
 
-    from capsem.gate.context import Context
-
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "x86_64")
     root = _checkout(tmp_path)
     config = gate_config.load(root)
     runner = RecordingRunner(root)
@@ -1032,8 +1030,8 @@ def test_package_helper_exact_identity_is_written_to_the_run_journal(
 def test_package_source_image_and_runtime_are_network_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
 
     _rail(runner).build()
@@ -1046,7 +1044,7 @@ def test_package_source_image_and_runtime_are_network_none(
     assert "BASE=capsem-package-builder-arm64:" in source
     assert "@sha256:" not in source
     assert "BASE=sha256:" not in source
-    from capsem.gate.invocation import ConsoleMode
+    from capsem_builder.gate.invocation import ConsoleMode
 
     source_command = next(
         command
@@ -1081,8 +1079,8 @@ def test_the_package_lane_supplies_its_verified_local_input_key_helper(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The targeted Dockerfile waiver is safe only while this is indivisible."""
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
 
     _run_lane(_rail(runner))
@@ -1104,8 +1102,8 @@ def test_the_package_lane_supplies_its_verified_local_input_key_helper(
 def test_the_builder_receives_every_name_for_the_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path, toolchain="1.2.3"), replies={"select-linux": "skip"})
 
     _run_lane(_rail(runner))
@@ -1131,8 +1129,8 @@ def test_the_lane_shares_no_named_volume_with_any_other_run(
 ) -> None:
     """A shared /cargo-target across architectures would rebuild the world on
     every alternation; a per-architecture registry would refetch the index."""
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
 
     _run_lane(_rail(runner))
@@ -1168,8 +1166,8 @@ def test_the_package_lane_mounts_no_git_metadata(
     `CAPSEM_BUILD_REVISION` -- so a mount of the host's Git directory would be
     a mount of the checkout by another name.
     """
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
 
     _run_lane(_rail(runner))
@@ -1198,8 +1196,8 @@ def test_the_builds_own_outputs_stay_container_local(
     baking the frontend into the builder image does, which is Phase 5's second
     half. Asserting only what is true keeps the difference visible.
     """
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
 
     _run_lane(_rail(runner))
@@ -1229,13 +1227,12 @@ def test_the_builder_image_is_rebuilt_before_every_package() -> None:
     """
     import argparse
 
-    from helpers.gate import RecordingRunner
-
-    from capsem.gate import (
+    from capsem_builder.gate import (
         cli,  # noqa: F401 - registers every command
         hostimage,
     )
-    from capsem.gate.command import GateCommand
+    from capsem_builder.gate.command import GateCommand
+    from helpers.gate import RecordingRunner
 
     plan = GateCommand.registry["cross-compile"](
         RecordingRunner(PROJECT_ROOT),
@@ -1253,8 +1250,8 @@ def test_the_builder_image_is_rebuilt_before_every_package() -> None:
 def test_fresh_release_package_plan_owns_helper_prerequisites_in_order() -> None:
     import argparse
 
-    from capsem.gate import cli, hostimage
-    from capsem.gate.command import GateCommand
+    from capsem_builder.gate import cli, hostimage
+    from capsem_builder.gate.command import GateCommand
 
     del cli  # Importing registers every command; the registry is the value used below.
 
@@ -1284,9 +1281,9 @@ def test_the_container_clock_is_synced_only_on_macos(
 ) -> None:
     """Colima's VM clock drifts and apt rejects a repository signed in what it
     believes is the future. A Linux runner has no such VM."""
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     for system, expected in (("Darwin", True), ("Linux", False)):
-        monkeypatch.setattr("capsem.gate.host.system", lambda system=system: system)
+        monkeypatch.setattr("capsem_builder.gate.host.system", lambda system=system: system)
         runner = Building(_checkout(tmp_path / system), replies={"select-linux": "skip"})
 
         _run_lane(_rail(runner))
@@ -1302,8 +1299,8 @@ def test_the_container_clock_is_synced_only_on_macos(
 def test_the_recorded_package_is_the_one_this_run_produced(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
     # A package from an earlier build of a different commit, still in dist/.
     (root / "dist").mkdir()
@@ -1316,8 +1313,8 @@ def test_the_recorded_package_is_the_one_this_run_produced(
 def test_a_build_that_recorded_nothing_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), records=None)
 
     with pytest.raises(GateError, match="did not record the exact Debian package"):
@@ -1334,8 +1331,8 @@ def test_a_build_that_recorded_nothing_fails(
 def test_a_nonsense_package_record_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorded: str, reason: str
 ) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), records=recorded)
 
     with pytest.raises(GateError, match=reason):
@@ -1346,8 +1343,8 @@ def test_the_record_does_not_survive_the_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Left behind, it would name this run's package to the next one."""
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
     runner = Building(root, replies={"select-linux": "skip"})
 
@@ -1364,9 +1361,9 @@ def test_the_record_does_not_survive_the_run(
 def test_a_provable_target_runs_the_systemd_kvm_proof(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
-    monkeypatch.setattr("capsem.gate.host.device_available", lambda _path: True)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda _path: True)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "prove"})
 
     # The proof is called, not launched: the three `CAPSEM_PROOF_*` variables
@@ -1374,8 +1371,8 @@ def test_a_provable_target_runs_the_systemd_kvm_proof(
     # longer exists, and `DebProof` always took them as arguments. What is
     # asserted is therefore what it was handed, which is the same claim
     # without a subprocess in the middle.
-    from capsem.gate import packagerail
-    from capsem.gate.sourcecommit import SourceCommit
+    from capsem_builder.gate import packagerail
+    from capsem_builder.gate.sourcecommit import SourceCommit
 
     handed = {}
     source_commit = SourceCommit("0" * 40)
@@ -1416,8 +1413,8 @@ def test_a_cross_target_skips_the_proof_and_says_why(
 ) -> None:
     """The decision belongs to `select-linux-deb-proof.sh`; this must not
     second-guess it, or the two disagree about what a green run proved."""
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
 
     _run_lane(_rail(runner))
@@ -1433,7 +1430,7 @@ def test_the_builder_environment_follows_the_configured_names() -> None:
     reads the same literal the implementation reads passes whether or not the
     implementation reads config at all.
     """
-    from capsem.gate.packageinputs import package_environment
+    from capsem_builder.gate.packageinputs import package_environment
 
     renamed = CONFIG.model_copy(
         update={
@@ -1462,7 +1459,7 @@ def test_the_builder_environment_follows_the_configured_names() -> None:
 
 
 def test_the_builder_environment_carries_the_signing_material_it_was_given() -> None:
-    from capsem.gate.packageinputs import package_environment
+    from capsem_builder.gate.packageinputs import package_environment
 
     target = CONFIG.arch(next(iter(CONFIG.architectures)))
     signing = {CONFIG.package.signing.key_variable: "secret-key-bytes"}
@@ -1483,7 +1480,7 @@ def test_the_disk_rail_is_measured_at_two_different_moments() -> None:
     measured the same moment and the second could only ever agree with the
     first. Removing one looked right and would have lost a real check.
     """
-    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "packagerail.py").read_text(
+    source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "packagerail.py").read_text(
         encoding="utf-8"
     )
 

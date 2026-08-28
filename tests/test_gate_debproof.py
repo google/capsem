@@ -12,14 +12,13 @@ import json
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.content import ProfileContent
+from capsem_builder.gate.debproof import DebProof
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.sourcecommit import SourceCommit
 from helpers.gate import RecordingRunner
 from helpers.profile_content import materialize_required_artifacts
-
-from capsem.gate import config as gate_config
-from capsem.gate.content import ProfileContent
-from capsem.gate.debproof import DebProof
-from capsem.gate.errors import GateError
-from capsem.gate.sourcecommit import SourceCommit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -32,7 +31,7 @@ SOURCE_COMMIT = SourceCommit("0" * 40)
 def _qualified_install_image(monkeypatch: pytest.MonkeyPatch) -> None:
     """DebProof tests own the transaction, not install-image provenance."""
     monkeypatch.setattr(
-        "capsem.gate.installimage.require_local_image",
+        "capsem_builder.gate.installimage.require_local_image",
         lambda _runner, _config: "sha256:" + "0" * 64,
     )
 
@@ -93,7 +92,7 @@ def _replies(*, version: str = VERSION, status: str | None = None) -> dict[str, 
 def _proof(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **kwargs
 ) -> tuple[DebProof, RecordingRunner]:
-    monkeypatch.setattr("capsem.gate.host.device_available", lambda _path: True)
+    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda _path: True)
     root = _checkout(tmp_path)
     runner = RecordingRunner(root, replies=_replies(**kwargs.pop("replies", {})), **kwargs)
     built = DebProof(
@@ -151,7 +150,7 @@ def test_a_host_without_kvm_refuses_rather_than_proving_less(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     proof, _ = _proof(tmp_path, monkeypatch)
-    monkeypatch.setattr("capsem.gate.host.device_available", lambda _path: False)
+    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda _path: False)
 
     with pytest.raises(GateError, match="/dev/kvm"):
         proof.run()
@@ -265,7 +264,7 @@ def test_a_binary_carrying_an_older_build_fails(
 ) -> None:
     """The package metadata and the ELF inside it are stamped separately, so
     this is the only check that catches a stale binary in a fresh package."""
-    monkeypatch.setattr("capsem.gate.host.device_available", lambda _path: True)
+    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda _path: True)
     root = _checkout(tmp_path)
     replies = _replies()
     replies["--version"] = "capsem 0.0.1"
@@ -288,7 +287,7 @@ def test_a_binary_carrying_an_older_build_fails(
 def test_an_installed_version_that_disagrees_with_the_package_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.host.device_available", lambda _path: True)
+    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda _path: True)
     root = _checkout(tmp_path)
     replies = _replies()
     replies["-f=${Version}"] = "0.0.1"
@@ -312,7 +311,7 @@ def test_a_status_line_that_is_missing_fails_the_proof(
 ) -> None:
     """A package that installs and then cannot start its own service passes
     every file-existence check there is."""
-    monkeypatch.setattr("capsem.gate.host.device_available", lambda _path: True)
+    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda _path: True)
     root = _checkout(tmp_path)
     full = _replies()["capsem status"]
     replies = _replies()
@@ -337,7 +336,7 @@ def test_profiles_must_all_be_ready(
 ) -> None:
     """Zero of zero is the interesting one: it reads as success to anything
     that only compares the two numbers."""
-    monkeypatch.setattr("capsem.gate.host.device_available", lambda _path: True)
+    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda _path: True)
     root = _checkout(tmp_path)
     replies = _replies()
     replies["capsem status"] = (

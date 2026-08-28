@@ -17,10 +17,9 @@ import shlex
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate import bench
+from capsem_builder.gate import config as gate_config
 from helpers.gate import RecordingRunner
-
-from capsem.gate import bench
-from capsem.gate import config as gate_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -146,7 +145,7 @@ def test_every_value_comes_from_config(value: str) -> None:
     Each of these was a `default_value` in the binary's own CLI, which is fine
     for running it by hand and is not config -- the gate passes them in.
     """
-    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "bench.py").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "bench.py").read_text(encoding="utf-8")
     assert f'"{value}"' not in source
 
 

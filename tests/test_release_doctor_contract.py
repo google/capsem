@@ -18,10 +18,9 @@ from typing import ClassVar
 
 import pytest
 import yaml
+from capsem_builder.gate.shellnodes import arm_named
+from capsem_builder.gate.shellparse import parse as parse_shell
 from helpers.workflow_contract import assert_unmasked_step, parsed_commands, workflow_reachable_text
-
-from capsem.gate.shellnodes import arm_named
-from capsem.gate.shellparse import parse as parse_shell
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -341,7 +340,7 @@ def test_doctor_fix_builds_assets_for_each_checked_in_profile() -> None:
 
 
 def test_macos_doctor_requires_live_rosetta_registration() -> None:
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     source = _source_text("scripts/doctor-macos.sh")
     config = gate_config.load(PROJECT_ROOT)
@@ -357,7 +356,7 @@ def test_macos_doctor_requires_live_rosetta_registration() -> None:
     # The cross-execution probe moved to `crossexec`, which is its own
     # question: whether this daemon can run a foreign architecture is a
     # property of the machine, not of building assets.
-    crossexec = _source_text("src/capsem/gate/crossexec.py")
+    crossexec = _source_text("build_system/builder/gate/crossexec.py")
     assert '"--platform",' in crossexec
     # The probe goes through the Docker wrapper, which means it also has to
     # say what network it needs -- the property the migration was for, and a
@@ -422,9 +421,9 @@ def test_parallel_asset_gate_preserves_and_names_failed_architecture_logs() -> N
     against the commands the lanes issue, in tests/test_gate_assetlanes.py;
     what stays here is that both halves still exist.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
-    lanes = _source_text("src/capsem/gate/assetlanes.py")
+    lanes = _source_text("build_system/builder/gate/assetlanes.py")
     config = gate_config.load(PROJECT_ROOT)
 
     # One log per lane, named for its architecture.
@@ -445,10 +444,10 @@ def test_parallel_asset_gate_preserves_and_names_failed_architecture_logs() -> N
 
 
 def test_asset_gate_interrupt_cleanup_only_reaps_owned_mounts(tmp_path: Path) -> None:
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    assets = _source_text("src/capsem/gate/assets.py")
+    assets = _source_text("build_system/builder/gate/assets.py")
 
     # Scoped to this gate's own scratch root, and run from a `finally` so an
     # aborted lane still releases its containers.
@@ -526,15 +525,15 @@ def test_install_e2e_reuses_exact_package_and_materialized_profile_config() -> N
     This used to read the recipe text and assert `install_pos < stage_pos` --
     the install running before its assets were staged. That was not a contract
     but a transcription of the defect, and it would have failed the fix. The
-    order now lives in `capsem.gate.install` and is asserted against the
+    order now lives in `capsem_builder.gate.install` and is asserted against the
     commands the gate actually issues, in
     `tests/test_gate_install_ordering.py`.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "install.py").read_text()
-    proof = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installproof.py").read_text()
+    source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "install.py").read_text()
+    proof = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installproof.py").read_text()
     recipe = _recipe_block("_gate-install:")
 
     assert "capsem-gate install" in recipe
@@ -713,7 +712,7 @@ def test_release_channel_contract_suite_is_in_pr_and_local_gates() -> None:
     # that owns this suite, and running it twice in one gate would double a
     # four-minute cost to prove the same thing. Read from the configuration
     # that declares the ignore rather than from a recipe comment.
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     settings = gate_config.load(PROJECT_ROOT).suites.pytest
     assert "tests/capsem-release" in settings.broad_ignores
@@ -2004,15 +2003,15 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
     image it had just deleted. It is a step with edges now, so "after" is a
     property of the graph rather than of the file.
     """
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installplan.py").read_text()
-    identity_source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installimage.py").read_text()
+    source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installplan.py").read_text()
+    identity_source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installimage.py").read_text()
 
     # The plan now names each boundary separately, so its log can distinguish
     # the sole egress phase from the sealed source build and smoke proof.
-    from capsem.gate.installimage import InstallImageStep
+    from capsem_builder.gate.installimage import InstallImageStep
 
     for lifecycle in InstallImageStep:
         assert f"_step_label(InstallImageStep.{lifecycle.name})" in source
@@ -3137,7 +3136,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
             (PROJECT_ROOT / "config" / "gate.toml").read_text(),
             *(
                 path.read_text()
-                for path in sorted((PROJECT_ROOT / "src" / "capsem" / "gate").glob("*.py"))
+                for path in sorted((PROJECT_ROOT / "build_system" / "builder" / "gate").glob("*.py"))
             ),
         ]
     )
@@ -4734,7 +4733,7 @@ def test_installer_codesigns_helpers_with_stable_identifiers() -> None:
         "org.capsem.mcp",
         "org.capsem.mcp.aggregator",
         "org.capsem.mcp.builtin",
-        "org.capsem.gateway",
+        "org.capsem_builder.gateway",
         "org.capsem.tray",
         "org.capsem.admin",
         "org.capsem.mock-server",
@@ -5107,7 +5106,7 @@ def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
     report_block = runner.split("cargo llvm-cov report", maxsplit=1)[1]
     assert "--bins" not in report_block
     assert "--fail-under-lines" not in runner
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     floor = gate_config.load(PROJECT_ROOT).modules.rust_coverage_floor
     assert floor.replace("=", " ") == RUST_LINE_COVERAGE_FLOOR
@@ -5123,10 +5122,9 @@ def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
 def test_just_test_owns_linux_rust_platform_coverage_through_docker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.hostimage import cargo_tool
     from helpers.gate import gate_issued, gate_plan
-
-    from capsem.gate import config as gate_config
-    from capsem.gate.hostimage import cargo_tool
 
     canonical_gate = _dispatched_text("test-clean:")
     linux_rust_recipe = _recipe_body("_gate-linux-rust:")
@@ -5138,14 +5136,14 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
     # the same checked-in runner through the sealed Docker lane, including the
     # builder/base dependency chain. Exercise both real plans instead of
     # asking the current host's Just recipe to contain the other platform.
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "x86_64")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "x86_64")
     native = gate_plan("linux-rust")
     assert native.labels == ("linux-rust",)
     assert "test-linux-rust.sh" in native.step_named("linux-rust").render()[0]
 
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: "arm64")
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "arm64")
     sealed = gate_plan("linux-rust")
     assert {"host-image", "warm-base", "linux-rust"} <= set(sealed.labels)
     assert sealed.after_of("warm-base") == {"host-image"}
@@ -5217,7 +5215,7 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
     # Both hosts use the same sealed Docker lane. That makes local Linux and
     # Colima exercise one input-keyed dependency image instead of two subtly
     # different native/container implementations.
-    linuxrust = _source_text("src/capsem/gate/linuxrust.py")
+    linuxrust = _source_text("build_system/builder/gate/linuxrust.py")
     assert "Docker(context.runner)" in linuxrust
     assert "host.on_linux()" not in linuxrust
     assert "host.on_macos()" not in linuxrust
@@ -5287,7 +5285,7 @@ def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     assert "SBOM" in host_sbom
     # Exactly the current version's packages, so an older `.deb` still in
     # `dist/` cannot be described by a cohort nobody ships.
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     sbom = gate_config.load(PROJECT_ROOT).sbom
     assert "{version}" in sbom.dist_glob
@@ -5395,7 +5393,7 @@ def test_binary_pairing_failure_uploads_exported_prefix_evidence() -> None:
 
 
 def test_hosted_install_failure_uploads_exact_gate_and_glowup_evidence() -> None:
-    from capsem.gate import config as gate_config
+    from capsem_builder.gate import config as gate_config
 
     job = _workflow_job("test-install")
     step = next(
@@ -6486,15 +6484,15 @@ def test_parallel_asset_primitive_does_not_run_docker_gc() -> None:
     # The lanes call the builder directly now, and the builder does not
     # reclaim: two concurrent architectures running destructive cleanup would
     # each free what the other was still using.
-    from capsem.gate import config as gate_config
-    from capsem.gate.imagebuild import build_argv
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.imagebuild import build_argv
 
     config = gate_config.load(PROJECT_ROOT)
     argv = " ".join(build_argv(config, profile="code", arch="arm64", template="all"))
     assert "docker-gc" not in argv
     assert "gc" not in argv.split()
 
-    lanes = _source_text("src/capsem/gate/assetlanes.py")
+    lanes = _source_text("build_system/builder/gate/assetlanes.py")
     assert "gc(" not in lanes, "an asset lane reclaims while its sibling runs"
     # `_docker-gc` remains as a developer convenience; what matters is that
     # no asset lane reaches it.

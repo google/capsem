@@ -5,12 +5,11 @@ import shutil
 from pathlib import Path
 
 import pytest
-
-from capsem.gate import config as gate_config
-from capsem.gate import qualificationevidence, qualificationjournal
-from capsem.gate.execution import ResumePolicy, step
-from capsem.gate.plan import Plan
-from capsem.gate.runlogschema import (
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import qualificationevidence, qualificationjournal
+from capsem_builder.gate.execution import ResumePolicy, step
+from capsem_builder.gate.plan import Plan
+from capsem_builder.gate.runlogschema import (
     CARRIED,
     FAILED,
     OK,
@@ -23,7 +22,7 @@ from capsem.gate.runlogschema import (
     RunStart,
     StepEnd,
 )
-from capsem.gate.sourcecommit import SourceCommit
+from capsem_builder.gate.sourcecommit import SourceCommit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 COMMIT = SourceCommit("1" * 40)
@@ -75,7 +74,7 @@ def _start(commit: SourceCommit = COMMIT) -> RunStart:
         machine="x86_64",
         cores=16,
         free_gb=100.0,
-        gate_source="/exact/src/capsem/gate",
+        gate_source="/exact/build_system/builder/gate",
         pycache="/exact/pycache",
     )
 
