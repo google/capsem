@@ -9,6 +9,7 @@ this package enforces on its own source.
 from __future__ import annotations
 
 from pathlib import PurePosixPath
+from typing import Literal
 
 from pydantic import Field, PositiveInt, field_validator, model_validator
 
@@ -38,6 +39,9 @@ class LintConfig(Strict):
     markdown: MarkdownLintConfig = MarkdownLintConfig()
     python_roots: tuple[PythonRoot, ...]
     strict_roots: tuple[PythonRoot, ...]
+    ty_search_paths: tuple[Literal["."] | PythonRoot, ...]
+    """Runtime import roots Ty cannot infer from the checked file roots."""
+
     python_platform: str
     """One explicit Ty platform so the exact ratchet is host-independent."""
 
@@ -55,7 +59,7 @@ class LintConfig(Strict):
     def relaxed_roots(self) -> tuple[str, ...]:
         return tuple(name for name in self.python_roots if name not in self.strict_roots)
 
-    @field_validator("python_roots", "strict_roots")
+    @field_validator("python_roots", "strict_roots", "ty_search_paths")
     @classmethod
     def _no_duplicates(cls, values: tuple[str, ...]) -> tuple[str, ...]:
         """A repeated root checks a tree twice and obscures its ownership."""
@@ -64,7 +68,7 @@ class LintConfig(Strict):
             raise ValueError(f"duplicated: {', '.join(sorted(set(seen)))}")
         return values
 
-    @field_validator("python_roots", "strict_roots")
+    @field_validator("python_roots", "strict_roots", "ty_search_paths")
     @classmethod
     def _stay_inside_the_checkout(cls, values: tuple[str, ...]) -> tuple[str, ...]:
         for value in values:

@@ -17,6 +17,22 @@ def uv_run(config: GateConfig, *arguments: object) -> list[str]:
     ]
 
 
+def uv_run_installed(config: GateConfig, *arguments: object) -> list[str]:
+    """Run against a conventional locked install, never an editable finder."""
+    return [
+        "uv",
+        "run",
+        "--isolated",
+        "--no-editable",
+        "--reinstall-package",
+        config.suites.pytest.project_distribution,
+        "--project",
+        config.suites.pytest.build_system_project,
+        "--frozen",
+        *(str(argument) for argument in arguments),
+    ]
+
+
 def pytest(config: GateConfig, *arguments: object) -> list[str]:
     """Run pytest with the sole project's configuration selected explicitly."""
     return uv_run(

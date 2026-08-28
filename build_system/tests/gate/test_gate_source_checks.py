@@ -15,9 +15,11 @@ vocabulary is closed and uses enums elsewhere.
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
 import tokenize
 import tomllib
+from itertools import pairwise
 from pathlib import Path
 
 import pydantic
@@ -33,6 +35,7 @@ def _policy(**overrides: object) -> LintConfig:
     base = {
         "python_roots": ("src", "scripts"),
         "strict_roots": ("src",),
+        "ty_search_paths": ("src", "tests"),
         "python_platform": "all",
         "error_on_warning": True,
         "ty_ratchet": {"invalid-assignment": 1},
@@ -55,6 +58,7 @@ def _policy(**overrides: object) -> LintConfig:
 
 def test_a_valid_policy_loads() -> None:
     assert _policy().strict_roots == ("src",)
+    assert _policy().ty_search_paths == ("src", "tests")
 
 
 @pytest.mark.parametrize(
@@ -76,6 +80,12 @@ def test_a_strict_root_outside_the_checked_roots_is_refused() -> None:
     """It would silently check nothing, which reads as passing."""
     with pytest.raises(pydantic.ValidationError):
         _policy(python_roots=("src",), strict_roots=("scripts",))
+
+
+@pytest.mark.parametrize("search_paths", (("tests", "tests"), ("../tests",), ("",)))
+def test_a_ty_search_path_must_be_one_relative_tree(search_paths: tuple[str, ...]) -> None:
+    with pytest.raises(pydantic.ValidationError):
+        _policy(ty_search_paths=search_paths)
 
 
 @pytest.mark.parametrize("rule", ("Invalid-Assignment", "invalid assignment", "", "x"))
@@ -145,13 +155,48 @@ def test_the_argv_each_step_issues() -> None:
         "--config build_system/pyproject.toml ."
     ) in described
     assert (
-        "uv run --project build_system --frozen ty check --project build_system "
-        "--error-on-warning --python-platform all build_system/builder"
+        "uv run --isolated --no-editable --reinstall-package capsem-builder "
+        "--project build_system --frozen ty check --project build_system "
+        "--error-on-warning --python-platform all"
     ) in described
 
 
+def test_ty_uses_the_installed_package_and_scoped_relaxed_search_paths() -> None:
+    """Editable finder magic must not decide whether first-party imports exist."""
+    plan = _plan()
+
+    for label in ("python.ty.strict", "python.ty.relaxed"):
+        arguments = tuple(shlex.split(" ".join(plan.step_named(label).render())))
+        rendered = " ".join(arguments)
+        assert rendered.startswith(
+            "uv run --isolated --no-editable --reinstall-package capsem-builder "
+            "--project build_system --frozen ty check"
+        )
+
+    strict = " ".join(plan.step_named("python.ty.strict").render())
+    assert "--extra-search-path" not in strict
+
+    relaxed_arguments = tuple(
+        shlex.split(" ".join(plan.step_named("python.ty.relaxed").render()))
+    )
+    pairs = list(pairwise(relaxed_arguments))
+    for path in CONFIG.lint.ty_search_paths:
+        assert pairs.count(("--extra-search-path", path)) == 1
+
+
+def test_standard_python_build_staging_cannot_dirty_the_checkout() -> None:
+    ignored = subprocess.run(
+        ["git", "check-ignore", "--no-index", "build_system/build/lib/capsem_builder"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert ignored.returncode == 0, "the sole Python project's build/ staging is not ignored"
+
+
 def test_strict_holds_nothing_back() -> None:
-    """The whole point of the strict list: `src` passes every rule."""
+    """The whole point of the strict list: the builder passes every rule."""
     plan = _plan()
     strict = " ".join(plan.step_named("python.ty.strict").render())
 
@@ -160,13 +205,16 @@ def test_strict_holds_nothing_back() -> None:
 
 def test_the_relaxed_step_holds_back_each_ratchet_rule_exactly_once() -> None:
     plan = _plan()
-    relaxed = " ".join(plan.step_named("python.ty.relaxed").render())
+    arguments = tuple(shlex.split(" ".join(plan.step_named("python.ty.relaxed").render())))
+    relaxed = " ".join(arguments)
 
     for rule in CONFIG.lint.ty_ratchet:
         assert relaxed.count(f"--ignore {rule}") == 1
-    assert "build_system/builder" not in relaxed.split("--ignore")[0].split()[4:], (
-        "a strict root must not be re-checked with rules held back"
-    )
+    for root in CONFIG.lint.strict_roots:
+        assert arguments.count(root) == CONFIG.lint.ty_search_paths.count(root), (
+            "a strict root must appear only as an import search path, not be re-checked "
+            "with rules held back"
+        )
 
 
 def test_python_suppressions_and_exclusions_cannot_grow_unnoticed() -> None:

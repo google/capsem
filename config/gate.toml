@@ -808,6 +808,20 @@ key = "version"
 python_roots = ["build_system/builder", "build_system/tests", "scripts", "tests", "guest"]
 # Already passes every rule, and must keep doing so.
 strict_roots = ["build_system/builder"]
+# Match the import roots exercised by the sole pytest project plus the guest
+# trees and script bootstrap paths that are materialized at runtime. Keeping
+# these explicit lets Ty inspect a conventional capsem-builder install without
+# depending on uv's editable finder.
+ty_search_paths = [
+    "build_system/tests/gate",
+    "build_system/builder",
+    "tests",
+    ".",
+    "scripts",
+    "build_system/tests/release",
+    "build_system/tests/release_site",
+    "guest/artifacts",
+]
 # Check the same cross-platform Python surface on Linux and macOS so the exact
 # diagnostic ratchet cannot change merely because the gate moved hosts.
 python_platform = "all"
@@ -827,20 +841,19 @@ error_on_warning = true
 # Reductions must lower the count immediately, so stale exemptions fail too.
 [lint.ty_ratchet]
 call-top-callable = 1
-invalid-argument-type = 110
-invalid-assignment = 15
+invalid-argument-type = 94
+invalid-assignment = 9
 invalid-attribute-override = 1
 invalid-method-override = 2
 invalid-return-type = 6
-no-matching-overload = 9
+no-matching-overload = 7
 not-iterable = 2
-not-subscriptable = 172
+not-subscriptable = 144
 possibly-missing-submodule = 2
-unknown-argument = 4
 unresolved-attribute = 88
-unresolved-import = 26
-unsupported-operator = 5
-unused-ignore-comment = 4
+unresolved-import = 22
+unsupported-operator = 4
+unused-ignore-comment = 3
 unused-type-ignore-comment = 3
 
 # Exact counts make every new inline or configured suppression a reviewed
@@ -1996,6 +2009,7 @@ root = "tests/"
 # in dry runs and prevents a caller from reconstructing either path.
 build_system_root = "build_system/tests/"
 build_system_project = "build_system"
+project_distribution = "capsem-builder"
 project_manifest = "build_system/pyproject.toml"
 # The Citadel: source-level guards recording architectural mistakes that must
 # not be repeated. Named separately from `root` because it belongs in the fast

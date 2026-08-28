@@ -205,6 +205,7 @@ class PytestConfig(Strict):
     root: str
     build_system_root: str
     build_system_project: str
+    project_distribution: str
     project_manifest: str
     citadel: str
     collection_flags: tuple[str, ...]

@@ -5,6 +5,7 @@ test-artifacts/
 # Python virtualenv lib (but NOT frontend/src/lib/)
 /lib/
 dist/
+/build_system/build/
 .env
 .env.local
 .env.cloudflare.local
