@@ -66,7 +66,7 @@ If events are missing: check boot logs for daemon startup, vsock connection acce
 
 ## Test fixture
 
-The fixture (`data/fixtures/test.db`) is a real session DB shared by frontend mock mode and Rust roundtrip tests. No synthetic data.
+The fixture (`tests/fixtures/session/test.db`) is a real session DB shared by frontend mock mode and Rust roundtrip tests. No synthetic data.
 
 ### Updating the fixture
 

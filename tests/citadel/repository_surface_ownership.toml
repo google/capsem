@@ -174,8 +174,8 @@ reason = "The checked-in skill library remains the canonical developer guidance 
 
 [[surface]]
 id = "cross-system-tests"
-state = "migrating"
-current = ["tests/", "data/fixtures/"]
+state = "retained"
+current = ["tests/"]
 targets = ["tests/"]
 lint = ["python.ruff", "python.ty.strict", "fast.audit.source-syntax", "fast.citadel"]
 tests = ["tests/citadel/", "tests/ironbank/", "tests/capsem-e2e/"]

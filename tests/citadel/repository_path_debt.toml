@@ -3,7 +3,7 @@ version = 1
 [prefixes]
 "assets/" = { item = "S05-009", reason = "Generated VM assets move under target ownership." }
 "bench/" = { item = "S06-009", reason = "Benchmark collectors move under benchmarks ownership." }
-"data/fixtures/" = { item = "S05-004", reason = "Shared fixtures move to their exact test owners." }
+"data/fixtures/" = { item = "S05-004", reason = "Shared fixtures belong to their exact test owners; new literals are forbidden after migration." }
 "docker/" = { item = "S04-008", reason = "Host build containers move under build-system ownership." }
 "docs/" = { item = "S06-005", reason = "Documentation source moves under web/docs ownership." }
 "entitlements.plist" = { item = "S04-007", reason = "macOS packaging entitlement moves under packaging ownership." }
@@ -75,7 +75,7 @@ version = 1
 "crates/capsem-core/src/vm/boot.rs" = "74a217dab84643278af0bc553655e6eda7f76db966709f0b6fd0629eb24c8e07"
 "crates/capsem-core/tests/mitm_integration.rs" = "74a217dab84643278af0bc553655e6eda7f76db966709f0b6fd0629eb24c8e07"
 "crates/capsem-core/tests/vm_integration.rs" = "8ef7d72155eb053bc67da1073f77f81210acfd5439301b59f8abf22afee3cbb3"
-"crates/capsem-logger/tests/roundtrip.rs" = "80fd08c3ee0ebc3af0564a608de564bd0ab26254f7bb338715f49496f4b46bb1"
+"crates/capsem-logger/tests/roundtrip.rs" = "93475489aadd305f212e677ff937ef08b393acd85618595744d5132152c434cb"
 "crates/capsem-service/src/main.rs" = "c2aa4979348fae598feaa7a248e819266944dbfe507e3eac32b08366d5571b12"
 "crates/capsem-service/src/startup.rs" = "f9ff7d4f40782b87806810d0297a823523639cb0e9fe853e0a00fe6ea14591d0"
 "crates/capsem/build.rs" = "56c686771bf005da1305974aa107db8b74bfc681035a698cef721e63c6ec82fa"
@@ -172,7 +172,7 @@ version = 1
 "skills/dev-start/SKILL.md" = "f29bacc3eb459a05e62198e3c57390fe46c840eb901cd103e263a79bf409a91f"
 "skills/dev-testing-frontend/SKILL.md" = "e68a3f6eaac5749a7a334f358e2b9e4045beeb8cc2a0bf5deb0ffd3710ea8818"
 "skills/dev-testing-python/SKILL.md" = "e8d82746be27730eabf0b3bfead9ebc231d57151517f1d1de2ff88736853d85b"
-"skills/dev-testing-vm/SKILL.md" = "e6d319b615d5b1ec1464ed7aef3cb4be1d576bca02941a6917f5874db8ba48fd"
+"skills/dev-testing-vm/SKILL.md" = "0aa0bb6520859687c08ab723a1b5d9405469350c392a9fb35507d9f95a0442b7"
 "skills/dev-testing/SKILL.md" = "0dbc374eb6e5c4d5ac2be9153c9ac3f7f78304e5b00faeefb66ccbfdc360cb6a"
 "skills/dev-testing/references/local-ci-parity.md" = "e1a397b0276226c77ae54c570838d92891889b3a6b57127a4eed86362be6a880"
 "skills/frontend-design/SKILL.md" = "bfc6bde7ce588935a8a4cabb16ef31e9722aae17cafc836f3a15fec3e11f51c9"

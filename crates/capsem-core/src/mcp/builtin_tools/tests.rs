@@ -1236,7 +1236,7 @@ async fn integration_http_headers_blocked_domain() {
 
 fn load_fixture(name: &str) -> String {
     let path = format!(
-        "{}/data/fixtures/html/{name}",
+        "{}/tests/fixtures/mcp/html/{name}",
         env!("CARGO_MANIFEST_DIR").replace("/crates/capsem-core", "")
     );
     std::fs::read_to_string(&path)

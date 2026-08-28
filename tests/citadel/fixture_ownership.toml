@@ -1,9 +1,5 @@
 version = 1
-root_reads = [
-  'crates/capsem-core/src/mcp/builtin_tools/tests.rs:"{}/data/fixtures/html/{name}",',
-  'crates/capsem-logger/tests/roundtrip.rs:/// Open the shared test fixture at data/fixtures/test.db (read-only).',
-  'crates/capsem-logger/tests/roundtrip.rs:path.push("data/fixtures/test.db");',
-]
+root_reads = []
 
 [[fixture]]
 source = "data/.gitkeep"
@@ -15,7 +11,7 @@ consumer = ""
 symbols = []
 
 [[fixture]]
-source = "data/fixtures/html/elie_about.html"
+source = "tests/fixtures/mcp/html/elie_about.html"
 target = "tests/fixtures/mcp/html/elie_about.html"
 disposition = "retain"
 owner = "MCP built-in HTML extraction test owner"
@@ -30,7 +26,7 @@ symbols = [
 ]
 
 [[fixture]]
-source = "data/fixtures/html/wiki_rust_excerpt.html"
+source = "tests/fixtures/mcp/html/wiki_rust_excerpt.html"
 target = "tests/fixtures/mcp/html/wiki_rust_excerpt.html"
 disposition = "retain"
 owner = "MCP built-in HTML extraction test owner"
@@ -39,7 +35,7 @@ consumer = "crates/capsem-core/src/mcp/builtin_tools/tests.rs"
 symbols = ["extract_wiki_rust_has_real_content"]
 
 [[fixture]]
-source = "data/fixtures/html/wiki_turing_excerpt.html"
+source = "tests/fixtures/mcp/html/wiki_turing_excerpt.html"
 target = "tests/fixtures/mcp/html/wiki_turing_excerpt.html"
 disposition = "retain"
 owner = "MCP built-in HTML extraction test owner"
@@ -52,7 +48,7 @@ symbols = [
 ]
 
 [[fixture]]
-source = "data/fixtures/html/wiki_unicode_excerpt.html"
+source = "tests/fixtures/mcp/html/wiki_unicode_excerpt.html"
 target = "tests/fixtures/mcp/html/wiki_unicode_excerpt.html"
 disposition = "retain"
 owner = "MCP built-in HTML extraction test owner"
@@ -65,7 +61,7 @@ symbols = [
 ]
 
 [[fixture]]
-source = "data/fixtures/test.db"
+source = "tests/fixtures/session/test.db"
 target = "tests/fixtures/session/test.db"
 disposition = "retain"
 owner = "logger roundtrip/session fixture owner"

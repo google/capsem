@@ -11,12 +11,12 @@ use capsem_logger::{
     FileEvent, McpCall, ModelCall, NetEvent, ToolCallEntry, ToolResponseEntry, WriteOp,
 };
 
-/// Open the shared test fixture at data/fixtures/test.db (read-only).
+/// Open the shared session fixture at tests/fixtures/session/test.db (read-only).
 fn fixture_reader() -> DbReader {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.pop(); // crates/capsem-logger -> crates
     path.pop(); // crates -> repo root
-    path.push("data/fixtures/test.db");
+    path.push("tests/fixtures/session/test.db");
     DbReader::open(&path).expect("failed to open fixture test.db")
 }
 
