@@ -11,7 +11,7 @@ from urllib.error import HTTPError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
-from capsem.releasechannel import FirstPartyChannel
+from capsem_builder.release.releasechannel import FirstPartyChannel
 
 CHANNELS = tuple(channel.value for channel in FirstPartyChannel)
 USER_AGENT = "capsem-channel-deploy/1"

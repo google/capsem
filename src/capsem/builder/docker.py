@@ -27,6 +27,7 @@ from capsem_builder.policy.dockerpolicy import (
     require_build_network,
     require_container_network,
 )
+from capsem_builder.release.obom import validate_exported_rootfs_obom
 from jinja2 import Environment, FileSystemLoader
 
 from capsem.builder import assetdependencies, guestbuilder
@@ -35,7 +36,6 @@ from capsem.builder.doctor import check_container_runtime
 from capsem.builder.guestbuilder import image_tag
 from capsem.builder.models import BuildConfig, ErofsConfig, GuestImageConfig, RootfsConfig
 from capsem.gate import auditfs
-from capsem.obom import validate_exported_rootfs_obom
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "config" / "docker"
 CLOCK_SYNC_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "sync-container-clock.py"

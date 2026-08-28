@@ -12,9 +12,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from capsem.releasechannel import FirstPartyChannel
+from . import project_root
+from .releasechannel import FirstPartyChannel
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = project_root(__file__)
 
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 

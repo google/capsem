@@ -11,12 +11,33 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+ROOT = Path(__file__).resolve().parents[1]
 
-from release_site_snapshot import retain_successful_external_fetches, snapshot_distribution_bytes
 
-from capsem import runtime_preflight_manifest as channel_resolver
+def _release_dependencies(root: Path):
+    sys.path.insert(0, str(root / "build_system" / "builder"))
+    sys.path.insert(0, str(root / "scripts"))
+    from bootstrap import mount_builder_package
+    from release_site_snapshot import (
+        retain_successful_external_fetches,
+        snapshot_distribution_bytes,
+    )
+
+    mount_builder_package(root)
+    from capsem_builder.release import runtime_preflight_manifest as channel_resolver
+
+    return (
+        retain_successful_external_fetches,
+        snapshot_distribution_bytes,
+        channel_resolver,
+    )
+
+
+(
+    retain_successful_external_fetches,
+    snapshot_distribution_bytes,
+    channel_resolver,
+) = _release_dependencies(ROOT)
 
 
 def main() -> int:

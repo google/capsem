@@ -25,8 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-
-from capsem import runtime_preflight_manifest as channel_resolver
+from capsem_builder.release import runtime_preflight_manifest as channel_resolver
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = PROJECT_ROOT / ".github" / "workflows"

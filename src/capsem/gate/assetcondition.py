@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from threading import Lock
 
-from capsem.obom import validate_exported_rootfs_obom
+from capsem_builder.release.obom import validate_exported_rootfs_obom
 
 from .actions import Action
 from .config import Arch, GateConfig

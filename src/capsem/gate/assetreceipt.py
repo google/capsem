@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import cast
 
-from capsem.obom import validate_exported_rootfs_obom
+from capsem_builder.release.obom import validate_exported_rootfs_obom
 
 from .config import Arch, GateConfig
 from .errors import GateError

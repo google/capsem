@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import Annotated
 
+from capsem_builder.release.releasechannel import FirstPartyChannel
 from pydantic import StringConstraints, field_validator
-
-from capsem.releasechannel import FirstPartyChannel
 
 from .configschema import Strict
 

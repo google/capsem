@@ -14,15 +14,40 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, url2pathname, urlopen
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+ROOT = Path(__file__).resolve().parents[1]
 
-from capsem import release_retirement as retirement
-from capsem.gate.sourcecommit import SourceCommit
-from capsem.release_source_bootstrap import (
+
+def _release_dependencies(root: Path):
+    sys.path.insert(0, str(root / "build_system" / "builder"))
+    sys.path.insert(0, str(root / "src"))
+    from bootstrap import mount_builder_package
+
+    mount_builder_package(root)
+    from capsem_builder.release import release_retirement as retirement
+    from capsem_builder.release.release_source_bootstrap import (
+        bootstrap_source_manifest,
+        validate_binary_source_manifest,
+        validate_source_manifest,
+    )
+
+    from capsem.gate.sourcecommit import SourceCommit
+
+    return (
+        retirement,
+        SourceCommit,
+        bootstrap_source_manifest,
+        validate_binary_source_manifest,
+        validate_source_manifest,
+    )
+
+
+(
+    retirement,
+    SourceCommit,
     bootstrap_source_manifest,
     validate_binary_source_manifest,
     validate_source_manifest,
-)
+) = _release_dependencies(ROOT)
 
 FirstPartyChannel = retirement.FirstPartyChannel
 

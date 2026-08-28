@@ -10,8 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from capsem import runtime_preflight_manifest as SELECTOR
+from capsem_builder.release import runtime_preflight_manifest as SELECTOR
 
 
 def _retired(

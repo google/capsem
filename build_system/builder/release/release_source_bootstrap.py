@@ -9,11 +9,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from capsem.gate.sourcecommit import SourceCommit
-from capsem.release_retirement import RetiredPublicGraph
-from capsem.releasechannel import FirstPartyChannel
+from . import project_root
+from .release_retirement import RetiredPublicGraph
+from .releasechannel import FirstPartyChannel
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = project_root(__file__)
 
 
 def validate_source_manifest(payload: bytes, channel: str) -> dict[str, Any]:
@@ -44,7 +44,7 @@ def bootstrap_source_manifest(
     *,
     channel: FirstPartyChannel,
     profile: str,
-    source_commit: SourceCommit,
+    source_commit: str,
     input_payload: bytes,
     output: Path,
     retired_graph: RetiredPublicGraph | None = None,

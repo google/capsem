@@ -16,8 +16,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
-from capsem import release_retirement as retirement
-from capsem.release_source_bootstrap import validate_source_manifest
+from . import release_retirement as retirement
+from .release_source_bootstrap import validate_source_manifest
 
 USER_AGENT = "capsem-runtime-preflight/1"
 # The catalog read is the first gating step of both release lanes, so a single

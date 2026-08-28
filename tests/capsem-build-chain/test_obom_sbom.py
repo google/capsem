@@ -80,7 +80,7 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
 
 def test_builder_emits_obom_and_keeps_build_ledger_debug_scoped() -> None:
     builder = _read("src/capsem/builder/docker.py")
-    evidence = _read("src/capsem/obom.py")
+    evidence = _read("build_system/builder/release/obom.py")
     syntax = ast.parse(builder)
     cdxgen_calls: list[ast.Call] = []
     for node in ast.walk(syntax):

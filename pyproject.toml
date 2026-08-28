@@ -25,7 +25,7 @@ build-backend = "hatchling.build"
 packages = ["src/capsem"]
 
 [tool.uv.sources]
-capsem-builder = { path = "build_system" }
+capsem-builder = { path = "build_system", editable = true }
 
 [[tool.uv.index]]
 url = "https://pypi.org/simple"

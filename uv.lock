@@ -153,7 +153,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "blake3", specifier = ">=1.0.8" },
-    { name = "capsem-builder", directory = "build_system" },
+    { name = "capsem-builder", editable = "build_system" },
     { name = "click", specifier = ">=8.0" },
     { name = "jinja2", specifier = ">=3.0" },
     { name = "pydantic", specifier = ">=2.0" },
@@ -179,7 +179,7 @@ dev = [
 [[package]]
 name = "capsem-builder"
 version = "0.6.2"
-source = { directory = "build_system" }
+source = { editable = "build_system" }
 dependencies = [
     { name = "blake3" },
     { name = "click" },
