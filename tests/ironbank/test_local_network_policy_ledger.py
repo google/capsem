@@ -122,6 +122,46 @@ def test_ollama_local_backend_can_be_allowed_by_profile_rule_blackbox() -> None:
         service.stop()
 
 
+def test_first_matching_rule_wins_and_all_detections_remain_visible_blackbox() -> None:
+    service = ServiceInstance()
+    try:
+        service.start()
+        client = service.client()
+
+        event = _evaluate(
+            client,
+            """
+            [profiles.rules.allow_preferred]
+            name = "allow_preferred"
+            action = "allow"
+            priority = 10
+            detection_level = "informational"
+            match = 'http.host == "api.example.com"'
+
+            [profiles.rules.block_weaker]
+            name = "block_weaker"
+            action = "block"
+            priority = 20
+            detection_level = "high"
+            match = 'http.host == "api.example.com"'
+            """,
+            {
+                "event_type": "http.request",
+                "http_host": "api.example.com",
+                "http_path": "/v1/responses",
+            },
+        )
+
+        assert event["decision"] == {"effective": "allow"}
+        assert [item["rule_id"] for item in event["detections"]] == [
+            "profiles.rules.allow_preferred",
+            "profiles.rules.block_weaker",
+        ]
+        assert [item["action"] for item in event["detections"]] == ["allow", "block"]
+    finally:
+        service.stop()
+
+
 def test_unknown_provider_detection_uses_model_facts_blackbox() -> None:
     service = ServiceInstance()
     try:
