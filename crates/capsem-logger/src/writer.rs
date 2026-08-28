@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -127,23 +127,6 @@ fn blake3_ref(value: &str) -> String {
 
 fn blake3_bytes_ref(value: &[u8]) -> String {
     format!("blake3:{}", blake3::hash(value).to_hex())
-}
-
-type ModelItemDedup = HashSet<String>;
-
-fn model_item_dedup_key(
-    trace_id: Option<&str>,
-    kind: &str,
-    content_hash: &str,
-    call_id: &str,
-) -> String {
-    format!(
-        "{}\0{}\0{}\0{}",
-        trace_id.unwrap_or_default(),
-        kind,
-        content_hash,
-        call_id
-    )
 }
 
 /// Typed write operations sent to the writer thread.
@@ -641,7 +624,6 @@ fn spawn_producer_sweeper(
 
 /// The writer thread loop: block-then-drain batching.
 fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Option<PathBuf>) {
-    let mut model_item_dedup = load_model_item_dedup(&conn);
     let mut flush_watermarks = schema::with_memory_schema_lock(|| {
         schema::initial_memory_flush_watermarks(&conn, schema::hot_ledger_tables())
     })
@@ -727,7 +709,7 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
                 &span,
             );
         } else {
-            match span.in_scope(|| execute_memory_batch(&conn, &batch, &mut model_item_dedup)) {
+            match span.in_scope(|| execute_memory_batch(&conn, &batch)) {
                 Ok(affected) => {
                     dirty_tables.extend(affected);
                     dirty_ops += batch_size;
@@ -754,9 +736,7 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
                         count = batch.len(),
                         "db memory write batch failed; retrying its ops individually"
                     );
-                    let salvaged = span.in_scope(|| {
-                        retry_batch_ops_individually(&conn, &batch, &mut model_item_dedup)
-                    });
+                    let salvaged = span.in_scope(|| retry_batch_ops_individually(&conn, &batch));
                     dirty_tables.extend(salvaged.tables);
                     dirty_ops += salvaged.written;
                 }
@@ -814,33 +794,6 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
     let status = if result.is_ok() { "ok" } else { "error" };
     ::metrics::histogram!(DB_SHUTDOWN_FLUSH_MS, "status" => status).record(elapsed_ms);
     span.record("status", status);
-}
-
-fn load_model_item_dedup(conn: &Connection) -> ModelItemDedup {
-    let mut dedup = ModelItemDedup::new();
-    let Ok(mut stmt) =
-        conn.prepare("SELECT trace_id, kind, content_hash, call_id FROM model_items")
-    else {
-        return dedup;
-    };
-    let Ok(rows) = stmt.query_map([], |row| {
-        let trace_id: Option<String> = row.get(0)?;
-        let kind: String = row.get(1)?;
-        let content_hash: String = row.get(2)?;
-        let call_id: String = row.get(3)?;
-        Ok(model_item_dedup_key(
-            trace_id.as_deref(),
-            &kind,
-            &content_hash,
-            &call_id,
-        ))
-    }) else {
-        return dedup;
-    };
-    for key in rows.flatten() {
-        dedup.insert(key);
-    }
-    dedup
 }
 
 fn record_enqueue(started: Instant, queue_result: &'static str, span: &tracing::Span) {
@@ -1014,23 +967,14 @@ struct SalvagedBatch {
 /// arbitrary window of unrelated events, so the batch failure path pays for a
 /// second pass. Nothing here runs when the batch commits.
 ///
-/// The rolled-back transaction left `model_item_dedup` describing rows that no
-/// longer exist, so it is reloaded from the committed table before the retry --
-/// otherwise the retry would skip model items it wrongly believes are already
-/// stored.
-fn retry_batch_ops_individually(
-    conn: &Connection,
-    batch: &[WriteOp],
-    model_item_dedup: &mut ModelItemDedup,
-) -> SalvagedBatch {
-    *model_item_dedup = load_model_item_dedup(conn);
+fn retry_batch_ops_individually(conn: &Connection, batch: &[WriteOp]) -> SalvagedBatch {
     let mut salvaged = SalvagedBatch {
         tables: BTreeSet::new(),
         written: 0,
     };
     for op in batch {
         let op_kind = op.kind();
-        match execute_memory_batch(conn, std::slice::from_ref(op), model_item_dedup) {
+        match execute_memory_batch(conn, std::slice::from_ref(op)) {
             Ok(tables) => {
                 salvaged.tables.extend(tables);
                 salvaged.written += 1;
@@ -1045,8 +989,7 @@ fn retry_batch_ops_individually(
                     event_id = op.event_id(),
                     "db rejected a write op; dropping it alone"
                 );
-                ::metrics::counter!(DB_WRITE_OP_REJECTED_TOTAL, "op_kind" => op_kind)
-                    .increment(1);
+                ::metrics::counter!(DB_WRITE_OP_REJECTED_TOTAL, "op_kind" => op_kind).increment(1);
             }
         }
     }
@@ -1063,7 +1006,6 @@ fn retry_batch_ops_individually(
 fn execute_memory_batch(
     conn: &Connection,
     batch: &[WriteOp],
-    model_item_dedup: &mut ModelItemDedup,
 ) -> rusqlite::Result<BTreeSet<&'static str>> {
     let tx = conn.unchecked_transaction()?;
     let mut affected_tables = BTreeSet::new();
@@ -1073,9 +1015,7 @@ fn execute_memory_batch(
         affected_memory_tables(op, &mut affected_tables);
         match op {
             WriteOp::NetEvent(e) => insert_net_event(&tx, e, WriteTarget::Memory)?,
-            WriteOp::ModelCall(m) => {
-                insert_model_call(&tx, m, model_item_dedup, WriteTarget::Memory)?
-            }
+            WriteOp::ModelCall(m) => insert_model_call(&tx, m, WriteTarget::Memory)?,
             WriteOp::McpCall(c) => insert_mcp_call(&tx, c, WriteTarget::Memory)?,
             WriteOp::FileEvent(f) => insert_file_event(&tx, f, WriteTarget::Memory)?,
             WriteOp::ExecEvent(e) => insert_exec_event(&tx, e, WriteTarget::Memory)?,
@@ -1228,7 +1168,6 @@ fn insert_net_event(
 fn insert_model_call(
     conn: &Connection,
     call: &ModelCall,
-    model_item_dedup: &mut ModelItemDedup,
     target: WriteTarget,
 ) -> rusqlite::Result<()> {
     let timestamp = format_timestamp(call.timestamp);
@@ -1314,14 +1253,7 @@ fn insert_model_call(
             turn_id: call.trace_id.as_deref(),
         },
     )?;
-    insert_model_items(
-        conn,
-        model_call_id,
-        call,
-        &timestamp,
-        model_item_dedup,
-        target,
-    )?;
+    insert_model_items(conn, model_call_id, call, &timestamp, target)?;
 
     for tc in &call.tool_calls {
         // W6: tool_calls.trace_id falls back to the parent model_call's
@@ -1388,9 +1320,9 @@ fn insert_model_items(
     model_call_id: i64,
     call: &ModelCall,
     timestamp: &str,
-    model_item_dedup: &mut ModelItemDedup,
     target: WriteTarget,
 ) -> rusqlite::Result<()> {
+    let table = target.table("model_items");
     let mut item_index = 0_i64;
     let mut insert_item = |kind: &str,
                            call_id: Option<&str>,
@@ -1410,20 +1342,21 @@ fn insert_model_items(
         })
         .to_string();
         let content_hash = blake3_ref(&hash_material);
-        let dedup_key =
-            model_item_dedup_key(call.trace_id.as_deref(), kind, &content_hash, call_id);
-        if !model_item_dedup.insert(dedup_key) {
-            return Ok(());
-        }
         conn.execute(
             &format!(
-                "INSERT OR IGNORE INTO {} (
+                "INSERT OR IGNORE INTO {table} (
                 event_id, model_call_id, timestamp, provider, model, path, trace_id,
                 kind, item_index, call_id, tool_name, arguments, content,
                 content_hash, credential_ref, turn_id
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-                target.table("model_items")
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
+             WHERE NOT EXISTS (
+                SELECT 1 FROM {table}
+                WHERE trace_id IS ?7
+                  AND kind = ?8
+                  AND content_hash = ?14
+                  AND call_id = ?10
+             )"
             ),
             params![
                 new_event_id(),

@@ -1992,12 +1992,8 @@ fn minimal_model_call(trace_id: &str) -> WriteOp {
     })
 }
 
-/// The rolled-back transaction leaves the model-item dedup set describing rows
-/// that no longer exist. Retrying without reloading it would skip every item the
-/// failed attempt had already claimed, so the salvage would drop exactly the
-/// data it exists to save.
 #[test]
-fn salvaging_a_failed_batch_reloads_the_model_item_dedup_set() {
+fn salvaging_a_failed_batch_preserves_model_items() {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("session.db");
     let writer = DbWriter::open(&db_path, 64).unwrap();
@@ -2025,10 +2021,13 @@ fn salvaging_a_failed_batch_reloads_the_model_item_dedup_set() {
         .query_row("SELECT count(*) FROM model_items", [], |row| row.get(0))
         .unwrap();
 
-    assert_eq!(calls, 1, "the model call survives the rejected row beside it");
+    assert_eq!(
+        calls, 1,
+        "the model call survives the rejected row beside it"
+    );
     assert!(
         items > 0,
-        "and so do its items -- a stale dedup set would have skipped them"
+        "the model items must survive retrying the rejected batch one row at a time"
     );
 }
 

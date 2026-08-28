@@ -320,6 +320,37 @@ async fn model_items_dedup_by_trace_kind_hash_and_call_id_across_restarts() {
             && row.4.as_deref() == Some("Process exited with code 0")));
 }
 
+#[tokio::test]
+async fn model_items_without_trace_id_dedup_across_restarts() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let call = sample_model_call("anthropic");
+
+    {
+        let writer = DbWriter::open(&path, 64).unwrap();
+        writer.write(WriteOp::ModelCall(call.clone())).await;
+        writer.flush().await;
+    }
+
+    let first_count: i64 = rusqlite::Connection::open(&path)
+        .unwrap()
+        .query_row("SELECT count(*) FROM model_items", [], |row| row.get(0))
+        .unwrap();
+    assert!(first_count > 0);
+
+    {
+        let writer = DbWriter::open(&path, 64).unwrap();
+        writer.write(WriteOp::ModelCall(call)).await;
+        writer.flush().await;
+    }
+
+    let final_count: i64 = rusqlite::Connection::open(&path)
+        .unwrap()
+        .query_row("SELECT count(*) FROM model_items", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(final_count, first_count);
+}
+
 // ── Count queries ────────────────────────────────────────────────────
 
 #[tokio::test]

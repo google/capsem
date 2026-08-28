@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Model-item deduplication now stays database-owned instead of retaining every
+  item key in process memory for the lifetime of a session.
 - The gateway proxy now removes hop-by-hop and connection-nominated request
   headers before forwarding requests to the service.
 - Gateway status reads now bound their service response time, body size, and
