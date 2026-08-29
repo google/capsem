@@ -5465,8 +5465,12 @@ def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
 
 def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> None:
     canonical_gate = _dispatched_text("test-clean:")
-    guard = _source_text("build_system/scripts/audit/check-hardcoded-release-selections.sh") + _source_text(
-        "build_system/builder/gate/tools/audit/release_selections.py"
+    guard = (
+        _source_text("build_system/scripts/audit/check-hardcoded-release-selections.sh")
+        + _source_text("build_system/builder/gate/tools/audit/release_selections.py")
+        + _source_text(
+            "build_system/builder/gate/tools/audit/release_selection_contracts.py"
+        )
     )
     reusable_channel = _workflow_text("release-channel.yaml")
 

@@ -3,9 +3,38 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import pytest
-from capsem_builder.gate.tools.doctor import check_session, kvm_diagnostic
+from capsem_builder.gate.tools.doctor import (
+    check_session,
+    check_session_report,
+    doctor_session_test,
+    kvm_diagnostic,
+)
+
+
+def test_session_report_public_entrypoint_stays_stable() -> None:
+    assert check_session.check_session is check_session_report.check_session
+
+
+def test_doctor_ledger_public_entrypoint_delegates_with_main_db(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_dir = tmp_path / "session"
+    main_db = tmp_path / "main.db"
+    seen: list[tuple[str, Path, Path]] = []
+
+    def fake_verify(session_id: str, path: Path, *, main_db: Path) -> bool:
+        seen.append((session_id, path, main_db))
+        return True
+
+    monkeypatch.setattr(doctor_session_test, "MAIN_DB", main_db)
+    monkeypatch.setattr(doctor_session_test, "_verify_session", fake_verify)
+
+    assert doctor_session_test.verify_session("vm-123", session_dir)
+    assert seen == [("vm-123", session_dir, main_db)]
 
 
 def test_session_list_preserves_empty_ledger_failure_status(

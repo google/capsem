@@ -16,18 +16,21 @@ LAUNCHERS = {
     "kvm-diagnostic.py": "kvm_diagnostic",
 }
 
+HELPERS = {
+    "check_session_report",
+    "doctor_session_host_verify",
+    "doctor_session_verify",
+}
+
 
 def test_doctor_tools_have_one_exact_gate_owned_package() -> None:
     assert {path.stem for path in DOCTOR_TOOL_ROOT.glob("*.py")} == {
         "__init__",
+        *HELPERS,
         *LAUNCHERS.values(),
     }
-    project = tomllib.loads(
-        (BUILD_SYSTEM_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )
-    assert "capsem_builder.gate.tools.doctor" in project["tool"]["setuptools"][
-        "packages"
-    ]
+    project = tomllib.loads((BUILD_SYSTEM_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "capsem_builder.gate.tools.doctor" in project["tool"]["setuptools"]["packages"]
 
 
 def test_doctor_script_boundaries_are_thin_status_launchers() -> None:
