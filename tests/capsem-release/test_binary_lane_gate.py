@@ -10,12 +10,13 @@ from copy import deepcopy
 from pathlib import Path
 
 import blake3
+from capsem_builder.release.tools import check_release_graph_diff
 from rust_sources import sibling_tests
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_GRAPH = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
 ADMIN_MAIN = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs"
-DIFF_POLICY = PROJECT_ROOT / "scripts" / "check-release-graph-diff.py"
+DIFF_POLICY = Path(check_release_graph_diff.__file__)
 DIFF_POLICY_TESTS = PROJECT_ROOT / "tests" / "capsem-release" / "test_release_lane_diff_policy.py"
 
 

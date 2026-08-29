@@ -1,19 +1,12 @@
 from __future__ import annotations
 
-import importlib.util
 from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from capsem_builder.release.tools import check_profile_release_delta as DELTA
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location(
-    "check_profile_release_delta",
-    ROOT / "scripts" / "check-profile-release-delta.py",
-)
-assert SPEC is not None and SPEC.loader is not None
-DELTA = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(DELTA)
 
 
 def _manifest() -> dict[str, object]:

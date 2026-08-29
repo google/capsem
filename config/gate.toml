@@ -841,10 +841,10 @@ error_on_warning = true
 # Reductions must lower the count immediately, so stale exemptions fail too.
 [lint.ty_ratchet]
 call-top-callable = 1
-invalid-argument-type = 92
-invalid-assignment = 9
+invalid-argument-type = 91
+invalid-assignment = 6
 invalid-method-override = 1
-invalid-return-type = 5
+invalid-return-type = 4
 no-matching-overload = 7
 not-iterable = 2
 not-subscriptable = 144
@@ -1068,8 +1068,6 @@ max_lines = 300
 [boundary.scripts.oversized_line_counts]
 "scripts/bootstrap-linux.sh" = 599
 "build_system/packaging/macos/build-pkg.sh" = 349
-"scripts/check-public-binary-release.py" = 934
-"scripts/check-remote-release-readiness.py" = 1973
 "scripts/doctor-common.sh" = 446
 "scripts/integration_test.py" = 1182
 "scripts/local-release-glowup.py" = 1957

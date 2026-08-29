@@ -12,6 +12,7 @@ import pytest
 from capsem_builder.release.tools import (
     materialize_graph_profile_artifacts as MATERIALIZE,
 )
+from capsem_builder.release.tools import verify_profile_publication as VERIFY
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -22,12 +23,6 @@ def _module(name: str, relative: str):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-VERIFY = _module(
-    "verify_channel_qualified_profiles",
-    "scripts/verify-profile-publication.py",
-)
 
 
 def _descriptor(url: str, contents: bytes) -> dict[str, object]:

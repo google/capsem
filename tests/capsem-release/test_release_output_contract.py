@@ -17,6 +17,7 @@ from typing import Any
 
 import blake3
 import pytest
+from capsem_builder.release.tools import check_remote_release_readiness as READINESS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL = "stable"
@@ -192,9 +193,7 @@ def test_generated_release_has_no_public_profile_catalog_primitive(
 
 
 def test_release_readiness_checker_uses_profile_contract_not_catalog() -> None:
-    checker = (PROJECT_ROOT / "scripts" / "check-remote-release-readiness.py").read_text(
-        encoding="utf-8"
-    )
+    checker = Path(READINESS.__file__).read_text(encoding="utf-8")
     forbidden_tokens = ("profile_catalog", "catalog.json", "capsem.profile_catalog")
     hits = [token for token in forbidden_tokens if token in checker]
     assert hits == []

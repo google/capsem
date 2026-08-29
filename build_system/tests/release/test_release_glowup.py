@@ -15,7 +15,12 @@ from typing import Any, cast
 
 import embedded_shell
 import pytest
-from capsem_builder.release.tools import release_first_release, release_glowup, release_transition
+from capsem_builder.release.tools import (
+    release_first_release,
+    release_glowup,
+    release_transition,
+    verify_installed_release,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 LOCAL_GLOWUP_PATH = PROJECT_ROOT / "scripts" / "local-release-glowup.py"
@@ -2246,7 +2251,7 @@ def test_installed_status_is_read_from_the_installed_home() -> None:
     The glow-up script's own readiness loop passed moments earlier precisely
     because it sets both variables before calling the same binary.
     """
-    source = (PROJECT_ROOT / "scripts" / "verify-installed-release.py").read_text(encoding="utf-8")
+    source = Path(verify_installed_release.__file__).read_text(encoding="utf-8")
     start = source.index('[str(args.capsem), "status"]')
     # To the end of the `subprocess.run(...)` call: a naive cut at the first
     # `)` lands inside `str(args.capsem)` and reads none of the arguments.

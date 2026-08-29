@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
+import importlib
 import json
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
 from blake3 import blake3
+from capsem_builder.release.tools import check_remote_release_readiness as READINESS
 from test_release_site_html_contract import (
     RELEASE_SITE_DIST,
     build_release_site_from_fixture,
@@ -404,14 +404,7 @@ def _assert_full_digest(digest: dict, label: str) -> None:
 
 
 def _readiness_checker_module():
-    module_path = PROJECT_ROOT / "scripts" / "check-remote-release-readiness.py"
-    spec = importlib.util.spec_from_file_location("check_remote_release_readiness", module_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return importlib.reload(READINESS)
 
 
 def _hmac_paths(value: Any, path: str = "$") -> list[str]:

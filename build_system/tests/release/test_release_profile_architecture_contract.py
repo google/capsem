@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
+import importlib
 import json
 import re
-import sys
 import tomllib
 from copy import deepcopy
 
 from blake3 import blake3
+from capsem_builder.release.tools import check_remote_release_readiness as READINESS
 from pytest import MonkeyPatch
 from test_release_site_html_contract import (
     FIXTURE_GRAPH,
@@ -53,14 +53,7 @@ CONFIG_KIND_LABELS = {
 
 
 def _readiness_checker_module():
-    module_path = PROJECT_ROOT / "scripts" / "check-remote-release-readiness.py"
-    spec = importlib.util.spec_from_file_location("check_remote_release_readiness", module_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return importlib.reload(READINESS)
 
 
 def test_profile_no_current_binary() -> None:

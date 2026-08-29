@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import gzip
 import hashlib
-import importlib.util
 import io
 import json
 import subprocess
-import sys
 import tarfile
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 import yaml
+from capsem_builder.release.tools import check_public_binary_release as RELEASE_GATE
 from helpers.workflow_contract import workflow_job_source
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -29,17 +28,7 @@ def _workflow_job_blocks(workflow: str) -> dict[str, str]:
 
 
 def _load_release_gate() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("check_public_binary_release", SCRIPT)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    sys.path.insert(0, str(SCRIPT.parent))
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.path.remove(str(SCRIPT.parent))
-    return module
+    return RELEASE_GATE
 
 
 def test_public_binary_release_gate_fetch_retries_ipv4_on_network_unreachable(
@@ -493,7 +482,7 @@ def test_public_binary_release_gate_switches_stable_to_nightly_and_back(
 
 
 def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> None:
-    source = SCRIPT.read_text(encoding="utf-8")
+    source = Path(RELEASE_GATE.__file__).read_text(encoding="utf-8")
 
     assert "--docker-channel-switch" in source
     assert "--docker-upgrade" in source

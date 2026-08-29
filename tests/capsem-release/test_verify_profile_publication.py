@@ -1,22 +1,17 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 from pathlib import Path
 
 import blake3
 import pytest
 from capsem_builder.release.tools import stage_profile_publication as STAGE
+from capsem_builder.release.tools import verify_profile_publication as VERIFY
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location(
-    "verify_profile_publication",
-    ROOT / "scripts" / "verify-profile-publication.py",
-)
-assert SPEC is not None and SPEC.loader is not None
-VERIFY = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(VERIFY)
+
+
 def _record(url: str, payload: bytes, *, name: str | None = None) -> dict[str, object]:
     record: dict[str, object] = {
         "url": url,

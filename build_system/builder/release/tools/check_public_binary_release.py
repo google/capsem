@@ -1,0 +1,929 @@
+"""Validate the public Capsem binary release after channel deployment."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import errno
+import functools
+import hashlib
+import http.server
+import json
+import os
+import platform
+import shlex
+import shutil
+import socket
+import socketserver
+import subprocess
+import sys
+import tempfile
+import threading
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Any, cast
+
+from . import repository_root
+from .package_payload import package_payload_files
+from .release_manifest_rows import dead_rows
+
+PROJECT_ROOT = repository_root()
+
+SBOM_GENERATOR = PROJECT_ROOT / "scripts" / "generate-host-binary-sbom.py"
+
+
+class PackageArchitecture(str, Enum):
+    ARM64 = "arm64"
+    AMD64 = "amd64"
+
+
+@dataclass(frozen=True)
+class RequiredPackage:
+    platform: str
+    architecture: PackageArchitecture
+    kind: str
+
+    @classmethod
+    def parse(cls, value: str) -> RequiredPackage:
+        parts = value.split(":")
+        if len(parts) != 3 or not all(parts):
+            raise argparse.ArgumentTypeError(
+                "--required-package must use platform:architecture:kind"
+            )
+        try:
+            architecture = PackageArchitecture(parts[1])
+        except ValueError as error:
+            raise argparse.ArgumentTypeError(
+                f"unsupported package architecture: {parts[1]}"
+            ) from error
+        return cls(parts[0], architecture, parts[2])
+
+    def label(self) -> str:
+        return f"{self.platform}/{self.architecture.value}/{self.kind}"
+
+
+DEFAULT_REQUIRED_PACKAGES = (
+    RequiredPackage("macos", PackageArchitecture.ARM64, "macos_pkg"),
+    RequiredPackage("linux", PackageArchitecture.AMD64, "debian_package"),
+    RequiredPackage("linux", PackageArchitecture.ARM64, "debian_package"),
+)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Fetch a public release-channel manifest, download its current "
+            "host packages, and prove the per-binary manifest hashes match "
+            "the executable files inside those packages."
+        )
+    )
+    parser.add_argument("--channel", default="stable")
+    parser.add_argument("--release-base-url", default="https://release.capsem.org")
+    parser.add_argument("--manifest-url")
+    parser.add_argument("--install-script-url", default="https://capsem.org/install.sh")
+    parser.add_argument("--site-url")
+    parser.add_argument("--package-dir", type=Path)
+    parser.add_argument("--work-dir", type=Path)
+    parser.add_argument(
+        "--required-package",
+        action="append",
+        type=RequiredPackage.parse,
+        dest="required_packages",
+        help=(
+            "Required current package as platform:architecture:kind. Defaults "
+            "to macOS arm64 .pkg plus Linux amd64/arm64 .deb."
+        ),
+    )
+    parser.add_argument(
+        "--docker-linux-install",
+        action="store_true",
+        help="Run curl -fsSL install.sh | sh in a clean Ubuntu Docker container.",
+    )
+    parser.add_argument(
+        "--docker-channel-switch",
+        action="store_true",
+        help="After Docker install, switch assets stable -> nightly -> stable through the installed CLI.",
+    )
+    parser.add_argument(
+        "--docker-upgrade",
+        action="store_true",
+        help="After Docker install, run the binary updater against the named nightly channel.",
+    )
+    parser.add_argument(
+        "--docker-transition-from-manifest",
+        help=(
+            "Frozen pre-deploy release manifest. Runs a Docker install, genuine "
+            "package upgrade, and genuine package downgrade between this document "
+            "and --manifest-url; the two compiled package versions must differ."
+        ),
+    )
+    parser.add_argument("--stable-manifest-url")
+    parser.add_argument("--nightly-manifest-url")
+    parser.add_argument("--docker-image", default="ubuntu:24.04")
+    args = parser.parse_args()
+
+    manifest_url = args.manifest_url or (
+        f"{args.release_base_url.rstrip('/')}/assets/{args.channel}/manifest.json"
+    )
+    stable_manifest_url = args.stable_manifest_url or (
+        f"{args.release_base_url.rstrip('/')}/assets/stable/manifest.json"
+    )
+    nightly_manifest_url = args.nightly_manifest_url or (
+        f"{args.release_base_url.rstrip('/')}/assets/nightly/manifest.json"
+    )
+    required = tuple(args.required_packages or DEFAULT_REQUIRED_PACKAGES)
+    failures: list[str] = []
+
+    try:
+        install_script = fetch_text(args.install_script_url)
+        failures.extend(
+            check_install_script_defaults(
+                install_script,
+                release_base_url=args.release_base_url,
+            )
+        )
+        if args.site_url:
+            failures.extend(
+                check_public_site_download_links(
+                    fetch_text(args.site_url),
+                    site_url=args.site_url,
+                    channel="stable",
+                    release_base_url=args.release_base_url,
+                )
+            )
+
+        manifest = json.loads(fetch_bytes(manifest_url).decode("utf-8"))
+        # Before anything is unpacked or compared: can each row be fetched at
+        # all? Everything below this validates the shape of a URL and the
+        # contents of a package it downloaded by other means, which is why the
+        # live stable channel could serve `status: current` for a month with
+        # all three package URLs returning 404 -- the tag they named had been
+        # deleted after publication, and no build-time check can see that.
+        #
+        # Only when the packages are being fetched. `--package-dir` means the
+        # caller supplied the bytes and is asking what is inside them, which is
+        # a question about a build rather than about a publication -- and the
+        # fixtures that ask it name versions nobody released, from a sandbox
+        # with no resolver. The release lane passes no `--package-dir`, so the
+        # check runs exactly where "can a user download this" is the question.
+        if args.package_dir is None:
+            failures.extend(dead_rows(manifest, manifest_url))
+        packages = current_packages_by_requirement(manifest, required, failures)
+
+        with managed_work_dir(args.work_dir) as work_dir:
+            validated_packages = 0
+            validated_binaries = 0
+            for _requirement, package in packages.items():
+                package_path = materialize_package(package, args.package_dir, work_dir, failures)
+                if package_path is None:
+                    continue
+                failures.extend(check_package_url(package))
+                failures.extend(check_package_digest(package, package_path))
+                failures.extend(
+                    check_package_manifest_metadata(
+                        package,
+                        package_path,
+                        expected_manifest_url=manifest_url,
+                    )
+                )
+                binary_count, binary_failures = check_package_binaries(package, package_path, work_dir)
+                failures.extend(binary_failures)
+                validated_packages += 1
+                validated_binaries += binary_count
+
+            if args.docker_linux_install:
+                package_versions: set[str] = set()
+                for package in packages.values():
+                    version = package.get("version")
+                    if isinstance(version, str):
+                        package_versions.add(version)
+                if len(package_versions) != 1:
+                    raise ValueError(
+                        "public Docker install requires one exact package version"
+                    )
+                run_docker_install_smoke(
+                    release_base_url=args.release_base_url,
+                    install_script_url=args.install_script_url,
+                    stable_manifest_url=stable_manifest_url,
+                    nightly_manifest_url=nightly_manifest_url,
+                    expected_version=next(iter(package_versions)),
+                    channel_switch=args.docker_channel_switch,
+                    upgrade=args.docker_upgrade,
+                    docker_image=args.docker_image,
+                )
+            if args.docker_transition_from_manifest:
+                previous_manifest = json.loads(
+                    fetch_bytes(args.docker_transition_from_manifest).decode("utf-8")
+                )
+                previous_version = linux_amd64_current_package(previous_manifest)["version"]
+                current_version = linux_amd64_current_package(manifest)["version"]
+                previous_key = numeric_release_version(previous_version)
+                current_key = numeric_release_version(current_version)
+                if previous_key == current_key:
+                    raise ValueError(
+                        "binary transition gate requires two different genuine package versions"
+                    )
+                older_manifest, newer_manifest = (
+                    (previous_manifest, manifest)
+                    if previous_key < current_key
+                    else (manifest, previous_manifest)
+                )
+                run_docker_binary_transition_smoke(
+                    older_manifest=older_manifest,
+                    newer_manifest=newer_manifest,
+                    install_script_url=args.install_script_url,
+                    docker_image=args.docker_image,
+                    work_dir=work_dir / "binary-transition",
+                )
+
+        if failures:
+            for failure in failures:
+                print(f"error: {failure}", file=sys.stderr)
+            return 1
+
+        print(
+            f"validated {validated_packages} package"
+            f"{'' if validated_packages == 1 else 's'} and {validated_binaries} "
+            f"packaged binaries from {manifest_url}"
+        )
+        return 0
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+
+def check_install_script_defaults(
+    script: str,
+    *,
+    release_base_url: str,
+) -> list[str]:
+    failures: list[str] = []
+    if 'CAPSEM_CHANNEL="${CAPSEM_CHANNEL:-stable}"' not in script:
+        failures.append("install.sh does not default CAPSEM_CHANNEL to stable")
+    if (
+        f'CAPSEM_RELEASE_BASE_URL="${{CAPSEM_RELEASE_BASE_URL:-{release_base_url}}}"'
+        not in script
+    ):
+        failures.append(
+            f"install.sh does not default CAPSEM_RELEASE_BASE_URL to {release_base_url}"
+        )
+    if "/assets/${CAPSEM_CHANNEL}/manifest.json" not in script:
+        failures.append("install.sh does not resolve packages through the release channel")
+    if "releases/latest" in script or "api.github.com/repos" in script:
+        failures.append("install.sh still depends on GitHub latest release metadata")
+    if "releases/tag/assets-" in script or "assets-v" in script:
+        failures.append("install.sh contains an asset-release tag URL")
+    required_outcomes = {
+        "ASSET_BYTES": "manifest package byte-size selection",
+        "ASSET_SHA256": "manifest package SHA-256 selection",
+        "verify_package": "package integrity verification",
+        "sudo /usr/sbin/installer -pkg": "synchronous macOS package installation",
+        "sudo apt install -y": "synchronous Linux package installation",
+    }
+    for token, outcome in required_outcomes.items():
+        if token not in script:
+            failures.append(f"install.sh is missing {outcome}")
+    return failures
+
+
+def check_public_site_download_links(
+    html: str,
+    *,
+    site_url: str,
+    channel: str,
+    release_base_url: str,
+) -> list[str]:
+    failures: list[str] = []
+    if "releases/tag/assets-" in html or "assets-v" in html:
+        failures.append(f"{site_url} contains an asset-release tag download URL")
+    channel_manifest = (
+        f"{release_base_url.rstrip('/')}/assets/{channel}/manifest.json"
+    )
+    has_install_entrypoint = "https://capsem.org/install.sh" in html or "install.sh" in html
+    has_channel_entrypoint = channel_manifest in html or f"/assets/{channel}/manifest.json" in html
+    if not has_install_entrypoint and not has_channel_entrypoint:
+        failures.append(
+            f"{site_url} does not expose the {channel} release-channel install entrypoint"
+        )
+    return failures
+
+
+def current_packages_by_requirement(
+    manifest: dict[str, Any],
+    required: tuple[RequiredPackage, ...],
+    failures: list[str],
+) -> dict[RequiredPackage, dict[str, Any]]:
+    raw_packages = manifest.get("packages")
+    if not isinstance(raw_packages, list):
+        failures.append("manifest packages missing or not a list")
+        return {}
+
+    packages: dict[RequiredPackage, dict[str, Any]] = {}
+    for requirement in required:
+        matches = [
+            item
+            for item in raw_packages
+            if isinstance(item, dict)
+            and item.get("status") == "current"
+            and item.get("platform") == requirement.platform
+            and item.get("architecture") == requirement.architecture
+            and item.get("kind") == requirement.kind
+        ]
+        if len(matches) != 1:
+            failures.append(
+                f"manifest must contain exactly one current {requirement.label()} package"
+            )
+            continue
+        packages[requirement] = matches[0]
+
+    versions: set[str] = set()
+    for package in packages.values():
+        version = package.get("version")
+        if isinstance(version, str):
+            versions.add(version)
+    if len(versions) > 1:
+        failures.append(f"current package versions disagree: {', '.join(sorted(versions))}")
+    return packages
+
+
+def materialize_package(
+    package: dict[str, Any],
+    package_dir: Path | None,
+    work_dir: Path,
+    failures: list[str],
+) -> Path | None:
+    name = package.get("name")
+    if not isinstance(name, str) or not name:
+        failures.append("package name missing")
+        return None
+    if package_dir is not None:
+        path = package_dir / name
+        if not path.is_file():
+            failures.append(f"{name} missing from package directory {package_dir}")
+            return None
+        return path
+
+    url = package.get("url")
+    if not isinstance(url, str) or not url:
+        failures.append(f"package {name} URL missing")
+        return None
+    path = work_dir / "packages" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"download {url}")
+    path.write_bytes(fetch_bytes(url))
+    return path
+
+
+def check_package_url(package: dict[str, Any]) -> list[str]:
+    failures: list[str] = []
+    name = package.get("name")
+    version = package.get("version")
+    url = package.get("url")
+    if not isinstance(name, str) or not isinstance(version, str) or not isinstance(url, str):
+        return ["package name/version/url missing"]
+
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme in {"http", "https"}:
+        expected_path = f"/google/capsem/releases/download/v{version}/{name}"
+        if parsed.netloc != "github.com" or parsed.path != expected_path:
+            failures.append(
+                f"package {name} must point at GitHub release download v{version}, got {url}"
+            )
+    if "/releases/tag/" in parsed.path or "assets-v" in parsed.path:
+        failures.append(f"package {name} URL points at an asset tag instead of a binary release")
+    return failures
+
+
+def check_package_digest(package: dict[str, Any], package_path: Path) -> list[str]:
+    digest = package.get("digest")
+    if not isinstance(digest, dict):
+        return [f"package {package.get('name', '<unknown>')} digest missing"]
+    expected = digest.get("sha256")
+    if not isinstance(expected, str) or not expected:
+        return [f"package {package.get('name', '<unknown>')} SHA-256 missing"]
+    actual = hashlib.sha256(package_path.read_bytes()).hexdigest()
+    if actual != expected.lower():
+        return [f"package {package_path.name} SHA-256 mismatch"]
+    return []
+
+
+def check_package_manifest_metadata(
+    package: dict[str, Any],
+    package_path: Path,
+    *,
+    expected_manifest_url: str,
+) -> list[str]:
+    kind = package.get("kind")
+    if kind == "debian_package":
+        origin_path = "/usr/share/capsem/assets/manifest-metadata.json"
+        frozen_manifest_path = "/usr/share/capsem/assets/manifest.json"
+    elif kind == "macos_pkg":
+        origin_path = "/usr/local/share/capsem/assets/manifest-metadata.json"
+        frozen_manifest_path = "/usr/local/share/capsem/assets/manifest.json"
+    else:
+        return []
+
+    try:
+        payload = package_payload_files(package_path)
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        return [f"could not inspect package metadata in {package_path.name}: {error}"]
+
+    failures: list[str] = []
+    if frozen_manifest_path in payload:
+        failures.append(f"{package_path.name} freezes {frozen_manifest_path}")
+    raw_origin = payload.get(origin_path)
+    if raw_origin is None:
+        failures.append(f"{package_path.name} missing {origin_path}")
+        return failures
+    try:
+        origin = json.loads(raw_origin.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        return [*failures, f"{package_path.name} has invalid manifest-metadata.json: {error}"]
+    if origin.get("schema") != "capsem.manifest_metadata.v1":
+        failures.append(f"{package_path.name} manifest-metadata schema invalid")
+    if origin.get("origin") != "package":
+        failures.append(f"{package_path.name} manifest-metadata origin must be package")
+    if origin.get("manifest_url") != expected_manifest_url:
+        failures.append(
+            f"{package_path.name} manifest-metadata source {origin.get('manifest_url')!r} "
+            f"does not match {expected_manifest_url}"
+        )
+    if origin.get("package_version") != package.get("version"):
+        failures.append(
+            f"{package_path.name} manifest-metadata package_version "
+            f"{origin.get('package_version')!r} does not match {package.get('version')}"
+        )
+    if "snapshot_sha256" in origin:
+        failures.append(f"{package_path.name} manifest-metadata still records snapshot_sha256")
+    return failures
+
+
+def check_package_binaries(
+    package: dict[str, Any],
+    package_path: Path,
+    work_dir: Path,
+) -> tuple[int, list[str]]:
+    binaries = package.get("binaries")
+    if not isinstance(binaries, list) or not binaries:
+        return 0, [f"package {package_path.name} binaries missing or empty"]
+
+    sbom_path = work_dir / "sbom" / f"{package_path.name}.spdx.json"
+    sbom_path.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SBOM_GENERATOR),
+            "--output",
+            str(sbom_path),
+            str(package_path),
+        ],
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        return 0, [f"could not inspect {package_path.name}: {detail}"]
+    sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
+    entries = sbom_file_hashes(sbom)
+
+    failures: list[str] = []
+    count = 0
+    payload: dict[str, bytes] | None = None
+    for binary in binaries:
+        if not isinstance(binary, dict):
+            failures.append(f"package {package_path.name} contains non-object binary entry")
+            continue
+        installed_path = binary.get("installed_path")
+        digest = binary.get("digest")
+        expected_sha256 = digest.get("sha256") if isinstance(digest, dict) else None
+        if not isinstance(installed_path, str) or not installed_path.startswith("/"):
+            failures.append(f"package {package_path.name} binary installed_path invalid")
+            continue
+        if not isinstance(expected_sha256, str) or not expected_sha256:
+            failures.append(f"binary {installed_path} SHA-256 missing")
+            continue
+        if (installed_path, expected_sha256.lower()) not in entries:
+            failures.append(
+                f"binary {installed_path} SHA-256 not found inside {package_path.name}"
+            )
+            continue
+        if should_execute_packaged_binary(package, installed_path):
+            if payload is None:
+                try:
+                    payload = package_payload_files(package_path)
+                except (OSError, ValueError, subprocess.CalledProcessError) as error:
+                    failures.append(f"could not extract {package_path.name}: {error}")
+                    payload = {}
+            failures.extend(
+                check_packaged_binary_version(
+                    package,
+                    binary,
+                    installed_path,
+                    payload,
+                    work_dir,
+                    package_path.name,
+                )
+            )
+        count += 1
+    return count, failures
+
+
+def should_execute_packaged_binary(package: dict[str, Any], installed_path: str) -> bool:
+    if os.environ.get("CAPSEM_SKIP_PACKAGE_EXECUTION") == "1":
+        return False
+    if package.get("platform") != "linux" or package.get("architecture") != "amd64":
+        return False
+    if package.get("kind") != "debian_package":
+        return False
+    if Path(installed_path).name in {"capsem-app", "capsem-tray"}:
+        return False
+    return platform.system() == "Linux" and platform.machine().lower() in {"x86_64", "amd64"}
+
+
+def check_packaged_binary_version(
+    package: dict[str, Any],
+    binary: dict[str, Any],
+    installed_path: str,
+    payload: dict[str, bytes],
+    work_dir: Path,
+    package_name: str,
+) -> list[str]:
+    contents = payload.get(installed_path)
+    if contents is None:
+        return [f"binary {installed_path} missing from {package_name} payload"]
+    expected_version = binary.get("version") or package.get("version")
+    if not isinstance(expected_version, str) or not expected_version:
+        return [f"binary {installed_path} version missing"]
+
+    executable = work_dir / "exec" / package_name / installed_path.removeprefix("/")
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    executable.write_bytes(contents)
+    executable.chmod(0o755)
+    command = [str(executable), "version"] if executable.name == "capsem" else [str(executable), "--version"]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    output = f"{result.stdout}\n{result.stderr}".strip()
+    if result.returncode != 0:
+        return [
+            f"binary {installed_path} version command failed with {result.returncode}: {output}"
+        ]
+    if expected_version not in output:
+        return [
+            f"binary {installed_path} version output does not contain {expected_version}: {output}"
+        ]
+    return []
+
+
+def sbom_file_hashes(sbom: dict[str, Any]) -> set[tuple[str, str]]:
+    rows: set[tuple[str, str]] = set()
+    for file_entry in sbom.get("files", []):
+        if not isinstance(file_entry, dict):
+            continue
+        file_name = file_entry.get("fileName")
+        if not isinstance(file_name, str):
+            continue
+        for checksum in file_entry.get("checksums", []):
+            if (
+                isinstance(checksum, dict)
+                and checksum.get("algorithm") == "SHA256"
+                and isinstance(checksum.get("checksumValue"), str)
+            ):
+                rows.add((file_name, checksum["checksumValue"].lower()))
+    return rows
+
+
+def linux_amd64_current_package(manifest: dict[str, Any]) -> dict[str, Any]:
+    matches = [
+        package
+        for package in manifest.get("packages", [])
+        if isinstance(package, dict)
+        and package.get("status") == "current"
+        and package.get("kind") == "debian_package"
+        and package.get("platform") == "linux"
+        and package.get("architecture") == "amd64"
+        and isinstance(package.get("version"), str)
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            "binary transition manifest must contain exactly one current linux/amd64 package"
+        )
+    return matches[0]
+
+
+def numeric_release_version(version: str) -> tuple[int, int, int]:
+    parts = version.split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        raise ValueError(f"binary transition package version is not numeric semver: {version}")
+    return int(parts[0]), int(parts[1]), int(parts[2])
+
+
+@contextlib.contextmanager
+def local_transition_server(root: Path):
+    class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+        daemon_threads = True
+
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
+    server = ThreadingServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host = str(server.server_address[0])
+        port = int(server.server_address[1])
+        yield f"http://{host}:{port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def run_docker_binary_transition_smoke(
+    *,
+    older_manifest: dict[str, Any],
+    newer_manifest: dict[str, Any],
+    install_script_url: str,
+    docker_image: str,
+    work_dir: Path,
+) -> None:
+    if shutil.which("docker") is None:
+        raise OSError("docker is required for the binary transition gate")
+    older_version = str(linux_amd64_current_package(older_manifest)["version"])
+    newer_version = str(linux_amd64_current_package(newer_manifest)["version"])
+    if numeric_release_version(older_version) >= numeric_release_version(newer_version):
+        raise ValueError(
+            f"binary transition versions are not ordered: {older_version} -> {newer_version}"
+        )
+
+    import blake3
+
+    if work_dir.exists():
+        shutil.rmtree(work_dir)
+    for channel in ("stable", "nightly"):
+        (work_dir / "assets" / channel).mkdir(parents=True, exist_ok=True)
+    manifest_bytes = {
+        "stable": (json.dumps(older_manifest, sort_keys=True) + "\n").encode(),
+        "nightly": (json.dumps(newer_manifest, sort_keys=True) + "\n").encode(),
+    }
+    for channel, content in manifest_bytes.items():
+        (work_dir / "assets" / channel / "manifest.json").write_bytes(content)
+
+    with local_transition_server(work_dir) as release_base_url:
+        channels: dict[str, Any] = {
+            "version": 1,
+            "generated_at": "2030-01-01T00:00:00Z",
+            "release_site": f"{release_base_url}/",
+            "channels": {},
+        }
+        for channel, label in (("stable", "Stable"), ("nightly", "Nightly")):
+            content = manifest_bytes[channel]
+            manifest = older_manifest if channel == "stable" else newer_manifest
+            channels["channels"][channel] = {
+                "label": label,
+                "manifests": [
+                    {
+                        "version": str(manifest.get("version", "1.0.0")),
+                        "status": "current",
+                        "url": f"/assets/{channel}/manifest.json",
+                        "digest": {
+                            "sha256": hashlib.sha256(content).hexdigest(),
+                            "blake3": blake3.blake3(content).hexdigest(),
+                        },
+                    }
+                ],
+            }
+        (work_dir / "channels.json").write_text(
+            json.dumps(channels, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+        helpers = " ".join(
+            shlex.quote(binary)
+            for binary in (
+                "capsem",
+                "capsem-admin",
+                "capsem-gateway",
+                "capsem-mcp",
+                "capsem-mcp-aggregator",
+                "capsem-mcp-builtin",
+                "capsem-process",
+                "capsem-service",
+                "capsem-tray",
+                "capsem-tui",
+                "capsem-mock-server",
+            )
+        )
+        install_pipeline = (
+            f"curl -fsSL {shlex.quote(install_script_url)} | "
+            "CAPSEM_CHANNEL=stable "
+            f"CAPSEM_RELEASE_BASE_URL={shlex.quote(release_base_url)} sh"
+        )
+        script = f"""
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y ca-certificates curl sudo
+useradd -m -s /bin/bash capsemtest
+printf '%s\n' 'capsemtest ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/capsemtest
+chmod 0440 /etc/sudoers.d/capsemtest
+check_binary_versions() {{
+  expected="$1"
+  for bin in {helpers}; do
+    su capsemtest -c "test -x \"\\$HOME/.capsem/bin/$bin\""
+    su capsemtest -c "\"\\$HOME/.capsem/bin/$bin\" --version" | grep -F "$expected"
+  done
+}}
+check_installed_version() {{
+  expected="$1"
+  dpkg-query -W -f='${{Version}}' capsem | grep -Fx "$expected"
+  check_binary_versions "$expected"
+  su capsemtest -c '"$HOME/.capsem/bin/capsem" status' > /tmp/capsem-transition-status.txt
+  grep -F "Installed: true" /tmp/capsem-transition-status.txt
+  grep -F "Running:   true" /tmp/capsem-transition-status.txt
+  grep -F "Service:   ok" /tmp/capsem-transition-status.txt
+  grep -F "Gateway:   ok" /tmp/capsem-transition-status.txt
+}}
+su capsemtest -c {shlex.quote(install_pipeline)}
+su capsemtest -c 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL={release_base_url}/channels.json "$HOME/.capsem/bin/capsem" update --assets --channel stable'
+check_installed_version {shlex.quote(older_version)}
+grep -F {shlex.quote(f'{release_base_url}/assets/stable/manifest.json')} /home/capsemtest/.capsem/assets/manifest-metadata.json
+python3 /src/scripts/verify-installed-release.py --capsem /home/capsemtest/.capsem/bin/capsem --capsem-home /home/capsemtest/.capsem --manifest-url {release_base_url}/assets/stable/manifest.json --channel stable --package-version {shlex.quote(older_version)}
+su capsemtest -c 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL={release_base_url}/channels.json DEBIAN_FRONTEND=noninteractive "$HOME/.capsem/bin/capsem" update --yes --channel nightly'
+check_installed_version {shlex.quote(newer_version)}
+grep -F {shlex.quote(f'{release_base_url}/assets/nightly/manifest.json')} /home/capsemtest/.capsem/assets/manifest-metadata.json
+python3 /src/scripts/verify-installed-release.py --capsem /home/capsemtest/.capsem/bin/capsem --capsem-home /home/capsemtest/.capsem --manifest-url {release_base_url}/assets/nightly/manifest.json --channel nightly --package-version {shlex.quote(newer_version)}
+su capsemtest -c 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL={release_base_url}/channels.json DEBIAN_FRONTEND=noninteractive "$HOME/.capsem/bin/capsem" update --yes --channel stable'
+check_installed_version {shlex.quote(older_version)}
+grep -F {shlex.quote(f'{release_base_url}/assets/stable/manifest.json')} /home/capsemtest/.capsem/assets/manifest-metadata.json
+python3 /src/scripts/verify-installed-release.py --capsem /home/capsemtest/.capsem/bin/capsem --capsem-home /home/capsemtest/.capsem --manifest-url {release_base_url}/assets/stable/manifest.json --channel stable --package-version {shlex.quote(older_version)}
+"""
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--pull=missing",
+                "--network=host",
+                "-v",
+                f"{PROJECT_ROOT}:/src:ro",
+                docker_image,
+                "bash",
+                "-lc",
+                script,
+            ],
+            check=True,
+        )
+
+
+def run_docker_install_smoke(
+    *,
+    release_base_url: str,
+    install_script_url: str,
+    stable_manifest_url: str,
+    nightly_manifest_url: str,
+    expected_version: str,
+    channel_switch: bool,
+    upgrade: bool,
+    docker_image: str,
+) -> None:
+    if shutil.which("docker") is None:
+        raise OSError("docker is required for --docker-linux-install")
+    install_pipeline = (
+        f"curl -fsSL {shlex.quote(install_script_url)} | "
+        "CAPSEM_CHANNEL=stable "
+        f"CAPSEM_RELEASE_BASE_URL={shlex.quote(release_base_url)} sh"
+    )
+    helper_checks = " ".join(
+        shlex.quote(binary)
+        for binary in (
+            "capsem",
+            "capsem-admin",
+            "capsem-gateway",
+            "capsem-mcp",
+            "capsem-mcp-aggregator",
+            "capsem-mcp-builtin",
+            "capsem-process",
+            "capsem-service",
+            "capsem-tray",
+            "capsem-tui",
+            "capsem-mock-server",
+        )
+    )
+    container_script = f"""
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y ca-certificates curl sudo
+useradd -m -s /bin/bash capsemtest
+printf '%s\\n' 'capsemtest ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/capsemtest
+chmod 0440 /etc/sudoers.d/capsemtest
+su capsemtest -c {shlex.quote(install_pipeline)}
+su capsemtest -c 'test -x "$HOME/.capsem/bin/capsem"'
+su capsemtest -c '"$HOME/.capsem/bin/capsem" --version' | grep -F {shlex.quote(expected_version)}
+su capsemtest -c 'test -f "$HOME/.capsem/assets/manifest.json"'
+su capsemtest -c 'grep -F {shlex.quote(stable_manifest_url)} "$HOME/.capsem/assets/manifest-metadata.json"'
+dpkg-query -W -f='${{Version}}' capsem | grep -Fx {shlex.quote(expected_version)}
+for bin in {helper_checks}; do
+  su capsemtest -c "test -x \\"\\$HOME/.capsem/bin/$bin\\""
+  su capsemtest -c "\\"\\$HOME/.capsem/bin/$bin\\" --version"
+done
+su capsemtest -c '"$HOME/.capsem/bin/capsem" status' | tee /home/capsemtest/.capsem/service-status.txt
+grep -F "Installed: true" /home/capsemtest/.capsem/service-status.txt
+grep -F "Running:   true" /home/capsemtest/.capsem/service-status.txt
+grep -F "Service:   ok" /home/capsemtest/.capsem/service-status.txt
+grep -F "Gateway:   ok" /home/capsemtest/.capsem/service-status.txt
+"""
+    if channel_switch:
+        container_script += f"""
+su capsemtest -c 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL={shlex.quote(f"{release_base_url.rstrip('/')}/channels.json")} "$HOME/.capsem/bin/capsem" update --assets --channel nightly'
+su capsemtest -c 'grep -F {shlex.quote(nightly_manifest_url)} "$HOME/.capsem/assets/manifest-metadata.json"'
+su capsemtest -c 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL={shlex.quote(f"{release_base_url.rstrip('/')}/channels.json")} "$HOME/.capsem/bin/capsem" update --assets --channel stable'
+su capsemtest -c 'grep -F {shlex.quote(stable_manifest_url)} "$HOME/.capsem/assets/manifest-metadata.json"'
+"""
+    if upgrade:
+        container_script += f"""
+su capsemtest -c 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL={shlex.quote(f"{release_base_url.rstrip('/')}/channels.json")} DEBIAN_FRONTEND=noninteractive "$HOME/.capsem/bin/capsem" update --yes --channel nightly'
+"""
+    subprocess.run(
+        ["docker", "run", "--rm", "--pull=missing", docker_image, "bash", "-lc", container_script],
+        check=True,
+    )
+
+
+def fetch_text(location: str) -> str:
+    return fetch_bytes(location).decode("utf-8")
+
+
+def fetch_bytes(location: str) -> bytes:
+    parsed = urllib.parse.urlparse(location)
+    if parsed.scheme in {"http", "https"}:
+        request = urllib.request.Request(location, headers={"User-Agent": "capsem-release-gate"})
+        with urlopen_release_gate(request, timeout=120) as response:
+            return response.read()
+    if parsed.scheme == "file":
+        return Path(urllib.request.url2pathname(parsed.path)).read_bytes()
+    return Path(location).read_bytes()
+
+
+def urlopen_release_gate(request: urllib.request.Request, *, timeout: int):
+    try:
+        return urllib.request.urlopen(request, timeout=timeout)
+    except (OSError, urllib.error.URLError) as error:
+        if not is_network_unreachable(error):
+            raise
+        with ipv4_only_getaddrinfo():
+            return urllib.request.urlopen(request, timeout=timeout)
+
+
+def is_network_unreachable(error: BaseException) -> bool:
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, OSError) and current.errno == errno.ENETUNREACH:
+            return True
+        reason = getattr(current, "reason", None)
+        if isinstance(reason, BaseException) and id(reason) not in seen:
+            current = reason
+            continue
+        cause = current.__cause__ or current.__context__
+        current = cause if isinstance(cause, BaseException) else None
+    return False
+
+
+@contextlib.contextmanager
+def ipv4_only_getaddrinfo():
+    original = socket.getaddrinfo
+
+    def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
+        requested_family = socket.AF_INET if family in (0, socket.AF_UNSPEC) else family
+        return original(host, port, requested_family, type, proto, flags)
+
+    socket.getaddrinfo = cast(Any, getaddrinfo_ipv4)
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = original
+
+
+class managed_work_dir:
+    def __init__(self, path: Path | None) -> None:
+        self.path = path
+        self._tmp: tempfile.TemporaryDirectory[str] | None = None
+
+    def __enter__(self) -> Path:
+        if self.path is not None:
+            self.path.mkdir(parents=True, exist_ok=True)
+            return self.path
+        self._tmp = tempfile.TemporaryDirectory()
+        return Path(self._tmp.name)
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        if self._tmp is not None:
+            self._tmp.cleanup()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

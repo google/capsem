@@ -4,14 +4,25 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
+import os
 import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urljoin, urlparse
+
+ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("CAPSEM_REPOSITORY_ROOT", str(ROOT))
+try:
+    import capsem_builder  # noqa: F401
+except ModuleNotFoundError:
+    sys.path.insert(0, str(ROOT / "build_system" / "builder"))
+    from bootstrap import mount_builder_package
+
+    mount_builder_package(ROOT)
+from capsem_builder.release.tools import check_remote_release_readiness  # noqa: E402
 
 CLOUDFLARE_CONTROL_FILES = frozenset({"_headers", "_redirects", "_routes.json"})
 
@@ -22,15 +33,8 @@ def normalize_release_site(release_site: str) -> str:
 
 
 def load_readiness_checker() -> Any:
-    """Load the hyphenated readiness checker as one stable module identity."""
-    module_path = Path(__file__).resolve().with_name("check-remote-release-readiness.py")
-    spec = importlib.util.spec_from_file_location("check_remote_release_readiness", module_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load {module_path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    """Return the release-owned readiness checker module."""
+    return check_remote_release_readiness
 
 
 def retain_successful_external_fetches(checker: Any, release_site: str) -> None:

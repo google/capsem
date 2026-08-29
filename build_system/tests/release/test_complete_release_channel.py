@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 
 import pytest
+from capsem_builder.release.tools import check_channel_deploy_freshness
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -24,12 +25,7 @@ def _module():
 
 
 def _freshness_module():
-    path = PROJECT_ROOT / "scripts" / "check-channel-deploy-freshness.py"
-    spec = importlib.util.spec_from_file_location("check_channel_deploy_freshness", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return check_channel_deploy_freshness
 
 
 def _legacy() -> dict[str, object]:

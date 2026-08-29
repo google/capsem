@@ -1,20 +1,16 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 from pathlib import Path
 from typing import Any
 
 import blake3
 import pytest
 import yaml
+from capsem_builder.release.tools import release_package_contract as CONTRACT
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "release-package-contract.py"
-SPEC = importlib.util.spec_from_file_location("release_package_contract", SCRIPT)
-assert SPEC is not None and SPEC.loader is not None
-CONTRACT = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(CONTRACT)
 FIXTURE_VERSION = "9.9.9"
 
 

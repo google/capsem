@@ -21,6 +21,8 @@ import yaml
 from capsem_builder.gate.shellnodes import arm_named
 from capsem_builder.gate.shellparse import parse as parse_shell
 from capsem_builder.gate.tools.audit import release_selections
+from capsem_builder.release.tools import check_remote_release_readiness as READINESS
+from capsem_builder.release.tools import verify_channel_downloads as VERIFY_DOWNLOADS
 from helpers.workflow_contract import assert_unmasked_step, parsed_commands, workflow_reachable_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -87,14 +89,7 @@ def _rootfs_obom_bytes(architecture: str = "arm64") -> bytes:
 
 
 def _readiness_checker_module():
-    module_path = PROJECT_ROOT / "scripts/check-remote-release-readiness.py"
-    spec = importlib.util.spec_from_file_location("check_remote_release_readiness", module_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return importlib.reload(READINESS)
 
 
 def _release_site_contract_module():
@@ -309,6 +304,12 @@ def _workflow_text(name: str) -> str:
 
 
 def _source_text(path: str) -> str:
+    package_sources = {
+        "scripts/check-remote-release-readiness.py": Path(READINESS.__file__),
+        "scripts/verify-channel-downloads.py": Path(VERIFY_DOWNLOADS.__file__),
+    }
+    if source := package_sources.get(path):
+        return source.read_text()
     return (PROJECT_ROOT / path).read_text()
 
 
@@ -2651,8 +2652,8 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
     # can call. They were a `curl` loop, a byte comparison and a blake3 check
     # written as a Python heredoc indented inside a `run:` block -- a program no
     # test could reach, guarding the last step before anyone installs a release.
-    verifier = (PROJECT_ROOT / "scripts" / "verify-channel-downloads.py").read_text()
-    assert "list-release-manifest-assets.py" in verifier
+    verifier = _source_text("scripts/verify-channel-downloads.py")
+    assert "manifest_asset_rows" in verifier
     assert "m['assets']['current']" not in verifier
     assert "blake3.blake3(payload).hexdigest()" in verifier
     assert "expected_bytes" in verifier
@@ -3328,7 +3329,7 @@ def test_release_channel_deploy_validates_the_deployed_channel_shape() -> None:
 
 
 def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -> None:
-    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    script = _source_text("scripts/check-remote-release-readiness.py")
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
 
@@ -3569,7 +3570,7 @@ jobs:
 
 
 def test_remote_release_readiness_checker_reports_unpublished_local_commits() -> None:
-    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    script = _source_text("scripts/check-remote-release-readiness.py")
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
 
@@ -3609,7 +3610,7 @@ def test_remote_release_readiness_missing_dependency_reports_setup_hint(tmp_path
 
 def test_remote_release_readiness_requires_active_pr_gate_rule() -> None:
     module = _readiness_checker_module()
-    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    script = _source_text("scripts/check-remote-release-readiness.py")
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
 
@@ -3654,7 +3655,7 @@ def test_remote_release_readiness_requires_active_pr_gate_rule() -> None:
 
 def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -> None:
     module = _readiness_checker_module()
-    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    script = _source_text("scripts/check-remote-release-readiness.py")
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
     sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
@@ -3802,7 +3803,7 @@ def test_remote_release_readiness_rejects_unscoped_host_obom() -> None:
 
 def test_remote_release_readiness_checker_verifies_vm_asset_file_content() -> None:
     module = _readiness_checker_module()
-    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    script = _source_text("scripts/check-remote-release-readiness.py")
     workflow = _workflow_text("release-channel.yaml")
     rootfs_url = (
         "https://github.com/google/capsem/releases/download/assets-v2030.0101.1/arm64-rootfs.erofs"
@@ -4040,7 +4041,7 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
     None
 ):
     module = _readiness_checker_module()
-    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    script = _source_text("scripts/check-remote-release-readiness.py")
     workflow = _workflow_text("release-channel.yaml")
     sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
     obom_bytes = _rootfs_obom_bytes()
@@ -4203,7 +4204,7 @@ def test_remote_readiness_rejects_attestation_rail_drift() -> None:
 
 def test_remote_readiness_rejects_host_sbom_attestation_subjects_missing_package() -> None:
     module = _readiness_checker_module()
-    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    script = _source_text("scripts/check-remote-release-readiness.py")
     sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
     sbom_url = "https://github.com/google/capsem/releases/download/v1.4.1/capsem-sbom.spdx.json"
     pkg_url = "https://github.com/google/capsem/releases/download/v1.4.1/Capsem-1.4.1.pkg"
@@ -4338,7 +4339,7 @@ def test_release_channel_smoke_host_sbom_attestation_subjects_cover_packages() -
 
 def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
     module = _readiness_checker_module()
-    script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
+    script = _source_text("scripts/check-remote-release-readiness.py")
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
     calls: list[str] = []

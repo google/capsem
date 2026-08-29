@@ -1,19 +1,12 @@
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 from typing import Any
 
 import pytest
+from capsem_builder.release.tools import verify_release_recovery_run as VERIFY
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location(
-    "verify_release_recovery_run",
-    PROJECT_ROOT / "scripts" / "verify-release-recovery-run.py",
-)
-assert SPEC is not None and SPEC.loader is not None
-VERIFY = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(VERIFY)
 
 SOURCE = "a" * 40
 RUN_ID = "42"

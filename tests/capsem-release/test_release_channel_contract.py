@@ -28,6 +28,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 import pytest
+from capsem_builder.release.tools import (
+    check_channel_deploy_freshness as DEPLOY_FRESHNESS,
+)
 from helpers.release_site import build_release_channel_site
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -39,13 +42,6 @@ BUILD_COMPLETE_SPEC = importlib.util.spec_from_file_location(
 assert BUILD_COMPLETE_SPEC is not None and BUILD_COMPLETE_SPEC.loader is not None
 BUILD_COMPLETE = importlib.util.module_from_spec(BUILD_COMPLETE_SPEC)
 BUILD_COMPLETE_SPEC.loader.exec_module(BUILD_COMPLETE)
-DEPLOY_FRESHNESS_SPEC = importlib.util.spec_from_file_location(
-    "check_channel_deploy_freshness",
-    PROJECT_ROOT / "scripts" / "check-channel-deploy-freshness.py",
-)
-assert DEPLOY_FRESHNESS_SPEC is not None and DEPLOY_FRESHNESS_SPEC.loader is not None
-DEPLOY_FRESHNESS = importlib.util.module_from_spec(DEPLOY_FRESHNESS_SPEC)
-DEPLOY_FRESHNESS_SPEC.loader.exec_module(DEPLOY_FRESHNESS)
 SNAPSHOT_SPEC = importlib.util.spec_from_file_location(
     "release_site_snapshot",
     PROJECT_ROOT / "scripts" / "release_site_snapshot.py",

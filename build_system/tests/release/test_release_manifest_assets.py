@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.release.tools import list_release_manifest_assets as MANIFEST_ASSETS
+from capsem_builder.release.tools import verify_channel_downloads
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = PROJECT_ROOT / "scripts/list-release-manifest-assets.py"
@@ -123,8 +124,8 @@ def test_release_workflow_uses_shared_dual_schema_asset_lister() -> None:
     )[0]
     assert "scripts/verify-channel-downloads.py" in step
 
-    verifier = (PROJECT_ROOT / "scripts" / "verify-channel-downloads.py").read_text()
-    assert "list-release-manifest-assets.py" in verifier
+    verifier = Path(verify_channel_downloads.__file__).read_text()
+    assert "manifest_asset_rows" in verifier
     assert "m['assets']['current']" not in verifier
     # The three questions a published row has to answer.
     assert "not reachable" in verifier

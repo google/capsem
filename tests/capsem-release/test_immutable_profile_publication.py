@@ -1,21 +1,15 @@
 from __future__ import annotations
 
-import importlib.util
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
+from capsem_builder.release.tools import verify_immutable_publication as VERIFY
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "verify-immutable-publication.py"
 PUBLISHER = ROOT / "scripts" / "publish-immutable-release-assets.sh"
-SPEC = importlib.util.spec_from_file_location("verify_immutable_publication", SCRIPT)
-assert SPEC is not None and SPEC.loader is not None
-VERIFY = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = VERIFY
-SPEC.loader.exec_module(VERIFY)
 
 
 def _publication(root: Path) -> None:

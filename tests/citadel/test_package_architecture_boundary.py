@@ -141,7 +141,10 @@ def test_rust_graph_uses_distinct_typed_architecture_domains() -> None:
 
 def test_public_linux_package_consumers_use_debian_identity() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
-    validator = (PROJECT_ROOT / "scripts" / "check-public-binary-release.py").read_text()
+    validator = (
+        PROJECT_ROOT
+        / "build_system/builder/release/tools/check_public_binary_release.py"
+    ).read_text()
 
     # A Debian package is `amd64`. Anything downstream asking it for `x86_64`
     # is asking the machine vocabulary of a package, and will either match

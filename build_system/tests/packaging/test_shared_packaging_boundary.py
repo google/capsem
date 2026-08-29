@@ -108,15 +108,15 @@ def test_release_workflow_uses_the_owned_manifest_handoff() -> None:
 
 
 def test_python_consumers_import_shared_helpers_from_their_owner() -> None:
-    release_check = (LEGACY / "check-public-binary-release.py").read_text(
-        encoding="utf-8"
-    )
+    release_check = (
+        ROOT / "build_system/builder/release/tools/check_public_binary_release.py"
+    ).read_text(encoding="utf-8")
     profile_staging = (
         ROOT / "build_system/builder/release/tools/stage_release_test_inputs.py"
     ).read_text(encoding="utf-8")
 
     assert (
-        "from build_system.packaging.shared.package_payload import package_payload_files"
+        "from .package_payload import package_payload_files"
         in release_check
     )
     assert (

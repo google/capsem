@@ -17,6 +17,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 import yaml
 from blake3 import blake3
+from capsem_builder.release.tools import check_public_binary_release
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -977,7 +978,7 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
     assert script.count("update --assets --channel nightly") == 1
     assert "corp-escape.log" in script
     assert "update --assets --channel stable" not in script
-    transition_gate = (PROJECT_ROOT / "scripts" / "check-public-binary-release.py").read_text()
+    transition_gate = Path(check_public_binary_release.__file__).read_text()
     fixture_transport = (
         PROJECT_ROOT
         / "build_system/builder/release/tools/release_fixture_server.py"

@@ -1,4 +1,4 @@
-"""Guard direct package ownership for release staging and input tools."""
+"""Guard direct package ownership for release verification and recovery tools."""
 
 from __future__ import annotations
 
@@ -10,7 +10,17 @@ BUILD_SYSTEM_ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY_ROOT = BUILD_SYSTEM_ROOT.parent
 TOOL_ROOT = BUILD_SYSTEM_ROOT / "builder" / "release" / "tools"
 
-FOUNDATIONS = {
+EXISTING_TOOLS = {
+    "fetch_channel_source_manifest",
+    "fetch_release_artifacts",
+    "finalize_binary_staging_fixtures",
+    "generate_host_binary_sbom",
+    "list_release_manifest_assets",
+    "materialize_graph_profile_artifacts",
+    "package_payload",
+    "profile_root_payload",
+    "project_first_channel_before",
+    "prove_release_profile_assets",
     "release_channel_author",
     "release_cohort",
     "release_first_release",
@@ -18,37 +28,44 @@ FOUNDATIONS = {
     "release_glowup",
     "release_inputs",
     "release_installed_probe",
+    "release_manifest_rows",
     "release_test_profiles",
     "release_transition",
     "release_transition_candidates",
     "release_version_tag",
+    "stage_profile_publication",
+    "stage_release_test_inputs",
+    "verify_release_inputs",
 }
 COMMANDS = {
-    "fetch-channel-source-manifest.py": "fetch_channel_source_manifest",
-    "fetch-release-artifacts.py": "fetch_release_artifacts",
-    "finalize-binary-staging-fixtures.py": "finalize_binary_staging_fixtures",
-    "generate-host-binary-sbom.py": "generate_host_binary_sbom",
-    "list-release-manifest-assets.py": "list_release_manifest_assets",
-    "materialize-graph-profile-artifacts.py": "materialize_graph_profile_artifacts",
-    "project-first-channel-before.py": "project_first_channel_before",
-    "prove-release-profile-assets.py": "prove_release_profile_assets",
-    "stage-profile-publication.py": "stage_profile_publication",
-    "stage-release-test-inputs.py": "stage_release_test_inputs",
-    "verify-release-inputs.py": "verify_release_inputs",
+    "check-channel-deploy-freshness.py": "check_channel_deploy_freshness",
+    "check-profile-release-delta.py": "check_profile_release_delta",
+    "check-public-binary-release.py": "check_public_binary_release",
+    "check-release-graph-diff.py": "check_release_graph_diff",
+    "check-remote-release-readiness.py": "check_remote_release_readiness",
+    "release-package-contract.py": "release_package_contract",
+    "verify-channel-downloads.py": "verify_channel_downloads",
+    "verify-immutable-publication.py": "verify_immutable_publication",
+    "verify-installed-release.py": "verify_installed_release",
+    "verify-profile-publication.py": "verify_profile_publication",
+    "verify-release-recovery-run.py": "verify_release_recovery_run",
 }
-SUPPORT = {"profile_root_payload"}
+EXECUTABLES = {
+    "check-public-binary-release.py",
+    "check-remote-release-readiness.py",
+    "release-package-contract.py",
+}
 
 
-def test_release_staging_tools_extend_the_exact_owned_package() -> None:
-    assert {
+def test_release_verification_tools_extend_the_exact_owned_package() -> None:
+    assert {path.stem for path in TOOL_ROOT.glob("*.py")} == {
         "__init__",
-        *FOUNDATIONS,
-        *SUPPORT,
+        *EXISTING_TOOLS,
         *COMMANDS.values(),
-    } <= {path.stem for path in TOOL_ROOT.glob("*.py")}
+    }
 
 
-def test_release_staging_launchers_are_thin_direct_commands() -> None:
+def test_release_verification_launchers_are_thin_direct_commands() -> None:
     for name, module in COMMANDS.items():
         path = REPOSITORY_ROOT / "scripts" / name
         source = path.read_text(encoding="utf-8")
@@ -76,14 +93,12 @@ def test_release_staging_launchers_are_thin_direct_commands() -> None:
             and node.exc.func.id == "SystemExit"
         ]
         assert len(exits) == 1, f"{name} does not propagate command status"
-        assert bool(path.stat().st_mode & stat.S_IXUSR) == (
-            name == "finalize-binary-staging-fixtures.py"
-        )
+        assert bool(path.stat().st_mode & stat.S_IXUSR) == (name in EXECUTABLES)
 
 
-def test_release_staging_tools_use_package_relative_sibling_imports() -> None:
-    sibling_names = FOUNDATIONS | SUPPORT | set(COMMANDS.values())
-    for module in SUPPORT | set(COMMANDS.values()):
+def test_release_verification_tools_use_package_relative_sibling_imports() -> None:
+    sibling_names = EXISTING_TOOLS | set(COMMANDS.values())
+    for module in COMMANDS.values():
         path = TOOL_ROOT / f"{module}.py"
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
