@@ -105,6 +105,25 @@ WEB_SCOPES = {
     "marketing": "marketing_graphics",
     "graphics": "marketing_graphics",
 }
+SHARED_CONTROL_FILES = frozenset(
+    {
+        "build_system/builder/gate/tools/ci/classify_ci_scope.py",
+        "config/gate.toml",
+        "scripts/check-web-surface.sh",
+        "scripts/classify-ci-scope.py",
+        "scripts/lib/exec_lock.sh",
+        "scripts/require-ci-jobs.sh",
+    }
+)
+MULTI_OWNER_FILES = {
+    "build_system/builder/gate/releasegraph.py": frozenset(
+        {"build_system", "release_site"}
+    ),
+    "build_system/builder/gate/tools/web/check_docs_holding_build.py": frozenset(
+        {"build_system", "docs"}
+    ),
+    "scripts/check-docs-holding-build.py": frozenset({"build_system", "docs"}),
+}
 
 
 def _validated_parts(path: str) -> tuple[str, str]:
@@ -121,6 +140,10 @@ def _validated_parts(path: str) -> tuple[str, str]:
 
 def _path_scopes(path: str) -> frozenset[str]:
     root, remainder = _validated_parts(path)
+    if path in SHARED_CONTROL_FILES:
+        return frozenset({"shared"})
+    if scopes := MULTI_OWNER_FILES.get(path):
+        return scopes
     if path == "README.md":
         return frozenset({"docs", "marketing_graphics"})
     if root == "web":
@@ -131,7 +154,7 @@ def _path_scopes(path: str) -> frozenset[str]:
         scopes = {scope}
     elif root == "build_system":
         subtree, separator, _nested = remainder.partition("/")
-        if subtree == "release_site":
+        if subtree == "release_site" or path.startswith("build_system/tests/release_site/"):
             scopes = {"release_site"}
         elif not separator or subtree in BUILD_SYSTEM_SUBTREES:
             scopes = {"build_system"}
@@ -213,11 +236,14 @@ def web_only(paths: Iterable[str]) -> bool:
 
 def main() -> int:
     modes = tuple(sys.argv[1:])
-    if modes not in {(), ("--scopes",)}:
+    if modes not in {(), ("--owners",), ("--scopes",)}:
         print(f"CI scope classification failed: unknown classifier mode: {modes}", file=sys.stderr)
         return 2
     try:
         changed = paths_from_git(sys.stdin.buffer.read())
+        if modes == ("--owners",):
+            print(json.dumps(sorted(ci_owners(changed))))
+            return 0
         if modes == ("--scopes",):
             print(json.dumps(sorted(ci_scopes(changed))))
             return 0

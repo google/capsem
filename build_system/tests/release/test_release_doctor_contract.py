@@ -42,6 +42,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 # list -- fail four contracts while changing nothing GitHub acts on.
 REQUIRED_PR_GATE_JOBS = frozenset(
     {
+        "scope",
         "fast-gate",
         "test-linux",
         "test",
@@ -611,6 +612,7 @@ def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in trigger
     assert frozenset(_workflow_job("pr-gate")["needs"]) == REQUIRED_PR_GATE_JOBS
     assert _workflow_job("pr-gate").get("if") == "${{ always() }}"
+    assert "SCOPE_RESULT: ${{ needs.scope.result }}" in gate
     assert "FAST_GATE_RESULT: ${{ needs.fast-gate.result }}" in gate
     assert "TEST_LINUX_RESULT: ${{ needs.test-linux.result }}" in gate
     assert "TEST_MACOS_RESULT: ${{ needs.test.result }}" in gate
@@ -1572,7 +1574,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         assert "pull_request:" not in trigger, workflow_name
         assert "push:" in workflow, workflow_name
         assert "branches: [main]" in workflow, workflow_name
-        assert "paths:" not in push_trigger, workflow_name
+        assert "paths:" in push_trigger, workflow_name
         assert f"cache-dependency-path: {directory}/pnpm-lock.yaml" in ci_block
         assert f"cd {directory} && pnpm install --frozen-lockfile" in ci_block
         assert f"bash scripts/check-web-surface.sh {directory}" in ci_block
@@ -3008,11 +3010,11 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
         in docs
     )
     assert (
-        "| `docs.yaml` | Push to main | Deploy docs.capsem.org on each main merge, then smoke the live docs site |"
+        "| `docs.yaml` | Push to main when docs or a shared docs-build input changes | Deploy docs.capsem.org, then smoke the live docs site |"
         in docs
     )
     assert (
-        "| `site.yaml` | Push to main | Deploy capsem.org on each main merge, then smoke the live marketing site |"
+        "| `site.yaml` | Push to main when marketing, graphics, or a shared site-build input changes | Deploy capsem.org, then smoke the live marketing site |"
         in docs
     )
     assert (
@@ -3022,9 +3024,9 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     assert "release.yaml` | Tag push (`v*`) | Build assets" not in docs
     assert "generated asset manifest artifact" not in docs
     assert "### pr-gate (ubuntu-latest)" in docs
-    assert "`fast-gate`, `test-linux`, `test`, `test-install`, `docs-build`, `site-build`," in docs
-    assert "`release-site-build`, runs even" in docs
-    assert "fails unless every dependency job reports" in docs
+    assert "`scope`, `fast-gate`, `test-linux`, `test`, `test-install`, `docs-build`," in docs
+    assert "`site-build`, and `release-site-build`, and runs even" in docs
+    assert "must report `success` when selected and `skipped` when not" in normalized_docs
     assert "After Cloudflare activates production, `release-channel.yaml` checks" in normalized_docs
     assert "`https://release.capsem.org/` index" in docs
     assert "`/channels.json`, and" in docs
@@ -3073,7 +3075,7 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
         in docs
     )
     assert (
-        "| Docs, marketing, and release-channel site builds | `docs-build`, `site-build`, and `release-site-build` call the same web-surface entrypoint as `just test-clean` before `pr-gate` can pass | Merge-blocking duplicate execution of the canonical local gate; deploy happens only after merge or explicit release-channel publication |"
+        "| Docs, marketing, and release-channel site builds | When selected by the fail-closed path owner, `docs-build`, `site-build`, and `release-site-build` call the same web-surface entrypoint as `just test-clean` before `pr-gate` can pass | Owner-scoped duplicate execution of the canonical local gate; deploy happens only after an owned or shared merge, or explicit release-channel publication |"
         in docs
     )
     assert "`pr-gate` is the only status that should be required by branch protection" in docs
@@ -3372,7 +3374,7 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     assert "read-only" in docs
     assert "remote `ci.yaml` exposes `pr-gate`" in docs_text
     assert (
-        "aggregates `fast-gate`, `test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and `release-site-build`"
+        "aggregates `scope`, `fast-gate`, `test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and `release-site-build`"
         in (docs_text)
     )
     assert "runs with `if: ${{ always() }}` and asserts every dependency result" in docs_text
@@ -3481,6 +3483,8 @@ def test_remote_release_readiness_requires_expanded_pr_gate() -> None:
 
     inline = """
 jobs:
+  scope:
+    runs-on: ubuntu-latest
   test-linux:
     runs-on: ubuntu-latest
   test:
@@ -3496,13 +3500,14 @@ jobs:
   fast-gate:
     uses: ./.github/workflows/fast-gate.yaml
   pr-gate:
-    needs: [fast-gate, test-linux, test, test-install, docs-build, site-build, release-site-build]
+    needs: [scope, fast-gate, test-linux, test, test-install, docs-build, site-build, release-site-build]
 """.strip()
     multiline = """
 jobs:
   pr-gate:
     needs:
       - fast-gate
+      - scope
       - test-linux
       - test
       - test-install
@@ -3521,6 +3526,7 @@ jobs:
       - name: Require all CI jobs
         env:
           FAST_GATE_RESULT: ${{ needs.fast-gate.result }}
+          SCOPE_RESULT: ${{ needs.scope.result }}
           TEST_LINUX_RESULT: ${{ needs.test-linux.result }}
           TEST_MACOS_RESULT: ${{ needs.test.result }}
           TEST_INSTALL_RESULT: ${{ needs.test-install.result }}
@@ -3529,6 +3535,7 @@ jobs:
           RELEASE_SITE_BUILD_RESULT: ${{ needs.release-site-build.result }}
         run: |
           test "$FAST_GATE_RESULT" = success
+          test "$SCOPE_RESULT" = success
           test "$TEST_LINUX_RESULT" = success
           test "$TEST_MACOS_RESULT" = success
           test "$TEST_INSTALL_RESULT" = success
@@ -3539,6 +3546,7 @@ jobs:
     )
 
     assert module.workflow_job_needs(module.workflow_job_block(inline, "pr-gate")) == {
+        "scope",
         "fast-gate",
         "test-linux",
         "test",
@@ -3548,6 +3556,7 @@ jobs:
         "release-site-build",
     }
     assert module.workflow_job_needs(module.workflow_job_block(multiline, "pr-gate")) == {
+        "scope",
         "fast-gate",
         "test-linux",
         "test",
@@ -3564,6 +3573,7 @@ jobs:
     assert module.pr_gate_contract_failures(module.workflow_job_block(fail_closed, "pr-gate")) == []
     assert module.pr_gate_contract_failures(module.workflow_job_block(non_failing, "pr-gate")) == [
         "pr-gate does not run with if: ${{ always() }}",
+        "pr-gate does not assert scope result",
         "pr-gate does not assert fast-gate result",
         "pr-gate does not assert test-linux result",
         "pr-gate does not assert test result",
@@ -6573,35 +6583,46 @@ def test_release_recipes_forward_the_explicit_source_commit_to_the_gate() -> Non
         assert "publish-release-source.py" not in body
 
 
-def test_web_only_prs_still_run_the_fast_gate_and_skip_only_product_jobs() -> None:
-    docs_job = _workflow_job_block("docs-build")
+def test_independent_ci_owners_keep_the_fast_gate_and_fail_closed() -> None:
+    scope_job = _workflow_job_block("scope")
     fast_gate = _workflow_job("fast-gate")
     gate = workflow_reachable_text(
         PROJECT_ROOT, PROJECT_ROOT / ".github" / "workflows" / "ci.yaml", job="pr-gate"
     )
 
-    assert "fetch-depth: 0" in docs_job
-    assert 'git diff --name-only -z "$BASE_SHA"...HEAD' in docs_job
-    assert "scripts/classify-ci-scope.py" in docs_job
-    assert "web_only: ${{ steps.scope.outputs.web_only }}" in docs_job
-    assert 'if [ "$EVENT_NAME" != pull_request ]; then' in docs_job
-    assert 'echo "web_only=false"' in docs_job
+    assert "fetch-depth: 0" in scope_job
+    assert 'git diff --name-only -z "$base_sha"...HEAD' in scope_job
+    assert scope_job.count("scripts/classify-ci-scope.py --owners") == 2
+    assert "owners: ${{ steps.scope.outputs.owners }}" in scope_job
+    assert ".github/workflows/ci.yaml" in scope_job
 
     assert "if" not in fast_gate
     assert "needs" not in fast_gate
 
-    for job_name in ("test-linux", "test", "test-install", "release-site-build"):
+    for job_name in (
+        "test-linux",
+        "test",
+        "test-install",
+        "docs-build",
+        "site-build",
+        "release-site-build",
+    ):
         job = _workflow_job_block(job_name)
-        assert "needs: docs-build" in job
-        assert "needs.docs-build.outputs.web_only != 'true'" in job
+        assert "needs: scope" in job
+        assert (
+            f"contains(fromJSON(needs.scope.outputs.owners), '{job_name}')" in job
+        )
 
-    assert "WEB_ONLY: ${{ needs.docs-build.outputs.web_only }}" in gate
+    assert "CI_OWNERS: ${{ needs.scope.outputs.owners }}" in gate
+    assert "SCOPE_RESULT: ${{ needs.scope.result }}" in gate
+    assert 'test "$SCOPE_RESULT" = success' in gate
     assert 'test "$FAST_GATE_RESULT" = success' in gate
-    assert 'if [ "$WEB_ONLY" = true ]; then' in gate
     for result in (
         "TEST_LINUX_RESULT",
         "TEST_MACOS_RESULT",
         "TEST_INSTALL_RESULT",
+        "DOCS_BUILD_RESULT",
+        "SITE_BUILD_RESULT",
         "RELEASE_SITE_BUILD_RESULT",
     ):
         assert f'test "${result}" = skipped' in gate

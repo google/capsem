@@ -283,7 +283,7 @@ def test_every_declared_result_is_actually_tested() -> None:
 def test_every_result_is_required_to_have_succeeded_somewhere() -> None:
     """Tested is not the same as required to have passed.
 
-    The gate has two branches -- a web-only PR must *skip* the expensive jobs,
+    The gate has two branches -- an unselected owner must *skip* its job,
     any other PR must see them succeed -- and the previous check was satisfied
     by a result appearing in either one. Deleting
     `test "$TEST_INSTALL_RESULT" = success` from the full branch therefore

@@ -21,6 +21,7 @@ closed.
 
 REQUIRED_JOBS = frozenset(
     {
+        "scope",
         "fast-gate",
         "test-linux",
         "test",
@@ -31,6 +32,15 @@ REQUIRED_JOBS = frozenset(
         "pr-gate",
     }
 )
+INDEPENDENT_JOBS = REQUIRED_JOBS - {"scope", "fast-gate", "pr-gate"}
+REQUIRED_VARIABLES = {
+    "test-linux": "TEST_LINUX_REQUIRED",
+    "test": "TEST_MACOS_REQUIRED",
+    "test-install": "TEST_INSTALL_REQUIRED",
+    "docs-build": "DOCS_BUILD_REQUIRED",
+    "site-build": "SITE_BUILD_REQUIRED",
+    "release-site-build": "RELEASE_SITE_BUILD_REQUIRED",
+}
 
 
 def _workflow_problems(workflow: dict[str, Any]) -> list[str]:
@@ -63,13 +73,13 @@ def _workflow_problems(workflow: dict[str, Any]) -> list[str]:
             for job in sorted(missing_needs)
         )
 
-    docs_job = jobs.get("docs-build")
-    steps = docs_job.get("steps", []) if isinstance(docs_job, dict) else []
+    scope_job = jobs.get("scope")
+    steps = scope_job.get("steps", []) if isinstance(scope_job, dict) else []
     classifiers = [
         step
         for step in steps
         if isinstance(step, dict)
-        and step.get("name") == "Classify pull request scope"
+        and step.get("name") == "Classify changed path owners"
     ]
     if len(classifiers) != 1:
         problems.append(f"expected one CI scope classifier step, found {len(classifiers)}")
@@ -78,7 +88,7 @@ def _workflow_problems(workflow: dict[str, Any]) -> list[str]:
         if classifier.get("continue-on-error") in {True, "true", "True"}:
             problems.append("CI scope classifier discards failure")
         run = classifier.get("run", "")
-        if "python3 scripts/classify-ci-scope.py" not in run:
+        if "python3 scripts/classify-ci-scope.py --owners" not in run:
             problems.append("CI scope classifier does not call the owned script")
         if any(token in run for token in ("|| true", "; true", "set +e")):
             problems.append("CI scope classifier neutralizes a failing command")
@@ -107,8 +117,8 @@ def test_discarded_classifier_failure_is_rejected() -> None:
     workflow = _workflow()
     classifier = next(
         step
-        for step in workflow["jobs"]["docs-build"]["steps"]
-        if step.get("name") == "Classify pull request scope"
+        for step in workflow["jobs"]["scope"]["steps"]
+        if step.get("name") == "Classify changed path owners"
     )
     classifier["continue-on-error"] = True
     assert _workflow_problems(workflow), CI_SCOPE_RATIONALE
@@ -124,3 +134,75 @@ def test_final_gate_must_need_every_owner() -> None:
 def test_current_ci_workflow_is_owned_and_enforced() -> None:
     problems = _workflow_problems(_workflow())
     assert not problems, CI_SCOPE_RATIONALE + "\n" + "\n".join(problems)
+
+
+def test_ci_jobs_are_selected_by_one_fail_closed_owner_stream() -> None:
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+    scope = jobs["scope"]
+    assert scope["outputs"]["owners"] == "${{ steps.scope.outputs.owners }}"
+    assert scope["steps"][0]["uses"].startswith("actions/checkout@")
+    assert scope["steps"][0]["with"]["fetch-depth"] == 0
+    classifier = next(
+        step for step in scope["steps"] if step.get("name") == "Classify changed path owners"
+    )
+    assert classifier.get("continue-on-error") is None
+    assert "git diff --name-only -z" in classifier["run"]
+    assert classifier["run"].count("scripts/classify-ci-scope.py --owners") == 2
+    assert ".github/workflows/ci.yaml" in classifier["run"]
+
+    assert "if" not in jobs["fast-gate"]
+    assert "needs" not in jobs["fast-gate"]
+    for name in INDEPENDENT_JOBS:
+        assert jobs[name]["needs"] == "scope"
+        assert jobs[name]["if"] == (
+            f"${{{{ contains(fromJSON(needs.scope.outputs.owners), '{name}') }}}}"
+        )
+
+
+def test_pr_gate_receives_owner_selection_and_every_job_result() -> None:
+    workflow = _workflow()
+    gate = workflow["jobs"]["pr-gate"]
+    assert set(gate["needs"]) == (REQUIRED_JOBS | {"scope"}) - {"pr-gate"}
+    require = next(step for step in gate["steps"] if step.get("name") == "Require all CI jobs")
+    env = require["env"]
+    assert env["CI_OWNERS"] == "${{ needs.scope.outputs.owners }}"
+    assert env["SCOPE_RESULT"] == "${{ needs.scope.result }}"
+    for name in INDEPENDENT_JOBS:
+        variable = REQUIRED_VARIABLES[name]
+        assert env[variable] == (
+            f"${{{{ contains(fromJSON(needs.scope.outputs.owners), '{name}') }}}}"
+        )
+
+
+def _push_paths(name: str) -> set[str]:
+    document = yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text())
+    trigger = document.get("on") or document.get(True)
+    return set(trigger["push"]["paths"])
+
+
+def test_public_web_deployments_run_only_for_owned_and_shared_inputs() -> None:
+    script_root = "scr" + "ipts"
+    current_docs = "do" + "cs/**"
+    current_site = "si" + "te/**"
+    current_graphics = "gra" + "phics/**"
+    shared = {
+        "README.md",
+        f"{script_root}/check-web-surface.sh",
+        f"{script_root}/lib/exec_lock.sh",
+    }
+    assert _push_paths("docs.yaml") == shared | {
+        ".github/workflows/docs.yaml",
+        "config/gate.toml",
+        current_docs,
+        "web/docs/**",
+        f"{script_root}/check-docs-holding-build.py",
+        "build_system/builder/gate/tools/web/check_docs_holding_build.py",
+    }
+    assert _push_paths("site.yaml") == shared | {
+        ".github/workflows/site.yaml",
+        current_site,
+        current_graphics,
+        "web/marketing/**",
+        "web/graphics/**",
+    }

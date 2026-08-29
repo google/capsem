@@ -18,8 +18,8 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 | `release-assets.yaml` | Correlated dispatch from `capsem-admin release` with `source_commit` | Build exactly one channel/profile's images, config, and evidence from that commit against the existing channel package; the public command watches that exact run through success |
 | `release-channel-staging.yaml` | Manual | Build a deterministic staging asset channel fixture, deploy it to a Cloudflare Pages preview branch, and validate the same release-channel contract without invoking `build-assets`, `build-app-macos`, or `build-app-linux` |
 | `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove profile image metadata is unchanged without creating a GitHub release or deploying release.capsem.org |
-| `docs.yaml` | Push to main | Deploy docs.capsem.org on each main merge, then smoke the live docs site |
-| `site.yaml` | Push to main | Deploy capsem.org on each main merge, then smoke the live marketing site |
+| `docs.yaml` | Push to main when docs or a shared docs-build input changes | Deploy docs.capsem.org, then smoke the live docs site |
+| `site.yaml` | Push to main when marketing, graphics, or a shared site-build input changes | Deploy capsem.org, then smoke the live marketing site |
 | `release-channel.yaml` | Called by binary or asset release | Validate the generated distribution on an immutable preview, activate it on release.capsem.org, and restore the prior production deployment on any activation-verification failure |
 
 Installers carry host binaries and the selected manifest URL provenance, plus
@@ -40,6 +40,16 @@ stable `pr-gate` status before merge. New pushes cancel superseded runs only on
 the same PR; main runs always finish so each merged commit has a post-merge
 signal and Codecov baseline. Docs and marketing retain their independent
 deployment workflows.
+
+### scope (ubuntu-latest)
+
+Checks out full Git history and classifies the exact NUL-delimited changed-path
+stream into CI job owners. Pull requests compare with their base commit and
+pushes compare with the event's previous commit. A missing base selects the
+shared workflow path through the same classifier, which runs every owner; an
+empty, malformed, or unknown path fails the classifier instead of skipping a
+job. `fast-gate` remains unconditional while each other job runs only when its
+owner is selected.
 
 ### test-linux (ubuntu-24.04-arm)
 
@@ -82,16 +92,19 @@ release.
 ### pr-gate (ubuntu-latest)
 
 This is the stable branch-protection status for code PRs. It depends on
-`fast-gate`, `test-linux`, `test`, `test-install`, `docs-build`, `site-build`,
-and `release-site-build`, runs even when one dependency fails, and fails unless every dependency job reports
-`success`.
+`scope`, `fast-gate`, `test-linux`, `test`, `test-install`, `docs-build`,
+`site-build`, and `release-site-build`, and runs even when one dependency
+fails. The scope classifier and fast gate must always report `success`; every
+independent owner must report `success` when selected and `skipped` when not
+selected.
 
 `pr-gate` is the only status that should be required by branch protection for
 the product CI workflow. Individual dependency job names may change as CI is
 reshaped; `pr-gate` keeps branch protection stable while still failing closed
 when any required lane fails. `pr-gate` depends on `docs-build`, `site-build`,
-and `release-site-build` so broken docs, marketing, or release-channel pages
-cannot merge even though the Cloudflare deploy workflows are separate.
+and `release-site-build` so a selected docs, marketing, or release-channel
+owner cannot merge broken pages even though the Cloudflare deploy workflows
+are separate. Shared inputs select every owner.
 
 Before claiming release readiness, run the read-only live gate checker:
 
@@ -100,7 +113,7 @@ uv run --project build_system --frozen python scripts/check-remote-release-readi
 ```
 
 It verifies that the local checkout has no unpublished commits relative to
-`origin/main`; remote `ci.yaml` exposes `pr-gate`, aggregates `fast-gate`,
+`origin/main`; remote `ci.yaml` exposes `pr-gate`, aggregates `scope`, `fast-gate`,
 `test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and
 `release-site-build`, runs with `if: ${{ always() }}` and asserts every
 dependency result; branch protection or active branch rulesets require
@@ -189,7 +202,7 @@ split feedback across jobs. Unavoidable runner substitutions are named below.
 | Rust workspace coverage | `test` and `test-linux` jobs run `cargo llvm-cov nextest` on macOS and Linux crate sets | Same coverage rail with runner-specific package sets |
 | Host binary signing prerequisites | `test` job builds and ad-hoc signs host binaries before non-VM integration suites | Same PR prerequisite for artifact-dependent Python suites |
 | Python schema and no-VM integration suites | `test` job runs schema coverage plus bootstrap, codesign, rootfs artifact, and release-channel suites | Same no-VM suites, scoped to generated artifacts available in CI |
-| Docs, marketing, and release-channel site builds | `docs-build`, `site-build`, and `release-site-build` call the same web-surface entrypoint as `just test-clean` before `pr-gate` can pass | Merge-blocking duplicate execution of the canonical local gate; deploy happens only after merge or explicit release-channel publication |
+| Docs, marketing, and release-channel site builds | When selected by the fail-closed path owner, `docs-build`, `site-build`, and `release-site-build` call the same web-surface entrypoint as `just test-clean` before `pr-gate` can pass | Owner-scoped duplicate execution of the canonical local gate; deploy happens only after an owned or shared merge, or explicit release-channel publication |
 | VM-heavy Python suites (`pytest tests/ -n 4`) | Import collection only on hosted PR runners | Runner substitution: full execution remains a local/release gate until PR runners can host Apple VZ reliably |
 | Serial timing, build-chain, release-channel, and route-health suites | Import collection only on hosted PR runners | Runner substitution: local `just test-clean` and release gates remain authoritative |
 | Legacy injection/integration scripts and benchmark recording | Not run in hosted PR CI | Run through the owning focus group during diagnosis and by hosted release qualification before publication |
@@ -199,8 +212,10 @@ split feedback across jobs. Unavoidable runner substitutions are named below.
 
 `docs.yaml` and `site.yaml` are independent from binary and profile image release
 rails. Pull requests build docs and marketing through the `ci.yaml`
-`docs-build`, `site-build`, and `release-site-build` jobs, which feed the required `pr-gate`. Pushes to
-`main` deploy through Cloudflare Pages and then smoke the public custom domain:
+`docs-build`, `site-build`, and `release-site-build` jobs, which feed the required
+`pr-gate` when selected by the exact changed-path owner. Pushes to `main` run
+each deployment workflow only for that surface or its explicit shared build
+inputs, deploy through Cloudflare Pages, and then smoke the public custom domain:
 
 | Workflow | Public smoke |
 |----------|--------------|

@@ -14,6 +14,37 @@ permissions:
   contents: read
 
 jobs:
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      owners: ${{ steps.scope.outputs.owners }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed path owners
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base_sha="$PUSH_BASE_SHA"
+          if [ "$EVENT_NAME" = pull_request ]; then
+            base_sha="$PR_BASE_SHA"
+          fi
+
+          if [ -n "$base_sha" ] && git cat-file -e "$base_sha^{commit}" 2>/dev/null; then
+            owners=$(git diff --name-only -z "$base_sha"...HEAD | \
+              python3 scripts/classify-ci-scope.py --owners)
+          else
+            owners=$(printf '%s\0' '.github/workflows/ci.yaml' | \
+              python3 scripts/classify-ci-scope.py --owners)
+          fi
+          echo "owners=$owners" >> "$GITHUB_OUTPUT"
+
   fast-gate:
     uses: ./.github/workflows/fast-gate.yaml
 
@@ -21,8 +52,8 @@ jobs:
   # Linux: compile + test KVM hypervisor backend (cfg(target_os = "linux"))
   # ---------------------------------------------------------------------------
   test-linux:
-    needs: docs-build
-    if: ${{ needs.docs-build.outputs.web_only != 'true' }}
+    needs: scope
+    if: ${{ contains(fromJSON(needs.scope.outputs.owners), 'test-linux') }}
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -140,8 +171,8 @@ jobs:
   # macOS: full test suite (Apple VZ backend, frontend, Python, coverage)
   # ---------------------------------------------------------------------------
   test:
-    needs: docs-build
-    if: ${{ needs.docs-build.outputs.web_only != 'true' }}
+    needs: scope
+    if: ${{ contains(fromJSON(needs.scope.outputs.owners), 'test') }}
     runs-on: macos-14
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -385,8 +416,8 @@ jobs:
   # Install e2e: Docker-based install layout + systemd tests (Linux)
   # ---------------------------------------------------------------------------
   test-install:
-    needs: docs-build
-    if: ${{ needs.docs-build.outputs.web_only != 'true' }}
+    needs: scope
+    if: ${{ contains(fromJSON(needs.scope.outputs.owners), 'test-install') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -501,28 +532,11 @@ jobs:
   # Web: build docs and marketing before pr-gate can pass
   # ---------------------------------------------------------------------------
   docs-build:
+    needs: scope
+    if: ${{ contains(fromJSON(needs.scope.outputs.owners), 'docs-build') }}
     runs-on: ubuntu-latest
-    outputs:
-      web_only: ${{ steps.scope.outputs.web_only }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-        with:
-          fetch-depth: 0
-
-      - name: Classify pull request scope
-        id: scope
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ "$EVENT_NAME" != pull_request ]; then
-            echo "web_only=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          web_only=$(git diff --name-only -z "$BASE_SHA"...HEAD | \
-            python3 scripts/classify-ci-scope.py)
-          echo "web_only=$web_only" >> "$GITHUB_OUTPUT"
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
@@ -540,6 +554,8 @@ jobs:
         run: bash scripts/check-web-surface.sh docs
 
   site-build:
+    needs: scope
+    if: ${{ contains(fromJSON(needs.scope.outputs.owners), 'site-build') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -560,8 +576,8 @@ jobs:
         run: bash scripts/check-web-surface.sh site
 
   release-site-build:
-    needs: docs-build
-    if: ${{ needs.docs-build.outputs.web_only != 'true' }}
+    needs: scope
+    if: ${{ contains(fromJSON(needs.scope.outputs.owners), 'release-site-build') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -611,13 +627,15 @@ jobs:
   # ---------------------------------------------------------------------------
   pr-gate:
     runs-on: ubuntu-latest
-    needs: [fast-gate, test-linux, test, test-install, docs-build, site-build, release-site-build]
+    needs: [scope, fast-gate, test-linux, test, test-install, docs-build, site-build, release-site-build]
     if: ${{ always() }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
       - name: Require all CI jobs
         env:
+          CI_OWNERS: ${{ needs.scope.outputs.owners }}
+          SCOPE_RESULT: ${{ needs.scope.result }}
           FAST_GATE_RESULT: ${{ needs.fast-gate.result }}
           TEST_LINUX_RESULT: ${{ needs.test-linux.result }}
           TEST_MACOS_RESULT: ${{ needs.test.result }}
@@ -625,5 +643,10 @@ jobs:
           DOCS_BUILD_RESULT: ${{ needs.docs-build.result }}
           SITE_BUILD_RESULT: ${{ needs.site-build.result }}
           RELEASE_SITE_BUILD_RESULT: ${{ needs.release-site-build.result }}
-          WEB_ONLY: ${{ needs.docs-build.outputs.web_only }}
+          TEST_LINUX_REQUIRED: ${{ contains(fromJSON(needs.scope.outputs.owners), 'test-linux') }}
+          TEST_MACOS_REQUIRED: ${{ contains(fromJSON(needs.scope.outputs.owners), 'test') }}
+          TEST_INSTALL_REQUIRED: ${{ contains(fromJSON(needs.scope.outputs.owners), 'test-install') }}
+          DOCS_BUILD_REQUIRED: ${{ contains(fromJSON(needs.scope.outputs.owners), 'docs-build') }}
+          SITE_BUILD_REQUIRED: ${{ contains(fromJSON(needs.scope.outputs.owners), 'site-build') }}
+          RELEASE_SITE_BUILD_REQUIRED: ${{ contains(fromJSON(needs.scope.outputs.owners), 'release-site-build') }}
         run: bash scripts/require-ci-jobs.sh

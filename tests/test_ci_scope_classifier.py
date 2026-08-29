@@ -58,7 +58,7 @@ def test_null_delimited_git_paths_are_parsed_without_ambiguity() -> None:
         module.paths_from_git(b"docs/index.md")
 
 
-def test_cli_emits_independent_scopes_without_changing_the_default_contract() -> None:
+def test_cli_emits_independent_scopes_and_job_owners_without_changing_the_default_contract() -> None:
     payload = b"web/app/src/App.svelte\0web/docs/src/index.mdx\0"
     default = subprocess.run(
         (sys.executable, str(SCRIPT)),
@@ -74,8 +74,18 @@ def test_cli_emits_independent_scopes_without_changing_the_default_contract() ->
         check=True,
         capture_output=True,
     )
+    owners = subprocess.run(
+        (sys.executable, str(SCRIPT), "--owners"),
+        cwd=ROOT,
+        input=payload,
+        check=True,
+        capture_output=True,
+    )
     assert default.stdout == b"false\n"
     assert scopes.stdout == b'["app", "docs"]\n'
+    assert owners.stdout == (
+        b'["docs-build", "fast-gate", "pr-gate", "test", "test-install", "test-linux"]\n'
+    )
 
 
 def test_cli_rejects_an_unknown_output_mode() -> None:
@@ -144,10 +154,58 @@ def test_each_approved_target_has_one_independent_scope(path: str, scope: str) -
 
 def test_shared_hidden_and_root_inputs_fan_out() -> None:
     module = _classifier()
-    assert module.ci_scopes((".github/workflows/ci.yaml",)) == {"shared"}
-    assert module.ci_scopes((".config/ty.toml",)) == {"shared"}
-    assert module.ci_scopes(("justfile",)) == {"shared"}
+    for path in (
+        ".github/workflows/ci.yaml",
+        ".config/ty.toml",
+        "justfile",
+        "config/gate.toml",
+        "scripts/check-web-surface.sh",
+        "scripts/lib/exec_lock.sh",
+        "scripts/classify-ci-scope.py",
+        "scripts/require-ci-jobs.sh",
+        "build_system/builder/gate/tools/ci/classify_ci_scope.py",
+    ):
+        assert module.ci_scopes((path,)) == {"shared"}
+        assert module.ci_owners((path,)) == module.ALL_JOBS
     assert module.ci_owners((".config/ty.toml",)) == module.ALL_JOBS
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "scripts/check-docs-holding-build.py",
+        "build_system/builder/gate/tools/web/check_docs_holding_build.py",
+    ],
+)
+def test_docs_build_controls_reach_the_docs_and_build_system_owners(path: str) -> None:
+    module = _classifier()
+    assert module.ci_scopes((path,)) == {"build_system", "docs"}
+    assert module.ci_owners((path,)) == module.PRODUCT_JOBS | {
+        "docs-build",
+        "fast-gate",
+        "pr-gate",
+    }
+
+
+@pytest.mark.parametrize(
+    ("path", "scopes"),
+    [
+        (
+            "build_system/tests/release_site/test_release_site_rendering.py",
+            {"release_site"},
+        ),
+        (
+            "build_system/builder/gate/releasegraph.py",
+            {"build_system", "release_site"},
+        ),
+    ],
+)
+def test_release_site_generator_tests_and_graph_inputs_reach_the_site_owner(
+    path: str, scopes: set[str]
+) -> None:
+    module = _classifier()
+    assert module.ci_scopes((path,)) == scopes
+    assert "release-site-build" in module.ci_owners((path,))
 
 
 def test_deletion_is_classified_by_its_absent_path() -> None:

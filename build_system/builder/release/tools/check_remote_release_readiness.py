@@ -29,6 +29,7 @@ else:
 
 
 REQUIRED_PR_GATE_JOBS = (
+    "scope",
     "fast-gate",
     "test-linux",
     "test",
@@ -38,6 +39,7 @@ REQUIRED_PR_GATE_JOBS = (
     "release-site-build",
 )
 REQUIRED_PR_GATE_RESULT_CHECKS = (
+    ("scope", "SCOPE_RESULT"),
     ("fast-gate", "FAST_GATE_RESULT"),
     ("test-linux", "TEST_LINUX_RESULT"),
     ("test", "TEST_MACOS_RESULT"),
