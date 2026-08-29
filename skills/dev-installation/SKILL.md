@@ -78,7 +78,7 @@ they do not create a user policy file.
 Postinstall writes the selected verified release document unchanged to
 `~/.capsem/assets/manifest.json`. The boot resolver derives its compact runtime view in
 memory; it must never serialize that view over the installed release graph.
-The adjacent `manifest-metadata.json` sidecar, with schema
+The adjacent `~/.capsem/assets/manifest-metadata.json` sidecar, with schema
 `capsem.manifest_metadata.v1`, is the only sidecar for provenance and update
 state. CLI status and About Capsem both read the service's canonical
 `GET /system/status` response, which includes those exact two JSON documents.
