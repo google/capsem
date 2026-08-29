@@ -109,7 +109,7 @@ MATCH_GUARDS = (
         "public release HTTP reader passes a bare URL to urllib and may be rejected by the edge",
         r"urlopen\(\s*(?:source|url|manifest_url)\s*,",
         (
-            "scripts/materialize-config.sh",
+            "build_system/scripts/build/materialize-config.sh",
             "build_system/builder/release/tools/build_complete_release_channel.py",
             "build_system/builder/release/tools/local_release_glowup.py",
         ),

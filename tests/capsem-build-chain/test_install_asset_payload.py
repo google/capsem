@@ -332,7 +332,7 @@ fi
     return subprocess.run(
         [
             "bash",
-            str(PROJECT_ROOT / "scripts" / "ensure-docker-space.sh"),
+            str(PROJECT_ROOT / "build_system" / "scripts" / "build" / "ensure-docker-space.sh"),
             rail,
         ],
         cwd=PROJECT_ROOT,
@@ -485,7 +485,7 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     assert exhausted.returncode != 0
     assert f"requires {floor_gib}.0 GiB free" in exhausted.stderr
 
-    storage_script = (PROJECT_ROOT / "scripts" / "ensure-docker-space.sh").read_text()
+    storage_script = (PROJECT_ROOT / "build_system" / "scripts" / "build" / "ensure-docker-space.sh").read_text()
     controller = (
         PROJECT_ROOT
         / "build_system/builder/image/tools/build/docker_storage_policy.py"
@@ -1033,7 +1033,7 @@ def test_installed_glowup_uses_the_materialized_python_without_project_sync(
     probe = installed_probe.exact_installed_probe_shell(tmp_path)
     quoted = "'/opt/capsem venv/bin/python'"
     assert f"{quoted} scripts/verify-installed-release.py" in probe
-    assert f"{quoted} scripts/run-installed-winterfell.py" in probe
+    assert f"{quoted} build_system/scripts/build/run-installed-winterfell.py" in probe
     assert "uv run" not in probe
 
     source = LOCAL_RELEASE_GLOWUP_SOURCE.read_text(encoding="utf-8")
@@ -1714,7 +1714,7 @@ def test_macos_install_gate_consumes_native_full_probe_evidence() -> None:
     order = _gate_order()
     proof = (PROJECT_ROOT / "build_system/builder/gate/installproof.py").read_text(encoding="utf-8")
 
-    assert config.install.suite.macos_report_check == "scripts/check-macos-native-glowup.py"
+    assert config.install.suite.macos_report_check == "build_system/scripts/build/check-macos-native-glowup.py"
     assert "validate_macos_glowup" in proof
     assert "boots_a_guest" in proof
 
@@ -2582,7 +2582,7 @@ def test_local_release_glowup_installed_path_asserts_channel_round_trip_and_prov
     assert 'grep -Fq "Gateway:   ok"' in script
     assert "scripts/verify-installed-release.py" in script
     assert '"$CAPSEM_BIN" doctor' in script
-    assert "scripts/run-installed-winterfell.py" in script
+    assert "build_system/scripts/build/run-installed-winterfell.py" in script
     assert "service status" not in script
     assert "CAPSEM_CHANNEL=nightly" in script
     assert "http://127.0.0.1:1234/corp/manifest.json" in script
@@ -2714,7 +2714,7 @@ def test_manifest_generation_public_path_is_capsem_admin() -> None:
 
     assert "manifest" in " ".join(config.initrd.manifest)
     assert "capsem-admin" in " ".join(config.initrd.manifest)
-    assert "scripts/gen_manifest.py" not in initrd
+    assert "build_system/scripts/build/gen_manifest.py" not in initrd
 
     public_docs = [
         path
@@ -2724,7 +2724,7 @@ def test_manifest_generation_public_path_is_capsem_admin() -> None:
     for path in public_docs:
         text = path.read_text(encoding="utf-8")
         assert "capsem-admin manifest generate" in text
-        assert "scripts/gen_manifest.py" not in text
+        assert "build_system/scripts/build/gen_manifest.py" not in text
 
 
 def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
@@ -3070,7 +3070,7 @@ def test_ci_install_job_selects_exact_profiles_before_building_packages() -> Non
     resolve_pos = install_job.index("build_system/scripts/bootstrap/select-runtime-preflight-manifest.py")
     source_pos = install_job.index("scripts/fetch-channel-source-manifest.py")
     stage_pos = install_job.index("scripts/stage-release-test-inputs.py")
-    materialize_pos = install_job.index("bash scripts/materialize-config.sh")
+    materialize_pos = install_job.index("bash build_system/scripts/build/materialize-config.sh")
     package_pos = install_job.index(
         "uv run --project build_system --frozen capsem-gate cross-compile x86_64"
     )
@@ -3080,7 +3080,7 @@ def test_ci_install_job_selects_exact_profiles_before_building_packages() -> Non
     assert (
         resolve_pos < source_pos < fetch_pos < stage_pos < materialize_pos < package_pos < gate_pos
     )
-    assert "bash scripts/materialize-config.sh --pair-content" in install_job
+    assert "bash build_system/scripts/build/materialize-config.sh --pair-content" in install_job
     assert "kind: profiles" in install_job
     assert "architecture: x86_64" in install_job
     assert "output: target/ci-install-content/inputs" in install_job

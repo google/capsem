@@ -202,5 +202,5 @@ jobs:
 
       - name: Install live public Linux release and prove guest shell execution
         run: >
-          scripts/prove-live-public-install.sh /tmp/verify/manifest.json
+          build_system/scripts/build/prove-live-public-install.sh /tmp/verify/manifest.json
           "$ASSET_MANIFEST_URL" "$RELEASE_CHANNEL"

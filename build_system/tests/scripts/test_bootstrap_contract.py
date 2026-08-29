@@ -124,7 +124,7 @@ def test_bootstrap_waits_for_container_dns_after_colima_restart() -> None:
 def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -> None:
     bootstrap = _read("bootstrap.sh")
     linux = _linux_bootstrap_source()
-    docker_selector = _read("scripts/select-docker-packages.sh")
+    docker_selector = _read("build_system/scripts/build/select-docker-packages.sh")
 
     assert '. "$SCRIPT_DIR/build_system/scripts/bootstrap/bootstrap-linux.sh"' in bootstrap
     assert 'bootstrap_linux "$SCRIPT_DIR" "$ASSUME_YES"' in bootstrap
@@ -139,7 +139,7 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
         assert package in linux
     for package in ["docker.io", "docker-buildx"]:
         assert package in docker_selector
-    assert "scripts/select-docker-packages.sh" in linux
+    assert "build_system/scripts/build/select-docker-packages.sh" in linux
     assert 'provision-linux-workspace.py" --packages apt' in linux
     assert 'provision-linux-workspace.py" --packages dnf' in linux
     assert 'provision-linux-workspace.py" --verify' in linux
@@ -297,7 +297,7 @@ def test_linux_bootstrap_installs_only_the_missing_docker_components(tmp_path: P
     )
     docker = binaries / "docker"
     _executable(docker, "exit 1")
-    selector = PROJECT_ROOT / "scripts/select-docker-packages.sh"
+    selector = PROJECT_ROOT / "build_system/scripts/build/select-docker-packages.sh"
 
     absent = subprocess.run(
         [str(selector)],

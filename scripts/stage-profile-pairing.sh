@@ -64,7 +64,7 @@ uv run --project build_system --frozen python scripts/stage-release-test-inputs.
 CAPSEM_ASSET_MANIFEST="$PWD/target/assets/manifest.json" \
 CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
 CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/config" \
-    bash scripts/materialize-config.sh --pair-content
+    bash build_system/scripts/build/materialize-config.sh --pair-content
 
 package=$(uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
     --input-dir target/profile-public-before/packages \

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-source "$ROOT/scripts/lib/exec_lock.sh"
+source "$ROOT/build_system/scripts/build/lib/exec_lock.sh"
 
 require_release_site_astro() {
     if [[ ! -x "$ROOT/build_system/release_site/node_modules/.bin/astro" ]]; then

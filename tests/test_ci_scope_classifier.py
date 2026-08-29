@@ -160,7 +160,7 @@ def test_shared_hidden_and_root_inputs_fan_out() -> None:
         "justfile",
         "config/gate.toml",
         "scripts/check-web-surface.sh",
-        "scripts/lib/exec_lock.sh",
+        "build_system/scripts/build/lib/exec_lock.sh",
         "build_system/scripts/ci/classify-ci-scope.py",
         "build_system/scripts/ci/require-ci-jobs.sh",
         "build_system/builder/gate/tools/ci/classify_ci_scope.py",

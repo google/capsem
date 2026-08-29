@@ -34,7 +34,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 from macos_tart_transition_support import local_tart_capabilities  # noqa: E402
 
 STORAGE_POLICY = PROJECT_ROOT / "config" / "storage-policy.toml"
-STORAGE_CONTROLLER = PROJECT_ROOT / "scripts" / "docker-storage-policy.py"
+STORAGE_CONTROLLER = PROJECT_ROOT / "build_system" / "scripts" / "build" / "docker-storage-policy.py"
 
 
 def storage_policy_string(section: str, key: str) -> str:

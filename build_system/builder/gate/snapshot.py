@@ -57,7 +57,7 @@ _BATCH = 200
 def _subject(source: Path) -> list[Path]:
     """Exactly what the source digest counts.
 
-    The same command as `scripts/source-state-digest.py`, deliberately: a
+    The same command as `build_system/scripts/build/source-state-digest.py`, deliberately: a
     prefix built from a different set is a prefix whose digest cannot match
     the tree it came from.
     """

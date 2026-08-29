@@ -9,7 +9,7 @@ on:
       - config/gate.toml
       - scripts/check-docs-holding-build.py
       - scripts/check-web-surface.sh
-      - scripts/lib/exec_lock.sh
+      - build_system/scripts/build/lib/exec_lock.sh
       - web/docs/**
 
 jobs:

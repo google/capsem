@@ -20,8 +20,8 @@ GUEST = MACOS_PACKAGING / "macos_tart_guest.sh"
 GUEST_REGRESSIONS = MACOS_PACKAGING / "macos-tart-regression-probes.sh"
 GUEST_SUPPORT = MACOS_PACKAGING / "macos_tart_transition_support.py"
 HOST_BOOT = MACOS_PACKAGING / "prove-macos-package-boot.sh"
-INSTALLED_WINTERFELL = PROJECT_ROOT / "scripts" / "run-installed-winterfell.py"
-NATIVE_REPORT_CHECK = PROJECT_ROOT / "scripts" / "check-macos-native-glowup.py"
+INSTALLED_WINTERFELL = PROJECT_ROOT / "build_system" / "scripts" / "build" / "run-installed-winterfell.py"
+NATIVE_REPORT_CHECK = PROJECT_ROOT / "build_system" / "scripts" / "build" / "check-macos-native-glowup.py"
 INSTALLED_WINTERFELL_IMPLEMENTATION = (
     PROJECT_ROOT
     / "build_system/builder/image/tools/build/run_installed_winterfell.py"
@@ -127,7 +127,7 @@ def test_tart_commands_are_headless_isolated_and_share_only_gate_inputs(
         "uv",
         "run",
         "python",
-        str(PROJECT_ROOT / "scripts" / "docker-storage-policy.py"),
+        str(PROJECT_ROOT / "build_system" / "scripts" / "build" / "docker-storage-policy.py"),
         "tart-clean",
         "--label",
         "preflight",
@@ -616,7 +616,7 @@ def test_physical_mac_boots_a_guest_from_the_exact_package_payload() -> None:
     assert "scripts/prove-installed-shell.py" in source
     assert "CAPSEM_MACOS_PACKAGE_VM_BOOT_OK" in source
     assert '"$CAPSEM_HOME_DIR/bin/capsem" doctor' in source
-    assert "scripts/run-installed-winterfell.py" in source
+    assert "build_system/scripts/build/run-installed-winterfell.py" in source
     assert '"full_doctor": True' in source
     assert '"installed_winterfell": True' in source
     assert '"guest_vm_booted": True' in source
@@ -766,10 +766,10 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke(
 
     assert "brew install cirruslabs/cli/tart cirruslabs/cli/sshpass" in bootstrap
     assert "brew trust --formula cirruslabs/cli/softnet" in bootstrap
-    assert 'uv run --project build_system --frozen python "$SCRIPT_DIR/scripts/tart_readiness.py"' in bootstrap
+    assert 'uv run --project build_system --frozen python "$SCRIPT_DIR/build_system/scripts/build/tart_readiness.py"' in bootstrap
     assert "tart --version" in doctor
     assert "sshpass" in doctor
-    assert 'uv run --project build_system --frozen python "$PROJECT_ROOT/scripts/tart_readiness.py"' in doctor
+    assert 'uv run --project build_system --frozen python "$PROJECT_ROOT/build_system/scripts/build/tart_readiness.py"' in doctor
     assert "test-macos-install:" not in justfile
     from capsem_builder.gate import config as gate_config
 
@@ -807,7 +807,7 @@ def test_standalone_glowup_owns_build_tart_install_and_physical_boot() -> None:
     assert "config.install.local_macos_package_script" in source
     assert 'str(Path(__file__).resolve().parent / "macos_tart_glowup.py")' in source
     assert 'str(Path(__file__).resolve().parent / "prove-macos-package-boot.sh")' in source
-    assert '"scripts/materialize-config.sh"' not in source
+    assert '"build_system/scripts/build/materialize-config.sh"' not in source
     assert '"--content-root"' in source
     assert '"--assets-dir"' in source and '"--config-root"' in source
     assert '"$ROOT/assets"' not in build

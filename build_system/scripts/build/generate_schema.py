@@ -18,7 +18,7 @@ from capsem_builder.image.config import (
 )
 from capsem_builder.image.schema import export_json_schema
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SCHEMA_PATH = PROJECT_ROOT / "config" / "settings" / "schema.generated.json"
 DEFAULTS_PATH = PROJECT_ROOT / "config" / "settings" / "ui-metadata.generated.json"
 MOCK_PATH = PROJECT_ROOT / "web" / "app" / "src" / "lib" / "mock-settings.generated.ts"

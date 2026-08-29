@@ -170,7 +170,7 @@ flowchart LR
 
 ```
 just schema
-# Runs: uv run --project build_system --frozen python scripts/generate_schema.py
+# Runs: uv run --project build_system --frozen python build_system/scripts/build/generate_schema.py
 # Outputs:
 #   config/settings/schema.generated.json  (JSON Schema from Pydantic)
 #   config/settings/ui-metadata.generated.json         (defaults from host settings source)

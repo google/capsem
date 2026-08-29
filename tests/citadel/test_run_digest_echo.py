@@ -25,7 +25,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = gate_config.load(PROJECT_ROOT)
 
 SETTINGS = PROJECT_ROOT / ".claude" / "settings.json"
-LAUNCHER = PROJECT_ROOT / "scripts" / "print-gate-digest.py"
+LAUNCHER = PROJECT_ROOT / "build_system" / "scripts" / "build" / "print-gate-digest.py"
 SCRIPT = PROJECT_ROOT / "build_system/builder/image/tools/build/print_gate_digest.py"
 #: Every agent contract that has to name it, because three agents work here and
 #: only one of them gets the hook.
@@ -284,7 +284,7 @@ somebody deletes. And when trunk is red it demands a statement -- fix it, or
 say out loud that you are leaving it red -- because a failure rate nobody is
 required to acknowledge is one everybody learns to route around.
 
-See scripts/print-gate-digest.py.
+See build_system/scripts/build/print-gate-digest.py.
 """
 
 

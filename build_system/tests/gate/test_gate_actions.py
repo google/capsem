@@ -52,7 +52,7 @@ def test_run_renders_the_argv_it_would_execute(context: Context) -> None:
 def test_rendering_executes_nothing(context: Context, runner: RecordingRunner) -> None:
     """A dry run with side effects is not a dry run."""
     Run(["docker", "system", "prune", "-af"]).render()
-    Script(context.config, "scripts/clean_stale.py").render()
+    Script(context.config, "build_system/scripts/build/clean_stale.py").render()
     Shell("rm -rf target/*").render()
 
     assert runner.commands == []
@@ -148,7 +148,7 @@ def test_a_script_runs_through_the_projects_environment(
 ) -> None:
     """`python3 scripts/x.py` picks up whatever interpreter is on PATH, which
     on a release runner is not the one the lockfile pins."""
-    Script(context.config, "scripts/clean_stale.py", "--force").perform(context)
+    Script(context.config, "build_system/scripts/build/clean_stale.py", "--force").perform(context)
 
     assert runner.rendered[0].startswith("uv run --project build_system --frozen python ")
     assert runner.rendered[0].endswith("clean_stale.py --force")
@@ -156,8 +156,8 @@ def test_a_script_runs_through_the_projects_environment(
 
 def test_a_script_renders_the_relative_path_it_was_given(context: Context) -> None:
     """The absolute path is noise in a dry run; the checkout is implied."""
-    assert Script(context.config, "scripts/clean_stale.py").render() == (
-        "uv run --project build_system --frozen python scripts/clean_stale.py"
+    assert Script(context.config, "build_system/scripts/build/clean_stale.py").render() == (
+        "uv run --project build_system --frozen python build_system/scripts/build/clean_stale.py"
     )
 
 

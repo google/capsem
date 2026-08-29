@@ -264,7 +264,7 @@ def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
 
 
 def _source_digest_module():
-    script = PROJECT_ROOT / "scripts" / "source-state-digest.py"
+    script = PROJECT_ROOT / "build_system" / "scripts" / "build" / "source-state-digest.py"
     spec = importlib.util.spec_from_file_location("source_state_digest", script)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

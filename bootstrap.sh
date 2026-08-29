@@ -216,7 +216,7 @@ if [ "$(uname -s)" = "Darwin" ] \
     && command -v tart >/dev/null 2>&1 \
     && command -v sshpass >/dev/null 2>&1; then
     printf "  Tart base image + boot readiness...\n"
-    uv run --project build_system --frozen python "$SCRIPT_DIR/scripts/tart_readiness.py"
+    uv run --project build_system --frozen python "$SCRIPT_DIR/build_system/scripts/build/tart_readiness.py"
     export CAPSEM_BOOTSTRAP_TART_PROVEN=1
 fi
 

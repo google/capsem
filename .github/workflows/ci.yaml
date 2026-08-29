@@ -215,9 +215,9 @@ jobs:
           uv run --project build_system --frozen python -m pytest
           tests/capsem-release/test_release_channel_contract.py::test_binary_staging_artifacts_are_deterministic_and_recordable
           -q
-      - run: bash scripts/generate-settings.sh
+      - run: bash build_system/scripts/build/generate-settings.sh
       - run: bash scripts/prepare-install-test-assets.sh
-      - run: bash scripts/materialize-config.sh
+      - run: bash build_system/scripts/build/materialize-config.sh
       - run: cd web/app && pnpm install --frozen-lockfile
       - name: Build frontend bundle
         run: bash scripts/check-web-surface.sh frontend-build
@@ -334,7 +334,7 @@ jobs:
       # Schema drift check
       - name: Schema drift check
         run: |
-          uv run --project build_system --frozen python scripts/generate_schema.py
+          uv run --project build_system --frozen python build_system/scripts/build/generate_schema.py
           git diff --exit-code config/settings/schema.generated.json \
             config/settings/ui-metadata.generated.json \
             web/app/src/lib/mock-settings.generated.ts
@@ -509,7 +509,7 @@ jobs:
           CAPSEM_CONFIG_ROOT="$PWD/target/ci-install-source-config" \
           CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/ci-install-content/config" \
           CAPSEM_ARCH=x86_64 \
-            bash scripts/materialize-config.sh --pair-content
+            bash build_system/scripts/build/materialize-config.sh --pair-content
 
       - name: Build exact native release package
         env:

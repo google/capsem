@@ -31,7 +31,7 @@ def test_justfile_does_not_expose_legacy_guest_dir_knob() -> None:
 
 def test_justfile_routes_assets_through_profile_admin_rail() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
-    materialize_config = (PROJECT_ROOT / "scripts" / "materialize-config.sh").read_text()
+    materialize_config = (PROJECT_ROOT / "build_system" / "scripts" / "build" / "materialize-config.sh").read_text()
 
     # An image build without a profile is unrepresentable now: the argv is
     # built from one, so there is nothing to guard against with an `echo`.
@@ -44,7 +44,7 @@ def test_justfile_routes_assets_through_profile_admin_rail() -> None:
     assert "--config-root config" in argv
     assert "capsem-admin -- image build" in argv
     assert "capsem-admin -- manifest generate" in " ".join(config.initrd.manifest)
-    assert "scripts/materialize-config.sh" in justfile
+    assert "build_system/scripts/build/materialize-config.sh" in justfile
     assert "cargo run -p capsem-admin -- profile materialize" in materialize_config
     assert 'profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)' in materialize_config
     assert '--config-root "$CONFIG_ROOT"' in materialize_config

@@ -302,7 +302,7 @@ jobs:
           CAPSEM_ASSETS_PATH="$PWD/target/release-assets" \
           CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
           CAPSEM_ARCH=arm64 \
-            bash scripts/materialize-config.sh
+            bash build_system/scripts/build/materialize-config.sh
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
@@ -542,7 +542,7 @@ jobs:
           CAPSEM_CONFIG_ROOT="$PWD/target/package-source-config" \
           CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/package-content/config" \
           CAPSEM_ARCH="${{ matrix.arch }}" \
-            bash scripts/materialize-config.sh --pair-content
+            bash build_system/scripts/build/materialize-config.sh --pair-content
 
       - name: Build Linux package through the shared hermetic rail
         env:
@@ -979,7 +979,7 @@ jobs:
           CAPSEM_ASSETS_PATH="$PWD/target/assets" \
           CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
           CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/config" \
-            bash scripts/materialize-config.sh --pair-content
+            bash build_system/scripts/build/materialize-config.sh --pair-content
 
       - name: Activate exact candidate package binaries for functional tests
         run: |
@@ -1280,7 +1280,7 @@ jobs:
 
       - name: Install live public Linux release and prove guest shell execution
         run: >
-          scripts/prove-live-public-install.sh /tmp/verify/manifest.json
+          build_system/scripts/build/prove-live-public-install.sh /tmp/verify/manifest.json
           "$ASSET_MANIFEST_URL" "$RELEASE_CHANNEL"
 
   cleanup-unpublished-version-claim:

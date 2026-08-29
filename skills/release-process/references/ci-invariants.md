@@ -199,7 +199,7 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
 - **Do not make macOS CI depend on a Homebrew-only `flock` binary.** GitHub's
   macOS runners do not provide `flock`, even when developer machines do.
   Shared `just` execution locking must work with the checked-in
-  `scripts/lib/exec_lock.sh` fallback: use `flock` when it exists and a Python
+  `build_system/scripts/build/lib/exec_lock.sh` fallback: use `flock` when it exists and a Python
   `fcntl.flock` holder process otherwise. Keep `flock` out of `capsem-doctor`
   required tools unless the fallback is removed.
 - **Python coverage remains blocking at an exact 85% floor.** Ordinary CI runs

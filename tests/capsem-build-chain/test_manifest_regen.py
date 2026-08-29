@@ -90,7 +90,9 @@ def test_manifest_hashes_match(manifest_and_arch_assets):
         filepath = arch_dir / filename
         result = subprocess.run(
             ["b3sum", "--no-names", str(filepath)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if result.returncode != 0:
             pytest.skip("b3sum not installed")
@@ -107,7 +109,7 @@ def test_no_extra_assets(manifest_and_arch_assets):
     manifest hash for the same logical asset. Anything else -- a rogue
     file, or a stale hash-tagged name left over from a prior build --
     should fail this check. The stale-alias class is what
-    `scripts/create_hash_assets.py`'s cleanup pass now guards against.
+    `build_system/scripts/build/create_hash_assets.py`'s cleanup pass now guards against.
     """
     _, arch_assets, arch_dir = manifest_and_arch_assets
     allowed_hashed: set[str] = set()

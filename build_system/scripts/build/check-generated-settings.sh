@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 ROOT="${1:-$SCRIPT_ROOT}"
 FRESH="$(mktemp -d)"
 trap 'rm -rf "$FRESH"' EXIT
@@ -23,7 +23,7 @@ for file in "${TRACKED_FILES[@]}"; do
   fi
 done
 
-bash "$ROOT/scripts/generate-settings.sh" "$FRESH"
+bash "$ROOT/build_system/scripts/build/generate-settings.sh" "$FRESH"
 
 failed=0
 # The mock is gitignored and the web checks import it, so it is still written

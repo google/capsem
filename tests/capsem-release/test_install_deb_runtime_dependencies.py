@@ -70,7 +70,7 @@ def test_installs_dependencies_declared_by_exact_package(tmp_path: Path) -> None
         (
             "sudo",
             "bash",
-            str((ROOT / "scripts" / "configure-apt-snapshot.sh").resolve()),
+            str((ROOT / "build_system" / "scripts" / "build" / "configure-apt-snapshot.sh").resolve()),
             "https://snapshot.ubuntu.com/ubuntu",
             "20260810T000000Z",
         ),

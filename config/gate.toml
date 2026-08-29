@@ -62,8 +62,8 @@ aliases = ["x86_64", "amd64"]
 
 [storage]
 policy_file = "config/storage-policy.toml"
-policy_script = "scripts/docker-storage-policy.py"
-ensure_space_script = "scripts/ensure-docker-space.sh"
+policy_script = "build_system/scripts/build/docker-storage-policy.py"
+ensure_space_script = "build_system/scripts/build/ensure-docker-space.sh"
 
 # Points at which storage held for a finished rail may be released, and the
 # rail whose headroom that release serves. Eleven recipes used to spell these
@@ -205,7 +205,7 @@ digest = "sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07
 # different OS cohorts under the same source revision.
 base = "https://snapshot.ubuntu.com/ubuntu"
 id = "20260810T000000Z"
-configure_script = "scripts/configure-apt-snapshot.sh"
+configure_script = "build_system/scripts/build/configure-apt-snapshot.sh"
 
 [install]
 # The source image, smoke, and privileged systemd runtime are all sealed. The
@@ -336,7 +336,7 @@ identity_inputs = [
     "build_system/release_site/pnpm-workspace.yaml",
     "build_system/docker/Dockerfile.install-builder",
     "build_system/docker/materialize-install-os.sh",
-    "scripts/configure-apt-snapshot.sh",
+    "build_system/scripts/build/configure-apt-snapshot.sh",
 ]
 identity_globs = ["crates/*/Cargo.toml"]
 materialize_build_network = "default"
@@ -374,7 +374,7 @@ asset_manifest = "/home/capsem/.capsem/assets/manifest.json"
 [install.suite]
 path = "tests/capsem-install/"
 glowup_script = "scripts/local-release-glowup.py"
-macos_report_check = "scripts/check-macos-native-glowup.py"
+macos_report_check = "build_system/scripts/build/check-macos-native-glowup.py"
 serve_script = "scripts/serve-release-test-root.py"
 sbom_script = "scripts/generate-host-binary-sbom.py"
 web_surface_script = "scripts/check-web-surface.sh"
@@ -535,7 +535,7 @@ default_manifest_url = "https://release.capsem.org/assets/stable/manifest.json"
 channels = ["stable", "nightly", "corp"]
 default_channel = "stable"
 toolchain_pin = "rust-toolchain.toml"
-clock_script = "scripts/sync-container-clock.py"
+clock_script = "build_system/scripts/build/sync-container-clock.py"
 cargo_target_mount = "/cargo-target"
 package_suffix = ".deb"
 # The container the build runs in, kept until its output has been copied out.
@@ -591,7 +591,7 @@ identity_inputs = [
     "web/app/pnpm-workspace.yaml",
     "build_system/docker/Dockerfile.package-builder",
     "build_system/docker/swap-dev-libs.sh",
-    "scripts/materialize-package-ort.py",
+    "build_system/scripts/build/materialize-package-ort.py",
 ]
 identity_globs = ["crates/*/Cargo.toml"]
 # BuildKit and containers have different network vocabularies. `default` is
@@ -715,9 +715,9 @@ shell_proof_timeout_seconds = 300
 # has installed one, and the admin under test is this checkout's.
 admin_command = ["cargo", "run", "-p", "capsem-admin", "--"]
 capsem_binary = "target/debug/capsem"
-hash_assets_script = "scripts/create_hash_assets.py"
+hash_assets_script = "build_system/scripts/build/create_hash_assets.py"
 shell_proof_script = "scripts/prove-installed-shell.py"
-container_cleanup_script = "scripts/cleanup-docker-containers-by-mount.sh"
+container_cleanup_script = "build_system/scripts/build/cleanup-docker-containers-by-mount.sh"
 
 # Docker must be able to execute the *other* architecture before any lane
 # starts, or the second lane fails an hour in with an exec format error. The
@@ -766,7 +766,7 @@ maximum_bytes = 17179869184
 keep_awake_command = ["caffeinate", "-dimsu"]
 keep_awake_marker = "CAPSEM_TEST_CAFFEINATED"
 
-source_digest_script = "scripts/source-state-digest.py"
+source_digest_script = "build_system/scripts/build/source-state-digest.py"
 orphan_script = "build_system/scripts/ci/check-orphan-processes.py"
 # Where the recorded state waits between the step that measures it and the one
 # that re-asserts it.
@@ -782,9 +782,9 @@ source_snapshot_dir = "target/gate-source-snapshot"
 colima = "colima"
 
 bootstrap_script = "bootstrap.sh"
-clean_stale_script = "scripts/clean_stale.py"
-generated_settings_script = "scripts/check-generated-settings.sh"
-materialize_script = "scripts/materialize-config.sh"
+clean_stale_script = "build_system/scripts/build/clean_stale.py"
+generated_settings_script = "build_system/scripts/build/check-generated-settings.sh"
+materialize_script = "build_system/scripts/build/materialize-config.sh"
 recipe_suite = ["uv", "run", "--project", "build_system", "--frozen", "python", "-m", "pytest", "-c", "build_system/pyproject.toml", "tests/capsem-recipes/", "-v", "--tb=short", "-m", "recipe"]
 # The rail and boundary the whole gate's disk budget is taken against.
 candidate_budget = ["default", "candidate-boundary"]
@@ -1198,7 +1198,7 @@ rust_components = ["llvm-tools"]
 # bytes. Host selection is data: Linux and Apple Silicon use different
 # archives, while both Linux package targets share this authority.
 [toolchain.ort]
-script = "scripts/materialize-package-ort.py"
+script = "build_system/scripts/build/materialize-package-ort.py"
 archive_cache_template = "~/.cache/capsem/ort/archive-{sha256}.tar.lzma2"
 output_template = "target/toolchain/ort/{consumer}-{target}-{sha256}"
 strategy_variable = "ORT_STRATEGY"
@@ -1377,7 +1377,7 @@ frontend_dev = ["pnpm", "run", "dev"]
 frontend_dir = "web/app"
 tui = ["cargo", "run", "-p", "capsem-tui"]
 surfaces = ["ui", "frontend", "tui"]
-generate_settings = "scripts/generate-settings.sh"
+generate_settings = "build_system/scripts/build/generate-settings.sh"
 # Where this step's *tracked* outputs go: build output, not the checkout. The
 # step exists to make the gitignored frontend mock, which the web surfaces
 # import; rewriting `config/settings/*.generated.json` on the way was a side
@@ -1385,8 +1385,8 @@ generate_settings = "scripts/generate-settings.sh"
 # `contracts.release` still compares the committed pair against a fresh
 # generation, so drift is caught -- by the step whose job that is.
 generated_settings_scratch = "target/generated-settings"
-check_settings = "scripts/check-generated-settings.sh"
-materialize_config = "scripts/materialize-config.sh"
+check_settings = "build_system/scripts/build/check-generated-settings.sh"
+materialize_config = "build_system/scripts/build/materialize-config.sh"
 
 [initrd]
 # The guest binaries the initrd carries, all cross-compiled to musl.
@@ -1435,7 +1435,7 @@ binary_mode = 0o555
 init_mode = 0o755
 
 manifest = ["cargo", "run", "-p", "capsem-admin", "--", "manifest", "generate"]
-hash_assets = "scripts/create_hash_assets.py"
+hash_assets = "build_system/scripts/build/create_hash_assets.py"
 
 [smoke]
 # Focused developer feedback, never release qualification. Three groups that
@@ -1488,7 +1488,7 @@ markers = "integration"
 # make profiles look broken in the UI.
 binary = "target/debug/capsem-service"
 process_binary = "target/debug/capsem-process"
-sync_assets_script = "scripts/sync-dev-assets.sh"
+sync_assets_script = "build_system/scripts/build/sync-dev-assets.sh"
 generated_profiles = "target/config/profiles"
 assets_dir = "target/assets"
 home_assets = "assets"
@@ -3093,13 +3093,13 @@ reason = "having no extended attributes to clear is the desired end state"
 
 [[boundary.discarded_verdicts]]
 digest = "0e859548a8aa"
-where = "scripts/check-generated-settings.sh"
+where = "build_system/scripts/build/check-generated-settings.sh"
 subject = "diff -u $ROOT/$file $fresh"
 reason = "prints detail for the reader; the verdict is the cmp above it, which sets failed=1"
 
 [[boundary.discarded_verdicts]]
 digest = "3ebd958506da"
-where = "scripts/cleanup-docker-containers-by-mount.sh"
+where = "build_system/scripts/build/cleanup-docker-containers-by-mount.sh"
 subject = "docker inspect --format {{range .Mounts}}{{println .Source}}{{end}} $container_id"
 reason = "the container can exit between being listed and being inspected"
 
@@ -3135,7 +3135,7 @@ reason = "stopping a service that is not running is the normal upgrade path"
 
 [[boundary.discarded_verdicts]]
 digest = "23dd11c8481d"
-where = "scripts/generate-settings.sh"
+where = "build_system/scripts/build/generate-settings.sh"
 subject = "tail -200 $LOG"
 reason = "prints the generator log after a failure; the log may be empty"
 

@@ -176,7 +176,7 @@ def write_plot(
     except ImportError as exc:
         raise SystemExit(
             "matplotlib is required for --plot; run with "
-            "`uv run --project build_system --frozen --with matplotlib scripts/benchmark_report.py ... --plot out.png`"
+            "`uv run --project build_system --frozen --with matplotlib build_system/scripts/build/benchmark_report.py ... --plot out.png`"
         ) from exc
 
     fig, (ax_rps, ax_p99) = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)

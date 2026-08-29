@@ -297,7 +297,7 @@ def test_cold_channel_pairing_executes_no_package_action(
     for forbidden in (
         "scripts/stage-release-test-inputs.py",
         "build_system/packaging/linux/install-deb-runtime-dependencies.py",
-        "scripts/materialize-config.sh",
+        "build_system/scripts/build/materialize-config.sh",
     ):
         assert forbidden not in invoked
     assert github_env.read_text(encoding="utf-8") == ""

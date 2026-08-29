@@ -1,4 +1,4 @@
-"""Unit tests for scripts/clean_stale.py."""
+"""Unit tests for build_system/scripts/build/clean_stale.py."""
 
 from __future__ import annotations
 

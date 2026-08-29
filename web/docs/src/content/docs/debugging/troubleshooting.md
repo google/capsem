@@ -59,7 +59,7 @@ colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 128
 # Check current state
 du -sh ~/.colima                            # host disk usage
 docker system df
-uv run --project build_system --frozen python scripts/docker-storage-policy.py show --rail assets
+uv run --project build_system --frozen python build_system/scripts/build/docker-storage-policy.py show --rail assets
 ```
 
 Use `just clean all` only for an intentional cold rebuild. Do not use a broad

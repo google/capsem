@@ -18,7 +18,7 @@ case "$#" in
         ;;
 esac
 
-ROOT="${CAPSEM_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+ROOT="${CAPSEM_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 ASSETS_DIR="${CAPSEM_ASSETS_DIR:-target/assets}"
 OUTPUT_ROOT="${CAPSEM_CONFIG_OUTPUT_ROOT:-$ROOT/target/config}"
 CONFIG_ROOT="${CAPSEM_CONFIG_ROOT:-$ROOT/config}"

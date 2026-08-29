@@ -1079,7 +1079,7 @@ class TestSyncContainerClock:
         sync_container_clock()
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == sys.executable
-        assert cmd[1].endswith("/scripts/sync-container-clock.py")
+        assert cmd[1].endswith("/build_system/scripts/build/sync-container-clock.py")
         assert mock_run.call_args.kwargs["timeout"] == 15
 
     @patch("capsem_builder.image.docker.sys")

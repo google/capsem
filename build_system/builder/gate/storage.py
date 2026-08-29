@@ -1,7 +1,7 @@
 """Docker seen as a disk budget rather than as containers.
 
 Eleven recipes spelled
-`uv run --project build_system --frozen python scripts/docker-storage-policy.py release --boundary X --rail Y`
+`uv run --project build_system --frozen python build_system/scripts/build/docker-storage-policy.py release --boundary X --rail Y`
 by hand, so the set of legal (boundary, rail) pairs existed only as a habit
 spread across the justfile. A typo produced a release that silently did nothing
 for the rail it was supposed to free, and the next build failed on ENOSPC
@@ -28,7 +28,7 @@ from .sourcecommit import SourceCommit
 
 
 class Storage:
-    """The gate's side of `scripts/docker-storage-policy.py`."""
+    """The gate's side of `build_system/scripts/build/docker-storage-policy.py`."""
 
     def __init__(self, runner: Runner) -> None:
         self._runner = runner

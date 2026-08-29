@@ -440,9 +440,9 @@ def test_runtime_recipes_materialize_generated_config_before_service() -> None:
 def test_materialize_config_uses_admin_profile_command() -> None:
     block = _recipe_block("_materialize-config:")
 
-    assert "scripts/materialize-config.sh" in block
+    assert "build_system/scripts/build/materialize-config.sh" in block
 
-    script = (PROJECT_ROOT / "scripts" / "materialize-config.sh").read_text()
+    script = (PROJECT_ROOT / "build_system" / "scripts" / "build" / "materialize-config.sh").read_text()
     assert "cargo run -p capsem-admin -- profile materialize" in script
     assert "normalize_arch()" in script
     assert 'case "$arch" in' in script
@@ -454,7 +454,7 @@ def test_materialize_config_uses_admin_profile_command() -> None:
 
 
 def test_materialize_config_falls_back_to_sole_manifest_arch_for_ci_runner() -> None:
-    script = (PROJECT_ROOT / "scripts" / "materialize-config.sh").read_text()
+    script = (PROJECT_ROOT / "build_system" / "scripts" / "build" / "materialize-config.sh").read_text()
 
     assert 'manifest["assets"]["current"]' in script
     assert 'manifest["assets"]["releases"][current]["arches"]' in script
@@ -466,7 +466,7 @@ def test_materialize_config_falls_back_to_sole_manifest_arch_for_ci_runner() -> 
 
 def test_materialize_config_uses_release_manifest_profile_membership() -> None:
     block = _recipe_block("_materialize-config:")
-    script = (PROJECT_ROOT / "scripts" / "materialize-config.sh").read_text()
+    script = (PROJECT_ROOT / "build_system" / "scripts" / "build" / "materialize-config.sh").read_text()
 
     assert 'rm -rf "$OUTPUT_ROOT"' in script
     assert 'rm -rf "$ROOT/target/config"' not in script
@@ -478,7 +478,7 @@ def test_materialize_config_uses_release_manifest_profile_membership() -> None:
     assert 'for profile_path in "${profile_paths[@]}"; do' in script
     assert '--profile "$profile_path"' in script
     assert '--profile "$ROOT/config/profiles/code/profile.toml"' not in script
-    assert "scripts/materialize-config.sh" in block
+    assert "build_system/scripts/build/materialize-config.sh" in block
 
 
 def test_ensure_service_uses_generated_profiles() -> None:
@@ -540,7 +540,7 @@ def test_isolated_test_recipes_trap_test_home_service_cleanup() -> None:
 def test_release_workflow_uses_same_config_materializer() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
 
-    assert workflow.count("bash scripts/materialize-config.sh") == 3
+    assert workflow.count("bash build_system/scripts/build/materialize-config.sh") == 3
     assert workflow.count('CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"') == 1
     assert 'CAPSEM_ASSET_MANIFEST="$PWD/target/package-content/assets/manifest.json"' in workflow
     # A path, not a `file://` URL. The pairing job now materializes with

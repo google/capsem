@@ -38,7 +38,7 @@ from .guestbuilder import image_tag
 from .models import BuildConfig, ErofsConfig, GuestImageConfig, RootfsConfig
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "config" / "docker"
-CLOCK_SYNC_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "sync-container-clock.py"
+CLOCK_SYNC_SCRIPT = Path(__file__).resolve().parents[3] / "build_system" / "scripts" / "build" / "sync-container-clock.py"
 BOOT_ASSETS = ("vmlinuz", "initrd.img")
 ROOTFS_ASSET_PREFERENCE = ("rootfs.erofs",)
 OBOM_ASSET = "obom.cdx.json"

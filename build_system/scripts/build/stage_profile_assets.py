@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Compatibility launcher for the image-owned database-writer benchmark archiver."""
+"""Compatibility launcher for the image-owned profile asset staging library."""
 
 import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 os.environ.setdefault("CAPSEM_REPOSITORY_ROOT", str(ROOT))
 try:
     import capsem_builder  # noqa: F401
@@ -14,8 +14,5 @@ except ModuleNotFoundError:
     from bootstrap import mount_builder_package
     mount_builder_package(ROOT)
 from capsem_builder.image.tools.build import (  # noqa: E402
-    archive_db_writer_benchmark as _implementation,
+    stage_profile_assets as _implementation,  # noqa: F401
 )
-
-if __name__ == "__main__":
-    raise SystemExit(_implementation.main())

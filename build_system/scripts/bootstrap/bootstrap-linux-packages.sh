@@ -7,7 +7,7 @@ capsem_linux_install_apt_packages() {
     CAPSEM_APT_BINFMT_PACKAGE=$(capsem_linux_apt_binfmt_package)
     CAPSEM_APT_WORKSPACE_PACKAGES=$(python3 \
         "$CAPSEM_APT_PROJECT_ROOT/build_system/scripts/bootstrap/provision-linux-workspace.py" --packages apt)
-    CAPSEM_APT_DOCKER_PACKAGES=$("$CAPSEM_APT_PROJECT_ROOT/scripts/select-docker-packages.sh")
+    CAPSEM_APT_DOCKER_PACKAGES=$("$CAPSEM_APT_PROJECT_ROOT/build_system/scripts/build/select-docker-packages.sh")
     CAPSEM_APT_BASE_PACKAGES="
         acl
         ca-certificates

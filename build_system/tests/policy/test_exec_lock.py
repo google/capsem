@@ -1,4 +1,4 @@
-"""Tests for the cross-platform locks in scripts/lib/exec_lock.sh.
+"""Tests for the cross-platform locks in build_system/scripts/build/lib/exec_lock.sh.
 
 The helper is the single source of truth for every lock acquisition in
 the justfile (dev/shell/run/test/smoke/bench/...), so flaking here would
@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-HELPER = REPO_ROOT / "scripts/lib/exec_lock.sh"
+HELPER = REPO_ROOT / "build_system/scripts/build/lib/exec_lock.sh"
 NO_EXTERNAL_FLOCK = """
 command() {
     if [[ "$1" == "-v" && "$2" == "flock" ]]; then

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Compatibility launcher for the image-owned reusable profile asset resolver."""
+"""Compatibility launcher for the image-owned Tart readiness command."""
 
 import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 os.environ.setdefault("CAPSEM_REPOSITORY_ROOT", str(ROOT))
 try:
     import capsem_builder  # noqa: F401
@@ -13,9 +13,7 @@ except ModuleNotFoundError:
     sys.path.insert(0, str(ROOT / "build_system" / "builder"))
     from bootstrap import mount_builder_package
     mount_builder_package(ROOT)
-from capsem_builder.image.tools.build import (  # noqa: E402
-    resolve_reusable_profile_assets as _implementation,
-)
+from capsem_builder.image.tools.build import tart_readiness as _implementation  # noqa: E402
 
 if __name__ == "__main__":
-    raise SystemExit(_implementation.main())
+    raise SystemExit(_implementation.entrypoint())

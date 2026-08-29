@@ -66,6 +66,6 @@ jobs:
         run: |
           set -euo pipefail
           CAPSEM_ASSET_MANIFEST="$PREFLIGHT_MANIFEST_URL" \
-            bash scripts/materialize-config.sh
+            bash build_system/scripts/build/materialize-config.sh
           test -f target/config/assets/manifest.json
           test -d target/config/profiles

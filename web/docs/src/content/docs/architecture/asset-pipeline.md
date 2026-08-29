@@ -155,7 +155,7 @@ custom builds must all use this profile-derived build rail. The lower-level buil
 implementation detail behind `capsem-admin`; docs and automation should not call
 manifest generator internals directly.
 
-After manifest generation, `scripts/create_hash_assets.py` creates
+After manifest generation, `build_system/scripts/build/create_hash_assets.py` creates
 `<stem>-<hex16>.<ext>` hardlinks so the dev layout matches the
 content-addressable names used by the installed layout.
 

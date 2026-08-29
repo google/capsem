@@ -1621,7 +1621,7 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     for script in (before_script, after_script, preserved_script):
         assert "scripts/verify-installed-release.py" in script
         assert '"$CAPSEM_BIN" doctor' in script
-        assert "scripts/run-installed-winterfell.py" in script
+        assert "build_system/scripts/build/run-installed-winterfell.py" in script
         assert "capsem-mock-server" in script
         assert "update --yes" not in script
     assert "update --yes" not in tamper_script

@@ -11,7 +11,7 @@ is this pid alive, is it still the same process, was the file left by a crash
 start anyway. The kernel drops the lock when the fd closes, including when the
 holder is killed, so there is nothing to clean up and nothing to get wrong.
 
-Three things this has to get right, all of which `scripts/lib/exec_lock.sh` got
+Three things this has to get right, all of which `build_system/scripts/build/lib/exec_lock.sh` got
 right in comments and nothing checked:
 
   the lockfile sits outside the tree the gate is about to wipe, or it is

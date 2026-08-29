@@ -103,7 +103,7 @@ SHARED_CONTROL_FILES = frozenset(
         "config/gate.toml",
         "scripts/check-web-surface.sh",
         "build_system/scripts/ci/classify-ci-scope.py",
-        "scripts/lib/exec_lock.sh",
+        "build_system/scripts/build/lib/exec_lock.sh",
         "build_system/scripts/ci/require-ci-jobs.sh",
     }
 )

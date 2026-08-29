@@ -385,7 +385,7 @@ def test_bootstrap_and_doctor_prove_tart_cache_clone_boot_and_ssh() -> None:
         "build_system/builder/image/tools/build/tart_readiness.py"
     )
 
-    assert 'uv run --project build_system --frozen python "$SCRIPT_DIR/scripts/tart_readiness.py"' in bootstrap
+    assert 'uv run --project build_system --frozen python "$SCRIPT_DIR/build_system/scripts/build/tart_readiness.py"' in bootstrap
     assert "--require-cache" in doctor
     assert "cached, cloned, booted, and SSH-ready" in doctor
     assert '"tart", "clone"' in readiness
@@ -504,7 +504,7 @@ fi
     result = subprocess.run(
         [
             "bash",
-            str(PROJECT_ROOT / "scripts/cleanup-docker-containers-by-mount.sh"),
+            str(PROJECT_ROOT / "build_system/scripts/build/cleanup-docker-containers-by-mount.sh"),
             str(mount_root),
         ],
         cwd=PROJECT_ROOT,
@@ -573,9 +573,9 @@ def test_install_e2e_reuses_exact_package_and_materialized_profile_config() -> N
 def test_ci_materializes_runtime_profiles_after_generating_settings() -> None:
     workflow = _workflow_job_block("test")
 
-    generate_pos = workflow.find("bash scripts/generate-settings.sh")
+    generate_pos = workflow.find("bash build_system/scripts/build/generate-settings.sh")
     prepare_assets_pos = workflow.find("bash scripts/prepare-install-test-assets.sh")
-    materialize_pos = workflow.find("bash scripts/materialize-config.sh")
+    materialize_pos = workflow.find("bash build_system/scripts/build/materialize-config.sh")
     python_pos = workflow.find("Python schema tests with coverage")
 
     assert generate_pos != -1
@@ -784,7 +784,7 @@ def test_install_e2e_generates_manifest_through_admin_rail() -> None:
     assert "mtime=0" in script
     assert "TRAILER!!!" in script
     assert 'write_if_missing "$ASSETS_DIR/$arch/rootfs.erofs"' in script
-    assert "scripts/gen_manifest.py" not in script
+    assert "build_system/scripts/build/gen_manifest.py" not in script
 
 
 def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
@@ -2686,15 +2686,15 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
     assert "--docker-linux-install" not in verify_downloads
     assert "Enable KVM for live public-install VM proof" in verify_downloads
     assert "Install live public Linux release and prove guest shell execution" in verify_downloads
-    assert "scripts/prove-live-public-install.sh" in verify_downloads
-    live_proof = (PROJECT_ROOT / "scripts/prove-live-public-install.sh").read_text()
+    assert "build_system/scripts/build/prove-live-public-install.sh" in verify_downloads
+    live_proof = (PROJECT_ROOT / "build_system/scripts/build/prove-live-public-install.sh").read_text()
     assert 'curl -fsSL https://capsem.org/install.sh | CAPSEM_CHANNEL="$channel" sh' in live_proof
     assert "dpkg-query -W -f='${Version}' capsem" in live_proof
     assert 'grep -F "Running:   true" /tmp/capsem-live-status.txt' in live_proof
     assert 'grep -F "Service:   ok" /tmp/capsem-live-status.txt' in live_proof
     assert 'grep -F "Gateway:   ok" /tmp/capsem-live-status.txt' in live_proof
-    assert '"$script_dir/prove-installed-shell.py"' in live_proof
-    assert '"$script_dir/verify-installed-release.py"' in live_proof
+    assert '"$repo_root/scripts/prove-installed-shell.py"' in live_proof
+    assert '"$repo_root/scripts/verify-installed-release.py"' in live_proof
     assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in live_proof
     assert '"$HOME/.capsem/bin/capsem" run' not in verify_downloads
     assert "skipping binary e2e" not in verify_downloads
@@ -4585,7 +4585,7 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     just = (PROJECT_ROOT / "justfile").read_text()
     web_gate = _source_text("scripts/check-web-surface.sh")
 
-    generate_pos = workflow.find("bash scripts/generate-settings.sh")
+    generate_pos = workflow.find("bash build_system/scripts/build/generate-settings.sh")
     first_frontend_build_pos = workflow.find("bash scripts/check-web-surface.sh frontend-build")
     frontend_check_pos = workflow.find("bash scripts/check-web-surface.sh frontend")
 
@@ -4602,13 +4602,13 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert "pnpm --dir web/app run check" in web_gate
     assert generate_pos < first_frontend_build_pos
     assert generate_pos < frontend_check_pos
-    assert "bash scripts/generate-settings.sh" in just
+    assert "bash build_system/scripts/build/generate-settings.sh" in just
     generated_gate = _recipe_block("_check-generated-settings:")
     assert "check-generated-settings.sh" in generated_gate
     assert "_dev-frontend: _pnpm-install _generate-settings" in just
     assert '_build-ui profile="debug": _pnpm-install _generate-settings' in just
     assert "\ntest-frontend:" not in just
-    assert "uv run --project build_system --frozen python scripts/generate_schema.py" not in just
+    assert "uv run --project build_system --frozen python build_system/scripts/build/generate_schema.py" not in just
 
 
 def test_generated_settings_gate_bootstraps_ignored_output_and_rejects_tracked_drift(
@@ -4616,7 +4616,7 @@ def test_generated_settings_gate_bootstraps_ignored_output_and_rejects_tracked_d
 ) -> None:
     """A clean checkout has no ignored frontend mock, but drift still fails closed."""
     root = tmp_path / "clean-checkout"
-    scripts = root / "scripts"
+    scripts = root / "build_system/scripts/build"
     settings = root / "config/settings"
     frontend = root / "web/app/src/lib"
     scripts.mkdir(parents=True)
@@ -4624,13 +4624,13 @@ def test_generated_settings_gate_bootstraps_ignored_output_and_rejects_tracked_d
     frontend.mkdir(parents=True)
 
     shutil.copy2(
-        PROJECT_ROOT / "scripts/check-generated-settings.sh",
+        PROJECT_ROOT / "build_system/scripts/build/check-generated-settings.sh",
         scripts / "check-generated-settings.sh",
     )
     (scripts / "generate-settings.sh").write_text(
         """#!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 # `$1` is where the tracked pair goes. The checker passes a scratch directory
 # so the gate never rewrites its own checked-in source; the mock is gitignored
 # and still lands in the checkout, because the web checks import it.
@@ -4694,7 +4694,7 @@ cp "$ROOT/config/settings/ui-metadata.generated.json" "$OUT/ui-metadata.generate
 
 
 def test_settings_generator_uses_current_config_authority() -> None:
-    generator = (PROJECT_ROOT / "scripts" / "generate_schema.py").read_text()
+    generator = (PROJECT_ROOT / "build_system" / "scripts" / "build" / "generate_schema.py").read_text()
 
     assert 'PROJECT_ROOT / "config" / "docker" / "image"' in generator
     assert 'PROJECT_ROOT / "guest"' not in generator
@@ -5326,7 +5326,7 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
     release = _source_text(".github/workflows/release.yaml")
     mac_job = _workflow_job_block("build-app-macos", "release.yaml")
     linux_job = _workflow_job_block("build-app-linux", "release.yaml")
-    materializer = _source_text("scripts/materialize-config.sh")
+    materializer = _source_text("build_system/scripts/build/materialize-config.sh")
 
     assert 'manifest_schema="release"' in materializer
     assert 'profile_path="$CONFIG_ROOT/profiles/$profile_id/profile.toml"' in materializer
@@ -5343,9 +5343,9 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
     assert 'CAPSEM_CONFIG_ROOT="$PWD/target/release-config"' in mac_job
     assert 'CAPSEM_ASSETS_PATH="$PWD/target/release-assets"' in mac_job
     assert "CAPSEM_ARCH=arm64" in mac_job
-    assert "bash scripts/materialize-config.sh" in mac_job
+    assert "bash build_system/scripts/build/materialize-config.sh" in mac_job
     assert mac_job.index("Fetch exact selected arm64 profiles") < mac_job.index(
-        "bash scripts/materialize-config.sh"
+        "bash build_system/scripts/build/materialize-config.sh"
     )
     assert '--manifest "$ASSET_MANIFEST_URL"' in mac_job
     assert "name: binary-channel-source" in linux_job
@@ -5360,7 +5360,7 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
     assert 'CAPSEM_CONFIG_ROOT="$PWD/target/package-source-config"' in linux_job
     assert 'CAPSEM_ASSETS_PATH="$PWD/target/package-content/assets"' in linux_job
     assert 'CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/package-content/config"' in linux_job
-    assert "bash scripts/materialize-config.sh --pair-content" in linux_job
+    assert "bash build_system/scripts/build/materialize-config.sh --pair-content" in linux_job
     assert_unmasked_step(
         "release.yaml",
         yaml.safe_load(release),
@@ -5368,9 +5368,9 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
         "Materialize runtime config",
     )
     assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in linux_job
-    assert "bash scripts/materialize-config.sh" in linux_job
+    assert "bash build_system/scripts/build/materialize-config.sh" in linux_job
     assert linux_job.index("Fetch exact selected ${{ matrix.arch }} profiles") < linux_job.index(
-        "bash scripts/materialize-config.sh"
+        "bash build_system/scripts/build/materialize-config.sh"
     )
     assert "uv run --project build_system --frozen capsem-gate cross-compile" in linux_job
     assert "--content-root target/package-content" in linux_job
@@ -5555,7 +5555,7 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         "build_system/packaging/linux/repack-deb.sh",
         "build_system/packaging/linux/deb-postinst.sh",
         "build_system/packaging/macos/pkg-scripts/postinstall",
-        "scripts/materialize-config.sh",
+        "build_system/scripts/build/materialize-config.sh",
         "build_system/builder/release/tools/build_complete_release_channel.py",
         "build_system/builder/release/tools/local_release_glowup.py",
         "tests/capsem-install",
@@ -5863,7 +5863,7 @@ def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:
 
 
 def test_generate_settings_creates_catalog_directory_before_redirect() -> None:
-    script = (PROJECT_ROOT / "scripts" / "generate-settings.sh").read_text()
+    script = (PROJECT_ROOT / "build_system" / "scripts" / "build" / "generate-settings.sh").read_text()
 
     mkdir_pos = script.find('mkdir -p "$ROOT/target/config/profiles"')
     catalog_pos = script.find("target/config/profiles/catalog.generated.json")

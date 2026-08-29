@@ -280,7 +280,7 @@ _cross-compile arch="": _clean-stale _check-assets _generate-settings _materiali
 
 # Generate settings schema/UI metadata and frontend mock data.
 _generate-settings:
-    bash scripts/generate-settings.sh
+    bash build_system/scripts/build/generate-settings.sh
 
 
 # Generate tracked settings outputs and fail if the generator changed them.
@@ -288,7 +288,7 @@ _generate-settings:
 # compares before/after content so an intentional already-generated worktree
 # change can still be tested before it is committed.
 _check-generated-settings:
-    bash scripts/check-generated-settings.sh {{quote(justfile_directory())}}
+    bash build_system/scripts/build/check-generated-settings.sh {{quote(justfile_directory())}}
 
 
 # Incomplete source feedback, and nothing else. The gate command owns the plan;
@@ -352,9 +352,9 @@ logs target="":
 
 
 # Remove stale rootfs copies, orphan UDS sockets, and trim bloated incremental caches.
-# See scripts/clean_stale.py for implementation (tested: tests/capsem-cleanup-script/).
+# See build_system/scripts/build/clean_stale.py for implementation (tested: tests/capsem-cleanup-script/).
 _clean-stale:
-    @uv run --project build_system --frozen python3 scripts/clean_stale.py
+    @uv run --project build_system --frozen python3 build_system/scripts/build/clean_stale.py
 
 # Auto-prune Docker after builds: stopped containers, dangling images, build cache >7d.
 # Keeps named volumes (cross-compile cargo caches) and recent build cache for fast rebuilds.
@@ -410,7 +410,7 @@ _pack-initrd:
 
 
 _materialize-config:
-    bash scripts/materialize-config.sh
+    bash build_system/scripts/build/materialize-config.sh
 
 
 # One bootable local runtime: verified assets, the initrd repacked around the

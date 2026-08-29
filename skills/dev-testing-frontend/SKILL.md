@@ -34,7 +34,7 @@ When `window.__TAURI_INTERNALS__` is absent (browser via `just dev ui`), `api.ts
 
 This means you can test the full UI without a VM by running `just dev ui`.
 
-**Generated mock data**: `mock-settings.generated.ts` is produced by `scripts/generate_schema.py` from `config/settings/ui-metadata.generated.json`. It runs as part of `just exec` and `just test-clean` via the `_generate-settings` recipe. Never hand-edit this file.
+**Generated mock data**: `mock-settings.generated.ts` is produced by `build_system/scripts/build/generate_schema.py` from `config/settings/ui-metadata.generated.json`. It runs as part of `just exec` and `just test-clean` via the `_generate-settings` recipe. Never hand-edit this file.
 
 ## Visual verification with Chrome DevTools MCP
 

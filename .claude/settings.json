@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 scripts/print-gate-digest.py"
+            "command": "python3 build_system/scripts/build/print-gate-digest.py"
           }
         ]
       }

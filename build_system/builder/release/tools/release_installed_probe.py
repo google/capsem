@@ -181,7 +181,7 @@ probe_installed_transition() {{
   fi
   printf '%s\n' '{{"schema":"capsem.installed_doctor.v1","passed":true}}' \
     > "$EVIDENCE_DIR/$label-doctor.json"
-  {shlex.quote(sys.executable)} scripts/run-installed-winterfell.py \
+  {shlex.quote(sys.executable)} build_system/scripts/build/run-installed-winterfell.py \
     --bin-dir "$CAPSEM_HOME_DIR/bin" \
     --assets-dir "$CAPSEM_HOME_DIR/assets" \
     --profiles-dir "$CAPSEM_HOME_DIR/profiles" \

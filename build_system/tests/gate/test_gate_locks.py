@@ -5,7 +5,7 @@ first thing a run does is remove `$CAPSEM_HOME` (justfile:502) and stop the
 service in it, so two runs means one deletes the other's home mid-flight and
 both report failures that belong to neither.
 
-`scripts/lib/exec_lock.sh` got this right, and every subtlety in it was a
+`build_system/scripts/build/lib/exec_lock.sh` got this right, and every subtlety in it was a
 comment. The lockfile had to sit outside the tree about to be wiped. The daemon
 had to be launched with the lock fd closed (`3>&-`, justfile:152) or it would
 hold the lock after the gate exited. And a dead holder had to release without

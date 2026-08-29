@@ -122,6 +122,7 @@ def test_public_binary_release_gate_reads_package_contents(tmp_path: Path) -> No
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
+        check=False,
         timeout=60,
     )
 
@@ -171,6 +172,7 @@ def test_public_binary_release_gate_rejects_manifest_binary_hash_drift(
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
+        check=False,
         timeout=60,
     )
 
@@ -254,6 +256,7 @@ def test_public_binary_release_gate_does_not_execute_gui_payload_without_deps(
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
+        check=False,
         timeout=60,
     )
 
@@ -306,6 +309,7 @@ def test_public_binary_release_gate_rejects_frozen_manifest_payload(tmp_path: Pa
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
+        check=False,
         timeout=60,
     )
 
@@ -358,6 +362,7 @@ def test_public_binary_release_gate_rejects_manifest_metadata_package_version_dr
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
+        check=False,
         timeout=60,
     )
 
@@ -370,7 +375,7 @@ def test_public_binary_release_gate_rejects_manifest_metadata_package_version_dr
 def test_release_workflow_runs_public_package_gate_and_native_install() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text(encoding="utf-8")
     verify_downloads = workflow.split("  verify-release-downloads:", maxsplit=1)[1]
-    live_proof = (PROJECT_ROOT / "scripts/prove-live-public-install.sh").read_text(encoding="utf-8")
+    live_proof = (PROJECT_ROOT / "build_system/scripts/build/prove-live-public-install.sh").read_text(encoding="utf-8")
 
     assert "scripts/check-public-binary-release.py" in verify_downloads
     assert '--channel "$RELEASE_CHANNEL"' in verify_downloads
@@ -385,11 +390,11 @@ def test_release_workflow_runs_public_package_gate_and_native_install() -> None:
     assert "--site-url https://capsem.org/" in verify_downloads
     assert "--docker-linux-install" not in verify_downloads
     assert "Enable KVM for live public-install VM proof" in verify_downloads
-    assert "scripts/prove-live-public-install.sh" in verify_downloads
+    assert "build_system/scripts/build/prove-live-public-install.sh" in verify_downloads
     assert 'curl -fsSL https://capsem.org/install.sh | CAPSEM_CHANNEL="$channel" sh' in live_proof
-    assert '"$script_dir/prove-installed-shell.py"' in live_proof
+    assert '"$repo_root/scripts/prove-installed-shell.py"' in live_proof
     assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in live_proof
-    assert '"$script_dir/verify-installed-release.py"' in live_proof
+    assert '"$repo_root/scripts/verify-installed-release.py"' in live_proof
     assert '"$HOME/.capsem/bin/capsem" run' not in verify_downloads
 
 
@@ -420,16 +425,12 @@ def test_public_binary_release_gate_keeps_public_installer_default_on_stable() -
     gate = _load_release_gate()
 
     failures = gate.check_install_script_defaults(
-        "\n".join(
-            (
-                'CAPSEM_CHANNEL="${CAPSEM_CHANNEL:-stable}"',
-                'CAPSEM_RELEASE_BASE_URL="${CAPSEM_RELEASE_BASE_URL:-https://release.capsem.org}"',
-                "/assets/${CAPSEM_CHANNEL}/manifest.json",
-                "ASSET_BYTES ASSET_SHA256 verify_package",
-                'sudo /usr/sbin/installer -pkg "$PKG_PATH" -target /',
-                'sudo apt install -y "$DEB_PATH"',
-            )
-        ),
+        'CAPSEM_CHANNEL="${CAPSEM_CHANNEL:-stable}"\n'
+        'CAPSEM_RELEASE_BASE_URL="${CAPSEM_RELEASE_BASE_URL:-https://release.capsem.org}"\n'
+        "/assets/${CAPSEM_CHANNEL}/manifest.json\n"
+        "ASSET_BYTES ASSET_SHA256 verify_package\n"
+        'sudo /usr/sbin/installer -pkg "$PKG_PATH" -target /\n'
+        'sudo apt install -y "$DEB_PATH"',
         release_base_url="https://release.capsem.org",
     )
 
@@ -624,19 +625,14 @@ def _write_manifest(tmp_path: Path, packages: list[dict[str, object]]) -> Path:
 def _write_install_sh(tmp_path: Path) -> Path:
     path = tmp_path / "install.sh"
     path.write_text(
-        "\n".join(
-            [
-                'CAPSEM_CHANNEL="${CAPSEM_CHANNEL:-stable}"',
-                'CAPSEM_RELEASE_BASE_URL="${CAPSEM_RELEASE_BASE_URL:-https://release.capsem.org}"',
-                'CAPSEM_MANIFEST_URL="${CAPSEM_MANIFEST_URL:-${CAPSEM_RELEASE_BASE_URL}/assets/${CAPSEM_CHANNEL}/manifest.json}"',
-                "ASSET_BYTES=1",
-                "ASSET_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "verify_package() { :; }",
-                'sudo /usr/sbin/installer -pkg "$PKG_PATH" -target /',
-                'sudo apt install -y "$DEB_PATH"',
-                "",
-            ]
-        ),
+        'CAPSEM_CHANNEL="${CAPSEM_CHANNEL:-stable}"\n'
+        'CAPSEM_RELEASE_BASE_URL="${CAPSEM_RELEASE_BASE_URL:-https://release.capsem.org}"\n'
+        'CAPSEM_MANIFEST_URL="${CAPSEM_MANIFEST_URL:-${CAPSEM_RELEASE_BASE_URL}/assets/${CAPSEM_CHANNEL}/manifest.json}"\n'
+        "ASSET_BYTES=1\n"
+        "ASSET_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+        "verify_package() { :; }\n"
+        'sudo /usr/sbin/installer -pkg "$PKG_PATH" -target /\n'
+        'sudo apt install -y "$DEB_PATH"\n',
         encoding="utf-8",
     )
     return path

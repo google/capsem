@@ -6,7 +6,7 @@ on:
       - .github/workflows/site.yaml
       - README.md
       - scripts/check-web-surface.sh
-      - scripts/lib/exec_lock.sh
+      - build_system/scripts/build/lib/exec_lock.sh
       - web/graphics/**
       - web/marketing/**
 

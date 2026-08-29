@@ -168,7 +168,7 @@ def build_cohort(args) -> dict[str, str]:
         # step compares the staged asset manifest against the materialized
         # runtime one byte for byte, and only this flag makes them the same
         # document -- the staged one is the channel graph until it is paired.
-        ["bash", "scripts/materialize-config.sh", "--pair-content"],
+        ["bash", "build_system/scripts/build/materialize-config.sh", "--pair-content"],
         env={
             # A path rather than a `file://` URL, and the assets directory
             # beside it. `--pair-content` compares the two as filesystem paths

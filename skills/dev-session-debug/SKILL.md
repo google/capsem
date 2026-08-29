@@ -353,7 +353,7 @@ Rollup happens when a session ends.
 ### Cost is zero
 - Model not found in pricing table (`config/data/genai-prices.json`)
 - Download the reviewed upstream pricing JSON and invoke
-  `python3 scripts/update_genai_prices.py <source.json> config/data/genai-prices.json`.
+  `python3 build_system/scripts/build/update_genai_prices.py <source.json> config/data/genai-prices.json`.
 
 ## When to inspect sessions
 

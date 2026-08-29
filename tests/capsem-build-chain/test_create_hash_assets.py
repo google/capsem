@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-SCRIPT = PROJECT_ROOT / "scripts" / "create_hash_assets.py"
+SCRIPT = PROJECT_ROOT / "build_system" / "scripts" / "build" / "create_hash_assets.py"
 IMPLEMENTATION = (
     PROJECT_ROOT
     / "build_system/builder/image/tools/build/create_hash_assets.py"

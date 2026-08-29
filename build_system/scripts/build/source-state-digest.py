@@ -11,7 +11,7 @@ from pathlib import Path
 
 import blake3
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def source_state_digest(root: Path = ROOT) -> str:

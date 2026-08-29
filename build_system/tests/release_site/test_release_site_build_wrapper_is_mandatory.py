@@ -168,7 +168,7 @@ def _shell_lock_parts(source: str) -> tuple[str, ...]:
 def test_every_shell_astro_build_takes_the_cross_process_lock() -> None:
     source = SHELL_OWNER.read_text(encoding="utf-8")
     assert not _unlocked_shell_surfaces(source)
-    assert 'source "$ROOT/scripts/lib/exec_lock.sh"' in source
+    assert 'source "$ROOT/build_system/scripts/build/lib/exec_lock.sh"' in source
     function = _astro_function(source)
     assert function is not None
     assert [command.argv for command in commands(function.body)] == [

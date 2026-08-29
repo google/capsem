@@ -122,8 +122,8 @@ def test_release_and_recovery_share_publication_proof_scripts() -> None:
     for workflow in workflows:
         assert "scripts/release-package-contract.py verify-storage" in workflow
         assert "scripts/prove-candidate-installer.sh" in workflow
-        assert "scripts/prove-live-public-install.sh" in workflow
-    live_proof = (PROJECT_ROOT / "scripts/prove-live-public-install.sh").read_text()
+        assert "build_system/scripts/build/prove-live-public-install.sh" in workflow
+    live_proof = (PROJECT_ROOT / "build_system/scripts/build/prove-live-public-install.sh").read_text()
     assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in live_proof
 
 

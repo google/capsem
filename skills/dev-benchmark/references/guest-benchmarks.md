@@ -24,7 +24,7 @@ Historical host-native evidence includes filesystem and machine metadata under
 `CAPSEM_HOST_NATIVE_BENCH_DIR` explicitly selects another disk. There is no Just
 history command: run the owner, review JSON, and commit a new file without
 overwriting prior evidence. Compare Linux x86_64 and macOS arm64 only after the
-same owner reruns both; `scripts/benchmark_report.py` validates/renders them.
+same owner reruns both; `build_system/scripts/build/benchmark_report.py` validates/renders them.
 
 ## Snapshot diagnosis
 

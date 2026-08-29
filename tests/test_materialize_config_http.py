@@ -10,10 +10,13 @@ import threading
 from pathlib import Path
 
 import pytest
-from capsem_builder.release.tools import build_complete_release_channel, local_release_glowup
+from capsem_builder.release.tools import (
+    build_complete_release_channel,
+    local_release_glowup,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MATERIALIZER = PROJECT_ROOT / "scripts" / "materialize-config.sh"
+MATERIALIZER = PROJECT_ROOT / "build_system" / "scripts" / "build" / "materialize-config.sh"
 EXPECTED_USER_AGENT = "capsem-materialize-config/1"
 EXPECTED_RELEASE_USER_AGENT = "capsem-release-client/1"
 
@@ -416,7 +419,7 @@ def test_public_release_readers_identify_capsem_to_http_edge() -> None:
 
 def test_public_release_readers_never_pass_a_url_string_to_urlopen() -> None:
     readers = {
-        PROJECT_ROOT / "scripts/materialize-config.sh": ("urlopen(source",),
+        PROJECT_ROOT / "build_system/scripts/build/materialize-config.sh": ("urlopen(source",),
         Path(build_complete_release_channel.__file__): ("urlopen(source",),
         Path(local_release_glowup.__file__): ("urlopen(manifest_url",),
     }

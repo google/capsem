@@ -206,7 +206,7 @@ def test_cross_run_download_requires_an_immutable_run_resolver() -> None:
 
 
 def test_cross_run_download_accepts_a_verified_upstream_matrix_reuse() -> None:
-    producer = {"steps": [{"run": "python3 scripts/resolve-reusable-profile-assets.py"}]}
+    producer = {"steps": [{"run": "python3 build_system/scripts/build/resolve-reusable-profile-assets.py"}]}
     consumer = {
         "needs": ["resolve"],
         "strategy": {"matrix": {"arch": ["arm64", "x86_64"]}},

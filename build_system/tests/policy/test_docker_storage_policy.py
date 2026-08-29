@@ -15,7 +15,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 POLICY_PATH = ROOT / "config" / "storage-policy.toml"
-POLICY_SCRIPT = ROOT / "scripts" / "docker-storage-policy.py"
+POLICY_SCRIPT = ROOT / "build_system" / "scripts" / "build" / "docker-storage-policy.py"
 POLICY_IMPLEMENTATION = (
     ROOT
     / "build_system/builder/image/tools/build/docker_storage_policy.py"
@@ -280,7 +280,7 @@ def test_both_package_architectures_release_their_own_install_headroom() -> None
 
 
 def test_shell_space_guard_is_only_a_python_controller_entrypoint() -> None:
-    guard = (ROOT / "scripts" / "ensure-docker-space.sh").read_text()
+    guard = (ROOT / "build_system" / "scripts" / "build" / "ensure-docker-space.sh").read_text()
 
     assert "docker " not in guard
     assert 'docker-storage-policy.py" enforce' in guard
@@ -308,7 +308,7 @@ exec "$@"
     fake_uv.chmod(0o755)
 
     result = subprocess.run(
-        [str(ROOT / "scripts" / "ensure-docker-space.sh"), "install", "contract"],
+        [str(ROOT / "build_system" / "scripts" / "build" / "ensure-docker-space.sh"), "install", "contract"],
         cwd=ROOT,
         env={
             **os.environ,

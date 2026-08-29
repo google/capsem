@@ -235,7 +235,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/resolve-reusable-profile-assets.py \
+          python3 build_system/scripts/build/resolve-reusable-profile-assets.py \
             --repository "${{ github.repository }}" \
             --workflow release-assets.yaml \
             --current-run-id "${{ github.run_id }}" \

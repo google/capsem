@@ -67,7 +67,7 @@ def test_ensure_space_passes_the_optional_boundary_through() -> None:
 
 
 def _policy_parser():
-    """The real parser from `scripts/docker-storage-policy.py`."""
+    """The real parser from `build_system/scripts/build/docker-storage-policy.py`."""
     import importlib.util
     import sys
 

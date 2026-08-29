@@ -37,7 +37,7 @@ WORKFLOWS = ROOT / ".github/workflows"
 #: The recipes whose plans contain `glowup.content`.
 PROVES_PAIRED_CONTENT = {"qualify-binaries", "qualify-assets"}
 
-MATERIALIZE = "scripts/materialize-config.sh"
+MATERIALIZE = "build_system/scripts/build/materialize-config.sh"
 
 
 def _qualifying_jobs() -> dict[str, str]:

@@ -100,7 +100,7 @@ fi
 
 # Copy assets through the same manifest-driven path used by local packages.
 if [[ -f "$ASSETS_SRC/manifest.json" ]]; then
-    bash "$SCRIPT_DIR/sync-dev-assets.sh" "$ASSETS_SRC" "$ASSETS_DST"
+    bash "$SCRIPT_DIR/../build_system/scripts/build/sync-dev-assets.sh" "$ASSETS_SRC" "$ASSETS_DST"
 fi
 
 rm -rf "$PROFILES_DST"
