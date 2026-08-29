@@ -173,7 +173,7 @@ def test_a_second_lane_run_reuses_the_exact_receipted_output(tmp_path: Path) -> 
     assert any("is current" in note and "reusing it" in note for note in second.notes)
 
 
-def test_asset_plan_repacks_every_private_lane_before_assembly() -> None:
+def test_asset_plan_builds_and_signs_host_binaries_before_assembly() -> None:
     from capsem_builder.gate.assetplan import fragment
     from capsem_builder.gate.plan import Plan
 
@@ -181,7 +181,15 @@ def test_asset_plan_repacks_every_private_lane_before_assembly() -> None:
     fragment(plan, CONFIG)
 
     assert plan.after_of("assets.pack-initrds") == {"assets.sweep"}
-    assert plan.after_of("assets.assemble") == {"assets.pack-initrds"}
+    assert plan.after_of("assets.build-host-binaries") == {"assets.pack-initrds"}
+    assert plan.after_of("assets.sign-host-binaries") == {"assets.build-host-binaries"}
+    assert plan.after_of("assets.assemble") == {"assets.sign-host-binaries"}
+    assert CONFIG.path(CONFIG.service.binary) in plan.step_named(
+        "assets.build-host-binaries"
+    ).produces
+    assert CONFIG.path(CONFIG.service.process_binary) in plan.step_named(
+        "assets.build-host-binaries"
+    ).produces
     packed = plan.step_named("assets.pack-initrds")
     profiles = {path.parent.name for path in CONFIG.root.glob(CONFIG.assets.profiles_glob)}
     expected = {

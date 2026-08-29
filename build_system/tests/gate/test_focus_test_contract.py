@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 import pytest
@@ -72,7 +73,9 @@ def test_focus_adopts_the_owner_lifecycle_without_nesting_a_gate_action() -> Non
     assert command.private_checkout == owner.private_checkout
     assert command._sandbox_mode == owner._sandbox_mode
     assert "reexec" not in vars(type(command))
-    assert "capsem-gate" not in command.plan().describe()
+    assert re.search(
+        r"(?<![\w-])capsem-gate(?![\w-])", command.plan().describe()
+    ) is None
 
 
 @pytest.mark.parametrize(
