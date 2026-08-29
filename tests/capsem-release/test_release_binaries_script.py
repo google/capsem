@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from capsem_builder.release.tools import release_version_tag as TAGS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "release-binaries.py"
@@ -21,12 +22,6 @@ NOTES_SPEC = importlib.util.spec_from_file_location("extract_release_notes", NOT
 assert NOTES_SPEC is not None and NOTES_SPEC.loader is not None
 NOTES = importlib.util.module_from_spec(NOTES_SPEC)
 NOTES_SPEC.loader.exec_module(NOTES)
-TAGS_SCRIPT = PROJECT_ROOT / "scripts" / "release_version_tag.py"
-TAGS_SPEC = importlib.util.spec_from_file_location("release_version_tag", TAGS_SCRIPT)
-assert TAGS_SPEC is not None and TAGS_SPEC.loader is not None
-TAGS = importlib.util.module_from_spec(TAGS_SPEC)
-TAGS_SPEC.loader.exec_module(TAGS)
-
 SOURCE = "0123456789abcdef0123456789abcdef01234567"
 VERSION = f"{RELEASE.RELEASE_LINE}.2"
 TAG = f"v{VERSION}"

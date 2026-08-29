@@ -16,20 +16,14 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
+from capsem_builder.release.tools.release_version_tag import (
+    discard_claimed_version,
+    ensure_version_tag,
+    remote_version_target,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 
-try:
-    from release_version_tag import (
-        discard_claimed_version,
-        ensure_version_tag,
-        remote_version_target,
-    )
-except ModuleNotFoundError:
-    from scripts.release_version_tag import (
-        discard_claimed_version,
-        ensure_version_tag,
-        remote_version_target,
-    )
 CHANNELS = {"stable", "nightly"}
 VERSION_COHORT_PATHS = (
     Path("Cargo.toml"),

@@ -15,12 +15,14 @@ from typing import Any, cast
 
 import embedded_shell
 import pytest
+from capsem_builder.release.tools import release_first_release, release_glowup, release_transition
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-MODULE_PATH = PROJECT_ROOT / "scripts" / "release_glowup.py"
-TRANSITION_PATH = PROJECT_ROOT / "scripts" / "release_transition.py"
 LOCAL_GLOWUP_PATH = PROJECT_ROOT / "scripts" / "local-release-glowup.py"
-INSTALLED_PROBE_PATH = PROJECT_ROOT / "scripts" / "release_installed_probe.py"
+INSTALLED_PROBE_PATH = (
+    PROJECT_ROOT
+    / "build_system/builder/release/tools/release_installed_probe.py"
+)
 MARKETING_SURFACE_PATH = PROJECT_ROOT / "scripts" / "marketing_install_surface.py"
 AUTOMATIC_UPDATE_POLL_CLEANUP = [
     "systemctl",
@@ -32,19 +34,11 @@ AUTOMATIC_UPDATE_POLL_CLEANUP = [
 
 
 def _load_module():
-    spec = importlib.util.spec_from_file_location("release_glowup", MODULE_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return release_glowup
 
 
 def _load_transition_module():
-    spec = importlib.util.spec_from_file_location("release_transition", TRANSITION_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return release_transition
 
 
 def _load_local_glowup():
@@ -75,17 +69,8 @@ def _load_marketing_surface():
 
 
 def _load_first_release():
-    """Load the first-release classifier, which imports `release_glowup` itself."""
-    path = PROJECT_ROOT / "scripts" / "release_first_release.py"
-    spec = importlib.util.spec_from_file_location("release_first_release", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.path.remove(str(PROJECT_ROOT / "scripts"))
-    return module
+    """Return the directly owned first-release classifier."""
+    return release_first_release
 
 
 def test_local_glowup_requires_the_public_install_command_to_be_discoverable() -> None:

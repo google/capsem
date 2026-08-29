@@ -11,6 +11,7 @@ from pathlib import Path
 
 import blake3
 import pytest
+from capsem_builder.release.tools import release_test_profiles as PROFILE_AXIS
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "fetch-release-artifacts.py"
@@ -52,15 +53,6 @@ SOURCE_SCRIPT = ROOT / "scripts" / "fetch-channel-source-manifest.py"
 assert SOURCE_SPEC is not None and SOURCE_SPEC.loader is not None
 SOURCE = importlib.util.module_from_spec(SOURCE_SPEC)
 SOURCE_SPEC.loader.exec_module(SOURCE)
-PROFILE_AXIS_SPEC = importlib.util.spec_from_file_location(
-    "release_test_profiles",
-    ROOT / "scripts" / "release-test-profiles.py",
-)
-assert PROFILE_AXIS_SPEC is not None and PROFILE_AXIS_SPEC.loader is not None
-PROFILE_AXIS = importlib.util.module_from_spec(PROFILE_AXIS_SPEC)
-PROFILE_AXIS_SPEC.loader.exec_module(PROFILE_AXIS)
-
-
 def _digest(payload: bytes) -> dict[str, str]:
     return {
         "sha256": hashlib.sha256(payload).hexdigest(),

@@ -18,32 +18,20 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO, cast
 
+from capsem_builder.release.tools.release_glowup import (
+    ArtifactIdentity,
+    GlowupContractError,
+    assert_manifest_artifact,
+    build_report,
+    load_manifest_bytes,
+)
+from capsem_builder.release.tools.release_transition_candidates import (
+    validate_macos_guest_report,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 from macos_tart_transition_support import local_tart_capabilities  # noqa: E402
-
-try:
-    from release_glowup import (
-        ArtifactIdentity,
-        GlowupContractError,
-        assert_manifest_artifact,
-        build_report,
-        load_manifest_bytes,
-    )
-except ModuleNotFoundError:
-    from scripts.release_glowup import (
-        ArtifactIdentity,
-        GlowupContractError,
-        assert_manifest_artifact,
-        build_report,
-        load_manifest_bytes,
-    )
-
-try:
-    from release_transition_candidates import validate_macos_guest_report
-except ModuleNotFoundError:
-    from scripts.release_transition_candidates import validate_macos_guest_report
-
 
 STORAGE_POLICY = PROJECT_ROOT / "config" / "storage-policy.toml"
 STORAGE_CONTROLLER = PROJECT_ROOT / "scripts" / "docker-storage-policy.py"

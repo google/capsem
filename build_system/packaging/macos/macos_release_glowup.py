@@ -22,51 +22,28 @@ from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.content import ProfileContent
 from capsem_builder.gate.releaseauthoring import author_native_candidate
 from capsem_builder.gate.sourcecommit import SourceCommit, source_commit_for_checkout
+from capsem_builder.release.tools.release_glowup import (
+    ArtifactIdentity,
+    PairingIdentity,
+    TransitionKind,
+    assert_manifest_artifact,
+    build_report,
+    build_transition_evidence,
+    validate_installed_evidence,
+)
+from capsem_builder.release.tools.release_transition_candidates import (
+    TransitionCandidates,
+    require_object,
+    stage_transition_candidates,
+    validate_complete_verdicts,
+    validate_physical_evidence,
+)
 from macos_candidate_content import hardlink_or_copy as hardlink_or_copy
 from macos_candidate_content import (
     localize_candidate_profile_urls,
     stage_candidate_assets,
 )
 from marketing_install_surface import validate_checked_in_marketing_install_surface
-
-try:
-    from release_glowup import (
-        ArtifactIdentity,
-        PairingIdentity,
-        TransitionKind,
-        assert_manifest_artifact,
-        build_report,
-        build_transition_evidence,
-        validate_installed_evidence,
-    )
-except ModuleNotFoundError:
-    from scripts.release_glowup import (
-        ArtifactIdentity,
-        PairingIdentity,
-        TransitionKind,
-        assert_manifest_artifact,
-        build_report,
-        build_transition_evidence,
-        validate_installed_evidence,
-    )
-
-try:
-    from release_transition_candidates import (
-        TransitionCandidates,
-        require_object,
-        stage_transition_candidates,
-        validate_complete_verdicts,
-        validate_physical_evidence,
-    )
-except ModuleNotFoundError:
-    from scripts.release_transition_candidates import (
-        TransitionCandidates,
-        require_object,
-        stage_transition_candidates,
-        validate_complete_verdicts,
-        validate_physical_evidence,
-    )
-
 
 GUEST_RELEASE_ROOT = "http://127.0.0.1:18765/candidate"
 GUEST_ASSET_ROOT = "file:///Volumes/My%20Shared%20Files/capsem-assets"

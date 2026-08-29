@@ -25,76 +25,36 @@ from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.productschema import ProfileRevisionPolicy
 from capsem_builder.gate.releaseauthoring import author_native_candidate
 from capsem_builder.gate.sourcecommit import SourceCommit
+from capsem_builder.release.tools import release_installed_probe as installed_probe
+from capsem_builder.release.tools.release_first_release import (
+    activates_first_profiles,
+    classify_pairing_inputs,
+    resolve_public_before_package,
+    verify_candidate_profile_publication,
+)
+from capsem_builder.release.tools.release_fixture_server import serve_release_root
+from capsem_builder.release.tools.release_glowup import (
+    ArtifactIdentity,
+    PairingIdentity,
+    TransitionKind,
+    artifact_identity_from_manifest_package,
+    assert_manifest_artifact,
+    build_report,
+    build_transition_evidence,
+    explicit_channel_switch_args,
+    requires_changed_profiles,
+    tamper_profile_artifact_digest,
+    validate_installed_evidence,
+    validate_pairing_inputs,
+)
+from capsem_builder.release.tools.release_inputs import (
+    load_verified_release_inputs,
+    safe_relative,
+    verify_payload,
+)
+from capsem_builder.release.tools.release_transition import validate_transition_verdict
 from marketing_install_surface import validate_checked_in_marketing_install_surface
 from release_pairing_baseline import exact_channel_catalog, validate_selected_profile_scope
-
-try:
-    from release_glowup import (
-        ArtifactIdentity,
-        PairingIdentity,
-        TransitionKind,
-        artifact_identity_from_manifest_package,
-        assert_manifest_artifact,
-        build_report,
-        build_transition_evidence,
-        explicit_channel_switch_args,
-        requires_changed_profiles,
-        tamper_profile_artifact_digest,
-        validate_installed_evidence,
-        validate_pairing_inputs,
-    )
-except ModuleNotFoundError:
-    from scripts.release_glowup import (
-        ArtifactIdentity,
-        PairingIdentity,
-        TransitionKind,
-        artifact_identity_from_manifest_package,
-        assert_manifest_artifact,
-        build_report,
-        build_transition_evidence,
-        explicit_channel_switch_args,
-        requires_changed_profiles,
-        tamper_profile_artifact_digest,
-        validate_installed_evidence,
-        validate_pairing_inputs,
-    )
-
-try:
-    from release_fixture_server import serve_release_root
-    from release_transition import validate_transition_verdict
-except ModuleNotFoundError:
-    from scripts.release_fixture_server import serve_release_root
-    from scripts.release_transition import validate_transition_verdict
-
-try:
-    from release_first_release import (
-        activates_first_profiles,
-        classify_pairing_inputs,
-        resolve_public_before_package,
-        verify_candidate_profile_publication,
-    )
-except ModuleNotFoundError:
-    from scripts.release_first_release import (
-        activates_first_profiles,
-        classify_pairing_inputs,
-        resolve_public_before_package,
-        verify_candidate_profile_publication,
-    )
-
-try:
-    from release_inputs import load_verified_release_inputs, safe_relative, verify_payload
-except ModuleNotFoundError:
-    from scripts.release_inputs import (
-        load_verified_release_inputs,
-        safe_relative,
-        verify_payload,
-    )
-
-try:
-    import release_installed_probe as installed_probe
-except ModuleNotFoundError:
-    from scripts import release_installed_probe as installed_probe
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 

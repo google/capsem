@@ -233,13 +233,9 @@ def _load_local_release_glowup() -> ModuleType:
 
 
 def _load_release_installed_probe() -> ModuleType:
-    path = PROJECT_ROOT / "scripts" / "release_installed_probe.py"
-    spec = importlib.util.spec_from_file_location("release_installed_probe", path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    from capsem_builder.release.tools import release_installed_probe
+
+    return release_installed_probe
 
 
 def _run_docker_space_gate(
@@ -498,7 +494,10 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     assert f"requires {floor_gib}.0 GiB free" in exhausted.stderr
 
     storage_script = (PROJECT_ROOT / "scripts" / "ensure-docker-space.sh").read_text()
-    controller = (PROJECT_ROOT / "scripts" / "docker-storage-policy.py").read_text()
+    controller = (
+        PROJECT_ROOT
+        / "build_system/builder/image/tools/build/docker_storage_policy.py"
+    ).read_text()
     assert "docker " not in storage_script
     assert '"retained-active"' in controller
     assert '"buildkit-pressure-prune"' in controller
@@ -979,7 +978,10 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
     assert "corp-escape.log" in script
     assert "update --assets --channel stable" not in script
     transition_gate = (PROJECT_ROOT / "scripts" / "check-public-binary-release.py").read_text()
-    fixture_transport = (PROJECT_ROOT / "scripts" / "release_fixture_server.py").read_text()
+    fixture_transport = (
+        PROJECT_ROOT
+        / "build_system/builder/release/tools/release_fixture_server.py"
+    ).read_text()
     assert "run_docker_binary_transition_smoke" in transition_gate
     assert "update --yes --channel nightly" in transition_gate
     assert "update --yes --channel stable" in transition_gate
@@ -1538,7 +1540,10 @@ def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> N
 
 
 def test_docker_gc_reclaims_old_created_debug_containers() -> None:
-    controller = (PROJECT_ROOT / "scripts/docker-storage-policy.py").read_text()
+    controller = (
+        PROJECT_ROOT
+        / "build_system/builder/image/tools/build/docker_storage_policy.py"
+    ).read_text()
 
     assert "gc" in _planned("storage", action="gc", rail=None)
     assert '"container",\n                    "prune"' in controller
@@ -2618,7 +2623,10 @@ def test_local_release_glowup_forbids_metadata_only_binary_cohorts() -> None:
 def test_native_glowup_owns_exact_manifest_and_installed_shell_evidence() -> None:
     macos = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "macos_release_glowup.py").read_text()
     linux = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
-    installed_probe = (PROJECT_ROOT / "scripts" / "release_installed_probe.py").read_text()
+    installed_probe = (
+        PROJECT_ROOT
+        / "build_system/builder/release/tools/release_installed_probe.py"
+    ).read_text()
     authoring = (PROJECT_ROOT / "build_system/builder/gate/releaseauthoring.py").read_text()
 
     assert "assert_manifest_artifact" in macos
@@ -3113,7 +3121,10 @@ def test_ci_install_job_selects_exact_profiles_before_building_packages() -> Non
 
 
 def test_installed_doctor_failure_is_printed_and_preserved() -> None:
-    probe = (PROJECT_ROOT / "scripts" / "release_installed_probe.py").read_text()
+    probe = (
+        PROJECT_ROOT
+        / "build_system/builder/release/tools/release_installed_probe.py"
+    ).read_text()
 
     assert 'doctor_log="$EVIDENCE_DIR/$label-doctor.log"' in probe
     assert 'failed_process_logs="$EVIDENCE_DIR/$label-failed-process-logs.txt"' in probe
@@ -3237,11 +3248,7 @@ def test_cross_compile_clock_sync_uses_bounded_colima_command(
     # Prove the configured helper is actually bounded and reaches Colima
     # directly; a source-string check in the Just dispatcher went stale as
     # soon as the work moved into the package rail.
-    clock_path = PROJECT_ROOT / config.package.clock_script
-    spec = importlib.util.spec_from_file_location("install_payload_clock_sync", clock_path)
-    assert spec is not None and spec.loader is not None
-    clock = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(clock)
+    from capsem_builder.image.tools.build import sync_container_clock as clock
     calls: list[tuple[list[str], dict[str, object]]] = []
 
     def record(command, **kwargs):

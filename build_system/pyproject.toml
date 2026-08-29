@@ -36,6 +36,7 @@ packages = [
     "capsem_builder.image.tools.build",
     "capsem_builder.policy",
     "capsem_builder.release",
+    "capsem_builder.release.tools",
 ]
 include-package-data = true
 

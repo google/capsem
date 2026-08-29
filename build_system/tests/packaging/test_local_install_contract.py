@@ -295,7 +295,10 @@ def test_installed_glowup_owns_the_release_regression_story_matrix() -> None:
         encoding="utf-8"
     )
     physical_boot = (ROOT / "build_system/packaging/macos/prove-macos-package-boot.sh").read_text(encoding="utf-8")
-    native_check = (ROOT / "scripts/check-macos-native-glowup.py").read_text(encoding="utf-8")
+    native_check = (
+        ROOT
+        / "build_system/builder/image/tools/build/check_macos_native_glowup.py"
+    ).read_text(encoding="utf-8")
 
     for source in (local_glowup, macos_glowup):
         assert "validate_checked_in_marketing_install_surface" in source
