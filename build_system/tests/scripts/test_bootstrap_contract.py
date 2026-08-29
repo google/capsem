@@ -12,6 +12,12 @@ LINUX_RUNTIME_ONLY = pytest.mark.skipif(
     sys.platform != "linux",
     reason="executes Linux bootstrap behavior; macOS proves the source contracts only",
 )
+LINUX_BOOTSTRAP_SOURCES = (
+    "build_system/scripts/bootstrap/bootstrap-linux.sh",
+    "build_system/scripts/bootstrap/bootstrap-linux-common.sh",
+    "build_system/scripts/bootstrap/bootstrap-linux-packages.sh",
+    "build_system/scripts/bootstrap/bootstrap-linux-host.sh",
+)
 
 
 def _gate_labels(name: str = "candidate") -> tuple[str, ...]:
@@ -36,6 +42,10 @@ def _gate_issues(name: str | None = None) -> str:
 
 def _read(path: str) -> str:
     return (PROJECT_ROOT / path).read_text()
+
+
+def _linux_bootstrap_source() -> str:
+    return "\n".join(_read(path) for path in LINUX_BOOTSTRAP_SOURCES)
 
 
 def _executable(path: Path, body: str) -> None:
@@ -113,11 +123,13 @@ def test_bootstrap_waits_for_container_dns_after_colima_restart() -> None:
 
 def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -> None:
     bootstrap = _read("bootstrap.sh")
-    linux = _read("build_system/scripts/bootstrap/bootstrap-linux.sh")
+    linux = _linux_bootstrap_source()
     docker_selector = _read("scripts/select-docker-packages.sh")
 
     assert '. "$SCRIPT_DIR/build_system/scripts/bootstrap/bootstrap-linux.sh"' in bootstrap
     assert 'bootstrap_linux "$SCRIPT_DIR" "$ASSUME_YES"' in bootstrap
+    for helper in LINUX_BOOTSTRAP_SOURCES[1:]:
+        assert f'. "$CAPSEM_BOOTSTRAP_HELPER_DIR/{Path(helper).name}"' in linux
     assert "[SKIP] docker (install via your package manager" not in bootstrap
     assert "[SKIP] docker daemon" not in bootstrap
 
@@ -203,6 +215,26 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     # of racing systemd and failing a valid installation.
     assert "CAPSEM_DOCKER_WAIT" in linux
     assert "CAPSEM_DOCKER_ACCESS_WAIT" in linux
+
+
+def test_release_preflight_sources_owned_checks_from_the_repository_root() -> None:
+    preflight = _read("build_system/scripts/bootstrap/preflight.sh")
+    apple = _read("build_system/scripts/bootstrap/preflight-apple.sh")
+    source = _read("build_system/scripts/bootstrap/preflight-source.sh")
+
+    assert 'ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"' in preflight
+    assert 'source "$SCRIPT_DIR/preflight-apple.sh"' in preflight
+    assert 'source "$SCRIPT_DIR/preflight-source.sh"' in preflight
+    for function in (
+        "check_apple_certificate",
+        "check_b64_matches_p12",
+        "check_notarization",
+    ):
+        assert f"{function}() {{" in apple
+        assert function in preflight
+    for function in ("check_ephemeral_model", "check_guest_binaries"):
+        assert f"{function}() {{" in source
+        assert function in preflight
 
 
 @LINUX_RUNTIME_ONLY
@@ -291,7 +323,7 @@ def test_linux_bootstrap_installs_only_the_missing_docker_components(tmp_path: P
 
 
 def test_linux_bootstrap_owns_distro_binfmt_setup_before_the_gate() -> None:
-    linux = _read("build_system/scripts/bootstrap/bootstrap-linux.sh")
+    linux = _linux_bootstrap_source()
 
     assert "qemu-user-static" in linux
     assert "qemu-user-binfmt" in linux
