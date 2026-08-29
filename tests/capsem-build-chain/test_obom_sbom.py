@@ -33,8 +33,8 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     assert "needs.author-profile-release.outputs.release_needed == 'true'" in publish_profile
     assert "needs.test-profile-pairing.result == 'success'" in publish_profile
     assert "if: ${{ inputs.dry_run == false }}" in publish_profile
-    assert "scripts/stage-profile-publication.py" in asset_workflow
-    assert "scripts/verify-profile-publication.py" in asset_workflow
+    assert "build_system/scripts/release/stage-profile-publication.py" in asset_workflow
+    assert "build_system/scripts/release/verify-profile-publication.py" in asset_workflow
     assert "subject-path: target/asset-release/profile-*/*" in asset_workflow
     assert publish_profile.index("Attest VM asset provenance") < publish_profile.index(
         "Publish immutable GitHub profile release"
@@ -45,7 +45,7 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     )
 
     assert "Generate packaged host SBOM" in binary_workflow
-    assert "scripts/generate-host-binary-sbom.py" in binary_workflow
+    assert "build_system/scripts/release/generate-host-binary-sbom.py" in binary_workflow
     assert "--output release-artifacts/capsem-sbom.spdx.json" in binary_workflow
     assert "cargo sbom --output-format spdx_json_2_3" not in binary_workflow
     assert "install_cargo_tool cargo-sbom" not in binary_workflow
@@ -53,7 +53,7 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
         "  test-binary-pairing:", maxsplit=1
     )[0]
     assert "Generate packaged host SBOM once" in author_sbom
-    assert "scripts/generate-host-binary-sbom.py" in author_sbom
+    assert "build_system/scripts/release/generate-host-binary-sbom.py" in author_sbom
     assembly = binary_workflow.split("  assemble-release-channel:", maxsplit=1)[1].split(
         "  verify-release-candidate:", maxsplit=1
     )[0]

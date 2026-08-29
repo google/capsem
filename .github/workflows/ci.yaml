@@ -476,7 +476,7 @@ jobs:
               # canonical URL shape. Keep a retired first-party fixture public
               # so the install gate may hand it its generated local manifest.
               output="$PWD/target/ci-install-selection/assets/stable/manifest.json"
-              python3 scripts/fetch-channel-source-manifest.py \
+              python3 build_system/scripts/release/fetch-channel-source-manifest.py \
                 --channel stable \
                 --repository "$GITHUB_REPOSITORY" \
                 --require-profile-membership \
@@ -499,7 +499,7 @@ jobs:
 
       - name: Stage one exact install content pair
         run: |
-          uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
+          uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
             --input-dir target/ci-install-content/inputs \
             --assets-dir target/ci-install-content/assets \
             --config-root target/ci-install-source-config \

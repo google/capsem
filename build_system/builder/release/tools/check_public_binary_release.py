@@ -33,7 +33,7 @@ from .release_manifest_rows import dead_rows
 
 PROJECT_ROOT = repository_root()
 
-SBOM_GENERATOR = PROJECT_ROOT / "scripts" / "generate-host-binary-sbom.py"
+SBOM_GENERATOR = PROJECT_ROOT / "build_system" / "scripts" / "release" / "generate-host-binary-sbom.py"
 
 
 class PackageArchitecture(str, Enum):
@@ -749,15 +749,15 @@ su capsemtest -c {shlex.quote(install_pipeline)}
 su capsemtest -c 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL={release_base_url}/channels.json "$HOME/.capsem/bin/capsem" update --assets --channel stable'
 check_installed_version {shlex.quote(older_version)}
 grep -F {shlex.quote(f'{release_base_url}/assets/stable/manifest.json')} /home/capsemtest/.capsem/assets/manifest-metadata.json
-python3 /src/scripts/verify-installed-release.py --capsem /home/capsemtest/.capsem/bin/capsem --capsem-home /home/capsemtest/.capsem --manifest-url {release_base_url}/assets/stable/manifest.json --channel stable --package-version {shlex.quote(older_version)}
+python3 /src/build_system/scripts/release/verify-installed-release.py --capsem /home/capsemtest/.capsem/bin/capsem --capsem-home /home/capsemtest/.capsem --manifest-url {release_base_url}/assets/stable/manifest.json --channel stable --package-version {shlex.quote(older_version)}
 su capsemtest -c 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL={release_base_url}/channels.json DEBIAN_FRONTEND=noninteractive "$HOME/.capsem/bin/capsem" update --yes --channel nightly'
 check_installed_version {shlex.quote(newer_version)}
 grep -F {shlex.quote(f'{release_base_url}/assets/nightly/manifest.json')} /home/capsemtest/.capsem/assets/manifest-metadata.json
-python3 /src/scripts/verify-installed-release.py --capsem /home/capsemtest/.capsem/bin/capsem --capsem-home /home/capsemtest/.capsem --manifest-url {release_base_url}/assets/nightly/manifest.json --channel nightly --package-version {shlex.quote(newer_version)}
+python3 /src/build_system/scripts/release/verify-installed-release.py --capsem /home/capsemtest/.capsem/bin/capsem --capsem-home /home/capsemtest/.capsem --manifest-url {release_base_url}/assets/nightly/manifest.json --channel nightly --package-version {shlex.quote(newer_version)}
 su capsemtest -c 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL={release_base_url}/channels.json DEBIAN_FRONTEND=noninteractive "$HOME/.capsem/bin/capsem" update --yes --channel stable'
 check_installed_version {shlex.quote(older_version)}
 grep -F {shlex.quote(f'{release_base_url}/assets/stable/manifest.json')} /home/capsemtest/.capsem/assets/manifest-metadata.json
-python3 /src/scripts/verify-installed-release.py --capsem /home/capsemtest/.capsem/bin/capsem --capsem-home /home/capsemtest/.capsem --manifest-url {release_base_url}/assets/stable/manifest.json --channel stable --package-version {shlex.quote(older_version)}
+python3 /src/build_system/scripts/release/verify-installed-release.py --capsem /home/capsemtest/.capsem/bin/capsem --capsem-home /home/capsemtest/.capsem --manifest-url {release_base_url}/assets/stable/manifest.json --channel stable --package-version {shlex.quote(older_version)}
 """
         subprocess.run(
             [

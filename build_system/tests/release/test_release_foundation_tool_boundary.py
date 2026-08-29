@@ -43,7 +43,9 @@ def test_release_foundations_have_direct_owned_package_modules() -> None:
 
 def test_release_foundation_boundaries_are_thin_direct_adapters() -> None:
     for name, module in LAUNCHERS.items():
-        source = (REPOSITORY_ROOT / "scripts" / name).read_text(encoding="utf-8")
+        source = (
+            REPOSITORY_ROOT / "build_system" / "scripts" / "release" / name
+        ).read_text(encoding="utf-8")
         tree = ast.parse(source)
         assert len(source.splitlines()) <= 21, f"{name} contains reusable behavior"
         imports = [

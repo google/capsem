@@ -17,7 +17,7 @@ ROOT = Path(os.environ.get("CAPSEM_REPOSITORY_ROOT", Path.cwd())).resolve()
 
 
 def _release_glowup() -> Any:
-    script = ROOT / "scripts" / "release_glowup.py"
+    script = ROOT / "build_system" / "scripts" / "release" / "release_glowup.py"
     sys.path.insert(0, str(script.parent))
     spec = importlib.util.spec_from_file_location("capsem_release_glowup", script)
     if spec is None or spec.loader is None:

@@ -28,7 +28,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 SERVER = ROOT / "scripts" / "serve-release-test-root.py"
-VERIFY = ROOT / "scripts" / "verify-channel-downloads.py"
+VERIFY = ROOT / "build_system" / "scripts" / "release" / "verify-channel-downloads.py"
 
 
 def _wait_for_ready(path: Path, process: subprocess.Popen[str]) -> dict[str, str]:

@@ -13,7 +13,7 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/../../.." && pwd)
 capsem_home=${CAPSEM_HOME:-"$HOME/.capsem"}
 capsem="$capsem_home/bin/capsem"
-expected_version=$(uv run --project build_system --frozen python "$repo_root/scripts/release-package-contract.py" selected-version \
+expected_version=$(uv run --project build_system --frozen python "$repo_root/build_system/scripts/release/release-package-contract.py" selected-version \
   --manifest "$manifest_path" --platform linux --architecture amd64)
 
 curl -fsSL https://capsem.org/install.sh | CAPSEM_CHANNEL="$channel" sh
@@ -31,7 +31,7 @@ grep -F "Installed: true" /tmp/capsem-live-status.txt
 grep -F "Running:   true" /tmp/capsem-live-status.txt
 grep -F "Service:   ok" /tmp/capsem-live-status.txt
 grep -F "Gateway:   ok" /tmp/capsem-live-status.txt
-python3 "$repo_root/scripts/verify-installed-release.py" \
+python3 "$repo_root/build_system/scripts/release/verify-installed-release.py" \
   --capsem "$capsem" \
   --manifest-url "$manifest_url" \
   --channel "$channel" \

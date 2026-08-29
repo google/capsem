@@ -73,7 +73,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          uv run --project build_system --frozen python scripts/nightly_release_scheduler.py \
+          uv run --project build_system --frozen python build_system/scripts/release/nightly_release_scheduler.py \
             --channel nightly \
             --profile code \
             --profile co-work \

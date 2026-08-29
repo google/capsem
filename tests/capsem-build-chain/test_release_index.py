@@ -786,9 +786,9 @@ def test_profile_release_deploys_generated_preview_only_when_activation_ready() 
     deploy_channel = workflow.split("  deploy-channel:", maxsplit=1)[1]
 
     assert "cargo run -p capsem-admin -- manifest generate target/assets" in author
-    assert "scripts/check-profile-release-delta.py" in author
+    assert "build_system/scripts/release/check-profile-release-delta.py" in author
     assert "cargo run -p capsem-admin -- release" in author
-    assert "scripts/build-complete-release-channel.py" in author
+    assert "build_system/scripts/release/build-complete-release-channel.py" in author
     assert '--channel-source "$CHANNEL=file://$PWD/target/assets/manifest.json"' in author
     assert '--primary-channel "$CHANNEL"' in author
     assert "--allow-mirror-missing" in author
@@ -814,7 +814,7 @@ def test_profile_release_deploys_generated_preview_only_when_activation_ready() 
     )
 
     assert "needs.test-profile-pairing.result == 'success'" in publish
-    assert "scripts/build-complete-release-channel.py" in publish
+    assert "build_system/scripts/release/build-complete-release-channel.py" in publish
     assert "--out-dir target/distribution" in publish
     assert "name: asset-channel-preview" in publish
     assert "path: target/distribution/" in publish
@@ -845,7 +845,7 @@ def test_profile_release_publishes_deferred_assets_but_withholds_channel_deploy(
     )[0]
     deploy_channel = workflow.split("  deploy-channel:", maxsplit=1)[1]
 
-    assert "scripts/check-profile-release-delta.py" in author
+    assert "build_system/scripts/release/check-profile-release-delta.py" in author
     assert "cargo run -p capsem-admin -- release" in author
     assert "Qualify the profile assets" in pairing
     assert "Run the complete fast gate" in reusable_fast_gate

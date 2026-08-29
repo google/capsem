@@ -431,7 +431,7 @@ def test_modules_retain_complete_named_quality_gates() -> None:
         "scripts/injection_test.py",
         "scripts/integration_test.py",
         "test_capsem_bench_baseline.py",
-        "scripts/local-release-glowup.py",
+        "build_system/scripts/release/local-release-glowup.py",
         "install the exact package and prove the installed product",
         "tests/capsem-build-chain/",
         "tests/capsem-release/",
@@ -665,7 +665,7 @@ def test_release_glowup_consumes_the_exact_pairing_environment() -> None:
     runner = _all_modules()
     owner = Path(local_release_glowup.__file__).read_text(encoding="utf-8")
 
-    assert "scripts/local-release-glowup.py" in runner
+    assert "build_system/scripts/release/local-release-glowup.py" in runner
     for variable in (
         "CAPSEM_RELEASE_CHANNEL",
         "CAPSEM_RELEASE_TRANSITION",
@@ -684,7 +684,7 @@ def test_release_glowup_runs_one_exact_candidate_transition() -> None:
     synthetic candidate-to-itself channel switch in the hosted lane."""
     glowup = _planned("test-glowup", BINARY_LANE)
 
-    assert glowup.count("scripts/local-release-glowup.py") == 1
+    assert glowup.count("build_system/scripts/release/local-release-glowup.py") == 1
     assert "--work-dir target/release-module-glowup" in glowup
     assert "glowup.channel-switch" not in glowup
     assert "target/release-module-channel-switch" not in glowup
@@ -711,7 +711,7 @@ def test_release_artifact_module_boots_manifest_selected_profile_bytes_without_b
     them; rebuilding would prove something about the source instead."""
     artifacts = _planned("test-artifacts", PROFILE_LANE)
 
-    assert "scripts/prove-release-profile-assets.py" in artifacts
+    assert "build_system/scripts/release/prove-release-profile-assets.py" in artifacts
     assert "--input-dir target/release-inputs" in artifacts
     assert "--profile code" in artifacts
     for forbidden in ("capsem-gate assets", "_build-kernel", "_build-rootfs", "cross-compile"):

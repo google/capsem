@@ -577,7 +577,7 @@ def test_exact_linux_deb_proof_uses_systemd_and_proves_guest_shell() -> None:
     assert config.install.vm_devices == ("/dev/kvm", "/dev/vhost-vsock")
     assert proof.shell_proof_script == "scripts/prove-installed-shell.py"
     assert proof.shell_marker == "CAPSEM_QUALIFIED_DEB_SHELL_OK"
-    assert proof.verify_script == "scripts/verify-installed-release.py"
+    assert proof.verify_script == "build_system/scripts/release/verify-installed-release.py"
 
     # The sealed helper already contains every declared dependency. The proof
     # authors and hands over its exact graph, invokes dpkg exactly once, and
@@ -661,7 +661,7 @@ def test_binary_release_requires_exact_linux_deb_proof() -> None:
     assert native.index("install-deb-runtime-dependencies.py") < native.index(
         "install-manifest-request.sh write"
     )
-    assert "scripts/verify-installed-release.py" in native
+    assert "build_system/scripts/release/verify-installed-release.py" in native
     assert "scripts/prove-installed-shell.py" in native
     # Both native runners install and exercise their exact package. GitHub's
     # ARM64 runner has no KVM device, so only the x86_64 row owns the additional
@@ -853,7 +853,7 @@ def test_install_test_runs_local_release_glowup_from_real_package() -> None:
     config = gate_config.load(PROJECT_ROOT)
     proof = (PROJECT_ROOT / "build_system/builder/gate/installproof.py").read_text(encoding="utf-8")
 
-    assert config.install.suite.glowup_script == "scripts/local-release-glowup.py"
+    assert config.install.suite.glowup_script == "build_system/scripts/release/local-release-glowup.py"
     assert config.install.bin_dir == "/usr/bin"
     for flag in ("--input-deb", "--bin-dir", "--package-ready", "--assets-dir", "--config-root"):
         assert flag in proof, f"the glow-up is invoked without {flag}"
@@ -930,7 +930,7 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
     ]
 
     assert "build_system/packaging/linux/repack-deb.sh" in script
-    assert "scripts/generate-host-binary-sbom.py" in script
+    assert "build_system/scripts/release/generate-host-binary-sbom.py" in script
     assert "record-binary" in authoring
     assert '"--source-commit"' in authoring
     # Told, never resolved -- the invariant this line has always protected. The
@@ -1032,7 +1032,7 @@ def test_installed_glowup_uses_the_materialized_python_without_project_sync(
 
     probe = installed_probe.exact_installed_probe_shell(tmp_path)
     quoted = "'/opt/capsem venv/bin/python'"
-    assert f"{quoted} scripts/verify-installed-release.py" in probe
+    assert f"{quoted} build_system/scripts/release/verify-installed-release.py" in probe
     assert f"{quoted} build_system/scripts/build/run-installed-winterfell.py" in probe
     assert "uv run" not in probe
 
@@ -1071,7 +1071,7 @@ def test_install_recipe_runs_release_glowup_in_clean_project_environment() -> No
     """
     proof = (PROJECT_ROOT / "build_system/builder/gate/installproof.py").read_text(encoding="utf-8")
 
-    assert "python3 scripts/local-release-glowup.py" not in proof
+    assert "python3 build_system/scripts/release/local-release-glowup.py" not in proof
     assert "uv run" not in proof
     assert "self._settings.venv_python" in proof
 
@@ -2580,7 +2580,7 @@ def test_local_release_glowup_installed_path_asserts_channel_round_trip_and_prov
     assert 'grep -Fq "Running:   true"' in script
     assert 'grep -Fq "Service:   ok"' in script
     assert 'grep -Fq "Gateway:   ok"' in script
-    assert "scripts/verify-installed-release.py" in script
+    assert "build_system/scripts/release/verify-installed-release.py" in script
     assert '"$CAPSEM_BIN" doctor' in script
     assert "build_system/scripts/build/run-installed-winterfell.py" in script
     assert "service status" not in script
@@ -3068,8 +3068,8 @@ def test_ci_install_job_selects_exact_profiles_before_building_packages() -> Non
 
     fetch_pos = install_job.index("./.github/actions/fetch-release-inputs")
     resolve_pos = install_job.index("build_system/scripts/bootstrap/select-runtime-preflight-manifest.py")
-    source_pos = install_job.index("scripts/fetch-channel-source-manifest.py")
-    stage_pos = install_job.index("scripts/stage-release-test-inputs.py")
+    source_pos = install_job.index("build_system/scripts/release/fetch-channel-source-manifest.py")
+    stage_pos = install_job.index("build_system/scripts/release/stage-release-test-inputs.py")
     materialize_pos = install_job.index("bash build_system/scripts/build/materialize-config.sh")
     package_pos = install_job.index(
         "uv run --project build_system --frozen capsem-gate cross-compile x86_64"

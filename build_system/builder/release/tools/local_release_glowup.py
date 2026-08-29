@@ -1059,7 +1059,7 @@ def stage_package_ready_artifact(input_deb: Path, output_deb: Path) -> None:
 
 def generate_sbom(output: Path, deb: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    run([sys.executable, "scripts/generate-host-binary-sbom.py", "--output", str(output), str(deb)])
+    run([sys.executable, "build_system/scripts/release/generate-host-binary-sbom.py", "--output", str(output), str(deb)])
 
 
 def copy_artifact_tree(source: Path, target: Path) -> None:

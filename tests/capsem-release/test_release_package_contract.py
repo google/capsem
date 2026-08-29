@@ -10,7 +10,7 @@ import yaml
 from capsem_builder.release.tools import release_package_contract as CONTRACT
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = PROJECT_ROOT / "scripts" / "release-package-contract.py"
+SCRIPT = PROJECT_ROOT / "build_system" / "scripts" / "release" / "release-package-contract.py"
 FIXTURE_VERSION = "9.9.9"
 
 
@@ -120,8 +120,8 @@ def test_release_and_recovery_share_publication_proof_scripts() -> None:
         ),
     ]
     for workflow in workflows:
-        assert "scripts/release-package-contract.py verify-storage" in workflow
-        assert "scripts/prove-candidate-installer.sh" in workflow
+        assert "build_system/scripts/release/release-package-contract.py verify-storage" in workflow
+        assert "build_system/scripts/release/prove-candidate-installer.sh" in workflow
         assert "build_system/scripts/build/prove-live-public-install.sh" in workflow
     live_proof = (PROJECT_ROOT / "build_system/scripts/build/prove-live-public-install.sh").read_text()
     assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in live_proof
@@ -142,6 +142,6 @@ def test_every_package_contract_caller_sets_up_uv_first() -> None:
         verify = next(
             index
             for index, step in enumerate(steps)
-            if "scripts/release-package-contract.py verify-storage" in step.get("run", "")
+            if "build_system/scripts/release/release-package-contract.py verify-storage" in step.get("run", "")
         )
         assert setup < verify

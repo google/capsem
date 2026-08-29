@@ -9,7 +9,7 @@ from capsem_builder.release.tools import list_release_manifest_assets as MANIFES
 from capsem_builder.release.tools import verify_channel_downloads
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = PROJECT_ROOT / "scripts/list-release-manifest-assets.py"
+SCRIPT = PROJECT_ROOT / "build_system/scripts/release/list-release-manifest-assets.py"
 
 
 def _module():
@@ -122,7 +122,7 @@ def test_release_workflow_uses_shared_dual_schema_asset_lister() -> None:
         "- name: Verify public release packages and installer contract",
         maxsplit=1,
     )[0]
-    assert "scripts/verify-channel-downloads.py" in step
+    assert "build_system/scripts/release/verify-channel-downloads.py" in step
 
     verifier = Path(verify_channel_downloads.__file__).read_text()
     assert "manifest_asset_rows" in verifier

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Serve one generated release-test directory on an ephemeral loopback port."""
 
 from __future__ import annotations
@@ -8,13 +7,24 @@ import http.server
 import json
 import os
 import signal
+import sys
 import threading
 from pathlib import Path
 
-try:
-    from release_fixture_server import handler_for_root
-except ModuleNotFoundError:
-    from scripts.release_fixture_server import handler_for_root
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_handler():
+    sys.path.insert(0, str(ROOT / "build_system" / "builder"))
+    from bootstrap import mount_builder_package
+
+    mount_builder_package(ROOT)
+    from capsem_builder.release.tools.release_fixture_server import handler_for_root
+
+    return handler_for_root
+
+
+handler_for_root = _load_handler()
 
 
 def _write_ready(path: Path, root: Path, port: int) -> None:

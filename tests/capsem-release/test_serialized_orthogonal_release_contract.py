@@ -121,11 +121,11 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
     profile = _publishing(profile_plan)
 
     # Each lane owns one artifact family, and neither rebuilds the other's.
-    assert "scripts/release-binaries.py" in binary
+    assert "build_system/scripts/release/release-binaries.py" in binary
     assert "capsem-admin" not in binary
 
     assert "capsem-admin -- release" in profile
-    assert "scripts/release-binaries.py" not in profile
+    assert "build_system/scripts/release/release-binaries.py" not in profile
 
     retired_commands = (
         "release",
@@ -183,7 +183,7 @@ def test_hosted_release_failure_cleans_only_its_unpublished_version_claim() -> N
         (
             "release-binaries",
             ("stable",),
-            f"scripts/release-binaries.py stable {'0' * 40}",
+            f"build_system/scripts/release/release-binaries.py stable {'0' * 40}",
         ),
         (
             "release-profile",
@@ -295,7 +295,7 @@ def test_daily_scheduler_runs_unattended_with_no_local_qualification() -> None:
     assert workflow.count("cron:") == 1
     assert "push:" not in workflow
 
-    assert "scripts/nightly_release_scheduler.py" in release
+    assert "build_system/scripts/release/nightly_release_scheduler.py" in release
     assert "--channel nightly" in release
     assert release.index("--profile code") < release.index("--profile co-work")
     assert ' --source-commit "${{ github.sha }}"' in release
@@ -422,7 +422,7 @@ def test_the_scheduler_meets_every_precondition_its_release_commands_check() -> 
 
     local_main = release.find("git branch -f main")
     credentials = release.find("insteadOf")
-    first_release = release.find("scripts/nightly_release_scheduler.py")
+    first_release = release.find("build_system/scripts/release/nightly_release_scheduler.py")
 
     assert local_main != -1, (
         "the scheduler must give require_local_main a local branch to read; "
@@ -511,7 +511,7 @@ def test_release_lanes_run_one_reusable_fast_gate_before_builders() -> None:
 def test_release_profile_downloads_share_one_manifest_addressed_cache_module() -> None:
     action = _read(".github/actions/fetch-release-inputs/action.yaml")
 
-    assert "scripts/fetch-release-artifacts.py" in action
+    assert "build_system/scripts/release/fetch-release-artifacts.py" in action
     assert '--manifest-url "${{ inputs.manifest-url }}"' in action
     assert "--cache-dir target/release-input-cache" in action
     assert "--prune-cache" not in action
@@ -661,7 +661,7 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
     assert '--source-commit "${{ inputs.source_commit }}"' in workflow
     assert '--profile "${{ inputs.profile }}"' in workflow
     assert "Project inactive first-channel public-before state" in workflow
-    assert "scripts/project-first-channel-before.py" in workflow
+    assert "build_system/scripts/release/project-first-channel-before.py" in workflow
     assert '--retired "${{ steps.public-before.outputs.retired }}"' in workflow
     assert "Select public-before authority for exact pairing" in workflow
     assert "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}" in workflow
@@ -840,7 +840,7 @@ def test_binary_bootstrap_uses_donor_only_as_public_before() -> None:
     assert "steps.public-before.outputs.bootstrap" in resolver
     assert "steps.public-before.outputs.retired" in resolver
     assert '--source-commit "${{ inputs.source_commit }}"' in resolver
-    assert "scripts/project-first-channel-before.py" in resolver
+    assert "build_system/scripts/release/project-first-channel-before.py" in resolver
     assert "Fetch latest selected channel source manifest" in resolver
     source_fetch = resolver.split(
         "- name: Fetch latest selected channel source manifest", maxsplit=1

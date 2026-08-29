@@ -100,7 +100,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/fetch-channel-source-manifest.py \
+          python3 build_system/scripts/release/fetch-channel-source-manifest.py \
             --channel "$RELEASE_CHANNEL" \
             --source-commit "${{ inputs.source_commit }}" \
             --require-profile-membership \
@@ -109,7 +109,7 @@ jobs:
       - name: Project inactive first-channel public-before state
         if: ${{ steps.public-before.outputs.bootstrap == 'true' }}
         run: |
-          python3 scripts/project-first-channel-before.py \
+          python3 build_system/scripts/release/project-first-channel-before.py \
             --source-manifest target/channel-source/manifest.json \
             --channel "stable" \
             --bootstrap "${{ steps.public-before.outputs.bootstrap }}" \
@@ -146,7 +146,7 @@ jobs:
 
       - name: Prove public-before cohorts use one manifest
         run: |
-          uv run --project build_system --frozen python scripts/verify-release-inputs.py \
+          uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
             --input-dir target/binary-public-before/profiles
           cmp \
             target/binary-public-before/packages/manifest.json \
@@ -290,7 +290,7 @@ jobs:
 
       - name: Stage exact selected profile inputs
         run: |
-          uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
+          uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
             --input-dir target/binary-selected-profiles \
             --assets-dir target/release-assets \
             --config-root target/release-config \
@@ -529,7 +529,7 @@ jobs:
 
       - name: Stage exact selected profile inputs
         run: |
-          uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
+          uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
             --input-dir target/binary-selected-profiles \
             --assets-dir target/package-content/assets \
             --config-root target/package-source-config \
@@ -627,7 +627,7 @@ jobs:
             echo "::error::no package artifacts available for host SBOM"
             exit 1
           fi
-          python3 scripts/generate-host-binary-sbom.py \
+          python3 build_system/scripts/release/generate-host-binary-sbom.py \
             --output release-artifacts/capsem-sbom.spdx.json \
             "${ARTIFACTS[@]}"
 
@@ -755,7 +755,7 @@ jobs:
           grep -F "Service:   ok" /tmp/capsem-status.txt
           grep -F "Gateway:   ok" /tmp/capsem-status.txt
           pgrep -x capsem-tray
-          python3 scripts/verify-installed-release.py \
+          python3 build_system/scripts/release/verify-installed-release.py \
             --capsem "$HOME/.capsem/bin/capsem" \
             --manifest-url "$PREACTIVATION_MANIFEST" \
             --metadata-manifest-url "$ASSET_MANIFEST_URL" \
@@ -851,7 +851,7 @@ jobs:
           grep -F "Running:   true" /tmp/capsem-status.txt
           grep -F "Service:   ok" /tmp/capsem-status.txt
           grep -F "Gateway:   ok" /tmp/capsem-status.txt
-          python3 scripts/verify-installed-release.py \
+          python3 build_system/scripts/release/verify-installed-release.py \
             --capsem /usr/bin/capsem \
             --manifest-url "$PREACTIVATION_MANIFEST" \
             --metadata-manifest-url "$ASSET_MANIFEST_URL" \
@@ -950,9 +950,9 @@ jobs:
 
       - name: Verify exact public-before cohorts
         run: |
-          uv run --project build_system --frozen python scripts/verify-release-inputs.py \
+          uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
             --input-dir target/binary-public-before/packages
-          uv run --project build_system --frozen python scripts/verify-release-inputs.py \
+          uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
             --input-dir target/binary-public-before/profiles
           cmp \
             target/binary-public-before/packages/manifest.json \
@@ -968,9 +968,9 @@ jobs:
 
       - name: Stage exact candidate-after profiles
         run: |
-          uv run --project build_system --frozen python scripts/verify-release-inputs.py \
+          uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
             --input-dir target/candidate-profile-inputs
-          uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
+          uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
             --input-dir target/candidate-profile-inputs \
             --assets-dir target/assets \
             --config-root target/release-config \
@@ -987,10 +987,10 @@ jobs:
           package=$(find release-test-package -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$package"
           uv run --project build_system --frozen python build_system/packaging/linux/install-deb-runtime-dependencies.py "$package" --config config/gate.toml
-          before_package=$(uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
+          before_package=$(uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
             --input-dir target/binary-public-before/packages \
             --print-package-path)
-          uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
+          uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
             --package-file "$package" \
             --binary-dir target/debug
           {
@@ -1079,7 +1079,7 @@ jobs:
 
       - name: Build summary
         run: >
-          python3 scripts/write-release-summary.py
+          python3 build_system/scripts/release/write-release-summary.py
           --artifacts release-artifacts
           --tag "$RELEASE_TAG"
           --manifest-url "$ASSET_MANIFEST_URL"
@@ -1094,11 +1094,11 @@ jobs:
           cp release-artifacts/*.pkg "$owned/"
           cp release-artifacts/*.deb "$owned/"
           cp release-artifacts/capsem-sbom.spdx.json "$owned/"
-          python3 scripts/write-release-notes.py "$notes"
+          python3 build_system/scripts/release/write-release-notes.py "$notes"
           CAPSEM_RELEASE_CREATE_TITLE="Capsem $RELEASE_TAG ($SOURCE_COMMIT)" \
           CAPSEM_RELEASE_CREATE_NOTES_FILE="$notes" \
           CAPSEM_RELEASE_CREATE_TARGET="$SOURCE_COMMIT" \
-            scripts/publish-immutable-release-assets.sh \
+            build_system/scripts/release/publish-immutable-release-assets.sh \
               "$RELEASE_TAG" "$owned"
 
   assemble-release-channel:
@@ -1147,7 +1147,7 @@ jobs:
         run: |
           set -euo pipefail
           generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          uv run --project build_system --frozen python scripts/build-complete-release-channel.py \
+          uv run --project build_system --frozen python build_system/scripts/release/build-complete-release-channel.py \
             --channel-source "$RELEASE_CHANNEL=file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
             --primary-channel "$RELEASE_CHANNEL" \
             --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
@@ -1190,7 +1190,7 @@ jobs:
 
       - name: Verify public GitHub package storage from the candidate manifest
         run: |
-          uv run --project build_system --frozen python scripts/release-package-contract.py verify-storage \
+          uv run --project build_system --frozen python build_system/scripts/release/release-package-contract.py verify-storage \
             --manifest "candidate-release/assets/$RELEASE_CHANNEL/manifest.json" \
             --expected-prefix "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
             --expected-version "${RELEASE_TAG#v}" \
@@ -1198,7 +1198,7 @@ jobs:
 
       - name: Prove install.sh selects and installs the candidate Linux package
         run: >
-          scripts/prove-candidate-installer.sh candidate-release
+          build_system/scripts/release/prove-candidate-installer.sh candidate-release
           "$RELEASE_CHANNEL" "${RELEASE_TAG#v}"
 
       - name: Persist mutated source manifest on the immutable binary release
@@ -1211,7 +1211,7 @@ jobs:
           named="$owned/channel-source-$RELEASE_CHANNEL.json"
           mkdir -p "$owned"
           cp "$source" "$named"
-          scripts/publish-immutable-release-assets.sh \
+          build_system/scripts/release/publish-immutable-release-assets.sh \
             "$RELEASE_TAG" "$owned"
 
   deploy-release-channel:
@@ -1253,12 +1253,12 @@ jobs:
 
       - name: Verify every URL in the asset channel manifest is reachable
         run: >
-          uv run --project build_system --frozen python scripts/verify-channel-downloads.py
+          uv run --project build_system --frozen python build_system/scripts/release/verify-channel-downloads.py
           --manifest-url "$ASSET_MANIFEST_URL"
       - name: Verify public release packages and installer contract
         run: |
           set -euo pipefail
-          uv run --project build_system --frozen python3 scripts/check-public-binary-release.py \
+          uv run --project build_system --frozen python3 build_system/scripts/release/check-public-binary-release.py \
             --channel "$RELEASE_CHANNEL" \
             --manifest-url "$ASSET_MANIFEST_URL" \
             --stable-manifest-url https://release.capsem.org/assets/stable/manifest.json \
@@ -1296,7 +1296,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/release_version_tag.py cleanup-exact \
+          python3 build_system/scripts/release/release_version_tag.py cleanup-exact \
             --tag "$RELEASE_TAG" \
             --source-commit "$SOURCE_COMMIT" \
             --repository "${{ github.repository }}"

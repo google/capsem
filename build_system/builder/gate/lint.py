@@ -3,7 +3,7 @@
 `ruff check .` always covered the whole tree. `ty` did not: it ran on
 `src/capsem` and nothing else, so `scripts/` -- which is release machinery, not
 scratch -- and every test helper went unchecked. A type error in
-`scripts/release-binaries.py` is a release bug; it had no gate at all.
+`build_system/scripts/release/release-binaries.py` is a release bug; it had no gate at all.
 
 Which trees are checked, which are checked strictly, and which rules are held
 back on the rest are all `[lint]` in `config/gate.toml`. `src/` passes every ty

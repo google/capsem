@@ -46,7 +46,7 @@ Native installation is a functional outcome, not a file-existence check:
   and runs the mandatory guest shell where KVM is available;
 - publication depends on both platform rails;
 - skipped, optional, source-layout-only, or inspect-only checks do not count;
-- `scripts/verify-installed-release.py` verifies the exact installed manifest,
+- `build_system/scripts/release/verify-installed-release.py` verifies the exact installed manifest,
   metadata sidecar, profile readiness, package version, and update state;
 - the stateful glow-up proves binary-only, profile-only,
   profile-then-binary, channel switching, tamper rejection, and preservation

@@ -144,7 +144,7 @@ probe_installed_transition() {{
   wait_for_service
   check_binary_versions "$package_version"
   dpkg-query -W -f='${{Version}}' capsem | grep -Fx "$package_version"
-  {shlex.quote(sys.executable)} scripts/verify-installed-release.py \
+  {shlex.quote(sys.executable)} build_system/scripts/release/verify-installed-release.py \
     --capsem "$CAPSEM_BIN" \
     --capsem-home "$CAPSEM_HOME_DIR" \
     --manifest-url "$manifest_url" \
@@ -196,7 +196,7 @@ observe_update_transition() {{
   evidence_out="$6"
   previous_manifest_sha="${{7:-}}"
   command=(
-    {shlex.quote(sys.executable)} scripts/release_transition.py
+    {shlex.quote(sys.executable)} build_system/scripts/release/release_transition.py
     --audit-log "$CAPSEM_HOME_DIR/logs/update.log"
     --after-line "$after_line"
     --kind "$kind"

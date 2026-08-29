@@ -188,7 +188,7 @@ def test_binary_release_recipe_uses_one_adversarial_script() -> None:
     # without rebuilding assets on the way -- read from the plan, because the
     # recipe is now a dispatch and the sequence lives in the graph.
     binary_plan = _planned("release-binaries", channel="nightly")
-    assert "scripts/release-binaries.py" in binary_plan
+    assert "build_system/scripts/release/release-binaries.py" in binary_plan
     assert "_build-kernel" not in binary_plan
     assert "_build-rootfs" not in binary_plan
     assert '\nrelease-binaries channel source_commit force="false":' in justfile

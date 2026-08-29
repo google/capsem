@@ -576,11 +576,11 @@ def test_asset_workflow_publishes_obom_not_debug_build_ledger() -> None:
         "\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
         maxsplit=1,
     )[0]
-    assert "scripts/stage-profile-publication.py" in stage_step
-    assert "scripts/verify-profile-publication.py" in stage_step
-    assert "scripts/stage-profile-publication.py" not in upload_step
-    assert "scripts/verify-profile-publication.py" in upload_step
-    assert "scripts/publish-immutable-release-assets.sh" in upload_step
+    assert "build_system/scripts/release/stage-profile-publication.py" in stage_step
+    assert "build_system/scripts/release/verify-profile-publication.py" in stage_step
+    assert "build_system/scripts/release/stage-profile-publication.py" not in upload_step
+    assert "build_system/scripts/release/verify-profile-publication.py" in upload_step
+    assert "build_system/scripts/release/publish-immutable-release-assets.sh" in upload_step
     assert "gh release create" not in upload_step
     assert "gh release upload" not in upload_step
     assert 'files=("$RELEASE_DIR"/*)' in upload_step

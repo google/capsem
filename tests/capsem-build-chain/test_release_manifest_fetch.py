@@ -45,7 +45,7 @@ def test_binary_release_fetches_fresh_source_without_bootstrapping_profiles() ->
     )._describe()
     described = plan.describe()
 
-    assert "scripts/fetch-channel-source-manifest.py" in described
+    assert "build_system/scripts/release/fetch-channel-source-manifest.py" in described
     assert "--require-profile-membership" in described
     assert "--bootstrap-missing-first-party" not in described
 

@@ -227,7 +227,7 @@ def build_complete_dist(args: argparse.Namespace) -> None:
             "uv",
             "run",
             "python3",
-            "scripts/materialize-graph-profile-artifacts.py",
+            "build_system/scripts/release/materialize-graph-profile-artifacts.py",
             "--dist",
             str(out_dir),
             "--channel",

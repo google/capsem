@@ -29,8 +29,12 @@ from urllib.parse import urlparse
 
 import pytest
 from capsem_builder.gate.tools.web import cloudflare_pages_rollback as ROLLBACK
-from capsem_builder.release.tools import build_complete_release_channel as BUILD_COMPLETE
-from capsem_builder.release.tools import check_channel_deploy_freshness as DEPLOY_FRESHNESS
+from capsem_builder.release.tools import (
+    build_complete_release_channel as BUILD_COMPLETE,
+)
+from capsem_builder.release.tools import (
+    check_channel_deploy_freshness as DEPLOY_FRESHNESS,
+)
 from helpers.release_site import build_release_channel_site
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -91,7 +95,7 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     assert "activate_production:" in workflow
     assert "workflow_dispatch:" not in workflow
     assert "artifact_run_id:" in workflow
-    assert "scripts/verify-release-recovery-run.py" in workflow
+    assert "build_system/scripts/release/verify-release-recovery-run.py" in workflow
     assert 'test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"' in workflow
     assert "github-token: ${{ github.token }}" in workflow
     assert "run-id: ${{ inputs.artifact_run_id }}" in workflow
@@ -128,7 +132,7 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     assert "activate_production: false" in staging
     assert "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86" in staging
     assert "uv sync --project build_system --frozen" in staging
-    assert "bash scripts/rehearse-asset-channel-staging.sh" in staging
+    assert "bash build_system/scripts/release/rehearse-asset-channel-staging.sh" in staging
     assert "scripts/write-release-site-ci-fixture.py" not in staging
     assert "--without-binary-files" not in staging
 
@@ -139,7 +143,7 @@ def test_asset_staging_rehearsal_builds_a_complete_public_shape(tmp_path: Path) 
     evidence = tmp_path / "evidence"
     command = [
         "bash",
-        "scripts/rehearse-asset-channel-staging.sh",
+        "build_system/scripts/release/rehearse-asset-channel-staging.sh",
         "staging",
         "1.0.2",
         str(fixture),
@@ -185,9 +189,9 @@ def test_binary_staging_builds_parseable_packages_with_production_sbom() -> None
         encoding="utf-8"
     )
 
-    assert "scripts/write-binary-staging-artifacts.sh" in workflow
-    assert "scripts/fetch-channel-source-manifest.py" in workflow
-    assert "scripts/build-complete-release-channel.py" in workflow
+    assert "build_system/scripts/release/write-binary-staging-artifacts.sh" in workflow
+    assert "build_system/scripts/release/fetch-channel-source-manifest.py" in workflow
+    assert "build_system/scripts/release/build-complete-release-channel.py" in workflow
     assert "uv sync --project build_system --frozen" in workflow
     assert 'curl -fsSL "$ASSET_MANIFEST_URL"' not in workflow
     assert '--primary-channel "$ASSET_CHANNEL"' in workflow
@@ -212,7 +216,7 @@ def test_binary_staging_proof_rejects_vm_asset_drift(tmp_path: Path) -> None:
     (root / "manifest.json").write_text(json.dumps(after), encoding="utf-8")
     command = [
         sys.executable,
-        "scripts/write-binary-channel-staging-proof.py",
+        "build_system/scripts/release/write-binary-channel-staging-proof.py",
         str(root),
     ]
     _run(command)
@@ -276,7 +280,7 @@ def test_binary_staging_artifacts_are_deterministic_and_recordable(tmp_path: Pat
                 "binary-staging",
                 umask,
                 "bash",
-                "scripts/write-binary-staging-artifacts.sh",
+                "build_system/scripts/release/write-binary-staging-artifacts.sh",
                 version,
                 str(artifacts),
                 str(root / "work"),
@@ -287,7 +291,7 @@ def test_binary_staging_artifacts_are_deterministic_and_recordable(tmp_path: Pat
     stale = subprocess.run(
         [
             "bash",
-            "scripts/write-binary-staging-artifacts.sh",
+            "build_system/scripts/release/write-binary-staging-artifacts.sh",
             version,
             str(runs[0]),
             str(tmp_path / "first" / "work"),

@@ -148,7 +148,7 @@ publication, and final dispatch run fresh on every public attempt.
 Do not introduce a skip flag, release-only reduced gate, preparation recipe,
 environment-variable bypass, or direct checked-in caller of:
 
-- `scripts/release-binaries.py`;
+- `build_system/scripts/release/release-binaries.py`;
 - `capsem-admin release` for a first-party public profile;
 - `release.yaml` or `release-assets.yaml`.
 

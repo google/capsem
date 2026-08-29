@@ -78,7 +78,7 @@ def fabricate(channel: str, profile: str, version: str) -> dict:
     result = subprocess.run(
         [
             "uv", "run", "--project", "build_system", "--frozen", "python",
-            str(ROOT / "scripts" / "rehearse-release-cohort.py"),
+            str(ROOT / "build_system" / "scripts" / "release" / "rehearse-release-cohort.py"),
             "--assets-dir", "assets",
             "--bin-dir", "target/debug",
             "--packages-dir", "dist",

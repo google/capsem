@@ -62,7 +62,7 @@ jobs:
           gh run view "$FAILED_RUN_ID" \
             --json databaseId,headSha,headBranch,event,workflowName,status,conclusion,jobs \
             > target/release-recovery/source-run.json
-          python3 scripts/verify-release-recovery-run.py \
+          python3 build_system/scripts/release/verify-release-recovery-run.py \
             --run target/release-recovery/source-run.json \
             --run-id "$FAILED_RUN_ID" \
             --source-commit "$SOURCE_COMMIT" \
@@ -104,7 +104,7 @@ jobs:
       - name: Build complete release channel from qualified candidate
         run: |
           generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          uv run --project build_system --frozen python scripts/build-complete-release-channel.py \
+          uv run --project build_system --frozen python build_system/scripts/release/build-complete-release-channel.py \
             --channel-source "$RELEASE_CHANNEL=file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
             --primary-channel "$RELEASE_CHANNEL" \
             --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
@@ -114,7 +114,7 @@ jobs:
 
       - name: Verify public package storage from recovered candidate
         run: |
-          uv run --project build_system --frozen python scripts/release-package-contract.py verify-storage \
+          uv run --project build_system --frozen python build_system/scripts/release/release-package-contract.py verify-storage \
             --manifest "target/distribution/assets/$RELEASE_CHANNEL/manifest.json" \
             --expected-prefix "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
             --expected-version "${RELEASE_TAG#v}" \
@@ -122,7 +122,7 @@ jobs:
 
       - name: Prove install.sh selects recovered candidate Linux package
         run: >
-          scripts/prove-candidate-installer.sh target/distribution
+          build_system/scripts/release/prove-candidate-installer.sh target/distribution
           "$RELEASE_CHANNEL" "${RELEASE_TAG#v}"
 
       - name: Persist recovered source manifest on immutable release
@@ -133,7 +133,7 @@ jobs:
           owned="target/binary-source-publication"
           mkdir -p "$owned"
           cp "$source" "$owned/channel-source-$RELEASE_CHANNEL.json"
-          scripts/publish-immutable-release-assets.sh "$RELEASE_TAG" "$owned"
+          build_system/scripts/release/publish-immutable-release-assets.sh "$RELEASE_TAG" "$owned"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -179,11 +179,11 @@ jobs:
           done
 
       - name: Verify every URL in the public channel manifest
-        run: uv run --project build_system --frozen python scripts/verify-channel-downloads.py --manifest-url "$ASSET_MANIFEST_URL"
+        run: uv run --project build_system --frozen python build_system/scripts/release/verify-channel-downloads.py --manifest-url "$ASSET_MANIFEST_URL"
 
       - name: Verify public release packages and installer contract
         run: |
-          uv run --project build_system --frozen python3 scripts/check-public-binary-release.py \
+          uv run --project build_system --frozen python3 build_system/scripts/release/check-public-binary-release.py \
             --channel "$RELEASE_CHANNEL" \
             --manifest-url "$ASSET_MANIFEST_URL" \
             --install-script-url https://capsem.org/install.sh \

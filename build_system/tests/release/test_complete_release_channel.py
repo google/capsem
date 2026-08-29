@@ -127,10 +127,10 @@ def test_asset_workflow_and_local_gate_share_complete_dist_builder() -> None:
     local_web_gate = (PROJECT_ROOT / "scripts/check-web-surface.sh").read_text()
     builder = Path(build_complete_release_channel.__file__).read_text()
 
-    assert "scripts/build-complete-release-channel.py" in workflow
-    assert "scripts/build-complete-release-channel.py" in release
-    assert "scripts/build-complete-release-channel.py" in local_web_gate
-    assert local_web_gate.count("scripts/build-complete-release-channel.py") == 2
+    assert "build_system/scripts/release/build-complete-release-channel.py" in workflow
+    assert "build_system/scripts/release/build-complete-release-channel.py" in release
+    assert "build_system/scripts/release/build-complete-release-channel.py" in local_web_gate
+    assert local_web_gate.count("build_system/scripts/release/build-complete-release-channel.py") == 2
     assert '--channel-source "stable=file://$graph_sources/stable.json"' in local_web_gate
     assert '--channel-source "nightly=file://$graph_sources/nightly.json"' in local_web_gate
     assert '--profile-source-root "$ROOT"' in local_web_gate

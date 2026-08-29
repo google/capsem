@@ -13,7 +13,7 @@ from capsem_builder.release.tools import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = PROJECT_ROOT / "scripts" / "materialize-graph-profile-artifacts.py"
+SCRIPT = PROJECT_ROOT / "build_system" / "scripts" / "release" / "materialize-graph-profile-artifacts.py"
 
 
 def _module():

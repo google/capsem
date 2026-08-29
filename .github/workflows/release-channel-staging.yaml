@@ -56,7 +56,7 @@ jobs:
 
       - name: Assemble and validate staging release channel
         run: |
-          bash scripts/rehearse-asset-channel-staging.sh \
+          bash build_system/scripts/release/rehearse-asset-channel-staging.sh \
             "${{ inputs.channel }}" \
             "${{ inputs.manifest_version }}" \
             "$RUNNER_TEMP/release-channel-staging-fixture" \

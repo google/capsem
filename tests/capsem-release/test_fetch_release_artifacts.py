@@ -5,11 +5,11 @@ import json
 import shutil
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import blake3
 import pytest
+import tomllib
 from capsem_builder.image.tools.build import stage_profile_assets as PROFILE_STAGE
 from capsem_builder.release.tools import fetch_channel_source_manifest as SOURCE
 from capsem_builder.release.tools import fetch_release_artifacts as FETCH
@@ -19,7 +19,7 @@ from capsem_builder.release.tools import stage_release_test_inputs as STAGE
 from capsem_builder.release.tools import verify_release_inputs as VERIFY
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE_SCRIPT = ROOT / "scripts" / "fetch-channel-source-manifest.py"
+SOURCE_SCRIPT = ROOT / "build_system" / "scripts" / "release" / "fetch-channel-source-manifest.py"
 
 
 def _digest(payload: bytes) -> dict[str, str]:
@@ -1438,11 +1438,11 @@ def test_selected_install_transport_keeps_the_verified_source_graph(
     config_root = root / "config"
 
     staged_manifest = STAGE.stage_profiles(inputs, assets, config_root, ROOT / "config")
-    config_manifest = config_root / "assets/manifest.json"
+    config = gate_config.load(ROOT)
+    config_manifest = config_root / config.suites.pytest.test_manifest
     config_manifest.parent.mkdir(parents=True)
     config_manifest.write_bytes(staged_manifest.read_bytes())
 
-    config = gate_config.load(ROOT)
     selected = SelectedInstallContent(ProfileContent.isolated(config, root))
     selected.require_complete(config, arches=(config.architectures["x86_64"],))
 

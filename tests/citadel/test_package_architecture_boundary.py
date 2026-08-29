@@ -156,17 +156,17 @@ def test_public_linux_package_consumers_use_debian_identity() -> None:
             (workflow, ".github/workflows/release.yaml", "package.get('architecture') == 'x86_64'"),
             (
                 validator,
-                "scripts/check-public-binary-release.py",
+                "build_system/scripts/release/check-public-binary-release.py",
                 'RequiredPackage("linux", "x86_64", "debian_package")',
             ),
             (
                 validator,
-                "scripts/check-public-binary-release.py",
+                "build_system/scripts/release/check-public-binary-release.py",
                 'package.get("architecture") != "x86_64"',
             ),
             (
                 validator,
-                "scripts/check-public-binary-release.py",
+                "build_system/scripts/release/check-public-binary-release.py",
                 'package.get("architecture") == "x86_64"',
             ),
         )

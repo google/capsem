@@ -49,7 +49,7 @@ qualify-assets input_dir profile workspace_root activation_ready:
 
 # Replay a release qualification lane locally, against a cohort built here.
 replay-release-lane lane="binaries":
-    uv run --project build_system --frozen python scripts/replay-release-lane.py --lane {{quote(lane)}}
+    uv run --project build_system --frozen python build_system/scripts/release/replay-release-lane.py --lane {{quote(lane)}}
 
 
 # Build, test, and publish only Capsem binaries/packages for one channel.

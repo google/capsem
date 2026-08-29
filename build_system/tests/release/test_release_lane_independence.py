@@ -18,7 +18,7 @@ FIXTURE_GRAPH = (
     / "fixtures"
     / "release-graph-stable-nightly.json"
 )
-DIFF_POLICY = PROJECT_ROOT / "scripts" / "check-release-graph-diff.py"
+DIFF_POLICY = PROJECT_ROOT / "build_system" / "scripts" / "release" / "check-release-graph-diff.py"
 
 
 def test_binary_update_does_not_touch_profiles(tmp_path: Path) -> None:

@@ -51,14 +51,14 @@ def test_the_workflow_calls_this_script() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text(
         encoding="utf-8"
     )
-    assert "scripts/write-release-notes.py" in workflow
+    assert "build_system/scripts/release/write-release-notes.py" in workflow
     assert "Qualified source:" not in workflow, "the heredoc is still there"
 
 
 def test_launcher_forwards_the_output_argument(tmp_path: Path) -> None:
     output = tmp_path / "release-notes.md"
     result = subprocess.run(
-        [sys.executable, "-I", "scripts/write-release-notes.py", str(output)],
+        [sys.executable, "-I", "build_system/scripts/release/write-release-notes.py", str(output)],
         cwd=PROJECT_ROOT,
         env={
             **os.environ,

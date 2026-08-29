@@ -78,8 +78,8 @@ runs:
             --local-publication-dir "${{ inputs.local-publication-dir }}"
           )
         fi
-        uv run --project build_system --frozen python scripts/fetch-release-artifacts.py "${args[@]}"
-        uv run --project build_system --frozen python scripts/verify-release-inputs.py \
+        uv run --project build_system --frozen python build_system/scripts/release/fetch-release-artifacts.py "${args[@]}"
+        uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
           --input-dir "${{ inputs.output }}"
         cache_misses="$(uv run --project build_system --frozen python -c \
           'import json,sys; print(json.load(open(sys.argv[1]))["cache"]["misses"])' \

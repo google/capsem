@@ -121,7 +121,7 @@ def test_staged_profile_is_authored_once_before_pairing_tests_and_publication() 
     assert "cargo run -p capsem-admin -- release" not in pairing
     assert "cargo run -p capsem-admin -- release" not in publish
     assert "gh release create" not in author
-    assert "scripts/publish-immutable-release-assets.sh" in publish
+    assert "build_system/scripts/release/publish-immutable-release-assets.sh" in publish
     assert "gh release create" not in publish
     assert "name: authored-profile-channel-source" in author
     assert "name: authored-profile-candidate" in author
@@ -239,11 +239,11 @@ def test_cold_channel_pairing_branches_before_package_selection() -> None:
     selection was unconditional.  Keep that decision ahead of every package
     staging/install action while retaining manifest/profile verification.
     """
-    script = (ROOT / "scripts" / "stage-profile-pairing.sh").read_text(encoding="utf-8")
+    script = (ROOT / "build_system" / "scripts" / "release" / "stage-profile-pairing.sh").read_text(encoding="utf-8")
     branch = script.index('if [[ "$ACTIVATION_READY" == "false" ]]')
 
-    assert script.index("scripts/verify-release-inputs.py") < branch
-    assert script.index("scripts/fetch-release-artifacts.py") < branch
+    assert script.index("build_system/scripts/release/verify-release-inputs.py") < branch
+    assert script.index("build_system/scripts/release/fetch-release-artifacts.py") < branch
     assert branch < script.index("--binary-dir target/debug")
     assert branch < script.index("--print-package-path")
     assert branch < script.index(
@@ -285,17 +285,17 @@ def test_cold_channel_pairing_executes_no_package_action(
     }
 
     subprocess.run(
-        ["bash", str(ROOT / "scripts" / "stage-profile-pairing.sh")],
+        ["bash", str(ROOT / "build_system" / "scripts" / "release" / "stage-profile-pairing.sh")],
         cwd=tmp_path,
         env=environment,
         check=True,
     )
 
     invoked = calls.read_text(encoding="utf-8")
-    assert invoked.count("scripts/verify-release-inputs.py") == 3
-    assert "scripts/fetch-release-artifacts.py" in invoked
+    assert invoked.count("build_system/scripts/release/verify-release-inputs.py") == 3
+    assert "build_system/scripts/release/fetch-release-artifacts.py" in invoked
     for forbidden in (
-        "scripts/stage-release-test-inputs.py",
+        "build_system/scripts/release/stage-release-test-inputs.py",
         "build_system/packaging/linux/install-deb-runtime-dependencies.py",
         "build_system/scripts/build/materialize-config.sh",
     ):
@@ -308,7 +308,7 @@ def test_cold_channel_pairing_rejects_an_unknown_activation_decision(
 ) -> None:
     github_env = tmp_path / "github-env"
     completed = subprocess.run(
-        ["bash", str(ROOT / "scripts" / "stage-profile-pairing.sh")],
+        ["bash", str(ROOT / "build_system" / "scripts" / "release" / "stage-profile-pairing.sh")],
         cwd=tmp_path,
         env={
             **os.environ,
@@ -344,7 +344,7 @@ def test_hosted_macos_never_claims_the_local_apple_vz_proof() -> None:
     local_gate = (ROOT / "justfile").read_text(encoding="utf-8")
 
     assert "test-profile-arm64-boot:" not in workflow
-    assert "scripts/prove-release-profile-assets.py" not in workflow
+    assert "build_system/scripts/release/prove-release-profile-assets.py" not in workflow
     assert "Local Apple Silicon `just test-clean` owns that VZ proof" in release_skill
     assert "_gate-assets" in local_gate
 
@@ -399,13 +399,13 @@ def test_profile_then_binary_reuses_authored_source_without_rebuilding_assets() 
 
 def test_profile_publication_retry_verifies_owned_bytes_and_uploads_only_missing() -> None:
     workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
-    publisher = (ROOT / "scripts" / "publish-immutable-release-assets.sh").read_text(
+    publisher = (ROOT / "build_system" / "scripts" / "release" / "publish-immutable-release-assets.sh").read_text(
         encoding="utf-8"
     )
     publish = _job(workflow, "publish-profile-release", "deploy-channel")
     immutable = _step(publish, "Publish immutable GitHub profile release", None)
 
-    assert "scripts/publish-immutable-release-assets.sh" in immutable
+    assert "build_system/scripts/release/publish-immutable-release-assets.sh" in immutable
     assert (
         'CAPSEM_RELEASE_CREATE_TITLE="Capsem $CHANNEL/${{ inputs.profile }} '
         '$PROFILE_REVISION ($SOURCE_COMMIT)"' in immutable
@@ -438,7 +438,7 @@ def test_profile_provenance_precedes_authoritative_source_publication() -> None:
 
 def test_binary_publication_retry_verifies_owned_bytes_and_uploads_only_missing() -> None:
     workflow = BINARY_WORKFLOW.read_text(encoding="utf-8")
-    publisher = (ROOT / "scripts" / "publish-immutable-release-assets.sh").read_text(
+    publisher = (ROOT / "build_system" / "scripts" / "release" / "publish-immutable-release-assets.sh").read_text(
         encoding="utf-8"
     )
     create = _job(workflow, "create-release", "assemble-release-channel")
@@ -452,7 +452,7 @@ def test_binary_publication_retry_verifies_owned_bytes_and_uploads_only_missing(
     )
 
     for step in (github_release, source_manifest):
-        assert "scripts/publish-immutable-release-assets.sh" in step
+        assert "build_system/scripts/release/publish-immutable-release-assets.sh" in step
         assert "gh release upload" not in step
         assert "--clobber" not in step
 
@@ -460,7 +460,7 @@ def test_binary_publication_retry_verifies_owned_bytes_and_uploads_only_missing(
     assert verify.index(
         "Prove install.sh selects and installs the candidate Linux package"
     ) < verify.index("Persist mutated source manifest on the immutable binary release")
-    assert workflow.count("scripts/publish-immutable-release-assets.sh") == 2
+    assert workflow.count("build_system/scripts/release/publish-immutable-release-assets.sh") == 2
     assert "gh release download" in publisher
     assert "verify-immutable-publication.py" in publisher
     assert publisher.count("--resume-owned") == 2

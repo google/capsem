@@ -60,7 +60,7 @@ The selected channel source manifest is the sole mutable release authority. Do
 not add a release result file, pending ledger, last-known-good graph, manual
 diff approval record, or parallel authoring path.
 
-`scripts/check-release-workflow.sh` is platform-aware without weakening the
+`build_system/scripts/release/check-release-workflow.sh` is platform-aware without weakening the
 publication boundary. Linux reports absent Apple signing material and CI-owned
 `cargo-sbom`/`cdxgen` as not applicable; it never fabricates a key or installs a
 secret-dependent macOS toolchain. Present tools are validated, and macOS still

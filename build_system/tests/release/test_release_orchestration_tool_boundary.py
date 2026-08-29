@@ -81,7 +81,12 @@ def test_release_orchestration_tools_close_the_exact_owned_package() -> None:
 
 def test_release_orchestration_launchers_are_thin_direct_commands() -> None:
     for name, module in COMMANDS.items():
-        path = REPOSITORY_ROOT / "scripts" / name
+        script_root = (
+            REPOSITORY_ROOT / "scripts"
+            if name == "marketing_install_surface.py"
+            else REPOSITORY_ROOT / "build_system" / "scripts" / "release"
+        )
+        path = script_root / name
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source)
         assert len(source.splitlines()) <= 21, f"{name} contains reusable behavior"

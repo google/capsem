@@ -12,7 +12,7 @@ from rust_sources import sibling_tests
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_GRAPH = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
-DIFF_SCRIPT = PROJECT_ROOT / "scripts" / "check-release-graph-diff.py"
+DIFF_SCRIPT = PROJECT_ROOT / "build_system" / "scripts" / "release" / "check-release-graph-diff.py"
 FIXTURE_GRAPH = (
     PROJECT_ROOT
     / "tests"

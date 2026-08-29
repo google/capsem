@@ -98,7 +98,7 @@ case "$surface" in
         mkdir -p "$work"
 
         uv run --project build_system --frozen python scripts/write-release-site-ci-fixture.py "$fixture"
-        uv run --project build_system --frozen python scripts/build-complete-release-channel.py \
+        uv run --project build_system --frozen python build_system/scripts/release/build-complete-release-channel.py \
             --channel-source "stable=file://$fixture/assets/manifest.json" \
             --primary-channel stable \
             --assets-dir "$fixture/assets" \
@@ -115,7 +115,7 @@ case "$surface" in
         mkdir -p "$graph_sources"
         cp "$dist/assets/stable/manifest.json" "$graph_sources/stable.json"
         cp "$dist/assets/nightly/manifest.json" "$graph_sources/nightly.json"
-        uv run --project build_system --frozen python scripts/build-complete-release-channel.py \
+        uv run --project build_system --frozen python build_system/scripts/release/build-complete-release-channel.py \
             --channel-source "stable=file://$graph_sources/stable.json" \
             --channel-source "nightly=file://$graph_sources/nightly.json" \
             --primary-channel stable \

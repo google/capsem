@@ -8,8 +8,8 @@ import pytest
 from capsem_builder.release.tools import verify_immutable_publication as VERIFY
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts" / "verify-immutable-publication.py"
-PUBLISHER = ROOT / "scripts" / "publish-immutable-release-assets.sh"
+SCRIPT = ROOT / "build_system" / "scripts" / "release" / "verify-immutable-publication.py"
+PUBLISHER = ROOT / "build_system" / "scripts" / "release" / "publish-immutable-release-assets.sh"
 
 
 def _publication(root: Path) -> None:

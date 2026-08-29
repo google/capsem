@@ -118,7 +118,7 @@ def verify_candidate_profile_publication(
     """
     command = [
         sys.executable,
-        str(ROOT / "scripts" / "verify-profile-publication.py"),
+        str(ROOT / "build_system" / "scripts" / "release" / "verify-profile-publication.py"),
         "--manifest",
         str(after_manifest),
         "--profile",

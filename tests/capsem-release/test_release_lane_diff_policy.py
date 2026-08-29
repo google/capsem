@@ -12,7 +12,7 @@ from pathlib import Path
 import blake3
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = PROJECT_ROOT / "scripts" / "check-release-graph-diff.py"
+SCRIPT = PROJECT_ROOT / "build_system" / "scripts" / "release" / "check-release-graph-diff.py"
 FIXTURE_GRAPH = (
     PROJECT_ROOT
     / "tests"

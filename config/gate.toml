@@ -373,10 +373,10 @@ asset_manifest = "/home/capsem/.capsem/assets/manifest.json"
 # The suite proving the installed package, run from inside the container.
 [install.suite]
 path = "tests/capsem-install/"
-glowup_script = "scripts/local-release-glowup.py"
+glowup_script = "build_system/scripts/release/local-release-glowup.py"
 macos_report_check = "build_system/scripts/build/check-macos-native-glowup.py"
 serve_script = "scripts/serve-release-test-root.py"
-sbom_script = "scripts/generate-host-binary-sbom.py"
+sbom_script = "build_system/scripts/release/generate-host-binary-sbom.py"
 web_surface_script = "scripts/check-web-surface.sh"
 runtime_dependencies_script = "build_system/packaging/linux/install-deb-runtime-dependencies.py"
 runtime_dependencies_config = "config/gate.toml"
@@ -621,7 +621,7 @@ password_variable = "TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
 [package.proof]
 container = "capsem-qualified-deb-proof"
 systemd_ready_attempts = 60
-verify_script = "scripts/verify-installed-release.py"
+verify_script = "build_system/scripts/release/verify-installed-release.py"
 shell_proof_script = "scripts/prove-installed-shell.py"
 shell_marker = "CAPSEM_QUALIFIED_DEB_SHELL_OK"
 session_name = "qualification-exact-deb-shell"
@@ -1347,13 +1347,13 @@ line = "0.6"
 # A release publishes a commit, not the working tree, so uncommitted edits are
 # silently excluded. Refuse before anything is accepted or published.
 clean_worktree = "build_system/scripts/ci/require-clean-worktree.py"
-source = "scripts/publish-release-source.py"
+source = "build_system/scripts/release/publish-release-source.py"
 source_ref_template = "capsem-source-{source_commit}"
 tagger_name = "Capsem Release Gate"
 tagger_email = "release@capsem.org"
-notes = ["scripts/release-binaries.py", "--precheck"]
-fetch_manifest = "scripts/fetch-channel-source-manifest.py"
-binaries = "scripts/release-binaries.py"
+notes = ["build_system/scripts/release/release-binaries.py", "--precheck"]
+fetch_manifest = "build_system/scripts/release/fetch-channel-source-manifest.py"
+binaries = "build_system/scripts/release/release-binaries.py"
 profile = ["cargo", "run", "-p", "capsem-admin", "--", "release"]
 preflight_dir = "target/release-preflight"
 channel_source = "target/release-preflight/channel-source.json"
@@ -1573,7 +1573,7 @@ mount = "/src"
 # so there is nothing to repair.
 
 [sbom]
-script = "scripts/generate-host-binary-sbom.py"
+script = "build_system/scripts/release/generate-host-binary-sbom.py"
 output = "target/ironbank-host-sbom.spdx.json"
 linux_packages_glob = "*{version}*.deb"
 macos_package_name = "Capsem-{version}.pkg"
@@ -2161,9 +2161,9 @@ guest_binary_tests = [
 release_input_dir = "CAPSEM_RELEASE_INPUT_DIR"
 release_profile = "CAPSEM_RELEASE_PROFILE"
 release_package = "CAPSEM_RELEASE_PACKAGE"
-verify_inputs_script = "scripts/verify-release-inputs.py"
-prove_profile_assets_script = "scripts/prove-release-profile-assets.py"
-glowup_script = "scripts/local-release-glowup.py"
+verify_inputs_script = "build_system/scripts/release/verify-release-inputs.py"
+prove_profile_assets_script = "build_system/scripts/release/prove-release-profile-assets.py"
+glowup_script = "build_system/scripts/release/local-release-glowup.py"
 macos_glowup_script = "build_system/packaging/macos/macos_release_glowup.py"
 # Proves the published package runs on every release [platforms.linux]
 # claims and is refused below the floor. The rest of the install chain
@@ -2181,7 +2181,7 @@ glowup_work_dir = "target/release-module-glowup"
 #
 # The channel is stable because that is the one a first release publishes into,
 # and the rehearsal exists for the pairing a first release makes.
-rehearsal_script = "scripts/rehearse-release-cohort.py"
+rehearsal_script = "build_system/scripts/release/rehearse-release-cohort.py"
 rehearsal_channel = "stable"
 # `release_cohort` creates its deployable `dist/` below this work directory,
 # so the work directory itself belongs beneath the canonical output owner.

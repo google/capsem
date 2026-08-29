@@ -61,7 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ inputs.version }}"
-          bash scripts/write-binary-staging-artifacts.sh \
+          bash build_system/scripts/release/write-binary-staging-artifacts.sh \
             "$VERSION" release-artifacts "$RUNNER_TEMP/binary-staging-packages"
           ls -lh release-artifacts/
 
@@ -70,7 +70,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           case "$ASSET_CHANNEL" in stable|nightly) ;; *) exit 1 ;; esac
-          uv run --project build_system --frozen python scripts/fetch-channel-source-manifest.py \
+          uv run --project build_system --frozen python build_system/scripts/release/fetch-channel-source-manifest.py \
             --channel "$ASSET_CHANNEL" \
             --source-commit "${{ github.sha }}" \
             --require-profile-membership \
@@ -94,14 +94,14 @@ jobs:
 
       - name: Prove VM asset metadata did not change
         run: >-
-          uv run --project build_system --frozen python scripts/write-binary-channel-staging-proof.py
+          uv run --project build_system --frozen python build_system/scripts/release/write-binary-channel-staging-proof.py
           "$RUNNER_TEMP/binary-channel-dry-run"
 
       - name: Build complete binary channel preview with existing VM assets
         run: |
           set -euo pipefail
           generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          uv run --project build_system --frozen python scripts/build-complete-release-channel.py \
+          uv run --project build_system --frozen python build_system/scripts/release/build-complete-release-channel.py \
             --channel-source "$ASSET_CHANNEL=file://$RUNNER_TEMP/binary-channel-dry-run/manifest.json" \
             --primary-channel "$ASSET_CHANNEL" \
             --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \

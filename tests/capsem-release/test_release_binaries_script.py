@@ -415,7 +415,7 @@ def test_daily_nightly_schedule_freezes_one_scheduler_commit() -> None:
     # The scheduler qualifies nothing: spec 13.2 rebuilds current `main`, and
     # the dispatched lanes prove themselves before publishing.
     assert "just test-clean" not in workflow
-    assert workflow.count("scripts/nightly_release_scheduler.py") == 1
+    assert workflow.count("build_system/scripts/release/nightly_release_scheduler.py") == 1
     assert workflow.count('--source-commit "${{ github.sha }}"') == 1
     assert "just release-" not in workflow
     for profile in ("code", "co-work"):

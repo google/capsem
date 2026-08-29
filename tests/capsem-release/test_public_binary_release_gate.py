@@ -17,7 +17,7 @@ from capsem_builder.release.tools import check_public_binary_release as RELEASE_
 from helpers.workflow_contract import workflow_job_source
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = PROJECT_ROOT / "scripts" / "check-public-binary-release.py"
+SCRIPT = PROJECT_ROOT / "build_system" / "scripts" / "release" / "check-public-binary-release.py"
 
 
 def _workflow_job_blocks(workflow: str) -> dict[str, str]:
@@ -377,7 +377,7 @@ def test_release_workflow_runs_public_package_gate_and_native_install() -> None:
     verify_downloads = workflow.split("  verify-release-downloads:", maxsplit=1)[1]
     live_proof = (PROJECT_ROOT / "build_system/scripts/build/prove-live-public-install.sh").read_text(encoding="utf-8")
 
-    assert "scripts/check-public-binary-release.py" in verify_downloads
+    assert "build_system/scripts/release/check-public-binary-release.py" in verify_downloads
     assert '--channel "$RELEASE_CHANNEL"' in verify_downloads
     assert '--manifest-url "$ASSET_MANIFEST_URL"' in verify_downloads
     assert (
@@ -394,7 +394,7 @@ def test_release_workflow_runs_public_package_gate_and_native_install() -> None:
     assert 'curl -fsSL https://capsem.org/install.sh | CAPSEM_CHANNEL="$channel" sh' in live_proof
     assert '"$repo_root/scripts/prove-installed-shell.py"' in live_proof
     assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in live_proof
-    assert '"$repo_root/scripts/verify-installed-release.py"' in live_proof
+    assert '"$repo_root/build_system/scripts/release/verify-installed-release.py"' in live_proof
     assert '"$HOME/.capsem/bin/capsem" run' not in verify_downloads
 
 
@@ -406,7 +406,7 @@ def test_release_workflow_verifies_exact_installed_state_before_artifact_publica
         job = jobs[job_name]
         assert "needs:" in job and "author-binary-candidate" in job
         assert "name: binary-channel-candidate" in job
-        assert "scripts/verify-installed-release.py" in job
+        assert "build_system/scripts/release/verify-installed-release.py" in job
         assert "PREACTIVATION_MANIFEST=file://" in job
 
     assert "sudo /usr/sbin/installer" not in jobs["build-app-macos"]
@@ -555,7 +555,7 @@ def test_public_binary_transition_gate_uses_two_real_manifests_and_downgrades(
     assert script.count("check_installed_version 1.5.100") == 2
     assert "dpkg-query -W -f='${Version}' capsem | grep -Fx \"$expected\"" in script
     assert 'check_binary_versions "$expected"' in script
-    assert script.count("scripts/verify-installed-release.py") == 3
+    assert script.count("build_system/scripts/release/verify-installed-release.py") == 3
 
 
 def test_public_binary_release_gate_requires_fail_closed_installer_integrity() -> None:

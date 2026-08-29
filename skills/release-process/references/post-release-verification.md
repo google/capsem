@@ -12,7 +12,7 @@ xcrun stapler validate /tmp/verify/Capsem-*.pkg       # Staple ticket present
 gh release download vX.Y.Z --pattern '*.deb' -D /tmp/verify
 curl -fsSL https://release.capsem.org/channels.json -o /tmp/verify/channels.json
 curl -fsSL https://release.capsem.org/assets/stable/manifest.json -o /tmp/verify/asset-manifest.json
-uv run --project build_system --frozen python3 scripts/check-public-binary-release.py \
+uv run --project build_system --frozen python3 build_system/scripts/release/check-public-binary-release.py \
   --channel stable \
   --manifest-url https://release.capsem.org/assets/stable/manifest.json \
   --install-script-url https://capsem.org/install.sh \
@@ -22,7 +22,7 @@ uv run --project build_system --frozen python3 scripts/check-public-binary-relea
   --docker-transition-from-manifest /path/to/frozen-predeploy-manifest.json
 ```
 
-Use `scripts/check-public-binary-release.py` for post-deploy glow-up instead of
+Use `build_system/scripts/release/check-public-binary-release.py` for post-deploy glow-up instead of
 ad hoc `tar`/`strings` checks. It validates public `install.sh`, package URLs,
 package SHA-256, package-owned binary hashes, absence of a packaged
 `~/.capsem/assets/manifest.json`, `manifest-metadata.json` source provenance, Docker

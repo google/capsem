@@ -80,7 +80,7 @@ bash "$SCRIPT_DIR/build-pkg.sh" \
 PKG="$ROOT/target/packages/Capsem-$VERSION.pkg"
 test -s "$PKG"
 SBOM="$ROOT/target/macos-package-sbom.spdx.json"
-python3 scripts/generate-host-binary-sbom.py --output "$SBOM" "$PKG"
+python3 build_system/scripts/release/generate-host-binary-sbom.py --output "$SBOM" "$PKG"
 python3 - "$SBOM" <<'PY'
 import json
 import pathlib

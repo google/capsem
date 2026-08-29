@@ -307,13 +307,13 @@ def _workflow_text(name: str) -> str:
 
 def _source_text(path: str) -> str:
     package_sources = {
-        "scripts/build-complete-release-channel.py": Path(COMPLETE_CHANNEL.__file__),
+        "build_system/scripts/release/build-complete-release-channel.py": Path(COMPLETE_CHANNEL.__file__),
         "scripts/check-cloudflare-pages-project.py": Path(CLOUDFLARE_PROJECT.__file__),
-        "scripts/check-remote-release-readiness.py": Path(READINESS.__file__),
-        "scripts/local-release-glowup.py": Path(LOCAL_GLOWUP.__file__),
-        "scripts/verify-channel-downloads.py": Path(VERIFY_DOWNLOADS.__file__),
-        "scripts/write-binary-channel-staging-proof.py": Path(BINARY_STAGING_PROOF.__file__),
-        "scripts/write-release-summary.py": Path(RELEASE_SUMMARY.__file__),
+        "build_system/scripts/release/check-remote-release-readiness.py": Path(READINESS.__file__),
+        "build_system/scripts/release/local-release-glowup.py": Path(LOCAL_GLOWUP.__file__),
+        "build_system/scripts/release/verify-channel-downloads.py": Path(VERIFY_DOWNLOADS.__file__),
+        "build_system/scripts/release/write-binary-channel-staging-proof.py": Path(BINARY_STAGING_PROOF.__file__),
+        "build_system/scripts/release/write-release-summary.py": Path(RELEASE_SUMMARY.__file__),
     }
     if source := package_sources.get(path):
         return source.read_text()
@@ -831,7 +831,7 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
     assert "just qualify-assets" in workflow
     assert "just _test-release-contracts" not in workflow
-    assert "scripts/build-complete-release-channel.py" in workflow
+    assert "build_system/scripts/release/build-complete-release-channel.py" in workflow
     assert "channel-source-$CHANNEL.json" in workflow
     assert "check-profile-release-delta.py" in workflow
     assert "uses: ./.github/workflows/release-channel.yaml" in workflow
@@ -947,7 +947,7 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
     assert "build-app-linux:" not in workflow
     assert "just _build-kernel" not in workflow
     assert "just _build-rootfs" not in workflow
-    assert "scripts/rehearse-asset-channel-staging.sh" in workflow
+    assert "build_system/scripts/release/rehearse-asset-channel-staging.sh" in workflow
     assert "--without-binary-files" not in workflow
     assert '"$RUNNER_TEMP/release-channel-staging-fixture"' in workflow
     assert '"$RUNNER_TEMP/release-channel-staging-validation"' in workflow
@@ -1279,7 +1279,7 @@ def test_cloudflare_pages_project_checker_reports_visibility_failures() -> None:
 
 def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None:
     workflow = _workflow_text("release-channel.yaml")
-    script = _source_text("scripts/check-remote-release-readiness.py")
+    script = _source_text("build_system/scripts/release/check-remote-release-readiness.py")
     docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
 
@@ -1333,7 +1333,7 @@ def test_release_channel_cache_header_documentation_matches_deploy_smoke() -> No
     release_skill = _skill_text("skills/release-process/SKILL.md")
     asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
 
-    script = _source_text("scripts/check-remote-release-readiness.py")
+    script = _source_text("build_system/scripts/release/check-remote-release-readiness.py")
     assert "uv run --project build_system --frozen python scripts/check-release-site-contract.py" in workflow
     assert "def check_release_cache_headers" in script
     assert '("no-cache", "must-revalidate")' in script
@@ -1351,7 +1351,7 @@ def test_release_channel_cache_header_documentation_matches_deploy_smoke() -> No
 
 
 def test_cdxgen_is_owned_only_by_the_digest_pinned_asset_helper() -> None:
-    release_preflight = _source_text("scripts/check-release-workflow.sh")
+    release_preflight = _source_text("build_system/scripts/release/check-release-workflow.sh")
     doctor = _source_text("build_system/scripts/doctor/doctor-common.sh") + _source_text(
         "build_system/scripts/doctor/doctor-run.sh"
     )
@@ -1383,7 +1383,7 @@ def test_cdxgen_is_owned_only_by_the_digest_pinned_asset_helper() -> None:
 
 
 def test_release_workflow_preflight_preserves_macos_key_and_linux_skip() -> None:
-    preflight = _source_text("scripts/check-release-workflow.sh")
+    preflight = _source_text("build_system/scripts/release/check-release-workflow.sh")
 
     assert "PLATFORM=$(uname -s)" in preflight
     assert 'if [ "$PLATFORM" = "Darwin" ]' in preflight
@@ -1689,14 +1689,14 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "release-artifacts/*.pkg" in create_release
     assert "release-artifacts/*.deb" in create_release
     assert "release-artifacts/capsem-sbom.spdx.json" in create_release
-    assert "scripts/publish-immutable-release-assets.sh" in create_release
+    assert "build_system/scripts/release/publish-immutable-release-assets.sh" in create_release
     assert 'CAPSEM_RELEASE_CREATE_TITLE="Capsem $RELEASE_TAG ($SOURCE_COMMIT)"' in create_release
     assert 'CAPSEM_RELEASE_CREATE_NOTES_FILE="$notes"' in create_release
     assert 'CAPSEM_RELEASE_CREATE_TARGET="$SOURCE_COMMIT"' in create_release
     assert "gh release create" not in create_release
     assert "gh release upload" not in create_release
     immutable_publisher = (
-        PROJECT_ROOT / "scripts" / "publish-immutable-release-assets.sh"
+        PROJECT_ROOT / "build_system" / "scripts" / "release" / "publish-immutable-release-assets.sh"
     ).read_text()
     assert 'gh release create "$release_tag"' in immutable_publisher
     assert 'gh release upload "$release_tag" "$owned_dir/$missing"' in immutable_publisher
@@ -1714,14 +1714,14 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     )[1].split("- uses: actions/upload-artifact", maxsplit=1)[0]
     assert "generated_at=\"$(date -u +'%Y-%m-%dT%H:%M:%SZ')\"" in build_channels
     assert '--generated-at "$generated_at"' in build_channels
-    assert "scripts/build-complete-release-channel.py" in build_channels
+    assert "build_system/scripts/release/build-complete-release-channel.py" in build_channels
     assert (
         '--channel-source "$RELEASE_CHANNEL=file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json"'
         in build_channels
     )
     assert '--primary-channel "$RELEASE_CHANNEL"' in build_channels
     assert build_channels.index('generated_at="$(date -u') < build_channels.index(
-        "scripts/build-complete-release-channel.py"
+        "build_system/scripts/release/build-complete-release-channel.py"
     )
     assert "Prove binary candidate preserved every profile" in author_candidate
     assert "binary candidate changed profile metadata" in author_candidate
@@ -1757,8 +1757,8 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     workflow = _workflow_text("release-binary-staging.yaml")
     real_release = _workflow_text("release.yaml")
     macos_ci = _workflow_job_block("test", "ci.yaml")
-    artifact_builder = _source_text("scripts/write-binary-staging-artifacts.sh")
-    complete_builder = _source_text("scripts/build-complete-release-channel.py")
+    artifact_builder = _source_text("build_system/scripts/release/write-binary-staging-artifacts.sh")
+    complete_builder = _source_text("build_system/scripts/release/build-complete-release-channel.py")
     compact_complete_builder = " ".join(complete_builder.split())
     assemble_channel = _workflow_job_block(
         "assemble-binary-channel",
@@ -1809,10 +1809,10 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
 
     assert "ASSET_MANIFEST_URL:" not in workflow
     assert 'case "$ASSET_CHANNEL" in stable|nightly)' in assemble_channel
-    assert "scripts/fetch-channel-source-manifest.py" in assemble_channel
+    assert "build_system/scripts/release/fetch-channel-source-manifest.py" in assemble_channel
     assert '--channel "$ASSET_CHANNEL"' in assemble_channel
     assert "--require-profile-membership" in assemble_channel
-    assert "scripts/write-binary-staging-artifacts.sh" in assemble_channel
+    assert "build_system/scripts/release/write-binary-staging-artifacts.sh" in assemble_channel
     assert "Capsem-${VERSION}.pkg" in artifact_builder
     assert "Capsem_${VERSION}_arm64.deb" in artifact_builder
     assert "capsem-sbom.spdx.json" in artifact_builder
@@ -1821,14 +1821,14 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     assert "ref: ${{ github.sha }}" in assemble_channel
     assert '--source-commit "${{ github.sha }}"' in assemble_channel
     assert "manifest.before.json" in assemble_channel
-    assert "scripts/write-binary-channel-staging-proof.py" in assemble_channel
-    staging_proof = _source_text("scripts/write-binary-channel-staging-proof.py")
+    assert "build_system/scripts/release/write-binary-channel-staging-proof.py" in assemble_channel
+    staging_proof = _source_text("build_system/scripts/release/write-binary-channel-staging-proof.py")
     assert "binary dry-run changed profile image metadata" in staging_proof
     assert "binary dry-run changed VM asset metadata" in staging_proof
     assert '"vm_asset_jobs": "not_run"' in staging_proof
     assert '"vm_assets_unchanged": True' in staging_proof
     assert "Build complete binary channel preview with existing VM assets" in assemble_channel
-    assert "scripts/build-complete-release-channel.py" in assemble_channel
+    assert "build_system/scripts/release/build-complete-release-channel.py" in assemble_channel
     assert "assets channel build" not in assemble_channel
     assert "assets channel check" not in assemble_channel
     assert '"assets", "channel", "build",' in compact_complete_builder
@@ -1846,9 +1846,9 @@ def test_binary_release_summary_names_pkg_and_deb_sbom_coverage() -> None:
     not formatting -- which no test could reach.
     """
     create_release = _workflow_job_block("create-release", "release.yaml")
-    assert "scripts/write-release-summary.py" in create_release
+    assert "build_system/scripts/release/write-release-summary.py" in create_release
 
-    summary = _source_text("scripts/write-release-summary.py")
+    summary = _source_text("build_system/scripts/release/write-release-summary.py")
     assert "SBOM attested (SPDX 2.3, pkg + deb)" in summary
     assert "SBOM attested (SPDX 2.3, pkg)\n" not in summary
 
@@ -1976,7 +1976,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert 'grep -F "Service:   ok" /tmp/capsem-status.txt' in macos
     assert 'grep -F "Gateway:   ok" /tmp/capsem-status.txt' in macos
     assert "pgrep -x capsem-tray" in macos
-    assert "scripts/verify-installed-release.py" in macos
+    assert "build_system/scripts/release/verify-installed-release.py" in macos
     assert "Collect macOS install diagnostics" in macos
     assert "if: always()" in macos
     assert '"$HOME/.capsem/logs/install-latest.log"' in macos
@@ -2003,7 +2003,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert 'grep -F "Running:   true" /tmp/capsem-status.txt' in linux
     assert 'grep -F "Service:   ok" /tmp/capsem-status.txt' in linux
     assert 'grep -F "Gateway:   ok" /tmp/capsem-status.txt' in linux
-    assert "scripts/verify-installed-release.py" in linux
+    assert "build_system/scripts/release/verify-installed-release.py" in linux
     assert "Enable KVM for exact-package VM proof" in linux
     assert linux.count("if: matrix.arch == 'x86_64'") == 2
     assert "test -r /dev/kvm -a -w /dev/kvm" in linux
@@ -2093,7 +2093,7 @@ def test_release_skill_requires_ci_and_local_mac_installer_outcome_proof() -> No
     assert "Hosted macOS owns signing, notarization" in normalized_release_skill
     assert "publication depends on both platform rails" in release_skill
     assert "Fix forward with a normal commit" in release_skill
-    assert "scripts/verify-installed-release.py" in release_skill
+    assert "build_system/scripts/release/verify-installed-release.py" in release_skill
     assert "byte-for-byte" in release_skill
     assert "profile readiness" in release_skill
 
@@ -2123,7 +2123,7 @@ def test_release_dispatch_has_exactly_two_single_purpose_just_recipes() -> None:
     assert "\nprepare-release:" not in justfile
     assert '\nrelease-binaries channel source_commit force="false":' in justfile
     assert '\nrelease-profile channel profile source_commit force="false":' in justfile
-    assert "scripts/release-binaries.py" in _recipe_block("release-binaries")
+    assert "build_system/scripts/release/release-binaries.py" in _recipe_block("release-binaries")
     assert "capsem-admin -- release" in _recipe_block("release-profile")
 
 
@@ -2663,14 +2663,14 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
     verify_downloads = _workflow_job_block("verify-release-downloads", "release.yaml")
 
     assert "needs: [deploy-release-channel]" in verify_downloads
-    assert "scripts/verify-channel-downloads.py" in verify_downloads
+    assert "build_system/scripts/release/verify-channel-downloads.py" in verify_downloads
     assert '--manifest-url "$ASSET_MANIFEST_URL"' in verify_downloads
 
     # The checks themselves moved out of the YAML and into a script that tests
     # can call. They were a `curl` loop, a byte comparison and a blake3 check
     # written as a Python heredoc indented inside a `run:` block -- a program no
     # test could reach, guarding the last step before anyone installs a release.
-    verifier = _source_text("scripts/verify-channel-downloads.py")
+    verifier = _source_text("build_system/scripts/release/verify-channel-downloads.py")
     assert "manifest_asset_rows" in verifier
     assert "m['assets']['current']" not in verifier
     assert "blake3.blake3(payload).hexdigest()" in verifier
@@ -2681,7 +2681,7 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
     assert "is not reachable" in verifier
     assert "the manifest declares" in verifier
     assert "hashes to" in verifier
-    assert "scripts/check-public-binary-release.py" in verify_downloads
+    assert "build_system/scripts/release/check-public-binary-release.py" in verify_downloads
     assert '--channel "$RELEASE_CHANNEL"' in verify_downloads
     assert (
         "--stable-manifest-url https://release.capsem.org/assets/stable/manifest.json"
@@ -2702,7 +2702,7 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
     assert 'grep -F "Service:   ok" /tmp/capsem-live-status.txt' in live_proof
     assert 'grep -F "Gateway:   ok" /tmp/capsem-live-status.txt' in live_proof
     assert '"$repo_root/scripts/prove-installed-shell.py"' in live_proof
-    assert '"$repo_root/scripts/verify-installed-release.py"' in live_proof
+    assert '"$repo_root/build_system/scripts/release/verify-installed-release.py"' in live_proof
     assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in live_proof
     assert '"$HOME/.capsem/bin/capsem" run' not in verify_downloads
     assert "skipping binary e2e" not in verify_downloads
@@ -3148,7 +3148,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
 
     for shared_script in (
         "build_system/packaging/macos/build-pkg.sh",
-        "scripts/verify-installed-release.py",
+        "build_system/scripts/release/verify-installed-release.py",
         "scripts/prove-installed-shell.py",
     ):
         assert shared_script in release
@@ -3180,7 +3180,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     )
     for shared_script in (
         '"$SCRIPT_DIR/repack-deb.sh"',
-        "scripts/verify-installed-release.py",
+        "build_system/scripts/release/verify-installed-release.py",
         "scripts/prove-installed-shell.py",
     ):
         assert shared_script in local_rail
@@ -3206,8 +3206,8 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     release_assets = _workflow_text("release-assets.yaml")
     binary_staging = _workflow_text("release-binary-staging.yaml")
     channel_staging = _workflow_text("release-channel-staging.yaml")
-    binary_staging_builder = _source_text("scripts/build-complete-release-channel.py")
-    channel_staging_rehearsal = _source_text("scripts/rehearse-asset-channel-staging.sh")
+    binary_staging_builder = _source_text("build_system/scripts/release/build-complete-release-channel.py")
+    channel_staging_rehearsal = _source_text("build_system/scripts/release/rehearse-asset-channel-staging.sh")
 
     for surface in (
         "frontend-verify",
@@ -3235,12 +3235,12 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     assert "bash scripts/check-web-surface.sh frontend-build" in _source_text(
         "build_system/packaging/linux/build-linux-package.sh"
     )
-    assert "scripts/build-complete-release-channel.py" in binary_staging
+    assert "build_system/scripts/release/build-complete-release-channel.py" in binary_staging
     assert '"scripts/check-web-surface.sh", "release-site-build"' in binary_staging_builder
-    assert "bash scripts/rehearse-asset-channel-staging.sh" in channel_staging
+    assert "bash build_system/scripts/release/rehearse-asset-channel-staging.sh" in channel_staging
     assert "bash scripts/check-web-surface.sh release-site-build" in channel_staging_rehearsal
-    assert "scripts/build-complete-release-channel.py" in release
-    assert "scripts/build-complete-release-channel.py" in release_assets
+    assert "build_system/scripts/release/build-complete-release-channel.py" in release
+    assert "build_system/scripts/release/build-complete-release-channel.py" in release_assets
 
     bypasses = (
         "cd web/app && pnpm run build",
@@ -3269,7 +3269,7 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     assert "pnpm --dir build_system/release_site run build:channel" in script
     assert 'test -s "$CAPSEM_RELEASE_CHANNEL_DIST/404.html"' in script
     assert 'grep -q "Artifact not found"' in script
-    complete_builder = _source_text("scripts/build-complete-release-channel.py")
+    complete_builder = _source_text("build_system/scripts/release/build-complete-release-channel.py")
     assert '"assets",\n                "channel",\n                "check"' in complete_builder
     assert "CAPSEM_FRONTEND_JUNIT" in script
 
@@ -3349,7 +3349,7 @@ def test_release_channel_deploy_validates_the_deployed_channel_shape() -> None:
 
 
 def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -> None:
-    script = _source_text("scripts/check-remote-release-readiness.py")
+    script = _source_text("build_system/scripts/release/check-remote-release-readiness.py")
     remote_gate = _source_text("build_system/builder/release/tools/remote_ci_gate.py")
     docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
@@ -3386,7 +3386,7 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     ]:
         assert forbidden not in script
 
-    assert "scripts/check-remote-release-readiness.py" in docs
+    assert "build_system/scripts/release/check-remote-release-readiness.py" in docs
     assert "read-only" in docs
     assert "reads both `ci.yaml` and its dispatched verdict script from that commit" in docs_text
     assert (
@@ -3568,7 +3568,7 @@ jobs:
 
 
 def test_remote_release_readiness_checker_reports_unpublished_local_commits() -> None:
-    script = _source_text("scripts/check-remote-release-readiness.py")
+    script = _source_text("build_system/scripts/release/check-remote-release-readiness.py")
     docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
 
@@ -3591,7 +3591,7 @@ def test_remote_release_readiness_missing_dependency_reports_setup_hint(tmp_path
     result = subprocess.run(
         [
             sys.executable,
-            str(PROJECT_ROOT / "scripts/check-remote-release-readiness.py"),
+            str(PROJECT_ROOT / "build_system/scripts/release/check-remote-release-readiness.py"),
         ],
         cwd=PROJECT_ROOT,
         capture_output=True,
@@ -3602,13 +3602,13 @@ def test_remote_release_readiness_missing_dependency_reports_setup_hint(tmp_path
 
     assert result.returncode == 2
     assert "missing Python dependency: blake3" in result.stderr
-    assert "uv run --project build_system --frozen python scripts/check-remote-release-readiness.py" in result.stderr
+    assert "uv run --project build_system --frozen python build_system/scripts/release/check-remote-release-readiness.py" in result.stderr
     assert "Traceback" not in result.stderr
 
 
 def test_remote_release_readiness_requires_active_pr_gate_rule() -> None:
     module = _readiness_checker_module()
-    script = _source_text("scripts/check-remote-release-readiness.py")
+    script = _source_text("build_system/scripts/release/check-remote-release-readiness.py")
     docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
 
@@ -3653,7 +3653,7 @@ def test_remote_release_readiness_requires_active_pr_gate_rule() -> None:
 
 def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -> None:
     module = _readiness_checker_module()
-    script = _source_text("scripts/check-remote-release-readiness.py")
+    script = _source_text("build_system/scripts/release/check-remote-release-readiness.py")
     docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
     sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
@@ -3801,7 +3801,7 @@ def test_remote_release_readiness_rejects_unscoped_host_obom() -> None:
 
 def test_remote_release_readiness_checker_verifies_vm_asset_file_content() -> None:
     module = _readiness_checker_module()
-    script = _source_text("scripts/check-remote-release-readiness.py")
+    script = _source_text("build_system/scripts/release/check-remote-release-readiness.py")
     workflow = _workflow_text("release-channel.yaml")
     rootfs_url = (
         "https://github.com/google/capsem/releases/download/assets-v2030.0101.1/arm64-rootfs.erofs"
@@ -3963,7 +3963,7 @@ def test_release_rejects_sha1_only_spdx_file_checksums() -> None:
         f"host SBOM evidence {sbom_url} SPDX file SPDXRef-File-capsem-gateway "
         "missing SHA256 checksum"
     ) in failures
-    script = _source_text("scripts/check-remote-release-readiness.py")
+    script = _source_text("build_system/scripts/release/check-remote-release-readiness.py")
     assert "missing SHA256 checksum" in script
     assert 'algorithm.upper() == "SHA256"' in script
 
@@ -4039,7 +4039,7 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
     None
 ):
     module = _readiness_checker_module()
-    script = _source_text("scripts/check-remote-release-readiness.py")
+    script = _source_text("build_system/scripts/release/check-remote-release-readiness.py")
     workflow = _workflow_text("release-channel.yaml")
     sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
     obom_bytes = _rootfs_obom_bytes()
@@ -4146,7 +4146,7 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
 
 def test_remote_readiness_rejects_attestation_rail_drift() -> None:
     module = _readiness_checker_module()
-    script = _source_text("scripts/check-remote-release-readiness.py")
+    script = _source_text("build_system/scripts/release/check-remote-release-readiness.py")
     obom_bytes = _rootfs_obom_bytes()
     obom_path = "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
     obom_url = f"https://release.capsem.test{obom_path}"
@@ -4202,7 +4202,7 @@ def test_remote_readiness_rejects_attestation_rail_drift() -> None:
 
 def test_remote_readiness_rejects_host_sbom_attestation_subjects_missing_package() -> None:
     module = _readiness_checker_module()
-    script = _source_text("scripts/check-remote-release-readiness.py")
+    script = _source_text("build_system/scripts/release/check-remote-release-readiness.py")
     sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
     sbom_url = "https://github.com/google/capsem/releases/download/v1.4.1/capsem-sbom.spdx.json"
     pkg_url = "https://github.com/google/capsem/releases/download/v1.4.1/Capsem-1.4.1.pkg"
@@ -4269,7 +4269,7 @@ def test_remote_readiness_rejects_host_sbom_attestation_subjects_missing_package
 
 def test_remote_readiness_rejects_noncanonical_host_sbom_evidence() -> None:
     module = _readiness_checker_module()
-    script = _source_text("scripts/check-remote-release-readiness.py")
+    script = _source_text("build_system/scripts/release/check-remote-release-readiness.py")
     sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
     sbom_url = "https://github.com/google/capsem/releases/download/v1.4.1/capsem-sbom.spdx.json"
     pkg_url = "https://github.com/google/capsem/releases/download/v1.4.1/Capsem-1.4.1.pkg"
@@ -4328,7 +4328,7 @@ def test_remote_readiness_rejects_noncanonical_host_sbom_evidence() -> None:
 
 
 def test_release_channel_smoke_host_sbom_attestation_subjects_cover_packages() -> None:
-    script = _source_text("scripts/check-remote-release-readiness.py")
+    script = _source_text("build_system/scripts/release/check-remote-release-readiness.py")
 
     assert "host_sbom_attestation_subjects" in script
     assert "github_attestations_host_sbom" in script
@@ -4337,7 +4337,7 @@ def test_release_channel_smoke_host_sbom_attestation_subjects_cover_packages() -
 
 def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
     module = _readiness_checker_module()
-    script = _source_text("scripts/check-remote-release-readiness.py")
+    script = _source_text("build_system/scripts/release/check-remote-release-readiness.py")
     docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
     calls: list[str] = []
@@ -5325,9 +5325,9 @@ def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     # What `glowup.host-sbom` above is built from, so naming the step is still
     # a claim about running the production generator rather than about a step
     # label that could be wired to anything.
-    assert sbom.script == "scripts/generate-host-binary-sbom.py"
+    assert sbom.script == "build_system/scripts/release/generate-host-binary-sbom.py"
     assert "build_system/packaging/macos/build-pkg.sh" in release
-    assert "scripts/generate-host-binary-sbom.py" in release
+    assert "build_system/scripts/release/generate-host-binary-sbom.py" in release
 
 
 def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
@@ -5780,7 +5780,7 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
     assert "shared per-channel release lock" in rejected.stderr
 
     rogue_writer = tmp_path / ".github/workflows/rogue-writer.yaml"
-    rogue_writer.write_text("steps:\n  - run: python scripts/stage-profile-publication.py\n")
+    rogue_writer.write_text("steps:\n  - run: python build_system/scripts/release/stage-profile-publication.py\n")
     rejected = run_guard()
     rogue_writer.unlink()
     assert rejected.returncode != 0

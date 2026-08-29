@@ -109,7 +109,7 @@ are separate. Shared inputs select every owner.
 Before claiming release readiness, run the read-only live gate checker:
 
 ```bash
-uv run --project build_system --frozen python scripts/check-remote-release-readiness.py
+uv run --project build_system --frozen python build_system/scripts/release/check-remote-release-readiness.py
 ```
 
 It verifies that the local checkout has no unpublished commits relative to

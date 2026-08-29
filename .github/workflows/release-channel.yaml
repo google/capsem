@@ -90,7 +90,7 @@ jobs:
           gh run view "$ARTIFACT_RUN_ID" \
             --json databaseId,headSha,headBranch,event,workflowName,status,conclusion,jobs \
             > target/release-channel-deployment/source-run.json
-          python scripts/verify-release-recovery-run.py \
+          python build_system/scripts/release/verify-release-recovery-run.py \
             --run target/release-channel-deployment/source-run.json \
             --run-id "$ARTIFACT_RUN_ID" \
             --source-commit "$SOURCE_COMMIT"
@@ -144,7 +144,7 @@ jobs:
         env:
           RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
         run: |
-          uv run --project build_system --frozen python scripts/check-channel-deploy-freshness.py \
+          uv run --project build_system --frozen python build_system/scripts/release/check-channel-deploy-freshness.py \
             --selected-channel "$CHANNEL" \
             --dist "$DIST_DIR" \
             --release-site "$RELEASE_SITE_URL"

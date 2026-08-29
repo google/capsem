@@ -149,13 +149,13 @@ def test_no_caller_sets_the_output_name_where_a_graph_fixture_goes() -> None:
     [
         (
             "release-binary-staging.yaml",
-            "scripts/build-complete-release-channel.py",
+            "build_system/scripts/release/build-complete-release-channel.py",
             "build_system/builder/release/tools/build_complete_release_channel.py",
         ),
         (
             "release-channel-staging.yaml",
-            "scripts/rehearse-asset-channel-staging.sh",
-            "scripts/rehearse-asset-channel-staging.sh",
+            "build_system/scripts/release/rehearse-asset-channel-staging.sh",
+            "build_system/scripts/release/rehearse-asset-channel-staging.sh",
         ),
     ],
 )

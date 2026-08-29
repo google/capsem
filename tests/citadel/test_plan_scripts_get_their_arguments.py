@@ -1,7 +1,7 @@
 """Citadel guard: a plan step must be able to start the script it names.
 
 `glowup.package` and `glowup.channel-switch` are the last two steps of a binary
-release, and they ran `scripts/local-release-glowup.py` without `--source-commit`,
+release, and they ran `build_system/scripts/release/local-release-glowup.py` without `--source-commit`,
 `--evidence-dir` or `--profile-revision-policy`. All three were `required=True`.
 Neither step could ever have got past `argparse`.
 

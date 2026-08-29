@@ -40,7 +40,7 @@ entrypoint with a local gate. Current required mappings are:
   kernel/rootfs builds to consume those exact image IDs with BuildKit network
   `none` and no remote cache;
 - release-channel assembly: the local `release-site` gate and production asset
-  and binary workflows execute `scripts/build-complete-release-channel.py`;
+  and binary workflows execute `build_system/scripts/release/build-complete-release-channel.py`;
   every deployable production dist must contain and validate both `stable` and
   `nightly`, preserving the untouched channel graph instead of replacing the
   Pages site with only the channel being updated. The local gate must
@@ -64,10 +64,10 @@ entrypoint with a local gate. Current required mappings are:
   gate without requiring the local worktree to be committed first;
 - package assembly and acceptance: local and release CI share
   `build_system/packaging/macos/build-pkg.sh`, `build_system/packaging/linux/repack-deb.sh`,
-  `scripts/verify-installed-release.py`, and
+  `build_system/scripts/release/verify-installed-release.py`, and
   `scripts/prove-installed-shell.py`; macOS-local `just test-clean` builds the real
   release-mode app and unsigned `.pkg`, both Linux release-mode `.deb`
-  architectures, and runs `scripts/generate-host-binary-sbom.py` over those
+  architectures, and runs `build_system/scripts/release/generate-host-binary-sbom.py` over those
   exact artifacts. The native glow-up must finish with the same
   installed-manifest verification and real guest-shell proof before success.
 

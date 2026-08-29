@@ -35,7 +35,7 @@ def _sources() -> tuple[str, str, str]:
     return (
         (ROOT / ".github/workflows/release.yaml").read_text(encoding="utf-8"),
         (ROOT / ".github/workflows/release-assets.yaml").read_text(encoding="utf-8"),
-        (ROOT / "scripts/stage-profile-pairing.sh").read_text(encoding="utf-8"),
+        (ROOT / "build_system/scripts/release/stage-profile-pairing.sh").read_text(encoding="utf-8"),
     )
 
 

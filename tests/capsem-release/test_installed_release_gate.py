@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = PROJECT_ROOT / "scripts" / "verify-installed-release.py"
+SCRIPT = PROJECT_ROOT / "build_system" / "scripts" / "release" / "verify-installed-release.py"
 
 
 def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -103,6 +103,7 @@ def _run(
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
+        check=False,
     )
 
 

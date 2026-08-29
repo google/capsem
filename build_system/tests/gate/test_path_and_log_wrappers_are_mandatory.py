@@ -353,7 +353,7 @@ def test_python_and_shell_read_streams_through_the_helper() -> None:
 # the guard would have stopped what got through it.
 # ---------------------------------------------------------------------------
 
-#: The exact shape `scripts/local-release-glowup.py` shipped in `b7b9cfbc`,
+#: The exact shape `build_system/scripts/release/local-release-glowup.py` shipped in `b7b9cfbc`,
 #: written *while fixing* the macOS instance of this bug. Two commits after
 #: the same lesson, in a proof of the same behaviour: three minutes waiting on
 #: a file that never existed.

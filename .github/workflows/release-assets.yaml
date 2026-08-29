@@ -113,7 +113,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/fetch-channel-source-manifest.py \
+          python3 build_system/scripts/release/fetch-channel-source-manifest.py \
             --channel "${{ inputs.channel }}" \
             --profile "${{ inputs.profile }}" \
             --source-commit "${{ inputs.source_commit }}" \
@@ -123,7 +123,7 @@ jobs:
       - name: Project inactive first-channel public-before state
         if: ${{ steps.public-before.outputs.bootstrap == 'true' }}
         run: |
-          python3 scripts/project-first-channel-before.py \
+          python3 build_system/scripts/release/project-first-channel-before.py \
             --source-manifest target/channel-source/manifest.json \
             --channel "stable" \
             --bootstrap "${{ steps.public-before.outputs.bootstrap }}" \
@@ -152,7 +152,7 @@ jobs:
       - name: Check pulled package functional binary cohort
         id: functional-cohort
         run: |
-          uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
+          uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
             --input-dir target/profile-public-before/packages \
             --check-functional-cohort \
             --github-output "$GITHUB_OUTPUT"
@@ -168,7 +168,7 @@ jobs:
 
       - name: Prove public-before cohorts use one manifest
         run: |
-          uv run --project build_system --frozen python scripts/verify-release-inputs.py \
+          uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
             --input-dir target/profile-public-before/profiles
           cmp \
             target/profile-public-before/packages/manifest.json \
@@ -400,7 +400,7 @@ jobs:
           RELEASE_BASELINE_CHANNEL: ${{ needs.resolve-current-binary.outputs.baseline_channel }}
           RELEASE_PROFILE: ${{ inputs.profile }}
           ACTIVATION_READY: ${{ needs.author-profile-release.outputs.activation_ready }}
-        run: bash scripts/stage-profile-pairing.sh
+        run: bash build_system/scripts/release/stage-profile-pairing.sh
 
       # A channel with no package cohort yet proves the profile alone. Which
       # shape that is belongs to the lane, so the flag is passed rather than
@@ -509,7 +509,7 @@ jobs:
           PROFILE_IDENTITY=$(python3 -c 'import json; print(json.load(open("target/profile-release-selection.json"))["publication_identity"])')
           ASSET_BASE="https://github.com/${{ github.repository }}/releases/download/$PROFILE_IDENTITY"
           MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open("target/source-channel/manifest.json"))["version"])')
-          uv run --project build_system --frozen python scripts/build-complete-release-channel.py \
+          uv run --project build_system --frozen python build_system/scripts/release/build-complete-release-channel.py \
             --channel-source "$CHANNEL=file://$PWD/target/assets/manifest.json" \
             --primary-channel "$CHANNEL" \
             --assets-dir target/assets \
@@ -521,7 +521,7 @@ jobs:
       - name: Check selected channel profile delta
         id: profile-delta
         run: |
-          uv run --project build_system --frozen python scripts/check-profile-release-delta.py \
+          uv run --project build_system --frozen python build_system/scripts/release/check-profile-release-delta.py \
             --source-manifest target/source-channel/manifest.json \
             --candidate-manifest "target/profile-candidate/assets/$CHANNEL/manifest.json" \
             --public-manifest target/profile-public-before/profiles/manifest.json \
@@ -575,13 +575,13 @@ jobs:
           set -euo pipefail
           PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$PUBLICATION_IDENTITY"
           RELEASE_DIR="target/asset-release/$PUBLICATION_IDENTITY"
-          uv run --project build_system --frozen python scripts/stage-profile-publication.py \
+          uv run --project build_system --frozen python build_system/scripts/release/stage-profile-publication.py \
             --manifest target/source-channel/manifest.json \
             --profile "${{ inputs.profile }}" \
             --assets-dir target/assets \
             --config-root config \
             --release-dir "$RELEASE_DIR"
-          uv run --project build_system --frozen python scripts/verify-profile-publication.py \
+          uv run --project build_system --frozen python build_system/scripts/release/verify-profile-publication.py \
             --manifest "$RELEASE_DIR/channel-source-$CHANNEL.json" \
             --profile "${{ inputs.profile }}" \
             --publication-base "$PUBLICATION_BASE" \
@@ -677,7 +677,7 @@ jobs:
       - name: Build deployable channel from authored source manifest
         if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
         run: |
-          uv run --project build_system --frozen python scripts/build-complete-release-channel.py \
+          uv run --project build_system --frozen python build_system/scripts/release/build-complete-release-channel.py \
             --channel-source "$CHANNEL=file://$PWD/target/source-channel/manifest.json" \
             --primary-channel "$CHANNEL" \
             --assets-dir target/assets \
@@ -702,7 +702,7 @@ jobs:
           RELEASE_DIR="target/asset-release/$TAG"
           NOTES_FILE="target/asset-release/profile-release-notes.md"
           PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
-          uv run --project build_system --frozen python scripts/verify-profile-publication.py \
+          uv run --project build_system --frozen python build_system/scripts/release/verify-profile-publication.py \
             --manifest "$RELEASE_DIR/channel-source-$CHANNEL.json" \
             --profile "${{ inputs.profile }}" \
             --publication-base "$PUBLICATION_BASE" \
@@ -730,7 +730,7 @@ jobs:
             CAPSEM_RELEASE_CREATE_TITLE="Capsem $CHANNEL/${{ inputs.profile }} $PROFILE_REVISION ($SOURCE_COMMIT)" \
             CAPSEM_RELEASE_CREATE_NOTES_FILE="$NOTES_FILE" \
             CAPSEM_RELEASE_CREATE_TARGET="$SOURCE_COMMIT" \
-              scripts/publish-immutable-release-assets.sh \
+              build_system/scripts/release/publish-immutable-release-assets.sh \
                 "$TAG" "$RELEASE_DIR"
           fi
 
