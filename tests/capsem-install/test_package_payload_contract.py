@@ -33,7 +33,7 @@ def _load_test_module(name: str, path: Path):
 def test_macos_pkg_payload_is_closed_and_manifest_only(tmp_path: Path) -> None:
     build_pkg = _load_test_module(
         "capsem_test_build_pkg_payload_contract",
-        REPO_ROOT / "tests" / "test_build_pkg.py",
+        REPO_ROOT / "build_system" / "tests" / "packaging" / "test_build_pkg.py",
     )
     build_pkg.test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path)
 
@@ -45,7 +45,7 @@ def test_macos_pkg_payload_is_closed_and_manifest_only(tmp_path: Path) -> None:
 def test_deb_payload_is_closed_and_manifest_only(tmp_path: Path) -> None:
     repack_deb = _load_test_module(
         "capsem_test_repack_deb_payload_contract",
-        REPO_ROOT / "tests" / "test_repack_deb.py",
+        REPO_ROOT / "build_system" / "tests" / "packaging" / "test_repack_deb.py",
     )
     repack_deb.test_repacked_deb_payload_is_closed_and_manifest_only_for_assets(
         tmp_path
