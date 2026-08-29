@@ -3011,7 +3011,7 @@ async fn try_write_production_burst_preserves_events() {
 // ========================================================================
 // Phase 2: End-to-end SQL dedup tests
 // Injects data into tool_calls + tool_responses, then runs
-// the exact SQL from frontend/src/lib/sql.ts to verify dedup + response
+// the exact SQL from web/app/src/lib/sql.ts to verify dedup + response
 // joining.
 // ========================================================================
 
@@ -3075,7 +3075,7 @@ async fn setup_dedup_scenario(writer: &DbWriter) {
     writer.write(WriteOp::McpCall(mcp_list)).await;
 }
 
-// -- SQL constants (must match frontend/src/lib/sql.ts exactly) --
+// -- SQL constants (must match web/app/src/lib/sql.ts exactly) --
 
 const TOOL_COUNT_SQL: &str = "
     SELECT
