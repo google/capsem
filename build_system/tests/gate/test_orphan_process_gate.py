@@ -14,7 +14,6 @@ alive, and that a survivor fails the run.
 from __future__ import annotations
 
 import contextlib
-import importlib.util
 import json
 import os
 import shutil
@@ -25,6 +24,8 @@ import time
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate.tools.ci import check_orphan_processes as ORPHANS
+from capsem_builder.gate.tools.ci import run_bounded_command as BOUNDED_MODULE
 from helpers.sign import sign_binary
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -34,19 +35,6 @@ JUSTFILE = ROOT / "justfile"
 SEALED_MACOS = (
     sys.platform == "darwin" and os.environ.get("CAPSEM_GATE_COMMAND_SANDBOX_MODE") == "enforce"
 )
-
-SPEC = importlib.util.spec_from_file_location("check_orphan_processes_guard", SCRIPT)
-assert SPEC is not None and SPEC.loader is not None
-ORPHANS = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = ORPHANS
-SPEC.loader.exec_module(ORPHANS)
-
-BOUNDED_SPEC = importlib.util.spec_from_file_location("run_bounded_command_guard", BOUNDED)
-assert BOUNDED_SPEC is not None and BOUNDED_SPEC.loader is not None
-BOUNDED_MODULE = importlib.util.module_from_spec(BOUNDED_SPEC)
-sys.modules[BOUNDED_SPEC.name] = BOUNDED_MODULE
-BOUNDED_SPEC.loader.exec_module(BOUNDED_MODULE)
-
 
 def _pid_is_alive(pid: int) -> bool:
     result = subprocess.run(
@@ -94,6 +82,11 @@ def test_bounded_cleanup_tolerates_macos_permission_denied_after_signal(
 
         @staticmethod
         def poll() -> int:
+            return 0
+
+        @staticmethod
+        def wait(timeout: float | None = None) -> int:
+            del timeout
             return 0
 
     monkeypatch.setattr(BOUNDED_MODULE.os, "killpg", killpg)

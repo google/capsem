@@ -1,29 +1,14 @@
 """Contracts for deterministic failures shared by smoke, test, and CI."""
 
-import importlib.util
 import re
-import sys
 from pathlib import Path
 
 import variables
 import yaml
+from capsem_builder.gate.tools.ci import justfile_graph as GRAPH
 
 ROOT = Path(__file__).resolve().parents[3]
 JUSTFILE = (ROOT / "justfile").read_text(encoding="utf-8")
-
-
-def _justfile_graph():
-    script = ROOT / "scripts" / "justfile-graph.py"
-    spec = importlib.util.spec_from_file_location("justfile_graph", script)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-GRAPH = _justfile_graph()
-
 
 
 def _planned(module: str) -> str:

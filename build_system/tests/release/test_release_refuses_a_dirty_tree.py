@@ -13,25 +13,20 @@ that had been right all along.
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import importlib
 import subprocess
 from pathlib import Path
 
 import pytest
 from capsem_builder.gate.command import GateCommand
 from capsem_builder.gate.sourcecommit import SourceCommit
+from capsem_builder.gate.tools.ci import require_clean_worktree as CHECK
 from helpers.gate import RecordingRunner
 
 importlib.import_module("capsem_builder.gate.cli")  # registers every command
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = PROJECT_ROOT / "scripts" / "require-clean-worktree.py"
 COMMIT = SourceCommit("0" * 40)
-
-_SPEC = importlib.util.spec_from_file_location("require_clean_worktree", SCRIPT)
-assert _SPEC is not None and _SPEC.loader is not None
-CHECK = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(CHECK)
 
 RELEASES = {
     "release-binaries": {"channel": "stable"},

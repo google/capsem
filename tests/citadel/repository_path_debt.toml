@@ -110,7 +110,6 @@ version = 1
 "scripts/check-generated-settings.sh" = "60ad51e6babd9f77824e94948190c2407533fb52ef93652b909ac14e866187cc"
 "scripts/check-remote-release-readiness.py" = "992860142aa254df69c32ec1dac7f870866b05e47c37f1175250fb1bc89b5109"
 "scripts/check-web-surface.sh" = "ab8ebbb33242cc51fef314750e94708a45847a01394c1e2ebb3f297ba4275539"
-"scripts/classify-ci-scope.py" = "8950a610e01bf84f597d3a4abc2ff7a992f434167a53ab0831ab386cc22c3bda"
 "scripts/doctor-common.sh" = "f713f6cfc4a08edecb8575975dcea2660daf602fed774f9227cb8d2fb921ee32"
 "scripts/doctor-macos.sh" = "f11f95b4a8a49c211b08b16fd68bcd3bf1d479d7f89ce9975c1741a4b86840af"
 "scripts/doctor_session_test.py" = "d192438a19e7a119efe9f5da80c8629bcccc48cc99b6333f452685a8cf77e60e"

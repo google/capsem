@@ -9,6 +9,7 @@ from pathlib import Path
 
 import yaml
 from capsem_builder.gate import config as _gate_config
+from capsem_builder.gate.tools.ci import justfile_graph as GRAPH
 from helpers.workflow_contract import parsed_commands, workflow_job_source, workflow_jobs
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -170,19 +171,6 @@ PROVISIONED_WORKFLOWS = (
     ".github/workflows/release.yaml",
     ".github/workflows/release-assets.yaml",
 )
-
-def _justfile_graph():
-    script = PROJECT_ROOT / "scripts" / "justfile-graph.py"
-    spec = importlib.util.spec_from_file_location("justfile_graph", script)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-GRAPH = _justfile_graph()
-
 
 def _tests_requiring_just() -> tuple[str, ...]:
     return tuple(
