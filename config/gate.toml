@@ -388,7 +388,9 @@ package_name = "capsem"
 [install.layout]
 assets = "target/install-test-assets"
 config = "target/install-test-config"
-channel = "target/install-test-channel"
+# The authored release tree is distribution output even though this instance
+# exists only long enough to prove the installer.
+channel = "target/distribution/install-proof"
 packages = "target/install-test-packages"
 glowup = "target/local-release-glowup"
 glowup_evidence = "target/local-release-glowup-evidence"
@@ -2184,7 +2186,9 @@ glowup_work_dir = "target/release-module-glowup"
 # and the rehearsal exists for the pairing a first release makes.
 rehearsal_script = "scripts/rehearse-release-cohort.py"
 rehearsal_channel = "stable"
-rehearsal_work_dir = "target/release-rehearsal"
+# `release_cohort` creates its deployable `dist/` below this work directory,
+# so the work directory itself belongs beneath the canonical output owner.
+rehearsal_work_dir = "target/distribution/rehearsal"
 rehearsal_inputs_dir = "target/release-rehearsal-inputs"
 # `{version}` is the workspace version and `{arch}` the dpkg architecture, and
 # both are load-bearing. `capsem-admin assets channel record-binary` refuses a
@@ -2207,7 +2211,7 @@ rehearsal_glowup_work_dir = "target/release-rehearsal-glowup"
 # FRESH_INSTALL -- the pairing a first release makes, and the one that had never
 # run anywhere before this rehearsal existed.
 rehearsal_before_inputs = "target/release-rehearsal-before"
-rehearsal_after_manifest = "target/release-rehearsal/dist/assets/{channel}/manifest.json"
+rehearsal_after_manifest = "target/distribution/rehearsal/dist/assets/{channel}/manifest.json"
 release_bin_dir = "CAPSEM_RELEASE_BIN_DIR"
 default_bin_dir = "target/debug"
 # Cleared for the channel-switch run: it has to rediscover the channel from

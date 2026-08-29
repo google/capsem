@@ -34,6 +34,9 @@ EXPECTED = {
 LEGACY = re.compile(
     r"(?<![A-Za-z0-9_./-])release-site/|target/release-channel(?=$|[/\'\"\s])"
 )
+NON_RUST_LOCAL_OUTPUT = re.compile(
+    r"target/(?:install-test-channel|release-rehearsal/dist)(?=$|[/\'\"\s])"
+)
 RATIONALE = """\
 The Astro release site is a build-time distribution generator, not an
 independent product website. Its source and unit tests belong to build_system,
@@ -77,6 +80,14 @@ def _legacy_literals(sources: dict[str, str]) -> list[str]:
     return sorted(path for path, text in sources.items() if LEGACY.search(text))
 
 
+def _legacy_non_rust_local_outputs(sources: dict[str, str]) -> list[str]:
+    return sorted(
+        path
+        for path, text in sources.items()
+        if not path.startswith("crates/") and NON_RUST_LOCAL_OUTPUT.search(text)
+    )
+
+
 def test_legacy_literal_detector_observes_both_old_owners() -> None:
     found = _legacy_literals(
         {
@@ -86,6 +97,18 @@ def test_legacy_literal_detector_observes_both_old_owners() -> None:
         }
     )
     assert found == ["output", "source"], RATIONALE
+
+
+def test_local_output_detector_observes_pre_convergence_paths() -> None:
+    found = _legacy_non_rust_local_outputs(
+        {
+            "install": 'channel = "target/install-test-channel"',
+            "rehearsal": "target/release-rehearsal/dist/assets/stable/manifest.json",
+            "valid": "target/distribution/rehearsal/dist/assets/stable/manifest.json",
+            "crates/capsem/src/tests.rs": "target/install-test-channel",
+        }
+    )
+    assert found == ["install", "rehearsal"], RATIONALE
 
 
 def test_release_generator_and_unit_test_have_exact_build_system_owners() -> None:
@@ -121,6 +144,9 @@ def test_release_generator_and_unit_test_have_exact_build_system_owners() -> Non
 
 def test_config_owns_new_source_and_distribution_paths() -> None:
     config = _toml(ROOT / "config" / "gate.toml")
+    outputs = config["outputs"]
+    assert isinstance(outputs, dict)
+    distribution = outputs["distribution"]
     install = config["install"]
     assert isinstance(install, dict)
     assert install["release_site_dir"] == "build_system/release_site"
@@ -133,6 +159,13 @@ def test_config_owns_new_source_and_distribution_paths() -> None:
         "build_system/release_site/node_modules",
         SHARED_DIST,
     ], RATIONALE
+    assert install["layout"]["channel"] == f"{distribution}/install-proof", RATIONALE
+    modules = config["modules"]
+    assert isinstance(modules, dict)
+    assert modules["rehearsal_work_dir"] == f"{distribution}/rehearsal", RATIONALE
+    assert modules["rehearsal_after_manifest"] == (
+        f"{distribution}/rehearsal/dist/assets/{{channel}}/manifest.json"
+    ), RATIONALE
     disk = config["disk"]
     assert isinstance(disk, dict)
     reclaimable = disk["reclaimable"]
@@ -141,7 +174,9 @@ def test_config_owns_new_source_and_distribution_paths() -> None:
 
 
 def test_no_old_release_source_or_distribution_output_literal_remains() -> None:
-    assert not _legacy_literals(_tracked_text()), RATIONALE
+    sources = _tracked_text()
+    assert not _legacy_literals(sources), RATIONALE
+    assert not _legacy_non_rust_local_outputs(sources), RATIONALE
 
 
 def test_cross_system_release_acceptance_stays_at_repository_root() -> None:

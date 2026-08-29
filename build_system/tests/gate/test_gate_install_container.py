@@ -221,9 +221,16 @@ def test_selected_release_transport_is_mounted_read_only_at_its_absolute_address
 
     started = runner.matching(r"docker run -d")[0]
     resolved = root.resolve()
+    mount = CONFIG.install.mount
     assert f"-v {resolved}:{resolved}:ro" in started
-    assert f"-v {resolved / CONFIG.assets.merged_assets_dir}:/src/assets:ro" in started
-    assert f"-v {resolved / CONFIG.assets.merged_config_dir}:/src/target/config:ro" in started
+    assert (
+        f"-v {resolved / CONFIG.assets.merged_assets_dir}:"
+        f"{mount}/{CONFIG.functional.assets_dir}:ro"
+    ) in started
+    assert (
+        f"-v {resolved / CONFIG.assets.merged_config_dir}:"
+        f"{mount}/{CONFIG.functional.config_root}:ro"
+    ) in started
 
 
 def _complete_selected_content(tmp_path: Path) -> SelectedInstallContent:
