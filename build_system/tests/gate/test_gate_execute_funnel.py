@@ -298,12 +298,12 @@ def test_an_ordinary_program_is_not_mistaken_for_re_entry(journal) -> None:
                         "build_system",
                         "--frozen",
                         "python",
-                        "scripts/check-source-syntax.py",
+                        "build_system/scripts/audit/check-source-syntax.py",
                     ]
                 ),
                 Run(["cargo", "build", "--workspace"]),
                 Run(["docker", "run", "--label", "just", "alpine"]),
-                Script(CONFIG, "scripts/audit-python-lock.sh"),
+                Script(CONFIG, "build_system/scripts/audit/audit-python-lock.sh"),
             ),
         ),
     )
@@ -406,7 +406,10 @@ def test_every_subprocess_is_recorded_once(journal) -> None:
         runner,
         steps=(
             step("one", Run(["cargo", "build"]), Run(["cargo", "clippy"])),
-            step("two", Script(CONFIG, "scripts/check-source-syntax.py")),
+            step(
+                "two",
+                Script(CONFIG, "build_system/scripts/audit/check-source-syntax.py"),
+            ),
         ),
     )
 

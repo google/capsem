@@ -7,7 +7,7 @@ from pathlib import Path
 from capsem_builder.gate.tools.audit import source_syntax
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-CHECKER = PROJECT_ROOT / "scripts" / "check-source-syntax.py"
+CHECKER = PROJECT_ROOT / "build_system" / "scripts" / "audit" / "check-source-syntax.py"
 
 
 def _run(*paths: Path) -> subprocess.CompletedProcess[str]:

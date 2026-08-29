@@ -72,7 +72,6 @@ APPROVED_ROOT_FILES = frozenset(
         "README.md",
         "RELEASE.md",
         "SECURITY.md",
-        "audit.toml",
         "bootstrap.sh",
         "codecov.yml",
         "justfile",

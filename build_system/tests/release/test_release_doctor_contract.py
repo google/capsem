@@ -5460,12 +5460,12 @@ def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
 
 def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> None:
     canonical_gate = _dispatched_text("test-clean:")
-    guard = _source_text("scripts/check-hardcoded-release-selections.sh") + _source_text(
+    guard = _source_text("build_system/scripts/audit/check-hardcoded-release-selections.sh") + _source_text(
         "build_system/builder/gate/tools/audit/release_selections.py"
     )
     reusable_channel = _workflow_text("release-channel.yaml")
 
-    assert "bash scripts/check-hardcoded-release-selections.sh" in canonical_gate
+    assert "bash build_system/scripts/audit/check-hardcoded-release-selections.sh" in canonical_gate
     for term in ("code", "co-work", "cowork", "terminal", "termional", "gui"):
         assert term in guard
     assert "ripgrep" in guard
@@ -5509,7 +5509,13 @@ def test_hardcoded_release_selection_guard_runs_without_ripgrep(tmp_path: Path) 
 
     assert shutil.which("rg", path=str(tool_bin)) is None
     result = subprocess.run(
-        ["/bin/bash", str(PROJECT_ROOT / "scripts/check-hardcoded-release-selections.sh")],
+        [
+            "/bin/bash",
+            str(
+                PROJECT_ROOT
+                / "build_system/scripts/audit/check-hardcoded-release-selections.sh"
+            ),
+        ],
         cwd=PROJECT_ROOT,
         env={
             **os.environ,
@@ -5555,7 +5561,10 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         else:
             shutil.copy2(source, target)
 
-    guard = PROJECT_ROOT / "scripts/check-hardcoded-release-selections.sh"
+    guard = (
+        PROJECT_ROOT
+        / "build_system/scripts/audit/check-hardcoded-release-selections.sh"
+    )
     tool_bin = tmp_path / "tool-bin"
     tool_bin.mkdir()
     python3 = shutil.which("python3")

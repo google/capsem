@@ -54,7 +54,7 @@ KNOWN_ROOT_FILES = frozenset(
         ".dockerignore", ".gitignore", "AGENTS.md", "CHANGELOG.md",
         "CITATION.cff", "CLAUDE.md", "CONTRIBUTING.md", "Cargo.lock",
         "Cargo.toml", "GEMINI.md", "LATEST_RELEASE.md", "LICENSE",
-        "README.md", "RELEASE.md", "SECURITY.md", "audit.toml",
+        "README.md", "RELEASE.md", "SECURITY.md",
         "bootstrap.sh", "codecov.yml", "justfile",
         "rust-toolchain.toml", "test-dev-null.sh",
     }
@@ -63,7 +63,6 @@ BUILD_SYSTEM_ROOTS = frozenset({"src", "scripts", "docker"})
 BUILD_SYSTEM_FILES = frozenset(
     {
         ".dockerignore",
-        "audit.toml",
         "bootstrap.sh",
     }
 )

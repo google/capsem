@@ -1662,18 +1662,18 @@ doctor_skips = { CAPSEM_SKIP_ASSET_CHECK = "1", CAPSEM_SKIP_KVM_CHECK = "1" }
 # runs them at once and reports every failure rather than the first. As shell
 # these were seven `&` and seven `wait` aggregating into a single FAIL bit,
 # which told you something broke but not what.
-cargo = "scripts/check-cargo-audit.py"
+cargo = "build_system/scripts/audit/check-cargo-audit.py"
 # Reports, never refuses. A supply-chain signal that fails a build is one people
 # learn to route around, and the containment is elsewhere: every compiling step
 # runs in a loopback-only namespace, so a build script cannot reach a C2 host.
 # This says which package changed shape, before anything is built.
-dependency_drift = "scripts/check-dependency-drift.py"
-pnpm = "scripts/audit-pnpm-bulk.py"
-python_lock = "scripts/audit-python-lock.sh"
-public_surface = "scripts/check_public_surface.py"
-source_syntax = "scripts/check-source-syntax.py"
-hardcoded_selections = "scripts/check-hardcoded-release-selections.sh"
-surfaces = "scripts/check-surfaces.py"
+dependency_drift = "build_system/scripts/audit/check-dependency-drift.py"
+pnpm = "build_system/scripts/audit/audit-pnpm-bulk.py"
+python_lock = "build_system/scripts/audit/audit-python-lock.sh"
+public_surface = "build_system/scripts/audit/check_public_surface.py"
+source_syntax = "build_system/scripts/audit/check-source-syntax.py"
+hardcoded_selections = "build_system/scripts/audit/check-hardcoded-release-selections.sh"
+surfaces = "build_system/scripts/audit/check-surfaces.py"
 # hadolint codes held back, each for its reason:
 #   DL3008/DL3018  pinning every apt/apk version in a base image is a
 #                  maintenance treadmill the pinned base digest already covers

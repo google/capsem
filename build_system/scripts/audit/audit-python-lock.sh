@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${CAPSEM_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+ROOT="${CAPSEM_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 AUDIT_REQUIREMENTS="$ROOT/target/python-audit-requirements.txt"
 
 mkdir -p "$(dirname "$AUDIT_REQUIREMENTS")"

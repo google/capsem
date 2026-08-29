@@ -156,7 +156,7 @@ only to the tagged publication workflow.
 Run:
 
 ```bash
-uv run --project build_system --frozen python scripts/check_public_surface.py
+uv run --project build_system --frozen python build_system/scripts/audit/check_public_surface.py
 uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml tests/test_public_surface_contract.py
 ```
 

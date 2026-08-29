@@ -47,10 +47,10 @@ jobs:
         run: cargo generate-lockfile
 
       - name: Strict RustSec audit (blocking vulnerabilities, unsoundness, and yanks)
-        run: python3 scripts/check-cargo-audit.py
+        run: python3 build_system/scripts/audit/check-cargo-audit.py
 
       - name: Locked Python dependency audit (blocking security signal)
-        run: bash scripts/audit-python-lock.sh
+        run: bash build_system/scripts/audit/audit-python-lock.sh
 
       - name: Install all web dependencies
         run: |
@@ -59,4 +59,4 @@ jobs:
           done
 
       - name: npm bulk advisory audit (blocking security signal)
-        run: python3 scripts/audit-pnpm-bulk.py
+        run: python3 build_system/scripts/audit/audit-pnpm-bulk.py

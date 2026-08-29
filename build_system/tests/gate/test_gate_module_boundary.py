@@ -11,6 +11,7 @@ BUILD_SYSTEM_ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY_ROOT = BUILD_SYSTEM_ROOT.parent
 BUILDER_ROOT = BUILD_SYSTEM_ROOT / "builder"
 GATE_ROOT = BUILDER_ROOT / "gate"
+AUDIT_SCRIPT_ROOT = BUILD_SYSTEM_ROOT / "scripts" / "audit"
 
 
 def test_gate_has_one_direct_source_owner() -> None:
@@ -62,7 +63,7 @@ def test_audit_script_boundaries_are_thin_exit_status_launchers() -> None:
         "check_public_surface.py": "public_surface",
     }
     for name, module in launchers.items():
-        source = (REPOSITORY_ROOT / "scripts" / name).read_text(encoding="utf-8")
+        source = (AUDIT_SCRIPT_ROOT / name).read_text(encoding="utf-8")
         tree = ast.parse(source)
         assert len(source.splitlines()) <= 20, f"{name} contains reusable behavior"
         assert f"capsem_builder.gate.tools.audit.{module}" in source
@@ -77,6 +78,26 @@ def test_audit_script_boundaries_are_thin_exit_status_launchers() -> None:
         ]
         assert len(exits) == 1, f"{name} does not propagate its owned command status"
 
-    harness = (REPOSITORY_ROOT / "scripts" / "lint_harness.py").read_text(encoding="utf-8")
+    harness = (AUDIT_SCRIPT_ROOT / "lint_harness.py").read_text(encoding="utf-8")
     assert len(harness.splitlines()) <= 25
     assert "capsem_builder.gate.tools.audit.lint_harness" in harness
+
+
+def test_audit_configuration_and_boundaries_have_one_functional_owner() -> None:
+    expected = {
+        "audit-pnpm-bulk.py",
+        "audit-python-lock.sh",
+        "audit.toml",
+        "check-cargo-audit.py",
+        "check-dependency-drift.py",
+        "check-hardcoded-release-selections.py",
+        "check-hardcoded-release-selections.sh",
+        "check-source-syntax.py",
+        "check-surfaces.py",
+        "check_public_surface.py",
+        "lint_harness.py",
+    }
+    assert {path.name for path in AUDIT_SCRIPT_ROOT.iterdir()} == expected
+    assert not (REPOSITORY_ROOT / "audit.toml").exists()
+    for name in expected - {"audit.toml"}:
+        assert not (REPOSITORY_ROOT / "scripts" / name).exists()

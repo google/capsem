@@ -344,10 +344,10 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
     planned = _planned("test-fast")
 
     for required in (
-        "scripts/check-source-syntax.py",
-        "scripts/check-cargo-audit.py",
-        "scripts/audit-pnpm-bulk.py",
-        "scripts/audit-python-lock.sh",
+        "build_system/scripts/audit/check-source-syntax.py",
+        "build_system/scripts/audit/check-cargo-audit.py",
+        "build_system/scripts/audit/audit-pnpm-bulk.py",
+        "build_system/scripts/audit/audit-python-lock.sh",
         # Ruff over the whole tree, and Ty over the strict builder package -- as
         # three steps, so a ruff failure no longer hides what ty would have
         # said. The explicit all-platform surface keeps the exact diagnostic
@@ -414,8 +414,8 @@ def test_modules_retain_complete_named_quality_gates() -> None:
     runner = _all_modules()
 
     for required in (
-        "scripts/check-cargo-audit.py",
-        "scripts/audit-pnpm-bulk.py",
+        "build_system/scripts/audit/check-cargo-audit.py",
+        "build_system/scripts/audit/audit-pnpm-bulk.py",
         "cargo clippy --workspace --all-targets -- -D warnings",
         "bash scripts/check-web-surface.sh frontend",
         "cargo llvm-cov nextest --workspace --bins --lib --tests",
@@ -592,7 +592,7 @@ def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
     fast = _planned("test-fast")
     static = _planned("test-static")
 
-    assert "scripts/check-cargo-audit.py" in fast
+    assert "build_system/scripts/audit/check-cargo-audit.py" in fast
     assert "check-web-surface.sh frontend" in fast
     assert fast.index("check-web-surface.sh frontend") < fast.index("cargo clippy")
 
@@ -610,9 +610,11 @@ def test_static_module_audits_the_locked_python_graph_fail_closed() -> None:
     fast = _planned("test-fast")
     static = _planned("test-static")
     pyproject = (PROJECT_ROOT / "build_system/pyproject.toml").read_text(encoding="utf-8")
-    audit_script = (PROJECT_ROOT / "scripts/audit-python-lock.sh").read_text(encoding="utf-8")
+    audit_script = (
+        PROJECT_ROOT / "build_system/scripts/audit/audit-python-lock.sh"
+    ).read_text(encoding="utf-8")
 
-    assert "scripts/audit-python-lock.sh" in fast
+    assert "build_system/scripts/audit/audit-python-lock.sh" in fast
     assert "build the network-denied install qualification image" in static
     assert '"pip-audit>=' in pyproject
     for required in (

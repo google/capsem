@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -128,9 +130,39 @@ def validate_report(report: dict[str, Any]) -> dict[str, int]:
     return counts
 
 
+def _ignore_args(config_path: Path) -> list[str]:
+    config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    advisories = config.get("advisories")
+    if not isinstance(advisories, dict):
+        raise ValueError("cargo audit policy is missing [advisories]")
+    ignored = advisories.get("ignore")
+    if not isinstance(ignored, list) or not all(
+        isinstance(advisory, str) and advisory for advisory in ignored
+    ):
+        raise ValueError("cargo audit policy has an invalid advisories.ignore list")
+    return [part for advisory in ignored for part in ("--ignore", advisory)]
+
+
 def main() -> int:
+    repository_root = Path(
+        os.environ.get("CAPSEM_REPOSITORY_ROOT", Path.cwd())
+    ).resolve()
+    audit_root = repository_root / "build_system" / "scripts" / "audit"
+    try:
+        ignore_args = _ignore_args(audit_root / "audit.toml")
+    except (OSError, tomllib.TOMLDecodeError, ValueError) as error:
+        print(f"strict cargo audit failed: {error}", file=sys.stderr)
+        return 1
     result = subprocess.run(
-        ["cargo", "audit", "--json"],
+        [
+            "cargo",
+            "audit",
+            "--json",
+            "--file",
+            str(repository_root / "Cargo.lock"),
+            *ignore_args,
+        ],
+        cwd=audit_root,
         text=True,
         capture_output=True,
         check=False,
@@ -152,7 +184,16 @@ def main() -> int:
         )
         return 1
     metadata_result = subprocess.run(
-        ["cargo", "metadata", "--format-version", "1", "--locked"],
+        [
+            "cargo",
+            "metadata",
+            "--format-version",
+            "1",
+            "--locked",
+            "--manifest-path",
+            str(repository_root / "Cargo.toml"),
+        ],
+        cwd=repository_root,
         text=True,
         capture_output=True,
         check=False,

@@ -4,7 +4,7 @@
 # Lifted verbatim out of a `docker run ... bash -c "..."` argument in the
 # justfile, where every quote was escaped twice and the whole program was one
 # logical line. As a file it can be read, syntax-checked by
-# scripts/check-source-syntax.py, and edited without counting backslashes.
+# build_system/scripts/audit/check-source-syntax.py, and edited without counting backslashes.
 #
 # Everything it needs arrives in the environment, set by capsem.gate.crosscompile:
 #

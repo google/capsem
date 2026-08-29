@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from capsem_builder.gate.tools.audit import cargo_audit as AUDIT
@@ -65,4 +67,61 @@ def test_all_shared_rust_audit_callers_use_the_strict_wrapper() -> None:
     assert _gate_issues().count("check-cargo-audit.py") >= 1
     assert "cargo audit &" not in justfile
     assert "capsem-gate test-fast" in justfile
-    assert "run: python3 scripts/check-cargo-audit.py" in security
+    assert "run: python3 build_system/scripts/audit/check-cargo-audit.py" in security
+
+
+def test_cargo_audit_uses_owned_config_and_root_lockfile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[list[str], Path | None]] = []
+    audit_root = tmp_path / "build_system" / "scripts" / "audit"
+    audit_root.mkdir(parents=True)
+    (audit_root / "audit.toml").write_text(
+        '[advisories]\nignore = ["RUSTSEC-2024-0429"]\n',
+        encoding="utf-8",
+    )
+
+    def fake_run(argv: list[str], **kwargs: object) -> SimpleNamespace:
+        calls.append((argv, cast(Path | None, kwargs.get("cwd"))))
+        if argv[:2] == ["cargo", "audit"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout='{"vulnerabilities":{"count":0},"warnings":{}}',
+                stderr="",
+            )
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"packages":[]}',
+            stderr="",
+        )
+
+    monkeypatch.setenv("CAPSEM_REPOSITORY_ROOT", str(tmp_path))
+    monkeypatch.setattr(AUDIT.subprocess, "run", fake_run)
+
+    assert AUDIT.main() == 0
+    assert calls == [
+        (
+            [
+                "cargo",
+                "audit",
+                "--json",
+                "--file",
+                str(tmp_path / "Cargo.lock"),
+                "--ignore",
+                "RUSTSEC-2024-0429",
+            ],
+            audit_root,
+        ),
+        (
+            [
+                "cargo",
+                "metadata",
+                "--format-version",
+                "1",
+                "--locked",
+                "--manifest-path",
+                str(tmp_path / "Cargo.toml"),
+            ],
+            tmp_path,
+        ),
+    ]

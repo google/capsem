@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
+os.environ.setdefault("CAPSEM_REPOSITORY_ROOT", str(ROOT))
 sys.path.insert(0, str(ROOT / "build_system" / "builder"))
 from bootstrap import mount_builder_package  # noqa: E402
 

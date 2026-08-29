@@ -97,9 +97,9 @@ now means adding its gate in the same change, or the Citadel fails.
 
 ## The lint harness
 
-`scripts/lint_harness.py` is the one spelling of "run a linter": a `Tool`
+`build_system/scripts/audit/lint_harness.py` is the one spelling of "run a linter": a `Tool`
 declares argv and how to read its output, `Sources` yields `(name, text)`
-however it must, and every finding renders identically. `scripts/check-surfaces.py`
+however it must, and every finding renders identically. `build_system/scripts/audit/check-surfaces.py`
 is the entry point, one surface per invocation.
 
 `Sources` exists because the shapes differ. `*.sh` is a file. A workflow `run:`

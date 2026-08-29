@@ -53,7 +53,7 @@ Capture verbose successful helper output so per-file progress cannot starve a
 runner. A release runner blackout during an expensive tool is a missing
 local/CI resource contract, not permission to rerun unchanged.
 
-Run `scripts/check-hardcoded-release-selections.sh` at the start of `just test-clean`.
+Run `build_system/scripts/audit/check-hardcoded-release-selections.sh` at the start of `just test-clean`.
 This source guard is a release contract, not a style check: user-facing and
 profile-scoped requests must obtain profile ids from arguments or the installed
 catalog, package rails must materialize the catalog, native installers must use

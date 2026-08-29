@@ -374,8 +374,8 @@ def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
     assert "schedule:" in security_audit
     assert "cron:" in security_audit
     assert "workflow_dispatch:" in security_audit
-    assert "run: python3 scripts/check-cargo-audit.py" in security_audit
-    assert "run: python3 scripts/audit-pnpm-bulk.py" in security_audit
+    assert "run: python3 build_system/scripts/audit/check-cargo-audit.py" in security_audit
+    assert "run: python3 build_system/scripts/audit/audit-pnpm-bulk.py" in security_audit
 
 
 def test_host_builder_base_images_are_immutable() -> None:
