@@ -4,15 +4,9 @@ from __future__ import annotations
 
 import subprocess
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
-from helpers.script_modules import load_script
-
-lintharness = load_script(
-    "citadel_lint_harness",
-    Path(__file__).resolve().parents[2] / "scripts" / "lint_harness.py",
-)
+from capsem_builder.gate.tools.audit import lint_harness as lintharness
 
 LINT_PROCESS_RATIONALE = """\
 The shared lint harness must distinguish "the tool found nothing" from "the

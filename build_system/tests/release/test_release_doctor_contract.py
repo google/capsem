@@ -20,6 +20,7 @@ import pytest
 import yaml
 from capsem_builder.gate.shellnodes import arm_named
 from capsem_builder.gate.shellparse import parse as parse_shell
+from capsem_builder.gate.tools.audit import release_selections
 from helpers.workflow_contract import assert_unmasked_step, parsed_commands, workflow_reachable_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -5443,7 +5444,7 @@ def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
 def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> None:
     canonical_gate = _dispatched_text("test-clean:")
     guard = _source_text("scripts/check-hardcoded-release-selections.sh") + _source_text(
-        "scripts/check-hardcoded-release-selections.py"
+        "build_system/builder/gate/tools/audit/release_selections.py"
     )
     reusable_channel = _workflow_text("release-channel.yaml")
 
@@ -5464,6 +5465,21 @@ def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> No
     assert "channel:\n        type: string\n        required: true" in reusable_channel
     assert "inputs.channel || 'stable'" not in reusable_channel
     assert "CHANNEL: ${{ inputs.channel }}" in reusable_channel
+
+
+def test_release_selection_match_guard_is_directly_unit_testable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "surface.py"
+    source.write_text('profile_id: "code"\n', encoding="utf-8")
+
+    assert release_selections.reject_matches(
+        tmp_path,
+        "fixture hardcodes a profile",
+        r"profile_id:\s*['\"]code['\"]",
+        ("surface.py",),
+    )
+    assert "fixture hardcodes a profile" in capsys.readouterr().err
 
 
 def test_hardcoded_release_selection_guard_runs_without_ripgrep(tmp_path: Path) -> None:

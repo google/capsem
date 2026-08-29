@@ -1070,7 +1070,6 @@ max_lines = 300
 [boundary.scripts.oversized_line_counts]
 "scripts/bootstrap-linux.sh" = 599
 "scripts/build-pkg.sh" = 350
-"scripts/check-hardcoded-release-selections.py" = 301
 "scripts/check-public-binary-release.py" = 934
 "scripts/check-remote-release-readiness.py" = 1973
 "scripts/check_session.py" = 381

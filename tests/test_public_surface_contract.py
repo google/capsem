@@ -1,27 +1,16 @@
 from __future__ import annotations
 
-import importlib.util
 import re
-import tomllib
 from pathlib import Path
 
 import pytest
+import tomllib
 import variables
+from capsem_builder.gate.tools.audit import public_surface as checker
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "check_public_surface.py"
-
-
-def _load_checker():
-    spec = importlib.util.spec_from_file_location("check_public_surface", SCRIPT)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_public_surfaces_match_the_approved_exact_allowlists() -> None:
-    _load_checker().check_policy()
+    checker.check_policy()
 
 
 def test_fast_feedback_is_explicitly_incomplete_and_release_owns_qualification() -> None:
@@ -33,7 +22,6 @@ def test_fast_feedback_is_explicitly_incomplete_and_release_owns_qualification()
     protected is unchanged: a developer-facing recipe must never become the
     thing a release lane leans on.
     """
-    checker = _load_checker()
     public_just = set(checker.current_surfaces()["just"])
     policy = tomllib.loads((ROOT / "config" / "public-surface.toml").read_text(encoding="utf-8"))[
         "just"
@@ -91,7 +79,6 @@ def test_fast_feedback_is_explicitly_incomplete_and_release_owns_qualification()
 
 
 def test_surface_extractors_do_not_silently_return_empty_sets() -> None:
-    checker = _load_checker()
     surfaces = checker.current_surfaces()
 
     assert set(surfaces) == {"just", "capsem_cli", "http"}
@@ -100,7 +87,6 @@ def test_surface_extractors_do_not_silently_return_empty_sets() -> None:
 
 
 def test_declared_count_drift_fails_closed(tmp_path: Path) -> None:
-    checker = _load_checker()
     policy = (ROOT / "config" / "public-surface.toml").read_text()
 
     # Derived, not hardcoded. This read `count = 13` -> `count = 14`, and the
@@ -118,7 +104,6 @@ def test_declared_count_drift_fails_closed(tmp_path: Path) -> None:
 
 
 def test_rejects_unapproved_allowlist_entry(tmp_path: Path) -> None:
-    checker = _load_checker()
     policy = (ROOT / "config" / "public-surface.toml").read_text()
     broken = tmp_path / "public-surface.toml"
     broken.write_text(
@@ -195,7 +180,13 @@ def test_no_verb_is_both_retired_and_approved() -> None:
     """
     source = Path(__file__).read_text(encoding="utf-8")
     block = source[source.index("    retired = {") :]
-    retired = set(re.findall(r'^\s+"([a-z][a-z0-9-]*)",', block[: block.index("\n    }")], re.M))
+    retired = set(
+        re.findall(
+            r'^\s+"([a-z][a-z0-9-]*)",',
+            block[: block.index("\n    }")],
+            re.MULTILINE,
+        )
+    )
     approved = set(
         tomllib.loads((ROOT / "config" / "public-surface.toml").read_text(encoding="utf-8"))[
             "just"

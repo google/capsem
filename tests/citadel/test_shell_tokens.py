@@ -12,14 +12,9 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.gate import shellsurfaces
-from helpers.script_modules import load_script
+from capsem_builder.gate.tools.audit import lint_harness
 from helpers.shelltokens import UnterminatedQuote, tokenize
 from helpers.workflow_contract import workflow_reachable_text
-
-lint_harness = load_script(
-    "citadel_shell_lint_harness",
-    Path(__file__).resolve().parents[2] / "scripts" / "lint_harness.py",
-)
 
 CASES: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
     ("bare words", "test $X = success", (("test", "$X", "=", "success"),)),
