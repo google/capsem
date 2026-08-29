@@ -341,7 +341,9 @@ def _command_attribute_prefix(source: str, struct_name: str = "Args") -> str:
 
 
 def test_doctor_fix_builds_assets_for_each_checked_in_profile() -> None:
-    source = (PROJECT_ROOT / "scripts" / "doctor-common.sh").read_text()
+    source = (
+        PROJECT_ROOT / "build_system" / "scripts" / "doctor" / "doctor-common.sh"
+    ).read_text()
 
     assert "for profile in config/profiles/*/profile.toml" in source
     assert 'just _build-assets "$(basename "$(dirname "$profile")")" "$arch"' in source
@@ -351,7 +353,7 @@ def test_doctor_fix_builds_assets_for_each_checked_in_profile() -> None:
 def test_macos_doctor_requires_live_rosetta_registration() -> None:
     from capsem_builder.gate import config as gate_config
 
-    source = _source_text("scripts/doctor-macos.sh")
+    source = _source_text("build_system/scripts/doctor/doctor-macos.sh")
     config = gate_config.load(PROJECT_ROOT)
 
     assert config.install.rosetta_binfmt in source
@@ -380,7 +382,7 @@ def test_macos_doctor_requires_live_rosetta_registration() -> None:
 
 def test_bootstrap_and_doctor_prove_tart_cache_clone_boot_and_ssh() -> None:
     bootstrap = _source_text("bootstrap.sh")
-    doctor = _source_text("scripts/doctor-macos.sh")
+    doctor = _source_text("build_system/scripts/doctor/doctor-macos.sh")
     readiness = _source_text(
         "build_system/builder/image/tools/build/tart_readiness.py"
     )
@@ -398,9 +400,11 @@ def test_bootstrap_and_doctor_prove_tart_cache_clone_boot_and_ssh() -> None:
 def test_host_sbom_zstd_dependency_has_local_and_binary_lane_parity() -> None:
     """The canonical gate must provision the same Debian archive decoder everywhere."""
     bootstrap = _source_text("bootstrap.sh")
-    doctor = _source_text("scripts/doctor-common.sh")
-    macos_doctor = _source_text("scripts/doctor-macos.sh")
-    linux_doctor = _source_text("scripts/doctor-linux.sh")
+    doctor = _source_text("build_system/scripts/doctor/doctor-common.sh") + _source_text(
+        "build_system/scripts/doctor/doctor-run.sh"
+    )
+    macos_doctor = _source_text("build_system/scripts/doctor/doctor-macos.sh")
+    linux_doctor = _source_text("build_system/scripts/doctor/doctor-linux.sh")
     release = _workflow_text("release.yaml")
 
     assert 'confirm "zstd (Debian package/SBOM archive support, via brew)"' in bootstrap
@@ -1348,7 +1352,9 @@ def test_release_channel_cache_header_documentation_matches_deploy_smoke() -> No
 
 def test_cdxgen_is_owned_only_by_the_digest_pinned_asset_helper() -> None:
     release_preflight = _source_text("scripts/check-release-workflow.sh")
-    doctor = _source_text("scripts/doctor-common.sh")
+    doctor = _source_text("build_system/scripts/doctor/doctor-common.sh") + _source_text(
+        "build_system/scripts/doctor/doctor-run.sh"
+    )
     asset_workflow = _workflow_text("release-assets.yaml")
     docs_and_skills = [
         _source_text("web/docs/src/content/docs/development/getting-started.md"),
@@ -1388,8 +1394,10 @@ def test_release_workflow_preflight_preserves_macos_key_and_linux_skip() -> None
 
 
 def test_linux_doctor_installs_musl_c_toolchain_before_building_assets() -> None:
-    doctor = _source_text("scripts/doctor-common.sh")
-    linux = _source_text("scripts/doctor-linux.sh")
+    doctor = _source_text("build_system/scripts/doctor/doctor-common.sh") + _source_text(
+        "build_system/scripts/doctor/doctor-run.sh"
+    )
+    linux = _source_text("build_system/scripts/doctor/doctor-linux.sh")
 
     assert '_reg linux-musl-tools "_doctor_install_linux_musl_tools"' in doctor
     assert doctor.index("_reg linux-musl-tools") < doctor.index("_reg build-assets")
@@ -1414,7 +1422,7 @@ def test_linux_doctor_accepts_native_musl_gcc_without_x86_cross_compiler(
             "/bin/bash",
             "-c",
             """
-            source scripts/doctor-linux.sh
+            source build_system/scripts/doctor/doctor-linux.sh
             section() { :; }
             pass() { printf 'PASS:%s\\n' "$1"; }
             fixable() { printf 'FIXABLE:%s\\n' "$*"; }

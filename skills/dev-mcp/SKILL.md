@@ -318,7 +318,7 @@ Boot interactively, run a workload, then inspect telemetry:
 ```bash
 just shell
 # (in another terminal)
-python3 scripts/check_session.py <vm_id> "SELECT * FROM tool_calls WHERE origin = 'mcp'"
+python3 build_system/scripts/doctor/check_session.py <vm_id> "SELECT * FROM tool_calls WHERE origin = 'mcp'"
 ```
 
 Or use MCP tools directly (see "Fast debugging" section above) for the same workflow without leaving Claude Code.

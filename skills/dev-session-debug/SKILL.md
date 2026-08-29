@@ -30,15 +30,15 @@ identity bug until proven otherwise.
 ### Listing sessions
 
 ```bash
-python3 scripts/list_sessions.py                    # Recent non-vacuumed sessions
-python3 scripts/list_sessions.py -n 20              # Show more
-python3 scripts/list_sessions.py --with-model       # Only sessions with AI model calls
-python3 scripts/list_sessions.py --with-db          # Only sessions with session.db on disk
-python3 scripts/list_sessions.py --with-net         # Only sessions with network events
-python3 scripts/list_sessions.py --with-mcp         # Only sessions with MCP calls
-python3 scripts/list_sessions.py --min-cost 0.01    # Only sessions that cost money
-python3 scripts/list_sessions.py --all              # Include vacuumed sessions
-python3 scripts/list_sessions.py --all --with-model # Combine filters
+python3 build_system/scripts/doctor/list_sessions.py                    # Recent non-vacuumed sessions
+python3 build_system/scripts/doctor/list_sessions.py -n 20              # Show more
+python3 build_system/scripts/doctor/list_sessions.py --with-model       # Only sessions with AI model calls
+python3 build_system/scripts/doctor/list_sessions.py --with-db          # Only sessions with session.db on disk
+python3 build_system/scripts/doctor/list_sessions.py --with-net         # Only sessions with network events
+python3 build_system/scripts/doctor/list_sessions.py --with-mcp         # Only sessions with MCP calls
+python3 build_system/scripts/doctor/list_sessions.py --min-cost 0.01    # Only sessions that cost money
+python3 build_system/scripts/doctor/list_sessions.py --all              # Include vacuumed sessions
+python3 build_system/scripts/doctor/list_sessions.py --all --with-model # Combine filters
 ```
 
 Output columns: ID, Created (MM-DD HH:MM:SS), Duration, Cost, net events, tokens (in+out), tool calls, MCP calls, fs events. Sessions with `*` after the ID still have a `session.db` on disk (queryable).
@@ -48,9 +48,9 @@ Stats come from the main.db rollup, so they're always available even after the s
 ### Deep inspection
 
 ```bash
-python3 scripts/check_session.py              # Full integrity check on latest session
-python3 scripts/check_session.py <id>         # Specific session (use full ID from list)
-python3 scripts/check_session.py -n 10        # Show 10 preview rows per table
+python3 build_system/scripts/doctor/check_session.py              # Full integrity check on latest session
+python3 build_system/scripts/doctor/check_session.py <id>         # Specific session (use full ID from list)
+python3 build_system/scripts/doctor/check_session.py -n 10        # Show 10 preview rows per table
 ```
 
 Checks: table existence, row counts, tool lifecycle integrity (orphaned tool_calls/tool_responses), AI provider correlation (net_events vs model_calls), NULL detection in critical fields, and optional MCP transport correlation.
@@ -335,7 +335,7 @@ Rollup happens when a session ends.
 ### tool_calls without matching tool_responses
 - The model invoked a tool but the next turn's tool results weren't captured
 - Check if the VM session ended before the tool result was sent back
-- `python3 scripts/check_session.py` reports orphaned tool_calls automatically
+- `python3 build_system/scripts/doctor/check_session.py` reports orphaned tool_calls automatically
 
 ### Empty fs_events
 - `capsem-fs-watch` didn't start (check boot logs for `[capsem-fs-watch] starting`)
@@ -357,7 +357,7 @@ Rollup happens when a session ends.
 
 ## When to inspect sessions
 
-**Always** run `python3 scripts/check_session.py` after changes to:
+**Always** run `python3 build_system/scripts/doctor/check_session.py` after changes to:
 - Guest MCP endpoint (tool routing, policy, response format)
 - MITM proxy (SSE parsing, body preview, Content-Encoding)
 - File monitor (VirtioFS events, debouncer)
@@ -392,8 +392,8 @@ sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT action, COUNT(*) FROM f
 # Trace a tool call chain
 sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT id, model, stop_reason, trace_id FROM model_calls WHERE trace_id = '<trace_id>' ORDER BY timestamp"
 
-# Query a specific session (use full ID from python3 scripts/list_sessions.py)
+# Query a specific session (use full ID from python3 build_system/scripts/doctor/list_sessions.py)
 sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT COUNT(*) FROM net_events" 20260327-154418-f907
 ```
 
-Tip: use `python3 scripts/list_sessions.py --with-db --with-model` to find sessions worth querying.
+Tip: use `python3 build_system/scripts/doctor/list_sessions.py --with-db --with-model` to find sessions worth querying.

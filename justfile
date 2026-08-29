@@ -343,7 +343,7 @@ _gate-install: _pnpm-install
 # Check dev tools and dependencies. Pass "fix" to auto-fix.
 doctor fix="": _pnpm-install
     @uv run --project build_system --frozen capsem-gate doctor
-    @scripts/doctor-common.sh {{ if fix == "fix" { "--fix" } else { "" } }}
+    @build_system/scripts/doctor/doctor-common.sh {{ if fix == "fix" { "--fix" } else { "" } }}
 
 # View service logs, a sandbox's logs, or the latest preserved test failure.
 # `just logs`, `just logs <sandbox-id>`, `just logs failure`.

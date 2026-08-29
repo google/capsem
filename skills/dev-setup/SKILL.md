@@ -158,7 +158,7 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 | 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` (+ symlink into `~/.docker/cli-plugins`) |
 | 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` |
 | 2 | Frontend, docs, site, and release-site deps | config-driven `capsem-gate install-node` with frozen lockfiles |
-| 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` -- Rust targets, exact config-owned Cargo tools (`cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri`, `cargo-sbom`), build VM assets, pack initrd |
+| 3 | Doctor `--fix` | `build_system/scripts/doctor/doctor-common.sh --fix` -- Rust targets, exact config-owned Cargo tools (`cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri`, `cargo-sbom`), build VM assets, pack initrd |
 
 The VM asset rail materializes its digest-pinned OBOM tools inside its own
 architecture-matched helper; do not install a parallel global cdxgen.

@@ -489,7 +489,7 @@ def test_debug_artifact_retention_is_bounded_but_keeps_recent_failures() -> None
 
 def test_bootstrap_and_doctor_share_the_recommended_disk_policy() -> None:
     bootstrap = (ROOT / "bootstrap.sh").read_text()
-    doctor = (ROOT / "scripts" / "doctor-macos.sh").read_text()
+    doctor = (ROOT / "build_system" / "scripts" / "doctor" / "doctor-macos.sh").read_text()
 
     assert "config/storage-policy.toml" in bootstrap
     assert '--disk "$DOCKER_DISK_GIB"' in bootstrap

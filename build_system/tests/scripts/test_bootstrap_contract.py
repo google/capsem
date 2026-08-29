@@ -85,7 +85,7 @@ def test_bootstrap_always_checks_project_skills_and_site_shape() -> None:
 def test_bootstrap_runs_full_doctor_fix_without_a_parallel_check_mode() -> None:
     bootstrap = _read("bootstrap.sh")
 
-    assert '"$SCRIPT_DIR/scripts/doctor-common.sh" --fix' in bootstrap
+    assert '"$SCRIPT_DIR/build_system/scripts/doctor/doctor-common.sh" --fix' in bootstrap
     assert "doctor-common.sh --check" not in bootstrap
     assert "dry-run" not in bootstrap.lower()
 
@@ -178,7 +178,7 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert "[ -r /dev/kvm ] && [ -w /dev/kvm ]" in linux
     assert "[ -r /dev/vhost-vsock ] && [ -w /dev/vhost-vsock ]" in linux
 
-    doctor = _read("scripts/doctor-linux.sh")
+    doctor = _read("build_system/scripts/doctor/doctor-linux.sh")
     assert "for device in /dev/kvm /dev/vhost-vsock" in doctor
     assert "--bind / / --dev-bind /dev /dev -- sh -c ': > /dev/null'" in linux
     assert "--bind / / --dev-bind /dev /dev -- sh -c ': > /dev/null'" in doctor
@@ -555,7 +555,9 @@ def test_bootstrap_rust_targets_parser_rejects_empty_duplicate_and_unsafe_values
 def test_bootstrap_installs_and_proves_the_exact_checked_in_rust_toolchain() -> None:
     bootstrap = _read("bootstrap.sh")
     rust = _read("build_system/scripts/bootstrap/bootstrap-rust.sh")
-    doctor = _read("scripts/doctor-common.sh")
+    doctor = _read("build_system/scripts/doctor/doctor-common.sh") + _read(
+        "build_system/scripts/doctor/doctor-run.sh"
+    )
 
     assert '. "$SCRIPT_DIR/build_system/scripts/bootstrap/bootstrap-rust.sh"' in bootstrap
     assert 'capsem_rust_toolchain "$SCRIPT_DIR/rust-toolchain.toml"' in bootstrap
@@ -719,7 +721,9 @@ def test_rust_bootstrap_rejects_missing_or_duplicate_cargo_tool_inventory(
 
 def test_bootstrap_and_doctor_install_then_expose_config_owned_cargo_tools() -> None:
     bootstrap = _read("bootstrap.sh")
-    doctor = _read("scripts/doctor-common.sh")
+    doctor = _read("build_system/scripts/doctor/doctor-common.sh") + _read(
+        "build_system/scripts/doctor/doctor-run.sh"
+    )
 
     assert "_doctor_install_gate_tools" in doctor
     assert "uv run --project build_system --frozen capsem-gate install-tools" in doctor
@@ -730,7 +734,7 @@ def test_bootstrap_and_doctor_install_then_expose_config_owned_cargo_tools() -> 
     assert "cargo-sbom (only needed for releases)" not in doctor
 
     expose = bootstrap.rindex("capsem_expose_gate_cargo_tools")
-    doctor_run = bootstrap.index('"$SCRIPT_DIR/scripts/doctor-common.sh" --fix')
+    doctor_run = bootstrap.index('"$SCRIPT_DIR/build_system/scripts/doctor/doctor-common.sh" --fix')
     assert doctor_run < expose
     assert bootstrap.rfind('if [ "$(uname -s)" = "Linux" ]', 0, expose) >= 0
 
@@ -867,8 +871,10 @@ def test_darwin_rustup_path_does_not_require_gnu_readlink(tmp_path: Path) -> Non
 
 
 def test_linux_doctor_uses_ubuntu_buildx_name_and_enforces_node_major() -> None:
-    doctor_linux = _read("scripts/doctor-linux.sh")
-    doctor_common = _read("scripts/doctor-common.sh")
+    doctor_linux = _read("build_system/scripts/doctor/doctor-linux.sh")
+    doctor_common = _read("build_system/scripts/doctor/doctor-common.sh") + _read(
+        "build_system/scripts/doctor/doctor-run.sh"
+    )
 
     assert 'apt) echo "sudo apt install docker-buildx"' in doctor_linux
     assert "required Node.js major" in doctor_common
@@ -880,8 +886,10 @@ def test_linux_doctor_uses_ubuntu_buildx_name_and_enforces_node_major() -> None:
 
 def test_bootstrap_and_doctor_do_not_require_an_external_flock_binary() -> None:
     bootstrap = _read("bootstrap.sh")
-    doctor_common = _read("scripts/doctor-common.sh")
-    doctor_macos = _read("scripts/doctor-macos.sh")
+    doctor_common = _read("build_system/scripts/doctor/doctor-common.sh") + _read(
+        "build_system/scripts/doctor/doctor-run.sh"
+    )
+    doctor_macos = _read("build_system/scripts/doctor/doctor-macos.sh")
 
     assert "brew install flock" not in bootstrap
     assert "brew install flock" not in doctor_macos

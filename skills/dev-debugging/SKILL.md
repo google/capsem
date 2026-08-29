@@ -92,7 +92,7 @@ just exec "<command that triggers the bug>"
 
 For telemetry issues, use session inspection:
 ```bash
-python3 scripts/check_session.py
+python3 build_system/scripts/doctor/check_session.py
 ```
 
 ## Step 2: Diagnose the root cause
@@ -143,7 +143,7 @@ materialization. Do not debug by adding credential handling to formatters,
 routes, DB readers, frontend transforms, or harnesses. Use session DB to see
 what actually happened:
 ```bash
-python3 scripts/check_session.py   # Check net_events for domain, decision, status_code
+python3 build_system/scripts/doctor/check_session.py   # Check net_events for domain, decision, status_code
 ```
 
 **Frontend issues**: Run `just dev ui`, open Chrome DevTools, check console errors, use `take_screenshot` to capture state. See dev-testing-frontend for the full visual verification workflow.
@@ -221,7 +221,7 @@ Now that you understand the root cause, write the fix. The fix should:
 After the fix, run the full validation:
 1. `just test-clean` -- unit + cross-compile + frontend
 2. `just exec "capsem-doctor"` -- VM smoke test
-3. If the bug touched telemetry: `python3 scripts/check_session.py` after a real session
+3. If the bug touched telemetry: `python3 build_system/scripts/doctor/check_session.py` after a real session
 
 A diagnostic continuation may shorten investigation before this validation;
 it never replaces any item in the final proof.

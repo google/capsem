@@ -497,7 +497,7 @@ for comprehensive validation before committing.
 After any change touching guest binaries, network policy, telemetry, MCP, or VM lifecycle:
 
 1. `just exec "capsem-doctor"` -- verifies sandbox integrity inside the VM
-2. After telemetry/logging changes: run a real session and verify with `python3 scripts/check_session.py` that net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, and security_rule_events are populated correctly for the exercised protocols
+2. After telemetry/logging changes: run a real session and verify with `python3 build_system/scripts/doctor/check_session.py` that net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, and security_rule_events are populated correctly for the exercised protocols
 
 ## When tests fail
 

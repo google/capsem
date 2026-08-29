@@ -25,7 +25,9 @@ def _just_python_entrypoints() -> list[Path]:
         PROJECT_ROOT / relative
         for relative in re.findall(r"scripts/[A-Za-z0-9_.-]+\.py", justfile)
     }
-    referenced.add(PROJECT_ROOT / "scripts" / "doctor_session_test.py")
+    referenced.add(
+        PROJECT_ROOT / "build_system" / "scripts" / "doctor" / "doctor_session_test.py"
+    )
     return sorted(
         path
         for path in referenced

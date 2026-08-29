@@ -10,8 +10,8 @@ model-shaped traffic through the local mock server. This test validates
 that all of those events were captured.
 
 Usage:
-    python3 scripts/doctor_session_test.py              # uses target/debug/capsem
-    python3 scripts/doctor_session_test.py --binary ./capsem --assets ./assets
+    python3 build_system/scripts/doctor/doctor_session_test.py              # uses target/debug/capsem
+    python3 build_system/scripts/doctor/doctor_session_test.py --binary ./capsem --assets ./assets
 
 Ironbank note: this script is a black-box ledger validator. Do not weaken it
 into status-only checks, row-exists checks, skipped cases, slow/optional cases,

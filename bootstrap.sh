@@ -340,7 +340,7 @@ esac
 echo ""
 echo "== Running doctor (with auto-fix) =="
 echo ""
-"$SCRIPT_DIR/scripts/doctor-common.sh" --fix
+"$SCRIPT_DIR/build_system/scripts/doctor/doctor-common.sh" --fix
 
 # The gate runs in a fresh process whose PATH cannot inherit this script's
 # earlier export. Linux exposes exactly the config-owned Cargo tools through

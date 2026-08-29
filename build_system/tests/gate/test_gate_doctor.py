@@ -28,7 +28,7 @@ def _linux_platform(*, policy: str | None, interfaces: str = "eth0 lo") -> list[
     """Exercise Doctor's shell contract independently of the current host."""
     script = r"""
 set -eu
-source scripts/doctor-linux.sh
+source build_system/scripts/doctor/doctor-linux.sh
 section() { :; }
 pass() { printf 'PASS:%s\n' "$1"; }
 fail() { printf 'FAIL:%s\n' "$1"; }
@@ -91,8 +91,8 @@ def test_gate_lock_marker_alone_never_claims_kernel_enforcement(monkeypatch) -> 
 
 
 def test_bootstrap_and_doctor_keep_lock_ownership_separate_from_sandbox_policy() -> None:
-    linux = (PROJECT_ROOT / "scripts/doctor-linux.sh").read_text(encoding="utf-8")
-    common = (PROJECT_ROOT / "scripts/doctor-common.sh").read_text(encoding="utf-8")
+    linux = (PROJECT_ROOT / "build_system/scripts/doctor/doctor-linux.sh").read_text(encoding="utf-8")
+    common = (PROJECT_ROOT / "build_system/scripts/doctor/doctor-common.sh").read_text(encoding="utf-8")
     bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text(encoding="utf-8")
     variable = CONFIG.environment.command_sandbox_mode
 
@@ -104,7 +104,7 @@ def test_bootstrap_and_doctor_keep_lock_ownership_separate_from_sandbox_policy()
 
 
 def test_macos_doctor_does_not_interpret_the_linux_command_policy() -> None:
-    macos = (PROJECT_ROOT / "scripts/doctor-macos.sh").read_text(encoding="utf-8")
+    macos = (PROJECT_ROOT / "build_system/scripts/doctor/doctor-macos.sh").read_text(encoding="utf-8")
 
     assert CONFIG.environment.command_sandbox_mode not in macos
 

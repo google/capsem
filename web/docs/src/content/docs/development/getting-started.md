@@ -58,7 +58,7 @@ lifecycles in the bootstrap run.
 | 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` + symlink into `~/.docker/cli-plugins` | Container runtime for `just build-assets code` |
 | 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 128` | Runs Docker; Rosetta enables x86_64 cross-builds and the disk retains release caches |
 | 2 | Frontend deps | `pnpm install --frozen-lockfile` (in `web/app/`) | Tauri UI dependencies |
-| 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` | Installs Rust targets and exact config-owned Cargo tools (`cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri`, `cargo-sbom`), builds VM assets, packs initrd |
+| 3 | Doctor `--fix` | `build_system/scripts/doctor/doctor-common.sh --fix` | Installs Rust targets and exact config-owned Cargo tools (`cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri`, `cargo-sbom`), builds VM assets, packs initrd |
 
 The VM asset rail materializes its pinned OBOM generator and validator inside
 an architecture-matched helper. No global npm cdxgen install is required.

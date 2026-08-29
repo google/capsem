@@ -35,7 +35,12 @@ def test_doctor_tools_have_one_exact_gate_owned_package() -> None:
 
 def test_doctor_script_boundaries_are_thin_status_launchers() -> None:
     for name, module in LAUNCHERS.items():
-        source = (REPOSITORY_ROOT / "scripts" / name).read_text(encoding="utf-8")
+        script_root = (
+            REPOSITORY_ROOT / "scripts"
+            if name == "kvm-diagnostic.py"
+            else REPOSITORY_ROOT / "build_system" / "scripts" / "doctor"
+        )
+        source = (script_root / name).read_text(encoding="utf-8")
         tree = ast.parse(source)
         assert len(source.splitlines()) <= 21, f"{name} contains reusable behavior"
         imports = {

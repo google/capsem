@@ -1169,7 +1169,7 @@ def test_full_gate_runs_fast_checks_before_install_harness_preflight() -> None:
     assert _at(order, "install.image-build") < _at(order, "install.image-smoke")
 
     assert "build_system/docker/Dockerfile.install-test" in preflight
-    assert "source /src/scripts/doctor-linux.sh" in preflight
+    assert "source /src/build_system/scripts/doctor/doctor-linux.sh" in preflight
     assert "linux_musl_toolchain_available" in preflight
     assert "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test" in preflight
     assert "CAPSEM_TEST_OUTPUT_ROOT=/tmp/capsem-test-output" in preflight
@@ -3165,7 +3165,7 @@ def test_asset_build_recipes_skip_kvm_only_for_build_prereq_doctor() -> None:
             "-c",
             """
 set -eu
-source scripts/doctor-linux.sh
+source build_system/scripts/doctor/doctor-linux.sh
 section() { :; }
 pass() { printf 'PASS:%s\\n' "$1"; }
 fail() { printf 'FAIL:%s\\n' "$1"; }

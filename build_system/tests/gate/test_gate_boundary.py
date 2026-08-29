@@ -385,7 +385,7 @@ def test_just_interpolation_is_not_shell() -> None:
     uses exactly this. A guard that reads it as an `if` would flag the
     approved surface.
     """
-    assert _control_flow_in(['@scripts/doctor-common.sh {{ if fix == "fix" { "--fix" } else { "" } }}']) == []
+    assert _control_flow_in(['@build_system/scripts/doctor/doctor-common.sh {{ if fix == "fix" { "--fix" } else { "" } }}']) == []
 
 
 def test_a_keyword_inside_a_string_is_not_control_flow() -> None:

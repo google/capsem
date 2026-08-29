@@ -44,7 +44,7 @@ def test_just_doctor_dispatches_to_both_halves_of_the_check():
     recipe = _recipe("doctor")
 
     assert "uv run --project build_system --frozen capsem-gate doctor" in recipe
-    assert "scripts/doctor-common.sh" in recipe
+    assert "build_system/scripts/doctor/doctor-common.sh" in recipe
     # Node workspaces first: the gate's own check reads the web surfaces.
     assert "_pnpm-install" in recipe.splitlines()[0]
 

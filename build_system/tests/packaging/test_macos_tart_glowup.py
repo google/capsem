@@ -761,7 +761,9 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text()
-    doctor = (PROJECT_ROOT / "scripts" / "doctor-macos.sh").read_text()
+    doctor = (
+        PROJECT_ROOT / "build_system" / "scripts" / "doctor" / "doctor-macos.sh"
+    ).read_text()
     justfile = (PROJECT_ROOT / "justfile").read_text()
 
     assert "brew install cirruslabs/cli/tart cirruslabs/cli/sshpass" in bootstrap

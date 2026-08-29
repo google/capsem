@@ -84,7 +84,7 @@ after-install = { boundary = "after-install", rail = "install" }
 # wiring; this checks the machine, and reads the skip variables an image
 # build sets so the asset and KVM checks do not fail on the very thing that
 # build is about to produce.
-common_script = "scripts/doctor-common.sh"
+common_script = "build_system/scripts/doctor/doctor-common.sh"
 
 [pidfiles]
 # Ordered. The gateway owns the fixed localhost port, so it must stop before
@@ -1083,7 +1083,6 @@ max_lines = 300
 
 [boundary.scripts.oversized_line_counts]
 "build_system/packaging/macos/build-pkg.sh" = 349
-"scripts/doctor-common.sh" = 446
 "scripts/integration_test.py" = 1182
 "build_system/packaging/macos/macos_release_glowup.py" = 369
 "build_system/packaging/macos/macos_tart_glowup.py" = 565

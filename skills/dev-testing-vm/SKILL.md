@@ -45,10 +45,10 @@ just exec "capsem-doctor -x"           # Stop on first failure
 After running a VM session, inspect the telemetry database:
 
 ```bash
-python3 scripts/check_session.py              # Latest session
-python3 scripts/check_session.py <session-id> # Specific session
-python3 scripts/check_session.py --list       # List recent sessions
-python3 scripts/check_session.py -n 10        # Show 10 preview rows per table
+python3 build_system/scripts/doctor/check_session.py              # Latest session
+python3 build_system/scripts/doctor/check_session.py <session-id> # Specific session
+python3 build_system/scripts/doctor/check_session.py --list       # List recent sessions
+python3 build_system/scripts/doctor/check_session.py -n 10        # Show 10 preview rows per table
 ```
 
 Checks: session ledgers exist (net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, security_rule_events), row counts, orphaned tool_calls, AI-provider consistency.
@@ -57,7 +57,7 @@ Checks: session ledgers exist (net_events, model_calls, tool_calls, tool_respons
 
 Each pipeline can be tested with a targeted VM command:
 
-- **fs_events**: `just exec 'touch /root/test.txt && sleep 1'` then `python3 scripts/check_session.py`
+- **fs_events**: `just exec 'touch /root/test.txt && sleep 1'` then `python3 build_system/scripts/doctor/check_session.py`
 - **net_events**: `just exec 'curl -s https://api.anthropic.com/ && sleep 1'`
 - **model_calls/tool_calls**: boot interactively, run `claude -p "what is 2+2"`
 - **MCP-origin tool_calls**: boot interactively, run `claude -p "use fetch to get https://example.com"` and query `tool_calls WHERE origin = 'mcp'`
@@ -75,7 +75,7 @@ The fixture (`tests/fixtures/session/test.db`) is a real session DB shared by fr
 python3 scripts/integration_test.py --binary target/debug/capsem --assets assets
 
 # 2. Inspect completeness
-python3 scripts/check_session.py <session-id>
+python3 build_system/scripts/doctor/check_session.py <session-id>
 
 # 3. Fixture refresh has no Just convenience command. Copy, checkpoint, and
 # scrub the selected DB using the procedure in /dev-session-debug.

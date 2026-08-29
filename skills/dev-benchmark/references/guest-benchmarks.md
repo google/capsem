@@ -31,7 +31,7 @@ same owner reruns both; `build_system/scripts/build/benchmark_report.py` validat
 Snapshot covers 10/100/500-file workspaces through guest CLI → MCP → vsock →
 gateway → filesystem. Run `just exec "capsem-bench snapshot"`; add
 `RUST_LOG=capsem=debug` and inspect `clone_ws_ms`, `clone_sys_ms`, and `hash_ms`.
-Use `scripts/check_session.py` or query `tool_calls` in the session database for
+Use `build_system/scripts/doctor/check_session.py` or query `tool_calls` in the session database for
 per-operation durations. High clone time means workspace size or CoW fallback;
 high hash time means walk overhead; slow compact means overlapping snapshots.
 
