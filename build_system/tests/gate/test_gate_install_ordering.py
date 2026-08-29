@@ -138,8 +138,9 @@ def _checkout(tmp_path: Path, *, dpkg_arch: str) -> Path:
     (tmp_path / "config" / "gate.toml").write_text(
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     )
-    (tmp_path / "dist").mkdir()
-    (tmp_path / "dist" / f"Capsem_{VERSION}_{dpkg_arch}.deb").write_text("package bytes")
+    packages = tmp_path / CONFIG.outputs.packages
+    packages.mkdir(parents=True)
+    (packages / f"Capsem_{VERSION}_{dpkg_arch}.deb").write_text("package bytes")
     return tmp_path
 
 
@@ -470,7 +471,7 @@ def test_a_release_lane_stages_verified_inputs_and_authors_the_exact_package_gra
     assert runner.ran(r"dpkg-deb --extract")
     assert runner.ran(r"dpkg -i")
     started = runner.matching(r"docker run -d")[0]
-    assert f"-v {content.assets}:/src/assets:ro" in started
+    assert f"-v {content.assets}:/src/{CONFIG.outputs.assets}:ro" in started
     assert f"-v {content.config}:/src/target/config:ro" in started
     assert f"-v {content.root}:{content.root}:ro" in started
 
@@ -482,7 +483,9 @@ def test_local_install_mounts_only_the_selected_content_pair(
     root = _macos_checkout(tmp_path, monkeypatch)
     content = _local_content(root)
     selected = content.assets
-    (root / "assets").symlink_to(selected.relative_to(root))
+    canonical_assets = root / CONFIG.outputs.assets
+    canonical_assets.parent.mkdir(parents=True, exist_ok=True)
+    canonical_assets.symlink_to(selected.relative_to(canonical_assets.parent))
     canonical = root / "target/config"
     canonical.mkdir(parents=True)
     sentinel = canonical / "stale"
@@ -497,12 +500,12 @@ def test_local_install_mounts_only_the_selected_content_pair(
     ).run()
 
     started = runner.matching(r"docker run -d")[0]
-    assert f"-v {content.assets}:/src/assets:ro" in started
+    assert f"-v {content.assets}:/src/{CONFIG.outputs.assets}:ro" in started
     assert f"-v {content.config}:/src/target/config:ro" in started
-    assert f"-v {root / 'assets'}:/src/assets:ro" not in started
+    assert f"-v {canonical_assets}:/src/{CONFIG.outputs.assets}:ro" not in started
     assert f"-v {canonical}:/src/target/config:ro" not in started
-    assert (root / "assets").is_symlink()
-    assert (root / "assets").readlink() == selected.relative_to(root)
+    assert canonical_assets.is_symlink()
+    assert canonical_assets.readlink() == selected.relative_to(canonical_assets.parent)
     assert sentinel.read_text() == "untouched"
 
 
@@ -552,8 +555,7 @@ def _checkout_without_package(tmp_path: Path) -> Path:
 def test_a_package_from_another_version_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A stale `dist/` entry would otherwise be installed and proved instead of
-    the candidate this checkout describes."""
+    """A stale `target/packages/` entry must not replace this checkout's candidate."""
     root = _macos_checkout(tmp_path, monkeypatch)
     runner = RecordingRunner(
         root,

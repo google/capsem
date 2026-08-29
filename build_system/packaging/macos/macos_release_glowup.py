@@ -292,7 +292,7 @@ def main() -> int:
             str(content.config),
         ]
     )
-    package = ROOT / "packages" / f"Capsem-{args.version}.pkg"
+    package = config.path(config.outputs.packages) / f"Capsem-{args.version}.pkg"
     sbom = ROOT / "target" / "macos-package-sbom.spdx.json"
     manifest_path, asset_share, profile_share = prepare_candidate_manifest(
         package=package,

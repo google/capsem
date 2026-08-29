@@ -560,7 +560,7 @@ def test_install_e2e_reuses_exact_package_and_materialized_profile_config() -> N
 
     # One typed, prevalidated assets/config pair reaches the container. Raw
     # manifest inputs are staged on the host and never transformed mid-proof.
-    assert config.install.generated_inputs == ("dist",)
+    assert config.install.generated_inputs == (config.outputs.packages,)
     assert "stage_content" in proof
     assert "stage_inputs_script" not in proof
     assert "stage-release-test-inputs" not in proof
@@ -5303,11 +5303,11 @@ def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     assert "capsem-gate host-sbom" in host_sbom
     assert "SBOM" in host_sbom
     # Exactly the current version's packages, so an older `.deb` still in
-    # `dist/` cannot be described by a cohort nobody ships.
+    # `target/packages/` cannot be described by a cohort nobody ships.
     from capsem_builder.gate import config as gate_config
 
     sbom = gate_config.load(PROJECT_ROOT).sbom
-    assert "{version}" in sbom.dist_glob
+    assert "{version}" in sbom.linux_packages_glob
     assert sbom.expected_debs == 2
     # What `glowup.host-sbom` above is built from, so naming the step is still
     # a claim about running the production generator rather than about a step

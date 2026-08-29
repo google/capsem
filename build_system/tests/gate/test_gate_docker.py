@@ -94,9 +94,13 @@ def test_mounts_render_in_docker_order(tmp_path: Path) -> None:
 
 
 def test_a_checkout_path_maps_onto_the_bind_mount(tmp_path: Path) -> None:
-    mapped = container_path(tmp_path, tmp_path / "dist" / "Capsem_9.9.9_arm64.deb", mount=MOUNT)
+    mapped = container_path(
+        tmp_path,
+        tmp_path / "target" / "packages" / "Capsem_9.9.9_arm64.deb",
+        mount=MOUNT,
+    )
 
-    assert mapped == f"{MOUNT}/dist/Capsem_9.9.9_arm64.deb"
+    assert mapped == f"{MOUNT}/target/packages/Capsem_9.9.9_arm64.deb"
 
 
 def test_a_path_outside_the_checkout_is_refused(tmp_path: Path) -> None:

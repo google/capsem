@@ -66,12 +66,12 @@ class PackageRail:
         self._require_proof = require_proof
 
     @property
-    def _dist(self) -> Path:
-        return self.root / self._package.dist_dir
+    def _packages(self) -> Path:
+        return self._config.path(self._config.outputs.packages)
 
     @property
     def _record(self) -> Path:
-        return self._dist / f".cross-compile-{self.target.name}-deb"
+        return self._packages / f".cross-compile-{self.target.name}-deb"
 
     # -- the phases, each one a step ---------------------------------------
     #
@@ -121,7 +121,7 @@ class PackageRail:
         # the first reservation, and this is the point where being wrong about
         # capacity costs an hour of compilation.
         self._storage.ensure_space("package")
-        make_dir(self._dist)
+        make_dir(self._packages)
         remove(self._record)
 
         signing = signing_key(self.root, self._config)
@@ -208,15 +208,19 @@ class PackageRail:
             # worth looking at, and `--rm` would have destroyed it. This is
             # also what makes "the builder produced it" and "the host can read
             # it" two events instead of one write through a shared mount.
-            docker.copy_out(container, self._package.container_output_contents, str(self._dist))
+            docker.copy_out(
+                container,
+                self._package.container_output_contents,
+                str(self._packages),
+            )
             docker.remove(container)
 
     def resolve(self) -> Path:
-        """The exact package this run produced, not whatever `dist/` holds.
+        """The exact package this run produced, not whatever `target/packages/` holds.
 
-        The builder writes the basename it just created. Globbing `dist/`
-        instead would happily prove and publish a package left by an earlier
-        build of a different commit.
+        The builder writes the basename it just created. Globbing the package
+        output root instead would happily prove and publish a package left by
+        an earlier build of a different commit.
         """
         if not self._record.is_file() or not self._record.read_text().strip():
             raise GateError("builder did not record the exact Debian package")
@@ -225,9 +229,11 @@ class PackageRail:
         if not name.endswith(self._package.package_suffix):
             raise GateError(f"invalid Debian package record: {name}")
         if name != Path(name).name:
-            raise GateError(f"Debian package record escaped {self._package.dist_dir}/: {name}")
+            raise GateError(
+                f"Debian package record escaped {self._config.outputs.packages}/: {name}"
+            )
 
-        package = self._dist / name
+        package = self._packages / name
         if not package.is_file():
             raise GateError(f"recorded Debian package is missing: {package}")
         return package
@@ -286,6 +292,6 @@ class PackageRail:
     def collect(self) -> None:
         """List what this lane produced, then give its disk back."""
         self._runner.step("Artifacts")
-        self._runner.run(["ls", "-lh", str(self._dist)])
+        self._runner.run(["ls", "-lh", str(self._packages)])
         remove(self._record)
         self._storage.gc()

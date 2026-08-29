@@ -624,17 +624,16 @@ def test_the_release_guard_still_sees_the_real_tree_edited(
 def test_the_export_list_covers_what_a_release_publishes() -> None:
     """Everything built inside the prefix dies with it unless it is named here.
 
-    `packages/` is the one that matters most and is easiest to forget: the
-    signed `.pkg` a release publishes is built inside the run, so omitting it
-    means a release that passes every gate and has nothing to ship.
+    `target/packages/` is the one that matters most and is easiest to forget:
+    the signed `.pkg` a release publishes is built inside the run, so omitting
+    it means a release that passes every gate and has nothing to ship.
     """
     exports = set(_config().prefix.exports)
 
     assert {
-        "dist",
-        "packages",
         "target/assets",
         "target/config",
+        "target/packages",
         "test-artifacts",
     } <= exports
     assert any(export.startswith("target/gate-runs") for export in exports), (

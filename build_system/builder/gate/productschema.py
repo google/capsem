@@ -264,5 +264,4 @@ class PackageConfig(Strict):
     writable_paths: tuple[str, ...]
     container_output_dir: str
     container_output_contents: str
-    dist_dir: str
     proof: PackageProof

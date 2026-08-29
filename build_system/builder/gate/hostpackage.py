@@ -134,14 +134,17 @@ def _artifacts(config: GateConfig) -> list[str]:
     """Every publishable host package for the current version.
 
     Exactly two `.deb`s, one per architecture. Fewer means a build did not
-    happen; more means an older version is still in `dist/` and the SBOM would
-    describe a cohort nobody is shipping.
+    happen; more means an older version is still in `target/packages/` and the
+    SBOM would describe a cohort nobody is shipping.
     """
     from .versions import workspace_version
 
     settings = config.sbom
     version = workspace_version(config.root)
-    debs = sorted(config.root.glob(settings.dist_glob.format(version=version)))
+    package_root = config.path(config.outputs.packages)
+    debs = sorted(
+        package_root.glob(settings.linux_packages_glob.format(version=version))
+    )
     if len(debs) != settings.expected_debs:
         raise GateError(
             f"expected {settings.expected_debs} current-version Linux packages, "
@@ -150,7 +153,7 @@ def _artifacts(config: GateConfig) -> list[str]:
 
     found = [str(path) for path in debs]
     if host.on_macos():
-        package = config.path(settings.macos_package.format(version=version))
+        package = package_root / settings.macos_package_name.format(version=version)
         if not package.is_file() or package.stat().st_size == 0:
             raise GateError(f"missing or empty macOS package: {package}")
         found.append(str(package))

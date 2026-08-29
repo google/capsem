@@ -69,16 +69,16 @@ class DebProof:
     def _resolve(self, package: Path) -> Path:
         """Only a package this checkout built, named absolutely.
 
-        `dist/*.deb` is the whole accepted set: anything else is a package
-        whose provenance this proof cannot speak for.
+        `target/packages/*.deb` is the whole accepted set: anything else is a
+        package whose provenance this proof cannot speak for.
         """
         resolved = Path(package).resolve()
-        expected = self.root / self._config.package.dist_dir
+        expected = self._config.path(self._config.outputs.packages)
         suffix = self._config.package.package_suffix
         if resolved.parent != expected or resolved.suffix != suffix:
             raise GateError(
                 f"exact Debian package proof only accepts "
-                f"{expected.name}/*{suffix} (got: {resolved})"
+                f"{self._config.outputs.packages}/*{suffix} (got: {resolved})"
             )
         if not resolved.is_file():
             raise GateError(f"exact Debian package is missing: {resolved}")

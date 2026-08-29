@@ -1,9 +1,9 @@
 """The package rail builds one architecture, and proves which package it built.
 
 The rail's sharpest rule is that it publishes the package *this run* produced.
-`dist/` accumulates, so globbing it would let a package built from a different
-commit be proved, installed, and shipped -- which is why the builder writes the
-basename it created and this reads it back rather than looking around.
+`target/packages/` accumulates, so globbing it would let a package built from a
+different commit be proved, installed, and shipped -- which is why the builder
+writes the basename it created and this reads it back rather than looking around.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ CONFIG = gate_config.load(PROJECT_ROOT)
 BUILD_SCRIPT = CONFIG.package.build_script
 TARGET = CONFIG.arch("arm64")
 PACKAGE = "Capsem_9.9.9_arm64.deb"
+PACKAGE_ROOT = Path(CONFIG.outputs.packages)
 
 
 def _asset_manifest(*arches: str) -> str:
@@ -73,11 +74,12 @@ def _checkout(tmp_path: Path, *, toolchain: str = "9.99.9") -> Path:
             destination = tmp_path / source.relative_to(PROJECT_ROOT)
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
-    (tmp_path / "assets" / TARGET.name).mkdir(parents=True)
+    assets = tmp_path / CONFIG.outputs.assets
+    (assets / TARGET.name).mkdir(parents=True)
     for name in (*CONFIG.artifacts.bootable, *CONFIG.assets.evidence_artifacts):
-        (tmp_path / "assets" / TARGET.name / name).write_text(name)
+        (assets / TARGET.name / name).write_text(name)
     manifest = _asset_manifest(TARGET.name)
-    (tmp_path / "assets" / CONFIG.install.manifest_name).write_text(manifest)
+    (assets / CONFIG.install.manifest_name).write_text(manifest)
     config_root = tmp_path / CONFIG.functional.config_root
     (config_root / CONFIG.functional.profiles_subdir / "code").mkdir(parents=True)
     (config_root / CONFIG.functional.profiles_subdir / "code" / "profile.toml").write_text(
@@ -99,12 +101,13 @@ class Building(RecordingRunner):
     def execute(self, command):
         completed = super().execute(command)
         if BUILD_SCRIPT in str(command) and self._records is not None:
-            (self.root / "dist").mkdir(exist_ok=True)
-            (self.root / "dist" / f".cross-compile-{TARGET.name}-deb").write_text(
+            packages = self.root / PACKAGE_ROOT
+            packages.mkdir(parents=True, exist_ok=True)
+            (packages / f".cross-compile-{TARGET.name}-deb").write_text(
                 self._records + "\n"
             )
-            target = self.root / "dist" / self._records
-            if target.parent == self.root / "dist":
+            target = packages / self._records
+            if target.parent == packages:
                 target.write_text("package bytes")
         return completed
 
@@ -177,7 +180,7 @@ def test_profile_content_refuses_an_architecture_not_declared_by_the_manifest(
     root = _checkout(tmp_path)
     config = gate_config.load(root)
     undeclared = config.arch("x86_64")
-    (root / "assets" / undeclared.name).mkdir()
+    (root / CONFIG.outputs.assets / undeclared.name).mkdir()
 
     with pytest.raises(GateError, match=r"manifest.*x86_64"):
         ProfileContent.standalone(config).require_complete(config, arches=(undeclared,))
@@ -190,7 +193,7 @@ def test_profile_content_refuses_missing_required_evidence_before_docker(
     monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
     missing = CONFIG.assets.evidence_artifacts[0]
-    (root / "assets" / TARGET.name / missing).unlink()
+    (root / CONFIG.outputs.assets / TARGET.name / missing).unlink()
     runner = Building(root, replies={"select-linux": "skip"})
 
     with pytest.raises(GateError, match=rf"{TARGET.name}/{re.escape(missing)}"):
@@ -212,14 +215,16 @@ def test_standalone_package_refuses_the_relative_assets_selector_before_docker(
     monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
     selected = root / "selected-assets"
-    (root / "assets").rename(selected)
-    (root / "assets").symlink_to(selected.name, target_is_directory=True)
+    canonical_assets = root / CONFIG.outputs.assets
+    canonical_assets.rename(selected)
+    selector = Path("..") / selected.name
+    canonical_assets.symlink_to(selector, target_is_directory=True)
     runner = Building(root, replies={"select-linux": "skip"})
 
     with pytest.raises(GateError, match=r"assets.*symlink"):
         _run_lane(_rail(runner))
 
-    assert (root / "assets").readlink() == Path(selected.name)
+    assert canonical_assets.readlink() == selector
     _assert_no_package_docker_started(runner)
 
 
@@ -290,10 +295,11 @@ def test_package_mounts_only_the_concrete_paired_content_dirs(
     # destroyed: a relative selector plus an older canonical config tree.  The
     # package must not even inspect or normalize either one.
     stale_assets = root / "stale-canonical-assets"
-    (root / "assets").rename(stale_assets)
-    (root / "assets").symlink_to(stale_assets.name)
-    selector_inode = (root / "assets").lstat().st_ino
-    selector_target = (root / "assets").readlink()
+    canonical_assets = root / CONFIG.outputs.assets
+    canonical_assets.rename(stale_assets)
+    canonical_assets.symlink_to(Path("..") / stale_assets.name)
+    selector_inode = canonical_assets.lstat().st_ino
+    selector_target = canonical_assets.readlink()
     sentinel = root / config.functional.config_root / "stale-sentinel"
     sentinel.write_bytes(b"canonical config must survive")
     runner = Building(root, replies={"select-linux": "skip"})
@@ -303,12 +309,12 @@ def test_package_mounts_only_the_concrete_paired_content_dirs(
     rail.build()
 
     create = runner.matching(r"docker create")[0]
-    assert f"{content.assets}:/src/assets:ro" in create
+    assert f"{content.assets}:/src/{CONFIG.outputs.assets}:ro" in create
     assert f"{content.config}:/src/target/config:ro" in create
-    assert f"{root / 'assets'}:/src/assets" not in create
+    assert f"{canonical_assets}:/src/{CONFIG.outputs.assets}" not in create
     assert f"{root / 'target' / 'config'}:/src/target/config" not in create
-    assert (root / "assets").lstat().st_ino == selector_inode
-    assert (root / "assets").readlink() == selector_target
+    assert canonical_assets.lstat().st_ino == selector_inode
+    assert canonical_assets.readlink() == selector_target
     assert sentinel.read_bytes() == b"canonical config must survive"
 
 
@@ -1305,12 +1311,13 @@ def test_the_recorded_package_is_the_one_this_run_produced(
     monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
     monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
-    # A package from an earlier build of a different commit, still in dist/.
-    (root / "dist").mkdir()
-    (root / "dist" / "Capsem_0.0.1_arm64.deb").write_text("stale")
+    # A package from an earlier build of a different commit, still in target/packages/.
+    packages = root / PACKAGE_ROOT
+    packages.mkdir(parents=True)
+    (packages / "Capsem_0.0.1_arm64.deb").write_text("stale")
     runner = Building(root, replies={"select-linux": "skip"})
 
-    assert _run_lane(_rail(runner)) == root / "dist" / PACKAGE
+    assert _run_lane(_rail(runner)) == packages / PACKAGE
 
 
 def test_a_build_that_recorded_nothing_fails(
@@ -1328,7 +1335,7 @@ def test_a_build_that_recorded_nothing_fails(
     "recorded, reason",
     [
         ("capsem.tar.gz", "invalid Debian package record"),
-        ("../outside/capsem.deb", "escaped dist/"),
+        ("../outside/capsem.deb", "escaped target/packages/"),
     ],
 )
 def test_a_nonsense_package_record_is_refused(
@@ -1353,7 +1360,7 @@ def test_the_record_does_not_survive_the_run(
 
     _run_lane(_rail(runner))
 
-    assert not (root / "dist" / f".cross-compile-{TARGET.name}-deb").exists()
+    assert not (root / PACKAGE_ROOT / f".cross-compile-{TARGET.name}-deb").exists()
 
 
 # ---------------------------------------------------------------------------

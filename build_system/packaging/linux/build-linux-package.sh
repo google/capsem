@@ -105,7 +105,7 @@ dpkg-deb --info "$DEB"
 dpkg-deb --contents "$DEB" | grep -E 'usr/bin/(capsem|capsem-service|capsem-process|capsem-tui|capsem-mcp|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin|capsem-mock-server|capsem-bench-rs)$'
 
 cp "$DEB" "$OUT/"
-# Record the exact package this run produced, so a stale dist/ entry from an
-# earlier build can never be the one that gets proved and published.
+# Record the exact package this run produced, so a stale target/packages entry
+# from an earlier build can never be the one that gets proved and published.
 basename "$DEB" > "$OUT/.cross-compile-$TARGET_ARCH-deb"
 cp "/cargo-target/linux-agent/$TARGET_ARCH/"* "$OUT/"

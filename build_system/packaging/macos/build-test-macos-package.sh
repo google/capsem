@@ -77,7 +77,7 @@ bash "$SCRIPT_DIR/build-pkg.sh" \
     "$CONFIG_ROOT" \
     "$VERSION"
 
-PKG="$ROOT/packages/Capsem-$VERSION.pkg"
+PKG="$ROOT/target/packages/Capsem-$VERSION.pkg"
 test -s "$PKG"
 SBOM="$ROOT/target/macos-package-sbom.spdx.json"
 python3 scripts/generate-host-binary-sbom.py --output "$SBOM" "$PKG"

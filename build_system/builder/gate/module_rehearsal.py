@@ -122,7 +122,7 @@ def rehearsal(
                 "--bin-dir",
                 settings.default_bin_dir,
                 "--packages-dir",
-                config.package.dist_dir,
+                config.outputs.packages,
                 "--work-dir",
                 settings.rehearsal_work_dir,
                 "--inputs-dir",

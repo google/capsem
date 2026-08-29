@@ -241,7 +241,7 @@ local_macos_target = "/"
 # it is produced *after* the image is built. ProfileContent supplies its exact
 # assets/config pair separately. Mounted read-only -- an install proof that
 # could rewrite the package it is proving would be proving nothing.
-generated_inputs = ["dist"]
+generated_inputs = ["target/packages"]
 systemd_ready_attempts = 30
 systemd_ready_interval_seconds = 0.5
 serve_ready_file = "/tmp/capsem-install-release.json"
@@ -536,7 +536,6 @@ toolchain_pin = "rust-toolchain.toml"
 clock_script = "scripts/sync-container-clock.py"
 cargo_target_mount = "/cargo-target"
 package_suffix = ".deb"
-dist_dir = "dist"
 # The container the build runs in, kept until its output has been copied out.
 # `--rm` and `docker cp` are mutually exclusive, which is the same constraint
 # the Linux parity lane hit: a removed container has nothing left to read.
@@ -1577,11 +1576,11 @@ mount = "/src"
 [sbom]
 script = "scripts/generate-host-binary-sbom.py"
 output = "target/ironbank-host-sbom.spdx.json"
-dist_glob = "dist/*{version}*.deb"
-macos_package = "packages/Capsem-{version}.pkg"
+linux_packages_glob = "*{version}*.deb"
+macos_package_name = "Capsem-{version}.pkg"
 # Two, one per architecture. Fewer means a build did not happen; more means an
-# older version's packages are still in dist/ and the SBOM would describe a
-# cohort nobody is shipping.
+# older version's packages are still in target/packages/ and the SBOM would
+# describe a cohort nobody is shipping.
 expected_debs = 2
 spdx_version = "SPDX-2.3"
 
@@ -2377,7 +2376,7 @@ resumable = ["target/install-image"]
 
 # What must come back out before the prefix is reclaimed. A release publishes
 # from these, and without the export they die with the copy that made them.
-exports = ["dist", "packages", "target/assets", "target/config", "target/gate-runs", "test-artifacts"]
+exports = ["target/assets", "target/config", "target/gate-runs", "target/packages", "test-artifacts"]
 
 # Trees a run writes but nothing publishes. `exports` establishes provenance
 # for everything a release takes out of a prefix; this establishes it for

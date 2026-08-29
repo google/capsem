@@ -61,8 +61,8 @@ def export(prefix: Path, destination: Path, config: GateConfig) -> None:
     """Bring back what the run produced, before the copy is reclaimed.
 
     Anything built inside the prefix and not named in `[prefix] exports` dies
-    with it. `packages/` is the one that matters most: the signed `.pkg` a
-    release publishes is built inside the run, so omitting it is a gate that
+    with it. `target/packages/` is the one that matters most: the signed `.pkg`
+    a release publishes is built inside the run, so omitting it is a gate that
     passes with nothing to ship.
     """
     exact_trees = {config.functional.assets_dir, config.functional.config_root}

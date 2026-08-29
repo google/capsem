@@ -79,7 +79,8 @@ def _resolvable_package():
 
     `_planned` runs the plan against a recording runner to capture real argv,
     so every runtime precondition has to hold or the plan stops at the step
-    that needs one. `install` resolves `dist/Capsem_<version>_<arch>.deb` and
+    that needs one. `install` resolves
+    `target/packages/Capsem_<version>_<arch>.deb` and
     refuses without it, which meant these contracts silently asserted against
     a two-step transcript -- `contextlib.suppress` swallows the refusal, and
     the failure surfaces later as `'chown -R' not in <almost nothing>`.
@@ -91,8 +92,8 @@ def _resolvable_package():
 
     Created only when genuinely absent, and removed again, so a real package is
     never touched and an empty placeholder never outlives the test that needed
-    it -- an empty `.deb` left in `dist/` is something a later lane would try
-    to install.
+    it -- an empty `.deb` left in `target/packages/` is something a later lane
+    would try to install.
     """
     from capsem_builder.gate import config as gate_config
     from capsem_builder.gate.versions import workspace_version
@@ -100,7 +101,7 @@ def _resolvable_package():
     config = gate_config.load(PROJECT_ROOT)
     package = (
         PROJECT_ROOT
-        / "dist"
+        / config.outputs.packages
         / f"Capsem_{workspace_version(PROJECT_ROOT)}_{config.host_arch().dpkg}.deb"
     )
     if package.exists() and package.stat().st_size:
@@ -874,7 +875,7 @@ def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> No
 
     assert layout.assets == "target/install-test-assets"
     assert layout.config == "target/install-test-config"
-    assert config.install.generated_inputs == ("dist",)
+    assert config.install.generated_inputs == (config.outputs.packages,)
     assert config.install.suite.serve_script == "scripts/serve-release-test-root.py"
     assert "stage_content" in proof
     assert "cmp -s" in proof
@@ -902,9 +903,10 @@ def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> No
 def test_install_test_consumes_exact_publishable_package_without_rebuild() -> None:
     """The package is selected by this checkout's version, not globbed.
 
-    `dist/` accumulates, so a glob would let a package built from a different
-    commit be installed and proved. Selecting by version and refusing an empty
-    or missing file is what makes "the exact publishable package" true.
+    `target/packages/` accumulates, so a glob would let a package built from a
+    different commit be installed and proved. Selecting by version and
+    refusing an empty or missing file is what makes "the exact publishable
+    package" true.
     """
     install = (PROJECT_ROOT / "build_system/builder/gate/install.py").read_text(encoding="utf-8")
 

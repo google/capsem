@@ -12,7 +12,7 @@
 #   signing_identity  Optional: Developer ID Installer identity for productsign
 #   --manifest        Optional manifest URL to record for postinstall hydration.
 #
-# Output: packages/Capsem-<version>.pkg in the repository root
+# Output: target/packages/Capsem-<version>.pkg in the repository output root
 #
 # The .pkg installs:
 #   /Applications/Capsem.app           -- Tauri GUI
@@ -332,7 +332,7 @@ productbuild \
     "$WORK_DIR/Capsem-$VERSION-unsigned.pkg"
 
 # Sign if identity provided
-OUTPUT_PKG="$(cd "$SCRIPT_DIR/../../.." && pwd)/packages/Capsem-$VERSION.pkg"
+OUTPUT_PKG="$(cd "$SCRIPT_DIR/../../.." && pwd)/target/packages/Capsem-$VERSION.pkg"
 mkdir -p "$(dirname "$OUTPUT_PKG")"
 if [ -n "$SIGNING_IDENTITY" ]; then
     echo "=== Signing .pkg ==="

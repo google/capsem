@@ -33,7 +33,9 @@ class LocalInstallCommand(
             config.path(config.assets.test_root) / config.suites.pytest.base_profile,
         )
         version = workspace_version(config.root)
-        package = config.path(config.sbom.macos_package.format(version=version))
+        package = config.path(config.outputs.packages) / (
+            config.sbom.macos_package_name.format(version=version)
+        )
 
         assets = assetplan.fragment(plan, config)
         verified = plan.add(

@@ -393,6 +393,39 @@ def test_non_rust_repository_asset_owners_use_the_canonical_target_root() -> Non
     assert "assets" not in config["prefix"]["exports"]
 
 
+def test_native_package_owners_use_the_canonical_target_root() -> None:
+    policy = tomllib.loads(POLICY.read_text(encoding="utf-8"))
+    observed = _observe(policy["approved_output_probes"])
+    config = _gate_config()
+    target = FINAL_OUTPUT_ROOTS["packages"]
+    workflow = (ROOT / ".github/workflows/release.yaml").read_text(encoding="utf-8")
+    macos_builder = (
+        ROOT / "build_system/packaging/macos/build-pkg.sh"
+    ).read_text(encoding="utf-8")
+    local_macos_builder = (
+        ROOT / "build_system/packaging/macos/build-test-macos-package.sh"
+    ).read_text(encoding="utf-8")
+
+    assert not [
+        record
+        for record in observed.producers
+        if "packages/Capsem" in record or "dist/*.deb" in record
+    ], RATIONALE
+    assert "dist_dir" not in config["package"]
+    assert config["install"]["generated_inputs"] == [target]
+    assert config["sbom"]["linux_packages_glob"] == "*{version}*.deb"
+    assert config["sbom"]["macos_package_name"] == "Capsem-{version}.pkg"
+    assert target in config["prefix"]["exports"]
+    assert "dist" not in config["prefix"]["exports"]
+    assert "packages" not in config["prefix"]["exports"]
+    assert '"packages/Capsem-$VERSION.pkg"' not in workflow
+    assert "cp dist/*.deb" not in workflow
+    assert "target/packages/Capsem-$VERSION.pkg" in workflow
+    assert "cp target/packages/*.deb" in workflow
+    assert "/target/packages/Capsem-$VERSION.pkg" in macos_builder
+    assert 'PKG="$ROOT/target/packages/Capsem-$VERSION.pkg"' in local_macos_builder
+
+
 def test_current_generated_output_boundary_is_exact() -> None:
     policy = tomllib.loads(POLICY.read_text(encoding="utf-8"))
     assert policy.get("version") == 1

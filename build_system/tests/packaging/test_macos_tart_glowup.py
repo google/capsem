@@ -837,7 +837,7 @@ def test_local_package_proof_uses_ad_hoc_payload_signing_without_release_keys() 
     assert "APPLE_INSTALLER_SIGNING_IDENTITY" in release
     assert "notarytool submit" in release
     assert "stapler staple" in release
-    assert 'pkgutil --check-signature "packages/Capsem-$VERSION.pkg"' in release
+    assert 'pkgutil --check-signature "target/packages/Capsem-$VERSION.pkg"' in release
 
 
 def test_public_release_dispatch_recipe_is_gone() -> None:

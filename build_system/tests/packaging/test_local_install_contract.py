@@ -53,7 +53,7 @@ def test_local_install_builds_content_package_then_installs_that_exact_package(
     version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))[
         "workspace"
     ]["package"]["version"]
-    assert f"packages/Capsem-{version}.pkg" in rendered
+    assert f"target/packages/Capsem-{version}.pkg" in rendered
 
 
 def test_local_install_packages_the_verified_base_profile_pair(

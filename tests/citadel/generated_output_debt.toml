@@ -18,17 +18,16 @@ allowed_generated_support = [
 
 # Exact shrinking transition inventory. S09-004 added build_system/builder to
 # the production scan, making pre-existing package-owned debt visible.
-producer_count = 2
-producer_sha256 = "f62abbd60b4aaca8ae9374bcbe4d600fafcebb36e3fd3e97db17dbf339b4a3b1"
+producer_count = 0
+producer_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 ambient_asset_count = 0
 ambient_asset_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 ci_transfer_count = 5
 ci_transfer_sha256 = "36cd416af8e8c45116d354d9bceef3c81b095ad5fe18eef5ac559c2ff8b82c6e"
 prefix_exports = [
-  "dist",
-  "packages",
   "target/assets",
   "target/config",
   "target/gate-runs",
+  "target/packages",
   "test-artifacts",
 ]

@@ -101,8 +101,8 @@ class HostImageConfig(Strict):
 class SbomConfig(Strict):
     script: str
     output: str
-    dist_glob: str
-    macos_package: str
+    linux_packages_glob: str
+    macos_package_name: str
     expected_debs: int
     spdx_version: str
 

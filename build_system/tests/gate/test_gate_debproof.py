@@ -25,6 +25,7 @@ CONFIG = gate_config.load(PROJECT_ROOT)
 PROOF = CONFIG.package.proof
 VERSION = "9.9.9"
 SOURCE_COMMIT = SourceCommit("0" * 40)
+PACKAGE_ROOT = Path(CONFIG.outputs.packages)
 
 
 @pytest.fixture(autouse=True)
@@ -41,8 +42,8 @@ def _checkout(tmp_path: Path) -> Path:
     (tmp_path / "config" / "gate.toml").write_text(
         (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     )
-    (tmp_path / "dist").mkdir()
-    package = tmp_path / "dist" / f"Capsem_{VERSION}_arm64.deb"
+    (tmp_path / PACKAGE_ROOT).mkdir(parents=True)
+    package = tmp_path / PACKAGE_ROOT / f"Capsem_{VERSION}_arm64.deb"
     package.write_text("package bytes")
     return tmp_path
 
@@ -97,7 +98,7 @@ def _proof(
     runner = RecordingRunner(root, replies=_replies(**kwargs.pop("replies", {})), **kwargs)
     built = DebProof(
         runner,
-        package=root / "dist" / f"Capsem_{VERSION}_arm64.deb",
+        package=root / PACKAGE_ROOT / f"Capsem_{VERSION}_arm64.deb",
         content=_content(root),
         manifest_url="file:///src/m.json",
         channel="nightly",
@@ -115,13 +116,12 @@ def _proof(
 def test_only_a_package_this_checkout_built_is_accepted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Anything outside dist/ is a package whose provenance this cannot vouch
-    for, so proving it says nothing about what gets published."""
+    """Anything outside target/packages/ has no package-build provenance."""
     root = _checkout(tmp_path)
     elsewhere = tmp_path / "elsewhere.deb"
     elsewhere.write_text("bytes")
 
-    with pytest.raises(GateError, match="only accepts dist/"):
+    with pytest.raises(GateError, match="only accepts target/packages/"):
         DebProof(
             RecordingRunner(root),
             package=elsewhere,
@@ -138,7 +138,7 @@ def test_an_unknown_channel_is_refused(tmp_path: Path) -> None:
     with pytest.raises(GateError, match="unsupported exact package proof channel"):
         DebProof(
             RecordingRunner(root),
-            package=root / "dist" / f"Capsem_{VERSION}_arm64.deb",
+            package=root / PACKAGE_ROOT / f"Capsem_{VERSION}_arm64.deb",
             content=_content(root),
             manifest_url="file:///src/m.json",
             channel="prod",
@@ -272,7 +272,7 @@ def test_a_binary_carrying_an_older_build_fails(
 
     proof = DebProof(
         runner,
-        package=root / "dist" / f"Capsem_{VERSION}_arm64.deb",
+        package=root / PACKAGE_ROOT / f"Capsem_{VERSION}_arm64.deb",
         content=_content(root),
         manifest_url="file:///src/m.json",
         channel="nightly",
@@ -296,7 +296,7 @@ def test_an_installed_version_that_disagrees_with_the_package_fails(
     with pytest.raises(GateError, match=r"expected 9\.9\.9"):
         DebProof(
             runner,
-            package=root / "dist" / f"Capsem_{VERSION}_arm64.deb",
+            package=root / PACKAGE_ROOT / f"Capsem_{VERSION}_arm64.deb",
             content=_content(root),
             manifest_url="file:///src/m.json",
             channel="nightly",
@@ -321,7 +321,7 @@ def test_a_status_line_that_is_missing_fails_the_proof(
     with pytest.raises(GateError, match="status is missing"):
         DebProof(
             runner,
-            package=root / "dist" / f"Capsem_{VERSION}_arm64.deb",
+            package=root / PACKAGE_ROOT / f"Capsem_{VERSION}_arm64.deb",
             content=_content(root),
             manifest_url="file:///src/m.json",
             channel="nightly",
@@ -348,7 +348,7 @@ def test_profiles_must_all_be_ready(
     with pytest.raises(GateError, match="profiles are not all ready"):
         DebProof(
             runner,
-            package=root / "dist" / f"Capsem_{VERSION}_arm64.deb",
+            package=root / PACKAGE_ROOT / f"Capsem_{VERSION}_arm64.deb",
             content=_content(root),
             manifest_url="file:///src/m.json",
             channel="nightly",

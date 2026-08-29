@@ -71,7 +71,9 @@ class InstallGate:
 
     @property
     def package(self) -> Path:
-        return self.root / "dist" / f"Capsem_{self.version}_{self.arch.dpkg}.deb"
+        return self._config.path(self._config.outputs.packages) / (
+            f"Capsem_{self.version}_{self.arch.dpkg}.deb"
+        )
 
     def _require_package(self) -> str:
         if not self.package.is_file() or self.package.stat().st_size == 0:

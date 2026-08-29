@@ -421,7 +421,7 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           EXPANDED_ROOT="$(mktemp -d "$RUNNER_TEMP/capsem-pkg-policy.XXXXXX")"
           pkgutil --expand-full \
-            "packages/Capsem-$VERSION.pkg" \
+            "target/packages/Capsem-$VERSION.pkg" \
             "$EXPANDED_ROOT/expanded"
           python3 - "$EXPANDED_ROOT/expanded" <<'PY'
           import pathlib
@@ -457,30 +457,30 @@ jobs:
           APPLE_API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
         run: |
           VERSION="${RELEASE_TAG#v}"
-          xcrun notarytool submit "packages/Capsem-$VERSION.pkg" \
+          xcrun notarytool submit "target/packages/Capsem-$VERSION.pkg" \
             --key "$APPLE_API_KEY_PATH" \
             --key-id "$APPLE_API_KEY" \
             --issuer "$APPLE_API_ISSUER" \
             --wait --timeout 30m
-          xcrun stapler staple "packages/Capsem-$VERSION.pkg"
-          xcrun stapler validate "packages/Capsem-$VERSION.pkg"
+          xcrun stapler staple "target/packages/Capsem-$VERSION.pkg"
+          xcrun stapler validate "target/packages/Capsem-$VERSION.pkg"
 
       - name: Verify exact notarized package identity and Gatekeeper acceptance
         run: |
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
-          pkgutil --check-signature "packages/Capsem-$VERSION.pkg"
-          spctl -a -vv -t install "packages/Capsem-$VERSION.pkg"
+          pkgutil --check-signature "target/packages/Capsem-$VERSION.pkg"
+          spctl -a -vv -t install "target/packages/Capsem-$VERSION.pkg"
 
       - name: Collect macOS artifacts
         run: |
           VERSION="${RELEASE_TAG#v}"
           mkdir -p release-artifacts
-          if [ ! -f "packages/Capsem-$VERSION.pkg" ]; then
+          if [ ! -f "target/packages/Capsem-$VERSION.pkg" ]; then
             echo "::error::Capsem-$VERSION.pkg not produced by build-pkg.sh"
             exit 1
           fi
-          cp "packages/Capsem-$VERSION.pkg" release-artifacts/
+          cp "target/packages/Capsem-$VERSION.pkg" release-artifacts/
           ls -lh release-artifacts/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -566,7 +566,7 @@ jobs:
       - name: Collect Linux artifacts
         run: |
           mkdir -p release-artifacts
-          cp dist/*.deb release-artifacts/
+          cp target/packages/*.deb release-artifacts/
           ls -lh release-artifacts/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
