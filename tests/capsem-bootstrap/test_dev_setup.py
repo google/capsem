@@ -53,6 +53,6 @@ class TestDevSetup:
         assert "pnpm install --frozen-lockfile" not in bootstrap
         assert 'node_env = { CI = "true" }' in gate
         assert (
-            'node_workspaces = ["frontend", "docs", "site", '
+            'node_workspaces = ["web/app", "docs", "site", '
             '"build_system/release_site"]' in gate
         )

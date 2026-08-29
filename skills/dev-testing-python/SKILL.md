@@ -61,7 +61,7 @@ Golden fixture at `tests/settings_spec/golden.json` with expected output at `tes
 |----------|-----------|-------|
 | Python | `tests/test_settings_spec.py` | 73 |
 | Rust | `crates/capsem-core/tests/settings_spec.rs` | 12 |
-| TypeScript | `frontend/src/lib/__tests__/settings_spec.test.ts` | 14 |
+| TypeScript | `web/app/src/lib/__tests__/settings_spec.test.ts` | 14 |
 
 If you change the settings schema (node types, metadata fields), all three must be updated together.
 

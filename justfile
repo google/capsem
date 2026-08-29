@@ -87,10 +87,10 @@ _dev-ui: _ensure-dev-ready _pnpm-install run-service
 
 # Frontend-only dev server with mock data (no Tauri/VM needed)
 _dev-frontend: _pnpm-install _generate-settings
-    cd frontend && pnpm run dev
+    cd web/app && pnpm run dev
 
 # Build the Tauri desktop app (capsem-app) with a fresh frontend bundle.
-# IMPORTANT: the Tauri binary embeds frontend/dist at cargo compile time via
+# IMPORTANT: the Tauri binary embeds web/app/dist at cargo compile time via
 # tauri::generate_context!(), so rebuilding only the frontend has no effect
 # on the running binary. This recipe keeps the two in lockstep.
 #   just build          # debug binary at ./target/debug/capsem-app
@@ -229,7 +229,7 @@ _gate-linux-rust:
 
 # Build the Linux parity base image, with network, before a sealed run needs it.
 # The lane refuses to build this itself: its tag is keyed by Cargo.lock,
-# rust-toolchain.toml and frontend/pnpm-lock.yaml, so a dependency bump re-keys
+# rust-toolchain.toml and web/app/pnpm-lock.yaml, so a dependency bump re-keys
 # it, and resolving that inside the run would turn a `--network none` lane into
 # a multi-gigabyte network build at minute four. `capsem-gate linux-rust` names
 # this recipe when the image is missing.

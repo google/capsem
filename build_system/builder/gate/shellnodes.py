@@ -75,7 +75,7 @@ class Command:
     def subcommand(self, *, after: str | None = None) -> str:
         """The first non-option word following the program.
 
-        `after` names a flag that takes a value, so `pnpm --dir frontend run`
+        `after` names a flag that takes a value, so `pnpm --dir web/app run`
         can be asked for `run` rather than `frontend`.
         """
         rest = (

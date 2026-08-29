@@ -34,7 +34,7 @@ surface="${1:-}"
 case "$surface" in
     frontend-verify)
         # Type-check and unit tests, and deliberately not the build. Clippy
-        # waits on the frontend because capsem-app embeds `frontend/dist` at
+        # waits on the frontend because capsem-app embeds `web/app/dist` at
         # compile time via `tauri::generate_context!` -- it reads the build's
         # output and nothing else. While all three ran as one step, clippy
         # waited through these two as well, and through
@@ -42,21 +42,21 @@ case "$surface" in
         # imported by three files, every one of them under `__tests__`, so it
         # is a dependency of this half alone. `frontend-build` needs no such
         # edge, and the build below is the same command it runs.
-        pnpm --dir frontend run check
+        pnpm --dir web/app run check
         if [[ -n "${CAPSEM_FRONTEND_JUNIT:-}" ]]; then
             (
-                cd frontend
+                cd web/app
                 npx vitest run --coverage \
                     --reporter=default \
                     --reporter=junit \
                     --outputFile="$CAPSEM_FRONTEND_JUNIT"
             )
         else
-            pnpm --dir frontend run test
+            pnpm --dir web/app run test
         fi
         ;;
     frontend-build)
-        astro_build pnpm --dir frontend run build
+        astro_build pnpm --dir web/app run build
         ;;
     docs)
         astro_build pnpm --dir docs run build

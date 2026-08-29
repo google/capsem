@@ -14,10 +14,10 @@ description: Capsem frontend design system. Use when building UI components, sty
 
 ## Loading into capsem-app (Tauri)
 
-`tauri::generate_context!()` bakes `frontend/dist/**` into the `capsem-app` binary at cargo compile time (via the `custom-protocol` feature). This means:
+`tauri::generate_context!()` bakes `web/app/dist/**` into the `capsem-app` binary at cargo compile time (via the `custom-protocol` feature). This means:
 
 - `pnpm run build` alone has **no effect** on a running `./target/**/capsem-app` -- the bundle is embedded in the binary.
-- After any `frontend/` change you intend to test in the desktop app, run `just build` (chains frontend build + `cargo build -p capsem-app`).
+- After any `web/app/` change you intend to test in the desktop app, run `just build` (chains frontend build + `cargo build -p capsem-app`).
 - `just dev ui` (`cargo tauri dev`) bypasses this by loading `http://localhost:5173` -- good for iteration, but the production code path goes through the embedded bundle.
 - The Toolbar shows `build YYYY-MM-DD HH:MM:SS` as a quick visual sanity check -- if it's stale after you rebuilt, you forgot `cargo build -p capsem-app`.
 
@@ -188,8 +188,8 @@ Mocks must exercise the same typed routes the product uses.
 ## Code reuse
 
 Before creating new components, stores, or helpers, check what exists:
-- **Stores** (`frontend/src/lib/stores/`): extend existing rune stores
-- **Components** (`frontend/src/lib/components/`): extend existing patterns
-- **Views** (`frontend/src/lib/views/`): main view containers with sub-views
-- **Models** (`frontend/src/lib/models/`): pure TS business logic (no Svelte deps)
+- **Stores** (`web/app/src/lib/stores/`): extend existing rune stores
+- **Components** (`web/app/src/lib/components/`): extend existing patterns
+- **Views** (`web/app/src/lib/views/`): main view containers with sub-views
+- **Models** (`web/app/src/lib/models/`): pure TS business logic (no Svelte deps)
 - **Helpers** (`api.ts`, `types.ts`): use existing typed route clients, formatters, and types

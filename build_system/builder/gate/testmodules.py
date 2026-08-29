@@ -69,7 +69,7 @@ class FastModule(
     """Cheap, independent, and the most common failure class.
 
     Everything here is free to overlap except one edge: clippy reads
-    `frontend/dist`, which `capsem-app` embeds at compile time, so the frontend
+    `web/app/dist`, which `capsem-app` embeds at compile time, so the frontend
     build must finish first. The shell expressed that as a conditional which
     skipped clippy entirely when the frontend failed -- losing the clippy
     result on exactly the runs where the most had changed.
@@ -139,7 +139,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # rather than after the VMs are up.
     guarded = phase.add(pytestsuite.citadel(config).as_step(config), after=(syntax,))
 
-    # The web surfaces import `frontend/src/lib/mock-settings.generated.ts`,
+    # The web surfaces import `web/app/src/lib/mock-settings.generated.ts`,
     # which is gitignored and therefore never part of the source a run is
     # given. This lane only ever *checked* it, so on a warm machine it arrived
     # from an earlier build and on a clean one the frontend check stopped at
@@ -150,7 +150,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # All four used to, and `runs schedule` put the cost on the board: the fast
     # lane's critical path was toolchain -> generated-settings -> release-site,
     # 3m24s, of which the middle 1m11s was a dependency `release-site` does not
-    # have. `frontend/src/lib/mock-settings.ts` is the only file in any surface
+    # have. `web/app/src/lib/mock-settings.ts` is the only file in any surface
     # that imports `mock-settings.generated`; docs, site and release-site never
     # touch it. The edge was uniform because it was written once for a list,
     # not because four surfaces needed it.

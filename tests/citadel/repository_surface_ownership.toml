@@ -187,7 +187,7 @@ reason = "Cross-process, installed-product, VM, security, and acceptance tests r
 [[surface]]
 id = "web-app"
 state = "migrating"
-current = ["frontend/"]
+current = ["web/app/"]
 targets = ["web/app/"]
 lint = ["fast.web.frontend-verify", "fast.audit.source-syntax"]
 tests = ["frontend vitest coverage", "tests/frontend/"]

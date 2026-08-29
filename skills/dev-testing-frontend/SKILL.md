@@ -12,7 +12,7 @@ Astro 7 + Svelte 5 (runes only) + Tailwind v4 + Capsem-owned semantic CSS + Laye
 ## Running tests
 
 ```bash
-cd frontend
+cd web/app
 pnpm run check              # astro check + svelte-check (type errors)
 npx vitest run --coverage   # Unit tests with coverage
 pnpm run build              # Production build (catches bundling issues dev misses)
@@ -22,7 +22,7 @@ All three run as part of `just test-clean`. The production build is important --
 
 ## Test files
 
-Tests live in `frontend/src/lib/__tests__/`. Use vitest with standard patterns:
+Tests live in `web/app/src/lib/__tests__/`. Use vitest with standard patterns:
 
 ```ts
 import { describe, it, expect } from 'vitest';

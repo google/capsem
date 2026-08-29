@@ -218,7 +218,7 @@ To avoid repeated permission prompts when using `just` and `capsem` commands, ad
       "Bash(uv run --project build_system --frozen *)",
       "Bash(cargo *)",
       "Bash(pnpm *)",
-      "Bash(cd frontend && pnpm *)",
+      "Bash(cd web/app && pnpm *)",
       "Bash(npx *)",
       "Bash(python3 scripts/*)",
       "Bash(rustup *)"

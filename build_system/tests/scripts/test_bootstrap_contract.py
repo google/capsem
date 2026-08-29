@@ -191,7 +191,7 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert "uv run --project build_system --frozen capsem-gate install-node" in bootstrap
     assert "uv sync --project build_system --frozen" in bootstrap
     assert "cargo fetch --locked" in bootstrap
-    assert "cd frontend && CI=true pnpm install" not in bootstrap
+    assert "cd web/app && CI=true pnpm install" not in bootstrap
     assert 'if [ -n "${CAPSEM_GATE_RUN:-}" ]; then' in bootstrap
     assert "fast.toolchain.node already owns every locked workspace" in bootstrap
     assert bootstrap.index('if [ -n "${CAPSEM_GATE_RUN:-}" ]; then') < bootstrap.index(
@@ -880,9 +880,9 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     ]:
         assert command in _gate_issues()
     for command in [
-        "pnpm --dir frontend run check",
-        "pnpm --dir frontend run test",
-        "pnpm --dir frontend run build",
+        "pnpm --dir web/app run check",
+        "pnpm --dir web/app run test",
+        "pnpm --dir web/app run build",
     ]:
         assert command in web_gate
 
@@ -908,6 +908,6 @@ def test_frontend_release_gate_is_owned_by_the_canonical_test() -> None:
     assert "\ntest-frontend:" not in justfile
     block = justfile.split("\n_test-candidate:", 1)[1].split("\n_build-host-image:", 1)[0]
     assert "bash scripts/check-web-surface.sh frontend" in block
-    assert "pnpm --dir frontend run check" in web_gate
-    assert "pnpm --dir frontend run test" in web_gate
-    assert "pnpm --dir frontend run build" in web_gate
+    assert "pnpm --dir web/app run check" in web_gate
+    assert "pnpm --dir web/app run test" in web_gate
+    assert "pnpm --dir web/app run build" in web_gate

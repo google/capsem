@@ -32,11 +32,11 @@ done
 
 cd "$ROOT"
 
-# capsem-app embeds frontend/dist at compile time. The macOS full gate builds
+# capsem-app embeds web/app/dist at compile time. The macOS full gate builds
 # it before mounting this checkout read-only in the Linux parity container;
 # the independent native-Linux CI job has to materialize it for itself.
-if [[ ! -s "$ROOT/frontend/dist/index.html" ]]; then
-    pnpm --dir frontend install --frozen-lockfile
+if [[ ! -s "$ROOT/web/app/dist/index.html" ]]; then
+    pnpm --dir web/app install --frozen-lockfile
     bash scripts/check-web-surface.sh frontend-build
 fi
 

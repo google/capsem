@@ -6,11 +6,11 @@
 #
 # The mount this replaces had to stay read-write, and not by choice: the
 # frontend bundler writes atomic temporaries directly beside its target, in
-# `frontend/` itself --
+# `web/app/` itself --
 #
-#   EROFS: read-only file system, open '/src/frontend/_tmp_50_...'
+#   EROFS: read-only file system, open '/src/web/app/_tmp_50_...'
 #
-# -- so `:ro` was impossible and grafting scratch over `frontend/` would have
+# -- so `:ro` was impossible and grafting scratch over `web/app/` would have
 # masked the very source the build compiles. There was no flag that fixed it.
 # Copying dissolves the problem instead of working around it: `/src` is an
 # image layer, so the temporaries have somewhere to go that is not the host's

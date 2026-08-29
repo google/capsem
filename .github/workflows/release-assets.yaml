@@ -332,11 +332,11 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: |
-            frontend/pnpm-lock.yaml
+            web/app/pnpm-lock.yaml
             build_system/release_site/pnpm-lock.yaml
       - name: Install shared functional web dependencies
         run: |
-          (cd frontend && pnpm install --frozen-lockfile)
+          (cd web/app && pnpm install --frozen-lockfile)
           (cd build_system/release_site && pnpm install --frozen-lockfile)
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:

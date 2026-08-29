@@ -11,7 +11,7 @@ Preline is NOT like DaisyUI. It does not provide pre-built component classes. It
 3. 27 headless JS plugins and 55 custom variants (reference only -- **Capsem does NOT use Preline JS**)
 
 **IMPORTANT: Capsem does not depend on Preline.** The owned contract is
-`frontend/src/styles/capsem-theme.css`; all interactivity is pure Svelte 5
+`web/app/src/styles/capsem-theme.css`; all interactivity is pure Svelte 5
 runes + TypeScript. These pages are a historical pattern catalogue only. Copy
 and adapt useful class composition into Capsem-owned components; never copy
 installation, import, package-scan, plugin, or initialization instructions.

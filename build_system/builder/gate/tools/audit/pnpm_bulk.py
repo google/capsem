@@ -13,7 +13,7 @@ from typing import Any
 
 DEFAULT_ENDPOINT = "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk"
 DEFAULT_PROJECT_DIRS = (
-    Path("frontend"),
+    Path("web/app"),
     Path("docs"),
     Path("site"),
     Path("build_system/release_site"),

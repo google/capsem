@@ -275,7 +275,7 @@ def main() -> int:
     frontend_env = os.environ.copy()
     frontend_env["CI"] = "true"
     run(
-        ["pnpm", "--dir", "frontend", "install", "--frozen-lockfile"],
+        ["pnpm", "--dir", "web/app", "install", "--frozen-lockfile"],
         env=frontend_env,
     )
     run(

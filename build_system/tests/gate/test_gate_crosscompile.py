@@ -463,8 +463,8 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
     assert "ARG HOST_RUST_TARGET" in dockerfile
     assert "ARG HOST_PACKAGES" in dockerfile
     assert "pnpm fetch --frozen-lockfile" in dockerfile
-    assert "frontend/pnpm-workspace.yaml" in builder.identity_inputs
-    assert "frontend/pnpm-workspace.yaml" in dockerfile
+    assert "web/app/pnpm-workspace.yaml" in builder.identity_inputs
+    assert "web/app/pnpm-workspace.yaml" in dockerfile
     assert "ORT_STRATEGY=system" in dockerfile
     assert "ORT_LIB_LOCATION" in dockerfile
     assert "materialize-package-ort.py" in dockerfile
@@ -1190,8 +1190,8 @@ def test_the_builds_own_outputs_stay_container_local(
 ) -> None:
     """The build writes into its source; its *outputs* must not reach the host.
 
-    `pnpm install` fills `frontend/node_modules`, `pnpm build` fills
-    `frontend/dist`, and Tauri regenerates ACL schemas into the app crate.
+    `pnpm install` fills `web/app/node_modules`, `pnpm build` fills
+    `web/app/dist`, and Tauri regenerates ACL schemas into the app crate.
     Through a plain mount those are host writes -- how a container and a host
     step came to share inodes and kill a release run on an intermittent EACCES.
     Anonymous volumes grafted over exactly those paths keep them
@@ -1199,9 +1199,9 @@ def test_the_builds_own_outputs_stay_container_local(
 
     The mount itself is still read-write, and this test used to claim
     otherwise. Making it `:ro` failed a real run: the frontend bundler writes
-    atomic temporaries beside its target, directly in `frontend/` --
-    `EROFS ... open '/src/frontend/_tmp_50_...'` -- and grafting scratch over
-    `frontend/` would mask the source being compiled. No flag fixes that;
+    atomic temporaries beside its target, directly in `web/app/` --
+    `EROFS ... open '/src/web/app/_tmp_50_...'` -- and grafting scratch over
+    `web/app/` would mask the source being compiled. No flag fixes that;
     baking the frontend into the builder image does, which is Phase 5's second
     half. Asserting only what is true keeps the difference visible.
     """

@@ -206,7 +206,7 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: |
-            frontend/pnpm-lock.yaml
+            web/app/pnpm-lock.yaml
             build_system/release_site/pnpm-lock.yaml
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync --project build_system --frozen
@@ -218,7 +218,7 @@ jobs:
       - run: bash scripts/generate-settings.sh
       - run: bash scripts/prepare-install-test-assets.sh
       - run: bash scripts/materialize-config.sh
-      - run: cd frontend && pnpm install --frozen-lockfile
+      - run: cd web/app && pnpm install --frozen-lockfile
       - name: Build frontend bundle
         run: bash scripts/check-web-surface.sh frontend-build
       - name: Install release site dependencies
@@ -337,7 +337,7 @@ jobs:
           uv run --project build_system --frozen python scripts/generate_schema.py
           git diff --exit-code config/settings/schema.generated.json \
             config/settings/ui-metadata.generated.json \
-            frontend/src/lib/mock-settings.generated.ts
+            web/app/src/lib/mock-settings.generated.ts
 
       # Upload coverage with flags
       - name: Upload Rust unit test coverage

@@ -1,6 +1,6 @@
 #capsem log
 *.log
-# Python virtualenv lib (but NOT frontend/src/lib/)
+# Python virtualenv lib (but NOT web/app/src/lib/)
 /lib/
 dist/
 /build_system/build/
@@ -25,7 +25,7 @@ node_modules/
 # pnpm writes atomic metadata scratch beside each configured Node workspace.
 # It can disappear between source enumeration and hashing, and is generated
 # state rather than an untracked source input.
-frontend/_tmp_*
+web/app/_tmp_*
 docs/_tmp_*
 site/_tmp_*
 build_system/release_site/_tmp_*
@@ -72,12 +72,12 @@ crates/capsem-app/gen/
 
 # Frontend
 .astro/
-frontend/.astro/
-frontend/dist/
-frontend/node_modules/
+web/app/.astro/
+web/app/dist/
+web/app/node_modules/
 # Generator output -- no runtime code imports it; kept out of the tree to avoid
 # churn on every `just _generate-settings` run. See commit 97ab1b5.
-frontend/src/lib/mock-settings.generated.ts
+web/app/src/lib/mock-settings.generated.ts
 
 # Web project outputs that remain owner-local rather than repository products.
 site/dist/

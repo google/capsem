@@ -145,7 +145,7 @@ class PackageRail:
             # below, so the container holds its own bytes and a host step
             # cannot race these inodes -- and the bundler's atomic
             # temporaries, which made a read-only mount impossible, land in an
-            # image layer instead of the developer's `frontend/`.
+            # image layer instead of the developer's `web/app/`.
             # The two generated trees the build reads. Mounted, not copied:
             # see `Mount.generated` -- `assets/` alone is 3.0 GB and changes
             # every run, so copying it would put a multi-gigabyte layer in

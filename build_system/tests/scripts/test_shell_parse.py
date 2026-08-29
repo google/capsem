@@ -153,7 +153,7 @@ def test_redirections_do_not_become_arguments() -> None:
 
 
 def test_subcommand_skips_options_and_their_values() -> None:
-    command = commands(parse("pnpm --dir frontend run build"))[0]
+    command = commands(parse("pnpm --dir web/app run build"))[0]
     assert command.subcommand(after="--dir") == "run"
     assert commands(parse("cargo run -p x"))[0].subcommand() == "run"
 
@@ -184,9 +184,9 @@ def test_a_discarded_verdict_is_visible() -> None:
 
 
 def test_a_subshell_is_scoped() -> None:
-    parsed = parse("(cd frontend && npx vitest run)\ncargo build")
+    parsed = parse("(cd web/app && npx vitest run)\ncargo build")
     assert any(isinstance(node, Compound) for node in parsed)
-    assert programs("(cd frontend && npx vitest run)\ncargo build") == [
+    assert programs("(cd web/app && npx vitest run)\ncargo build") == [
         "cd",
         "npx",
         "cargo",

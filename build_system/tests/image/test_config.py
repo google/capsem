@@ -744,9 +744,9 @@ class TestGenerateDefaultsJsonConformance:
         defaults = generate_defaults_json(real_config)
         expected = generate_mock_ts(defaults, mcp_tools=[])
         on_disk = (
-            PROJECT_ROOT / "frontend" / "src" / "lib" / "mock-settings.generated.ts"
+            PROJECT_ROOT / "web" / "app" / "src" / "lib" / "mock-settings.generated.ts"
         ).read_text()
         assert on_disk == expected, (
-            "frontend/src/lib/mock-settings.generated.ts is stale"
+            "web/app/src/lib/mock-settings.generated.ts is stale"
             " -- regenerate with: just _generate-settings"
         )

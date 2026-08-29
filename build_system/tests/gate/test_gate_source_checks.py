@@ -353,7 +353,7 @@ def test_no_step_forces_a_rebuild_by_touching_tracked_source() -> None:
     build.rs and picks up the new manifest hashes". That crate's `build.rs`
     reads nothing -- it forwards one environment variable and calls
     `tauri_build::build()` -- and its `tauri.conf.json` bundles only
-    `frontend/dist`. There were no manifest hashes for it to pick up, so the
+    `web/app/dist`. There were no manifest hashes for it to pick up, so the
     touch rebuilt the Tauri app on every asset build for nothing, and wrote
     into the gate's own tracked source to do it.
 

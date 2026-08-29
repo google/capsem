@@ -88,18 +88,18 @@ RUN bash -lc 'eval "$(cargo llvm-cov show-env --export-prefix)" \
     && cargo build --locked --workspace --all-targets' \
     || echo "prewarm incomplete; the lane will surface anything missing"
 
-# `capsem-app` embeds `frontend/dist` at compile time, so
+# `capsem-app` embeds `web/app/dist` at compile time, so
 # `scripts/test-linux-rust.sh` builds the frontend when that directory is
 # missing -- with `pnpm install`, over the network. Sealed, that is a hard
 # failure, which is how it was found: every previous run of this lane had been
 # quietly pulling from npm. Built here instead, with network, like every other
-# dependency; the lane's own check then sees `frontend/dist/index.html` and
+# dependency; the lane's own check then sees `web/app/dist/index.html` and
 # skips the fetch entirely.
-COPY frontend /src/frontend
-RUN cd /src/frontend \
+COPY web/app /src/web/app
+RUN cd /src/web/app \
     && CI=true pnpm install --frozen-lockfile \
     && pnpm run build \
-    && test -s /src/frontend/dist/index.html
+    && test -s /src/web/app/dist/index.html
 
 # Ownership last, so it covers everything every step above created as root.
 # A non-root user is required: the suite chmods an asset to 0o000 and demands

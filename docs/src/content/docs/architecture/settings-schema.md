@@ -19,9 +19,9 @@ Key files:
 | `config/settings/schema.generated.json` | Generated JSON Schema |
 | `config/settings/ui-metadata.generated.json` | Generated UI metadata and defaults from `config/settings/settings.toml` |
 | `crates/capsem-core/src/net/policy_config/types.rs` | Rust settings serde contract |
-| `frontend/src/lib/types/settings.ts` | TypeScript settings wire types |
+| `web/app/src/lib/types/settings.ts` | TypeScript settings wire types |
 | `crates/capsem-core/tests/settings_spec.rs` | Rust conformance tests |
-| `frontend/src/lib/__tests__/settings_spec.test.ts` | TypeScript conformance tests |
+| `web/app/src/lib/__tests__/settings_spec.test.ts` | TypeScript conformance tests |
 | `tests/test_settings_spec.py` | Python schema + conformance tests |
 | `tests/settings_spec/golden.json` | Golden fixture (shared by all three) |
 
@@ -189,7 +189,7 @@ flowchart TD
 
     GOLDEN --> PY["Python\ntests/test_settings_spec.py\n73 tests"]
     GOLDEN --> RS["Rust\ncrates/capsem-core/tests/settings_spec.rs\n12 tests"]
-    GOLDEN --> TS["TypeScript\nfrontend/.../settings_spec.test.ts\n14 tests"]
+    GOLDEN --> TS["TypeScript\nweb/app/.../settings_spec.test.ts\n14 tests"]
 
     EXPECTED --> PY
     EXPECTED --> RS

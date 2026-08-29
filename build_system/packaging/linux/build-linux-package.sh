@@ -49,7 +49,7 @@ if ! rustup target list --toolchain "$RUST_TOOLCHAIN" --installed \
 fi
 
 echo "--- Build frontend ---"
-(cd frontend && CI=true pnpm install --offline --frozen-lockfile \
+(cd web/app && CI=true pnpm install --offline --frozen-lockfile \
     --store-dir "$CAPSEM_PNPM_STORE")
 bash scripts/check-web-surface.sh frontend-build
 

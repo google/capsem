@@ -7,7 +7,7 @@ is independent -- none reads what another writes -- so as graph nodes they run
 at once by construction and every failure comes back named.
 
 The web surfaces are here too, and one of them is not independent: `capsem-app`
-embeds `frontend/dist` at compile time, so clippy reads a directory the
+embeds `web/app/dist` at compile time, so clippy reads a directory the
 frontend build produces. The shell expressed that as a conditional which
 skipped clippy entirely when the frontend failed -- losing the clippy result on
 exactly the runs where the most had changed. It is an edge.
@@ -141,7 +141,7 @@ def source_syntax(config: GateConfig) -> Step:
 def generated_settings(config: GateConfig) -> Step:
     """Produce the settings schema, defaults and mock the web surfaces import.
 
-    `frontend/src/lib/mock-settings.generated.ts` is gitignored, so it is not
+    `web/app/src/lib/mock-settings.generated.ts` is gitignored, so it is not
     part of the source the gate copies or digests -- it has to be *made*. It
     was not: the fast and static modules ran `_check-generated-settings`, which
     only asserts the committed schema and the generated output agree, and the

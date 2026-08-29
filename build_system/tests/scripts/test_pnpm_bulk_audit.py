@@ -79,7 +79,7 @@ def test_bulk_audit_rejects_malformed_registry_response() -> None:
 def test_default_bulk_audit_covers_every_web_workspace() -> None:
 
     assert (
-        Path("frontend"),
+        Path("web/app"),
         Path("docs"),
         Path("site"),
         Path("build_system/release_site"),
@@ -108,7 +108,7 @@ def test_every_fast_gate_blocks_on_bulk_dependency_advisories() -> None:
     assert "run: python3 build_system/scripts/audit/audit-pnpm-bulk.py" in scheduled
     assert "--project-dir frontend" not in scheduled
     for lockfile in (
-        "frontend/pnpm-lock.yaml",
+        "web/app/pnpm-lock.yaml",
         "docs/pnpm-lock.yaml",
         "site/pnpm-lock.yaml",
         "build_system/release_site/pnpm-lock.yaml",
@@ -139,11 +139,11 @@ def test_every_fast_gate_blocks_on_bulk_dependency_advisories() -> None:
 
 
 def test_frontend_owns_theme_css_without_preline_build_dependency() -> None:
-    package = json.loads((PROJECT_ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
-    global_css = (PROJECT_ROOT / "frontend" / "src" / "styles" / "global.css").read_text(
+    package = json.loads((PROJECT_ROOT / "web" / "app" / "package.json").read_text(encoding="utf-8"))
+    global_css = (PROJECT_ROOT / "web" / "app" / "src" / "styles" / "global.css").read_text(
         encoding="utf-8"
     )
-    lockfile = (PROJECT_ROOT / "frontend" / "pnpm-lock.yaml").read_text(encoding="utf-8")
+    lockfile = (PROJECT_ROOT / "web" / "app" / "pnpm-lock.yaml").read_text(encoding="utf-8")
 
     assert "preline" not in package["dependencies"]
     assert "preline" not in lockfile

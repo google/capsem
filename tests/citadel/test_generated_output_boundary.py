@@ -462,7 +462,7 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
         (ROOT / ".config/nextest.toml").read_text(encoding="utf-8")
     )
     linux_runner = (ROOT / "scripts/test-linux-rust.sh").read_text(encoding="utf-8")
-    frontend_vitest = (ROOT / "frontend/vitest.config.ts").read_text(encoding="utf-8")
+    frontend_vitest = (ROOT / "web/app/vitest.config.ts").read_text(encoding="utf-8")
     release_vitest = (ROOT / "build_system/release_site/vitest.config.ts").read_text(
         encoding="utf-8"
     )
@@ -488,7 +488,7 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
         RATIONALE
     )
     assert f'$ROOT/{coverage}/linux' in linux_runner, RATIONALE
-    assert f"reportsDirectory: '../{coverage}/web-app'" in frontend_vitest, RATIONALE
+    assert f"reportsDirectory: '../../{coverage}/web-app'" in frontend_vitest, RATIONALE
     assert f"reportsDirectory: '../../{coverage}/distribution-site'" in release_vitest, RATIONALE
     assert "_GATE_CONFIG.outputs.test_artifacts" in conftest, RATIONALE
     assert f'Path("{evidence}") / "release"' in collector, RATIONALE

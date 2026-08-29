@@ -62,7 +62,7 @@ def _wave_of(cls, label: str) -> int:
 
 
 def test_clippy_waits_for_the_frontend_build() -> None:
-    """`capsem-app` embeds `frontend/dist` at compile time, so clippy reads a
+    """`capsem-app` embeds `web/app/dist` at compile time, so clippy reads a
     directory the frontend build produces.
 
     The shell expressed this as a conditional that skipped clippy entirely
@@ -80,7 +80,7 @@ def test_clippy_waits_for_the_frontend_build() -> None:
 
 
 def test_static_owns_the_frontend_bundle_before_rust_coverage() -> None:
-    """A private static checkout cannot inherit ``frontend/dist`` from fast.
+    """A private static checkout cannot inherit ``web/app/dist`` from fast.
 
     Tauri reads that directory while compiling ``capsem-app`` tests, so the
     static module has to own the ignored Node tree, generated settings, and

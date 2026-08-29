@@ -343,7 +343,7 @@ See `tests/capsem-service/test_svc_exec_ready.py` for the regression tests that 
 - Rust integration: `crates/capsem-core/tests/`
 - In-VM diagnostics: `guest/artifacts/diagnostics/test_*.py` (see dev-testing-vm)
 - Hypervisor: KVM + Apple VZ tests (see dev-testing-hypervisor)
-- Frontend: `frontend/src/lib/__tests__/` (see dev-testing-frontend)
+- Frontend: `web/app/src/lib/__tests__/` (see dev-testing-frontend)
 - Python (builder): `tests/test_*.py`
 - Python integration (service daemon): `tests/capsem-*/` directories, each with its own conftest.py and pytest marker
 - Ironbank release ledger: `tests/ironbank/` (black-box only; no Rust

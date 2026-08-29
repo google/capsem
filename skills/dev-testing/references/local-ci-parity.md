@@ -78,7 +78,7 @@ distinct schemas even when they share the name `manifest.json`.
 
 This includes workspace/runtime tests, Rust and Python coverage floors,
 `capsem-doctor` and Ironbank acceptance, benchmarks, artifact completeness,
-frontend/docs/marketing/release-site validation, and the Docker/systemd Linux
+web app, docs, marketing, and release-site validation, and the Docker/systemd Linux
 package install and guest-shell proof. It also includes the full profile-owned
 VM asset matrix: `just test-clean` calls `just _gate-assets`, which rebuilds every
 checked-in profile for arm64 and x86_64 through `just _build-kernel` and

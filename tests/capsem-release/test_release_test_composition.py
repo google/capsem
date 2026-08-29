@@ -536,7 +536,7 @@ def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) 
         pairing = _workflow_job(workflow_path, job)
         assert "cache: pnpm" in pairing
         assert "build_system/release_site/pnpm-lock.yaml" in pairing
-        assert "cd frontend && pnpm install --frozen-lockfile" in pairing
+        assert "cd web/app && pnpm install --frozen-lockfile" in pairing
         assert "cd build_system/release_site && pnpm install --frozen-lockfile" in pairing
 
     real_just = shutil.which("just")

@@ -311,7 +311,7 @@ from VM asset releases.
 | `capsem-mcp` | bin | MCP server (stdio). rmcp crate, bridges tool calls to service |
 | `capsem-mcp-aggregator` | bin | Isolated subprocess. Manages external MCP server connections via NDJSON |
 | `capsem-gateway` | bin | HTTP gateway. Axum on TCP:19222, Bearer auth, WebSocket terminal relay |
-| `capsem-app` | bin | Thin Tauri webview. Points at gateway, bundles frontend/dist for the service-unavailable screen |
+| `capsem-app` | bin | Thin Tauri webview. Points at gateway, bundles web/app/dist for the service-unavailable screen |
 | `capsem-tray` | bin | System tray. Polls gateway, shows VM status |
 | `capsem-agent` | bin(5) | Guest binaries (pty-agent, net-proxy, dns-proxy, mcp-server, sysutil) |
 | `capsem-logger` | lib | Session DB schema, queries, async writer |

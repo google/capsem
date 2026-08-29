@@ -546,8 +546,8 @@ package_suffix = ".deb"
 lane_container = "capsem-package-{arch}"
 # The source goes in as an image layer, not a mount. See
 # `build_system/docker/Dockerfile.package` for why a mount could not be sealed: the frontend
-# bundler writes atomic temporaries in `frontend/` itself, so `:ro` was
-# impossible and scratch over `frontend/` would have masked the source.
+# bundler writes atomic temporaries in `web/app/` itself, so `:ro` was
+# impossible and scratch over `web/app/` would have masked the source.
 # One tag for every architecture -- the source is the same, and `COPY`
 # invalidates the layer on any source change, which is the correct cache key.
 # Build output the lane consumes and the image deliberately does not carry.
@@ -565,8 +565,8 @@ lane_image = "capsem-package-lane:latest"
 # ACL schemas into the app crate's `gen/`. Anonymous volumes rather than tmpfs:
 # node_modules is 356 MB and the Colima VM's RAM is not where it belongs.
 writable_paths = [
-    "frontend/node_modules",
-    "frontend/dist",
+    "web/app/node_modules",
+    "web/app/dist",
     "crates/capsem-app/gen",
 ]
 container_output_dir = "/package-output"
@@ -586,9 +586,9 @@ identity_inputs = [
     "Cargo.lock",
     "rust-toolchain.toml",
     ".cargo/config.toml",
-    "frontend/package.json",
-    "frontend/pnpm-lock.yaml",
-    "frontend/pnpm-workspace.yaml",
+    "web/app/package.json",
+    "web/app/pnpm-lock.yaml",
+    "web/app/pnpm-workspace.yaml",
     "build_system/docker/Dockerfile.package-builder",
     "build_system/docker/swap-dev-libs.sh",
     "scripts/materialize-package-ort.py",
@@ -1176,7 +1176,7 @@ run_marker = "CAPSEM_GATE_RUN"
 # near-identical `if ! ... ; then ... fi` blocks in shell, where the only thing
 # that varied was the probe and the install.
 sync = ["uv", "sync", "--project", "build_system", "--frozen"]
-node_workspaces = ["frontend", "docs", "site", "build_system/release_site"]
+node_workspaces = ["web/app", "docs", "site", "build_system/release_site"]
 # CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
 # prompt, which hangs an unattended gate when the store layout drifts from the
 # lockfile.
@@ -1376,7 +1376,7 @@ setup_sentinel = ".dev-setup"
 dev_lock = "run/execution.lock"
 tauri = ["cargo", "tauri", "dev", "--config", "crates/capsem-app/tauri.conf.json"]
 frontend_dev = ["pnpm", "run", "dev"]
-frontend_dir = "frontend"
+frontend_dir = "web/app"
 tui = ["cargo", "run", "-p", "capsem-tui"]
 surfaces = ["ui", "frontend", "tui"]
 generate_settings = "scripts/generate-settings.sh"
@@ -1522,7 +1522,7 @@ lane_tag = "capsem-linux-rust:latest"
 # Not the workspace manifests: `cargo fetch --locked` fetches everything the
 # lock resolves regardless of features, so a manifest edit that leaves
 # `Cargo.lock` alone leaves the sealed lane with every source it needs.
-identity_inputs = ["Cargo.lock", "rust-toolchain.toml", "frontend/pnpm-lock.yaml"]
+identity_inputs = ["Cargo.lock", "rust-toolchain.toml", "web/app/pnpm-lock.yaml"]
 # Named here so the lane's refusal and the recipe that answers it cannot drift
 # apart. `test_every_recipe_the_gate_tells_an_operator_to_run_exists` checks
 # this resolves to a real recipe -- the last time a message named one that did
@@ -1611,7 +1611,7 @@ binaries = [
 # rather than being discovered by a gate twenty minutes in.
 #
 # Two exclusions, both with an owner elsewhere. `capsem-app` embeds
-# `frontend/dist` at compile time and belongs to `build-ui`, which builds the
+# `web/app/dist` at compile time and belongs to `build-ui`, which builds the
 # bundle first; `capsem-agent`'s five bins are musl guest binaries that
 # `initrd.guest-agents` cross-compiles.
 built = [
@@ -1629,7 +1629,7 @@ release_binary = "target/debug/capsem"
 [frontend]
 build_script = "scripts/check-web-surface.sh"
 build_target = "frontend-build"
-# capsem-app embeds frontend/dist at compile time, so the bundle has to exist
+# capsem-app embeds web/app/dist at compile time, so the bundle has to exist
 # before cargo reads it.
 app_crate = "capsem-app"
 profiles = ["debug", "release"]
@@ -1844,14 +1844,14 @@ script = "scripts/check-web-surface.sh"
 # the three produces anything, and clippy -- which waits on the frontend --
 # waited on all of it.
 targets = ["frontend-build", "frontend-verify", "docs", "site", "release-site"]
-# The frontend build must finish before clippy: capsem-app embeds frontend/dist
+# The frontend build must finish before clippy: capsem-app embeds web/app/dist
 # at compile time via `tauri::generate_context!`, so clippy reads a directory
 # that build produces. Expressed as an edge, where the shell expressed it as a
 # conditional that skipped clippy entirely when the frontend failed.
 blocks_clippy = "frontend-build"
 # The one surface that reads `mock-settings.generated`, and so the only one
 # that waits for `audit.generated-settings`. Three files import it and every
-# one of them is under `frontend/src/**/__tests__/`, which makes it a test
+# one of them is under `web/app/src/**/__tests__/`, which makes it a test
 # dependency; it reached clippy only because the tests shared a step with the
 # build.
 needs_generated_settings = "frontend-verify"

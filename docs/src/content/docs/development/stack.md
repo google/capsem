@@ -32,7 +32,7 @@ flowchart TD
 
     subgraph stage3["3. Host binaries"]
         PNPM["pnpm install + astro build"]
-        DIST["frontend/dist/"]
+        DIST["web/app/dist/"]
         CARGO_HOST["cargo build\n(6 host binaries)"]
         PNPM --> DIST --> CARGO_HOST
         CARGO_HOST --> SIGN["codesign\n(com.apple.security.virtualization)"]
@@ -114,10 +114,10 @@ This stage has two parts: the frontend build and the Rust compilation.
 
 ### Frontend (`pnpm build`)
 
-The UI lives in `frontend/` and is built by pnpm. The build chain:
+The UI lives in `web/app/` and is built by pnpm. The build chain:
 
 1. **pnpm install** -- installs npm dependencies (Astro, Svelte, Tailwind, xterm.js, LayerChart, sql.js)
-2. **astro build** -- compiles `.astro` and `.svelte` files into static HTML/JS/CSS in `frontend/dist/`
+2. **astro build** -- compiles `.astro` and `.svelte` files into static HTML/JS/CSS in `web/app/dist/`
 3. The built frontend is served by capsem-gateway over HTTP and bundled into capsem-app for the service-unavailable screen.
 
 The frontend stack:

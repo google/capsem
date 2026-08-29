@@ -28,8 +28,8 @@ bash "$ROOT/scripts/generate-settings.sh" "$FRESH"
 failed=0
 # The mock is gitignored and the web checks import it, so it is still written
 # into the checkout; the tracked pair is not.
-if [ ! -f "$ROOT/frontend/src/lib/mock-settings.generated.ts" ]; then
-  echo "ERROR: settings generator did not create: frontend/src/lib/mock-settings.generated.ts" >&2
+if [ ! -f "$ROOT/web/app/src/lib/mock-settings.generated.ts" ]; then
+  echo "ERROR: settings generator did not create: web/app/src/lib/mock-settings.generated.ts" >&2
   failed=1
 fi
 

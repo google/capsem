@@ -6,7 +6,7 @@ from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SQL_SOURCE = ROOT / "frontend/src/lib/sql.ts"
+SQL_SOURCE = ROOT / "web/app/src/lib/sql.ts"
 
 
 def _sql_const(name: str) -> str:

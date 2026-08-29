@@ -44,11 +44,11 @@
 
 ## Frontend
 
-- `frontend/src/components/capsem-terminal.ts` -- xterm.js web component
-- `frontend/src/lib/components/App.svelte` -- root layout
-- `frontend/src/lib/api.ts` -- HTTP client for explicit gateway API routes
-- `frontend/src/lib/mock.ts` -- fake data for browser dev mode
-- `frontend/src/lib/types.ts` -- TS types mirroring Rust IPC structs
+- `web/app/src/lib/components/terminal/TerminalFrame.svelte` -- xterm.js terminal frame
+- `web/app/src/lib/components/shell/App.svelte` -- root layout
+- `web/app/src/lib/api.ts` -- HTTP client for explicit gateway API routes
+- `web/app/src/lib/mock-settings.ts` -- fake settings data for browser dev mode
+- `web/app/src/lib/types.ts` -- TS types mirroring Rust IPC structs
 
 ## MCP
 

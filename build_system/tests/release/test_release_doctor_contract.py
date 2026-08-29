@@ -685,7 +685,7 @@ def test_macos_ci_installs_release_site_dependencies_before_integration() -> Non
     install = "cd build_system/release_site && pnpm install --frozen-lockfile"
     integration = "Python integration tests (non-VM suites)"
 
-    assert "frontend/pnpm-lock.yaml" in job
+    assert "web/app/pnpm-lock.yaml" in job
     assert "build_system/release_site/pnpm-lock.yaml" in job
     assert install in job
     assert job.index(install) < job.index(integration)
@@ -1437,8 +1437,8 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     service = _source_text("crates/capsem-service/src/tests.rs")
     tray = _source_text("crates/capsem-tray/src/menu/tests.rs")
     tui = _source_text("crates/capsem-tui/src/tests.rs")
-    frontend = _source_text("frontend/src/lib/__tests__/update-status.test.ts")
-    frontend_api = _source_text("frontend/src/lib/__tests__/api.test.ts")
+    frontend = _source_text("web/app/src/lib/__tests__/update-status.test.ts")
+    frontend_api = _source_text("web/app/src/lib/__tests__/api.test.ts")
 
     assert "Profile catalog update available" in cli
     assert "Run `capsem update --assets` separately to refresh VM assets." not in cli
@@ -3231,8 +3231,8 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     assert "scripts/build-complete-release-channel.py" in release_assets
 
     bypasses = (
-        "cd frontend && pnpm run build",
-        "cd frontend && pnpm build",
+        "cd web/app && pnpm run build",
+        "cd web/app && pnpm build",
         "cd docs && pnpm run build",
         "cd site && pnpm run build",
         "cd build_system/release_site && pnpm run build:channel",
@@ -4595,7 +4595,7 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     gate = _dispatched_text("test-clean:")
     assert "bootstrap.sh" in gate
     assert "check-web-surface.sh frontend" in gate
-    assert "pnpm --dir frontend run check" in web_gate
+    assert "pnpm --dir web/app run check" in web_gate
     assert generate_pos < first_frontend_build_pos
     assert generate_pos < frontend_check_pos
     assert "bash scripts/generate-settings.sh" in just
@@ -4614,7 +4614,7 @@ def test_generated_settings_gate_bootstraps_ignored_output_and_rejects_tracked_d
     root = tmp_path / "clean-checkout"
     scripts = root / "scripts"
     settings = root / "config/settings"
-    frontend = root / "frontend/src/lib"
+    frontend = root / "web/app/src/lib"
     scripts.mkdir(parents=True)
     settings.mkdir(parents=True)
     frontend.mkdir(parents=True)
@@ -4631,9 +4631,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # so the gate never rewrites its own checked-in source; the mock is gitignored
 # and still lands in the checkout, because the web checks import it.
 OUT="${1:-$ROOT/config/settings}"
-mkdir -p "$ROOT/frontend/src/lib" "$OUT"
+mkdir -p "$ROOT/web/app/src/lib" "$OUT"
 if [ "${FAKE_SKIP_RUNTIME_OUTPUT:-0}" != 1 ]; then
-  printf 'runtime mock\n' > "$ROOT/frontend/src/lib/mock-settings.generated.ts"
+  printf 'runtime mock\n' > "$ROOT/web/app/src/lib/mock-settings.generated.ts"
 fi
 if [ "${FAKE_TRACKED_DRIFT:-0}" = 1 ]; then
   printf 'drifted schema\n' > "$OUT/schema.generated.json"
@@ -4673,7 +4673,7 @@ cp "$ROOT/config/settings/ui-metadata.generated.json" "$OUT/ui-metadata.generate
     )
     assert missing.returncode != 0
     assert (
-        "settings generator did not create: frontend/src/lib/mock-settings.generated.ts"
+        "settings generator did not create: web/app/src/lib/mock-settings.generated.ts"
     ) in missing.stderr
 
     drift_env = os.environ.copy()
@@ -5063,17 +5063,17 @@ def test_release_docs_name_tool_calls_as_canonical_tool_ledger() -> None:
 
 
 def test_frontend_coverage_runner_declares_its_provider() -> None:
-    package_json = json.loads((PROJECT_ROOT / "frontend" / "package.json").read_text())
+    package_json = json.loads((PROJECT_ROOT / "web" / "app" / "package.json").read_text())
 
     assert "@vitest/coverage-v8" in package_json["devDependencies"]
 
 
 def test_frontend_coverage_artifacts_are_not_typechecked_or_misuploaded() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
-    tsconfig = json.loads((PROJECT_ROOT / "frontend" / "tsconfig.json").read_text())
+    tsconfig = json.loads((PROJECT_ROOT / "web" / "app" / "tsconfig.json").read_text())
 
     assert "target/coverage/web-app/coverage-final.json" in workflow
-    assert "frontend/coverage/coverage-final.json" not in workflow
+    assert "web/app/coverage/coverage-final.json" not in workflow
     assert "coverage" in tsconfig["exclude"]
 
 
@@ -5439,7 +5439,7 @@ def test_hosted_install_failure_uploads_exact_gate_and_glowup_evidence() -> None
 
 
 def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
-    app = _source_text("frontend/src/lib/components/shell/App.svelte")
+    app = _source_text("web/app/src/lib/components/shell/App.svelte")
     tray_main = _source_text("crates/capsem-tray/src/main.rs")
     tray_gateway = _source_text("crates/capsem-tray/src/gateway.rs")
     cli = _source_text("crates/capsem/src/main.rs")
@@ -5535,7 +5535,7 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
     fixture_paths = (
         ".github/workflows",
         "config/profiles",
-        "frontend/src/lib/components",
+        "web/app/src/lib/components",
         "crates/capsem-tray/src",
         "crates/capsem-mcp/src/main.rs",
         "crates/capsem/src/main.rs",
@@ -5590,7 +5590,7 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
     baseline = run_guard()
     assert baseline.returncode == 0, baseline.stderr
 
-    dialog = tmp_path / "frontend/src/lib/components/shell/CreateSandboxDialog.svelte"
+    dialog = tmp_path / "web/app/src/lib/components/shell/CreateSandboxDialog.svelte"
     for profile in ("code", "co-work", "cowork", "terminal", "termional", "gui"):
         original = dialog.read_text()
         dialog.write_text(original + f"\n<!-- profile_id: '{profile}' -->\n")

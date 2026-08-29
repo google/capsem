@@ -124,7 +124,7 @@ def test_every_recipe_the_gate_tells_an_operator_to_run_exists() -> None:
         the gate runs without.
 
     and `just warm` did not exist. The release stopped there, correctly, and
-    handed the operator a command that fails. Bumping `frontend/pnpm-lock.yaml`
+    handed the operator a command that fails. Bumping `web/app/pnpm-lock.yaml`
     for a security advisory is what re-keyed the image and found it.
 
     So: every ``just <recipe>`` the gate names in prose must be a recipe the

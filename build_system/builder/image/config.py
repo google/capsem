@@ -680,7 +680,7 @@ def _build_mock_tree_ts(
 def generate_mock_ts(
     defaults: dict, *, mcp_tools: list[dict] | None = None,
 ) -> str:
-    """Generate frontend/src/lib/mock-settings.generated.ts from settings metadata.
+    """Generate web/app/src/lib/mock-settings.generated.ts from settings metadata.
 
     Produces:
     - mockSettings: flat array of ResolvedSetting objects

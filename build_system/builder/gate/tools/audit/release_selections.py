@@ -21,13 +21,13 @@ MATCH_GUARDS = (
     (
         "user-facing session request hardcodes a named profile",
         rf"profile_id\s*:\s*['\"]{PROFILE_TERMS}['\"]",
-        ("frontend/src/lib/components", "crates/capsem-tray/src"),
+        ("web/app/src/lib/components", "crates/capsem-tray/src"),
     ),
     (
         "profile picker fabricates a named profile instead of using the installed catalog",
         rf"(?:profileId\s*=[^\n]*['\"]{PROFILE_TERMS}['\"]|"
         rf"<option[^>]*value=['\"]{PROFILE_TERMS}['\"])",
-        ("frontend/src/lib/components",),
+        ("web/app/src/lib/components",),
     ),
     (
         "MCP request bypasses its explicit profile parameter",

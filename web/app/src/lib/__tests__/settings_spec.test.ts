@@ -91,7 +91,7 @@ interface Expected {
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const FIXTURE_DIR = resolve(__dirname, '../../../../tests/settings_spec');
+const FIXTURE_DIR = resolve(__dirname, '../../../../../tests/settings_spec');
 
 const golden: { settings: TestNode[] } = JSON.parse(
   readFileSync(resolve(FIXTURE_DIR, 'golden.json'), 'utf-8'),

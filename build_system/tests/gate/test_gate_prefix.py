@@ -653,7 +653,7 @@ def test_the_built_binaries_are_every_host_binary() -> None:
 
     So the list is checked against `cargo metadata` instead of against
     yesterday's failure. The two exclusions are declared rather than implied:
-    `capsem-app` embeds `frontend/dist` and belongs to `build-ui`, which builds
+    `capsem-app` embeds `web/app/dist` and belongs to `build-ui`, which builds
     the bundle first, and the guest crate's binaries are musl and belong to
     `initrd.guest-agents`.
     """

@@ -109,7 +109,7 @@ def invocations(body: str, program: str) -> list[tuple[str, ...]]:
     """Every argv in `body` whose command is `program`.
 
     Full argv rather than a `(command, subcommand)` pair. The pair is wrong the
-    moment a flag precedes the subcommand -- `pnpm --dir frontend run build`
+    moment a flag precedes the subcommand -- `pnpm --dir web/app run build`
     reads as `("pnpm", "--dir")` -- and which flags take a value is knowledge
     this module has no business holding. The caller knows what it is asking
     about, so it gets the tokens and asks.

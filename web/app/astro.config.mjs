@@ -15,7 +15,7 @@ export default defineConfig({
     plugins: [tailwindcss(), releaseNotes()],
     build: {
       // Every Shiki grammar and theme is a dynamic-import chunk fetched
-      // on first use (see frontend/src/lib/shiki.ts). The startup graph
+      // on first use (see web/app/src/lib/shiki.ts). The startup graph
       // has no chunk >200 KB. The sole exception is cpp (~620 KB), which
       // is the inherent size of the C++ TextMate grammar upstream and
       // only fetched when the user opens a .cpp/.hpp/.cc/.cxx file. Any

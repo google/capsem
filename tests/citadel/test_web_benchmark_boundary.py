@@ -28,6 +28,11 @@ surface. See the T5 section of the approved repository cleanup proposal.
 """
 
 OLD_WEB_ROOTS = ("frontend/", "docs/", "site/", "graphics/")
+WEB_PROJECT_ROOTS = OLD_WEB_ROOTS[:3] + (
+    "web/app/",
+    "web/docs/",
+    "web/marketing/",
+)
 REFERENCE_PATTERNS = {
     "app": re.compile(r"(?<![\w-])frontend/|['\"]frontend['\"]"),
     "docs": re.compile(r"(?<![\w-])docs/|['\"]docs['\"]"),
@@ -115,12 +120,14 @@ def _lint_mappings() -> tuple[str, ...]:
 
 
 def _coverage_mappings() -> tuple[str, ...]:
+    target_web = re.compile(r"(?<![\w-])web/(?:app|docs|marketing|graphics)/")
     return tuple(
         f"{line_number}:{line.strip()}"
         for line_number, line in enumerate(
             (ROOT / "codecov.yml").read_text(encoding="utf-8").splitlines(), 1
         )
-        if any(pattern.search(line) for pattern in REFERENCE_PATTERNS.values())
+        if target_web.search(line)
+        or any(pattern.search(line) for pattern in REFERENCE_PATTERNS.values())
     )
 
 
@@ -152,7 +159,7 @@ def _static_asset_problems(
     problems: list[str] = []
     for path, text in sources.items():
         project = next(
-            (root.rstrip("/") for root in OLD_WEB_ROOTS[:3] if path.startswith(root)),
+            (root.rstrip("/") for root in WEB_PROJECT_ROOTS if path.startswith(root)),
             None,
         )
         if project is None or "/src/" not in path:

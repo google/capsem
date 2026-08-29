@@ -20,7 +20,7 @@ sidebar:
 
 `just shell` is the daily VM driver. `just exec "CMD"` is the one-shot path for
 quick checks. After frontend changes intended for the desktop app, use
-`just build-ui`; the Tauri binary embeds `frontend/dist` at cargo build time.
+`just build-ui`; the Tauri binary embeds `web/app/dist` at cargo build time.
 
 ## Testing
 
@@ -46,8 +46,8 @@ and telemetry. Use this sequence for focused iteration:
 |---|---|
 | Rust policy contracts | `cargo test -p capsem-core policy_config --lib` |
 | Framed MCP policy | `cargo test -p capsem-core net::mitm_proxy::mcp_frame --lib` |
-| Frontend policy UI/model | `pnpm -C frontend test -- settings-model settings-export api settings-store` |
-| Frontend type/check gate | `pnpm -C frontend run check` |
+| Frontend policy UI/model | `pnpm -C web/app test -- settings-model settings-export api settings-store` |
+| Frontend type/check gate | `pnpm -C web/app run check` |
 | Docs gate | `cd docs && pnpm run build` |
 | Focused VM feedback | `just focus-test functional` |
 | Session integrity | `just inspect-session [id]` |

@@ -14,7 +14,7 @@ ENV RUSTUP_AUTO_INSTALL=0
 COPY Cargo.toml Cargo.lock rust-toolchain.toml /prefetch/
 COPY .cargo/config.toml /prefetch/.cargo/config.toml
 COPY crates /prefetch/crates
-COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml /prefetch/frontend/
+COPY web/app/package.json web/app/pnpm-lock.yaml web/app/pnpm-workspace.yaml /prefetch/web/app/
 COPY scripts/materialize-package-ort.py /usr/local/bin/materialize-package-ort.py
 
 WORKDIR /prefetch
@@ -36,7 +36,7 @@ RUN selected="$(sed -n 's/^channel = \"\(.*\)\"/\1/p' rust-toolchain.toml)" \
 RUN mkdir -p /capsem-deps/cargo/registry /capsem-deps/cargo/git \
     && CARGO_HOME=/capsem-deps/cargo cargo fetch --locked --target "${RUST_TARGET}" \
     && CARGO_HOME=/capsem-deps/cargo cargo fetch --locked --target "${HOST_RUST_TARGET}"
-RUN cd frontend && pnpm fetch --frozen-lockfile --store-dir /capsem-deps/pnpm
+RUN cd web/app && pnpm fetch --frozen-lockfile --store-dir /capsem-deps/pnpm
 RUN python3 /usr/local/bin/materialize-package-ort.py \
     --url "${ORT_URL}" --sha256 "${ORT_SHA256}" --output /capsem-deps/ort
 

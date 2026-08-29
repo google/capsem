@@ -196,7 +196,7 @@ class BuildUiCommand(
 ):
     """The bundle first, always.
 
-    `capsem-app` embeds `frontend/dist` at compile time through
+    `capsem-app` embeds `web/app/dist` at compile time through
     `tauri::generate_context!`, so a cargo build that runs first embeds
     whatever was there before -- which is why a rebuilt frontend appeared to
     change nothing.

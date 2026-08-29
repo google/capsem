@@ -37,7 +37,7 @@ flags:
   unit:
     paths:
       - crates/**
-      - frontend/src/**
+      - web/app/src/**
       - build_system/release_site/scripts/**
       - build_system/release_site/src/**
       - build_system/builder/**
@@ -256,7 +256,7 @@ component_management:
     - component_id: ui
       name: UI
       paths:
-        - frontend/src/**
+        - web/app/src/**
 
     # Release site: Astro pages and release graph rendering helpers.
     - component_id: release-site

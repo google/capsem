@@ -16,7 +16,7 @@ owner of a portable release requirement.
 
 The canonical gate includes workspace/runtime tests, Rust and Python coverage
 floors, `capsem-doctor` and Ironbank acceptance, benchmarks, artifact
-completeness, frontend/docs/marketing/release-site checks, and the
+completeness, web app, docs, marketing, and release-site checks, and the
 Docker/systemd Linux package install with a real guest-shell proof. Keep only
 unavoidable platform boundaries outside it: Apple signing/notarization,
 hosted-runner KVM, and Cloudflare publication. Apple VZ is owned by the complete
@@ -158,8 +158,8 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
   candidate and request the managed restart after `apt` returns.
 - **Clean-checkout proof belongs before tagging.** When fixing release-only
   failures, test the exact path a runner takes: fresh checkout, install deps,
-  then focused checks (`pnpm -C frontend run check`, generated-config conformance
-  tests, `pnpm -C frontend run test`, `pnpm -C frontend run build`) before the
+  then focused checks (`pnpm -C web/app run check`, generated-config conformance
+  tests, `pnpm -C web/app run test`, `pnpm -C web/app run build`) before the
   full release gate.
 - **Manual VM asset releases use arch-prefixed blob names on release.capsem.org.**
   `capsem-admin assets channel build` writes the channel manifest to

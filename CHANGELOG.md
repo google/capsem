@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The desktop dashboard source now lives under `web/app/`; development,
+  packaging, CI, coverage, and generated-settings callers use that single web
+  owner instead of the retired `frontend/` root.
 - Python engineering tooling now has one locked project under `build_system/`:
   the `capsem-builder` distribution owns both `capsem-builder` and
   `capsem-gate`, and the obsolete root `capsem` distribution, package facade,
@@ -577,7 +580,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Clippy no longer waits on work it does not read. `web.frontend` was a
   type-check, a unit-test run and a build in one step, and clippy -- which
-  needs only `frontend/dist` -- waited on all three, and through them on
+  needs only `web/app/dist` -- waited on all three, and through them on
   `audit.generated-settings`, because the generated mock those tests import
   made the whole step depend on an `mcp_export` build. Split into
   `web.frontend-build` and `web.frontend-verify`, with the generated-settings
@@ -1124,7 +1127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exercising an unrelated package transition.
 - Standalone static qualification now materializes its own Node workspace,
   generated settings, and Tauri frontend bundle before Rust coverage. A fresh
-  private checkout no longer depends on `frontend/dist` produced in another
+  private checkout no longer depends on `web/app/dist` produced in another
   gate command's discarded prefix.
 - A focused gate command given an existing `--prefix` now actually executes
   inside that retained checkout. Cross-compile and other diagnostic rails can
@@ -1891,8 +1894,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Linux package lane no longer mounts the checkout. Its source is copied
   into a lane image, so a host step and the container can no longer race the
   same inodes. The mount it replaces could not be made read-only: the frontend
-  bundler writes atomic temporaries directly in `frontend/`, and grafting
-  container scratch over `frontend/` would have masked the source being built.
+  bundler writes atomic temporaries directly in `web/app/`, and grafting
+  container scratch over `web/app/` would have masked the source being built.
 - A service restarting after a crash now actually reaps the per-VM
   `capsem-process` children its predecessor orphaned. The reaper shelled out to
   `/bin/ps`, which is setuid root and which macOS refuses to exec from a
@@ -1983,7 +1986,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rebuild. The comment said it was "so cargo re-runs build.rs and picks up the
   new manifest hashes", and that crate's `build.rs` reads nothing — it
   forwards one environment variable and calls `tauri_build::build()`, and its
-  `tauri.conf.json` bundles only `frontend/dist`. There were no manifest
+  `tauri.conf.json` bundles only `web/app/dist`. There were no manifest
   hashes to pick up, so every asset build rebuilt the Tauri app for nothing
   and wrote into the gate's own tracked source to do it. A crate that really
   depends on a file says so with `cargo:rerun-if-changed`, which is what
@@ -2083,15 +2086,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Linux package lane's checkout mount stays writable, and now says why.
   Making it `:ro` looked right — the build's outputs all go to container-local
   scratch — and failed a real run: the frontend bundler writes atomic
-  temporaries beside its target, directly in `frontend/`, so the container
-  reported `EROFS ... open '/src/frontend/_tmp_50_…'`. Grafting scratch over
-  `frontend/` would mask the source being compiled, so no flag fixes it;
+  temporaries beside its target, directly in `web/app/`, so the container
+  reported `EROFS ... open '/src/web/app/_tmp_50_…'`. Grafting scratch over
+  `web/app/` would mask the source being compiled, so no flag fixes it;
   baking the frontend into the builder image does, which is Phase 5's second
   half. The outputs stay container-local either way.
 
 - The Linux package lane no longer mounts the checkout writable. It writes
   into its source for three real reasons -- `pnpm install` fills
-  `frontend/node_modules`, `pnpm build` fills `frontend/dist`, and Tauri
+  `web/app/node_modules`, `pnpm build` fills `web/app/dist`, and Tauri
   regenerates ACL schemas into the app crate -- and all three are now
   container-local anonymous volumes grafted over those paths, so the mount is
   `:ro` and none of those writes reaches the host. That is the last read-write
@@ -2257,7 +2260,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[signing] built` is now the whole host cohort, and
   `test_the_built_binaries_are_every_host_binary` fails when a workspace binary
   is missing from it or when a name in it no longer exists. The two exclusions
-  are declared rather than implied: `capsem-app` embeds `frontend/dist` and
+  are declared rather than implied: `capsem-app` embeds `web/app/dist` and
   belongs to `build-ui`, and the guest crate's musl binaries belong to
   `initrd.guest-agents`.
 
@@ -2295,7 +2298,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `test-fast` and `test-static` depended on a generated file that nothing in
   their lane generated. The web surfaces import
-  `frontend/src/lib/mock-settings.generated.ts`, which is gitignored, and both
+  `web/app/src/lib/mock-settings.generated.ts`, which is gitignored, and both
   modules only ran `_check-generated-settings` -- which asserts the committed
   schema and the generated output agree, not that the output exists. On a warm
   machine it arrived from an earlier build; on a clean one `svelte-check`
@@ -2352,7 +2355,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `capsem-linux-rust-base` is declared `generational` in
   `config/storage-policy.toml`, and warming it now retires the tags it
   supersedes. The image is tagged by a blake2b of `Cargo.lock`,
-  `rust-toolchain.toml` and `frontend/pnpm-lock.yaml`, so every bump of any of
+  `rust-toolchain.toml` and `web/app/pnpm-lock.yaml`, so every bump of any of
   the three mints a new ~25 GiB tag -- and nothing retired the old ones. A
   single `fast-uri` security bump left three coexisting on a VM with 54.7 GiB
   free; left alone that reaches disk-full in the middle of a two-hour release
@@ -2378,7 +2381,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `just _warm-linux-rust-base` builds the Linux parity base image, with
   network, before a sealed run needs it. The lane deliberately refuses to build
   it mid-run -- its tag is keyed by `Cargo.lock`, `rust-toolchain.toml` and
-  `frontend/pnpm-lock.yaml`, so a dependency bump re-keys it, and resolving
+  `web/app/pnpm-lock.yaml`, so a dependency bump re-keys it, and resolving
   that inside the run would turn a `--network none` lane into a multi-gigabyte
   network build at minute four -- and its refusal named `just warm`, which did
   not exist. Bumping `fast-uri` for a security advisory re-keyed the image and
@@ -2503,12 +2506,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   because nothing ever passed `--network`. It now builds its source into an
   image, runs with `--network none`, and returns coverage through `docker cp`.
   Dependencies live in a base image keyed by `Cargo.lock`,
-  `rust-toolchain.toml` and `frontend/pnpm-lock.yaml`; a lockfile change makes
+  `rust-toolchain.toml` and `web/app/pnpm-lock.yaml`; a lockfile change makes
   a new tag and the gate refuses to start rather than rebuilding multiple
   gigabytes at minute four.
 
   Sealing it surfaced two fetches nobody had recorded. The lane built the
-  frontend with `pnpm install` mid-run whenever `frontend/dist` was absent, and
+  frontend with `pnpm install` mid-run whenever `web/app/dist` was absent, and
   `ort` -- ONNX Runtime, under `magika` -- downloaded a binary from
   `cdn.pyke.io` inside a build script on every cold build. Both now come from
   the image: the frontend is built there, and ONNX Runtime is Microsoft's
@@ -3431,7 +3434,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The fast gate is the first module ported out of `_test-candidate-run`, and
   it is now a graph rather than seven backgrounded jobs aggregating into one
   `FAIL` bit. Every failure comes back named. The one real dependency in it --
-  clippy reads `frontend/dist`, which `capsem-app` embeds at compile time --
+  clippy reads `web/app/dist`, which `capsem-app` embeds at compile time --
   is an edge instead of a conditional that used to skip clippy entirely when
   the frontend failed, losing that result on exactly the runs where the most
   had changed.
@@ -6609,7 +6612,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed PR CI frontend coverage by moving generated settings/mock fixture
   creation onto a shared `scripts/generate-settings.sh` rail, running that rail
   before frontend build/check in CI, declaring the Vitest coverage provider,
-  uploading the actual `frontend/coverage/coverage-final.json`, and excluding
+  uploading the actual `web/app/coverage/coverage-final.json`, and excluding
   generated coverage output from later frontend type checks.
 - Fixed PR CI Rust coverage so `cargo llvm-cov` reports and uploads coverage
   without aborting the rest of the release gate on a local percentage
@@ -6623,7 +6626,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   working tree is prepared with tiny test boot files and a `capsem-admin`
   generated manifest before profile materialization.
 - Fixed CI regressions where macOS Rust coverage compiled the Tauri app before
-  `frontend/dist` existed, and Linux ARM agent exec tests selected `/root` as
+  `web/app/dist` existed, and Linux ARM agent exec tests selected `/root` as
   cwd for a non-root runner user simply because the directory existed.
 - Fixed ARM Linux CI compilation for KVM checkpoint tests by keeping portable
   checkpoint header decode coverage on every target while gating x86 KVM vCPU,
@@ -10301,7 +10304,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   advisory GHSA-j687-52p2-xcff (moderate XSS in `define:vars` via incomplete
   `</script>` tag sanitization; patched in Astro >=6.1.6). `just test` Stage 1
   runs `cd frontend && pnpm audit` and was failing because
-  `frontend/pnpm-lock.yaml` had locked Astro to 6.1.4 despite the caret range.
+  `web/app/pnpm-lock.yaml` had locked Astro to 6.1.4 despite the caret range.
   Grepped the tree for `define:vars` and found zero usages -- exploitability
   in this codebase was nil, but `pnpm audit` gates on version, not usage, so
   the `test` recipe couldn't pass until the lockfiles refreshed. `docs/` and
@@ -10675,9 +10678,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `elie.net` directly because raw hyper does not follow redirects.
   Dropped `ash-speed.hetzner.com` from the default web allow list
   (`config/defaults.toml`, `guest/config/security/web.toml`, and the
-  hand-written `frontend/src/lib/mock-settings.ts`) since no live test
+  hand-written `web/app/src/lib/mock-settings.ts`) since no live test
   or config still needs it; regenerated `config/defaults.json` and
-  `frontend/src/lib/mock-settings.generated.ts` from the TOML. Docs
+  `web/app/src/lib/mock-settings.generated.ts` from the TOML. Docs
   page `docs/src/content/docs/development/benchmarking.md` updated to
   match.
 
@@ -11739,7 +11742,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ProvisionRequest.ram_mb` / `cpus` now optional** -- service fills missing fields from merged VM settings (`vm.resources.ram_gb`, `vm.resources.cpu_count`). Lets callers without a settings round-trip (the tray's "New Session") honor the user's configured defaults instead of hardcoding.
 - **`capsem-app` reverted to thin webview shell** -- 578-line `main.rs` + 9 helper files (`assets.rs`, `boot.rs`, `cli.rs`, `commands/`, `gui.rs`, `logging.rs`, `session_mgmt.rs`, `state.rs`, `vsock_wiring.rs`) collapsed to a 185-line `main.rs` with 3 IPC commands: `log_frontend`, `open_url`, `check_for_app_update`. Drops `capsem-core`, `capsem-logger`, `anyhow`, `reqwest`, `rmp-serde`, and the macOS `objc2-*` deps from the app. All VM/MCP/MITM logic stays in the service daemon; the app only hosts the webview and deep-link handling.
 - **Terminal iframe owns its WebSocket lifecycle** -- replaces the parent/iframe `ready`/`vm-id`/`ws-ticket` postMessage handshake with URL-param init (`/vm/terminal/index.html?vm=…&theme=…&mode=…&fontSize=…&fontFamily=…`). The iframe fetches its own gateway token, manages WebSocket lifecycle + exponential-backoff reconnect with fresh tokens. Parent→iframe postMessage now covers only runtime signals (`theme-change`, `focus`, `clipboard-paste`). Removes `MsgReady`, `MsgVmId`, `MsgWsTicket`, `MsgWsConnected` from the contract.
-- **Frontend logging to Rust tracing** -- new `frontend/src/lib/tauri-log.ts` patches `console.*` + `window.onerror` + `onunhandledrejection` to forward via `invoke('log_frontend')` from `@tauri-apps/api/core`. Webview logs now land in `~/.capsem/logs/<timestamp>.jsonl` alongside backend events, target `frontend`. No-op outside the Tauri webview (detects via `__TAURI_INTERNALS__`, not the opt-in `window.isTauri` global).
+- **Frontend logging to Rust tracing** -- new `web/app/src/lib/tauri-log.ts` patches `console.*` + `window.onerror` + `onunhandledrejection` to forward via `invoke('log_frontend')` from `@tauri-apps/api/core`. Webview logs now land in `~/.capsem/logs/<timestamp>.jsonl` alongside backend events, target `frontend`. No-op outside the Tauri webview (detects via `__TAURI_INTERNALS__`, not the opt-in `window.isTauri` global).
 - **Frontend build timestamp in toolbar** -- `__BUILD_TS__` set at Vite build time, displayed right-side of toolbar. Makes stale-bundle issues obvious at a glance.
 - **`just build-ui [release]` recipe** -- frontend build + `cargo build -p capsem-ui` in lockstep. Required because `tauri::generate_context!()` embeds the frontend bundle at cargo compile time; rebuilding only the frontend has no effect on an already-compiled binary. Documented in `CLAUDE.md`, `/dev-just`, and `/frontend-design`.
 - **`just run-ui -- [args]`** -- `build-ui` then launch `./target/debug/capsem-ui` with passthrough args (e.g., `just run-ui -- --connect <vm-id>`).
@@ -12746,7 +12749,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rootfs switched from 2GB ext4 to 382MB squashfs (zstd, 64K blocks) -- 81% smaller for DMG distribution
 - Boot sequence uses overlayfs (immutable squashfs lower + ephemeral tmpfs upper) -- writes to system paths silently go to tmpfs
 - Test fixture (`data/fixtures/test.db`) is now captured from real sessions instead of generated by a Python script
-- `just update-fixture <path>` replaces `just gen-test-db`: copies a real session DB, scrubs API keys, and syncs to `frontend/public/fixtures/`
+- `just update-fixture <path>` replaces `just gen-test-db`: copies a real session DB, scrubs API keys, and syncs to `web/app/public/fixtures/`
 
 ### Removed
 - Dead AI gateway server (`gateway/server.rs`, 997 lines): axum HTTP server on vsock:5004 was never wired up in main.rs. All AI traffic goes through the MITM proxy on vsock:5002. `extract_model_from_path`, `parse_non_streaming_usage`, and `tool_origin` helpers moved to `gateway/provider.rs` and `gateway/events.rs` where the MITM proxy can use them.

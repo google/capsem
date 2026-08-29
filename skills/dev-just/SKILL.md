@@ -89,7 +89,7 @@ orchestration back. Logic lives in `src/capsem/gate/`; see `/dev-gate` for how
 to add or change a command.
 
 The one exception is a single command with no branching -- `cargo build`,
-`cd frontend && pnpm run dev` -- where routing through Python would add a `uv`
+`cd web/app && pnpm run dev` -- where routing through Python would add a `uv`
 startup and, for an interactive dev server, break TTY and signal handling, in
 exchange for no decision made.
 

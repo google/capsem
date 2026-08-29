@@ -28,7 +28,7 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: |
-            frontend/pnpm-lock.yaml
+            web/app/pnpm-lock.yaml
             docs/pnpm-lock.yaml
             site/pnpm-lock.yaml
             build_system/release_site/pnpm-lock.yaml
@@ -54,7 +54,7 @@ jobs:
 
       - name: Install all web dependencies
         run: |
-          for project in frontend docs site build_system/release_site; do
+          for project in web/app docs site build_system/release_site; do
             pnpm --dir "$project" install --frozen-lockfile
           done
 

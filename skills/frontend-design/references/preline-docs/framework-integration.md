@@ -4,7 +4,7 @@
 
 Capsem uses Astro 7 as a static shell with Svelte 5 components loaded through
 `client:only="svelte"`. Capsem owns the complete semantic token contract in
-`frontend/src/styles/capsem-theme.css`.
+`web/app/src/styles/capsem-theme.css`.
 
 Preline is not a package, build input, runtime, or authority. The surrounding
 reference directory is retained only as a historical catalogue of component
