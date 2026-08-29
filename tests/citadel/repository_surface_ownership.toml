@@ -235,13 +235,13 @@ reason = "Shared web and native brand sources move together."
 [[surface]]
 id = "generated-output"
 state = "generated"
-current = ["data/.gitkeep"]
+current = []
 targets = ["target/"]
 lint = ["fast.citadel"]
 tests = ["build_system/tests/gate/test_gate_artifact_ownership.py", "tests/test_preserve_artifacts.py"]
 ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
 coverage = "not-applicable: generated output is ignored and never a source surface"
-debt = "root data placeholder is removed in T4"
+debt = "none: obsolete root data placeholder removed in T4"
 reason = "Generated assets, packages, test evidence, and configuration converge under ignored target."
 
 [[surface]]

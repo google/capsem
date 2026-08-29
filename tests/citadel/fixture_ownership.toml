@@ -2,15 +2,6 @@ version = 1
 root_reads = []
 
 [[fixture]]
-source = "data/.gitkeep"
-target = "[delete]"
-disposition = "delete"
-owner = "empty obsolete root marker"
-item = "S05-010"
-consumer = ""
-symbols = []
-
-[[fixture]]
 source = "tests/fixtures/mcp/html/elie_about.html"
 target = "tests/fixtures/mcp/html/elie_about.html"
 disposition = "retain"

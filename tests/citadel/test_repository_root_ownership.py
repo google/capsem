@@ -29,27 +29,21 @@ APPROVED_DIRECTORIES = frozenset(
         ".cursor",
         ".gemini",
         ".github",
-        "assets",
         "benchmarks",
         "build_system",
         "config",
         "crates",
-        "data",
-        "dist",
         "docs",
         "frontend",
         "graphics",
         "guest",
-        "packages",
         "release-site",
         "scripts",
         "sdk",
-        "security",
         "site",
         "skills",
         "src",
         "target",
-        "test-artifacts",
         "tests",
         "web",
     }
@@ -84,23 +78,29 @@ APPROVED_ROOT_FILES = frozenset(
 
 MIGRATING_DIRECTORIES = frozenset(
     {
-        "assets",
-        "data",
-        "dist",
         "docs",
         "frontend",
         "graphics",
-        "packages",
         "release-site",
         "scripts",
-        "security",
         "site",
         "src",
-        "test-artifacts",
     }
 )
 
-RETIRED_DIRECTORIES = frozenset({"bench", "sprints", "tmp"})
+RETIRED_DIRECTORIES = frozenset(
+    {
+        "assets",
+        "bench",
+        "data",
+        "dist",
+        "packages",
+        "security",
+        "sprints",
+        "test-artifacts",
+        "tmp",
+    }
+)
 
 
 @dataclass(frozen=True)
