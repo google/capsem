@@ -56,13 +56,14 @@ def test_shared_packaging_resources_preserve_reviewed_source_modes() -> None:
 
 
 def test_native_package_rails_select_shared_lifecycle_helpers() -> None:
-    macos_builder = (LEGACY / "build-pkg.sh").read_text(encoding="utf-8")
+    macos_builder = (
+        ROOT / "build_system/packaging/macos/build-pkg.sh"
+    ).read_text(encoding="utf-8")
     linux_repacker = (LINUX / "repack-deb.sh").read_text(encoding="utf-8")
     linux_preinstall = (LINUX / "deb-preinst.sh").read_text(encoding="utf-8")
     linux_postinstall = (LINUX / "deb-postinst.sh").read_text(encoding="utf-8")
 
-    shared_owner = "build_system/packaging/shared"
-    assert f'$SCRIPT_DIR/../{shared_owner}/$package_script' in macos_builder
+    assert '$SCRIPT_DIR/../shared/$package_script' in macos_builder
     assert '$SCRIPT_DIR/../shared/$helper' in linux_repacker
     for maintainer_script in (linux_preinstall, linux_postinstall):
         assert '$(dirname "$0")/../shared/' in maintainer_script
@@ -110,15 +111,17 @@ def test_python_consumers_import_shared_helpers_from_their_owner() -> None:
     release_check = (LEGACY / "check-public-binary-release.py").read_text(
         encoding="utf-8"
     )
-    profile_staging = (LEGACY / "stage-release-test-inputs.py").read_text(
-        encoding="utf-8"
-    )
+    profile_staging = (
+        ROOT / "build_system/builder/release/tools/stage_release_test_inputs.py"
+    ).read_text(encoding="utf-8")
 
     assert (
         "from build_system.packaging.shared.package_payload import package_payload_files"
         in release_check
     )
     assert (
-        "from build_system.packaging.shared.profile_root_payload import stage_legacy_root"
+        "from .profile_root_payload import stage_legacy_root"
         in profile_staging
     )
+    compatibility = (SHARED / "profile_root_payload.py").read_text(encoding="utf-8")
+    assert "from capsem_builder.release.tools.profile_root_payload import *" in compatibility

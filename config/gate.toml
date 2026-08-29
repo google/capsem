@@ -1071,7 +1071,6 @@ max_lines = 300
 "scripts/check-public-binary-release.py" = 934
 "scripts/check-remote-release-readiness.py" = 1973
 "scripts/doctor-common.sh" = 446
-"scripts/fetch-release-artifacts.py" = 353
 "scripts/integration_test.py" = 1182
 "scripts/local-release-glowup.py" = 1957
 "build_system/packaging/macos/macos_release_glowup.py" = 369
@@ -1082,7 +1081,6 @@ max_lines = 300
 "scripts/prove-installed-shell.py" = 318
 "scripts/release-binaries.py" = 429
 "scripts/release_collect_evidence.py" = 462
-"scripts/stage-release-test-inputs.py" = 459
 
 # ---------------------------------------------------------------------------
 # What may not run beside what

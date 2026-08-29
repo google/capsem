@@ -1,22 +1,18 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder.release.tools import list_release_manifest_assets as MANIFEST_ASSETS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = PROJECT_ROOT / "scripts/list-release-manifest-assets.py"
 
 
 def _module():
-    spec = importlib.util.spec_from_file_location("list_release_manifest_assets", SCRIPT)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return MANIFEST_ASSETS
 
 
 def _record(*, url: str, name: str | None = None, path: str | None = None) -> dict:

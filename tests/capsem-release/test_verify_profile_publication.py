@@ -7,6 +7,7 @@ from pathlib import Path
 
 import blake3
 import pytest
+from capsem_builder.release.tools import stage_profile_publication as STAGE
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
@@ -16,15 +17,6 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC is not None and SPEC.loader is not None
 VERIFY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VERIFY)
-STAGE_SPEC = importlib.util.spec_from_file_location(
-    "stage_profile_publication",
-    ROOT / "scripts" / "stage-profile-publication.py",
-)
-assert STAGE_SPEC is not None and STAGE_SPEC.loader is not None
-STAGE = importlib.util.module_from_spec(STAGE_SPEC)
-STAGE_SPEC.loader.exec_module(STAGE)
-
-
 def _record(url: str, payload: bytes, *, name: str | None = None) -> dict[str, object]:
     record: dict[str, object] = {
         "url": url,

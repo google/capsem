@@ -2,17 +2,8 @@
 
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
-
 import pytest
-
-ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts" / "project-first-channel-before.py"
-SPEC = importlib.util.spec_from_file_location("first_channel_before", SCRIPT)
-assert SPEC is not None and SPEC.loader is not None
-PROJECTOR = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(PROJECTOR)
+from capsem_builder.release.tools import project_first_channel_before as PROJECTOR
 
 
 def _source() -> dict[str, object]:

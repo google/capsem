@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import shutil
 import subprocess
@@ -11,48 +10,18 @@ from pathlib import Path
 
 import blake3
 import pytest
+from capsem_builder.image.tools.build import stage_profile_assets as PROFILE_STAGE
+from capsem_builder.release.tools import fetch_channel_source_manifest as SOURCE
+from capsem_builder.release.tools import fetch_release_artifacts as FETCH
+from capsem_builder.release.tools import prove_release_profile_assets as BOOT
 from capsem_builder.release.tools import release_test_profiles as PROFILE_AXIS
+from capsem_builder.release.tools import stage_release_test_inputs as STAGE
+from capsem_builder.release.tools import verify_release_inputs as VERIFY
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts" / "fetch-release-artifacts.py"
-SPEC = importlib.util.spec_from_file_location("fetch_release_artifacts", SCRIPT)
-assert SPEC is not None and SPEC.loader is not None
-FETCH = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(FETCH)
-VERIFY_SPEC = importlib.util.spec_from_file_location(
-    "verify_release_inputs", ROOT / "scripts" / "verify-release-inputs.py"
-)
-assert VERIFY_SPEC is not None and VERIFY_SPEC.loader is not None
-VERIFY = importlib.util.module_from_spec(VERIFY_SPEC)
-VERIFY_SPEC.loader.exec_module(VERIFY)
-STAGE_SPEC = importlib.util.spec_from_file_location(
-    "stage_release_test_inputs", ROOT / "scripts" / "stage-release-test-inputs.py"
-)
-assert STAGE_SPEC is not None and STAGE_SPEC.loader is not None
-STAGE = importlib.util.module_from_spec(STAGE_SPEC)
-STAGE_SPEC.loader.exec_module(STAGE)
-PROFILE_STAGE_SPEC = importlib.util.spec_from_file_location(
-    "stage_profile_assets",
-    ROOT / "build_system/builder/image/tools/build/stage_profile_assets.py",
-)
-assert PROFILE_STAGE_SPEC is not None and PROFILE_STAGE_SPEC.loader is not None
-PROFILE_STAGE = importlib.util.module_from_spec(PROFILE_STAGE_SPEC)
-PROFILE_STAGE_SPEC.loader.exec_module(PROFILE_STAGE)
-BOOT_SPEC = importlib.util.spec_from_file_location(
-    "prove_release_profile_assets",
-    ROOT / "scripts" / "prove-release-profile-assets.py",
-)
-assert BOOT_SPEC is not None and BOOT_SPEC.loader is not None
-BOOT = importlib.util.module_from_spec(BOOT_SPEC)
-BOOT_SPEC.loader.exec_module(BOOT)
-SOURCE_SPEC = importlib.util.spec_from_file_location(
-    "fetch_channel_source_manifest",
-    ROOT / "scripts" / "fetch-channel-source-manifest.py",
-)
 SOURCE_SCRIPT = ROOT / "scripts" / "fetch-channel-source-manifest.py"
-assert SOURCE_SPEC is not None and SOURCE_SPEC.loader is not None
-SOURCE = importlib.util.module_from_spec(SOURCE_SPEC)
-SOURCE_SPEC.loader.exec_module(SOURCE)
+
+
 def _digest(payload: bytes) -> dict[str, str]:
     return {
         "sha256": hashlib.sha256(payload).hexdigest(),

@@ -18,6 +18,23 @@ from . import repository_root
 from .release_channel_author import author_and_fetch, glowup_helpers, run
 
 PROJECT_ROOT = repository_root()
+REQUIRED_LINUX_RELEASE_BINARIES = frozenset(
+    {
+        "capsem",
+        "capsem-admin",
+        "capsem-app",
+        "capsem-bench-rs",
+        "capsem-gateway",
+        "capsem-mcp",
+        "capsem-mcp-aggregator",
+        "capsem-mcp-builtin",
+        "capsem-mock-server",
+        "capsem-process",
+        "capsem-service",
+        "capsem-tray",
+        "capsem-tui",
+    }
+)
 
 
 def _candidate_package(config, packages_dir: Path) -> Path:

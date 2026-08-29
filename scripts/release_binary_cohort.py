@@ -1,21 +1,15 @@
-"""Canonical native Linux binary cohort required by release qualification."""
+"""Compatibility adapter for the release-owned native binary cohort."""
 
-from __future__ import annotations
+import os
+import sys
+from pathlib import Path
 
-REQUIRED_LINUX_RELEASE_BINARIES = frozenset(
-    {
-        "capsem",
-        "capsem-admin",
-        "capsem-app",
-        "capsem-bench-rs",
-        "capsem-gateway",
-        "capsem-mcp",
-        "capsem-mcp-aggregator",
-        "capsem-mcp-builtin",
-        "capsem-mock-server",
-        "capsem-process",
-        "capsem-service",
-        "capsem-tray",
-        "capsem-tui",
-    }
-)
+ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("CAPSEM_REPOSITORY_ROOT", str(ROOT))
+try:
+    import capsem_builder  # noqa: F401
+except ModuleNotFoundError:
+    sys.path.insert(0, str(ROOT / "build_system" / "builder"))
+    from bootstrap import mount_builder_package
+    mount_builder_package(ROOT)
+from capsem_builder.release.tools.release_cohort import *  # noqa: E402,F403

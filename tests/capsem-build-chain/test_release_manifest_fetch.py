@@ -1,17 +1,12 @@
 """Fail-early contracts for binary release manifest authority."""
 
-import importlib.util
 import json
 from pathlib import Path
 
 import pytest
+from capsem_builder.release.tools import fetch_channel_source_manifest as SOURCE
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts" / "fetch-channel-source-manifest.py"
-SPEC = importlib.util.spec_from_file_location("release_manifest_fetch", SCRIPT)
-assert SPEC is not None and SPEC.loader is not None
-SOURCE = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(SOURCE)
 
 
 def test_binary_source_manifest_requires_staged_profile_membership() -> None:

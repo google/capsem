@@ -554,7 +554,10 @@ def test_release_workflow_uses_same_config_materializer() -> None:
 def test_asset_workflow_publishes_obom_not_debug_build_ledger() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text()
     release = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
-    stager = (PROJECT_ROOT / "scripts/stage-profile-publication.py").read_text()
+    stager = (
+        PROJECT_ROOT
+        / "build_system/builder/release/tools/stage_profile_publication.py"
+    ).read_text()
 
     assert "npm install -g @cyclonedx/cdxgen" not in workflow
     assert "CAPSEM_CDXGEN_CMD" not in workflow

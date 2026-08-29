@@ -9,6 +9,9 @@ from pathlib import Path
 
 import blake3
 import pytest
+from capsem_builder.release.tools import (
+    materialize_graph_profile_artifacts as MATERIALIZE,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -21,10 +24,6 @@ def _module(name: str, relative: str):
     return module
 
 
-MATERIALIZE = _module(
-    "materialize_channel_qualified_profiles",
-    "scripts/materialize-graph-profile-artifacts.py",
-)
 VERIFY = _module(
     "verify_channel_qualified_profiles",
     "scripts/verify-profile-publication.py",

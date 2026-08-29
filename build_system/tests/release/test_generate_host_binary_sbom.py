@@ -2,24 +2,14 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
 
 import pytest
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+from capsem_builder.release.tools import generate_host_binary_sbom as HOST_SBOM
 
 
 def _module():
-    path = PROJECT_ROOT / "scripts" / "generate-host-binary-sbom.py"
-    spec = importlib.util.spec_from_file_location("generate_host_binary_sbom", path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return HOST_SBOM
 
 
 def _write_deb_member(path: Path, name: str, payload: bytes) -> None:

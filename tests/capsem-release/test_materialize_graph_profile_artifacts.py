@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import subprocess
 import sys
@@ -9,17 +8,16 @@ from pathlib import Path
 
 import blake3
 import pytest
+from capsem_builder.release.tools import (
+    materialize_graph_profile_artifacts as GRAPH_ARTIFACTS,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "materialize-graph-profile-artifacts.py"
 
 
 def _module():
-    spec = importlib.util.spec_from_file_location("materialize_graph_profiles", SCRIPT)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return GRAPH_ARTIFACTS
 
 
 def test_materializes_profile_config_from_asset_source_tag(tmp_path: Path) -> None:
@@ -354,8 +352,10 @@ def test_public_mirror_preserves_legacy_profile_config_bytes(
 
     assert written == 1
     assert requested == [
-        "https://release.example/profiles/releases/legacy-revision/"
-        "arm64/apt-packages.txt"
+        (
+            "https://release.example/profiles/releases/legacy-revision/"
+            "arm64/apt-packages.txt"
+        )
     ]
     assert (
         tmp_path / "profiles/releases/legacy-revision/arm64/apt-packages.txt"

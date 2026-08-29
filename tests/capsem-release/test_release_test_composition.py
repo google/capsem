@@ -780,7 +780,7 @@ def test_release_functional_helpers_never_hide_host_binary_builds() -> None:
 def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tree(
     tmp_path: Path,
 ) -> None:
-    from tests.conftest import (
+    from conftest import (
         _missing_required_artifacts,
         _required_artifacts_for_run,
     )

@@ -1,38 +1,19 @@
 #!/usr/bin/env python3
-"""Verify a previously resolved immutable release-input directory."""
+"""Compatibility launcher for release-owned input verification."""
 
-from __future__ import annotations
-
-import argparse
-import json
+import os
 import sys
 from pathlib import Path
-from typing import Any
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
-
-from release_inputs import load_verified_release_inputs  # noqa: E402
-
-
-def verify_release_inputs(input_dir: Path) -> dict[str, Any]:
-    _, _, verification = load_verified_release_inputs(input_dir)
-    return verification
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input-dir", required=True, type=Path)
-    args = parser.parse_args()
-    try:
-        report = verify_release_inputs(args.input_dir)
-    except (OSError, ValueError) as error:
-        print(f"release input verification failed: {error}", file=sys.stderr)
-        return 1
-    print(json.dumps(report, indent=2, sort_keys=True))
-    return 0
-
+ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("CAPSEM_REPOSITORY_ROOT", str(ROOT))
+try:
+    import capsem_builder  # noqa: F401
+except ModuleNotFoundError:
+    sys.path.insert(0, str(ROOT / "build_system" / "builder"))
+    from bootstrap import mount_builder_package
+    mount_builder_package(ROOT)
+from capsem_builder.release.tools.verify_release_inputs import main as _main  # noqa: E402
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_main())
