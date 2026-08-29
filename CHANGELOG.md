@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The marketing site now lives under `web/marketing/`; CI, deployment,
+  installer validation, coverage, and developer callers follow its functional
+  owner without changing the public `/` or `/later/` routes.
 - The documentation site now lives under `web/docs/`; CI, deployment,
   coverage, holding-page verification, and developer guidance follow the new
   functional owner without changing public documentation routes.
@@ -10311,7 +10314,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Grepped the tree for `define:vars` and found zero usages -- exploitability
   in this codebase was nil, but `pnpm audit` gates on version, not usage, so
   the `test` recipe couldn't pass until the lockfiles refreshed. `web/docs/` and
-  `site/` were bumped in the same commit because they were also on affected
+  `web/marketing/` were bumped in the same commit because they were also on affected
   Astro versions.
 
 ### Fixed
@@ -12478,7 +12481,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - GitHub Actions upgraded to Node 24 (checkout v5, setup-node v5, upload/download-artifact v5, setup-buildx v4)
-- CI workflow scoped to PRs only; site deploy scoped to main + site/ changes only
+- CI workflow scoped to PRs only; site deploy scoped to main + web/marketing/ changes only
 
 ## [0.9.0] - 2026-03-18
 

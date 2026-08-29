@@ -274,7 +274,7 @@ def test_deb_preinstall_preserves_a_service_owned_update_until_activation() -> N
 
 
 def test_public_installer_stops_the_user_service_before_package_replacement() -> None:
-    for relative in ("site/public/install.sh", "web/docs/public/install.sh"):
+    for relative in ("web/marketing/public/install.sh", "web/docs/public/install.sh"):
         installer = (ROOT / relative).read_text(encoding="utf-8")
         stop = installer.index('"$HOME/.capsem/bin/capsem" stop')
         macos = installer[installer.index("install_macos()") : installer.index("install_linux()")]

@@ -41,7 +41,7 @@ def test_ambiguous_or_executable_changes_fail_closed(paths: tuple[str, ...]) -> 
     [
         ("README.md",),
         ("web/docs/src/content/docs/index.mdx",),
-        ("site/src/pages/index.astro", "web/docs/src/pages/index.astro"),
+        ("web/marketing/src/pages/index.astro", "web/docs/src/pages/index.astro"),
     ],
 )
 def test_only_inert_web_content_may_skip_expensive_product_jobs(paths: tuple[str, ...]) -> None:
@@ -50,9 +50,9 @@ def test_only_inert_web_content_may_skip_expensive_product_jobs(paths: tuple[str
 
 def test_null_delimited_git_paths_are_parsed_without_ambiguity() -> None:
     module = _classifier()
-    assert module.paths_from_git(b"web/docs/a file.md\0site/src/index.astro\0") == (
+    assert module.paths_from_git(b"web/docs/a file.md\0web/marketing/src/index.astro\0") == (
         "web/docs/a file.md",
-        "site/src/index.astro",
+        "web/marketing/src/index.astro",
     )
     with pytest.raises(ValueError, match="NUL-terminated"):
         module.paths_from_git(b"web/docs/index.md")

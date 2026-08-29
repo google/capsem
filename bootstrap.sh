@@ -46,10 +46,10 @@ check_bootstrap_shape() {
         skills/dev-capsem/SKILL.md \
         skills/ironbank/SKILL.md \
         skills/frontend-design/SKILL.md \
-        site/package.json \
-        site/astro.config.mjs \
-        site/src/components/FAQ.svelte \
-        site/src/lib/data.ts; do
+        web/marketing/package.json \
+        web/marketing/astro.config.mjs \
+        web/marketing/src/components/FAQ.svelte \
+        web/marketing/src/lib/data.ts; do
         [ -f "$file" ] || { printf "  [FAIL] missing %s\n" "$file" >&2; exit 1; }
     done
     SKILL_COUNT=$(find skills -mindepth 2 -name SKILL.md | wc -l | tr -d ' ')

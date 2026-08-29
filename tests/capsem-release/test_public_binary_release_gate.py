@@ -559,7 +559,9 @@ def test_public_binary_transition_gate_uses_two_real_manifests_and_downgrades(
 
 def test_public_binary_release_gate_requires_fail_closed_installer_integrity() -> None:
     gate = _load_release_gate()
-    script = (PROJECT_ROOT / "site" / "public" / "install.sh").read_text(encoding="utf-8")
+    script = (
+        PROJECT_ROOT / "web" / "marketing" / "public" / "install.sh"
+    ).read_text(encoding="utf-8")
 
     failures = gate.check_install_script_defaults(
         script,

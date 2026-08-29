@@ -63,10 +63,10 @@ def test_bootstrap_always_checks_project_skills_and_site_shape() -> None:
         "skills/dev-capsem/SKILL.md",
         "skills/ironbank/SKILL.md",
         "skills/frontend-design/SKILL.md",
-        "site/package.json",
-        "site/astro.config.mjs",
-        "site/src/components/FAQ.svelte",
-        "site/src/lib/data.ts",
+        "web/marketing/package.json",
+        "web/marketing/astro.config.mjs",
+        "web/marketing/src/components/FAQ.svelte",
+        "web/marketing/src/lib/data.ts",
     ]:
         assert required_file in bootstrap
     assert "find skills -mindepth 2 -name SKILL.md" in bootstrap

@@ -5,7 +5,7 @@
 //!
 //! Security model: path traversal protection uses `canonicalize()` to
 //! defend against a malicious guest. TOCTOU analysis and threat model
-//! details are documented at `site/src/content/docs/security/virtualization.md`.
+//! details are documented at `web/docs/src/content/docs/security/virtualization.md`.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;

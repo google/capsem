@@ -34,7 +34,7 @@ Rule: if logic could be reused or tested without a specific crate, it belongs in
 |------|------|-------|
 | `crates/` | Rust workspace | `/site-architecture` |
 | `web/app/` | Astro 7 + Svelte 5 + Tailwind v4 + owned semantic CSS | `/frontend-design` |
-| `site/` | Marketing website (Astro + Svelte 5) | `/site-marketing` |
+| `web/marketing/` | Marketing website (Astro + Svelte 5) | `/site-marketing` |
 | `web/docs/` | Documentation site (Astro Starlight) | `/site-infra` |
 | `src/capsem/builder/` | Python image builder CLI | `/build-images` |
 | `guest/artifacts/` | capsem-init, bashrc, diagnostics | `/dev-capsem-doctor`, `/build-initrd` |

@@ -53,7 +53,7 @@ crates/capsem-guard/           Companion lifecycle primitives (parent-watch + fl
 crates/capsem-bench/           Benchmark harness, ships as capsem-bench-rs (guest musl + host)
 crates/capsem-mock-server/     Hermetic mock upstream (HTTP/TLS/WS) for tests and benchmarks
 web/app/                 Astro 7 + Svelte 5 + Tailwind v4 + owned semantic CSS
-site/                     Marketing website (Astro + Svelte 5)
+web/marketing/                     Marketing website (Astro + Svelte 5)
 web/docs/                     Documentation site (Astro Starlight)
 build_system/release_site/ Release channel site generator (Astro, writes target/distribution/)
 config/                   Runtime product config source -- never developer skills (see Skills)

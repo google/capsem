@@ -62,7 +62,8 @@ case "$surface" in
         astro_build pnpm --dir web/docs run build
         ;;
     site)
-        astro_build pnpm --dir site run build
+        pnpm --dir web/marketing run check
+        astro_build pnpm --dir web/marketing run build
         ;;
     release-site-build)
         require_release_site_astro

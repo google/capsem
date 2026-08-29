@@ -291,7 +291,7 @@ ignore:
   # `#[cfg(test)]`-only fixture helpers; not product code any component owns.
   - crates/capsem-core/src/test_support/**
   - crates/capsem-app/gen/**
-  - site/**
+  - web/marketing/**
   - web/docs/**
   - guest/**
   - scripts/**

@@ -140,7 +140,7 @@ def main() -> int:
     parser.add_argument("--assets-dir", required=True, type=Path)
     parser.add_argument("--config-root", required=True, type=Path)
     parser.add_argument(
-        "--install-script", default=PROJECT_ROOT / "site/public/install.sh", type=Path
+        "--install-script", default=PROJECT_ROOT / "web/marketing/public/install.sh", type=Path
     )
     parser.add_argument(
         "--work-dir", default=PROJECT_ROOT / "target/local-release-glowup", type=Path

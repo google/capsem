@@ -25,8 +25,8 @@ def validate_marketing_install_surface(
 
 def validate_checked_in_marketing_install_surface(project_root: Path) -> None:
     sources = (
-        project_root / "site/src/pages/index.astro",
-        project_root / "site/src/lib/data.ts",
+        project_root / "web/marketing/src/pages/index.astro",
+        project_root / "web/marketing/src/lib/data.ts",
     )
     validate_marketing_install_surface(
         "\n".join(path.read_text(encoding="utf-8") for path in sources)

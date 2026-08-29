@@ -81,7 +81,7 @@ def test_default_bulk_audit_covers_every_web_workspace() -> None:
     assert (
         Path("web/app"),
         Path("web/docs"),
-        Path("site"),
+        Path("web/marketing"),
         Path("build_system/release_site"),
     ) == audit.DEFAULT_PROJECT_DIRS
     for project in audit.DEFAULT_PROJECT_DIRS:
@@ -110,7 +110,7 @@ def test_every_fast_gate_blocks_on_bulk_dependency_advisories() -> None:
     for lockfile in (
         "web/app/pnpm-lock.yaml",
         "web/docs/pnpm-lock.yaml",
-        "site/pnpm-lock.yaml",
+        "web/marketing/pnpm-lock.yaml",
         "build_system/release_site/pnpm-lock.yaml",
     ):
         assert lockfile in fast_gate

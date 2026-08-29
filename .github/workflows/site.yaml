@@ -8,7 +8,6 @@ on:
       - graphics/**
       - scripts/check-web-surface.sh
       - scripts/lib/exec_lock.sh
-      - site/**
       - web/graphics/**
       - web/marketing/**
 
@@ -32,9 +31,9 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: site/pnpm-lock.yaml
+          cache-dependency-path: web/marketing/pnpm-lock.yaml
       - name: Install
-        run: cd site && pnpm install --frozen-lockfile
+        run: cd web/marketing && pnpm install --frozen-lockfile
       - name: Build
         run: bash scripts/check-web-surface.sh site
       - name: Deploy
@@ -46,7 +45,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy site/dist/ --project-name=capsem
+          command: pages deploy web/marketing/dist/ --project-name=capsem
       - name: Smoke public marketing site
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:

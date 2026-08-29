@@ -211,7 +211,7 @@ reason = "The documentation site moves under the web product owner."
 [[surface]]
 id = "web-marketing"
 state = "migrating"
-current = ["site/"]
+current = ["web/marketing/"]
 targets = ["web/marketing/"]
 lint = ["fast.audit.source-syntax", "fast.audit.markdown"]
 tests = ["marketing site build", "tests/test_marketing_download_contract.py"]

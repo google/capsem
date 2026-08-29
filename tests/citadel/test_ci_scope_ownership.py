@@ -185,8 +185,6 @@ def _push_paths(name: str) -> set[str]:
 
 def test_public_web_deployments_run_only_for_owned_and_shared_inputs() -> None:
     script_root = "scr" + "ipts"
-    current_docs = "do" + "cs/**"
-    current_site = "si" + "te/**"
     current_graphics = "gra" + "phics/**"
     shared = {
         "README.md",
@@ -196,14 +194,12 @@ def test_public_web_deployments_run_only_for_owned_and_shared_inputs() -> None:
     assert _push_paths("docs.yaml") == shared | {
         ".github/workflows/docs.yaml",
         "config/gate.toml",
-        current_docs,
         "web/docs/**",
         f"{script_root}/check-docs-holding-build.py",
         "build_system/builder/gate/tools/web/check_docs_holding_build.py",
     }
     assert _push_paths("site.yaml") == shared | {
         ".github/workflows/site.yaml",
-        current_site,
         current_graphics,
         "web/marketing/**",
         "web/graphics/**",

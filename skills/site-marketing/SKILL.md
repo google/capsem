@@ -5,14 +5,14 @@ description: The marketing website, capsem.org. Use when editing copy, adding se
 
 # Marketing Website
 
-The marketing site (capsem.org) is a single-page landing built with Astro 6 + Svelte 5 + Tailwind v4. Source lives in `site/`.
+The marketing site (capsem.org) is a single-page landing built with Astro 7 + Svelte 5 + Tailwind v4. Source lives in `web/marketing/`.
 
 ## Dev workflow
 
 ```bash
-cd site && pnpm run dev     # localhost:4321
-cd site && pnpm run build   # Production build
-cd site && pnpm run preview # Preview production build
+cd web/marketing && pnpm run dev     # localhost:4321
+cd web/marketing && pnpm run build   # Production build
+cd web/marketing && pnpm run preview # Preview production build
 ```
 
 ## CI and deploy rail
@@ -24,10 +24,10 @@ the `release.capsem.org` asset-channel workflow.
 
 ## Architecture
 
-Single page (`site/src/pages/index.astro`) composed of Svelte components. All marketing copy is centralized in `site/src/lib/data.ts` -- edit that file to change text, not the components.
+Single page (`web/marketing/src/pages/index.astro`) composed of Svelte components. All marketing copy is centralized in `web/marketing/src/lib/data.ts` -- edit that file to change text, not the components.
 
 ```
-site/
+web/marketing/
   astro.config.mjs           Astro config (site: capsem.org, Svelte + Tailwind)
   package.json               capsem-marketing package
   src/
@@ -55,7 +55,7 @@ site/
 
 ## Content editing
 
-All text lives in `site/src/lib/data.ts` as typed const exports:
+All text lives in `web/marketing/src/lib/data.ts` as typed const exports:
 
 | Export | Content |
 |--------|---------|
@@ -74,7 +74,7 @@ All text lives in `site/src/lib/data.ts` as typed const exports:
 
 ## Theme
 
-Defined in `site/src/styles/global.css` using Tailwind v4 `@theme` tokens:
+Defined in `web/marketing/src/styles/global.css` using Tailwind v4 `@theme` tokens:
 
 - **Accent**: `--color-accent` (blue), `--color-accent-secondary` (purple), gradient between them
 - **Surfaces**: light (`--color-surface`) and dark (`--color-surface-dark`) variants
@@ -91,4 +91,4 @@ Defined in `site/src/styles/global.css` using Tailwind v4 `@theme` tokens:
 
 ## Graphics and icons
 
-Icons use inline SVG paths from `site/src/lib/icons.ts`, rendered via `Icon.svelte`. Favicons in `site/public/` are generated from `graphics/icon/1024w/capsem-logo-color.png`.
+Icons use inline SVG paths from `web/marketing/src/lib/icons.ts`, rendered via `Icon.svelte`. Favicons in `web/marketing/public/` are generated from `graphics/icon/1024w/capsem-logo-color.png`.

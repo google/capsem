@@ -1,4 +1,4 @@
-"""Tests for site/public/install.sh -- OS/arch detection and asset URL selection.
+"""Tests for web/marketing/public/install.sh -- OS/arch detection and asset URL selection.
 
 Sources the install script with __INSTALL_SH_SOURCED=1 to access functions
 without triggering the main install flow. Uses stub uname to test detection
@@ -12,7 +12,13 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-INSTALL_SH = Path(__file__).resolve().parents[3] / "site" / "public" / "install.sh"
+INSTALL_SH = (
+    Path(__file__).resolve().parents[3]
+    / "web"
+    / "marketing"
+    / "public"
+    / "install.sh"
+)
 DOCS_INSTALL_SH = (
     Path(__file__).resolve().parents[3] / "web" / "docs" / "public" / "install.sh"
 )

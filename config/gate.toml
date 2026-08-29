@@ -1176,7 +1176,7 @@ run_marker = "CAPSEM_GATE_RUN"
 # near-identical `if ! ... ; then ... fi` blocks in shell, where the only thing
 # that varied was the probe and the install.
 sync = ["uv", "sync", "--project", "build_system", "--frozen"]
-node_workspaces = ["web/app", "web/docs", "site", "build_system/release_site"]
+node_workspaces = ["web/app", "web/docs", "web/marketing", "build_system/release_site"]
 # CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
 # prompt, which hangs an unattended gate when the store layout drifts from the
 # lockfile.
@@ -3209,7 +3209,7 @@ reason = "nothing to kill is the common case; pkill exits non-zero on no match"
 
 [[boundary.discarded_verdicts]]
 digest = "03305b303f7f"
-where = "site/public/install.sh"
+where = "web/marketing/public/install.sh"
 subject = "$HOME/.capsem/bin/capsem stop"
 reason = "the public upgrade asks an existing user service to stop, but first install and already-stopped service are both successful preconditions"
 
@@ -3239,18 +3239,18 @@ reason = "reads the first line of a stream that may be empty"
 
 [[boundary.discarded_verdicts]]
 digest = "4596796f7191"
-where = "site/public/install.sh"
+where = "web/marketing/public/install.sh"
 subject = "clear_macos_install_user_request"
 reason = "clears a request that may never have been set"
 
 [[boundary.discarded_verdicts]]
 digest = "3f30ef4f1051"
-where = "site/public/install.sh"
+where = "web/marketing/public/install.sh"
 subject = "clear_install_manifest_request"
 reason = "clears a request that may never have been set"
 
 [[boundary.discarded_verdicts]]
 digest = "e71e2ff726f6"
-where = "site/public/install.sh"
+where = "web/marketing/public/install.sh"
 subject = "return 0"
 reason = "a trap handler returning success on a path where the failure has already been reported"

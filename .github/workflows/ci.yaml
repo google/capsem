@@ -579,10 +579,10 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: site/pnpm-lock.yaml
+          cache-dependency-path: web/marketing/pnpm-lock.yaml
 
       - name: Install site dependencies
-        run: cd site && pnpm install --frozen-lockfile
+        run: cd web/marketing && pnpm install --frozen-lockfile
 
       - name: Build site
         run: bash scripts/check-web-surface.sh site

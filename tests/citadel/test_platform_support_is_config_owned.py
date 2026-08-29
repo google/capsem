@@ -26,7 +26,7 @@ README = PROJECT_ROOT / "README.md"
 DOCS = PROJECT_ROOT / "web" / "docs" / "src" / "content" / "docs" / "getting-started.md"
 TAURI = PROJECT_ROOT / "crates/capsem-app/tauri.conf.json"
 INSTALLERS = (
-    PROJECT_ROOT / "site/public/install.sh",
+    PROJECT_ROOT / "web/marketing/public/install.sh",
     PROJECT_ROOT / "web" / "docs" / "public" / "install.sh",
 )
 
@@ -130,4 +130,4 @@ def test_the_two_public_installers_are_the_same_file() -> None:
     """They are hand-maintained copies, so only equality keeps them honest."""
     site, docs = (path.read_text(encoding="utf-8") for path in INSTALLERS)
 
-    assert site == docs, "site/public/install.sh and web/docs/public/install.sh have diverged"
+    assert site == docs, "web/marketing/public/install.sh and web/docs/public/install.sh have diverged"

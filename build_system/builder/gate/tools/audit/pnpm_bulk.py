@@ -15,7 +15,7 @@ DEFAULT_ENDPOINT = "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk
 DEFAULT_PROJECT_DIRS = (
     Path("web/app"),
     Path("web/docs"),
-    Path("site"),
+    Path("web/marketing"),
     Path("build_system/release_site"),
 )
 

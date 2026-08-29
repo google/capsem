@@ -38,7 +38,6 @@ APPROVED_DIRECTORIES = frozenset(
         "release-site",
         "scripts",
         "sdk",
-        "site",
         "skills",
         "src",
         "target",
@@ -79,7 +78,6 @@ MIGRATING_DIRECTORIES = frozenset(
         "graphics",
         "release-site",
         "scripts",
-        "site",
         "src",
     }
 )

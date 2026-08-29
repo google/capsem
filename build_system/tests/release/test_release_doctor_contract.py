@@ -661,8 +661,8 @@ def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
     assert "bash scripts/check-web-surface.sh docs" in docs_job
     assert "pages deploy" not in docs_job
 
-    assert "cache-dependency-path: site/pnpm-lock.yaml" in site_job
-    assert "cd site && pnpm install --frozen-lockfile" in site_job
+    assert "cache-dependency-path: web/marketing/pnpm-lock.yaml" in site_job
+    assert "cd web/marketing && pnpm install --frozen-lockfile" in site_job
     assert "bash scripts/check-web-surface.sh site" in site_job
     assert "pages deploy" not in site_job
 
@@ -1540,6 +1540,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         (
             "docs.yaml",
             "web/docs",
+            "docs",
             "docs-build",
             "capsem-docs",
             "Smoke public docs site",
@@ -1548,6 +1549,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         ),
         (
             "site.yaml",
+            "web/marketing",
             "site",
             "site-build",
             "capsem",
@@ -1560,6 +1562,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
     for (
         workflow_name,
         directory,
+        surface,
         ci_job,
         project_name,
         smoke_name,
@@ -1571,8 +1574,6 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         trigger = workflow.split("\njobs:", maxsplit=1)[0]
         push_trigger = trigger.split("  push:", maxsplit=1)[1]
         ci_block = _workflow_job_block(ci_job)
-        surface = directory.rsplit("/", maxsplit=1)[-1]
-
         assert "pull_request:" not in trigger, workflow_name
         assert "push:" in workflow, workflow_name
         assert "branches: [main]" in workflow, workflow_name
@@ -3209,6 +3210,8 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
         "release-site-build",
     ):
         assert arm_named(shell, surface) is not None
+    assert "pnpm --dir web/marketing run check" in script
+    assert "astro_build pnpm --dir web/marketing run build" in script
 
     fast = _dispatched_text("test-clean:")
     for surface in ("frontend-verify", "docs", "site", "release-site"):
@@ -3235,7 +3238,7 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
         "cd web/app && pnpm run build",
         "cd web/app && pnpm build",
         "cd web/docs && pnpm run build",
-        "cd site && pnpm run build",
+        "cd web/marketing && pnpm run build",
         "cd build_system/release_site && pnpm run build:channel",
     )
     for text in (

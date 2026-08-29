@@ -3,7 +3,7 @@
   import { SITE, FOOTER_COLUMNS } from "$lib/data";
 </script>
 
-<footer class="section-dark border-t border-border-dark" role="contentinfo">
+<footer class="section-dark border-t border-border-dark">
   <div class="mx-auto max-w-6xl px-6 py-16">
     <div class="flex flex-col md:flex-row justify-between gap-12">
       <div>

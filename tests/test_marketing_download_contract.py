@@ -13,10 +13,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_marketing_download_cta_uses_release_channel_not_github_latest() -> None:
-    data = (PROJECT_ROOT / "site" / "src" / "lib" / "data.ts").read_text(
+    data = (PROJECT_ROOT / "web" / "marketing" / "src" / "lib" / "data.ts").read_text(
         encoding="utf-8"
     )
-    cta = (PROJECT_ROOT / "site" / "src" / "components" / "CTA.svelte").read_text(
+    cta = (
+        PROJECT_ROOT / "web" / "marketing" / "src" / "components" / "CTA.svelte"
+    ).read_text(
         encoding="utf-8"
     )
 
@@ -28,9 +30,9 @@ def test_marketing_download_cta_uses_release_channel_not_github_latest() -> None
 
 
 def test_marketing_homepage_exposes_the_supported_install_surface() -> None:
-    index = (PROJECT_ROOT / "site" / "src" / "pages" / "index.astro").read_text(
-        encoding="utf-8"
-    )
+    index = (
+        PROJECT_ROOT / "web" / "marketing" / "src" / "pages" / "index.astro"
+    ).read_text(encoding="utf-8")
 
     assert 'import Hero from "../components/Hero.svelte"' in index
     assert 'import CTA from "../components/CTA.svelte"' in index
