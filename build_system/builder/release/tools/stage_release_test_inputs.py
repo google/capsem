@@ -395,7 +395,7 @@ def main() -> int:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--input-dir", type=Path)
     source.add_argument("--package-file", type=Path)
-    parser.add_argument("--assets-dir", type=Path, default=Path("assets"))
+    parser.add_argument("--assets-dir", type=Path, default=Path("target/assets"))
     parser.add_argument("--binary-dir", type=Path, default=Path("target/debug"))
     parser.add_argument(
         "--config-root",

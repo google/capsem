@@ -107,7 +107,7 @@ _check-assets -> _pack-initrd -> _materialize-config -> _ensure-service
 
 `_materialize-config` invokes `capsem-admin profile materialize`, which writes
 the current-build runtime profile under `target/config/` from checked-in
-`config/` source files and `assets/manifest.json`.
+`config/` source files and `target/assets/manifest.json`.
 
 ## Session inspection
 

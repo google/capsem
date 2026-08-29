@@ -113,7 +113,7 @@ def test_scaffolding_is_never_copied_back_into_the_checkout() -> None:
 def test_a_tree_reached_through_a_link_is_carried_as_its_contents(tmp_path: Path) -> None:
     """Profile content reaches the assets through a relative symlink.
 
-    `target/ironbank-assets/<profile>/assets` is a link to the tree at the root,
+    `target/ironbank-assets/<profile>/assets` is a link to `target/assets`,
     so what a run leaves behind is one real directory and several pointers at
     it. Moving a pointer instead of the directory would fill the cache with
     links into a prefix that no longer exists, and the next run would be lent a
@@ -123,7 +123,7 @@ def test_a_tree_reached_through_a_link_is_carried_as_its_contents(tmp_path: Path
     finished = _produced(config, "cccccccc")
     pointer = finished / "target" / "ironbank-assets" / "code"
     pointer.mkdir(parents=True)
-    (pointer / "assets").symlink_to("../../../assets")
+    (pointer / "assets").symlink_to("../../assets")
 
     prefix.reclaim(config, finished)
 
@@ -372,6 +372,7 @@ def test_a_dangling_entry_never_passes_for_a_filled_cache(tmp_path: Path) -> Non
     relative = config.prefix.lent[0]
     cache = buildcache.root(config)
     cache.mkdir(parents=True)
+    (cache / relative).parent.mkdir(parents=True, exist_ok=True)
     (cache / relative).symlink_to(tmp_path / "a-prefix-that-was-reclaimed")
 
     checkout = tmp_path / "checkout"

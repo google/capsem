@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="${CAPSEM_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$ROOT/assets}"
+ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$ROOT/target/assets}"
 
 arch="${CAPSEM_ARCH:-$(uname -m)}"
 case "$arch" in

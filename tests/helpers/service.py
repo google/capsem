@@ -137,7 +137,7 @@ def resolve_winterfell_artifact_roots(
     profiles_dir = configured_path("profiles_dir")
     source_roots = (
         (binary_dir, host_bin_root(environment).resolve(), "binary"),
-        (assets_dir, (PROJECT_ROOT / "assets").resolve(), "asset"),
+        (assets_dir, (PROJECT_ROOT / "target" / "assets").resolve(), "asset"),
         (profiles_dir, PROFILES_DIR.resolve(), "profile"),
     )
     for selected, source, family in source_roots:

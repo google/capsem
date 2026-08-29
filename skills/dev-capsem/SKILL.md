@@ -38,7 +38,7 @@ Rule: if logic could be reused or tested without a specific crate, it belongs in
 | `docs/` | Documentation site (Astro Starlight) | `/site-infra` |
 | `src/capsem/builder/` | Python image builder CLI | `/build-images` |
 | `guest/artifacts/` | capsem-init, bashrc, diagnostics | `/dev-capsem-doctor`, `/build-initrd` |
-| `assets/` | Built VM assets (gitignored, per-arch) | `/build-images` |
+| `target/assets/` | Built VM assets (gitignored, per-arch) | `/build-images` |
 | `graphics/` | Brand icons and app icons (source of truth) | `/dev-capsem` |
 | `skills/` | AI agent skills | `/dev-skills`, `/meta-organize-skills` |
 | `config/` | Profile, corp, settings source config and profile payloads | `/site-architecture`, `/build-images` |

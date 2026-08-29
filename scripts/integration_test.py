@@ -110,7 +110,7 @@ def _profile_env() -> dict[str, str]:
 def _service_assets_dir(assets_dir: str) -> str:
     """Use the gate-owned host architecture selector when given an asset tree.
 
-    The asset gate points ``assets/current`` at ``config.host_arch()`` after
+    The asset gate points ``target/assets/current`` at ``config.host_arch()`` after
     merging both architecture lanes. A release input may instead already be
     an architecture-specific directory, so retain that direct-root shape.
     """
@@ -1158,8 +1158,8 @@ def main():
     )
     parser.add_argument(
         "--assets",
-        default="assets",
-        help="Path to VM assets directory (default: assets)",
+        default="target/assets",
+        help="Path to VM assets directory (default: target/assets)",
     )
     parser.add_argument(
         "--profile",

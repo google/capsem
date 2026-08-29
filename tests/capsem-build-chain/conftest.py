@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-ASSETS_DIR = PROJECT_ROOT / "assets"
+ASSETS_DIR = PROJECT_ROOT / "target" / "assets"
 TARGET_DIR = PROJECT_ROOT / "target" / "debug"
 ENTITLEMENTS = PROJECT_ROOT / "build_system/packaging/macos/entitlements.plist"
 

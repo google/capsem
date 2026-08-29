@@ -66,7 +66,7 @@ def test_default_winterfell_roots_preserve_the_development_suite() -> None:
     assert roots.installed is False
     assert roots.binary_dir == PROJECT_ROOT / "target" / "debug"
     assert roots.profiles_dir == PROJECT_ROOT / "target" / "config" / "profiles"
-    assert roots.assets_dir.parent == PROJECT_ROOT / "assets"
+    assert roots.assets_dir.parent == PROJECT_ROOT / "target" / "assets"
 
 
 def test_development_winterfell_honours_the_functional_content_selector(
@@ -126,12 +126,12 @@ def test_installed_winterfell_roots_accept_one_complete_installed_cohort(
     [
         (
             PROJECT_ROOT / "target" / "debug",
-            PROJECT_ROOT / "assets",
+            PROJECT_ROOT / "target" / "assets",
             PROJECT_ROOT / "target" / "config" / "profiles",
         ),
         (
             PROJECT_ROOT / "target" / "debug",
-            PROJECT_ROOT / "assets" / "arm64",
+            PROJECT_ROOT / "target" / "assets" / "arm64",
             PROJECT_ROOT / "target" / "config" / "profiles",
         ),
     ],

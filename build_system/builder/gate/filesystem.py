@@ -99,7 +99,7 @@ def copy_tree(source: Path, target: Path) -> None:
     The write-through defect cannot happen here -- the target is removed first,
     so there is no destination link left to write through -- but *dereferencing
     the source* is its own hazard: it silently turns a link into a full copy.
-    `assets/current` is a relative selector into a multi-gigabyte architecture,
+    `target/assets/current` is a relative selector into a multi-gigabyte architecture,
     and materializing it copies the whole thing for no new bytes.
 
     This was a `symlinks=` argument defaulting to `False`, which every informed

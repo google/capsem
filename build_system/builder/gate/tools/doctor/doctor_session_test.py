@@ -532,8 +532,8 @@ def main():
     )
     parser.add_argument(
         "--assets",
-        default="assets",
-        help="Path to VM assets directory (default: assets)",
+        default="target/assets",
+        help="Path to VM assets directory (default: target/assets)",
     )
     args = parser.parse_args()
 

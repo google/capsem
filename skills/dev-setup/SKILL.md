@@ -319,7 +319,7 @@ Fix: set `credsStore` to empty string in `~/.docker/config.json`:
 
 ### VM boot hangs
 - Check codesigning: `codesign -dvv target/debug/capsem 2>&1 | grep entitlements`
-- Check assets exist: `ls assets/arm64/vmlinuz assets/arm64/rootfs.erofs`
+- Check assets exist: `ls target/assets/arm64/vmlinuz target/assets/arm64/rootfs.erofs`
 - Check kernel architecture matches host: wrong-arch kernel causes silent hang. `VmConfig::build()` now rejects mismatched kernels at config time.
 - Try with debug logs: `RUST_LOG=capsem=debug just exec`
 

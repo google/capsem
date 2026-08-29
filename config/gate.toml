@@ -550,10 +550,10 @@ lane_container = "capsem-package-{arch}"
 # One tag for every architecture -- the source is the same, and `COPY`
 # invalidates the layer on any source change, which is the correct cache key.
 # Build output the lane consumes and the image deliberately does not carry.
-# `assets/` is 3.0 GB and changes every run; `target/config` is the
+# `target/assets/` is 3.0 GB and changes every run; `target/config` is the
 # materialized profile catalog `repack-deb.sh` reads. Both are produced by
 # earlier steps, so they are mounted read-only rather than copied.
-generated_inputs = ["assets", "target/config"]
+generated_inputs = ["target/assets", "target/config"]
 lane_dockerfile = "build_system/docker/Dockerfile.package"
 lane_image = "capsem-package-lane:latest"
 # The checkout is copied into the source image; these three paths get
@@ -1491,7 +1491,7 @@ binary = "target/debug/capsem-service"
 process_binary = "target/debug/capsem-process"
 sync_assets_script = "scripts/sync-dev-assets.sh"
 generated_profiles = "target/config/profiles"
-assets_dir = "assets"
+assets_dir = "target/assets"
 home_assets = "assets"
 home_profiles = "profiles"
 socket = "service.sock"
@@ -1659,7 +1659,7 @@ templates = ["kernel", "rootfs", "all"]
 profiles_glob = "config/profiles/*/profile.toml"
 profile_manifest = "config/profiles/{profile}/profile.toml"
 config_root = "config"
-output = "assets"
+output = "target/assets"
 # Doctor is run first, with the checks that would fail on the very thing this
 # is about to build turned off.
 doctor_skips = { CAPSEM_SKIP_ASSET_CHECK = "1", CAPSEM_SKIP_KVM_CHECK = "1" }
@@ -2081,7 +2081,7 @@ profile_variable = "CAPSEM_TEST_PROFILE"
 # compatibility axis, and run the VM-owned suites again behind it.
 base_profile = "code"
 materialized_profiles = "target/config/profiles"
-test_manifest = "assets/manifest.json"
+test_manifest = "target/assets/manifest.json"
 
 [functional]
 # The two legacy VM drivers. Neither is pytest, both need a real VM, and both
@@ -2090,7 +2090,7 @@ test_manifest = "assets/manifest.json"
 injection_script = "scripts/injection_test.py"
 integration_script = "scripts/integration_test.py"
 binary = "target/debug/capsem"
-assets_dir = "assets"
+assets_dir = "target/assets"
 config_root = "target/config"
 # The Node workspaces these suites render, and only those. `toolchain.node`
 # installs every workspace the local gate exercises, which is more than this
@@ -2338,7 +2338,7 @@ carried = ["private"]
 # `tests/citadel/test_build_cache_is_reusable.py` checks it against
 # `git check-ignore` rather than against a second list here.
 #
-# Only content-addressed artifacts. `assets/` is VM images plus a manifest of
+# Only content-addressed artifacts. `target/assets/` is VM images plus a manifest of
 # their digests: nothing in it records where it was built, so the same bytes are
 # valid under any prefix name, and the asset conditions already decide from
 # content whether a rebuild is needed.
@@ -2359,14 +2359,14 @@ carried = ["private"]
 # mechanism: a uv venv records its own absolute path in `pyvenv.cfg` and in
 # every console-script shebang, and both are already fast from warm global
 # stores.
-# `assets` is the selected payload. Isolated VM products live in the stable
+# `target/assets` is the selected payload. Isolated VM products live in the stable
 # content-addressed `vm_image_cache`; each prefix keeps only symlinks selecting
 # its exact input generation, so a resumable source continues to pin its bytes.
 # `target/install-image` carries the live source/helper/runtime/product receipt
 # for the sealed Docker image. Without it a successful prefix kept the image in
 # Docker, deleted the authority to reuse it, and forced the next prefix to run
 # the same construction again.
-lent = ["assets", "target/install-image"]
+lent = ["target/assets", "target/install-image"]
 
 # Tiny lent authorities that stay in a failed/explicitly retained prefix when
 # they are also copied into the shared cache. This is deliberately narrower
@@ -2377,7 +2377,7 @@ resumable = ["target/install-image"]
 
 # What must come back out before the prefix is reclaimed. A release publishes
 # from these, and without the export they die with the copy that made them.
-exports = ["dist", "packages", "assets", "target/config", "target/gate-runs", "test-artifacts"]
+exports = ["dist", "packages", "target/assets", "target/config", "target/gate-runs", "test-artifacts"]
 
 # Trees a run writes but nothing publishes. `exports` establishes provenance
 # for everything a release takes out of a prefix; this establishes it for

@@ -265,7 +265,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--channel-source", action="append", default=[])
     parser.add_argument("--primary-channel", choices=REQUIRED_CHANNELS, required=True)
-    parser.add_argument("--assets-dir", type=Path, default=Path("assets"))
+    parser.add_argument("--assets-dir", type=Path, default=Path("target/assets"))
     parser.add_argument("--profiles-dir", type=Path, default=Path("config/profiles"))
     parser.add_argument("--asset-source-base")
     parser.add_argument("--manifest-version", required=True)

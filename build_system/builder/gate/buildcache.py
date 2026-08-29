@@ -84,7 +84,7 @@ def export(prefix: Path, destination: Path, config: GateConfig) -> None:
             if relative in exact_trees:
                 remove(target)
                 # Follow a top-level profile selector, but retain selectors
-                # inside the exported tree such as assets/current. The latter
+                # inside the exported tree such as target/assets/current. The latter
                 # is a relative link in the tree and materializing it copies a
                 # multi-gigabyte architecture for no new bytes.
                 copy_tree(origin, target)

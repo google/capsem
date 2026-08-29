@@ -157,7 +157,7 @@ On macOS, all binaries must be codesigned with the `com.apple.security.virtualiz
 The service loads the selected profile from `target/config/profiles` in
 development and the installed profile directory in packaged builds. That
 profile selects three assets from `~/.capsem/assets/` (installed) or
-`assets/{arch}/` (development):
+`target/assets/{arch}/` (development):
 
 | Asset | Produced by | What it is |
 |-------|-------------|------------|

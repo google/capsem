@@ -1736,8 +1736,8 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
-    # Create assets/current symlink pointing to the most recently built arch.
-    # Tauri bundle resources reference assets/current/ so they resolve on any platform.
+    # Create target/assets/current symlink pointing to the most recently built arch.
+    # Tauri bundle resources reference target/assets/current/ so they resolve on any platform.
     current_link = output_dir / "current"
     if arch_dirs:
         target = sorted(arch_dirs)[-1].name
@@ -1875,7 +1875,7 @@ def build_image(
     if repo_root is None:
         repo_root = Path.cwd()
     if output_dir is None:
-        output_dir = repo_root / "assets"
+        output_dir = repo_root / "target" / "assets"
 
     arch = config.build.architectures[arch_name]
     runtime = detect_runtime()
@@ -2132,7 +2132,7 @@ def build_all_architectures(
     if repo_root is None:
         repo_root = Path.cwd()
     if output_dir is None:
-        output_dir = repo_root / "assets"
+        output_dir = repo_root / "target" / "assets"
 
     for arch_name in config.build.architectures:
         print(f"\n=== Building {template} for {arch_name} ===")

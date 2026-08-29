@@ -18,7 +18,7 @@ from typing import Literal
 #: is not the thing that was measured.
 #:
 #: `dist`, `packages` and `assets` are here because they are gitignored build
-#: roots the gate rewrites every run -- `assets/current` is resynced per
+#: roots the gate rewrites every run -- `target/assets/current` is resynced per
 #: architecture, and stale `.deb`s are removed before each package build. With
 #: only `target` excluded, ordinary steps read as the gate mutating the tree it
 #: is qualifying.

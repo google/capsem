@@ -324,7 +324,7 @@ def test_every_build_root_is_build_output_not_only_target() -> None:
     """`dist/`, `packages/` and `assets/` are gitignored and rewritten per run.
 
     Only `target` was excluded, so deleting a stale `.deb` or resyncing
-    `assets/current` -- both ordinary steps -- read as the gate mutating the
+    `target/assets/current` -- both ordinary steps -- read as the gate mutating the
     tree it is qualifying.
     """
     watch = Watch([], source_root=Path("/repo"))

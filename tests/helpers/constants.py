@@ -17,7 +17,7 @@ BIN_VARIABLE = "CAPSEM_RELEASE_BIN_DIR"
 def content_assets_root(environment: Mapping[str, str] | None = None) -> Path:
     """The manifest-selected asset root for this test process."""
     source = os.environ if environment is None else environment
-    return Path(source.get(ASSETS_VARIABLE) or PROJECT_ROOT / "assets")
+    return Path(source.get(ASSETS_VARIABLE) or PROJECT_ROOT / "target" / "assets")
 
 
 def content_profiles_root(environment: Mapping[str, str] | None = None) -> Path:

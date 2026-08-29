@@ -39,9 +39,9 @@ config/
     tips.txt              Profile guest tips
     root/                 Guest / seed, projected by capsem-init
 target/config/            Generated runtime config with asset/file evidence
+target/assets/            Generated VM assets
+target/packages/          Generated native packages
 guest/artifacts/          Core guest payloads: init, doctor, diagnostics, bench
-assets/                   Generated VM assets
-packages/                 Generated native packages
 ```
 
 The materialized backend workspace may contain generated package-set files and
@@ -90,7 +90,7 @@ just _build-rootfs arm64
 ## Per-arch asset layout
 
 ```
-assets/
+target/assets/
   manifest.json          Version, checksums, asset list
   B3SUMS                 BLAKE3 checksums
   arm64/

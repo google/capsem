@@ -123,7 +123,9 @@ def test_rootfs_asset_build_repacks_then_regenerates_its_manifest() -> None:
     assert plan.after_of("manifest") == {"pack-initrds"}
     assert plan.after_of("hash-aliases") == {"manifest"}
     packed = plan.step_named("pack-initrds")
-    assert packed.produces == (PROJECT_ROOT / "assets" / "arm64" / "initrd.img",)
+    assert packed.produces == (
+        PROJECT_ROOT / "target" / "assets" / "arm64" / "initrd.img",
+    )
     rendering = "\n".join(packed.render())
     assert "--arch arm64" in rendering
     assert str(packed.produces[0]) in rendering
@@ -546,8 +548,8 @@ def test_release_workflow_uses_same_config_materializer() -> None:
     # directory as filesystem paths to check it is pairing what it was given --
     # so a URL fails that comparison against the very file it names, and the
     # message reads as a content mismatch rather than a spelling one.
-    assert 'CAPSEM_ASSET_MANIFEST="$PWD/assets/manifest.json"' in workflow
-    assert 'CAPSEM_ASSETS_PATH="$PWD/assets"' in workflow
+    assert 'CAPSEM_ASSET_MANIFEST="$PWD/target/assets/manifest.json"' in workflow
+    assert 'CAPSEM_ASSETS_PATH="$PWD/target/assets"' in workflow
     assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in workflow
 
 

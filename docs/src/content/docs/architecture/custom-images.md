@@ -130,7 +130,7 @@ seed files, rules, MCP declarations, and plugins are part of the image.
 
 ## Manifest
 
-Every build produces `assets/manifest.json` (format 2) -- a single top-level file covering every arch. It records BLAKE3 hashes and file sizes for each asset and ties asset versions to compatible binary versions:
+Every repository build produces `target/assets/manifest.json` (format 2) -- a single top-level file covering every arch. It records BLAKE3 hashes and file sizes for each asset and ties asset versions to compatible binary versions:
 
 ```json
 {

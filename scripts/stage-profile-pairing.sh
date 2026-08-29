@@ -61,7 +61,7 @@ uv run --project build_system --frozen python scripts/stage-release-test-inputs.
     --config-root target/release-config \
     --shared-config-root config
 
-CAPSEM_ASSET_MANIFEST="$PWD/assets/manifest.json" \
+CAPSEM_ASSET_MANIFEST="$PWD/target/assets/manifest.json" \
 CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
 CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/config" \
     bash scripts/materialize-config.sh --pair-content
@@ -88,6 +88,6 @@ uv run --project build_system --frozen python build_system/packaging/linux/insta
     echo "CAPSEM_RELEASE_CANDIDATE_PROFILE_PUBLICATION=$PWD/$PUBLICATION_DIR"
     echo "CAPSEM_RELEASE_PUBLICATION_BASE=$PUBLICATION_BASE"
     echo "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem"
-    echo "CAPSEM_TEST_ASSETS_DIR=$PWD/assets"
+    echo "CAPSEM_TEST_ASSETS_DIR=$PWD/target/assets"
     echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/target/config"
 } >> "$GITHUB_ENV"

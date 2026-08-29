@@ -157,7 +157,7 @@ _build-assets profile="" arch="":
 # performed by release-assets.yaml: every checked-in profile, both published
 # architectures, the exact CI-facing build primitives, generated-manifest
 # validation, and a real shell marker from each profile-owned host-arch image.
-# Outputs stay under target/ so the gate never mutates the developer's assets/.
+# Outputs stay under target/ so the gate never mutates a source-owned directory.
 _gate-assets: _bootstrap _install-tools _generate-settings _sign
     @uv run --project build_system --frozen capsem-gate assets
 

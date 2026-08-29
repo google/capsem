@@ -149,7 +149,7 @@ def test_vm_suites_do_not_bypass_the_manifest_content_selector() -> None:
         "ironbank",
     )
     forbidden = (
-        'ASSETS_DIR = PROJECT_ROOT / "assets"',
+        'ASSETS_DIR = PROJECT_ROOT / "target" / "assets"',
         'PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"',
     )
     offenders = [

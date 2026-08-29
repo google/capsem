@@ -972,11 +972,11 @@ jobs:
             --input-dir target/candidate-profile-inputs
           uv run --project build_system --frozen python scripts/stage-release-test-inputs.py \
             --input-dir target/candidate-profile-inputs \
-            --assets-dir assets \
+            --assets-dir target/assets \
             --config-root target/release-config \
             --shared-config-root config
-          CAPSEM_ASSET_MANIFEST="$PWD/assets/manifest.json" \
-          CAPSEM_ASSETS_PATH="$PWD/assets" \
+          CAPSEM_ASSET_MANIFEST="$PWD/target/assets/manifest.json" \
+          CAPSEM_ASSETS_PATH="$PWD/target/assets" \
           CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
           CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/config" \
             bash scripts/materialize-config.sh --pair-content
@@ -1005,7 +1005,7 @@ jobs:
             echo "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS=$PWD/target/binary-public-before/profiles"
             echo "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS=$PWD/target/candidate-profile-inputs"
             echo "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem"
-            echo "CAPSEM_TEST_ASSETS_DIR=$PWD/assets"
+            echo "CAPSEM_TEST_ASSETS_DIR=$PWD/target/assets"
             echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/target/config"
           } >> "$GITHUB_ENV"
 

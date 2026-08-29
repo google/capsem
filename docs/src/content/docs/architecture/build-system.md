@@ -36,7 +36,7 @@ flowchart TD
 
   subgraph Output["Build Outputs"]
     Docker["Docker Build"]
-    Assets["assets/{arch}/\nvmlinuz, initrd.img,\nrootfs.erofs"]
+    Assets["target/assets/{arch}/\nvmlinuz, initrd.img,\nrootfs.erofs"]
     Ledger["build-ledger.log\nconfig inputs + hashes"]
     BOM["manifest.json\n+ B3SUMS\n+ obom.cdx.json"]
     RuntimeConfig["target/config/\nmaterialized runtime profiles"]
@@ -82,7 +82,7 @@ Four outputs are produced:
    version.
 4. **target/config/** -- generated runtime config produced by
    `capsem-admin profile materialize` from checked-in `config/` plus
-   `assets/manifest.json`.
+   `target/assets/manifest.json`.
 
 ## Backend Image Spec
 
@@ -196,7 +196,7 @@ Two architectures are supported. Each is self-contained in `build.toml` and prod
 Output layout:
 
 ```
-assets/
+target/assets/
   arm64/
     vmlinuz
     initrd.img
@@ -211,7 +211,7 @@ assets/
   B3SUMS
 target/
   config/
-    assets/manifest.json
+    target/assets/manifest.json
     profiles/code/profile.toml
 ```
 

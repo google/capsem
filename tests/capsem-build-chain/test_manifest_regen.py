@@ -1,12 +1,12 @@
 """Verify manifest.json matches actual asset files on disk.
 
-The manifest at assets/manifest.json (v2 format) records per-arch assets
+The manifest at target/assets/manifest.json (v2 format) records per-arch assets
 with their blake3 hashes. These tests check that for the host arch:
 
   - manifest.json parses as expected v2 shape
-  - every file listed exists on disk under assets/<arch>/
+  - every file listed exists on disk under target/assets/<arch>/
   - each file's blake3 hash matches the manifest entry
-  - no unlisted files live in assets/<arch>/, allowing hash-tagged aliases
+  - no unlisted files live in target/assets/<arch>/, allowing hash-tagged aliases
     (`<stem>-<hex16>.<ext>`) only when <hex16> matches a manifest entry
 
 Until April 2026 this file read a per-arch manifest.json that never
@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-ASSETS_DIR = PROJECT_ROOT / "assets"
+ASSETS_DIR = PROJECT_ROOT / "target" / "assets"
 
 HASH_TAG_RE = re.compile(r"^(?P<stem>[A-Za-z0-9_]+)-(?P<hex>[0-9a-f]{16})(?P<ext>\.[A-Za-z0-9_.]+)?$")
 

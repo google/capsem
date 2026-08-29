@@ -17,7 +17,7 @@ source "$SCRIPT_DIR/bootstrap-linux.sh"
 CAPSEM_RUST_TOOLCHAIN=$(capsem_rust_toolchain "$PROJECT_ROOT/rust-toolchain.toml")
 
 ENTITLEMENTS="build_system/packaging/macos/entitlements.plist"
-ASSETS_DIR="assets"
+ASSETS_DIR="target/assets"
 
 # ---------------------------------------------------------------------------
 # Colors (disabled when not a TTY)

@@ -346,7 +346,7 @@ scheduler invokes that same public rail.
 
 `release-assets.yaml` is the profile image release workflow. It builds
 the profile-owned image files for both supported architectures, generates the
-same `assets/manifest.json` produced by `capsem-admin manifest generate`, and
+same `target/assets/manifest.json` produced by `capsem-admin manifest generate`, and
 builds a channel preview. By default it runs as a dry run; live publication
 calls `release-channel.yaml`.
 

@@ -131,12 +131,12 @@ VM assets (kernel, initrd, rootfs) are recorded with BLAKE3 and SHA-256 at the
 asset build boundary and verified via BLAKE3 identity at every stage
 from build to boot. The checked-in profile is materialized into
 `target/config/` before runtime, so the service boots from a generated profile
-whose asset URLs, hashes, and sizes come directly from `assets/manifest.json`.
+whose asset URLs, hashes, and sizes come directly from `target/assets/manifest.json`.
 Published GitHub Release blob names are arch-prefixed, for example
 `arm64-rootfs.erofs`; inside the manifest they remain bare names such as
 `rootfs.erofs` under the owning architecture.
 
-`assets/manifest.json` is generated through `capsem-admin manifest generate
+`target/assets/manifest.json` is generated through `capsem-admin manifest generate
 <assets_dir>`. Release automation, local packaging, and corp custom builds use
 that same admin command; lower-level manifest generation internals are not a
 supported public path.

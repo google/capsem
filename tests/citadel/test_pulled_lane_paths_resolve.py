@@ -52,6 +52,10 @@ CREATED_BY_THE_RUN = {
 }
 
 DECLARED_ABSENT = {
+    # Pulled lanes set CAPSEM_ASSETS_DIR to the verified content cohort before
+    # importing test helpers, so their target/assets fallback is deliberately
+    # absent from the private prefix.
+    "assets",
     # `conftest._required_artifacts_for_run` drops this for a release lane: it
     # is a source-build intermediate, and requiring it there would force a
     # rebuild that proves nothing about the pulled package.

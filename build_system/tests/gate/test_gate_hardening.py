@@ -135,7 +135,7 @@ def test_a_symlink_is_verified_by_where_it_actually_points(
 ) -> None:
     """`Symlink` compared basenames, so `a/current` and `b/current` agreed.
 
-    `assets/current` decides which architecture the host VM proof boots
+    `target/assets/current` decides which architecture the host VM proof boots
     against. Two lanes both leave something called `current`, and checking the
     name proves only that *a* link exists.
     """

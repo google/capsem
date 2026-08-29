@@ -191,8 +191,8 @@ _REQUIRED_ARTIFACTS = {
     # production reader -- capsem-service boot, capsem setup, gen_manifest,
     # release workflow -- and the builder's generate_checksums writer agree
     # on this path. A per-arch entry here never resolved on a real build.
-    "assets/manifest.json": _SELECTED_ASSETS_DIR / "manifest.json",
-    "assets/<arch>/initrd.img": _SELECTED_ASSETS_DIR / _ARCH / "initrd.img",
+    "target/assets/manifest.json": _SELECTED_ASSETS_DIR / "manifest.json",
+    "target/assets/<arch>/initrd.img": _SELECTED_ASSETS_DIR / _ARCH / "initrd.img",
     "build_system/packaging/macos/entitlements.plist": (
         _PROJECT_ROOT / "build_system/packaging/macos/entitlements.plist"
     ),

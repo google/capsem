@@ -785,11 +785,11 @@ def test_profile_release_deploys_generated_preview_only_when_activation_ready() 
     )[0]
     deploy_channel = workflow.split("  deploy-channel:", maxsplit=1)[1]
 
-    assert "cargo run -p capsem-admin -- manifest generate assets" in author
+    assert "cargo run -p capsem-admin -- manifest generate target/assets" in author
     assert "scripts/check-profile-release-delta.py" in author
     assert "cargo run -p capsem-admin -- release" in author
     assert "scripts/build-complete-release-channel.py" in author
-    assert '--channel-source "$CHANNEL=file://$PWD/assets/manifest.json"' in author
+    assert '--channel-source "$CHANNEL=file://$PWD/target/assets/manifest.json"' in author
     assert '--primary-channel "$CHANNEL"' in author
     assert "--allow-mirror-missing" in author
     assert '--asset-source-base "$ASSET_BASE"' in author

@@ -18,7 +18,7 @@ config/profiles/<id>/profile.toml
   -> capsem-admin image build
   -> generated backend image spec
   -> capsem-builder
-  -> assets/{arch}/
+  -> target/assets/{arch}/
 ```
 
 Two build templates exist:
@@ -33,7 +33,7 @@ The build process also cross-compiles guest agent binaries (`capsem-pty-agent`, 
 ### Output layout
 
 ```
-assets/
+target/assets/
   arm64/
     vmlinuz
     initrd.img
@@ -52,8 +52,8 @@ assets/
 |---------|-------------|
 | `just build-assets code [arch]` | Full profile-derived build: kernel + rootfs + checksums |
 | `just shell` / `just exec "CMD"` | Repack initrd, materialize runtime config, sign, boot |
-| `capsem-admin manifest generate assets` | Generate `assets/manifest.json` from an asset directory |
-| `capsem-admin profile materialize` | Generate `target/config` from source `config/` plus `assets/manifest.json` |
+| `capsem-admin manifest generate target/assets` | Generate `target/assets/manifest.json` from the repository asset directory |
+| `capsem-admin profile materialize` | Generate `target/config` from source `config/` plus `target/assets/manifest.json` |
 | `capsem-admin assets channel build` | Generate `target/distribution` with `assets/<channel>/manifest.json` for release.capsem.org |
 | `capsem-admin image build --profile config/profiles/code/profile.toml --config-root config --arch arm64 --template rootfs` | Build one template for one arch through the profile rail |
 
@@ -64,7 +64,7 @@ same profile-derived build rail; there is no dev-only profile patcher.
 
 ## Manifest Format
 
-The manifest (`assets/manifest.json`, format 2) is a single top-level file covering every arch. Asset versions and binary versions are tracked independently with compatibility ranges (`min_binary`, `min_assets`):
+The manifest (`target/assets/manifest.json`, format 2) is a single top-level file covering every arch. Asset versions and binary versions are tracked independently with compatibility ranges (`min_binary`, `min_assets`):
 
 ```json
 {
@@ -290,7 +290,7 @@ Assets are verified at multiple points:
 | Before boot | `vm/config.rs` | `ConfigError::HashMismatch`, boot prevented |
 
 Both use BLAKE3 with 64-character hex format. In dev/test, expected hashes are
-copied from `assets/manifest.json` into
+copied from `target/assets/manifest.json` into
 `target/config/profiles/code/profile.toml` by the shared
 `capsem-admin profile materialize` rail. Runtime then reads the generated
 profile, not the source profile.
@@ -306,7 +306,7 @@ flowchart LR
     subgraph Build
         PROFILE["config/profiles/<id>/profile.toml"] --> Admin["capsem-admin image build"]
         Admin --> Builder[capsem-builder]
-        Builder --> Assets[assets/arm64/]
+        Builder --> Assets[target/assets/arm64/]
         Builder --> Checksums[manifest.json]
     end
 

@@ -175,6 +175,10 @@ def _output_roots() -> dict[str, str]:
     return config.get("outputs", {})
 
 
+def _gate_config() -> dict[str, Any]:
+    return tomllib.loads((ROOT / "config/gate.toml").read_text(encoding="utf-8"))
+
+
 def _observe(probes: list[str]) -> Observed:
     tracked = tuple(_git("ls-files"))
     sources = _text_sources(list(tracked))
@@ -367,6 +371,26 @@ def test_ambient_scanner_distinguishes_path_defaults_from_asset_data() -> None:
         'scripts/new.py:ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$ROOT/assets}"',
         'scripts/new.py:parser.add_argument("--assets", default=Path("assets"))',
     )
+
+
+def test_non_rust_repository_asset_owners_use_the_canonical_target_root() -> None:
+    policy = tomllib.loads(POLICY.read_text(encoding="utf-8"))
+    observed = _observe(policy["approved_output_probes"])
+    config = _gate_config()
+    target = FINAL_OUTPUT_ROOTS["assets"]
+
+    assert not [record for record in observed.producers if "assets" in record], RATIONALE
+    assert not observed.ambient_assets, RATIONALE
+    assert not [record for record in observed.ci_transfers if "assets/" in record], RATIONALE
+    assert config["imagebuild"]["output"] == target
+    assert config["service"]["assets_dir"] == target
+    assert config["suites"]["pytest"]["test_manifest"] == f"{target}/manifest.json"
+    assert config["functional"]["assets_dir"] == target
+    assert config["package"]["generated_inputs"][0] == target
+    assert target in config["prefix"]["lent"]
+    assert target in config["prefix"]["exports"]
+    assert "assets" not in config["prefix"]["lent"]
+    assert "assets" not in config["prefix"]["exports"]
 
 
 def test_current_generated_output_boundary_is_exact() -> None:

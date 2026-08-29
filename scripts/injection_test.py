@@ -228,8 +228,8 @@ def main():
     )
     parser.add_argument(
         "--assets",
-        default="assets",
-        help="Path to VM assets directory (default: assets)",
+        default="target/assets",
+        help="Path to VM assets directory (default: target/assets)",
     )
     parser.add_argument(
         "--profiles-dir",

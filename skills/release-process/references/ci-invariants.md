@@ -208,7 +208,7 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
   two decimal places so subthreshold totals cannot round up to a pass.
 - **Do not execute artifact-dependent Python suites on a clean PR runner before
   creating their artifacts.** `tests/capsem-bootstrap/` needs real
-  `assets/<arch>/` plus `assets/manifest.json`, and `tests/capsem-codesign/`
+  `target/assets/<arch>/` plus `target/assets/manifest.json`, and `tests/capsem-codesign/`
   needs built, signed host binaries. The PR macOS no-VM integration lane runs
   only suites without generated prerequisites and then import-collects every
   `tests/capsem-*/` suite; the full `just test-clean` gate owns bootstrap/codesign

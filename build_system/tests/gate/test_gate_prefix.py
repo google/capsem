@@ -423,7 +423,7 @@ def test_export_materializes_the_selected_assets_without_copying_current(
     """The private gate selects a verified profile with a top-level symlink.
 
     Export must dereference that one selector into the checkout while retaining
-    the self-contained ``assets/current`` architecture selector. Dereferencing
+    the self-contained ``target/assets/current`` architecture selector. Dereferencing
     both materializes a second multi-gigabyte asset tree.
     """
     from capsem_builder.gate import config as gate_config
@@ -442,13 +442,15 @@ def test_export_materializes_the_selected_assets_without_copying_current(
     (architecture / "rootfs.erofs").write_bytes(b"fresh")
     (selected / "manifest.json").write_text('{"fresh":true}\n')
     (selected / "current").symlink_to("x86_64")
-    (private / "assets").symlink_to("target/ironbank-assets/code/assets")
+    private_assets = private / "target" / "assets"
+    private_assets.parent.mkdir(exist_ok=True)
+    private_assets.symlink_to("ironbank-assets/code/assets")
     private_config = private / "target" / "config"
     private_config_manifest = private_config / "assets" / "manifest.json"
     private_config_manifest.parent.mkdir(parents=True)
     private_config_manifest.write_text('{"fresh":true}\n')
 
-    old = checkout / "assets"
+    old = checkout / "target" / "assets"
     (old / "current").mkdir(parents=True)
     (old / "current" / "stale").write_text("stale\n")
     (old / "stale").write_text("stale\n")
@@ -628,7 +630,13 @@ def test_the_export_list_covers_what_a_release_publishes() -> None:
     """
     exports = set(_config().prefix.exports)
 
-    assert {"dist", "packages", "assets", "target/config", "test-artifacts"} <= exports
+    assert {
+        "dist",
+        "packages",
+        "target/assets",
+        "target/config",
+        "test-artifacts",
+    } <= exports
     assert any(export.startswith("target/gate-runs") for export in exports), (
         "the run log is the evidence a failure is argued from, and it is written inside the prefix"
     )
@@ -1046,7 +1054,7 @@ def test_copying_a_tree_keeps_a_symlink_a_symlink(tmp_path: Path) -> None:
 
     The write-through defect cannot occur here -- the target is removed first,
     so nothing is left to write through. Dereferencing the *source* is the
-    separate hazard: `assets/current` is a relative selector into a
+    separate hazard: `target/assets/current` is a relative selector into a
     multi-gigabyte architecture, and materializing it copies the whole tree for
     no new bytes.
 

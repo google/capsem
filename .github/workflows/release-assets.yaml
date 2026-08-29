@@ -288,7 +288,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: vm-assets-${{ matrix.arch }}
-          path: assets/${{ matrix.arch }}/
+          path: target/assets/${{ matrix.arch }}/
 
   reuse-assets:
     needs: [cloudflare-release-site-preflight, fast-gate, resolve-profile-assets]
@@ -302,7 +302,7 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: vm-assets-${{ matrix.arch }}
-          path: assets/${{ matrix.arch }}/
+          path: target/assets/${{ matrix.arch }}/
           repository: ${{ github.repository }}
           run-id: ${{ needs.resolve-profile-assets.outputs.reuse_run_id }}
           github-token: ${{ github.token }}
@@ -310,7 +310,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: vm-assets-${{ matrix.arch }}
-          path: assets/${{ matrix.arch }}/
+          path: target/assets/${{ matrix.arch }}/
 
   test-profile-pairing:
     needs: [author-profile-release, resolve-current-binary]
@@ -475,12 +475,12 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: vm-assets-arm64
-          path: assets/arm64/
+          path: target/assets/arm64/
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: vm-assets-x86_64
-          path: assets/x86_64/
+          path: target/assets/x86_64/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: profile-channel-source
@@ -496,7 +496,7 @@ jobs:
 
       - name: Generate asset manifest
         run: |
-          cargo run -p capsem-admin -- manifest generate assets
+          cargo run -p capsem-admin -- manifest generate target/assets
 
       - name: Verify profile release lane policy
         run: |
@@ -510,9 +510,9 @@ jobs:
           ASSET_BASE="https://github.com/${{ github.repository }}/releases/download/$PROFILE_IDENTITY"
           MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open("target/source-channel/manifest.json"))["version"])')
           uv run --project build_system --frozen python scripts/build-complete-release-channel.py \
-            --channel-source "$CHANNEL=file://$PWD/assets/manifest.json" \
+            --channel-source "$CHANNEL=file://$PWD/target/assets/manifest.json" \
             --primary-channel "$CHANNEL" \
-            --assets-dir assets \
+            --assets-dir target/assets \
             --asset-source-base "$ASSET_BASE" \
             --manifest-version "$MANIFEST_VERSION" \
             --out-dir target/profile-candidate \
@@ -578,7 +578,7 @@ jobs:
           uv run --project build_system --frozen python scripts/stage-profile-publication.py \
             --manifest target/source-channel/manifest.json \
             --profile "${{ inputs.profile }}" \
-            --assets-dir assets \
+            --assets-dir target/assets \
             --config-root config \
             --release-dir "$RELEASE_DIR"
           uv run --project build_system --frozen python scripts/verify-profile-publication.py \
@@ -652,11 +652,11 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: vm-assets-arm64
-          path: assets/arm64/
+          path: target/assets/arm64/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: vm-assets-x86_64
-          path: assets/x86_64/
+          path: target/assets/x86_64/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: authored-profile-channel-source
@@ -680,7 +680,7 @@ jobs:
           uv run --project build_system --frozen python scripts/build-complete-release-channel.py \
             --channel-source "$CHANNEL=file://$PWD/target/source-channel/manifest.json" \
             --primary-channel "$CHANNEL" \
-            --assets-dir assets \
+            --assets-dir target/assets \
             --manifest-version "$(python3 -c 'import json; print(json.load(open("target/source-channel/manifest.json"))["version"])')" \
             --profile-source-root target/profile-candidate \
             --out-dir target/distribution
