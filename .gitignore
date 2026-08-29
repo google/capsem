@@ -26,7 +26,7 @@ node_modules/
 # It can disappear between source enumeration and hashing, and is generated
 # state rather than an untracked source input.
 web/app/_tmp_*
-docs/_tmp_*
+web/docs/_tmp_*
 site/_tmp_*
 build_system/release_site/_tmp_*
 *.pyc

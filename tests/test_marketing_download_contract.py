@@ -63,7 +63,7 @@ def test_rendered_install_surface_rejects_the_retired_holding_page() -> None:
 
 def test_getting_started_manual_download_uses_release_channel_package() -> None:
     guide = (
-        PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "getting-started.md"
+        PROJECT_ROOT / "web" / "docs" / "src" / "content" / "docs" / "getting-started.md"
     ).read_text(encoding="utf-8")
 
     assert "https://release.capsem.org/channels/stable/" in guide

@@ -22,7 +22,7 @@ FIXTURE_GRAPH = (
 )
 FIXTURE_FILE_ROOT = PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-channel-files"
 RELEASE_OUTPUT_DOC = (
-    PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "release-output.md"
+    PROJECT_ROOT / "web" / "docs" / "src" / "content" / "docs" / "architecture" / "release-output.md"
 )
 
 

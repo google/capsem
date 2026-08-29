@@ -80,7 +80,7 @@ def test_active_docs_and_skills_do_not_teach_retired_just_run() -> None:
     """
     retired = re.compile(r"\bjust run(?:\s|['\"]|$)")
     roots = [
-        PROJECT_ROOT / "docs" / "src" / "content" / "docs",
+        PROJECT_ROOT / "web" / "docs" / "src" / "content" / "docs",
         PROJECT_ROOT / "skills",
     ]
     failures: list[str] = []
@@ -93,7 +93,7 @@ def test_active_docs_and_skills_do_not_teach_retired_just_run() -> None:
                     failures.append(f"{path.relative_to(PROJECT_ROOT)}:{line_no}: {line.strip()}")
 
     assert not failures, (
-        "active docs/skills still teach retired `just run`; use `just exec` for "
+        "active documentation or skills still teach retired `just run`; use `just exec` for "
         "one-shot commands and `just shell` for interactive VMs:\n" + "\n".join(failures)
     )
 

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The documentation site now lives under `web/docs/`; CI, deployment,
+  coverage, holding-page verification, and developer guidance follow the new
+  functional owner without changing public documentation routes.
 - The desktop dashboard source now lives under `web/app/`; development,
   packaging, CI, coverage, and generated-settings callers use that single web
   owner instead of the retired `frontend/` root.
@@ -4694,7 +4697,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pinned external GitHub Actions to immutable commits; unified artifact
   uploads; and replaced source-built CI utilities with reviewed prebuilts.
 - CI now runs on `main`, cancels only superseded PR runs, treats token-gated
-  Codecov uploads as non-blocking, and uses structural docs/site smokes.
+  Codecov uploads as non-blocking, and uses structural web-surface smokes.
 - Split `release-process` and `dev-testing` skills into sub-500-line spines
   with on-demand `references/` files (release graph, CI invariants, Apple
   signing, post-release verification, local/CI parity, test matrix, MCP debug
@@ -6584,7 +6587,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skills: `config/` is now documented as settings/corp/profiles/docker/data,
   `capsem-admin` is explicitly a validator/materializer/build tool rather
   than a config authority, stale `guest/config` authoring and source-profile
-  pin language is removed from active docs/skills, and `capsem-admin image
+  pin language is removed from active documentation and skills, and `capsem-admin image
   build --dry-run` is no longer a public product rail. The internal settings UI
   metadata parser no longer calls itself a registry, preserving the rule that
   profiles and corp own runtime truth while settings only describe
@@ -7916,7 +7919,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was silently skipped on collision. A user typing the same
   name as a corp-injected server would win the URL, headers,
   and bearer token, contradicting the documented `corp > user
-  > defaults` policy in `docs/architecture/settings.md` and
+  > defaults` policy in `web/docs/architecture/settings.md` and
   the "corp_locked" model. Corp definitions are now processed
   first, so the first-wins rule enforces the documented trust
   order. Same-name user entries are skipped; unique-name user
@@ -7924,7 +7927,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `build_server_list_corp_shadows_user_on_same_name`,
   `build_server_list_unique_user_server_survives_with_corp_present`,
   `build_server_list_corp_enabled_override_on_user_server`.
-  `docs/src/content/docs/architecture/mcp-aggregator.md`
+  `web/docs/src/content/docs/architecture/mcp-aggregator.md`
   reordered to match the new processing order.
 
 ### Fixed (security: gateway CORS -- AB-001)
@@ -9878,7 +9881,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a manifest. Missing or malformed manifest falls back to disabled
   verification with an explicit `[boot-audit] asset hash verification
   disabled` log line, keeping dev loops without a manifest working.
-  Updated `docs/src/content/docs/architecture/asset-pipeline.md` to
+  Updated `web/docs/src/content/docs/architecture/asset-pipeline.md` to
   describe the runtime-lookup flow (replacing the old "Compile-Time
   Hash Embedding" section) and fixed the mermaid diagram to match.
   Covered by 8 new unit tests in `crates/capsem-core/src/asset_manager.rs`
@@ -10048,7 +10051,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   around 46-50/50 before). Scoped the pre-existing MutexGuard in
   `with_graceful_shutdown` into its own block so the compiler's Send
   analysis survives the new tokio mutex in `ServiceState`. Full
-  gotcha writeup at `docs/src/content/docs/gotchas/
+  gotcha writeup at `web/docs/src/content/docs/gotchas/
   concurrent-suspend-resume.md`; skills updated in
   `skills/dev-testing/SKILL.md` to call out the one legitimate `-n 1`
   test.
@@ -10232,10 +10235,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preemptively `docker rm -f`ing it at the top of the recipe, and
   installing an `EXIT` trap so cleanup runs on any exit path.
 - **Docs described a fictional manifest schema.**
-  `docs/src/content/docs/architecture/custom-images.md` claimed every build
+  `web/docs/src/content/docs/architecture/custom-images.md` claimed every build
   produced `assets/{arch}/manifest.json` with a bill-of-materials schema
   containing `packages[]` and `vulnerabilities[]` arrays -- none of which
-  ever existed. `docs/src/content/docs/architecture/asset-pipeline.md`
+  ever existed. `web/docs/src/content/docs/architecture/asset-pipeline.md`
   showed a different wrong schema (`{"latest", "releases": {<ver>: {<arch>:
   {"assets": []}}}}`) and mentioned legacy flat-format compatibility that
   `asset_manager.rs` no longer accepts. Both pages now document the real
@@ -10307,7 +10310,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `web/app/pnpm-lock.yaml` had locked Astro to 6.1.4 despite the caret range.
   Grepped the tree for `define:vars` and found zero usages -- exploitability
   in this codebase was nil, but `pnpm audit` gates on version, not usage, so
-  the `test` recipe couldn't pass until the lockfiles refreshed. `docs/` and
+  the `test` recipe couldn't pass until the lockfiles refreshed. `web/docs/` and
   `site/` were bumped in the same commit because they were also on affected
   Astro versions.
 
@@ -10681,7 +10684,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hand-written `web/app/src/lib/mock-settings.ts`) since no live test
   or config still needs it; regenerated `config/defaults.json` and
   `web/app/src/lib/mock-settings.generated.ts` from the TOML. Docs
-  page `docs/src/content/docs/development/benchmarking.md` updated to
+  page `web/docs/src/content/docs/development/benchmarking.md` updated to
   match.
 
 ### Added
@@ -11724,8 +11727,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`SECURITY.md`** -- vulnerability reporting policy (GitHub Security Advisories), supported versions, disclosure timeline, scope (sandbox escape, MITM bypass, supply-chain integrity) and explicit out-of-scope (anything inside the guest VM by design).
 - **`RELEASE.md`** -- human-facing pre/post-release checklist that points back to `/release-process` for depth. Captures the `just cut-release` path, CI pipeline shape, and what to check after the tag is pushed.
 - **`rust-toolchain.toml`** -- pins the stable channel + `aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl` targets so local and CI builds resolve the same toolchain.
-- **`docs/usage/mcp-tools.md`** -- user-facing reference for the 22 MCP tools exposed by `capsem-mcp`, grouped by session lifecycle, exec/file, telemetry, MCP aggregator, and diagnostics. Source of truth remains `crates/capsem-mcp/src/main.rs`.
-- **`docs/usage/shell-completions.md`** -- how to generate and install bash/zsh/fish/PowerShell completions via `capsem completions <shell>`.
+- **`web/docs/usage/mcp-tools.md`** -- user-facing reference for the 22 MCP tools exposed by `capsem-mcp`, grouped by session lifecycle, exec/file, telemetry, MCP aggregator, and diagnostics. Source of truth remains `crates/capsem-mcp/src/main.rs`.
+- **`web/docs/usage/shell-completions.md`** -- how to generate and install bash/zsh/fish/PowerShell completions via `capsem completions <shell>`.
 - **Pointer READMEs at `crates/capsem/README.md` and `crates/capsem-proto/README.md`** -- ~10-line README each for the two externally-visible crates, linking to capsem.org.
 
 ### Added
@@ -12572,7 +12575,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ash-speed.hetzner.com` added to the default network allow list and integration test config for the throughput benchmark
 - Rust integration test `mitm_proxy_download_throughput` (in `crates/capsem-core/tests/mitm_integration.rs`): validates 100 MB download through the proxy at the host level; marked `#[ignore]` so it runs only on demand
 - `test_proxy_download_throughput` in `capsem-doctor` (`test_network.py`): in-VM Layer 7 test verifying end-to-end proxy throughput; skips gracefully if the speed-test domain is not in the allow list
-- `docs/performance.md`: documents all benchmark modes, baseline numbers, proxy data path, and domain allow list setup
+- `web/docs/performance.md`: documents all benchmark modes, baseline numbers, proxy data path, and domain allow list setup
 - `just run` now kills any existing Capsem instance before booting, preventing a stale GUI window from appearing alongside a CLI run
 - Notarization credential verification in CI preflight job: validates Apple API key against `notarytool history` before spending time on build-assets and tests
 - Notarization preflight check in `scripts/preflight.sh`: verifies `.p8` key, API Key ID, Issuer ID, and runs a live `notarytool history` test
@@ -12626,11 +12629,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI download support: `capsem "command"` auto-downloads rootfs with stderr progress if missing
 - Squashfs support: boot_vm accepts both rootfs.squashfs (new) and rootfs.img (legacy) formats
 - Release workflow uploads rootfs.squashfs as separate GitHub Release asset alongside the thin DMG
-- Onboarding plan (`docs/onboarding.md`): first-launch wizard scope for credentials, MCP config, and guided setup
+- Onboarding plan (`web/docs/onboarding.md`): first-launch wizard scope for credentials, MCP config, and guided setup
 - AI stats tab: unified model analytics with stat cards (total calls, tokens, cost, models), model usage chart, token breakdown, cost-over-time, and provider distribution
 - `StatCards.svelte` reusable component for stat card rows across all analytics tabs
 - Chart color system (`css-var.ts`): provider hue families, model color assignment, file action colors, server palette -- all using oklch() constants (no CSS var lookups)
-- LayerChart v2 API documentation (`docs/libs/layercharts.md`) for LLM-friendly chart development
+- LayerChart v2 API documentation (`web/docs/libs/layercharts.md`) for LLM-friendly chart development
 
 ### Changed
 - Asset resolution in macOS app bundle now searches multiple paths in `Resources` (including nested Tauri v2 paths) for better reliability.
@@ -12765,7 +12768,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `sql.ts`: centralized SQL query constants for all per-session analytics (13 queries covering net stats, domains, time buckets, provider usage, tool usage, model stats, MCP stats, file stats, latency, method/process distribution)
 - `queryOne<T>()` and `queryAll<T>()` typed helpers in `api.ts` for running SQL against the active session's info.db
-- Analytics data architecture documented in `docs/architecture.md` (two-database design, data flow, query strategy, polling patterns)
+- Analytics data architecture documented in `web/docs/architecture.md` (two-database design, data flow, query strategy, polling patterns)
 - Frontend development skill file (`.claude/skills/frontend.md`)
 - In-VM filesystem watcher (`capsem-fs-watch`): inotify-based daemon streams file create/modify/delete events to the host over vsock:5005 for real-time file activity telemetry
 - `fs_events` audit table in `capsem-logger`: records every file operation with timestamp, action, path, and size
@@ -12960,8 +12963,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-setting corp override: corporate settings (`/etc/capsem/corp.toml`) lock individual settings, not entire sections
 - Setting metadata with domain patterns, HTTP method permissions, numeric bounds, and text choices
 - `get_settings` and `update_setting` Tauri IPC commands for the settings UI
-- Settings architecture documentation in `docs/architecture.md`
-- Policy override security documentation in `docs/security.md`
+- Settings architecture documentation in `web/docs/architecture.md`
+- Policy override security documentation in `web/docs/security.md`
 
 ### Changed
 - Increased vsock MAX_FRAME_SIZE from 8KB to 256KB for generous boot payloads
@@ -13030,8 +13033,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-state message validation: host validates both outbound and inbound vsock control messages against lifecycle stage
 - New Tauri IPC commands for Svelte UI: `get_guest_config`, `get_network_policy`, `set_guest_env`, `remove_guest_env`, `get_vm_state`
 - Structured `vm-state-changed` events with JSON payloads (state + trigger) instead of plain strings
-- Protocol documentation (`docs/protocol.md`): wire format, message reference, state machine diagrams, boot handshake, security invariants
-- Zero-trust guest binary security rule documented in `docs/security.md`
+- Protocol documentation (`web/docs/protocol.md`): wire format, message reference, state machine diagrams, boot handshake, security invariants
+- Zero-trust guest binary security rule documented in `web/docs/security.md`
 - `write_policy_file()` for TOML serialization of user.toml changes from the UI
 - MITM transparent proxy: full HTTP inspection (method, path, status code, headers, body preview) for all HTTPS traffic from the guest VM
 - Static Capsem MITM CA certificate (ECDSA P-256, 100-year validity) baked into the guest rootfs trust store

@@ -84,7 +84,7 @@ fn parse_version_body(response: &[u8]) -> Option<String> {
 /// Cold starts and teardown take a shared lock; save/restore take an exclusive
 /// lock. Apple's VZ framework does not tolerate crossing checkpoint lifecycle
 /// edges, but it does tolerate sibling cold starts. See
-/// docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
+/// web/docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
 ///
 /// Lock file lives at `/tmp/capsem-vz-save-restore-<uid>.lock` -- outside
 /// any `CAPSEM_HOME`/`CAPSEM_RUN_DIR` override so every sibling service

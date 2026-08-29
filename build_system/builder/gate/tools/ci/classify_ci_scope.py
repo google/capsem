@@ -13,10 +13,9 @@ import sys
 from collections.abc import Iterable
 
 CONTENT_FILES = frozenset({"README.md"})
-CONTENT_PREFIXES = ("docs/", "site/", "web/docs/", "web/marketing/")
+CONTENT_PREFIXES = ("site/", "web/docs/", "web/marketing/")
 PUBLIC_INSTALLERS = frozenset(
     {
-        "docs/public/install.sh",
         "site/public/install.sh",
         "web/docs/public/install.sh",
         "web/marketing/public/install.sh",
@@ -43,7 +42,7 @@ KNOWN_DIRECTORIES = frozenset(
         ".agents", ".cargo", ".claude", ".codex", ".config", ".cursor",
         ".gemini", ".github", "bench", "benchmarks",
         "build_system", "config", "crates", "data", "docker",
-        "docs", "graphics", "guest",
+        "graphics", "guest",
         "scripts", "sdk", "security", "site", "skills",
         "sprints", "src", "tests", "tmp",
         "web",
@@ -156,8 +155,6 @@ def _path_scopes(path: str) -> frozenset[str]:
             raise ValueError(f"unowned build_system subtree: {path}")
     elif root in BUILD_SYSTEM_ROOTS or path in BUILD_SYSTEM_FILES:
         scopes = {"build_system"}
-    elif root == "docs":
-        scopes = {"docs"}
     elif root in {"site", "graphics"}:
         scopes = {"marketing_graphics"}
     elif root in {"bench", "benchmarks"}:

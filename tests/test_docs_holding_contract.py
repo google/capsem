@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import importlib
 import json
-import tomllib
 from pathlib import Path
 
 import pytest
+import tomllib
 from capsem_builder.gate.tools.web import check_docs_holding_build as DOCS_HOLDING_BUILD
 from helpers.workflow_contract import workflow_reachable_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DOCS_ROOT = PROJECT_ROOT / "docs"
+DOCS_ROOT = PROJECT_ROOT / "web" / "docs"
 GATE_CONFIG = PROJECT_ROOT / "config" / "gate.toml"
 RELEASE_LINE = tomllib.loads(GATE_CONFIG.read_text(encoding="utf-8"))["release"]["line"]
 
@@ -184,7 +184,7 @@ def test_docs_source_builds_the_holding_graph_without_deleting_the_manual() -> N
     assert 'src="/logo.svg"' not in page
     assert "/getting-started/" not in page
     assert package["scripts"]["build"] == (
-        "astro build && python3 ../scripts/check-docs-holding-build.py dist src/content/docs"
+        "astro build && python3 ../../scripts/check-docs-holding-build.py dist src/content/docs"
     )
     assert len(detailed_sources) == 48
     assert DOCS_ROOT / "src" / "content" / "docs" / "index.mdx" in detailed_sources

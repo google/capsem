@@ -204,7 +204,7 @@ case "$1" in
         cargo clippy
         ;;
     (docs)
-        pnpm --dir docs run build
+        pnpm --dir web/docs run build
         ;;
     *)
         echo usage >&2

@@ -557,10 +557,10 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: docs/pnpm-lock.yaml
+          cache-dependency-path: web/docs/pnpm-lock.yaml
 
       - name: Install docs dependencies
-        run: cd docs && pnpm install --frozen-lockfile
+        run: cd web/docs && pnpm install --frozen-lockfile
 
       - name: Build docs
         run: bash scripts/check-web-surface.sh docs

@@ -186,8 +186,8 @@ def test_shell_and_python_builders_lock_the_same_repository_path() -> None:
 def test_the_shell_lock_guard_rejects_an_unwrapped_build() -> None:
     source = SHELL_OWNER.read_text(encoding="utf-8")
     mutated = source.replace(
-        "astro_build pnpm --dir docs run build",
-        "pnpm --dir docs run build",
+        "astro_build pnpm --dir web/docs run build",
+        "pnpm --dir web/docs run build",
         1,
     )
     assert _unlocked_shell_surfaces(mutated) == ["docs"]

@@ -29,7 +29,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: |
             web/app/pnpm-lock.yaml
-            docs/pnpm-lock.yaml
+            web/docs/pnpm-lock.yaml
             site/pnpm-lock.yaml
             build_system/release_site/pnpm-lock.yaml
 
@@ -54,7 +54,7 @@ jobs:
 
       - name: Install all web dependencies
         run: |
-          for project in web/app docs site build_system/release_site; do
+          for project in web/app web/docs site build_system/release_site; do
             pnpm --dir "$project" install --frozen-lockfile
           done
 

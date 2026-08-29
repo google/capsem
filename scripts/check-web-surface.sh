@@ -59,7 +59,7 @@ case "$surface" in
         astro_build pnpm --dir web/app run build
         ;;
     docs)
-        astro_build pnpm --dir docs run build
+        astro_build pnpm --dir web/docs run build
         ;;
     site)
         astro_build pnpm --dir site run build

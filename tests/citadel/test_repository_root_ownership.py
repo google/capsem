@@ -33,7 +33,6 @@ APPROVED_DIRECTORIES = frozenset(
         "build_system",
         "config",
         "crates",
-        "docs",
         "graphics",
         "guest",
         "release-site",
@@ -77,7 +76,6 @@ APPROVED_ROOT_FILES = frozenset(
 
 MIGRATING_DIRECTORIES = frozenset(
     {
-        "docs",
         "graphics",
         "release-site",
         "scripts",

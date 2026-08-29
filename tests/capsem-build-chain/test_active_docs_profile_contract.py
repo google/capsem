@@ -45,19 +45,19 @@ FORBIDDEN_CONFIG_DIRS = {
 }
 
 ACTIVE_DOCS_AND_SKILLS = [
-    PROJECT_ROOT / "docs/src/content/docs/architecture/asset-pipeline.md",
-    PROJECT_ROOT / "docs/src/content/docs/architecture/build-system.md",
-    PROJECT_ROOT / "docs/src/content/docs/architecture/custom-images.md",
-    PROJECT_ROOT / "docs/src/content/docs/architecture/mcp-gateway.md",
-    PROJECT_ROOT / "docs/src/content/docs/architecture/service-architecture.md",
-    PROJECT_ROOT / "docs/src/content/docs/architecture/settings-schema.md",
-    PROJECT_ROOT / "docs/src/content/docs/development/ci.md",
-    PROJECT_ROOT / "docs/src/content/docs/development/custom-images.md",
-    PROJECT_ROOT / "docs/src/content/docs/development/getting-started.md",
-    PROJECT_ROOT / "docs/src/content/docs/development/just-recipes.md",
-    PROJECT_ROOT / "docs/src/content/docs/development/stack.md",
-    PROJECT_ROOT / "docs/src/content/docs/security/build-verification.md",
-    PROJECT_ROOT / "docs/src/content/docs/security/plugins/credential-broker.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/architecture/asset-pipeline.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/architecture/build-system.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/architecture/custom-images.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/architecture/mcp-gateway.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/architecture/service-architecture.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/architecture/settings-schema.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/development/custom-images.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/development/getting-started.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/development/just-recipes.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/development/stack.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/security/build-verification.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/security/plugins/credential-broker.md",
     PROJECT_ROOT / "skills/asset-pipeline/SKILL.md",
     PROJECT_ROOT / "skills/build-images/SKILL.md",
     PROJECT_ROOT / "skills/build-initrd/SKILL.md",
@@ -120,13 +120,13 @@ STALE_GUIDANCE = [
 ]
 
 RELEASE_ASSET_DOCS = [
-    PROJECT_ROOT / "docs/src/content/docs/architecture/asset-pipeline.md",
-    PROJECT_ROOT / "docs/src/content/docs/development/ci.md",
-    PROJECT_ROOT / "docs/src/content/docs/development/stack.md",
-    PROJECT_ROOT / "docs/src/content/docs/security/build-verification.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/architecture/asset-pipeline.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/development/stack.md",
+    PROJECT_ROOT / "web/docs/src/content/docs/security/build-verification.md",
 ]
 
-BENCHMARK_RESULTS_DOC = PROJECT_ROOT / "docs/src/content/docs/benchmarks/results.md"
+BENCHMARK_RESULTS_DOC = PROJECT_ROOT / "web/docs/src/content/docs/benchmarks/results.md"
 
 
 def _active_text(path: Path) -> str:
@@ -158,7 +158,7 @@ def test_active_docs_do_not_teach_retired_guest_config_authority() -> None:
             if re.search(pattern, text):
                 failures.append(f"{path.relative_to(PROJECT_ROOT)} contains {needle!r}")
 
-    assert not failures, "stale active docs/skills:\n" + "\n".join(sorted(failures))
+    assert not failures, "stale active documentation or skills:\n" + "\n".join(sorted(failures))
 
 
 def test_release_asset_docs_teach_thin_packages_and_release_assets() -> None:
@@ -176,10 +176,10 @@ def test_release_asset_docs_teach_thin_packages_and_release_assets() -> None:
             if needle not in text:
                 failures.append(f"{path.relative_to(PROJECT_ROOT)} missing {needle!r}")
 
-    ci_text = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
-    stack_text = (PROJECT_ROOT / "docs/src/content/docs/development/stack.md").read_text()
-    asset_text = (PROJECT_ROOT / "docs/src/content/docs/architecture/asset-pipeline.md").read_text()
-    security_text = (PROJECT_ROOT / "docs/src/content/docs/security/build-verification.md").read_text()
+    ci_text = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
+    stack_text = (PROJECT_ROOT / "web/docs/src/content/docs/development/stack.md").read_text()
+    asset_text = (PROJECT_ROOT / "web/docs/src/content/docs/architecture/asset-pipeline.md").read_text()
+    security_text = (PROJECT_ROOT / "web/docs/src/content/docs/security/build-verification.md").read_text()
 
     assert "Installers carry host binaries and the selected manifest" in ci_text
     assert "VM assets are not bundled into the installers" in stack_text

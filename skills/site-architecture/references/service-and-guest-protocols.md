@@ -46,7 +46,7 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 
 The service and gateway expose one explicit route table. Unknown routes must
 return 404; do not add compatibility aliases or generic gateway forwarding. The full
-contract lives in `docs/src/content/docs/architecture/service-api.md`; the
+contract lives in `web/docs/src/content/docs/architecture/service-api.md`; the
 common session routes are:
 
 Every method/path pair is also locked in `config/public-surface.toml`.

@@ -147,7 +147,7 @@ When a service orchestrates N sibling child processes on a single host and some 
 
 Current instances in `crates/capsem-service/src/main.rs`:
 
-- **`save_restore_lock`**: serializes Apple VZ `saveMachineStateToURL` / `restoreMachineStateFromURL` across sibling VMs. Concurrent save/restore corrupts the VirtioFS ring state on the unlucky VM, surfaces as ext4-on-loop0 I/O errors after resume. Held through `handle_suspend` (IPC + child-exit wait) and `handle_resume` (spawn + `wait_for_vm_ready`). See `docs/src/content/docs/gotchas/concurrent-suspend-resume.md`.
+- **`save_restore_lock`**: serializes Apple VZ `saveMachineStateToURL` / `restoreMachineStateFromURL` across sibling VMs. Concurrent save/restore corrupts the VirtioFS ring state on the unlucky VM, surfaces as ext4-on-loop0 I/O errors after resume. Held through `handle_suspend` (IPC + child-exit wait) and `handle_resume` (spawn + `wait_for_vm_ready`). See `web/docs/src/content/docs/gotchas/concurrent-suspend-resume.md`.
 
 - **`shutdown_lock`**: serializes VM teardown across `handle_delete` / `handle_stop` / `handle_purge` / `handle_run`. Without it, N concurrent deletes under load starve each other of the bandwidth each `capsem-process` needs to exit cleanly within the 1s fast-path budget; past the budget the service SIGKILLs mid-checkpoint and leaves a non-empty `session.db-wal`. Held through `shutdown_vm_process` for the whole `SIGTERM` + `wait_for_process_exit` window.
 

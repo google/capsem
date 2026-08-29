@@ -7,17 +7,17 @@ description: The documentation site, docs.capsem.org. Use when writing or editin
 
 The detailed documentation source for docs.capsem.org is authored for
 [Astro Starlight](https://starlight.astro.build/) and lives in
-`docs/src/content/docs/` as Markdown/MDX files. During the Capsem 0.6
+`web/docs/src/content/docs/` as Markdown/MDX files. During the Capsem 0.6
 pre-release, the production Astro build deliberately does not register the
-Starlight integration: it publishes `docs/src/pages/index.astro` as the root
+Starlight integration: it publishes `web/docs/src/pages/index.astro` as the root
 holding page and derives a noindex holding tombstone for every former detailed
 route while every source file remains checked in.
 
 ## Dev workflow
 
 ```bash
-cd docs && pnpm run dev     # Holding surface at localhost:4321
-cd docs && pnpm run build   # Build and verify the exact production artifact graph
+cd web/docs && pnpm run dev     # Holding surface at localhost:4321
+cd web/docs && pnpm run build   # Build and verify the exact production artifact graph
 ```
 
 ## CI and deploy rail
@@ -31,11 +31,11 @@ manual VM asset releases, and the `release.capsem.org` asset-channel workflow.
 ## Capsem 0.6 holding boundary
 
 - Do not delete or rewrite the detailed manual to produce the holding page.
-- `docs/src/pages/[...slug].astro` derives one static noindex tombstone from
+- `web/docs/src/pages/[...slug].astro` derives one static noindex tombstone from
   every detailed Markdown/MDX source except the root `index.mdx`. A removed
   path is not enough: Cloudflare can continue serving a warmed old asset after
   deletion, so each former URL must be replaced explicitly.
-- `docs/public-holding/_headers` applies no-store browser/CDN policy and an
+- `web/docs/public-holding/_headers` applies no-store browser/CDN policy and an
   `X-Robots-Tag` to the complete qualification surface.
 - `scripts/check-docs-holding-build.py` independently derives the exact
   tombstone inventory from the manual sources. It permits only those files,
@@ -67,7 +67,7 @@ sidebar:
 ## Site structure
 
 ```
-docs/src/content/docs/
+web/docs/src/content/docs/
   getting-started.md
   architecture/
     hypervisor.md         Hypervisor abstraction, Apple VZ + KVM backends (5 mermaid diagrams)
@@ -96,25 +96,25 @@ docs/src/content/docs/
 
 ## Sidebar
 
-Configured in `docs/astro.config.mjs` under `starlight({ sidebar: [...] })`. Uses `autogenerate: { directory: '<category>' }` for each section. Page ordering within a section uses `sidebar: { order: N }` in frontmatter.
+Configured in `web/docs/astro.config.mjs` under `starlight({ sidebar: [...] })`. Uses `autogenerate: { directory: '<category>' }` for each section. Page ordering within a section uses `sidebar: { order: N }` in frontmatter.
 
 ## Adding a new doc page
 
-1. Create `docs/src/content/docs/<category>/<topic>.md` with frontmatter
+1. Create `web/docs/src/content/docs/<category>/<topic>.md` with frontmatter
 2. It auto-appears in the sidebar via `autogenerate`
 3. Set `sidebar: { order: N }` to control position (lower = higher in list)
 
 ## Adding a new category
 
-1. Create the directory under `docs/src/content/docs/`
-2. Add a sidebar entry in `docs/astro.config.mjs`:
+1. Create the directory under `web/docs/src/content/docs/`
+2. Add a sidebar entry in `web/docs/astro.config.mjs`:
    ```js
    { label: 'Category Name', autogenerate: { directory: 'category-slug' } }
    ```
 
 ## Release pages
 
-- Path: `docs/src/content/docs/releases/<major>-<minor>.md` (hyphens, not dots)
+- Path: `web/docs/src/content/docs/releases/<major>-<minor>.md` (hyphens, not dots)
 - Each page consolidates all patch releases for that minor version
 - Higher `sidebar.order` = newer = listed first (reverse-chrono)
 - When bumping to a new minor, create a new page
@@ -136,7 +136,7 @@ Read `references/astro.md` for Astro framework patterns (components, content col
 
 ## Theme
 
-Custom CSS in `docs/src/styles/custom.css`. Accent colors and fonts. Logo at `docs/src/assets/logo.svg`.
+Custom CSS in `web/docs/src/styles/custom.css`. Accent colors and fonts. Logo at `web/docs/src/assets/logo.svg`.
 
 ## Graphics and icons
 
@@ -158,20 +158,20 @@ graphics/
     icon.icns, icon.ico, icon.svg
 ```
 
-Site favicons in `docs/public/` are generated from `graphics/icon/1024w/capsem-logo-color.png`. To regenerate:
+Site favicons in `web/docs/public/` are generated from `graphics/icon/1024w/capsem-logo-color.png`. To regenerate:
 
 ```bash
-sips -z 16 16 graphics/icon/1024w/capsem-logo-color.png --out docs/public/favicon-16x16.png
-sips -z 32 32 graphics/icon/1024w/capsem-logo-color.png --out docs/public/favicon-32x32.png
-sips -z 180 180 graphics/icon/1024w/capsem-logo-color.png --out docs/public/apple-touch-icon.png
-sips -z 192 192 graphics/icon/1024w/capsem-logo-color.png --out docs/public/android-chrome-192x192.png
-sips -z 512 512 graphics/icon/1024w/capsem-logo-color.png --out docs/public/android-chrome-512x512.png
+sips -z 16 16 graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/favicon-16x16.png
+sips -z 32 32 graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/favicon-32x32.png
+sips -z 180 180 graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/apple-touch-icon.png
+sips -z 192 192 graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/android-chrome-192x192.png
+sips -z 512 512 graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/android-chrome-512x512.png
 ```
 
 ## Custom images
 
 The maintained custom-image documentation lives at
-`docs/src/content/docs/architecture/custom-images.md`.
+`web/docs/src/content/docs/architecture/custom-images.md`.
 
 ## Page scope boundaries
 

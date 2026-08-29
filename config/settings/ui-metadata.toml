@@ -3,7 +3,7 @@
 # ============================================================================
 #
 # Single source of truth for all built-in settings. Embedded at compile time
-# via include_str!(). See docs/config.md for the format reference.
+# via include_str!(). See web/docs/config.md for the format reference.
 #
 # Three node types, distinguished by presence of `type`:
 #   - Category/group: has `name` but no `type` -- grouping with metadata

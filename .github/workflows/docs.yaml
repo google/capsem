@@ -7,7 +7,6 @@ on:
       - README.md
       - build_system/builder/gate/tools/web/check_docs_holding_build.py
       - config/gate.toml
-      - docs/**
       - scripts/check-docs-holding-build.py
       - scripts/check-web-surface.sh
       - scripts/lib/exec_lock.sh
@@ -33,9 +32,9 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: docs/pnpm-lock.yaml
+          cache-dependency-path: web/docs/pnpm-lock.yaml
       - name: Install
-        run: cd docs && pnpm install --frozen-lockfile
+        run: cd web/docs && pnpm install --frozen-lockfile
       - name: Build
         run: bash scripts/check-web-surface.sh docs
       - name: Deploy
@@ -47,7 +46,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy docs/dist/ --project-name=capsem-docs
+          command: pages deploy web/docs/dist/ --project-name=capsem-docs
       - name: Smoke public docs site
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:

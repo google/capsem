@@ -80,7 +80,7 @@ def test_default_bulk_audit_covers_every_web_workspace() -> None:
 
     assert (
         Path("web/app"),
-        Path("docs"),
+        Path("web/docs"),
         Path("site"),
         Path("build_system/release_site"),
     ) == audit.DEFAULT_PROJECT_DIRS
@@ -109,7 +109,7 @@ def test_every_fast_gate_blocks_on_bulk_dependency_advisories() -> None:
     assert "--project-dir frontend" not in scheduled
     for lockfile in (
         "web/app/pnpm-lock.yaml",
-        "docs/pnpm-lock.yaml",
+        "web/docs/pnpm-lock.yaml",
         "site/pnpm-lock.yaml",
         "build_system/release_site/pnpm-lock.yaml",
     ):

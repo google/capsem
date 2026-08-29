@@ -174,9 +174,9 @@ def test_admin_materialization_and_service_routes_expose_verified_obom_evidence(
 
 
 def test_docs_describe_scope_without_claiming_user_runtime_inventory() -> None:
-    build_verification = _read("docs/src/content/docs/security/build-verification.md")
-    build_system = _read("docs/src/content/docs/architecture/build-system.md")
-    service_api = _read("docs/src/content/docs/architecture/service-api.md")
+    build_verification = _read("web/docs/src/content/docs/security/build-verification.md")
+    build_system = _read("web/docs/src/content/docs/architecture/build-system.md")
+    service_api = _read("web/docs/src/content/docs/architecture/service-api.md")
 
     assert "Host binaries publish a Software Bill of Materials" in build_verification
     assert "VM base images publish an Operations Bill of Materials" in build_verification

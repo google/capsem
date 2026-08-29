@@ -9,14 +9,17 @@ import json
 import os
 import re
 import subprocess
-import tomllib
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+import tomllib
 import yaml
 from blake3 import blake3
-from capsem_builder.release.tools import check_public_binary_release, local_release_glowup
+from capsem_builder.release.tools import (
+    check_public_binary_release,
+    local_release_glowup,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_RELEASE_GLOWUP_SOURCE = Path(local_release_glowup.__file__)
@@ -2714,7 +2717,7 @@ def test_manifest_generation_public_path_is_capsem_admin() -> None:
 
     public_docs = [
         path
-        for path in (PROJECT_ROOT / "docs").rglob("*.md")
+        for path in (PROJECT_ROOT / "web" / "docs").rglob("*.md")
         if "manifest generate" in path.read_text(encoding="utf-8", errors="ignore")
     ]
     for path in public_docs:

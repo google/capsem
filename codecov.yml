@@ -292,6 +292,6 @@ ignore:
   - crates/capsem-core/src/test_support/**
   - crates/capsem-app/gen/**
   - site/**
-  - docs/**
+  - web/docs/**
   - guest/**
   - scripts/**

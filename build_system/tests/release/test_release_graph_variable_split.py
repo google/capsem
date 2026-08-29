@@ -37,7 +37,7 @@ SEARCHED = (
     ".github/workflows",
     "skills",
     "tests",
-    "docs",
+    "web/docs",
 )
 
 SKIP_DIRS = {"node_modules", "dist", ".astro", "__pycache__", ".git"}
@@ -145,14 +145,22 @@ def test_no_caller_sets_the_output_name_where_a_graph_fixture_goes() -> None:
 
 
 @pytest.mark.parametrize(
-    ("workflow", "driver"),
+    ("workflow", "driver", "implementation"),
     [
-        ("release-binary-staging.yaml", "scripts/build-complete-release-channel.py"),
-        ("release-channel-staging.yaml", "scripts/rehearse-asset-channel-staging.sh"),
+        (
+            "release-binary-staging.yaml",
+            "scripts/build-complete-release-channel.py",
+            "build_system/builder/release/tools/build_complete_release_channel.py",
+        ),
+        (
+            "release-channel-staging.yaml",
+            "scripts/rehearse-asset-channel-staging.sh",
+            "scripts/rehearse-asset-channel-staging.sh",
+        ),
     ],
 )
 def test_the_published_workflows_reach_a_driver_that_names_both_roles(
-    workflow: str, driver: str
+    workflow: str, driver: str, implementation: str
 ) -> None:
     """One path, two roles -- and now two names.
 
@@ -161,17 +169,23 @@ def test_the_published_workflows_reach_a_driver_that_names_both_roles(
     survived this long. Setting both is what makes that a coincidence rather
     than a contract.
 
-    Both workflows and their drivers are in this repository. Following that
-    exact edge keeps a shared driver from hiding a missing role while still
-    allowing the workflow to delegate the whole operation instead of copying it.
+    Both workflows and their implementations are in this repository. Following
+    the exact launcher edge keeps a compatibility wrapper from hiding a missing
+    role while still allowing the workflow to delegate the whole operation
+    instead of copying it.
     """
     workflow_text = (PROJECT_ROOT / ".github/workflows" / workflow).read_text(encoding="utf-8")
-    driver_text = _code(PROJECT_ROOT / driver)
+    launcher_text = _code(PROJECT_ROOT / driver)
+    implementation_text = _code(PROJECT_ROOT / implementation)
 
     assert driver in workflow_text, f"{workflow} bypasses its shared release-site driver"
-    assert INPUT in driver_text, f"{driver} never says which graph to render"
-    assert OUTPUT in driver_text, f"{driver} never says where the render goes"
-    assert "release-site-build" in driver_text, f"{driver} does not drive the shared web build"
+    if implementation != driver:
+        assert "capsem_builder.release.tools.build_complete_release_channel" in launcher_text
+    assert INPUT in implementation_text, f"{implementation} never says which graph to render"
+    assert OUTPUT in implementation_text, f"{implementation} never says where the render goes"
+    assert "release-site-build" in implementation_text, (
+        f"{implementation} does not drive the shared web build"
+    )
 
 
 def test_the_split_is_complete_across_the_repository() -> None:

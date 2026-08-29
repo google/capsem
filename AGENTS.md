@@ -54,7 +54,7 @@ crates/capsem-bench/           Benchmark harness, ships as capsem-bench-rs (gues
 crates/capsem-mock-server/     Hermetic mock upstream (HTTP/TLS/WS) for tests and benchmarks
 web/app/                 Astro 7 + Svelte 5 + Tailwind v4 + owned semantic CSS
 site/                     Marketing website (Astro + Svelte 5)
-docs/                     Documentation site (Astro Starlight)
+web/docs/                     Documentation site (Astro Starlight)
 build_system/release_site/ Release channel site generator (Astro, writes target/distribution/)
 config/                   Runtime product config source -- never developer skills (see Skills)
 config/profiles/<id>/     Profile ledgers (code, co-work): profile.toml + packages, MCP, rules, root seed

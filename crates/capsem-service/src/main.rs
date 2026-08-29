@@ -345,7 +345,7 @@ struct ServiceState {
     /// service. Cold starts and teardown take a read guard; save/restore take
     /// a write guard. That keeps checkpoint edges exclusive without
     /// serializing independent cold boots and breaking the boot latency gate.
-    /// See docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
+    /// See web/docs/src/content/docs/gotchas/concurrent-suspend-resume.mdx.
     save_restore_lock: tokio::sync::RwLock<()>,
     /// Serializes VM teardown (delete / stop / purge per-VM / handle_run)
     /// across all VMs managed by this service. N concurrent shutdowns starve
@@ -11614,7 +11614,7 @@ async fn shutdown_vm_process(
     // fast-path exit budget, which SIGKILLs capsem-process mid-checkpoint
     // and leaves a non-empty session.db-wal on disk (see
     // tests/capsem-session-lifecycle/test_wal_cleanup.py).
-    // See docs/src/content/docs/gotchas/serialized-vm-shutdown.md.
+    // See web/docs/src/content/docs/gotchas/serialized-vm-shutdown.md.
     let _shutdown_guard = state.shutdown_lock.lock().await;
 
     let (uds_path, session_dir, pid, persistent) = {

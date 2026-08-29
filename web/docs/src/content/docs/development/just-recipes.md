@@ -48,7 +48,7 @@ and telemetry. Use this sequence for focused iteration:
 | Framed MCP policy | `cargo test -p capsem-core net::mitm_proxy::mcp_frame --lib` |
 | Frontend policy UI/model | `pnpm -C web/app test -- settings-model settings-export api settings-store` |
 | Frontend type/check gate | `pnpm -C web/app run check` |
-| Docs gate | `cd docs && pnpm run build` |
+| Docs gate | `cd web/docs && pnpm run build` |
 | Focused VM feedback | `just focus-test functional` |
 | Session integrity | `just inspect-session [id]` |
 | Session SQL proof | `just query-session "SQL" [id]` |

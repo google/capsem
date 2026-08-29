@@ -205,7 +205,7 @@ check_notarization() {
 # Invariants:
 #   (1) scratch disk is always formatted unconditionally at boot (no ext4 detection skip)
 #   (2) overlay upperdir is always on tmpfs, never on the scratch disk
-# See docs/ephemeral_model.md for the incident that motivated these checks.
+# See web/docs/ephemeral_model.md for the incident that motivated these checks.
 # --------------------------------------------------------------------------
 check_ephemeral_model() {
     echo ""

@@ -642,7 +642,7 @@ def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
     )
     docs_deploy = _workflow_text("docs.yaml")
     site_deploy = _workflow_text("site.yaml")
-    docs_ci = _source_text("docs/src/content/docs/development/ci.md")
+    docs_ci = _source_text("web/docs/src/content/docs/development/ci.md")
     docs_ci_text = " ".join(docs_ci.split())
 
     assert "pr-gate:" in workflow
@@ -656,8 +656,8 @@ def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
     assert 'test "$SITE_BUILD_RESULT" = success' in gate
     assert 'test "$RELEASE_SITE_BUILD_RESULT" = success' in gate
 
-    assert "cache-dependency-path: docs/pnpm-lock.yaml" in docs_job
-    assert "cd docs && pnpm install --frozen-lockfile" in docs_job
+    assert "cache-dependency-path: web/docs/pnpm-lock.yaml" in docs_job
+    assert "cd web/docs && pnpm install --frozen-lockfile" in docs_job
     assert "bash scripts/check-web-surface.sh docs" in docs_job
     assert "pages deploy" not in docs_job
 
@@ -931,7 +931,7 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
 ):
     workflow = _workflow_text("release-channel-staging.yaml")
     reusable = _workflow_text("release-channel.yaml")
-    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     release_skill = _skill_text("skills/release-process/SKILL.md")
     asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
 
@@ -1201,7 +1201,7 @@ def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
     workflow = _workflow_text("release-channel.yaml")
     release_assets = _workflow_text("release-assets.yaml")
     checker = _source_text("scripts/check-cloudflare-pages-project.py")
-    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     release_skill = _skill_text("skills/release-process/SKILL.md")
     asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
 
@@ -1276,7 +1276,7 @@ def test_cloudflare_pages_project_checker_reports_visibility_failures() -> None:
 def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None:
     workflow = _workflow_text("release-channel.yaml")
     script = _source_text("scripts/check-remote-release-readiness.py")
-    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
 
     assert "astral-sh/setup-uv@" in workflow
@@ -1304,7 +1304,7 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
 
 
 def test_docs_preserve_vm_obom_attestation_predicate_contract() -> None:
-    docs_text = " ".join(_source_text("docs/src/content/docs/development/ci.md").split())
+    docs_text = " ".join(_source_text("web/docs/src/content/docs/development/ci.md").split())
 
     assert "Profile image attestations are incomplete unless" in docs_text
     assert "`github_attestations_vm_assets`" in docs_text
@@ -1313,7 +1313,7 @@ def test_docs_preserve_vm_obom_attestation_predicate_contract() -> None:
 
 def test_architecture_docs_preserve_vm_obom_attestation_predicate_contract() -> None:
     docs_text = " ".join(
-        _source_text("docs/src/content/docs/architecture/asset-pipeline.md").split()
+        _source_text("web/docs/src/content/docs/architecture/asset-pipeline.md").split()
     )
 
     assert "SBOM and VM OBOM evidence" in docs_text
@@ -1324,8 +1324,8 @@ def test_architecture_docs_preserve_vm_obom_attestation_predicate_contract() -> 
 
 def test_release_channel_cache_header_documentation_matches_deploy_smoke() -> None:
     workflow = _workflow_text("release-channel.yaml")
-    ci_docs = _source_text("docs/src/content/docs/development/ci.md")
-    architecture_docs = _source_text("docs/src/content/docs/architecture/asset-pipeline.md")
+    ci_docs = _source_text("web/docs/src/content/docs/development/ci.md")
+    architecture_docs = _source_text("web/docs/src/content/docs/architecture/asset-pipeline.md")
     release_skill = _skill_text("skills/release-process/SKILL.md")
     asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
 
@@ -1351,8 +1351,8 @@ def test_cdxgen_is_owned_only_by_the_digest_pinned_asset_helper() -> None:
     doctor = _source_text("scripts/doctor-common.sh")
     asset_workflow = _workflow_text("release-assets.yaml")
     docs_and_skills = [
-        _source_text("docs/src/content/docs/development/getting-started.md"),
-        _source_text("docs/src/content/docs/development/ci.md"),
+        _source_text("web/docs/src/content/docs/development/getting-started.md"),
+        _source_text("web/docs/src/content/docs/development/ci.md"),
         _source_text("skills/dev-start/SKILL.md"),
         _source_text("skills/dev-setup/SKILL.md"),
     ]
@@ -1539,7 +1539,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
     expectations = [
         (
             "docs.yaml",
-            "docs",
+            "web/docs",
             "docs-build",
             "capsem-docs",
             "Smoke public docs site",
@@ -1571,6 +1571,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         trigger = workflow.split("\njobs:", maxsplit=1)[0]
         push_trigger = trigger.split("  push:", maxsplit=1)[1]
         ci_block = _workflow_job_block(ci_job)
+        surface = directory.rsplit("/", maxsplit=1)[-1]
 
         assert "pull_request:" not in trigger, workflow_name
         assert "push:" in workflow, workflow_name
@@ -1578,10 +1579,10 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         assert "paths:" in push_trigger, workflow_name
         assert f"cache-dependency-path: {directory}/pnpm-lock.yaml" in ci_block
         assert f"cd {directory} && pnpm install --frozen-lockfile" in ci_block
-        assert f"bash scripts/check-web-surface.sh {directory}" in ci_block
+        assert f"bash scripts/check-web-surface.sh {surface}" in ci_block
         assert frozenset(_workflow_job("pr-gate")["needs"]) == REQUIRED_PR_GATE_JOBS
         assert f"cd {directory} && pnpm install --frozen-lockfile" in workflow
-        assert f"bash scripts/check-web-surface.sh {directory}" in workflow
+        assert f"bash scripts/check-web-surface.sh {surface}" in workflow
         assert (
             "if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}" in workflow
         )
@@ -1845,7 +1846,7 @@ def test_binary_release_summary_names_pkg_and_deb_sbom_coverage() -> None:
 
 def test_binary_release_does_not_publish_latest_json_updater_metadata() -> None:
     workflow = _workflow_text("release.yaml")
-    docs = _source_text("docs/src/content/docs/development/ci.md")
+    docs = _source_text("web/docs/src/content/docs/development/ci.md")
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
     assert "latest.json" not in workflow
@@ -1863,7 +1864,7 @@ def test_binary_release_does_not_publish_latest_json_updater_metadata() -> None:
 
 def test_binary_release_channel_policy_supports_daily_nightly_and_explicit_stable() -> None:
     workflow = _workflow_text("release.yaml")
-    docs = _source_text("docs/src/content/docs/development/ci.md")
+    docs = _source_text("web/docs/src/content/docs/development/ci.md")
     normalized_docs = " ".join(docs.split())
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
@@ -2122,7 +2123,7 @@ def test_self_update_docs_match_verified_package_execution() -> None:
     install_tests = _source_text("tests/capsem-install/test_update.py")
     install_skill = _source_text("skills/dev-installation/SKILL.md")
     architecture_skill = _skill_text("skills/site-architecture/SKILL.md")
-    service_docs = _source_text("docs/src/content/docs/architecture/service-architecture.md")
+    service_docs = _source_text("web/docs/src/content/docs/architecture/service-architecture.md")
 
     assert "apply_binary_installer_plan(&plan).await?" in update_rs
     assert "Binary update applied. Restart Capsem" in update_rs
@@ -2754,7 +2755,7 @@ def test_manifest_source_inputs_are_url_only() -> None:
 
 
 def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json() -> None:
-    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
     release_skill = _skill_text("skills/release-process/SKILL.md")
     release_skill_text = " ".join(release_skill.split())
@@ -2853,9 +2854,9 @@ def test_release_process_skill_documents_multi_channel_graph() -> None:
 
 def test_docs_describe_multi_channel_release_graph() -> None:
     docs_paths = [
-        PROJECT_ROOT / "docs/src/content/docs/security/build-verification.md",
-        PROJECT_ROOT / "docs/src/content/docs/development/ci.md",
-        PROJECT_ROOT / "docs/src/content/docs/architecture/build-system.md",
+        PROJECT_ROOT / "web/docs/src/content/docs/security/build-verification.md",
+        PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md",
+        PROJECT_ROOT / "web/docs/src/content/docs/architecture/build-system.md",
     ]
     combined = "\n".join(path.read_text() for path in docs_paths)
     combined_text = " ".join(combined.split())
@@ -2966,8 +2967,8 @@ def test_capsem_update_checks_release_channel_manifest_not_github_latest() -> No
 
 def test_docs_do_not_teach_bare_manifest_paths_for_package_inputs() -> None:
     docs = [
-        PROJECT_ROOT / "docs/src/content/docs/architecture/asset-pipeline.md",
-        PROJECT_ROOT / "docs/src/content/docs/security/build-verification.md",
+        PROJECT_ROOT / "web/docs/src/content/docs/architecture/asset-pipeline.md",
+        PROJECT_ROOT / "web/docs/src/content/docs/security/build-verification.md",
     ]
 
     for path in docs:
@@ -2987,7 +2988,7 @@ def test_asset_skill_documents_custom_manifest_url_contract() -> None:
 
 
 def test_ci_docs_describes_three_independent_publication_rails() -> None:
-    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     normalized_docs = " ".join(docs.split())
 
     assert (
@@ -3040,7 +3041,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
 
 
 def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None:
-    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
 
     for stage in [
@@ -3233,7 +3234,7 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     bypasses = (
         "cd web/app && pnpm run build",
         "cd web/app && pnpm build",
-        "cd docs && pnpm run build",
+        "cd web/docs && pnpm run build",
         "cd site && pnpm run build",
         "cd build_system/release_site && pnpm run build:channel",
     )
@@ -3339,7 +3340,7 @@ def test_release_channel_deploy_validates_the_deployed_channel_shape() -> None:
 def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -> None:
     script = _source_text("scripts/check-remote-release-readiness.py")
     remote_gate = _source_text("build_system/builder/release/tools/remote_ci_gate.py")
-    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
 
     assert "Read-only remote release readiness checks" in script
@@ -3468,7 +3469,7 @@ def test_remote_release_readiness_fetch_retries_ipv4_on_network_unreachable(monk
 
 
 def test_dependent_release_activation_order_is_documented() -> None:
-    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
     for text in (docs, release_skill):
@@ -3557,7 +3558,7 @@ jobs:
 
 def test_remote_release_readiness_checker_reports_unpublished_local_commits() -> None:
     script = _source_text("scripts/check-remote-release-readiness.py")
-    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
 
     assert "def check_local_branch_publication" in script
@@ -3597,7 +3598,7 @@ def test_remote_release_readiness_missing_dependency_reports_setup_hint(tmp_path
 def test_remote_release_readiness_requires_active_pr_gate_rule() -> None:
     module = _readiness_checker_module()
     script = _source_text("scripts/check-remote-release-readiness.py")
-    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
 
     assert module.classic_protection_requires_pr_gate(
@@ -3642,7 +3643,7 @@ def test_remote_release_readiness_requires_active_pr_gate_rule() -> None:
 def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -> None:
     module = _readiness_checker_module()
     script = _source_text("scripts/check-remote-release-readiness.py")
-    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
     sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
     obom_bytes = _rootfs_obom_bytes()
@@ -4326,7 +4327,7 @@ def test_release_channel_smoke_host_sbom_attestation_subjects_cover_packages() -
 def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
     module = _readiness_checker_module()
     script = _source_text("scripts/check-remote-release-readiness.py")
-    docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
+    docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
     calls: list[str] = []
     headers = {
@@ -4977,10 +4978,10 @@ def test_changelog_does_not_advertise_keychain_credential_storage_for_1_3() -> N
 
 def test_release_docs_identify_body_blobs_as_forensic_truth() -> None:
     telemetry = (
-        PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "session-telemetry.md"
+        PROJECT_ROOT / "web" / "docs" / "src" / "content" / "docs" / "architecture" / "session-telemetry.md"
     ).read_text()
     network = (
-        PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "security" / "network-isolation.md"
+        PROJECT_ROOT / "web" / "docs" / "src" / "content" / "docs" / "security" / "network-isolation.md"
     ).read_text()
     debug_skill = (PROJECT_ROOT / "skills" / "dev-session-debug" / "SKILL.md").read_text()
     mcp_skill = (PROJECT_ROOT / "skills" / "dev-mcp" / "SKILL.md").read_text()
@@ -5044,8 +5045,9 @@ def test_release_docs_reject_old_service_routes_and_manifest_signing() -> None:
 
 def test_release_docs_name_tool_calls_as_canonical_tool_ledger() -> None:
     docs = [
-        PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "mcp-gateway.md",
+        PROJECT_ROOT / "web" / "docs" / "src" / "content" / "docs" / "architecture" / "mcp-gateway.md",
         PROJECT_ROOT
+        / "web"
         / "docs"
         / "src"
         / "content"
@@ -5727,8 +5729,8 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
     assert rejected.returncode != 0
     assert "silently substitutes stable" in rejected.stderr
 
-    doctrine = tmp_path / "docs/regression.md"
-    doctrine.parent.mkdir(exist_ok=True)
+    doctrine = tmp_path / "web/docs/regression.md"
+    doctrine.parent.mkdir(parents=True, exist_ok=True)
     retired_markers = (
         "release-" + "qualification.yaml",
         "check-release-" + "qualification.py",
@@ -6038,7 +6040,7 @@ def test_builder_has_no_legacy_ai_provider_authoring_rail() -> None:
 def test_gateway_docs_describe_explicit_routes_not_generic_forwarding() -> None:
     docs = "\n".join(
         [
-            _source_text("docs/src/content/docs/architecture/service-api.md"),
+            _source_text("web/docs/src/content/docs/architecture/service-api.md"),
             _skill_text("skills/site-architecture/SKILL.md"),
             _source_text("skills/frontend-design/SKILL.md"),
         ]
@@ -6074,7 +6076,7 @@ def test_config_contract_has_no_admin_or_registry_authority() -> None:
         PROJECT_ROOT / "crates" / "capsem-admin" / "src",
         PROJECT_ROOT / "crates" / "capsem-core" / "src" / "net" / "policy_config",
         PROJECT_ROOT / "tests",
-        PROJECT_ROOT / "docs" / "src" / "content" / "docs",
+        PROJECT_ROOT / "web" / "docs" / "src" / "content" / "docs",
         PROJECT_ROOT / "skills",
         PROJECT_ROOT / ".github" / "workflows",
     ]
@@ -6116,7 +6118,7 @@ def test_builder_has_no_guest_scaffold_authoring_rail() -> None:
     )
     checked_roots = [
         PROJECT_ROOT / "src" / "capsem" / "builder",
-        PROJECT_ROOT / "docs" / "src" / "content" / "docs",
+        PROJECT_ROOT / "web" / "docs" / "src" / "content" / "docs",
         PROJECT_ROOT / "skills",
         PROJECT_ROOT / ".github" / "workflows",
     ]

@@ -28,4 +28,4 @@ Profiles own `min_capsem_version`, config files, software inventory, profile
 images, and ABOM/OBOM evidence. Profiles never select the current Capsem binary.
 
 The full release output contract lives in
-`docs/src/content/docs/architecture/release-output.md`.
+`web/docs/src/content/docs/architecture/release-output.md`.

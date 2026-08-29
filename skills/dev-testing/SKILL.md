@@ -281,7 +281,7 @@ Do not demote suspend/resume, lifecycle, provisioning, or teardown tests to
 concurrent run sees restore permission errors, loop-device corruption,
 connection-refused startup races, or readiness misses, fix the lifecycle rail.
 Full context and failure signatures live in
-`docs/src/content/docs/gotchas/concurrent-suspend-resume.md`.
+`web/docs/src/content/docs/gotchas/concurrent-suspend-resume.md`.
 
 ## Adversarial testing
 

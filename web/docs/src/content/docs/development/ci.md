@@ -64,7 +64,7 @@ Tests the KVM backend, which only compiles on Linux:
 
 Hosted-runner quality suite on macOS:
 
-1. **Shared fast/static gate** -- blocking RustSec and all-workspace JavaScript audits, Clippy, Python lint/type checks, web app/docs/sites, source contracts, cross-compilation, clean install-harness bootstrap, and portable coverage
+1. **Shared fast/static gate** -- blocking RustSec and all-workspace JavaScript audits, Clippy, Python lint/type checks, all web surfaces, source contracts, cross-compilation, clean install-harness bootstrap, and portable coverage
 2. **Rust unit tests with coverage** -- every workspace crate, including macOS-only app/tray crates
 3. **Rust integration tests** -- cross-crate tests from `tests/` directory
 4. **Frontend** -- type check (`astro check` + `svelte-check`), vitest with coverage, production build

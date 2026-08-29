@@ -199,7 +199,7 @@ reason = "The desktop dashboard moves intact and remains embedded by the Tauri a
 [[surface]]
 id = "web-docs"
 state = "migrating"
-current = ["docs/"]
+current = ["web/docs/"]
 targets = ["web/docs/"]
 lint = ["fast.audit.markdown", "fast.audit.source-syntax"]
 tests = ["docs build", "tests/test_docs_holding_contract.py"]

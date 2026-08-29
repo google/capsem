@@ -13,7 +13,9 @@ import textwrap
 from pathlib import Path
 
 INSTALL_SH = Path(__file__).resolve().parents[3] / "site" / "public" / "install.sh"
-DOCS_INSTALL_SH = Path(__file__).resolve().parents[3] / "docs" / "public" / "install.sh"
+DOCS_INSTALL_SH = (
+    Path(__file__).resolve().parents[3] / "web" / "docs" / "public" / "install.sh"
+)
 
 
 def _run_shell(script: str) -> subprocess.CompletedProcess[str]:

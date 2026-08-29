@@ -15,6 +15,7 @@ FIXTURE_GRAPH = (
 )
 RELEASE_OUTPUT_DOC = (
     PROJECT_ROOT
+    / "web"
     / "docs"
     / "src"
     / "content"
