@@ -29,7 +29,10 @@ def _just_python_entrypoints() -> list[Path]:
     return sorted(
         path
         for path in referenced
-        if "ArgumentParser" in path.read_text(encoding="utf-8")
+        if any(
+            marker in path.read_text(encoding="utf-8")
+            for marker in ("ArgumentParser", "capsem_builder.gate.tools.doctor")
+        )
     )
 
 

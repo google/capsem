@@ -16,4 +16,4 @@ lint_mapping_sha256 = "ac42e4aac5f97bab38e19bf3691343d0f79934dabef4137ac501baa6f
 coverage_mapping_count = 4
 coverage_mapping_sha256 = "342da96ae0980f73debda6a54a975b8128d3ce0a53eb11a819b8400dd196814e"
 legacy_reference_count = 595
-legacy_reference_sha256 = "74406fb1e9be49480bf3a8350c91e16dbe8569463573f2b07396a8ab96e0a900"
+legacy_reference_sha256 = "853e91ae6f6f70a1ff72d9e88d6c0c831b62592674bcf7fe347b88e51b5c4e0e"

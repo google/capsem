@@ -1,21 +1,16 @@
-import importlib.util
+import importlib
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate.tools.doctor import doctor_session_test
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def load_doctor_script():
-    script_path = PROJECT_ROOT / "scripts" / "doctor_session_test.py"
-    spec = importlib.util.spec_from_file_location("capsem_doctor_session_test", script_path)
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+    return importlib.reload(doctor_session_test)
 
 
 def test_doctor_ledger_session_is_stopped_then_verified_then_deleted(tmp_path, monkeypatch):

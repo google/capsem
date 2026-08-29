@@ -373,7 +373,9 @@ def test_macos_doctor_requires_live_rosetta_registration() -> None:
 def test_bootstrap_and_doctor_prove_tart_cache_clone_boot_and_ssh() -> None:
     bootstrap = _source_text("bootstrap.sh")
     doctor = _source_text("scripts/doctor-macos.sh")
-    readiness = _source_text("scripts/tart_readiness.py")
+    readiness = _source_text(
+        "build_system/builder/image/tools/build/tart_readiness.py"
+    )
 
     assert 'uv run --project build_system --frozen python "$SCRIPT_DIR/scripts/tart_readiness.py"' in bootstrap
     assert "--require-cache" in doctor
@@ -4486,9 +4488,13 @@ def test_guest_network_doctor_has_no_skipped_protocol_proofs() -> None:
 
 
 def test_doctor_session_validation_starts_mock_server() -> None:
-    source = (PROJECT_ROOT / "scripts" / "doctor_session_test.py").read_text()
+    source = (
+        PROJECT_ROOT
+        / "build_system/builder/gate/tools/doctor/doctor_session_test.py"
+    ).read_text()
 
-    assert "from mock_server import start_mock_server, stop_process" in source
+    assert "_mock_server_module" in source
+    assert 'SCRIPT_DIR / "mock_server.py"' in source
     assert "CAPSEM_MOCK_SERVER_BASE_URL" in source
     assert '"create",' in source
     assert '"exec",' in source
@@ -4502,10 +4508,16 @@ def test_release_scripts_use_shared_mock_server_helper() -> None:
     helper = PROJECT_ROOT / "scripts" / "mock_server.py"
     assert helper.exists(), "release scripts need one shared mock-server helper"
 
-    direct_imports = [
-        "scripts/doctor_session_test.py",
-        "scripts/integration_test.py",
-    ]
+    doctor = (
+        PROJECT_ROOT
+        / "build_system/builder/gate/tools/doctor/doctor_session_test.py"
+    ).read_text()
+    assert "_mock_server_module" in doctor
+    assert 'SCRIPT_DIR / "mock_server.py"' in doctor
+    assert "def _read_mock_server_ready" not in doctor
+    assert "def _start_mock_server" not in doctor
+
+    direct_imports = ["scripts/integration_test.py"]
     helper_imports = [
         "tests/capsem-serial/test_mock_server_protocol_benchmark.py",
     ]
