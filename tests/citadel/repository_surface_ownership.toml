@@ -223,7 +223,7 @@ reason = "The public marketing site moves under the web product owner."
 [[surface]]
 id = "web-graphics"
 state = "migrating"
-current = ["graphics/"]
+current = ["web/graphics/"]
 targets = ["web/graphics/"]
 lint = ["fast.citadel"]
 tests = ["graphics reference guards", "T5 visual browser verification"]

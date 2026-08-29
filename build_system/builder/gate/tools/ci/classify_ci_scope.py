@@ -41,7 +41,7 @@ KNOWN_DIRECTORIES = frozenset(
         ".agents", ".cargo", ".claude", ".codex", ".config", ".cursor",
         ".gemini", ".github", "bench", "benchmarks",
         "build_system", "config", "crates", "data", "docker",
-        "graphics", "guest",
+        "guest",
         "scripts", "sdk", "security", "skills",
         "sprints", "src", "tests", "tmp",
         "web",
@@ -154,8 +154,6 @@ def _path_scopes(path: str) -> frozenset[str]:
             raise ValueError(f"unowned build_system subtree: {path}")
     elif root in BUILD_SYSTEM_ROOTS or path in BUILD_SYSTEM_FILES:
         scopes = {"build_system"}
-    elif root == "graphics":
-        scopes = {"marketing_graphics"}
     elif root in {"bench", "benchmarks"}:
         if root == "bench" and remainder and not remainder.startswith("collectors/"):
             raise ValueError(f"unowned bench subtree: {path}")

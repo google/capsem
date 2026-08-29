@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../../../crates/capsem-app/icons/icon.svg" alt="Capsem" width="120" />
+  <img src="../public/favicon.svg" alt="Capsem" width="120" />
 </p>
 
 <h1 align="center">Capsem</h1>

@@ -5,7 +5,6 @@ on:
     paths:
       - .github/workflows/site.yaml
       - README.md
-      - graphics/**
       - scripts/check-web-surface.sh
       - scripts/lib/exec_lock.sh
       - web/graphics/**

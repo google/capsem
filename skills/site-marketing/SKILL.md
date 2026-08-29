@@ -91,4 +91,4 @@ Defined in `web/marketing/src/styles/global.css` using Tailwind v4 `@theme` toke
 
 ## Graphics and icons
 
-Icons use inline SVG paths from `web/marketing/src/lib/icons.ts`, rendered via `Icon.svelte`. Favicons in `web/marketing/public/` are generated from `graphics/icon/1024w/capsem-logo-color.png`.
+Icons use inline SVG paths from `web/marketing/src/lib/icons.ts`, rendered via `Icon.svelte`. Favicons in `web/marketing/public/` are generated from `web/graphics/icon/1024w/capsem-logo-color.png`.

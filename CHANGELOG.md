@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Brand and Tauri icon sources now have one canonical owner under
+  `web/graphics/`; native packaging, CI, documentation, and web callers no
+  longer depend on the retired root or a duplicate crate-local icon set.
 - The marketing site now lives under `web/marketing/`; CI, deployment,
   installer validation, coverage, and developer callers follow its functional
   owner without changing the public `/` or `/later/` routes.

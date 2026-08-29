@@ -185,7 +185,6 @@ def _push_paths(name: str) -> set[str]:
 
 def test_public_web_deployments_run_only_for_owned_and_shared_inputs() -> None:
     script_root = "scr" + "ipts"
-    current_graphics = "gra" + "phics/**"
     shared = {
         "README.md",
         f"{script_root}/check-web-surface.sh",
@@ -200,7 +199,6 @@ def test_public_web_deployments_run_only_for_owned_and_shared_inputs() -> None:
     }
     assert _push_paths("site.yaml") == shared | {
         ".github/workflows/site.yaml",
-        current_graphics,
         "web/marketing/**",
         "web/graphics/**",
     }

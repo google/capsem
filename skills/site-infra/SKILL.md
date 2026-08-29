@@ -140,10 +140,10 @@ Custom CSS in `web/docs/src/styles/custom.css`. Accent colors and fonts. Logo at
 
 ## Graphics and icons
 
-Source of truth for all icons: `graphics/` at the project root.
+Source of truth for all icons: `web/graphics/`.
 
 ```
-graphics/
+web/graphics/
   icon/                        Brand icon in multiple sizes and variants
     icon-mainfile.ai           Illustrator source file
     22w/                       22px (menu bar)
@@ -158,14 +158,14 @@ graphics/
     icon.icns, icon.ico, icon.svg
 ```
 
-Site favicons in `web/docs/public/` are generated from `graphics/icon/1024w/capsem-logo-color.png`. To regenerate:
+Site favicons in `web/docs/public/` are generated from `web/graphics/icon/1024w/capsem-logo-color.png`. To regenerate:
 
 ```bash
-sips -z 16 16 graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/favicon-16x16.png
-sips -z 32 32 graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/favicon-32x32.png
-sips -z 180 180 graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/apple-touch-icon.png
-sips -z 192 192 graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/android-chrome-192x192.png
-sips -z 512 512 graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/android-chrome-512x512.png
+sips -z 16 16 web/graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/favicon-16x16.png
+sips -z 32 32 web/graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/favicon-32x32.png
+sips -z 180 180 web/graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/apple-touch-icon.png
+sips -z 192 192 web/graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/android-chrome-192x192.png
+sips -z 512 512 web/graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/android-chrome-512x512.png
 ```
 
 ## Custom images

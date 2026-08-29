@@ -61,7 +61,7 @@ config/profiles/<id>/     Profile ledgers (code, co-work): profile.toml + packag
 src/capsem/builder/       capsem-builder backend helpers (image builds are driven by capsem-admin)
 guest/artifacts/          Guest scripts and diagnostics (capsem-init, bashrc, tests)
 target/assets/            Built VM assets (gitignored, per-arch: target/assets/{arch}/)
-graphics/                 Brand icons and Tauri app icons (source of truth)
+web/graphics/             Brand icons and Tauri app icons (source of truth)
 skills/                   Shared AI agent skills (SKILL.md format)
 tests/                    Cross-crate suites (ironbank/ black-box gates, citadel/ guards)
                           citadel/ is source-level and runs in the fast phase: a

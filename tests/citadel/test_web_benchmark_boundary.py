@@ -37,7 +37,7 @@ REFERENCE_PATTERNS = {
     "app": re.compile(r"(?<![\w-])frontend/|['\"]frontend['\"]"),
     "docs": re.compile(r"(?<![\w-])docs/|['\"]docs['\"]"),
     "marketing": re.compile(r"(?<![\w-])site/|['\"]site['\"]"),
-    "graphics": re.compile(r"(?<![\w-])graphics/|['\"]graphics['\"]"),
+    "graphics": re.compile(r"(?<![\w/-])graphics/|['\"]graphics['\"]"),
     "collectors": re.compile(r"(?<![\w-])bench/collectors/|['\"]bench['\"]"),
     "baselines": re.compile(r"(?<![\w-])benchmarks/|['\"]benchmarks['\"]"),
 }
@@ -134,6 +134,7 @@ def _coverage_mappings() -> tuple[str, ...]:
 def _tauri_problems(config: dict[str, Any], tracked: frozenset[str]) -> list[str]:
     problems: list[str] = []
     base = Path("crates/capsem-app")
+    canonical_icons = Path("web/graphics/tauri")
     frontend = (ROOT / base / config["build"]["frontendDist"]).resolve().relative_to(ROOT).as_posix()
     source_root = str(Path(frontend).parent).rstrip("/") + "/"
     if not any(path.startswith(source_root) for path in tracked):
@@ -150,6 +151,13 @@ def _tauri_problems(config: dict[str, Any], tracked: frozenset[str]) -> list[str
         resolved = (ROOT / base / icon).resolve().relative_to(ROOT).as_posix()
         if resolved not in tracked:
             problems.append(f"Tauri icon is missing: {resolved}")
+        elif not Path(resolved).is_relative_to(canonical_icons):
+            problems.append(f"Tauri icon is outside canonical ownership: {resolved}")
+    problems.extend(
+        f"duplicate crate-local Tauri icon: {path}"
+        for path in sorted(tracked)
+        if path.startswith("crates/capsem-app/icons/")
+    )
     return problems
 
 
@@ -317,6 +325,28 @@ def test_tauri_asset_resolver_is_observed_red() -> None:
     }
     problems = _tauri_problems(config, frozenset())
     assert len(problems) == 3, RATIONALE
+
+
+def test_tauri_icon_owner_and_duplicate_are_observed_red() -> None:
+    config = {
+        "build": {"frontendDist": "../../web/app/dist"},
+        "bundle": {
+            "macOS": {
+                "entitlements": "../../build_system/packaging/macos/entitlements.plist"
+            },
+            "icon": ["icons/icon.png"],
+        },
+    }
+    tracked = frozenset(
+        {
+            "web/app/src/App.svelte",
+            "build_system/packaging/macos/entitlements.plist",
+            "crates/capsem-app/icons/icon.png",
+        }
+    )
+    problems = _tauri_problems(config, tracked)
+    assert any("outside canonical ownership" in problem for problem in problems), RATIONALE
+    assert any("duplicate crate-local Tauri icon" in problem for problem in problems), RATIONALE
 
 
 def test_current_web_benchmark_boundary_is_exact() -> None:

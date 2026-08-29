@@ -32,11 +32,11 @@
       "minimumSystemVersion": "14.0"
     },
     "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
+      "../../web/graphics/tauri/32x32.png",
+      "../../web/graphics/tauri/128x128.png",
+      "../../web/graphics/tauri/128x128@2x.png",
+      "../../web/graphics/tauri/icon.icns",
+      "../../web/graphics/tauri/icon.ico"
     ]
   }
 }
