@@ -1,4 +1,4 @@
-"""Tests for scripts/repack-deb.sh.
+"""Tests for build_system/packaging/linux/repack-deb.sh.
 
 The script is the seam between Tauri's bundler and the host install: if it
 silently drops a companion binary or accepts a malformed input path, every
@@ -26,9 +26,10 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = REPO_ROOT / "scripts" / "repack-deb.sh"
-POSTINST = REPO_ROOT / "scripts" / "deb-postinst.sh"
-PREINST = REPO_ROOT / "scripts" / "deb-preinst.sh"
+LINUX_PACKAGING = REPO_ROOT / "build_system" / "packaging" / "linux"
+SCRIPT = LINUX_PACKAGING / "repack-deb.sh"
+POSTINST = LINUX_PACKAGING / "deb-postinst.sh"
+PREINST = LINUX_PACKAGING / "deb-preinst.sh"
 
 REQUIRED_BINARIES = [
     "capsem",
@@ -241,7 +242,7 @@ def test_happy_path_adds_every_companion_binary(tmp_path):
 
 
 def test_postinst_script_is_included(tmp_path):
-    """DEBIAN/postinst is copied from scripts/deb-postinst.sh and is executable."""
+    """DEBIAN/postinst is copied from the Linux packaging owner and is executable."""
     fixture = _build_fixture_deb(tmp_path)
     bin_dir = tmp_path / "bin"
     config_dir = tmp_path / "target-config"
@@ -262,7 +263,7 @@ def test_postinst_script_is_included(tmp_path):
     # copy, not a text-munging bug.
     expected_head = POSTINST.read_text().splitlines()[0]
     assert postinst.read_text().startswith(expected_head), (
-        "postinst doesn't look like scripts/deb-postinst.sh"
+        "postinst doesn't look like the owned deb-postinst.sh"
     )
     postinst_text = postinst.read_text()
     assert "Tester action: copy the output of this command into the bug report:" in postinst_text
@@ -292,7 +293,7 @@ def test_preinst_script_is_included(tmp_path):
     )
     expected_head = PREINST.read_text().splitlines()[0]
     assert preinst.read_text().startswith(expected_head), (
-        "preinst doesn't look like scripts/deb-preinst.sh"
+        "preinst doesn't look like the owned deb-preinst.sh"
     )
     preinst_text = preinst.read_text()
     assert "Tester action: copy the output of this command into the bug report:" in preinst_text
@@ -423,7 +424,7 @@ def test_repacked_deb_declares_the_glibc_floor_it_actually_needs(tmp_path):
     expected = subprocess.run(
         [
             "python3",
-            str(REPO_ROOT / "scripts" / "derive-deb-libc-floor.py"),
+            str(LINUX_PACKAGING / "derive-deb-libc-floor.py"),
             str(extracted),
         ],
         capture_output=True,

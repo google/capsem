@@ -1079,7 +1079,7 @@ def repack_deb(
     run(
         [
             "bash",
-            "scripts/repack-deb.sh",
+            "build_system/packaging/linux/repack-deb.sh",
             "--manifest",
             manifest_url,
             str(input_deb),

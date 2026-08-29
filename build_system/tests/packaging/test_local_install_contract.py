@@ -256,7 +256,9 @@ def test_linux_package_detects_only_its_own_service_cgroup(
 
 
 def test_deb_preinstall_preserves_a_service_owned_update_until_activation() -> None:
-    preinstall = (ROOT / "scripts/deb-preinst.sh").read_text(encoding="utf-8")
+    preinstall = (
+        ROOT / "build_system/packaging/linux/deb-preinst.sh"
+    ).read_text(encoding="utf-8")
 
     branch = preinstall[preinstall.index("if capsem_install_runs_inside_service") :]
     preserve, ordinary = branch.split("else", maxsplit=1)

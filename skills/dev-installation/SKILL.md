@@ -96,7 +96,7 @@ retry after failure; postinstall removes both only after success.
   stale package-owned helpers, removes old app/share payloads, then
   `scripts/pkg-scripts/postinstall` copies binaries, hydrates assets, registers
   the service, waits for service/gateway readiness, and opens the app.
-- Linux `.deb`: `scripts/deb-preinst.sh` is packaged as `DEBIAN/preinst`. It
+- Linux `.deb`: `build_system/packaging/linux/deb-preinst.sh` is packaged as `DEBIAN/preinst`. It
   normally runs `systemctl --user stop capsem.service` when a user systemd
   session is available, then kills the stale helper cohort before package replacement
   so old service/gateway/tray/process binaries cannot survive from
@@ -111,7 +111,7 @@ retry after failure; postinstall removes both only after success.
   updater already owns the exact preverified candidate and final restart. This
   is the bootstrap for releases whose previous service does not yet contain the
   sibling `systemd-run` updater.
-  For ordinary installs, `scripts/deb-postinst.sh` symlinks the packaged
+  For ordinary installs, `build_system/packaging/linux/deb-postinst.sh` symlinks the packaged
   binaries into `~/.capsem/bin`, hydrates assets, and invokes `capsem install`
   to register or enable the user service without restarting an already active
   unit mid-transaction.

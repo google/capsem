@@ -536,7 +536,7 @@ def test_cross_compile_repacks_deb_before_exact_systemd_install_proof() -> None:
 
     companion = script.index("Build companion host binaries")
     tauri = script.index("cargo tauri build --target")
-    repack = script.index("scripts/repack-deb.sh")
+    repack = script.index('"$SCRIPT_DIR/repack-deb.sh"')
     validate = script.index("dpkg-deb --contents")
     assert companion < tauri < repack < validate
 
@@ -554,7 +554,9 @@ def test_cross_compile_repacks_deb_before_exact_systemd_install_proof() -> None:
         (PROJECT_ROOT / "build_system/builder/gate" / name).read_text(encoding="utf-8")
         for name in ("packagerail.py", "crosscompile.py")
     )
-    assert config.package.proof_selector == "scripts/select-linux-deb-proof.sh"
+    assert config.package.proof_selector == (
+        "build_system/packaging/linux/select-linux-deb-proof.sh"
+    )
     # The variable is declared in `[package]` and read through it. Asserting
     # the literal appeared in this module was asserting where it was spelled,
     # which stopped being true the moment it got one owner.
@@ -662,7 +664,10 @@ def test_binary_release_requires_exact_linux_deb_proof() -> None:
 
     assert "build-app-linux:" in workflow
     assert "runs-on: ${{ matrix.runner }}" in workflow
-    assert 'python3 scripts/install-deb-runtime-dependencies.py "$package"' in native
+    assert (
+        'python3 build_system/packaging/linux/install-deb-runtime-dependencies.py '
+        '"$package"' in native
+    )
     assert 'sudo dpkg -i "$package"' in native
     assert "sudo apt-get install -f -y" not in native
     assert native.index("install-deb-runtime-dependencies.py") < native.index(
@@ -681,7 +686,13 @@ def test_binary_release_requires_exact_linux_deb_proof() -> None:
 
 
 def test_linux_deb_proof_selector_requires_only_the_native_package() -> None:
-    selector = PROJECT_ROOT / "scripts" / "select-linux-deb-proof.sh"
+    selector = (
+        PROJECT_ROOT
+        / "build_system"
+        / "packaging"
+        / "linux"
+        / "select-linux-deb-proof.sh"
+    )
 
     cases = (
         ("Linux", "x86_64", "x86_64", "1", "1", "prove"),
@@ -710,7 +721,13 @@ def test_linux_deb_proof_selector_requires_only_the_native_package() -> None:
 
 
 def test_linux_deb_proof_selector_fails_closed_for_native_package_without_kvm() -> None:
-    selector = PROJECT_ROOT / "scripts" / "select-linux-deb-proof.sh"
+    selector = (
+        PROJECT_ROOT
+        / "build_system"
+        / "packaging"
+        / "linux"
+        / "select-linux-deb-proof.sh"
+    )
 
     result = subprocess.run(
         ["bash", str(selector), "Linux", "arm64", "arm64", "0", "1"],
@@ -923,7 +940,7 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
         if isinstance(node, ast.FunctionDef) and node.name == "clone_manifest_for_channel"
     ]
 
-    assert "scripts/repack-deb.sh" in script
+    assert "build_system/packaging/linux/repack-deb.sh" in script
     assert "scripts/generate-host-binary-sbom.py" in script
     assert "record-binary" in authoring
     assert '"--source-commit"' in authoring
@@ -1070,8 +1087,9 @@ def test_install_recipe_runs_release_glowup_in_clean_project_environment() -> No
 def test_native_packages_make_full_doctor_mock_server_self_contained() -> None:
     build_pkg = (PROJECT_ROOT / "scripts" / "build-pkg.sh").read_text()
     pkg_postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
-    repack_deb = (PROJECT_ROOT / "scripts" / "repack-deb.sh").read_text()
-    deb_postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()
+    linux = PROJECT_ROOT / "build_system" / "packaging" / "linux"
+    repack_deb = (linux / "repack-deb.sh").read_text()
+    deb_postinst = (linux / "deb-postinst.sh").read_text()
     cli = (PROJECT_ROOT / "crates" / "capsem" / "src" / "main.rs").read_text()
     mock_server = (PROJECT_ROOT / "crates" / "capsem-mock-server" / "src" / "main.rs").read_text()
 
@@ -1314,7 +1332,9 @@ def test_cross_compile_reasserts_pinned_rust_target_before_expensive_work() -> N
 
 
 def test_deb_repacker_strips_each_elf_with_its_target_tool_and_fails_closed() -> None:
-    repack = (PROJECT_ROOT / "scripts/repack-deb.sh").read_text()
+    repack = (
+        PROJECT_ROOT / "build_system/packaging/linux/repack-deb.sh"
+    ).read_text()
 
     assert "x86_64-linux-gnu-strip" in repack
     assert "aarch64-linux-gnu-strip" in repack
@@ -1777,7 +1797,7 @@ def test_local_release_glowup_repack_uses_selected_asset_fixture(
     assert commands == [
         [
             "bash",
-            "scripts/repack-deb.sh",
+            "build_system/packaging/linux/repack-deb.sh",
             "--manifest",
             "https://release.invalid/assets/stable/manifest.json",
             str(tmp_path / "input.deb"),
@@ -2645,7 +2665,7 @@ def test_dev_service_does_not_replace_installed_assets_with_worktree_symlink() -
 def test_installers_remove_retired_user_and_service_config_rails() -> None:
     scripts = [
         PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall",
-        PROJECT_ROOT / "scripts" / "deb-postinst.sh",
+        PROJECT_ROOT / "build_system" / "packaging" / "linux" / "deb-postinst.sh",
         PROJECT_ROOT / "scripts" / "simulate-install.sh",
     ]
 
@@ -2659,7 +2679,7 @@ def test_installers_remove_retired_user_and_service_config_rails() -> None:
 def test_installers_remove_retired_python_admin_bundle() -> None:
     scripts = [
         PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall",
-        PROJECT_ROOT / "scripts" / "deb-postinst.sh",
+        PROJECT_ROOT / "build_system" / "packaging" / "linux" / "deb-postinst.sh",
         PROJECT_ROOT / "scripts" / "simulate-install.sh",
     ]
 
@@ -2670,7 +2690,10 @@ def test_installers_remove_retired_python_admin_bundle() -> None:
 
 
 def test_native_postinstall_merges_fresh_check_into_manifest_metadata() -> None:
-    for relative in ("scripts/pkg-scripts/postinstall", "scripts/deb-postinst.sh"):
+    for relative in (
+        "scripts/pkg-scripts/postinstall",
+        "build_system/packaging/linux/deb-postinst.sh",
+    ):
         script = (PROJECT_ROOT / relative).read_text()
         metadata = script.index("manifest-metadata.json")
         hydrate = script.index('update --assets --manifest \\"$MANIFEST_SOURCE\\"')
@@ -2707,8 +2730,9 @@ def test_manifest_generation_public_path_is_capsem_admin() -> None:
 
 def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     build_pkg = (PROJECT_ROOT / "scripts" / "build-pkg.sh").read_text()
-    repack_deb = (PROJECT_ROOT / "scripts" / "repack-deb.sh").read_text()
-    deb_postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()
+    linux = PROJECT_ROOT / "build_system" / "packaging" / "linux"
+    repack_deb = (linux / "repack-deb.sh").read_text()
+    deb_postinst = (linux / "deb-postinst.sh").read_text()
     pkg_preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
     pkg_postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
     pkg_install_user = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "install-user").read_text()
@@ -2751,8 +2775,13 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert 'CONFIG_ROOT="${POSITIONAL[3]}"' in build_pkg
     assert 'ditto --norsrc --noextattr "$src" "$dst"' in build_pkg
     assert 'copy_tree_clean "$CONFIG_ROOT/profiles" "$SHARE_DIR/profiles"' in build_pkg
-    assert "for package_script in preinstall postinstall install-diagnostics install-user" in build_pkg
+    assert "for package_script in preinstall postinstall install-user" in build_pkg
     assert 'install -m 0755 "$SCRIPT_DIR/pkg-scripts/$package_script"' in build_pkg
+    assert "for package_script in install-diagnostics install-manifest retire-cohort" in build_pkg
+    assert (
+        'install -m 0755 "$SCRIPT_DIR/../build_system/packaging/shared/$package_script"'
+        in build_pkg
+    )
     assert 'xattr -rc "$WORK_DIR/payload" "$PKG_SCRIPTS"' in build_pkg
     assert 'find "$WORK_DIR/payload" "$PKG_SCRIPTS" -name' in build_pkg
     assert '--scripts "$PKG_SCRIPTS"' in build_pkg
@@ -2925,7 +2954,9 @@ def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
 
 
 def test_linux_postinstall_prints_service_journal_on_readiness_failure() -> None:
-    postinstall = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()
+    postinstall = (
+        PROJECT_ROOT / "build_system/packaging/linux/deb-postinst.sh"
+    ).read_text()
 
     assert "event=service_diagnostics" in postinstall
     assert "systemctl --user status capsem.service --no-pager -l" in postinstall

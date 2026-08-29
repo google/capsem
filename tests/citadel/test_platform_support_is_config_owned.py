@@ -9,7 +9,7 @@ installer denied.
 `config/gate.toml` owns the claim. `install.sh` is served to users as a shell
 script and cannot read it at runtime, so the value is copied there and compared
 here rather than injected. What the Linux floor *means* is proved separately
-and against real images by `scripts/prove-deb-platform-support.py`; this only
+and against real images by `build_system/packaging/linux/prove-deb-platform-support.py`; this only
 keeps the surfaces that state it from disagreeing.
 """
 

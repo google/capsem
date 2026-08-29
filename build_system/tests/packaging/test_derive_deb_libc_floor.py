@@ -1,4 +1,4 @@
-"""Tests for scripts/derive-deb-libc-floor.py.
+"""Tests for build_system/packaging/linux/derive-deb-libc-floor.py.
 
 The first published Debian package declared `libwebkit2gtk-4.1-0, libgtk-3-0,
 libxdo3`
@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = REPO_ROOT / "scripts" / "derive-deb-libc-floor.py"
+SCRIPT = REPO_ROOT / "build_system" / "packaging" / "linux" / "derive-deb-libc-floor.py"
 _ELF_SOURCE = Path("/bin/true")
 
 

@@ -70,7 +70,7 @@ package=$(uv run --project build_system --frozen python scripts/stage-release-te
     --input-dir target/profile-public-before/packages \
     --print-package-path)
 test -n "$package"
-uv run --project build_system --frozen python scripts/install-deb-runtime-dependencies.py "$package" --config config/gate.toml
+uv run --project build_system --frozen python build_system/packaging/linux/install-deb-runtime-dependencies.py "$package" --config config/gate.toml
 
 {
     echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package"

@@ -71,12 +71,12 @@ MATCH_GUARDS = (
         "native postinstall silently falls back to a public channel",
         r"MANIFEST_SOURCE=['\"]https://release\.capsem\.org/assets/(?:stable|nightly)/"
         r"manifest\.json['\"]",
-        ("scripts/deb-postinst.sh", "scripts/pkg-scripts/postinstall"),
+        ("build_system/packaging/linux/deb-postinst.sh", "scripts/pkg-scripts/postinstall"),
     ),
     (
         "native postinstall bypasses installed manifest-metadata provenance",
         r"CAPSEM_RELEASE_(?:MANIFEST|HEALTH)_URL",
-        ("scripts/deb-postinst.sh", "scripts/pkg-scripts/postinstall"),
+        ("build_system/packaging/linux/deb-postinst.sh", "scripts/pkg-scripts/postinstall"),
     ),
     (
         "installed update test bypasses manifest-metadata provenance",
@@ -88,8 +88,8 @@ MATCH_GUARDS = (
         r"manifest-origin\.json|update-check\.json",
         (
             "scripts/build-pkg.sh",
-            "scripts/repack-deb.sh",
-            "scripts/deb-postinst.sh",
+            "build_system/packaging/linux/repack-deb.sh",
+            "build_system/packaging/linux/deb-postinst.sh",
             "scripts/pkg-scripts/postinstall",
             "crates/capsem/src/update.rs",
             "crates/capsem-service/src/main.rs",

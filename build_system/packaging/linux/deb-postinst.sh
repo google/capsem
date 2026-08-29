@@ -8,13 +8,13 @@
 # symlinks them into ~/.capsem/bin/ for the user who installed.
 set -euo pipefail
 if ! declare -F capsem_install_enable_failure_trap >/dev/null; then
-    source "$(cd "$(dirname "$0")/.." && pwd)/build_system/packaging/shared/install-diagnostics"
+    source "$(dirname "$0")/../shared/install-diagnostics"
 fi
 if ! declare -F capsem_resolve_install_manifest >/dev/null; then
-    source "$(cd "$(dirname "$0")/.." && pwd)/build_system/packaging/shared/install-manifest"
+    source "$(dirname "$0")/../shared/install-manifest"
 fi
 if ! declare -F capsem_install_runs_inside_service >/dev/null; then
-    source "$(cd "$(dirname "$0")/.." && pwd)/build_system/packaging/shared/service-owned-update"
+    source "$(dirname "$0")/../shared/service-owned-update"
 fi
 
 CAPSEM_INSTALL_MANIFEST_REQUEST="/var/run/capsem/install-manifest"

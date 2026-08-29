@@ -172,7 +172,9 @@ def test_package_provenance_check_rejects_stale_revision(tmp_path: Path) -> None
 
 def test_every_package_builder_enforces_exact_provenance() -> None:
     macos_builder = (REPO_ROOT / "scripts" / "build-test-macos-package.sh").read_text()
-    linux_builder = (REPO_ROOT / "scripts" / "build-linux-package.sh").read_text()
+    linux_builder = (
+        REPO_ROOT / "build_system" / "packaging" / "linux" / "build-linux-package.sh"
+    ).read_text()
     release_workflow = (REPO_ROOT / ".github" / "workflows" / "release.yaml").read_text()
 
     assert 'bash scripts/check-build-provenance.sh "$ROOT/target/release/capsem"' in macos_builder

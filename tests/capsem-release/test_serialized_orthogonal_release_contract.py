@@ -549,7 +549,7 @@ def test_binary_lane_pulls_profiles_and_never_builds_them() -> None:
     assert "--shared-config-root config" in workflow
     assert 'CAPSEM_CONFIG_ROOT="$PWD/target/release-config"' in workflow
     assert '--package-file "$package"' in workflow
-    assert 'scripts/install-deb-runtime-dependencies.py "$package"' in workflow
+    assert 'build_system/packaging/linux/install-deb-runtime-dependencies.py "$package"' in workflow
     assert "cp target/release-package-root/usr/bin/capsem*" not in workflow
     assert "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem" in workflow
 
@@ -569,7 +569,9 @@ def test_profile_lane_installs_pulled_package_runtime_dependencies() -> None:
     )
 
     resolve_package = pairing.index("--print-package-path")
-    install_dependencies = pairing.index('scripts/install-deb-runtime-dependencies.py "$package"')
+    install_dependencies = pairing.index(
+        'build_system/packaging/linux/install-deb-runtime-dependencies.py "$package"'
+    )
     functional = pairing.index("just qualify-assets")
 
     assert resolve_package < install_dependencies < functional
@@ -690,7 +692,7 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
     for forbidden in (
         "just _cross-compile",
         "scripts/build-pkg.sh",
-        "scripts/repack-deb.sh",
+        "build_system/packaging/linux/repack-deb.sh",
         "cargo tauri build",
     ):
         assert forbidden not in workflow

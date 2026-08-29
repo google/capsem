@@ -246,7 +246,9 @@ def test_cold_channel_pairing_branches_before_package_selection() -> None:
     assert script.index("scripts/fetch-release-artifacts.py") < branch
     assert branch < script.index("--binary-dir target/debug")
     assert branch < script.index("--print-package-path")
-    assert branch < script.index("scripts/install-deb-runtime-dependencies.py")
+    assert branch < script.index(
+        "build_system/packaging/linux/install-deb-runtime-dependencies.py"
+    )
     assert '[[ "$ACTIVATION_READY" == "true" ]]' in script
 
 
@@ -294,7 +296,7 @@ def test_cold_channel_pairing_executes_no_package_action(
     assert "scripts/fetch-release-artifacts.py" in invoked
     for forbidden in (
         "scripts/stage-release-test-inputs.py",
-        "scripts/install-deb-runtime-dependencies.py",
+        "build_system/packaging/linux/install-deb-runtime-dependencies.py",
         "scripts/materialize-config.sh",
     ):
         assert forbidden not in invoked

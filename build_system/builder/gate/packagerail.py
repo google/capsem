@@ -11,7 +11,7 @@ the container keeps first-party build output out of both the helper and host.
 CI takes its Tauri signing keys from secrets where a local build takes them
 from `private/tauri/`.
 
-The build itself is `scripts/build-linux-package.sh`. It used to be the
+The build itself is `build_system/packaging/linux/build-linux-package.sh`. It used to be the
 argument of a `bash -c` inside a `docker run` inside a recipe, escaped twice
 over and written as one logical line; as a file it is syntax-checked with the
 rest of the shell in the repository.

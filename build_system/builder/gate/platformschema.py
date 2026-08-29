@@ -65,7 +65,7 @@ class LinuxPlatform(Strict):
     """The Linux floor, expressed as the glibc the binaries are built against.
 
     `minimum_glibc` is not chosen; it is derived from the shipped binaries by
-    `scripts/derive-deb-libc-floor.py` and recorded here so the support claim
+    `build_system/packaging/linux/derive-deb-libc-floor.py` and recorded here so the support claim
     and the shipped bytes can be compared.
     """
 

@@ -1,13 +1,13 @@
 version = 1
 
 # Exact shrinking migration inventory captured after the adversarial/current-state RED run.
-legacy_program_count = 156
-legacy_program_sha256 = "ccec92cd1dbfa97906878939c50891ce8d89edcb19dca193ecfb675939c8ef20"
+legacy_program_count = 148
+legacy_program_sha256 = "c160f5ee8e8862fffdca202b815b7be77401b098731f4c5abf9eaaaec767d6f8"
 root_dockerfile_count = 9
 root_dockerfile_sha256 = "fac61e7ea01a43d25606e166d2c59ff5dade806282ee8d7ee24b6a4dbd176533"
 release_site_count = 18
 release_site_sha256 = "6b87b15a0d77968246dd168f554f314d74ad013521645ba79b8e5f553be9e52b"
 root_package_surface_count = 2
 root_package_surface_sha256 = "81ebfcc2e0469cec9471eb204c82be8f1dc8f305609b950934bbdb57a655ddc8"
-plan_path_count = 113
-plan_path_sha256 = "13999a6178628b2bf2bb0a0b8d5ce3be4af6d21509dd80b93621476c478cf59a"
+plan_path_count = 104
+plan_path_sha256 = "720c57faf3500d8679990dabcacd3826234424d6080a5f5c380680f67e4c30c2"

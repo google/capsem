@@ -63,7 +63,7 @@ entrypoint with a local gate. Current required mappings are:
   fails if their before/after contents drift, matching CI's generation drift
   gate without requiring the local worktree to be committed first;
 - package assembly and acceptance: local and release CI share
-  `scripts/build-pkg.sh`, `scripts/repack-deb.sh`,
+  `scripts/build-pkg.sh`, `build_system/packaging/linux/repack-deb.sh`,
   `scripts/verify-installed-release.py`, and
   `scripts/prove-installed-shell.py`; macOS-local `just test-clean` builds the real
   release-mode app and unsigned `.pkg`, both Linux release-mode `.deb`
@@ -145,12 +145,12 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
   `capsem update --assets --manifest <URL>` for the selected channel; VM
   payload rebuilds live in the manual asset workflow.
 - **Linux `.deb` self-updates stop stale helpers before replacement.**
-  `scripts/repack-deb.sh` must include `scripts/deb-preinst.sh` as
+  `build_system/packaging/linux/repack-deb.sh` must include `build_system/packaging/linux/deb-preinst.sh` as
   `DEBIAN/preinst`. That preinstall script runs
   `systemctl --user stop capsem.service` when a user systemd session is
   available, then kills the stale helper cohort before package replacement so
   old service/gateway/tray/process binaries cannot survive from old inodes.
-  `scripts/deb-postinst.sh` owns symlink refresh, asset hydration, and service
+  `build_system/packaging/linux/deb-postinst.sh` owns symlink refresh, asset hydration, and service
   registration after replacement. When `/proc/self/cgroup` proves the package
   transaction belongs to the old `capsem.service`, preinstall preserves that
   cohort and postinstall defers manifest hydration/status refresh plus service

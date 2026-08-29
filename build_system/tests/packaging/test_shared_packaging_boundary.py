@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 SHARED = ROOT / "build_system" / "packaging" / "shared"
 LEGACY = ROOT / ("scr" + "ipts")
+LINUX = ROOT / "build_system" / "packaging" / "linux"
 
 EXPECTED_RESOURCE_MODES = {
     "install-diagnostics": 0o755,
@@ -56,15 +57,15 @@ def test_shared_packaging_resources_preserve_reviewed_source_modes() -> None:
 
 def test_native_package_rails_select_shared_lifecycle_helpers() -> None:
     macos_builder = (LEGACY / "build-pkg.sh").read_text(encoding="utf-8")
-    linux_repacker = (LEGACY / "repack-deb.sh").read_text(encoding="utf-8")
-    linux_preinstall = (LEGACY / "deb-preinst.sh").read_text(encoding="utf-8")
-    linux_postinstall = (LEGACY / "deb-postinst.sh").read_text(encoding="utf-8")
+    linux_repacker = (LINUX / "repack-deb.sh").read_text(encoding="utf-8")
+    linux_preinstall = (LINUX / "deb-preinst.sh").read_text(encoding="utf-8")
+    linux_postinstall = (LINUX / "deb-postinst.sh").read_text(encoding="utf-8")
 
     shared_owner = "build_system/packaging/shared"
     assert f'$SCRIPT_DIR/../{shared_owner}/$package_script' in macos_builder
-    assert f'$SCRIPT_DIR/../{shared_owner}/$helper' in linux_repacker
+    assert '$SCRIPT_DIR/../shared/$helper' in linux_repacker
     for maintainer_script in (linux_preinstall, linux_postinstall):
-        assert f'/{shared_owner}/' in maintainer_script
+        assert '$(dirname "$0")/../shared/' in maintainer_script
 
 
 def test_shared_shell_boundaries_preserve_usage_exit_status() -> None:

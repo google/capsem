@@ -97,7 +97,7 @@ minimum_version = "14.0"
 minimum_release_name = "Sonoma"
 
 [platforms.linux]
-# Derived from the shipped binaries by scripts/derive-deb-libc-floor.py and
+# Derived from the shipped binaries by build_system/packaging/linux/derive-deb-libc-floor.py and
 # declared by the .deb, so apt refuses an install it cannot run. Lowering it is
 # a build-base change, not a source change; see issue #181.
 minimum_glibc = "2.39"
@@ -298,7 +298,7 @@ package_runtime_packages = [
     "libwebkit2gtk-4.1-0",
     "libgtk-3-0",
     "libxdo3",
-    # Derived from the shipped binaries by scripts/derive-deb-libc-floor.py,
+    # Derived from the shipped binaries by build_system/packaging/linux/derive-deb-libc-floor.py,
     # not hand-written: the hand-written list above omitted libc entirely, so
     # the package installed on glibc older than it needs and then every binary
     # failed at runtime instead of apt refusing the install.
@@ -364,7 +364,7 @@ macos_report_check = "scripts/check-macos-native-glowup.py"
 serve_script = "scripts/serve-release-test-root.py"
 sbom_script = "scripts/generate-host-binary-sbom.py"
 web_surface_script = "scripts/check-web-surface.sh"
-runtime_dependencies_script = "scripts/install-deb-runtime-dependencies.py"
+runtime_dependencies_script = "build_system/packaging/linux/install-deb-runtime-dependencies.py"
 runtime_dependencies_config = "config/gate.toml"
 # The Debian package name, as dpkg-query reports it.
 package_name = "capsem"
@@ -510,8 +510,8 @@ channel_variable = "CAPSEM_INSTALL_CHANNEL"
 require_proof_variable = "CAPSEM_REQUIRE_LINUX_DEB_PROOF"
 
 builder_image = "capsem-host-builder:latest"
-build_script = "scripts/build-linux-package.sh"
-proof_selector = "scripts/select-linux-deb-proof.sh"
+build_script = "build_system/packaging/linux/build-linux-package.sh"
+proof_selector = "build_system/packaging/linux/select-linux-deb-proof.sh"
 
 # The sidecar a release lane stages beside its manifest.
 release_inputs_name = "release-inputs.json"
@@ -2169,7 +2169,7 @@ macos_glowup_script = "scripts/macos_release_glowup.py"
 # Proves the published package runs on every release [platforms.linux]
 # claims and is refused below the floor. The rest of the install chain
 # only ever runs on ubuntu:24.04, where a wrong floor is invisible.
-platform_support_script = "scripts/prove-deb-platform-support.py"
+platform_support_script = "build_system/packaging/linux/prove-deb-platform-support.py"
 macos_glowup_report = "target/macos-tart-glowup/report.json"
 macos_report_variable = "CAPSEM_MACOS_NATIVE_GLOWUP_REPORT"
 glowup_work_dir = "target/release-module-glowup"
@@ -3098,31 +3098,31 @@ reason = "the container can exit between being listed and being inspected"
 
 [[boundary.discarded_verdicts]]
 digest = "218517a41536"
-where = "scripts/deb-postinst.sh"
+where = "build_system/packaging/linux/deb-postinst.sh"
 subject = "cp -R /usr/share/capsem/profiles/. $CAPSEM_DIR/profiles/"
 reason = "the packaged profile tree is optional; its absence must not fail the install"
 
 [[boundary.discarded_verdicts]]
 digest = "b61604839e7c"
-where = "scripts/deb-postinst.sh"
+where = "build_system/packaging/linux/deb-postinst.sh"
 subject = "su $TARGET_USER -c XDG_RUNTIME_DIR=$XDG_DIR systemctl --user status capsem.service --no-pager -l"
 reason = "diagnostics; a not-running unit is exactly what this prints"
 
 [[boundary.discarded_verdicts]]
 digest = "a651a24dcdbf"
-where = "scripts/deb-postinst.sh"
+where = "build_system/packaging/linux/deb-postinst.sh"
 subject = "su $TARGET_USER -c XDG_RUNTIME_DIR=$XDG_DIR journalctl --user-unit capsem.service --no-pager -n 100"
 reason = "diagnostics; there may be no journal yet on a first install"
 
 [[boundary.discarded_verdicts]]
 digest = "30e2e243eea1"
-where = "scripts/deb-preinst.sh"
+where = "build_system/packaging/linux/deb-preinst.sh"
 subject = "chown -R $TARGET_USER:$(id -gn $TARGET_USER) $CAPSEM_DIR/logs"
 reason = "the log directory may not exist before the first run"
 
 [[boundary.discarded_verdicts]]
 digest = "d52766736735"
-where = "scripts/deb-preinst.sh"
+where = "build_system/packaging/linux/deb-preinst.sh"
 subject = "su $TARGET_USER -c XDG_RUNTIME_DIR=$XDG_DIR systemctl --user stop capsem.service"
 reason = "stopping a service that is not running is the normal upgrade path"
 

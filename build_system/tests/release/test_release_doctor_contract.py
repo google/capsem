@@ -809,7 +809,7 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "stage-profile-publication.py" in workflow
     assert "verify-profile-publication.py" in workflow
     assert "scripts/build-pkg.sh" not in workflow
-    assert "scripts/repack-deb.sh" not in workflow
+    assert "build_system/packaging/linux/repack-deb.sh" not in workflow
     assert "cargo tauri build" not in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
     assert "run: just fast-test" in fast_gate
@@ -1964,7 +1964,10 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     )
 
     assert "Install and verify exact release deb" in linux
-    assert 'python3 scripts/install-deb-runtime-dependencies.py "$package"' in linux
+    assert (
+        'python3 build_system/packaging/linux/install-deb-runtime-dependencies.py '
+        '"$package"' in linux
+    )
     assert 'sudo dpkg -i "$package"' in linux
     assert "sudo apt-get install -f -y" not in linux
     assert linux.index("install-deb-runtime-dependencies.py") < linux.index(
@@ -2688,7 +2691,9 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
 
 def test_manifest_source_inputs_are_url_only() -> None:
     build_pkg = (PROJECT_ROOT / "scripts" / "build-pkg.sh").read_text()
-    repack_deb = (PROJECT_ROOT / "scripts" / "repack-deb.sh").read_text()
+    repack_deb = (
+        PROJECT_ROOT / "build_system/packaging/linux/repack-deb.sh"
+    ).read_text()
     release = _workflow_text("release.yaml")
     release_assets = _workflow_text("release-assets.yaml")
     release_channel = _workflow_text("release-channel.yaml")
@@ -2719,7 +2724,10 @@ def test_manifest_source_inputs_are_url_only() -> None:
                 package_commands.extend(
                     command
                     for command in parsed_commands(shell, origin=f"{name}:{job_name}")
-                    if {"scripts/build-pkg.sh", "scripts/repack-deb.sh"}.intersection(command.argv)
+                    if {
+                        "scripts/build-pkg.sh",
+                        "build_system/packaging/linux/repack-deb.sh",
+                    }.intersection(command.argv)
                 )
 
     assert package_commands
@@ -3124,7 +3132,9 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     ):
         assert shared_script in release
     assert "uv run --project build_system --frozen capsem-gate cross-compile" in release
-    assert "scripts/repack-deb.sh" in _source_text("scripts/build-linux-package.sh")
+    assert '"$SCRIPT_DIR/repack-deb.sh"' in _source_text(
+        "build_system/packaging/linux/build-linux-package.sh"
+    )
     assert "scripts/build-test-macos-package.sh" in macos_glowup
     # The local rail must reach the same shared scripts CI does. Since the
     # package build moved out of the recipe body, "local" is the justfile plus
@@ -3137,7 +3147,9 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     local_rail = "\n".join(
         [
             just,
-            (PROJECT_ROOT / "scripts" / "build-linux-package.sh").read_text(),
+            (
+                PROJECT_ROOT / "build_system/packaging/linux/build-linux-package.sh"
+            ).read_text(),
             (PROJECT_ROOT / "config" / "gate.toml").read_text(),
             *(
                 path.read_text()
@@ -3146,7 +3158,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
         ]
     )
     for shared_script in (
-        "scripts/repack-deb.sh",
+        '"$SCRIPT_DIR/repack-deb.sh"',
         "scripts/verify-installed-release.py",
         "scripts/prove-installed-shell.py",
     ):
@@ -3198,7 +3210,7 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     assert "bash scripts/check-web-surface.sh site" in site
     assert release.count("bash scripts/check-web-surface.sh frontend-build") == 1
     assert "bash scripts/check-web-surface.sh frontend-build" in _source_text(
-        "scripts/build-linux-package.sh"
+        "build_system/packaging/linux/build-linux-package.sh"
     )
     assert "scripts/build-complete-release-channel.py" in binary_staging
     assert '"scripts/check-web-surface.sh", "release-site-build"' in binary_staging_builder
@@ -4757,9 +4769,10 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
         PROJECT_ROOT / "build_system" / "packaging" / "shared" / "retire-cohort"
     ).read_text()
     postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
-    deb_preinst = (PROJECT_ROOT / "scripts" / "deb-preinst.sh").read_text()
-    deb_postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()
-    repack_deb = (PROJECT_ROOT / "scripts" / "repack-deb.sh").read_text()
+    linux = PROJECT_ROOT / "build_system" / "packaging" / "linux"
+    deb_preinst = (linux / "deb-preinst.sh").read_text()
+    deb_postinst = (linux / "deb-postinst.sh").read_text()
+    repack_deb = (linux / "repack-deb.sh").read_text()
     required_bins = [
         "capsem",
         "capsem-service",
@@ -5362,7 +5375,10 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
     for mutable in ("sudo apt-get", "pnpm install", "cargo install", "cargo tauri build"):
         assert mutable not in linux_job
     assert "--profile config/profiles/code/profile.toml" not in release
-    for assembler in ("scripts/build-pkg.sh", "scripts/repack-deb.sh"):
+    for assembler in (
+        "scripts/build-pkg.sh",
+        "build_system/packaging/linux/repack-deb.sh",
+    ):
         source = _source_text(assembler)
         assert 'for profile_path in "$CONFIG_ROOT"/profiles/*/profile.toml' in source
         assert 'profile validate "$profile_path"' in source
@@ -5522,8 +5538,8 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         "crates/capsem-service/src/main.rs",
         "crates/capsem-core/src/net/policy_config/profile_contract.rs",
         "scripts/build-pkg.sh",
-        "scripts/repack-deb.sh",
-        "scripts/deb-postinst.sh",
+        "build_system/packaging/linux/repack-deb.sh",
+        "build_system/packaging/linux/deb-postinst.sh",
         "scripts/pkg-scripts/postinstall",
         "scripts/materialize-config.sh",
         "scripts/build-complete-release-channel.py",
@@ -5587,7 +5603,7 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         assert rejected.returncode != 0, f"guard accepted hardcoded channel {channel}"
         assert "hardcodes a stable/nightly ASSET_MANIFEST_URL" in rejected.stderr
 
-    postinstall = tmp_path / "scripts/deb-postinst.sh"
+    postinstall = tmp_path / "build_system/packaging/linux/deb-postinst.sh"
     original = postinstall.read_text()
     postinstall.write_text(
         original + "\n# MANIFEST_SOURCE='https://release.capsem.org/assets/nightly/manifest.json'\n"
@@ -5754,7 +5770,10 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
     assert rejected.returncode != 0
     assert "production deploy caller outside serialized release workflows" in rejected.stderr
 
-    for relative in ("scripts/deb-postinst.sh", "scripts/pkg-scripts/postinstall"):
+    for relative in (
+        "build_system/packaging/linux/deb-postinst.sh",
+        "scripts/pkg-scripts/postinstall",
+    ):
         postinstall = tmp_path / relative
         original = postinstall.read_text()
         for channel in ("stable", "nightly"):

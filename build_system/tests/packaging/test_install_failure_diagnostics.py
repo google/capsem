@@ -102,16 +102,14 @@ def test_macos_package_scripts_install_and_enable_failure_diagnostics() -> None:
 
 
 def test_linux_package_scripts_embed_and_enable_failure_diagnostics() -> None:
-    repack_deb = (PROJECT_ROOT / "scripts" / "repack-deb.sh").read_text()
-    preinst = (PROJECT_ROOT / "scripts" / "deb-preinst.sh").read_text()
-    postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()
+    linux = PROJECT_ROOT / "build_system" / "packaging" / "linux"
+    repack_deb = (linux / "repack-deb.sh").read_text()
+    preinst = (linux / "deb-preinst.sh").read_text()
+    postinst = (linux / "deb-postinst.sh").read_text()
 
     assert "embed_install_diagnostics" in repack_deb
     assert "embed_native_cohort_retirement" in repack_deb
-    assert (
-        'sed -n \'2,$p\' "$SCRIPT_DIR/../build_system/packaging/shared/$helper"'
-        in repack_deb
-    )
+    assert 'sed -n \'2,$p\' "$SCRIPT_DIR/../shared/$helper"' in repack_deb
     assert "embed_pkg_script install-diagnostics" in repack_deb
     assert "embed_pkg_script retire-cohort" in repack_deb
     assert 'capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID"' in preinst

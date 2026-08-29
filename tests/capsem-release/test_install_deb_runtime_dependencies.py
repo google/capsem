@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts" / "install-deb-runtime-dependencies.py"
+SCRIPT = (
+    ROOT
+    / "build_system"
+    / "packaging"
+    / "linux"
+    / "install-deb-runtime-dependencies.py"
+)
 CONFIG = ROOT / "config" / "gate.toml"
 SPEC = importlib.util.spec_from_file_location(
     "install_deb_runtime_dependencies",

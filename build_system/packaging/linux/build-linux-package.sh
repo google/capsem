@@ -17,6 +17,8 @@
 #   TAURI_SIGNING_PRIVATE_KEY[_PASSWORD]   optional; a dev key is made if absent
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 : "${TARGET_ARCH:?}" "${RUST_TARGET:?}" "${DPKG_ARCH:?}" "${RUST_TOOLCHAIN:?}"
 : "${CARGO_HOME:?}" "${CAPSEM_PNPM_STORE:?}"
 : "${HOST_UID:?}" "${HOST_GID:?}" "${CAPSEM_INSTALL_MANIFEST_URL:?}"
@@ -95,7 +97,7 @@ rm -rf "/cargo-target/$RUST_TARGET/release/bundle/deb"
 
 echo "--- Repack Debian package ---"
 DEB=$(ls -t "/cargo-target/$RUST_TARGET/release/bundle/deb/"*.deb | head -n1)
-bash scripts/repack-deb.sh --manifest "$CAPSEM_INSTALL_MANIFEST_URL" "$DEB" \
+bash "$SCRIPT_DIR/repack-deb.sh" --manifest "$CAPSEM_INSTALL_MANIFEST_URL" "$DEB" \
     "/cargo-target/$RUST_TARGET/release" "target/config" "assets"
 
 echo "--- Validate artifacts ---"

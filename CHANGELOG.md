@@ -368,7 +368,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bookworm (2.36) and Ubuntu 22.04 (2.35) `apt install` succeeded -- every
   declared dependency was satisfiable -- and then every binary died with
   "version `GLIBC_2.39' not found". The floor is now derived from the packaged
-  bytes by `scripts/derive-deb-libc-floor.py` rather than hand-written beside
+  bytes by `build_system/packaging/linux/derive-deb-libc-floor.py` rather than hand-written beside
   the GUI libraries, so apt refuses an unusable install instead of completing a
   broken one.
 
@@ -3674,7 +3674,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Linux package build no longer spells the pinned Rust toolchain three
   times. It reads `rust-toolchain.toml`, so a toolchain bump cannot leave the
   package rail behind on the old one. The build itself moved out of an escaped
-  `bash -c` argument into `scripts/build-linux-package.sh`, where the repository's
+  `bash -c` argument into `build_system/packaging/linux/build-linux-package.sh`, where the repository's
   shell syntax gate can see it.
 - Version stamping reads `[workspace.package].version` from `Cargo.toml`
   instead of `grep '^version' | head -1`, which matched the first line in the
@@ -10683,7 +10683,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **`build_system/tests/packaging/test_repack_deb.py` -- 6 pytests that exercise
-  `scripts/repack-deb.sh` directly in under a second.** Previously the
+  `build_system/packaging/linux/repack-deb.sh` directly in under a second.** Previously the
   repack step was only validated through `just test-install`, which
   takes minutes (Tauri build + systemd container + pnpm install)
   before any repack-related bug surfaces. The new harness builds a
@@ -10837,7 +10837,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `capsem-install-target` volume still held a previous version's `.deb`
   (e.g. today's `0.16.1` -> `1.0.1776688771` bump left the old file
   sitting next to the new one), the glob matched both and `$()`
-  captured them joined by a newline. `scripts/repack-deb.sh` then got
+  captured them joined by a newline. `build_system/packaging/linux/repack-deb.sh` then got
   one path-with-embedded-newline, which `dpkg-deb` tried to open as a
   single file and bailed with `No such file or directory`. Added
   `rm -f /cargo-target/debug/bundle/deb/*.deb` before the Tauri build
@@ -11846,7 +11846,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **standalone installer: macOS .pkg build** -- `scripts/build-pkg.sh` assembles a .pkg from the Tauri .app, all 6 companion binaries, VM assets, and a postinstall script that copies to `~/.capsem/bin/`, codesigns, registers LaunchAgent, and runs setup. CI pipeline updated to build .pkg alongside .dmg.
 - **`just install` builds and installs the platform package** -- builds release binaries, frontend, and Tauri app, then assembles and installs the native package: .pkg with macOS Installer GUI on macOS, .deb via `dpkg -i` on Linux. The postinstall script handles codesign, PATH, service registration, and setup. Replaces the old `simulate-install.sh` bypass.
 - **`just test-install` exercises the real .deb path** -- Docker e2e tests now build a real .deb (Tauri + `repack-deb.sh`), install with `dpkg -i` (exercising `deb-postinst.sh` with systemd registration and setup), then run the pytest suite against the installed layout. Named volumes cache cargo builds across runs. Tests split into packaging (run in Docker) and `live_system` (need VM assets, run on real systems).
-- **standalone installer: Linux .deb repack** -- `scripts/repack-deb.sh` injects companion binaries and a postinst script into the Tauri .deb. Postinst symlinks system binaries to `~/.capsem/bin/`, registers systemd user unit, and runs setup.
+- **standalone installer: Linux .deb repack** -- `build_system/packaging/linux/repack-deb.sh` injects companion binaries and a postinst script into the Tauri .deb. Postinst symlinks system binaries to `~/.capsem/bin/`, registers systemd user unit, and runs setup.
 - **CLI: auto-setup on first use** -- running any sandbox command without prior `capsem setup` triggers non-interactive setup automatically (service registration, credential detection, asset download). Skipped when `--uds-path` is explicit.
 - **`just install`: graceful stop + health check** -- stops existing service before overwriting binaries, verifies service health after registration, auto-runs setup on first install.
 

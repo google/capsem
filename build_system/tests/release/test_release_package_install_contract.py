@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-POSTINST = PROJECT_ROOT / "scripts" / "deb-postinst.sh"
+POSTINST = PROJECT_ROOT / "build_system" / "packaging" / "linux" / "deb-postinst.sh"
 
 # systemd's own documented answer to "am I the init system" -- `sd_booted(3)`
 # is specified as the existence of this directory.
