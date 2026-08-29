@@ -31,6 +31,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/image/test_image_module_boundary.py",
         "build_system/tests/policy/test_policy_modules.py",
         "build_system/tests/release/test_release_module_boundary.py",
+        "build_system/tests/scripts/test_audit_python_lock.py",
         "build_system/tests/conftest.py",
         "build_system/tests/test_ownership.toml",
         "build_system/tests/test_project_boundary.py",
