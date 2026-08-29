@@ -40,7 +40,7 @@ if [[ ! -s "$ROOT/web/app/dist/index.html" ]]; then
     bash scripts/check-web-surface.sh frontend-build
 fi
 
-cross_target=$(python3 scripts/provision-linux-workspace.py --cross-rust-target)
+cross_target=$(python3 build_system/scripts/bootstrap/provision-linux-workspace.py --cross-rust-target)
 cargo clippy --target "$cross_target" -p capsem-core --lib --tests -- -D warnings
 cargo clippy --workspace --all-targets -- -D warnings
 

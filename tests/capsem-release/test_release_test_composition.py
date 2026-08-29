@@ -642,7 +642,7 @@ def test_reusable_fast_gate_installs_workspace_static_prerequisites() -> None:
     shared_module = workflow.index("Run the complete fast gate")
 
     assert prerequisites < shared_module
-    provision = "sudo python3 scripts/provision-linux-workspace.py --install apt"
+    provision = "sudo python3 build_system/scripts/bootstrap/provision-linux-workspace.py --install apt"
     assert provision in workflow[prerequisites:shared_module]
     linux_coverage = ci.index("Unit tests (KVM backend) with coverage")
     assert provision in ci[:linux_coverage]

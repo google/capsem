@@ -819,7 +819,7 @@ def test_release_runtime_preflight_bootstraps_only_from_manifest_catalog() -> No
     profile = _workflow("release-assets.yaml")
 
     assert "bootstrap_missing_first_party:" in preflight
-    assert "scripts/select-runtime-preflight-manifest.py" in preflight
+    assert "build_system/scripts/bootstrap/select-runtime-preflight-manifest.py" in preflight
     assert "--bootstrap-missing-first-party" in preflight
     assert "steps.manifest.outputs.manifest-url" in preflight
     assert "ASSET_MANIFEST_URL" not in preflight
@@ -834,7 +834,7 @@ def test_binary_bootstrap_uses_donor_only_as_public_before() -> None:
         "\n  preflight:\n", maxsplit=1
     )[0]
 
-    assert "scripts/select-runtime-preflight-manifest.py" in resolver
+    assert "build_system/scripts/bootstrap/select-runtime-preflight-manifest.py" in resolver
     assert "--bootstrap-missing-first-party" in resolver
     assert "steps.public-before.outputs.manifest-url" in resolver
     assert "steps.public-before.outputs.bootstrap" in resolver

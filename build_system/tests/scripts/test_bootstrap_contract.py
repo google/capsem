@@ -113,10 +113,10 @@ def test_bootstrap_waits_for_container_dns_after_colima_restart() -> None:
 
 def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -> None:
     bootstrap = _read("bootstrap.sh")
-    linux = _read("scripts/bootstrap-linux.sh")
+    linux = _read("build_system/scripts/bootstrap/bootstrap-linux.sh")
     docker_selector = _read("scripts/select-docker-packages.sh")
 
-    assert '. "$SCRIPT_DIR/scripts/bootstrap-linux.sh"' in bootstrap
+    assert '. "$SCRIPT_DIR/build_system/scripts/bootstrap/bootstrap-linux.sh"' in bootstrap
     assert 'bootstrap_linux "$SCRIPT_DIR" "$ASSUME_YES"' in bootstrap
     assert "[SKIP] docker (install via your package manager" not in bootstrap
     assert "[SKIP] docker daemon" not in bootstrap
@@ -160,7 +160,7 @@ def test_linux_bootstrap_owns_host_setup_and_avoids_install_node_inside_gate() -
     assert "docker buildx version" in linux
     assert "bwrap --unshare-net" in linux
     assert (
-        'python3 "$CAPSEM_BUBBLEWRAP_PROJECT_ROOT/scripts/prepare-linux-sandbox.py" '
+        'python3 "$CAPSEM_BUBBLEWRAP_PROJECT_ROOT/build_system/scripts/bootstrap/prepare-linux-sandbox.py" '
         "--repair-hosted-runner"
     ) in linux
     assert "[ -r /dev/kvm ] && [ -w /dev/kvm ]" in linux
@@ -239,7 +239,7 @@ def test_linux_bootstrap_does_not_replace_a_working_hosted_docker_stack(
             "-c",
             '. "$1"; capsem_linux_as_root() { "$@"; }; capsem_linux_install_apt_packages "$2" 1',
             "sh",
-            str(PROJECT_ROOT / "scripts/bootstrap-linux.sh"),
+            str(PROJECT_ROOT / "build_system/scripts/bootstrap/bootstrap-linux.sh"),
             str(PROJECT_ROOT),
         ],
         env={"PATH": f"{binaries}:/usr/bin:/bin"},
@@ -291,7 +291,7 @@ def test_linux_bootstrap_installs_only_the_missing_docker_components(tmp_path: P
 
 
 def test_linux_bootstrap_owns_distro_binfmt_setup_before_the_gate() -> None:
-    linux = _read("scripts/bootstrap-linux.sh")
+    linux = _read("build_system/scripts/bootstrap/bootstrap-linux.sh")
 
     assert "qemu-user-static" in linux
     assert "qemu-user-binfmt" in linux
@@ -318,7 +318,7 @@ def test_linux_binfmt_verifier_requires_enabled_fix_binary_registration(
         "enabled\ninterpreter /bin/true\nflags: OCF\n",
         encoding="utf-8",
     )
-    script = PROJECT_ROOT / "scripts/bootstrap-linux.sh"
+    script = PROJECT_ROOT / "build_system/scripts/bootstrap/bootstrap-linux.sh"
     command = '. "$1"; capsem_linux_verify_binfmt "$2" aarch64'
 
     valid = subprocess.run(
@@ -356,7 +356,7 @@ def test_linux_bubblewrap_probe_does_not_nest_an_active_namespace(tmp_path: Path
         encoding="utf-8",
     )
     marker = tmp_path / "bwrap-called"
-    script = PROJECT_ROOT / "scripts/bootstrap-linux.sh"
+    script = PROJECT_ROOT / "build_system/scripts/bootstrap/bootstrap-linux.sh"
     command = """
 . "$1"
 CAPSEM_BWRAP_MARKER=$2
@@ -407,7 +407,7 @@ def test_linux_bootstrap_verifies_in_gate_and_provisions_only_on_host(
         loopback.read_text(encoding="utf-8") + "  eth0: 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0\n",
         encoding="utf-8",
     )
-    script = PROJECT_ROOT / "scripts/bootstrap-linux.sh"
+    script = PROJECT_ROOT / "build_system/scripts/bootstrap/bootstrap-linux.sh"
     command = """
 . "$1"
 capsem_linux_install_apt_packages() { :; }
@@ -442,7 +442,7 @@ bootstrap_linux "$2" 1 "$3"
 
 
 def test_linux_bootstrap_node_major_parser_requires_one_shared_value() -> None:
-    command = ". scripts/bootstrap-linux.sh; capsem_linux_node_major config/docker/image/build.toml"
+    command = ". build_system/scripts/bootstrap/bootstrap-linux.sh; capsem_linux_node_major config/docker/image/build.toml"
     completed = subprocess.run(
         ["sh", "-c", command],
         cwd=PROJECT_ROOT,
@@ -455,7 +455,7 @@ def test_linux_bootstrap_node_major_parser_requires_one_shared_value() -> None:
 
 
 def test_bootstrap_rust_toolchain_parser_requires_the_checked_in_pin() -> None:
-    command = ". scripts/bootstrap-rust.sh; capsem_rust_toolchain rust-toolchain.toml"
+    command = ". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_rust_toolchain rust-toolchain.toml"
     completed = subprocess.run(
         ["sh", "-c", command],
         cwd=PROJECT_ROOT,
@@ -473,7 +473,7 @@ def test_bootstrap_rust_targets_parser_reads_the_complete_config_inventory() -> 
         [
             "sh",
             "-c",
-            ". scripts/bootstrap-rust.sh; capsem_rust_targets config/gate.toml",
+            ". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_rust_targets config/gate.toml",
         ],
         cwd=PROJECT_ROOT,
         check=True,
@@ -508,7 +508,7 @@ def test_bootstrap_rust_targets_parser_rejects_empty_duplicate_and_unsafe_values
             [
                 "sh",
                 "-c",
-                f". scripts/bootstrap-rust.sh; capsem_rust_targets {config}",
+                f". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_rust_targets {config}",
             ],
             cwd=PROJECT_ROOT,
             check=False,
@@ -522,10 +522,10 @@ def test_bootstrap_rust_targets_parser_rejects_empty_duplicate_and_unsafe_values
 
 def test_bootstrap_installs_and_proves_the_exact_checked_in_rust_toolchain() -> None:
     bootstrap = _read("bootstrap.sh")
-    rust = _read("scripts/bootstrap-rust.sh")
+    rust = _read("build_system/scripts/bootstrap/bootstrap-rust.sh")
     doctor = _read("scripts/doctor-common.sh")
 
-    assert '. "$SCRIPT_DIR/scripts/bootstrap-rust.sh"' in bootstrap
+    assert '. "$SCRIPT_DIR/build_system/scripts/bootstrap/bootstrap-rust.sh"' in bootstrap
     assert 'capsem_rust_toolchain "$SCRIPT_DIR/rust-toolchain.toml"' in bootstrap
     assert '--default-toolchain "$CAPSEM_RUST_TOOLCHAIN" --profile minimal' in bootstrap
     assert 'capsem_ensure_rust_toolchain "$CAPSEM_RUST_TOOLCHAIN"' in bootstrap
@@ -541,7 +541,7 @@ def test_bootstrap_installs_and_proves_the_exact_checked_in_rust_toolchain() -> 
 
     # Doctor consumes the same checked-in pin and tests the exact selected
     # compiler. Merely finding a standalone cargo binary is not a Rust setup.
-    assert '. "$SCRIPT_DIR/bootstrap-rust.sh"' in doctor
+    assert '. "$PROJECT_ROOT/build_system/scripts/bootstrap/bootstrap-rust.sh"' in doctor
     assert 'capsem_rust_toolchain "$PROJECT_ROOT/rust-toolchain.toml"' in doctor
     assert 'rustup run "$CAPSEM_RUST_TOOLCHAIN" rustc --version' in doctor
     assert 'target list --toolchain "$CAPSEM_RUST_TOOLCHAIN" --installed' in doctor
@@ -564,7 +564,7 @@ def test_bootstrap_exposes_rustup_proxies_to_the_agent_path(tmp_path: Path) -> N
         [
             "sh",
             "-c",
-            ". scripts/bootstrap-rust.sh; capsem_expose_rustup_tools; "
+            ". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_expose_rustup_tools; "
             'readlink "$HOME/.local/bin/rustup"; '
             'readlink "$HOME/.local/bin/rustc"; '
             'readlink "$HOME/.local/bin/cargo"',
@@ -596,7 +596,7 @@ def test_bootstrap_refuses_to_replace_an_unmanaged_rust_tool(tmp_path: Path) -> 
     (local_bin / "rustup").write_text("owned elsewhere\n", encoding="utf-8")
 
     completed = subprocess.run(
-        ["sh", "-c", ". scripts/bootstrap-rust.sh; capsem_expose_rustup_tools"],
+        ["sh", "-c", ". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_expose_rustup_tools"],
         cwd=PROJECT_ROOT,
         env={"HOME": str(tmp_path / "home"), "PATH": f"{rust_bin}:/usr/bin:/bin"},
         check=False,
@@ -613,7 +613,7 @@ def test_rust_bootstrap_reads_the_complete_gate_cargo_tool_inventory() -> None:
         [
             "sh",
             "-c",
-            ". scripts/bootstrap-rust.sh; capsem_gate_cargo_tools config/gate.toml",
+            ". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_gate_cargo_tools config/gate.toml",
         ],
         cwd=PROJECT_ROOT,
         check=True,
@@ -636,7 +636,7 @@ def test_rust_bootstrap_reads_exact_cargo_tool_versions_from_the_same_inventory(
         [
             "sh",
             "-c",
-            ". scripts/bootstrap-rust.sh; capsem_gate_cargo_tool_versions config/gate.toml",
+            ". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_gate_cargo_tool_versions config/gate.toml",
         ],
         cwd=PROJECT_ROOT,
         check=True,
@@ -673,7 +673,7 @@ def test_rust_bootstrap_rejects_missing_or_duplicate_cargo_tool_inventory(
             [
                 "sh",
                 "-c",
-                f". scripts/bootstrap-rust.sh; capsem_gate_cargo_tools {config}",
+                f". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_gate_cargo_tools {config}",
             ],
             cwd=PROJECT_ROOT,
             check=False,
@@ -732,7 +732,7 @@ def test_gate_cargo_tool_exposure_is_limited_to_the_configured_inventory(
         [
             "sh",
             "-c",
-            f". scripts/bootstrap-rust.sh; capsem_expose_gate_cargo_tools {config}",
+            f". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_expose_gate_cargo_tools {config}",
         ],
         cwd=PROJECT_ROOT,
         env={
@@ -762,7 +762,7 @@ def test_managed_tool_exposure_requires_a_regular_executable(tmp_path: Path) -> 
         [
             "sh",
             "-c",
-            f". scripts/bootstrap-rust.sh; _capsem_expose_managed_tools {rust_bin} cargo-broken",
+            f". build_system/scripts/bootstrap/bootstrap-rust.sh; _capsem_expose_managed_tools {rust_bin} cargo-broken",
         ],
         cwd=PROJECT_ROOT,
         env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
@@ -790,7 +790,7 @@ def test_linux_managed_tool_exposure_is_idempotent_with_only_local_bin_on_path(
         binary.chmod(0o755)
 
     first = subprocess.run(
-        ["sh", "-c", ". scripts/bootstrap-rust.sh; capsem_expose_rustup_tools"],
+        ["sh", "-c", ". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_expose_rustup_tools"],
         cwd=PROJECT_ROOT,
         env={"HOME": str(home), "PATH": f"{rust_bin}:/usr/bin:/bin"},
         check=True,
@@ -798,7 +798,7 @@ def test_linux_managed_tool_exposure_is_idempotent_with_only_local_bin_on_path(
         capture_output=True,
     )
     second = subprocess.run(
-        ["sh", "-c", ". scripts/bootstrap-rust.sh; capsem_expose_rustup_tools"],
+        ["sh", "-c", ". build_system/scripts/bootstrap/bootstrap-rust.sh; capsem_expose_rustup_tools"],
         cwd=PROJECT_ROOT,
         env={"HOME": str(home), "PATH": f"{local_bin}:/usr/bin:/bin"},
         check=True,
@@ -823,7 +823,7 @@ def test_darwin_rustup_path_does_not_require_gnu_readlink(tmp_path: Path) -> Non
         binary.chmod(0o755)
 
     completed = subprocess.run(
-        ["sh", "-c", ". scripts/bootstrap-rust.sh; _capsem_rustup_bin_dir"],
+        ["sh", "-c", ". build_system/scripts/bootstrap/bootstrap-rust.sh; _capsem_rustup_bin_dir"],
         cwd=PROJECT_ROOT,
         env={"HOME": str(tmp_path / "home"), "PATH": f"{fake_bin}:/usr/bin:/bin"},
         check=True,

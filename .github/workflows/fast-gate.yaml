@@ -49,10 +49,10 @@ jobs:
             build_system/release_site/pnpm-lock.yaml
 
       - name: Install Linux workspace lint prerequisites
-        run: sudo python3 scripts/provision-linux-workspace.py --install apt
+        run: sudo python3 build_system/scripts/bootstrap/provision-linux-workspace.py --install apt
 
       - name: Prove Linux sandbox boundary
-        run: python3 scripts/prepare-linux-sandbox.py --repair-hosted-runner
+        run: python3 build_system/scripts/bootstrap/prepare-linux-sandbox.py --repair-hosted-runner
 
       - name: Select the declared tool set
         id: gate_tools

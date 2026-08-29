@@ -11,9 +11,9 @@ cd "$PROJECT_ROOT"
 # Share the architecture-consistency parser with canonical bootstrap. Sourcing
 # the library is inert: it only defines functions and performs no Linux setup.
 # shellcheck disable=SC1091
-source "$SCRIPT_DIR/bootstrap-linux.sh"
+source "$PROJECT_ROOT/build_system/scripts/bootstrap/bootstrap-linux.sh"
 # shellcheck disable=SC1091
-. "$SCRIPT_DIR/bootstrap-rust.sh"
+. "$PROJECT_ROOT/build_system/scripts/bootstrap/bootstrap-rust.sh"
 CAPSEM_RUST_TOOLCHAIN=$(capsem_rust_toolchain "$PROJECT_ROOT/rust-toolchain.toml")
 
 ENTITLEMENTS="build_system/packaging/macos/entitlements.plist"

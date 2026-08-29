@@ -96,7 +96,7 @@ jobs:
       - name: Select exact public-before manifest
         id: public-before
         run: |
-          python3 scripts/select-runtime-preflight-manifest.py \
+          python3 build_system/scripts/bootstrap/select-runtime-preflight-manifest.py \
             --channel "stable" \
             --bootstrap-missing-first-party \
             --github-output "$GITHUB_OUTPUT"
@@ -360,7 +360,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends bubblewrap
 
       - name: Prove Linux sandbox boundary
-        run: python3 scripts/prepare-linux-sandbox.py --repair-hosted-runner
+        run: python3 build_system/scripts/bootstrap/prepare-linux-sandbox.py --repair-hosted-runner
 
       - name: Materialize locked Rust dependencies
         run: |

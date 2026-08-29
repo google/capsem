@@ -180,7 +180,7 @@ def test_fast_gate_proves_hosted_linux_sandbox_before_dependency_work() -> None:
     names = [step.get("name") for step in steps]
     prepare = next(step for step in steps if step.get("name") == "Prove Linux sandbox boundary")
 
-    assert prepare["run"] == ("python3 scripts/prepare-linux-sandbox.py --repair-hosted-runner")
+    assert prepare["run"] == ("python3 build_system/scripts/bootstrap/prepare-linux-sandbox.py --repair-hosted-runner")
     assert "continue-on-error" not in prepare
     assert names.index("Prove Linux sandbox boundary") < names.index(
         "Materialize locked qualification dependencies"
@@ -238,7 +238,7 @@ def test_every_hosted_linux_job_entering_a_gate_module_proves_the_boundary_first
             prepare_index = prepare_indexes[0]
             prepare = steps[prepare_index]
             assert prepare["run"] == (
-                "python3 scripts/prepare-linux-sandbox.py --repair-hosted-runner"
+                "python3 build_system/scripts/bootstrap/prepare-linux-sandbox.py --repair-hosted-runner"
             )
             assert prepare_index < min(module_indexes)
             assert all(

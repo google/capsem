@@ -2232,6 +2232,7 @@ def test_release_site_overlay_replaces_partial_files_without_clobbering_artifact
         env={**os.environ, "CAPSEM_RELEASE_CHANNEL_DIST": str(target)},
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -3005,7 +3006,7 @@ def test_release_workflow_retries_app_cargo_tool_installs_through_config_authori
         "build_system",
         "--frozen",
         "python",
-        "scripts/install-configured-cargo-tools.py",
+        "build_system/scripts/bootstrap/install-configured-cargo-tools.py",
         "cargo-tauri",
         "cargo-sbom",
     ]
@@ -3066,7 +3067,7 @@ def test_ci_install_job_selects_exact_profiles_before_building_packages() -> Non
     ).read_text()
 
     fetch_pos = install_job.index("./.github/actions/fetch-release-inputs")
-    resolve_pos = install_job.index("scripts/select-runtime-preflight-manifest.py")
+    resolve_pos = install_job.index("build_system/scripts/bootstrap/select-runtime-preflight-manifest.py")
     source_pos = install_job.index("scripts/fetch-channel-source-manifest.py")
     stage_pos = install_job.index("scripts/stage-release-test-inputs.py")
     materialize_pos = install_job.index("bash scripts/materialize-config.sh")

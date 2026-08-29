@@ -62,7 +62,9 @@ def test_bootstrap_script_boundaries_are_thin_exit_status_launchers() -> None:
         "provision-linux-workspace.py": "linux_workspace",
     }
     for name, module in launchers.items():
-        source = (REPOSITORY_ROOT / "scripts" / name).read_text(encoding="utf-8")
+        source = (
+            REPOSITORY_ROOT / "build_system" / "scripts" / "bootstrap" / name
+        ).read_text(encoding="utf-8")
         tree = ast.parse(source)
         assert len(source.splitlines()) <= 20, f"{name} contains reusable behavior"
         assert f"capsem_builder.image.tools.bootstrap.{module}" in source

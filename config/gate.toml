@@ -1082,14 +1082,14 @@ max_lines = 300
 [boundary.bench.oversized_line_counts]
 
 [boundary.scripts.oversized_line_counts]
-"scripts/bootstrap-linux.sh" = 599
+"build_system/scripts/bootstrap/bootstrap-linux.sh" = 599
 "build_system/packaging/macos/build-pkg.sh" = 349
 "scripts/doctor-common.sh" = 446
 "scripts/integration_test.py" = 1182
 "build_system/packaging/macos/macos_release_glowup.py" = 369
 "build_system/packaging/macos/macos_tart_glowup.py" = 565
 "build_system/packaging/macos/macos_tart_guest.sh" = 317
-"scripts/preflight.sh" = 338
+"build_system/scripts/bootstrap/preflight.sh" = 338
 "scripts/protocol_fixture_recorder.py" = 500
 "scripts/prove-installed-shell.py" = 318
 
@@ -3059,31 +3059,31 @@ reason = "failure diagnostics; the log may not exist on a run that failed early"
 
 [[boundary.discarded_verdicts]]
 digest = "7f05ea7e6584"
-where = "scripts/bootstrap-linux.sh"
+where = "build_system/scripts/bootstrap/bootstrap-linux.sh"
 subject = "capsem_linux_as_root systemctl restart systemd-binfmt.service"
 reason = "best-effort on hosts without systemd; bootstrap continues and the gate checks the capability later"
 
 [[boundary.discarded_verdicts]]
 digest = "2f11afe49a4c"
-where = "scripts/bootstrap-linux.sh"
+where = "build_system/scripts/bootstrap/bootstrap-linux.sh"
 subject = "capsem_linux_as_root update-binfmts --enable"
 reason = "best-effort; binfmt may be absent or already enabled"
 
 [[boundary.discarded_verdicts]]
 digest = "74539be85480"
-where = "scripts/bootstrap-linux.sh"
+where = "build_system/scripts/bootstrap/bootstrap-linux.sh"
 subject = "capsem_linux_as_root modprobe kvm"
 reason = "best-effort; KVM may be built in, absent, or already loaded, and doctor reports the real state"
 
 [[boundary.discarded_verdicts]]
 digest = "07ddd0ee5d14"
-where = "scripts/bootstrap-linux.sh"
+where = "build_system/scripts/bootstrap/bootstrap-linux.sh"
 subject = "capsem_linux_as_root modprobe vhost_vsock"
 reason = "best-effort; the module may be built in or already loaded, and doctor reports the real state"
 
 [[boundary.discarded_verdicts]]
 digest = "425b81d285a6"
-where = "scripts/bootstrap-rust.sh"
+where = "build_system/scripts/bootstrap/bootstrap-rust.sh"
 subject = "hash -r"
 reason = "a shell builtin that has nothing to forget in a fresh non-interactive shell"
 
@@ -3197,7 +3197,7 @@ reason = "diagnostics; the log may not exist if the server never started"
 
 [[boundary.discarded_verdicts]]
 digest = "c5226c15dfa0"
-where = "scripts/preflight.sh"
+where = "build_system/scripts/bootstrap/preflight.sh"
 subject = "security delete-keychain $keychain"
 reason = "deleting a keychain that was never created is the desired end state"
 

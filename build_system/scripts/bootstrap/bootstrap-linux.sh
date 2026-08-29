@@ -107,7 +107,7 @@ capsem_linux_install_apt_packages() {
     CAPSEM_APT_ASSUME_YES=$2
     CAPSEM_APT_BINFMT_PACKAGE=$(capsem_linux_apt_binfmt_package)
     CAPSEM_APT_WORKSPACE_PACKAGES=$(python3 \
-        "$CAPSEM_APT_PROJECT_ROOT/scripts/provision-linux-workspace.py" --packages apt)
+        "$CAPSEM_APT_PROJECT_ROOT/build_system/scripts/bootstrap/provision-linux-workspace.py" --packages apt)
     CAPSEM_APT_DOCKER_PACKAGES=$("$CAPSEM_APT_PROJECT_ROOT/scripts/select-docker-packages.sh")
     CAPSEM_APT_BASE_PACKAGES="
         acl
@@ -134,7 +134,7 @@ capsem_linux_install_apt_packages() {
         fi
     done
     if [ "$CAPSEM_APT_NEEDS_INSTALL" -eq 0 ]; then
-        python3 "$CAPSEM_APT_PROJECT_ROOT/scripts/provision-linux-workspace.py" --verify
+        python3 "$CAPSEM_APT_PROJECT_ROOT/build_system/scripts/bootstrap/provision-linux-workspace.py" --verify
         printf "  [ok]   Linux system packages\n"
         return 0
     fi
@@ -166,7 +166,7 @@ capsem_linux_install_apt_packages() {
     capsem_linux_apt install -y \
         --no-install-recommends \
         $CAPSEM_APT_BASE_PACKAGES
-    python3 "$CAPSEM_APT_PROJECT_ROOT/scripts/provision-linux-workspace.py" --verify
+    python3 "$CAPSEM_APT_PROJECT_ROOT/build_system/scripts/bootstrap/provision-linux-workspace.py" --verify
     printf "  [ok]   Linux system packages installed\n"
 }
 
@@ -175,7 +175,7 @@ capsem_linux_install_dnf_packages() {
     CAPSEM_DNF_ASSUME_YES=$2
     CAPSEM_DNF_BINFMT_PACKAGE=$(capsem_linux_dnf_binfmt_package)
     CAPSEM_DNF_WORKSPACE_PACKAGES=$(python3 \
-        "$CAPSEM_DNF_PROJECT_ROOT/scripts/provision-linux-workspace.py" --packages dnf)
+        "$CAPSEM_DNF_PROJECT_ROOT/build_system/scripts/bootstrap/provision-linux-workspace.py" --packages dnf)
     CAPSEM_DNF_PACKAGES="
         acl
         cpio
@@ -198,7 +198,7 @@ capsem_linux_install_dnf_packages() {
         fi
     done
     if [ "$CAPSEM_DNF_NEEDS_INSTALL" -eq 0 ]; then
-        python3 "$CAPSEM_DNF_PROJECT_ROOT/scripts/provision-linux-workspace.py" --verify
+        python3 "$CAPSEM_DNF_PROJECT_ROOT/build_system/scripts/bootstrap/provision-linux-workspace.py" --verify
         printf "  [ok]   Linux system packages\n"
         return 0
     fi
@@ -207,7 +207,7 @@ capsem_linux_install_dnf_packages() {
         return 1
     fi
     capsem_linux_as_root dnf install -y $CAPSEM_DNF_PACKAGES
-    python3 "$CAPSEM_DNF_PROJECT_ROOT/scripts/provision-linux-workspace.py" --verify
+    python3 "$CAPSEM_DNF_PROJECT_ROOT/build_system/scripts/bootstrap/provision-linux-workspace.py" --verify
     printf "  [ok]   Linux system packages installed\n"
 }
 
@@ -420,7 +420,7 @@ capsem_linux_prepare_bubblewrap() {
         return 0
     fi
     if [ -n "$CAPSEM_BUBBLEWRAP_PROJECT_ROOT" ]; then
-        python3 "$CAPSEM_BUBBLEWRAP_PROJECT_ROOT/scripts/prepare-linux-sandbox.py" --repair-hosted-runner
+        python3 "$CAPSEM_BUBBLEWRAP_PROJECT_ROOT/build_system/scripts/bootstrap/prepare-linux-sandbox.py" --repair-hosted-runner
         return
     fi
     if ! bwrap --unshare-net --die-with-parent --new-session \

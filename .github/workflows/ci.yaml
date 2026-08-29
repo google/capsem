@@ -84,7 +84,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
 
       - name: Install Linux workspace lint prerequisites
-        run: sudo python3 scripts/provision-linux-workspace.py --install apt
+        run: sudo python3 build_system/scripts/bootstrap/provision-linux-workspace.py --install apt
 
       # Try to enable KVM for integration tests. GitHub-hosted runners don't
       # always expose nested virt -- when /dev/kvm is absent the udev trigger
@@ -454,7 +454,7 @@ jobs:
       - name: Classify the stable install graph
         id: install-channel
         run: |
-          python3 scripts/select-runtime-preflight-manifest.py \
+          python3 build_system/scripts/bootstrap/select-runtime-preflight-manifest.py \
             --channel stable \
             --classify-only \
             --github-output "$GITHUB_OUTPUT"

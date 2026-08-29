@@ -5251,7 +5251,7 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
         'cargo clippy --target "$cross_target" -p capsem-core --lib --tests -- -D warnings'
     )
     assert (
-        "cross_target=$(python3 scripts/provision-linux-workspace.py --cross-rust-target)" in runner
+        "cross_target=$(python3 build_system/scripts/bootstrap/provision-linux-workspace.py --cross-rust-target)" in runner
     )
     assert cross_clippy in runner
     assert linux_clippy in runner

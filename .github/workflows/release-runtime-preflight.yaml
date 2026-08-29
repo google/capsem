@@ -47,7 +47,7 @@ jobs:
           if [[ "${{ inputs.bootstrap_missing_first_party }}" == "true" ]]; then
             args+=(--bootstrap-missing-first-party)
           fi
-          python3 scripts/select-runtime-preflight-manifest.py "${args[@]}"
+          python3 build_system/scripts/bootstrap/select-runtime-preflight-manifest.py "${args[@]}"
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:

@@ -108,7 +108,7 @@ export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 # its parser in a source-only helper shared with doctor so bootstrap, doctor,
 # and the gate cannot silently qualify different compilers.
 # shellcheck disable=SC1091
-. "$SCRIPT_DIR/scripts/bootstrap-rust.sh"
+. "$SCRIPT_DIR/build_system/scripts/bootstrap/bootstrap-rust.sh"
 CAPSEM_RUST_TOOLCHAIN=$(capsem_rust_toolchain "$SCRIPT_DIR/rust-toolchain.toml")
 
 # Linux is a first-class build and runtime host. Provision the complete native
@@ -118,7 +118,7 @@ CAPSEM_RUST_TOOLCHAIN=$(capsem_rust_toolchain "$SCRIPT_DIR/rust-toolchain.toml")
 # immediately visible to the remaining bootstrap phases.
 if [ "$(uname -s)" = "Linux" ]; then
     # shellcheck disable=SC1091
-    . "$SCRIPT_DIR/scripts/bootstrap-linux.sh"
+    . "$SCRIPT_DIR/build_system/scripts/bootstrap/bootstrap-linux.sh"
     bootstrap_linux "$SCRIPT_DIR" "$ASSUME_YES"
 fi
 

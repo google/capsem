@@ -14,7 +14,7 @@ from typing import Protocol
 
 from capsem_builder.gate import project_root
 
-LAUNCHER = project_root() / "scripts/prepare-linux-sandbox.py"
+LAUNCHER = project_root() / "build_system/scripts/bootstrap/prepare-linux-sandbox.py"
 
 class PreparationError(RuntimeError):
     """The configured kernel boundary could not be established."""
