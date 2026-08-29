@@ -28,17 +28,17 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-# Sibling scripts, imported the way `release-binaries.py` imports its own: the
-# script directory is on `sys.path` when this is run as a program and is not
-# when something imports it as `scripts.<name>`, and both happen.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# Sibling release helpers stay until S04-018; package formats have their owner.
 try:
-    from package_payload import package_payload_files
     from release_manifest_rows import dead_rows
 except ModuleNotFoundError:  # pragma: no cover - exercised by the other path
-    from scripts.package_payload import package_payload_files
     from scripts.release_manifest_rows import dead_rows
+from build_system.packaging.shared.package_payload import package_payload_files  # noqa: E402
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SBOM_GENERATOR = PROJECT_ROOT / "scripts" / "generate-host-binary-sbom.py"
 
 

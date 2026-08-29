@@ -241,7 +241,7 @@ optional_vm_devices = ["/dev/vsock"]
 # Docker keeps host numeric device ownership. This wrapper maps only the
 # selected non-root device gids onto the unprivileged proof user before
 # systemd creates that user's manager and recomputes supplementary groups.
-vm_device_setup_script = "scripts/prepare-install-vm-devices.sh"
+vm_device_setup_script = "build_system/packaging/shared/prepare-install-vm-devices.sh"
 rosetta_binfmt = "/proc/sys/fs/binfmt_misc/rosetta"
 
 # Where the extracted-but-not-installed package lands. Deliberately not
@@ -275,7 +275,7 @@ test_output_root = "/tmp/capsem-test-output"
 install_log_glob = "$HOME/.capsem/logs/install-*.log"
 preinstall_root = "/tmp/capsem-preinstall"
 admin_relative = "usr/bin/capsem-admin"
-request_script = "scripts/install-manifest-request.sh"
+request_script = "build_system/packaging/shared/install-manifest-request.sh"
 
 # The authoritative release graph, and the legacy runtime projection an
 # operator can mistake for it. Handing the installer the second produces an
@@ -805,7 +805,7 @@ key = "version"
 # ---------------------------------------------------------------------------
 
 [lint]
-python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/tests", "scripts", "tests", "guest"]
+python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/tests", "scripts", "tests", "guest"]
 # Already passes every rule, and must keep doing so.
 strict_roots = ["build_system/builder", "build_system/sdist_command.py"]
 # Match the import roots exercised by the sole pytest project plus the guest
@@ -1020,7 +1020,7 @@ direct_concurrency = ["planrunner.py"]
 # shrink must update or remove its entry immediately. This is debt inventory,
 # not an exemption list.
 [boundary.scripts]
-roots = ["scripts"]
+roots = ["scripts", "build_system/packaging"]
 suffixes = [".py", ".sh"]
 max_lines = 300
 
@@ -1079,7 +1079,7 @@ max_lines = 300
 "scripts/integration_test.py" = 1182
 "scripts/local-release-glowup.py" = 1997
 "scripts/macos_release_glowup.py" = 392
-"scripts/macos_tart_glowup.py" = 579
+"scripts/macos_tart_glowup.py" = 577
 "scripts/macos_tart_guest.sh" = 317
 "scripts/preflight.sh" = 338
 "scripts/protocol_fixture_recorder.py" = 500
@@ -3013,9 +3013,9 @@ subject = "bash scripts/macos-install-user-request.sh clear"
 reason = "clears a request that may never have been set"
 
 [[boundary.discarded_verdicts]]
-digest = "1f806ab11b30"
+digest = "927e5367b6c2"
 where = ".github/workflows/release.yaml"
-subject = "bash scripts/install-manifest-request.sh clear"
+subject = "bash build_system/packaging/shared/install-manifest-request.sh clear"
 reason = "clears a request that may never have been set"
 
 [[boundary.discarded_verdicts]]

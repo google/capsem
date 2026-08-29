@@ -1135,9 +1135,9 @@ def test_binary_packages_embed_public_url_but_install_against_serialized_source(
     for job in (native_macos, native_linux):
         assert "binary-channel-candidate" in job
         assert "PREACTIVATION_MANIFEST=file://" in job
-        assert "scripts/install-manifest-request.sh write" in job
+        assert "build_system/packaging/shared/install-manifest-request.sh write" in job
         assert '--manifest-url "$PREACTIVATION_MANIFEST"' in job
-        assert "scripts/install-manifest-request.sh clear" in job
+        assert "build_system/packaging/shared/install-manifest-request.sh clear" in job
     assert (
         "needs: [test-native-macos-package, test-native-linux-package, test-binary-pairing]"
     ) in workflow

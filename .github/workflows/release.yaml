@@ -724,7 +724,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/macos-install-user-request.sh write "$(id -un)"
-          bash scripts/install-manifest-request.sh write "$PREACTIVATION_MANIFEST_PATH" "$PREACTIVATION_MANIFEST"
+          bash build_system/packaging/shared/install-manifest-request.sh write "$PREACTIVATION_MANIFEST_PATH" "$PREACTIVATION_MANIFEST"
           test "$(sudo stat -f '%u' /var/run/capsem/install-manifest)" = "0"
           test "$(sudo stat -f '%Lp' /var/run/capsem/install-manifest)" = "600"
 
@@ -733,7 +733,7 @@ jobs:
           set -euo pipefail
           cleanup_requests() {
             bash scripts/macos-install-user-request.sh clear || true
-            bash scripts/install-manifest-request.sh clear || true
+            bash build_system/packaging/shared/install-manifest-request.sh clear || true
           }
           trap cleanup_requests EXIT
           VERSION="${RELEASE_TAG#v}"
@@ -775,7 +775,7 @@ jobs:
             tail -n 400 "$HOME/.capsem/logs/install-latest.log" 2>&1 || true
           } | tee release-diagnostics/macos-install.txt
           bash scripts/macos-install-user-request.sh clear || true
-          bash scripts/install-manifest-request.sh clear || true
+          bash build_system/packaging/shared/install-manifest-request.sh clear || true
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
@@ -831,11 +831,11 @@ jobs:
       - name: Install and verify exact release deb
         run: |
           set -euo pipefail
-          trap 'bash scripts/install-manifest-request.sh clear || true' EXIT
+          trap 'bash build_system/packaging/shared/install-manifest-request.sh clear || true' EXIT
           package=$(find release-test-package -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$package"
           python3 scripts/install-deb-runtime-dependencies.py "$package" --config config/gate.toml
-          bash scripts/install-manifest-request.sh write "$PREACTIVATION_MANIFEST_PATH" "$PREACTIVATION_MANIFEST"
+          bash build_system/packaging/shared/install-manifest-request.sh write "$PREACTIVATION_MANIFEST_PATH" "$PREACTIVATION_MANIFEST"
           VERSION="${RELEASE_TAG#v}"
           sudo dpkg -i "$package"
           test ! -e /var/run/capsem/install-manifest

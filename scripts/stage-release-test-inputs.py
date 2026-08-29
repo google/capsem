@@ -32,7 +32,8 @@ from stage_profile_assets import (
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
-
+if str(SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR.parent))
 
 def _host_arch() -> str:
     machine = platform.machine().lower()
@@ -140,8 +141,7 @@ def stage_profiles(
     config_root: Path = Path("target/release-config"),
     shared_config_root: Path = Path("config"),
 ) -> Path:
-    from profile_root_payload import stage_legacy_root
-
+    from build_system.packaging.shared.profile_root_payload import stage_legacy_root
     report, manifest = _load(input_dir)
     if report.get("kind") != "profiles":
         raise ValueError("profile staging requires profile release inputs")

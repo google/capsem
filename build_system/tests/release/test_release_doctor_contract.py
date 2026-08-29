@@ -1942,7 +1942,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "PREACTIVATION_MANIFEST=file://" in macos
     assert "PREACTIVATION_MANIFEST=file://" in linux
     assert 'sudo /usr/sbin/installer -pkg "$package" -target /' in macos
-    assert "scripts/install-manifest-request.sh write" in macos
+    assert "build_system/packaging/shared/install-manifest-request.sh write" in macos
     assert "pkgutil --pkg-info com.capsem.pkg" in macos
     assert 'test -d "/Applications/Capsem.app"' in macos
     assert 'test -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"' in macos

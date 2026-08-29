@@ -456,10 +456,7 @@ def main() -> int:
     guest_package = release_dir / package.name
     stage_file(package, guest_package)
     stage_file(args.sbom.resolve(), release_dir / "capsem-sbom.spdx.json")
-    stage_file(
-        manifest_file,
-        candidate_dir / "assets" / args.channel / "manifest.json",
-    )
+    stage_file(manifest_file, candidate_dir / "assets" / args.channel / "manifest.json")
     stage_file(manifest_file, share / "original-manifest.json")
     for source, name in zip(
         candidate_files,
@@ -468,10 +465,11 @@ def main() -> int:
     ):
         stage_file(source, share / name)
     stage_file(PROJECT_ROOT / "scripts" / "macos_tart_guest.sh", share / "guest.sh")
+    request = PROJECT_ROOT / "build_system/packaging/shared/install-manifest-request.sh"
+    stage_file(request, share / request.name)
     for name in (
         "verify-installed-release.py",
         "macos-install-user-request.sh",
-        "install-manifest-request.sh",
         "release_fixture_server.py",
         "release_transition.py",
         "macos_tart_transition_support.py",

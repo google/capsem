@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any, cast
 
 import blake3
-from release_inputs import safe_relative
+
+from scripts.release_inputs import safe_relative
 
 
 def _entries(manifest_path: Path, profile_id: str) -> tuple[tuple[Path, str, int], ...]:
