@@ -52,6 +52,7 @@ COMMANDS = {
     "build-complete-release-channel.py": "build_complete_release_channel",
     "extract-release-notes.py": "extract_release_notes",
     "local-release-glowup.py": "local_release_glowup",
+    "marketing_install_surface.py": "marketing_install_surface",
     "nightly_release_scheduler.py": "nightly_release_scheduler",
     "publish-release-source.py": "publish_release_source",
     "release-binaries.py": "release_binaries",
@@ -61,7 +62,7 @@ COMMANDS = {
     "write-release-notes.py": "write_release_notes",
     "write-release-summary.py": "write_release_summary",
 }
-SUPPORT = {"marketing_install_surface", "release_pairing_baseline", "remote_ci_gate"}
+SUPPORT = {"release_pairing_baseline", "remote_ci_gate"}
 EXECUTABLES = {
     "local-release-glowup.py",
     "write-binary-channel-staging-proof.py",
