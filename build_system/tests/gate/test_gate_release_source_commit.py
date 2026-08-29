@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -10,7 +9,6 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-SOURCE_SCRIPT = PROJECT_ROOT / "scripts" / "publish-release-source.py"
 
 
 def _git(root: Path, *args: str, check: bool = True) -> str:
@@ -295,15 +293,11 @@ def test_source_transport_ref_is_create_or_verify_not_mutable(
     from capsem_builder.gate import config as gate_config
     from capsem_builder.gate import snapshot
     from capsem_builder.gate.sourcecommit import SourceCommit
+    from capsem_builder.release.tools import publish_release_source as module
 
     source, first, second = committed_source
     target = tmp_path / "qualified"
     snapshot.populate_commit(source, target, gate_config.load(PROJECT_ROOT), SourceCommit(first))
-    spec = importlib.util.spec_from_file_location("publish_release_source", SOURCE_SCRIPT)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
     monkeypatch.setattr(module, "ROOT", target)
 
     short = module.publish(first, "capsem-source-{source_commit}")
@@ -319,11 +313,8 @@ def test_source_transport_ref_is_create_or_verify_not_mutable(
 def test_same_commit_source_ref_creation_race_converges(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    spec = importlib.util.spec_from_file_location("publish_release_source_race", SOURCE_SCRIPT)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    from capsem_builder.release.tools import publish_release_source as module
+
     commit = "1" * 40
     observed = iter((None, commit, commit))
 
