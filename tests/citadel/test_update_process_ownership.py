@@ -19,8 +19,10 @@ SERVICE_MAIN = PROJECT_ROOT / "crates/capsem-service/src/main.rs"
 SERVICE_INSTALL = PROJECT_ROOT / "crates/capsem/src/service_install.rs"
 DEB_PREINSTALL = PROJECT_ROOT / "scripts/deb-preinst.sh"
 DEB_POSTINSTALL = PROJECT_ROOT / "scripts/deb-postinst.sh"
-SERVICE_OWNERSHIP = PROJECT_ROOT / "scripts/pkg-scripts/service-owned-update"
-INSTALL_COHORT = PROJECT_ROOT / "scripts/pkg-scripts/retire-cohort"
+SERVICE_OWNERSHIP = (
+    PROJECT_ROOT / "build_system/packaging/shared/service-owned-update"
+)
+INSTALL_COHORT = PROJECT_ROOT / "build_system/packaging/shared/retire-cohort"
 REPACK_DEB = PROJECT_ROOT / "scripts/repack-deb.sh"
 INSTALLATION_SKILL = PROJECT_ROOT / "skills/dev-installation/SKILL.md"
 RELEASE_SKILL = PROJECT_ROOT / "skills/release-process/SKILL.md"
@@ -219,10 +221,10 @@ def test_release_skills_document_the_old_service_package_handoff() -> None:
     )
 
     for maintainer_script in (preinstall, postinstall):
-        assert 'source "$(dirname "$0")/pkg-scripts/service-owned-update"' in maintainer_script
+        assert "build_system/packaging/shared/service-owned-update" in maintainer_script
     assert "capsem_install_runs_inside_service()" in ownership
     assert repack.count('embed_pkg_script service-owned-update "$WORK_DIR/deb/DEBIAN/') == 2
-    assert 'source "$(dirname "$0")/pkg-scripts/retire-cohort"' in preinstall
+    assert "build_system/packaging/shared/retire-cohort" in preinstall
     assert '"$kill_command" -9 "$pid"' in cohort
     assert 'cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"' in repack
     assert "embed_native_cohort_retirement" in repack

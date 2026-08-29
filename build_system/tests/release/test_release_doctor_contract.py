@@ -4753,7 +4753,9 @@ def test_installer_codesigns_helpers_with_stable_identifiers() -> None:
 
 def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort() -> None:
     preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
-    retire_cohort = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "retire-cohort").read_text()
+    retire_cohort = (
+        PROJECT_ROOT / "build_system" / "packaging" / "shared" / "retire-cohort"
+    ).read_text()
     postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
     deb_preinst = (PROJECT_ROOT / "scripts" / "deb-preinst.sh").read_text()
     deb_postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()

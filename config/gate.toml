@@ -1057,7 +1057,7 @@ max_lines = 1000
 # came to mean a different thing in each of ten producers.
 #
 # They carry no suffix (`benchmarks/collectors/routes` is run by name), so they are
-# found by shebang, the same way `scripts/pkg-scripts/*` are.
+# found by shebang, the same way suffix-less packaging helpers are.
 [boundary.bench]
 roots = ["benchmarks/collectors"]
 suffixes = [".py"]
@@ -1067,7 +1067,7 @@ max_lines = 300
 
 [boundary.scripts.oversized_line_counts]
 "scripts/bootstrap-linux.sh" = 599
-"scripts/build-pkg.sh" = 350
+"scripts/build-pkg.sh" = 349
 "scripts/check-public-binary-release.py" = 934
 "scripts/check-remote-release-readiness.py" = 1973
 "scripts/check_session.py" = 381

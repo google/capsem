@@ -63,7 +63,7 @@ def _tracked_line_counts(
 ) -> dict[str, int]:
     """Line counts for every tracked file in `roots` matching `suffixes`.
 
-    A suffix-less file with a shebang counts too: `scripts/pkg-scripts/*` are
+    A suffix-less file with a shebang counts too: packaging helpers are
     programs whatever they are named, and a rule that missed them would be a
     rule anyone could route around by dropping an extension.
     """

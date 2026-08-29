@@ -8,13 +8,13 @@
 # updater activates the manifest and requests its managed restart.
 set -euo pipefail
 if ! declare -F capsem_install_enable_failure_trap >/dev/null; then
-    source "$(dirname "$0")/pkg-scripts/install-diagnostics"
+    source "$(cd "$(dirname "$0")/.." && pwd)/build_system/packaging/shared/install-diagnostics"
 fi
 if ! declare -F capsem_install_runs_inside_service >/dev/null; then
-    source "$(dirname "$0")/pkg-scripts/service-owned-update"
+    source "$(cd "$(dirname "$0")/.." && pwd)/build_system/packaging/shared/service-owned-update"
 fi
 if ! declare -F capsem_retire_native_cohort >/dev/null; then
-    source "$(dirname "$0")/pkg-scripts/retire-cohort"
+    source "$(cd "$(dirname "$0")/.." && pwd)/build_system/packaging/shared/retire-cohort"
 fi
 
 if [ -n "${SUDO_USER:-}" ]; then

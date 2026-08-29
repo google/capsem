@@ -35,7 +35,7 @@ embed_pkg_script() {
     local combined="${maintainer_script}.with-${helper}"
     {
         head -n 1 "$maintainer_script"
-        sed -n '2,$p' "$SCRIPT_DIR/pkg-scripts/$helper"
+        sed -n '2,$p' "$SCRIPT_DIR/../build_system/packaging/shared/$helper"
         sed -n '2,$p' "$maintainer_script"
     } > "$combined"
     mv "$combined" "$maintainer_script"

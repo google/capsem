@@ -250,9 +250,8 @@ echo "=== Building component package ==="
 
 PKG_SCRIPTS="$WORK_DIR/pkg-scripts"
 mkdir -p "$PKG_SCRIPTS"
-for package_script in preinstall postinstall install-diagnostics install-user install-manifest retire-cohort; do
-    install -m 0755 "$SCRIPT_DIR/pkg-scripts/$package_script" "$PKG_SCRIPTS/$package_script"
-done
+for package_script in preinstall postinstall install-user; do install -m 0755 "$SCRIPT_DIR/pkg-scripts/$package_script" "$PKG_SCRIPTS/$package_script"; done
+for package_script in install-diagnostics install-manifest retire-cohort; do install -m 0755 "$SCRIPT_DIR/../build_system/packaging/shared/$package_script" "$PKG_SCRIPTS/$package_script"; done
 
 # Strip macOS extended attributes in the temporary staging area. Otherwise
 # pkgbuild serializes AppleDouble `._*` sidecars into Payload/Scripts.

@@ -6,7 +6,9 @@ import subprocess
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DIAGNOSTICS = PROJECT_ROOT / "scripts" / "pkg-scripts" / "install-diagnostics"
+DIAGNOSTICS = (
+    PROJECT_ROOT / "build_system" / "packaging" / "shared" / "install-diagnostics"
+)
 
 
 def test_install_failure_trap_writes_actionable_report_and_preserves_status(
@@ -87,8 +89,9 @@ def test_macos_package_scripts_install_and_enable_failure_diagnostics() -> None:
     preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
     postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
 
-    assert "install-diagnostics install-user install-manifest retire-cohort" in build_pkg
+    assert "install-diagnostics install-manifest retire-cohort" in build_pkg
     assert 'install -m 0755 "$SCRIPT_DIR/pkg-scripts/$package_script"' in build_pkg
+    assert "$SCRIPT_DIR/../build_system/packaging/shared/$package_script" in build_pkg
     assert 'source "$(dirname "$0")/retire-cohort"' in preinstall
     assert 'capsem_retire_native_cohort "$CAPSEM_DIR"' in preinstall
     for script in (preinstall, postinstall):
@@ -105,7 +108,10 @@ def test_linux_package_scripts_embed_and_enable_failure_diagnostics() -> None:
 
     assert "embed_install_diagnostics" in repack_deb
     assert "embed_native_cohort_retirement" in repack_deb
-    assert 'sed -n \'2,$p\' "$SCRIPT_DIR/pkg-scripts/$helper"' in repack_deb
+    assert (
+        'sed -n \'2,$p\' "$SCRIPT_DIR/../build_system/packaging/shared/$helper"'
+        in repack_deb
+    )
     assert "embed_pkg_script install-diagnostics" in repack_deb
     assert "embed_pkg_script retire-cohort" in repack_deb
     assert 'capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID"' in preinst

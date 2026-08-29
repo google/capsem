@@ -1,5 +1,5 @@
 #!/bin/bash
-# Shared failure reporting for macOS package maintainer scripts.
+# Shared failure reporting for native package maintainer scripts.
 
 capsem_install_report_failure() {
     local status="$1"

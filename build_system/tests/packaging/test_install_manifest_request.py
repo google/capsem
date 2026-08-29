@@ -9,8 +9,10 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
-HELPER = ROOT / "scripts" / "pkg-scripts" / "install-manifest"
-DIAGNOSTICS = ROOT / "scripts" / "pkg-scripts" / "install-diagnostics"
+HELPER = ROOT / "build_system" / "packaging" / "shared" / "install-manifest"
+DIAGNOSTICS = (
+    ROOT / "build_system" / "packaging" / "shared" / "install-diagnostics"
+)
 
 
 def _resolve(packaged: str, request: Path) -> subprocess.CompletedProcess[str]:

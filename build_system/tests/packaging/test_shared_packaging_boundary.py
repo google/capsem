@@ -11,11 +11,23 @@ ROOT = Path(__file__).resolve().parents[3]
 SHARED = ROOT / "build_system" / "packaging" / "shared"
 LEGACY = ROOT / ("scr" + "ipts")
 
-EXPECTED_RESOURCES = {
-    "install-manifest-request.sh",
-    "package_payload.py",
-    "prepare-install-vm-devices.sh",
-    "profile_root_payload.py",
+EXPECTED_RESOURCE_MODES = {
+    "install-diagnostics": 0o755,
+    "install-manifest": 0o644,
+    "install-manifest-request.sh": 0o644,
+    "package_payload.py": 0o644,
+    "prepare-install-vm-devices.sh": 0o644,
+    "profile_root_payload.py": 0o644,
+    "retire-cohort": 0o755,
+    "service-owned-update": 0o644,
+}
+
+LEGACY_LIFECYCLE = LEGACY / "pkg-scripts"
+SHARED_LIFECYCLE = {
+    "install-diagnostics",
+    "install-manifest",
+    "retire-cohort",
+    "service-owned-update",
 }
 
 
@@ -26,15 +38,33 @@ def test_shared_packaging_resources_have_one_exact_owner() -> None:
         if path.is_file() and not path.name.startswith(".")
     }
 
-    assert found == EXPECTED_RESOURCES
-    assert all(not (LEGACY / name).exists() for name in EXPECTED_RESOURCES)
+    assert found == set(EXPECTED_RESOURCE_MODES)
+    assert all(
+        not (LEGACY / name).exists()
+        for name in EXPECTED_RESOURCE_MODES
+        if name.endswith((".py", ".sh"))
+    )
+    assert all(not (LEGACY_LIFECYCLE / name).exists() for name in SHARED_LIFECYCLE)
 
 
 def test_shared_packaging_resources_preserve_reviewed_source_modes() -> None:
-    for name in EXPECTED_RESOURCES:
+    for name, expected_mode in EXPECTED_RESOURCE_MODES.items():
         path = SHARED / name
         assert path.is_file() and not path.is_symlink()
-        assert stat.S_IMODE(path.stat().st_mode) == 0o644
+        assert stat.S_IMODE(path.stat().st_mode) == expected_mode
+
+
+def test_native_package_rails_select_shared_lifecycle_helpers() -> None:
+    macos_builder = (LEGACY / "build-pkg.sh").read_text(encoding="utf-8")
+    linux_repacker = (LEGACY / "repack-deb.sh").read_text(encoding="utf-8")
+    linux_preinstall = (LEGACY / "deb-preinst.sh").read_text(encoding="utf-8")
+    linux_postinstall = (LEGACY / "deb-postinst.sh").read_text(encoding="utf-8")
+
+    shared_owner = "build_system/packaging/shared"
+    assert f'$SCRIPT_DIR/../{shared_owner}/$package_script' in macos_builder
+    assert f'$SCRIPT_DIR/../{shared_owner}/$helper' in linux_repacker
+    for maintainer_script in (linux_preinstall, linux_postinstall):
+        assert f'/{shared_owner}/' in maintainer_script
 
 
 def test_shared_shell_boundaries_preserve_usage_exit_status() -> None:
