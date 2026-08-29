@@ -5,7 +5,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CERT_DIR="$(dirname "$SCRIPT_DIR")/private/apple-certificate"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+CERT_DIR="$ROOT_DIR/private/apple-certificate"
 P12="$CERT_DIR/capsem.p12"
 B64="$CERT_DIR/capsem-b64.txt"
 PASS_FILE="$CERT_DIR/p12-password.txt"

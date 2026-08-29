@@ -165,7 +165,7 @@ smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initr
 test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings + _check-assets + _pack-initrd
 build-assets     -> _install-tools + _clean-stale + doctor + capsem-admin image build
 test-install     -> Docker package install + generated local stable/nightly glow-up
-scripts/macos_release_glowup.py -> production .pkg + clean Tart install + physical-host exact-payload VZ boot
+build_system/packaging/macos/macos_release_glowup.py -> production .pkg + clean Tart install + physical-host exact-payload VZ boot
 release-profile  -> capsem-admin release + locked one-profile workflow
 release-binaries -> adversarial binary script + locked package workflow
 ```

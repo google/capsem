@@ -25,7 +25,14 @@ from __future__ import annotations
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-POSTINSTALL = PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall"
+POSTINSTALL = (
+    PROJECT_ROOT
+    / "build_system"
+    / "packaging"
+    / "macos"
+    / "pkg-scripts"
+    / "postinstall"
+)
 
 
 def test_a_failed_postinstall_leaves_the_handoff_for_the_retry() -> None:

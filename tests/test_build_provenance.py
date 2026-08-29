@@ -171,7 +171,9 @@ def test_package_provenance_check_rejects_stale_revision(tmp_path: Path) -> None
 
 
 def test_every_package_builder_enforces_exact_provenance() -> None:
-    macos_builder = (REPO_ROOT / "scripts" / "build-test-macos-package.sh").read_text()
+    macos_builder = (
+        REPO_ROOT / "build_system/packaging/macos/build-test-macos-package.sh"
+    ).read_text()
     linux_builder = (
         REPO_ROOT / "build_system" / "packaging" / "linux" / "build-linux-package.sh"
     ).read_text()

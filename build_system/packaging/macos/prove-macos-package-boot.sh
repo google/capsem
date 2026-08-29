@@ -2,7 +2,7 @@
 # Boot a real Capsem guest on the physical Mac using the exact .pkg payload.
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 PKG=""
 VERSION=""
 ASSETS_DIR=""

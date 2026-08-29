@@ -63,7 +63,7 @@ entrypoint with a local gate. Current required mappings are:
   fails if their before/after contents drift, matching CI's generation drift
   gate without requiring the local worktree to be committed first;
 - package assembly and acceptance: local and release CI share
-  `scripts/build-pkg.sh`, `build_system/packaging/linux/repack-deb.sh`,
+  `build_system/packaging/macos/build-pkg.sh`, `build_system/packaging/linux/repack-deb.sh`,
   `scripts/verify-installed-release.py`, and
   `scripts/prove-installed-shell.py`; macOS-local `just test-clean` builds the real
   release-mode app and unsigned `.pkg`, both Linux release-mode `.deb`
@@ -235,7 +235,7 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
 - **Pin Xcode version on macOS runners.** Always `sudo xcode-select -s /Applications/Xcode_16.2.app` (or latest) before any Apple toolchain use. GitHub periodically updates runner images and the default Xcode can break (Abort trap in xcodebuild). The preflight may pass on one runner instance while build-app-macos gets a different one. v0.14.12 failed because Xcode 15.4's xcodebuild crashed with `Abort trap: 6` when Tauri tried to locate notarytool -- despite zero workflow changes from v0.14.11 which passed 9 hours earlier.
 - **Installer identity and Gatekeeper checks are release gates.** Release
   preflight must require `APPLE_INSTALLER_SIGNING_IDENTITY`, and it must start
-  with `Developer ID Installer:`. Pass it into `scripts/build-pkg.sh` through
+  with `Developer ID Installer:`. Pass it into `build_system/packaging/macos/build-pkg.sh` through
   the job environment, not inline expressions. After `xcrun stapler validate`,
   `build-app-macos` must run `pkgutil --check-signature` and
   `spctl -a -vv -t install` against the built `.pkg`. If a local macOS host

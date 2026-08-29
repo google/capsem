@@ -9,7 +9,14 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
-RESOLVER = ROOT / "scripts" / "pkg-scripts" / "install-user"
+RESOLVER = (
+    ROOT
+    / "build_system"
+    / "packaging"
+    / "macos"
+    / "pkg-scripts"
+    / "install-user"
+)
 TARGET_USER = "capsem-test-user"
 
 

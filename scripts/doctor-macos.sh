@@ -191,12 +191,12 @@ check_platform() {
         fixable cargo-config ".cargo/config.toml missing or misconfigured"
     fi
 
-    if [[ -x "scripts/run_signed.sh" ]]; then
-        pass "scripts/run_signed.sh"
-    elif [[ -f "scripts/run_signed.sh" ]]; then
-        fixable run-signed-chmod "scripts/run_signed.sh not executable"
+    if [[ -x "build_system/packaging/macos/run_signed.sh" ]]; then
+        pass "build_system/packaging/macos/run_signed.sh"
+    elif [[ -f "build_system/packaging/macos/run_signed.sh" ]]; then
+        fixable run-signed-chmod "build_system/packaging/macos/run_signed.sh not executable"
     else
-        fixable run-signed "scripts/run_signed.sh missing"
+        fixable run-signed "build_system/packaging/macos/run_signed.sh missing"
     fi
 
     # Test sign

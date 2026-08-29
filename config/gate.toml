@@ -219,8 +219,8 @@ manifest_version = "1.0.0"
 # The hands-on developer-machine path. It builds the same complete unsigned
 # candidate package the macOS qualification adapter consumes, then installs it
 # synchronously. Qualification itself remains in the release lane.
-local_macos_package_script = "scripts/build-test-macos-package.sh"
-local_macos_installer = ["/usr/bin/osascript", "scripts/install-local-macos-package.applescript"]
+local_macos_package_script = "build_system/packaging/macos/build-test-macos-package.sh"
+local_macos_installer = ["/usr/bin/osascript", "build_system/packaging/macos/install-local-macos-package.applescript"]
 local_macos_target = "/"
 
 # Build output the install proof reads, which the image cannot carry because
@@ -1067,7 +1067,7 @@ max_lines = 300
 
 [boundary.scripts.oversized_line_counts]
 "scripts/bootstrap-linux.sh" = 599
-"scripts/build-pkg.sh" = 349
+"build_system/packaging/macos/build-pkg.sh" = 349
 "scripts/check-public-binary-release.py" = 934
 "scripts/check-remote-release-readiness.py" = 1973
 "scripts/check_session.py" = 381
@@ -1078,9 +1078,9 @@ max_lines = 300
 "scripts/fetch-release-artifacts.py" = 353
 "scripts/integration_test.py" = 1182
 "scripts/local-release-glowup.py" = 1997
-"scripts/macos_release_glowup.py" = 392
-"scripts/macos_tart_glowup.py" = 577
-"scripts/macos_tart_guest.sh" = 317
+"build_system/packaging/macos/macos_release_glowup.py" = 392
+"build_system/packaging/macos/macos_tart_glowup.py" = 577
+"build_system/packaging/macos/macos_tart_guest.sh" = 317
 "scripts/preflight.sh" = 338
 "scripts/protocol_fixture_recorder.py" = 500
 "scripts/prove-installed-shell.py" = 318
@@ -1585,7 +1585,7 @@ expected_debs = 2
 spdx_version = "SPDX-2.3"
 
 [signing]
-entitlements = "entitlements.plist"
+entitlements = "build_system/packaging/macos/entitlements.plist"
 binaries = [
     "target/debug/capsem", "target/debug/capsem-service", "target/debug/capsem-process",
     "target/debug/capsem-gateway", "target/debug/capsem-mcp", "target/debug/capsem-admin",
@@ -2165,7 +2165,7 @@ release_package = "CAPSEM_RELEASE_PACKAGE"
 verify_inputs_script = "scripts/verify-release-inputs.py"
 prove_profile_assets_script = "scripts/prove-release-profile-assets.py"
 glowup_script = "scripts/local-release-glowup.py"
-macos_glowup_script = "scripts/macos_release_glowup.py"
+macos_glowup_script = "build_system/packaging/macos/macos_release_glowup.py"
 # Proves the published package runs on every release [platforms.linux]
 # claims and is refused below the floor. The rest of the install chain
 # only ever runs on ubuntu:24.04, where a wrong floor is invisible.
@@ -3009,7 +3009,7 @@ reason = "a cache prewarm, not a proof; the lane that consumes it surfaces anyth
 [[boundary.discarded_verdicts]]
 digest = "b8d451b10f8a"
 where = ".github/workflows/release.yaml"
-subject = "bash scripts/macos-install-user-request.sh clear"
+subject = "bash build_system/packaging/macos/macos-install-user-request.sh clear"
 reason = "clears a request that may never have been set"
 
 [[boundary.discarded_verdicts]]
@@ -3080,7 +3080,7 @@ reason = "a shell builtin that has nothing to forget in a fresh non-interactive 
 
 [[boundary.discarded_verdicts]]
 digest = "ae37391e3f77"
-where = "scripts/build-pkg.sh"
+where = "build_system/packaging/macos/build-pkg.sh"
 subject = "xattr -rc $WORK_DIR/payload $PKG_SCRIPTS"
 reason = "having no extended attributes to clear is the desired end state"
 
@@ -3134,55 +3134,55 @@ reason = "prints the generator log after a failure; the log may be empty"
 
 [[boundary.discarded_verdicts]]
 digest = "9b6a02b15944"
-where = "scripts/macos_tart_guest.sh"
+where = "build_system/packaging/macos/macos_tart_guest.sh"
 subject = "bash $INSTALL_USER_REQUEST clear"
 reason = "clears a request that may never have been set"
 
 [[boundary.discarded_verdicts]]
 digest = "7bade16dbb40"
-where = "scripts/macos_tart_guest.sh"
+where = "build_system/packaging/macos/macos_tart_guest.sh"
 subject = "bash $INSTALL_MANIFEST_REQUEST clear"
 reason = "clears a request that may never have been set"
 
 [[boundary.discarded_verdicts]]
 digest = "00197fb30042"
-where = "scripts/macos_tart_guest.sh"
+where = "build_system/packaging/macos/macos_tart_guest.sh"
 subject = "cp $ORIGINAL_MANIFEST $REMOTE_MANIFEST"
 reason = "cleanup restore; the original may not have been captured if the run failed before that point"
 
 [[boundary.discarded_verdicts]]
 digest = "fd59813c8a7d"
-where = "scripts/macos_tart_guest.sh"
+where = "build_system/packaging/macos/macos_tart_guest.sh"
 subject = "cp $SERVICE_PLIST_BACKUP $SERVICE_PLIST"
 reason = "cleanup restore; the backup may not exist if the run failed before it was taken"
 
 [[boundary.discarded_verdicts]]
 digest = "5a63cb81b516"
-where = "scripts/macos_tart_guest.sh"
+where = "build_system/packaging/macos/macos_tart_guest.sh"
 subject = "launchctl bootout gui/$(id -u) $SERVICE_PLIST"
 reason = "unloading a service that is not loaded is the normal path"
 
 [[boundary.discarded_verdicts]]
 digest = "2a080ed3b333"
-where = "scripts/macos_tart_guest.sh"
+where = "build_system/packaging/macos/macos_tart_guest.sh"
 subject = "launchctl bootstrap gui/$(id -u) $SERVICE_PLIST"
 reason = "may already be loaded from a previous stage of the same run"
 
 [[boundary.discarded_verdicts]]
 digest = "1d9ab9c5f4ee"
-where = "scripts/macos_tart_guest.sh"
+where = "build_system/packaging/macos/macos_tart_guest.sh"
 subject = "kill $RELEASE_HTTP_PID"
 reason = "the helper server may have exited on its own already"
 
 [[boundary.discarded_verdicts]]
 digest = "db4e183b296a"
-where = "scripts/macos_tart_guest.sh"
+where = "build_system/packaging/macos/macos_tart_guest.sh"
 subject = "wait $RELEASE_HTTP_PID"
 reason = "waiting on a process that has already been reaped is not an error here"
 
 [[boundary.discarded_verdicts]]
 digest = "413fdebf6e7b"
-where = "scripts/macos_tart_guest.sh"
+where = "build_system/packaging/macos/macos_tart_guest.sh"
 subject = "cat $RELEASE_HTTP_LOG"
 reason = "diagnostics; the log may not exist if the server never started"
 
@@ -3194,7 +3194,7 @@ reason = "deleting a keychain that was never created is the desired end state"
 
 [[boundary.discarded_verdicts]]
 digest = "69ae39b348c2"
-where = "scripts/prove-macos-package-boot.sh"
+where = "build_system/packaging/macos/prove-macos-package-boot.sh"
 subject = "pkill -9 -f $CAPSEM_HOME_DIR/bin/$name"
 reason = "nothing to kill is the common case; pkill exits non-zero on no match"
 
@@ -3206,7 +3206,7 @@ reason = "the public upgrade asks an existing user service to stop, but first in
 
 [[boundary.discarded_verdicts]]
 digest = "36503db23196"
-where = "scripts/prove-macos-package-boot.sh"
+where = "build_system/packaging/macos/prove-macos-package-boot.sh"
 subject = "capsem_isolated info macos-package-vm-boot --json"
 reason = "bounded diagnostics printed only after the persistent resume probe has already failed"
 

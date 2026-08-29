@@ -200,7 +200,7 @@ jobs:
           if [ -z "$IDENTITY" ]; then
             echo "::error::No Developer ID signing identity found. Check APPLE_CERTIFICATE secret."
             echo "::error::If the p12 was created with OpenSSL 3.x, it uses PBES2/AES encryption."
-            echo "::error::macOS requires legacy 3DES. Re-export with: scripts/fix_p12_legacy.sh"
+            echo "::error::macOS requires legacy 3DES. Re-export with: build_system/packaging/macos/fix_p12_legacy.sh"
             exit 1
           fi
           echo "codesigning identities:"
@@ -398,7 +398,7 @@ jobs:
             codesign --sign "$APPLE_SIGNING_IDENTITY" \
               --options runtime \
               --timestamp \
-              --entitlements entitlements.plist \
+              --entitlements build_system/packaging/macos/entitlements.plist \
               --force \
               "target/release/$bin"
           done
@@ -406,7 +406,7 @@ jobs:
       - name: Build .pkg installer
         run: |
           VERSION="${RELEASE_TAG#v}"
-          bash scripts/build-pkg.sh \
+          bash build_system/packaging/macos/build-pkg.sh \
             --manifest "$ASSET_MANIFEST_URL" \
             "target/release/bundle/macos/Capsem.app" \
             "target/release" \
@@ -723,7 +723,7 @@ jobs:
       - name: Write secure package install requests
         run: |
           set -euo pipefail
-          bash scripts/macos-install-user-request.sh write "$(id -un)"
+          bash build_system/packaging/macos/macos-install-user-request.sh write "$(id -un)"
           bash build_system/packaging/shared/install-manifest-request.sh write "$PREACTIVATION_MANIFEST_PATH" "$PREACTIVATION_MANIFEST"
           test "$(sudo stat -f '%u' /var/run/capsem/install-manifest)" = "0"
           test "$(sudo stat -f '%Lp' /var/run/capsem/install-manifest)" = "600"
@@ -732,7 +732,7 @@ jobs:
         run: |
           set -euo pipefail
           cleanup_requests() {
-            bash scripts/macos-install-user-request.sh clear || true
+            bash build_system/packaging/macos/macos-install-user-request.sh clear || true
             bash build_system/packaging/shared/install-manifest-request.sh clear || true
           }
           trap cleanup_requests EXIT
@@ -774,7 +774,7 @@ jobs:
             tail -n 400 /var/log/install.log 2>&1 || true
             tail -n 400 "$HOME/.capsem/logs/install-latest.log" 2>&1 || true
           } | tee release-diagnostics/macos-install.txt
-          bash scripts/macos-install-user-request.sh clear || true
+          bash build_system/packaging/macos/macos-install-user-request.sh clear || true
           bash build_system/packaging/shared/install-manifest-request.sh clear || true
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

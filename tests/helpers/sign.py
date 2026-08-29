@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-ENTITLEMENTS = PROJECT_ROOT / "entitlements.plist"
+ENTITLEMENTS = PROJECT_ROOT / "build_system/packaging/macos/entitlements.plist"
 
 IS_MACOS = os.uname().sysname == "Darwin"
 

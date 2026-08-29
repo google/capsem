@@ -69,7 +69,7 @@ pgrep -x capsem-service
 pgrep -x capsem-tray
 ```
 
-`scripts/build-pkg.sh` must install `/Applications/Capsem.app` and carry a
+`build_system/packaging/macos/build-pkg.sh` must install `/Applications/Capsem.app` and carry a
 fallback app copy in `/usr/local/share/capsem/Capsem.app` so postinstall cannot
 report success while the GUI is missing. Relaunching `Capsem.app` must ask the
 running service to ensure the tray via `/companions/tray/ensure`; spawning

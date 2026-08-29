@@ -56,7 +56,7 @@ KNOWN_ROOT_FILES = frozenset(
         "CITATION.cff", "CLAUDE.md", "CONTRIBUTING.md", "Cargo.lock",
         "Cargo.toml", "GEMINI.md", "LATEST_RELEASE.md", "LICENSE",
         "README.md", "RELEASE.md", "SECURITY.md", "audit.toml",
-        "bootstrap.sh", "codecov.yml", "entitlements.plist", "justfile",
+        "bootstrap.sh", "codecov.yml", "justfile",
         "rust-toolchain.toml", "test-dev-null.sh",
     }
 )
@@ -66,7 +66,6 @@ BUILD_SYSTEM_FILES = frozenset(
         ".dockerignore",
         "audit.toml",
         "bootstrap.sh",
-        "entitlements.plist",
     }
 )
 RUST_GUEST_CONFIG_ROOTS = frozenset(

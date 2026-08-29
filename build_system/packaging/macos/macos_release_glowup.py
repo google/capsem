@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build and prove the exact macOS package without a Just recipe fork."""
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 import argparse
@@ -15,13 +16,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts"))
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.content import ProfileContent
 from capsem_builder.gate.releaseauthoring import author_native_candidate
 from capsem_builder.gate.sourcecommit import SourceCommit, source_commit_for_checkout
-from macos_candidate_content import (
-    hardlink_or_copy as hardlink_or_copy,
-)
+from macos_candidate_content import hardlink_or_copy as hardlink_or_copy
 from macos_candidate_content import (
     localize_candidate_profile_urls,
     stage_candidate_assets,
@@ -67,7 +68,6 @@ except ModuleNotFoundError:
     )
 
 
-ROOT = Path(__file__).resolve().parent.parent
 GUEST_RELEASE_ROOT = "http://127.0.0.1:18765/candidate"
 GUEST_ASSET_ROOT = "file:///Volumes/My%20Shared%20Files/capsem-assets"
 
@@ -304,7 +304,7 @@ def main() -> int:
     run(
         [
             "bash",
-            "scripts/build-test-macos-package.sh",
+            config.install.local_macos_package_script,
             "--version",
             args.version,
             "--manifest-url",
@@ -333,7 +333,7 @@ def main() -> int:
     run(
         [
             sys.executable,
-            "scripts/macos_tart_glowup.py",
+            str(Path(__file__).resolve().parent / "macos_tart_glowup.py"),
             "--package",
             str(package),
             "--version",
@@ -361,7 +361,7 @@ def main() -> int:
     run(
         [
             "bash",
-            "scripts/prove-macos-package-boot.sh",
+            str(Path(__file__).resolve().parent / "prove-macos-package-boot.sh"),
             "--package",
             str(package),
             "--version",

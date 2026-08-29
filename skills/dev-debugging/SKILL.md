@@ -148,7 +148,7 @@ python3 scripts/check_session.py   # Check net_events for domain, decision, stat
 
 **Frontend issues**: Run `just dev ui`, open Chrome DevTools, check console errors, use `take_screenshot` to capture state. See dev-testing-frontend for the full visual verification workflow.
 
-**Build pipeline issues**: Check `target/build.log` -- all build infrastructure (runner, code signing, generation scripts) logs here. The runner (`scripts/run_signed.sh`) and `_generate-settings` recipe both append to this file. Never write diagnostics to stdout from build scripts (it contaminates binary output like `mcp-export`).
+**Build pipeline issues**: Check `target/build.log` -- all build infrastructure (runner, code signing, generation scripts) logs here. The runner (`build_system/packaging/macos/run_signed.sh`) and `_generate-settings` recipe both append to this file. Never write diagnostics to stdout from build scripts (it contaminates binary output like `mcp-export`).
 
 For a Python gate or release failure, inspect the recorded run first. Step
 labels, argv, timing, captured output, resource events, and the first failed

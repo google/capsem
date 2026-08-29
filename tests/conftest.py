@@ -193,7 +193,9 @@ _REQUIRED_ARTIFACTS = {
     # on this path. A per-arch entry here never resolved on a real build.
     "assets/manifest.json": _SELECTED_ASSETS_DIR / "manifest.json",
     "assets/<arch>/initrd.img": _SELECTED_ASSETS_DIR / _ARCH / "initrd.img",
-    "entitlements.plist": _PROJECT_ROOT / "entitlements.plist",
+    "build_system/packaging/macos/entitlements.plist": (
+        _PROJECT_ROOT / "build_system/packaging/macos/entitlements.plist"
+    ),
     "target/linux-agent/<arch>": _PROJECT_ROOT / "target" / "linux-agent" / _ARCH,
     # Seven checked-in tests read this directly rather than through
     # `CAPSEM_PROFILES_DIR`, and they are not wrong to: a test should not have

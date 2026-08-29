@@ -18,7 +18,9 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO, cast
 
-from macos_tart_transition_support import local_tart_capabilities
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+from macos_tart_transition_support import local_tart_capabilities  # noqa: E402
 
 try:
     from release_glowup import (
@@ -43,7 +45,6 @@ except ModuleNotFoundError:
     from scripts.release_transition_candidates import validate_macos_guest_report
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STORAGE_POLICY = PROJECT_ROOT / "config" / "storage-policy.toml"
 STORAGE_CONTROLLER = PROJECT_ROOT / "scripts" / "docker-storage-policy.py"
 
@@ -464,19 +465,18 @@ def main() -> int:
         strict=True,
     ):
         stage_file(source, share / name)
-    stage_file(PROJECT_ROOT / "scripts" / "macos_tart_guest.sh", share / "guest.sh")
+    stage_file(Path(__file__).resolve().parent / "macos_tart_guest.sh", share / "guest.sh")
     request = PROJECT_ROOT / "build_system/packaging/shared/install-manifest-request.sh"
     stage_file(request, share / request.name)
     for name in (
         "verify-installed-release.py",
-        "macos-install-user-request.sh",
         "release_fixture_server.py",
         "release_transition.py",
-        "macos_tart_transition_support.py",
-        "macos-tart-regression-probes.sh",
         "serve-release-test-root.py",
     ):
         stage_file(PROJECT_ROOT / "scripts" / name, share / name)
+    for name in ("macos-install-user-request.sh", "macos_tart_transition_support.py", "macos-tart-regression-probes.sh"):
+        stage_file(Path(__file__).resolve().parent / name, share / name)
     vm_name = f"{OWNED_VM_PREFIX}{os.getpid()}-{int(time.time())}"
     require_owned_vm(vm_name)
     runner: subprocess.Popen[str] | None = None

@@ -92,9 +92,9 @@ retry after failure; postinstall removes both only after success.
 
 ## Package maintainer scripts
 
-- macOS `.pkg`: `scripts/pkg-scripts/preinstall` unloads the LaunchAgent, kills
+- macOS `.pkg`: `build_system/packaging/macos/pkg-scripts/preinstall` unloads the LaunchAgent, kills
   stale package-owned helpers, removes old app/share payloads, then
-  `scripts/pkg-scripts/postinstall` copies binaries, hydrates assets, registers
+  `build_system/packaging/macos/pkg-scripts/postinstall` copies binaries, hydrates assets, registers
   the service, waits for service/gateway readiness, and opens the app.
 - Linux `.deb`: `build_system/packaging/linux/deb-preinst.sh` is packaged as `DEBIAN/preinst`. It
   normally runs `systemctl --user stop capsem.service` when a user systemd
@@ -170,7 +170,7 @@ Docker-based e2e tests in `tests/capsem-install/`:
 | test_error_paths.py | Failure scenarios with actionable errors |
 
 Run `just _gate-install` for the Linux Docker/systemd boundary. On Apple Silicon
-macOS, run `python3 scripts/macos_release_glowup.py` for the exact `.pkg` build, clean Tart
+macOS, run `python3 build_system/packaging/macos/macos_release_glowup.py` for the exact `.pkg` build, clean Tart
 install, receipt/app/binary verification, and service health. Because Tart
 macOS guests cannot expose nested virtualization, the recipe then extracts the
 same package on the physical Mac and boots a real Capsem guest from its exact

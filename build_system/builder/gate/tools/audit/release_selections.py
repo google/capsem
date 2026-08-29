@@ -71,12 +71,12 @@ MATCH_GUARDS = (
         "native postinstall silently falls back to a public channel",
         r"MANIFEST_SOURCE=['\"]https://release\.capsem\.org/assets/(?:stable|nightly)/"
         r"manifest\.json['\"]",
-        ("build_system/packaging/linux/deb-postinst.sh", "scripts/pkg-scripts/postinstall"),
+        ("build_system/packaging/linux/deb-postinst.sh", "build_system/packaging/macos/pkg-scripts/postinstall"),
     ),
     (
         "native postinstall bypasses installed manifest-metadata provenance",
         r"CAPSEM_RELEASE_(?:MANIFEST|HEALTH)_URL",
-        ("build_system/packaging/linux/deb-postinst.sh", "scripts/pkg-scripts/postinstall"),
+        ("build_system/packaging/linux/deb-postinst.sh", "build_system/packaging/macos/pkg-scripts/postinstall"),
     ),
     (
         "installed update test bypasses manifest-metadata provenance",
@@ -87,10 +87,10 @@ MATCH_GUARDS = (
         "legacy split manifest/update sidecar was reintroduced",
         r"manifest-origin\.json|update-check\.json",
         (
-            "scripts/build-pkg.sh",
+            "build_system/packaging/macos/build-pkg.sh",
             "build_system/packaging/linux/repack-deb.sh",
             "build_system/packaging/linux/deb-postinst.sh",
-            "scripts/pkg-scripts/postinstall",
+            "build_system/packaging/macos/pkg-scripts/postinstall",
             "crates/capsem/src/update.rs",
             "crates/capsem-service/src/main.rs",
         ),

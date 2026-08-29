@@ -44,7 +44,7 @@ check_apple_certificate() {
         | grep -o 'PBES2\|pbeWithSHA1And3-KeyTripleDES-CBC' | head -1)
 
     if [[ "$fmt" == "PBES2" ]]; then
-        fail "p12 uses modern PBES2/AES encryption (macOS incompatible) -- run: scripts/fix_p12_legacy.sh"
+        fail "p12 uses modern PBES2/AES encryption (macOS incompatible) -- run: build_system/packaging/macos/fix_p12_legacy.sh"
         return
     fi
     pass "p12 uses legacy 3DES encryption (macOS-compatible)"

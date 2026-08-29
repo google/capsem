@@ -37,7 +37,7 @@ RELEASE_HTTP_PORT=18765
 RELEASE_HTTP_LOG="$SHARE/release-http.log"
 RELEASE_HTTP_READY="$SHARE/release-http-ready.json"
 RELEASE_HTTP_PID=""
-# shellcheck source=scripts/macos-tart-regression-probes.sh
+# shellcheck source=build_system/packaging/macos/macos-tart-regression-probes.sh
 source "$SHARE/macos-tart-regression-probes.sh"
 BINARIES=(
     capsem

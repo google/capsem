@@ -20,20 +20,20 @@ class TestDevSetup:
         assert sentinel.stat().st_size == 0 or sentinel.exists()
 
     def test_entitlements_plist_exists(self):
-        plist = PROJECT_ROOT / "entitlements.plist"
+        plist = PROJECT_ROOT / "build_system/packaging/macos/entitlements.plist"
         assert plist.exists(), "entitlements.plist missing"
 
     def test_entitlements_valid_xml(self):
         """entitlements.plist must be valid XML."""
         import xml.etree.ElementTree as ET
-        plist = PROJECT_ROOT / "entitlements.plist"
+        plist = PROJECT_ROOT / "build_system/packaging/macos/entitlements.plist"
         if not plist.exists():
             pytest.skip("No entitlements.plist")
         # Should not raise
         ET.parse(plist)
 
     def test_entitlements_has_virtualization(self):
-        plist = PROJECT_ROOT / "entitlements.plist"
+        plist = PROJECT_ROOT / "build_system/packaging/macos/entitlements.plist"
         if not plist.exists():
             pytest.skip("No entitlements.plist")
         text = plist.read_text()

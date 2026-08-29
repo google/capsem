@@ -40,10 +40,10 @@ def test_local_install_builds_content_package_then_installs_that_exact_package(
     assert labels.index("assets.assemble") < labels.index("local-install.content")
     assert labels.index("local-install.content") < labels.index("local-install.package")
     assert labels.index("local-install.package") < labels.index("local-install.install")
-    assert "scripts/build-test-macos-package.sh" in rendered
-    assert "scripts/install-local-macos-package.applescript" in rendered
+    assert "build_system/packaging/macos/build-test-macos-package.sh" in rendered
+    assert "build_system/packaging/macos/install-local-macos-package.applescript" in rendered
     assert "sudo /usr/sbin/installer" not in rendered
-    authorization = (ROOT / "scripts/install-local-macos-package.applescript").read_text(
+    authorization = (ROOT / "build_system/packaging/macos/install-local-macos-package.applescript").read_text(
         encoding="utf-8"
     )
     assert "quoted form of packagePath" in authorization
@@ -288,13 +288,13 @@ def test_public_installer_stops_the_user_service_before_package_replacement() ->
 
 def test_installed_glowup_owns_the_release_regression_story_matrix() -> None:
     local_glowup = (ROOT / "scripts/local-release-glowup.py").read_text(encoding="utf-8")
-    macos_glowup = (ROOT / "scripts/macos_release_glowup.py").read_text(encoding="utf-8")
-    tart_host = (ROOT / "scripts/macos_tart_glowup.py").read_text(encoding="utf-8")
-    tart_guest = (ROOT / "scripts/macos_tart_guest.sh").read_text(encoding="utf-8")
-    tart_regressions = (ROOT / "scripts/macos-tart-regression-probes.sh").read_text(
+    macos_glowup = (ROOT / "build_system/packaging/macos/macos_release_glowup.py").read_text(encoding="utf-8")
+    tart_host = (ROOT / "build_system/packaging/macos/macos_tart_glowup.py").read_text(encoding="utf-8")
+    tart_guest = (ROOT / "build_system/packaging/macos/macos_tart_guest.sh").read_text(encoding="utf-8")
+    tart_regressions = (ROOT / "build_system/packaging/macos/macos-tart-regression-probes.sh").read_text(
         encoding="utf-8"
     )
-    physical_boot = (ROOT / "scripts/prove-macos-package-boot.sh").read_text(encoding="utf-8")
+    physical_boot = (ROOT / "build_system/packaging/macos/prove-macos-package-boot.sh").read_text(encoding="utf-8")
     native_check = (ROOT / "scripts/check-macos-native-glowup.py").read_text(encoding="utf-8")
 
     for source in (local_glowup, macos_glowup):

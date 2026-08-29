@@ -1,14 +1,14 @@
 #!/bin/bash
-# scripts/run_signed.sh
+# build_system/packaging/macos/run_signed.sh
 #
 # Custom runner for Capsem development.
 # Handles signing the binary with Virtualization entitlements on macOS.
 # All runner diagnostics go to a unified build log (never stdout/stderr).
 
-# Find the workspace root based on the script's location
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-ROOT_DIR="$(dirname "$DIR")"
-ENTITLEMENTS="$ROOT_DIR/entitlements.plist"
+# Find the workspace root based on the script's owned package location.
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+ENTITLEMENTS="$SCRIPT_DIR/entitlements.plist"
 BUILD_LOG="$ROOT_DIR/target/build.log"
 SIGN_LOCK_DIR="$ROOT_DIR/target/.run_signed_codesign.lock"
 

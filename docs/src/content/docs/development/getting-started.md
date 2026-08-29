@@ -111,7 +111,7 @@ On macOS, the compiled binary must be codesigned with Apple's `com.apple.securit
 
 **Prerequisites:**
 - Xcode Command Line Tools (`xcode-select --install`)
-- `entitlements.plist` in the repo root (checked into git)
+- `build_system/packaging/macos/entitlements.plist` (checked into git)
 
 **Validation:** `just doctor` runs a six-step codesigning check (macOS only):
 
@@ -119,7 +119,7 @@ On macOS, the compiled binary must be codesigned with Apple's `com.apple.securit
 |-------|-------------------|-----------------|
 | Xcode CLTools | `xcode-select -p` returns a path | `xcode-select --install` |
 | `codesign` binary | The tool exists in PATH | Install Xcode CLTools (see above) |
-| `entitlements.plist` | The file exists and is readable | `just doctor-fix` (auto-restores from git) |
+| `build_system/packaging/macos/entitlements.plist` | The file exists and is readable | `just doctor-fix` (auto-restores from git) |
 | `.cargo/config.toml` | Cargo runner configured | `just doctor-fix` (auto-restores from git) |
 | `run_signed.sh` | Script exists and is executable | `just doctor-fix` (auto-restores from git) |
 | Test sign | Compiles a tiny binary + signs it with entitlements | See [troubleshooting](#codesign-fails) below |
@@ -151,9 +151,9 @@ Run `just doctor-fix` to auto-fix all fixable issues. Fixes run in dependency or
 If `just run` or `just doctor` reports a codesign failure:
 
 1. **Xcode CLTools missing:** `xcode-select --install` (opens the system installer)
-2. **`entitlements.plist` missing:** `git checkout entitlements.plist`
+2. **macOS packaging entitlements missing:** `git checkout build_system/packaging/macos/entitlements.plist`
 3. **Test sign fails but tools are present:**
-   - Try manually: `codesign --sign - --entitlements entitlements.plist --force target/debug/capsem`
+   - Try manually: `codesign --sign - --entitlements build_system/packaging/macos/entitlements.plist --force target/debug/capsem`
    - Check SIP status: `csrutil status` (should be "enabled")
    - Verify `cc` works: `echo 'int main(){return 0;}' | cc -x c -o /tmp/test -` -- if this fails, reinstall CLTools: `sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install`
 

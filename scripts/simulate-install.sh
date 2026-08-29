@@ -84,7 +84,7 @@ codesign_identifier_for_bin() {
 # Codesign real macOS Mach-O binaries with Virtualization entitlements. Fake
 # shell-script binaries used by install tests are intentionally skipped.
 if [[ "$(uname -s)" == "Darwin" ]]; then
-    ENTITLEMENTS="$(cd "$SCRIPT_DIR/.." && pwd)/entitlements.plist"
+    ENTITLEMENTS="$(cd "$SCRIPT_DIR/.." && pwd)/build_system/packaging/macos/entitlements.plist"
     for bin in "$INSTALL_DIR"/capsem*; do
         [[ -f "$bin" ]] || continue
         if file "$bin" | grep -q "Mach-O"; then

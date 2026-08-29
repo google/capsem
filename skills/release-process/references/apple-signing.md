@@ -11,14 +11,14 @@ Check: `openssl pkcs12 -in cert.p12 -info -nokeys -nocerts -passin pass:PWD 2>&1
 - `PBES2` = broken on macOS
 - `pbeWithSHA1And3-KeyTripleDES-CBC` = works
 
-Fix: `scripts/fix_p12_legacy.sh` then `gh secret set APPLE_CERTIFICATE < private/apple-certificate/capsem-b64.txt`
+Fix: `build_system/packaging/macos/fix_p12_legacy.sh` then `gh secret set APPLE_CERTIFICATE < private/apple-certificate/capsem-b64.txt`
 
 ### Notarization
 
 Shipping artifact on macOS is a **`.pkg`** (productbuild), not a `.dmg`. Flow:
 
 1. `cargo tauri build --bundles app --skip-stapling` -- builds `.app` only (Tauri skips stapling the inner app; we staple the outer `.pkg`).
-2. `scripts/build-pkg.sh` -- productbuilds `Capsem-$VERSION.pkg` with the `.app` + companion binaries + `manifest.json`. Heavy VM assets are downloaded on first use by the postinstall.
+2. `build_system/packaging/macos/build-pkg.sh` -- productbuilds `Capsem-$VERSION.pkg` with the `.app` + companion binaries + `manifest.json`. Heavy VM assets are downloaded on first use by the postinstall.
 3. `xcrun notarytool submit ... --wait --timeout 30m` -- synchronous.
 4. `xcrun stapler staple` + `xcrun stapler validate`.
 

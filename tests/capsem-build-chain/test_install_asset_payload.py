@@ -505,17 +505,14 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
 
 
 def test_native_install_reuses_the_release_package_builder() -> None:
-    from capsem_builder.gate import config as gate_config
-
     justfile = (PROJECT_ROOT / "justfile").read_text()
-    macos_glowup = (PROJECT_ROOT / "scripts" / "macos_release_glowup.py").read_text()
+    macos_glowup = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "macos_release_glowup.py").read_text()
     local_install = (PROJECT_ROOT / "build_system/builder/gate/localinstall.py").read_text()
-    package_script = gate_config.load(PROJECT_ROOT).install.local_macos_package_script
 
     assert "\ninstall:" in justfile
     assert "capsem-gate local-install" in justfile
     assert "config.install.local_macos_package_script" in local_install
-    assert package_script in macos_glowup
+    assert "config.install.local_macos_package_script" in macos_glowup
     assert "macos_tart_glowup.py" in macos_glowup
     assert "prove-macos-package-boot.sh" in macos_glowup
 
@@ -1085,8 +1082,8 @@ def test_install_recipe_runs_release_glowup_in_clean_project_environment() -> No
 
 
 def test_native_packages_make_full_doctor_mock_server_self_contained() -> None:
-    build_pkg = (PROJECT_ROOT / "scripts" / "build-pkg.sh").read_text()
-    pkg_postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
+    build_pkg = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "build-pkg.sh").read_text()
+    pkg_postinstall = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "pkg-scripts" / "postinstall").read_text()
     linux = PROJECT_ROOT / "build_system" / "packaging" / "linux"
     repack_deb = (linux / "repack-deb.sh").read_text()
     deb_postinst = (linux / "deb-postinst.sh").read_text()
@@ -2619,7 +2616,7 @@ def test_local_release_glowup_forbids_metadata_only_binary_cohorts() -> None:
 
 
 def test_native_glowup_owns_exact_manifest_and_installed_shell_evidence() -> None:
-    macos = (PROJECT_ROOT / "scripts" / "macos_release_glowup.py").read_text()
+    macos = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "macos_release_glowup.py").read_text()
     linux = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
     installed_probe = (PROJECT_ROOT / "scripts" / "release_installed_probe.py").read_text()
     authoring = (PROJECT_ROOT / "build_system/builder/gate/releaseauthoring.py").read_text()
@@ -2637,7 +2634,7 @@ def test_every_native_glowup_uses_graph_first_binary_authoring() -> None:
     """Linux and macOS must not stamp provenance into a legacy projection."""
     gate = (PROJECT_ROOT / "build_system/builder/gate/releasegraph.py").read_text()
     linux = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
-    macos = (PROJECT_ROOT / "scripts" / "macos_release_glowup.py").read_text()
+    macos = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "macos_release_glowup.py").read_text()
 
     assert "author_binary_graph(" in gate
     for source in (linux, macos):
@@ -2664,7 +2661,7 @@ def test_dev_service_does_not_replace_installed_assets_with_worktree_symlink() -
 
 def test_installers_remove_retired_user_and_service_config_rails() -> None:
     scripts = [
-        PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall",
+        PROJECT_ROOT / "build_system" / "packaging" / "macos" / "pkg-scripts" / "postinstall",
         PROJECT_ROOT / "build_system" / "packaging" / "linux" / "deb-postinst.sh",
         PROJECT_ROOT / "scripts" / "simulate-install.sh",
     ]
@@ -2678,7 +2675,7 @@ def test_installers_remove_retired_user_and_service_config_rails() -> None:
 
 def test_installers_remove_retired_python_admin_bundle() -> None:
     scripts = [
-        PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall",
+        PROJECT_ROOT / "build_system" / "packaging" / "macos" / "pkg-scripts" / "postinstall",
         PROJECT_ROOT / "build_system" / "packaging" / "linux" / "deb-postinst.sh",
         PROJECT_ROOT / "scripts" / "simulate-install.sh",
     ]
@@ -2691,7 +2688,7 @@ def test_installers_remove_retired_python_admin_bundle() -> None:
 
 def test_native_postinstall_merges_fresh_check_into_manifest_metadata() -> None:
     for relative in (
-        "scripts/pkg-scripts/postinstall",
+        "build_system/packaging/macos/pkg-scripts/postinstall",
         "build_system/packaging/linux/deb-postinst.sh",
     ):
         script = (PROJECT_ROOT / relative).read_text()
@@ -2729,13 +2726,13 @@ def test_manifest_generation_public_path_is_capsem_admin() -> None:
 
 
 def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
-    build_pkg = (PROJECT_ROOT / "scripts" / "build-pkg.sh").read_text()
+    build_pkg = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "build-pkg.sh").read_text()
     linux = PROJECT_ROOT / "build_system" / "packaging" / "linux"
     repack_deb = (linux / "repack-deb.sh").read_text()
     deb_postinst = (linux / "deb-postinst.sh").read_text()
-    pkg_preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
-    pkg_postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
-    pkg_install_user = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "install-user").read_text()
+    pkg_preinstall = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "pkg-scripts" / "preinstall").read_text()
+    pkg_postinstall = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "pkg-scripts" / "postinstall").read_text()
+    pkg_install_user = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "pkg-scripts" / "install-user").read_text()
 
     assert "CAPSEM_PKG_ASSET_MODE" not in build_pkg
     assert "ASSET_MODE=" not in build_pkg
@@ -2779,7 +2776,7 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert 'install -m 0755 "$SCRIPT_DIR/pkg-scripts/$package_script"' in build_pkg
     assert "for package_script in install-diagnostics install-manifest retire-cohort" in build_pkg
     assert (
-        'install -m 0755 "$SCRIPT_DIR/../build_system/packaging/shared/$package_script"'
+        'install -m 0755 "$SCRIPT_DIR/../shared/$package_script"'
         in build_pkg
     )
     assert 'xattr -rc "$WORK_DIR/payload" "$PKG_SCRIPTS"' in build_pkg
@@ -2933,7 +2930,7 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
 
 
 def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
-    postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
+    postinstall = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "pkg-scripts" / "postinstall").read_text()
 
     assert ".config/fish/config.fish" in postinstall
     assert "fish_add_path" in postinstall

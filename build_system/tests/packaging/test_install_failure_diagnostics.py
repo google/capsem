@@ -85,13 +85,14 @@ exit 0
 
 
 def test_macos_package_scripts_install_and_enable_failure_diagnostics() -> None:
-    build_pkg = (PROJECT_ROOT / "scripts" / "build-pkg.sh").read_text()
-    preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
-    postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
+    macos = PROJECT_ROOT / "build_system" / "packaging" / "macos"
+    build_pkg = (macos / "build-pkg.sh").read_text()
+    preinstall = (macos / "pkg-scripts" / "preinstall").read_text()
+    postinstall = (macos / "pkg-scripts" / "postinstall").read_text()
 
     assert "install-diagnostics install-manifest retire-cohort" in build_pkg
     assert 'install -m 0755 "$SCRIPT_DIR/pkg-scripts/$package_script"' in build_pkg
-    assert "$SCRIPT_DIR/../build_system/packaging/shared/$package_script" in build_pkg
+    assert "$SCRIPT_DIR/../shared/$package_script" in build_pkg
     assert 'source "$(dirname "$0")/retire-cohort"' in preinstall
     assert 'capsem_retire_native_cohort "$CAPSEM_DIR"' in preinstall
     for script in (preinstall, postinstall):

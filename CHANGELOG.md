@@ -10350,7 +10350,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Missing built artifacts silently skipped tests instead of failing.**
   Tests that depend on `assets/<arch>/manifest.json`,
-  `assets/<arch>/initrd.img`, `entitlements.plist`, or
+  `assets/<arch>/initrd.img`, `build_system/packaging/macos/entitlements.plist`, or
   `target/linux-agent/<arch>/` use `pytest.skip()` when the artifact is
   absent so a fresh local checkout doesn't fail the suite. In CI, where
   earlier `just test` stages are expected to produce those artifacts, a
@@ -11843,7 +11843,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **frontend: VM table telemetry columns** -- Uptime, Tokens, Cost columns in the sandbox table. Shows "--" for stopped VMs, live values for running.
 - **frontend: `getStats()` API** -- new API function with graceful offline handling (returns empty stats when disconnected).
 - **frontend: shared formatters** -- `format.ts` with `formatUptime`, `formatTokens`, `formatCost`, `formatDuration`, `formatBytes`, `formatTime`, `truncate`, `fmtAge`. StatsView refactored to use shared module.
-- **standalone installer: macOS .pkg build** -- `scripts/build-pkg.sh` assembles a .pkg from the Tauri .app, all 6 companion binaries, VM assets, and a postinstall script that copies to `~/.capsem/bin/`, codesigns, registers LaunchAgent, and runs setup. CI pipeline updated to build .pkg alongside .dmg.
+- **standalone installer: macOS .pkg build** -- `build_system/packaging/macos/build-pkg.sh` assembles a .pkg from the Tauri .app, all 6 companion binaries, VM assets, and a postinstall script that copies to `~/.capsem/bin/`, codesigns, registers LaunchAgent, and runs setup. CI pipeline updated to build .pkg alongside .dmg.
 - **`just install` builds and installs the platform package** -- builds release binaries, frontend, and Tauri app, then assembles and installs the native package: .pkg with macOS Installer GUI on macOS, .deb via `dpkg -i` on Linux. The postinstall script handles codesign, PATH, service registration, and setup. Replaces the old `simulate-install.sh` bypass.
 - **`just test-install` exercises the real .deb path** -- Docker e2e tests now build a real .deb (Tauri + `repack-deb.sh`), install with `dpkg -i` (exercising `deb-postinst.sh` with systemd registration and setup), then run the pytest suite against the installed layout. Named volumes cache cargo builds across runs. Tests split into packaging (run in Docker) and `live_system` (need VM assets, run on real systems).
 - **standalone installer: Linux .deb repack** -- `build_system/packaging/linux/repack-deb.sh` injects companion binaries and a postinst script into the Tauri .deb. Postinst symlinks system binaries to `~/.capsem/bin/`, registers systemd user unit, and runs setup.
@@ -12603,7 +12603,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `just doctor` command: checks all required dev tools, container runtime (docker/podman), Rust targets, and cargo tools are installed
 - Release preflight checks (`scripts/preflight.sh`): validates Apple certificate format, keychain import, and base64 sync before CI release
-- `scripts/fix_p12_legacy.sh`: converts OpenSSL 3.x p12 files to legacy 3DES format macOS Keychain accepts
+- `build_system/packaging/macos/fix_p12_legacy.sh`: converts OpenSSL 3.x p12 files to legacy 3DES format macOS Keychain accepts
 - CI preflight job in release workflow: fails fast on certificate/credential issues before slow build jobs
 
 ### Changed
@@ -12645,7 +12645,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AI telemetry pollution: `model_call` records are now strictly filtered to valid LLM API paths (e.g., `/v1/messages`), preventing metadata endpoints from generating spurious NULL traces.
 - Fallback model extraction: Added regex-based fallback to extract the model name from truncated JSON request bodies when the 64KB preview buffer limit is reached.
 - fs-watch telemetry drops: Fixed a race condition during VM boot where early vsock connections (like `fs-watch`) were dropped by the host before the terminal/control handshake completed.
-- `scripts/run_signed.sh` now correctly refreshes the binary signature via `touch` after re-signing with entitlements.
+- `build_system/packaging/macos/run_signed.sh` now correctly refreshes the binary signature via `touch` after re-signing with entitlements.
 - Build prerequisites documentation updated with `b3sum`, `tauri-cli`, and `musl-cross` toolchain requirements.
 - capsem-doctor PATH: writable bin dirs (`/root/.npm-global/bin`, `/root/.local/bin`) now included so AI CLIs and npm globals are found
 - Gemini CLI settings.json: added `homeDirectoryWarningDismissed` and `sessionRetention` to suppress first-run prompts

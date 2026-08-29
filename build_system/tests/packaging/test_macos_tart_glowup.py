@@ -13,15 +13,16 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-HARNESS = PROJECT_ROOT / "scripts" / "macos_tart_glowup.py"
-GLOWUP = PROJECT_ROOT / "scripts" / "macos_release_glowup.py"
-GUEST = PROJECT_ROOT / "scripts" / "macos_tart_guest.sh"
-GUEST_REGRESSIONS = PROJECT_ROOT / "scripts" / "macos-tart-regression-probes.sh"
-GUEST_SUPPORT = PROJECT_ROOT / "scripts" / "macos_tart_transition_support.py"
-HOST_BOOT = PROJECT_ROOT / "scripts" / "prove-macos-package-boot.sh"
+MACOS_PACKAGING = PROJECT_ROOT / "build_system" / "packaging" / "macos"
+HARNESS = MACOS_PACKAGING / "macos_tart_glowup.py"
+GLOWUP = MACOS_PACKAGING / "macos_release_glowup.py"
+GUEST = MACOS_PACKAGING / "macos_tart_guest.sh"
+GUEST_REGRESSIONS = MACOS_PACKAGING / "macos-tart-regression-probes.sh"
+GUEST_SUPPORT = MACOS_PACKAGING / "macos_tart_transition_support.py"
+HOST_BOOT = MACOS_PACKAGING / "prove-macos-package-boot.sh"
 INSTALLED_WINTERFELL = PROJECT_ROOT / "scripts" / "run-installed-winterfell.py"
 NATIVE_REPORT_CHECK = PROJECT_ROOT / "scripts" / "check-macos-native-glowup.py"
-LOCAL_PACKAGE_BUILD = PROJECT_ROOT / "scripts" / "build-test-macos-package.sh"
+LOCAL_PACKAGE_BUILD = MACOS_PACKAGING / "build-test-macos-package.sh"
 LOCAL_SIGNING = PROJECT_ROOT / "scripts" / "macos_signing.py"
 RELEASE_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "release.yaml"
 PINNED_TART_IMAGE = (
@@ -57,12 +58,14 @@ def _load_script(path: Path, name: str):
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
-    scripts_dir = str(PROJECT_ROOT / "scripts")
-    sys.path.insert(0, scripts_dir)
+    search_paths = (str(path.parent), str(PROJECT_ROOT / "scripts"))
+    for search_path in reversed(search_paths):
+        sys.path.insert(0, search_path)
     try:
         spec.loader.exec_module(module)
     finally:
-        sys.path.remove(scripts_dir)
+        for search_path in search_paths:
+            sys.path.remove(search_path)
     return module
 
 
@@ -789,9 +792,9 @@ def test_standalone_glowup_owns_build_tart_install_and_physical_boot() -> None:
     build = LOCAL_PACKAGE_BUILD.read_text()
     physical = HOST_BOOT.read_text()
 
-    assert '"scripts/build-test-macos-package.sh"' in source
-    assert '"scripts/macos_tart_glowup.py"' in source
-    assert '"scripts/prove-macos-package-boot.sh"' in source
+    assert "config.install.local_macos_package_script" in source
+    assert 'str(Path(__file__).resolve().parent / "macos_tart_glowup.py")' in source
+    assert 'str(Path(__file__).resolve().parent / "prove-macos-package-boot.sh")' in source
     assert '"scripts/materialize-config.sh"' not in source
     assert '"--content-root"' in source
     assert '"--assets-dir"' in source and '"--config-root"' in source

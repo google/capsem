@@ -308,7 +308,7 @@ Before deployment, `just test-clean` owns both native install boundaries. Linux 
 `just test-install`: the gate serves generated stable and nightly release
 channels from package and manifest artifacts built in Docker, then proves
 `install.sh`, `capsem update --assets --manifest`, and `capsem update --yes`.
-On Apple Silicon macOS, `scripts/macos_release_glowup.py` builds the real `.pkg`, mounts
+On Apple Silicon macOS, `build_system/packaging/macos/macos_release_glowup.py` builds the real `.pkg`, mounts
 that exact file into a disposable Tart Mac, installs it, verifies the receipt,
 app bundle, binary cohort, and service/gateway status. Tart macOS guests cannot
 expose nested virtualization, so the recipe then extracts the same package on
@@ -498,7 +498,7 @@ Common failure patterns:
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| "No Developer ID signing identity" | p12 uses PBES2/AES encryption | Re-export with `scripts/fix_p12_legacy.sh` |
+| "No Developer ID signing identity" | p12 uses PBES2/AES encryption | Re-export with `build_system/packaging/macos/fix_p12_legacy.sh` |
 | KVM tests skipped | `/dev/kvm` not available on runner | Check udev rules in workflow |
 | Schema drift | `config/settings/schema.generated.json` out of sync | Run `just _generate-settings` and commit |
 | Frontend build fails | Missing `@source` directive | Add pattern to `global.css` |

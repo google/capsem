@@ -16,7 +16,7 @@ source "$SCRIPT_DIR/bootstrap-linux.sh"
 . "$SCRIPT_DIR/bootstrap-rust.sh"
 CAPSEM_RUST_TOOLCHAIN=$(capsem_rust_toolchain "$PROJECT_ROOT/rust-toolchain.toml")
 
-ENTITLEMENTS="entitlements.plist"
+ENTITLEMENTS="build_system/packaging/macos/entitlements.plist"
 ASSETS_DIR="assets"
 
 # ---------------------------------------------------------------------------
@@ -114,14 +114,14 @@ _reg linux-musl-tools "_doctor_install_linux_musl_tools" \
                       "Install Linux musl C compiler/linker (musl-tools)"
 _reg gate-cargo-tools "_doctor_install_gate_tools" \
                       "Install every config-owned Cargo gate tool"
-_reg entitlements     "git checkout entitlements.plist" \
+_reg entitlements     "git checkout build_system/packaging/macos/entitlements.plist" \
                       "Restore entitlements.plist"
 _reg cargo-config     "git checkout .cargo/config.toml" \
                       "Restore .cargo/config.toml"
-_reg run-signed       "git checkout scripts/run_signed.sh && chmod +x scripts/run_signed.sh" \
-                      "Restore scripts/run_signed.sh"
-_reg run-signed-chmod "chmod +x scripts/run_signed.sh" \
-                      "Make scripts/run_signed.sh executable"
+_reg run-signed       "git checkout build_system/packaging/macos/run_signed.sh && chmod +x build_system/packaging/macos/run_signed.sh" \
+                      "Restore build_system/packaging/macos/run_signed.sh"
+_reg run-signed-chmod "chmod +x build_system/packaging/macos/run_signed.sh" \
+                      "Make build_system/packaging/macos/run_signed.sh executable"
 _reg pnpm-install     "_doctor_install_node_workspaces" \
                       "Install every locked Node workspace"
 _reg build-assets     "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 _doctor_build_assets_all_profiles" \

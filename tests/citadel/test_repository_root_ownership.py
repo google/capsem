@@ -76,7 +76,6 @@ APPROVED_ROOT_FILES = frozenset(
         "audit.toml",
         "bootstrap.sh",
         "codecov.yml",
-        "entitlements.plist",
         "justfile",
         "pyproject.toml",
         "rust-toolchain.toml",

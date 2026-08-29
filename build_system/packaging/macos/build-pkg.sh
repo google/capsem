@@ -12,7 +12,7 @@
 #   signing_identity  Optional: Developer ID Installer identity for productsign
 #   --manifest        Optional manifest URL to record for postinstall hydration.
 #
-# Output: Capsem-<version>.pkg in the current directory
+# Output: packages/Capsem-<version>.pkg in the repository root
 #
 # The .pkg installs:
 #   /Applications/Capsem.app           -- Tauri GUI
@@ -210,8 +210,8 @@ for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp
 done
 
 # Entitlements (needed by postinstall for codesigning)
-if [ -f "$SCRIPT_DIR/../entitlements.plist" ]; then
-    cp "$SCRIPT_DIR/../entitlements.plist" "$SHARE_DIR/"
+if [ -f "$SCRIPT_DIR/entitlements.plist" ]; then
+    cp "$SCRIPT_DIR/entitlements.plist" "$SHARE_DIR/"
 fi
 
 # VM manifest source. The package carries only the selected manifest URL and
@@ -251,7 +251,7 @@ echo "=== Building component package ==="
 PKG_SCRIPTS="$WORK_DIR/pkg-scripts"
 mkdir -p "$PKG_SCRIPTS"
 for package_script in preinstall postinstall install-user; do install -m 0755 "$SCRIPT_DIR/pkg-scripts/$package_script" "$PKG_SCRIPTS/$package_script"; done
-for package_script in install-diagnostics install-manifest retire-cohort; do install -m 0755 "$SCRIPT_DIR/../build_system/packaging/shared/$package_script" "$PKG_SCRIPTS/$package_script"; done
+for package_script in install-diagnostics install-manifest retire-cohort; do install -m 0755 "$SCRIPT_DIR/../shared/$package_script" "$PKG_SCRIPTS/$package_script"; done
 
 # Strip macOS extended attributes in the temporary staging area. Otherwise
 # pkgbuild serializes AppleDouble `._*` sidecars into Payload/Scripts.
@@ -332,8 +332,8 @@ productbuild \
     "$WORK_DIR/Capsem-$VERSION-unsigned.pkg"
 
 # Sign if identity provided
-mkdir -p "$(dirname "$0")/../packages"
-OUTPUT_PKG="$(dirname "$0")/../packages/Capsem-$VERSION.pkg"
+OUTPUT_PKG="$(cd "$SCRIPT_DIR/../../.." && pwd)/packages/Capsem-$VERSION.pkg"
+mkdir -p "$(dirname "$OUTPUT_PKG")"
 if [ -n "$SIGNING_IDENTITY" ]; then
     echo "=== Signing .pkg ==="
     productsign \

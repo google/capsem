@@ -808,7 +808,7 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "--publication-base" in workflow
     assert "stage-profile-publication.py" in workflow
     assert "verify-profile-publication.py" in workflow
-    assert "scripts/build-pkg.sh" not in workflow
+    assert "build_system/packaging/macos/build-pkg.sh" not in workflow
     assert "build_system/packaging/linux/repack-deb.sh" not in workflow
     assert "cargo tauri build" not in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
@@ -2690,7 +2690,7 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
 
 
 def test_manifest_source_inputs_are_url_only() -> None:
-    build_pkg = (PROJECT_ROOT / "scripts" / "build-pkg.sh").read_text()
+    build_pkg = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "build-pkg.sh").read_text()
     repack_deb = (
         PROJECT_ROOT / "build_system/packaging/linux/repack-deb.sh"
     ).read_text()
@@ -2725,7 +2725,7 @@ def test_manifest_source_inputs_are_url_only() -> None:
                     command
                     for command in parsed_commands(shell, origin=f"{name}:{job_name}")
                     if {
-                        "scripts/build-pkg.sh",
+                        "build_system/packaging/macos/build-pkg.sh",
                         "build_system/packaging/linux/repack-deb.sh",
                     }.intersection(command.argv)
                 )
@@ -3096,7 +3096,7 @@ def test_release_skills_require_local_ci_execution_parity_and_record_native_musl
 
 def test_release_critical_workflows_share_local_entrypoints_or_name_platform_boundaries() -> None:
     just = (PROJECT_ROOT / "justfile").read_text()
-    macos_glowup = _source_text("scripts/macos_release_glowup.py")
+    macos_glowup = _source_text("build_system/packaging/macos/macos_release_glowup.py")
     assets = _workflow_text("release-assets.yaml")
     ci = _workflow_text("ci.yaml")
     release = _workflow_text("release.yaml")
@@ -3126,7 +3126,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     assert "test -r /dev/vhost-vsock -a -w /dev/vhost-vsock" in install_job
 
     for shared_script in (
-        "scripts/build-pkg.sh",
+        "build_system/packaging/macos/build-pkg.sh",
         "scripts/verify-installed-release.py",
         "scripts/prove-installed-shell.py",
     ):
@@ -3135,7 +3135,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     assert '"$SCRIPT_DIR/repack-deb.sh"' in _source_text(
         "build_system/packaging/linux/build-linux-package.sh"
     )
-    assert "scripts/build-test-macos-package.sh" in macos_glowup
+    assert "config.install.local_macos_package_script" in macos_glowup
     # The local rail must reach the same shared scripts CI does. Since the
     # package build moved out of the recipe body, "local" is the justfile plus
     # what it dispatches to -- the point of the rule is that both rails run the
@@ -4740,7 +4740,7 @@ def test_installer_codesigns_helpers_with_stable_identifiers() -> None:
     identifiers even when the signing identity is ad-hoc in local/dev builds.
     """
 
-    postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
+    postinstall = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "pkg-scripts" / "postinstall").read_text()
     simulate_install = (PROJECT_ROOT / "scripts" / "simulate-install.sh").read_text()
     expected = [
         "org.capsem.cli",
@@ -4764,11 +4764,11 @@ def test_installer_codesigns_helpers_with_stable_identifiers() -> None:
 
 
 def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort() -> None:
-    preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
+    preinstall = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "pkg-scripts" / "preinstall").read_text()
     retire_cohort = (
         PROJECT_ROOT / "build_system" / "packaging" / "shared" / "retire-cohort"
     ).read_text()
-    postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
+    postinstall = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "pkg-scripts" / "postinstall").read_text()
     linux = PROJECT_ROOT / "build_system" / "packaging" / "linux"
     deb_preinst = (linux / "deb-preinst.sh").read_text()
     deb_postinst = (linux / "deb-postinst.sh").read_text()
@@ -5273,7 +5273,7 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
 
 def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     canonical_gate = _dispatched_text("test-clean:")
-    mac_glowup = _source_text("scripts/macos_release_glowup.py")
+    mac_glowup = _source_text("build_system/packaging/macos/macos_release_glowup.py")
     host_sbom = _recipe_block("_gate-host-package-sbom:")
     release = _source_text(".github/workflows/release.yaml")
 
@@ -5293,9 +5293,9 @@ def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     # in `host_sbom` as well.
     assert "glowup.host-sbom" in canonical_gate
     assert "tests/capsem-recipes/" in canonical_gate
-    assert "scripts/build-test-macos-package.sh" in mac_glowup
-    assert "scripts/macos_tart_glowup.py" in mac_glowup
-    assert "scripts/prove-macos-package-boot.sh" in mac_glowup
+    assert "config.install.local_macos_package_script" in mac_glowup
+    assert 'str(Path(__file__).resolve().parent / "macos_tart_glowup.py")' in mac_glowup
+    assert 'str(Path(__file__).resolve().parent / "prove-macos-package-boot.sh")' in mac_glowup
     # Same reason as `glowup.host-sbom` above: the recipe dispatches to the
     # gate, and the command's work is a `Call` that describes itself in prose.
     # The script name reached this string only when a warm tree let the
@@ -5314,7 +5314,7 @@ def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     # a claim about running the production generator rather than about a step
     # label that could be wired to anything.
     assert sbom.script == "scripts/generate-host-binary-sbom.py"
-    assert "scripts/build-pkg.sh" in release
+    assert "build_system/packaging/macos/build-pkg.sh" in release
     assert "scripts/generate-host-binary-sbom.py" in release
 
 
@@ -5376,7 +5376,7 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
         assert mutable not in linux_job
     assert "--profile config/profiles/code/profile.toml" not in release
     for assembler in (
-        "scripts/build-pkg.sh",
+        "build_system/packaging/macos/build-pkg.sh",
         "build_system/packaging/linux/repack-deb.sh",
     ):
         source = _source_text(assembler)
@@ -5537,10 +5537,10 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         "crates/capsem/src/update.rs",
         "crates/capsem-service/src/main.rs",
         "crates/capsem-core/src/net/policy_config/profile_contract.rs",
-        "scripts/build-pkg.sh",
+        "build_system/packaging/macos/build-pkg.sh",
         "build_system/packaging/linux/repack-deb.sh",
         "build_system/packaging/linux/deb-postinst.sh",
-        "scripts/pkg-scripts/postinstall",
+        "build_system/packaging/macos/pkg-scripts/postinstall",
         "scripts/materialize-config.sh",
         "scripts/build-complete-release-channel.py",
         "scripts/local-release-glowup.py",
@@ -5772,7 +5772,7 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
 
     for relative in (
         "build_system/packaging/linux/deb-postinst.sh",
-        "scripts/pkg-scripts/postinstall",
+        "build_system/packaging/macos/pkg-scripts/postinstall",
     ):
         postinstall = tmp_path / relative
         original = postinstall.read_text()
@@ -5876,7 +5876,7 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
     )
     bench_package_pos = block.find("-p capsem-bench")
     bench_binary_pos = block.find("target/debug/capsem-bench-rs")
-    sign_pos = block.find("codesign --sign - --entitlements entitlements.plist --force")
+    sign_pos = block.find("codesign --sign - --entitlements build_system/packaging/macos/entitlements.plist --force")
     pytest_pos = block.find("uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml tests/capsem-bootstrap/")
 
     assert asset_pos != -1

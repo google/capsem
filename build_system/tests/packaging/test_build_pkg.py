@@ -1,4 +1,4 @@
-"""Artifact-level tests for scripts/build-pkg.sh."""
+"""Artifact-level tests for build_system/packaging/macos/build-pkg.sh."""
 
 import contextlib
 import functools
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = REPO_ROOT / "scripts" / "build-pkg.sh"
+SCRIPT = REPO_ROOT / "build_system" / "packaging" / "macos" / "build-pkg.sh"
 
 REQUIRED_BINARIES = [
     "capsem",

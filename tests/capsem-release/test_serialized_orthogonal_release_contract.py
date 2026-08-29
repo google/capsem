@@ -691,7 +691,7 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
 
     for forbidden in (
         "just _cross-compile",
-        "scripts/build-pkg.sh",
+        "build_system/packaging/macos/build-pkg.sh",
         "build_system/packaging/linux/repack-deb.sh",
         "cargo tauri build",
     ):

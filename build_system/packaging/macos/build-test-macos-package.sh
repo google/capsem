@@ -6,7 +6,8 @@
 # only to the tagged publication workflow.
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 VERSION=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
 MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/stable/manifest.json}"
 ASSETS_DIR=""
@@ -68,7 +69,7 @@ cargo build --release \
     -p capsem-mock-server \
     -p capsem-bench
 bash scripts/check-build-provenance.sh "$ROOT/target/release/capsem"
-bash scripts/build-pkg.sh \
+bash "$SCRIPT_DIR/build-pkg.sh" \
     --manifest "$MANIFEST_URL" \
     "$ROOT/target/release/bundle/macos/Capsem.app" \
     "$ROOT/target/release" \

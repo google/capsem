@@ -154,7 +154,7 @@ def markdown_links(root: Path) -> Outcome:
                 unused.discard(key)
                 continue
             # A bundled resource resolves beside its document; a path like
-            # `scripts/build-pkg.sh` quoted in a skill is a repository path
+            # `build_system/packaging/macos/build-pkg.sh` quoted in a skill is a repository path
             # named in prose. Try both before calling it broken -- checking
             # only the first reported forty-five files that plainly exist.
             if (source.parent / target).exists() or (root / target).exists():

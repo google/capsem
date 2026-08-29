@@ -87,7 +87,7 @@ the public stable-to-nightly switch/upgrade glow-up remain mandatory
 end-to-end proof.
 
 On Apple Silicon macOS, `just test-clean` owns the pre-publication macOS package
-boundary through `scripts/macos_release_glowup.py`: it builds the package with the
+boundary through `build_system/packaging/macos/macos_release_glowup.py`: it builds the package with the
 production assembler, installs that exact file in a disposable headless Tart
 guest, verifies the receipt, app bundle, complete binary cohort, service and
 gateway health, then extracts the same package on the physical Mac and boots a

@@ -40,7 +40,7 @@ def test_entitlements_present(signed_process):
 def test_entitlements_plist_valid():
     """entitlements.plist is valid XML with required keys."""
     import xml.etree.ElementTree as ET
-    plist = PROJECT_ROOT / "entitlements.plist"
+    plist = PROJECT_ROOT / "build_system/packaging/macos/entitlements.plist"
     assert plist.exists()
     ET.parse(plist)
     text = plist.read_text()

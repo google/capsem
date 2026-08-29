@@ -182,7 +182,7 @@ Corporate/custom asset builds use the same sequence as release:
 ```bash
 capsem-admin manifest generate /path/to/assets --version 1.3.corp.1 --json
 capsem-admin manifest check /path/to/assets/manifest.json --json
-bash scripts/build-pkg.sh \
+bash build_system/packaging/macos/build-pkg.sh \
   --manifest file:///path/to/assets/manifest.json \
   target/release/bundle/macos/Capsem.app \
   target/release \

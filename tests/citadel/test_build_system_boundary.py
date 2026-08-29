@@ -18,14 +18,14 @@ CONFIG = ROOT / "config" / "gate.toml"
 
 RATIONALE = """\
 Host build behavior belongs under build_system/. Root scripts/, docker/, and
-release-site/ are exact migration debt, as are audit and macOS package resources
-still at the repository root. Gate configuration must render only the owning new
+release-site/ are exact migration debt, as is audit configuration still at the
+repository root. Gate configuration must render only the owning new
 paths after each move. This inventory may shrink or have keys rewritten to their
 approved destination; it may never grow or be reset. See the T3 section of the
 approved repository cleanup proposal and [boundary.scripts] in config/gate.toml.
 """
 
-MIGRATING_ROOT_FILES = ("audit.toml", "entitlements.plist")
+MIGRATING_ROOT_FILES = ("audit.toml",)
 LEGACY_PLAN_PATH = re.compile(
     r"(?:^|[\s'\"])(?:scripts|docker|release-site)/|(?:^|/)entitlements[.]plist$"
 )

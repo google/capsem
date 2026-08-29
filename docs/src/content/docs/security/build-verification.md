@@ -44,7 +44,7 @@ All host binaries are codesigned with a Developer ID certificate. The `com.apple
 | Context | Signing | Command |
 |---------|---------|---------|
 | Development | Ad-hoc (`--sign -`) | `just build` (automatic) |
-| Release | Developer ID certificate | `codesign --sign "$APPLE_SIGNING_IDENTITY" --entitlements entitlements.plist --force` |
+| Release | Developer ID certificate | `codesign --sign "$APPLE_SIGNING_IDENTITY" --entitlements build_system/packaging/macos/entitlements.plist --force` |
 
 Ad-hoc signing is sufficient for local development. The justfile handles this automatically on macOS.
 
@@ -262,7 +262,7 @@ directory before packaging:
 ```bash
 capsem-admin manifest generate /path/to/assets --version 1.3.corp.1 --json
 capsem-admin manifest check /path/to/assets/manifest.json --json
-bash scripts/build-pkg.sh --manifest file:///path/to/assets/manifest.json ...
+bash build_system/packaging/macos/build-pkg.sh --manifest file:///path/to/assets/manifest.json ...
 ```
 
 The installer records that manifest URL in packaged `manifest-metadata.json`, then
