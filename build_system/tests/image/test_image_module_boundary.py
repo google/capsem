@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import tomllib
 from pathlib import Path
@@ -39,6 +40,8 @@ def test_builder_distribution_owns_image_package_and_command() -> None:
         (BUILD_SYSTEM_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
     assert "capsem_builder.image" in project["tool"]["setuptools"]["packages"]
+    assert "capsem_builder.image.tools" in project["tool"]["setuptools"]["packages"]
+    assert "capsem_builder.image.tools.bootstrap" in project["tool"]["setuptools"]["packages"]
     assert project["project"]["scripts"]["capsem-builder"] == (
         "capsem_builder.image.cli:main"
     )
@@ -49,3 +52,26 @@ def test_image_modules_resolve_from_the_direct_source_tree() -> None:
         module = importlib.import_module(f"capsem_builder.image.{name}")
         assert module.__file__ is not None
         assert Path(module.__file__).resolve() == (IMAGE_ROOT / f"{name}.py").resolve()
+
+
+def test_bootstrap_script_boundaries_are_thin_exit_status_launchers() -> None:
+    launchers = {
+        "install-configured-cargo-tools.py": "cargo_tools",
+        "prepare-linux-sandbox.py": "linux_sandbox",
+        "provision-linux-workspace.py": "linux_workspace",
+    }
+    for name, module in launchers.items():
+        source = (REPOSITORY_ROOT / "scripts" / name).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        assert len(source.splitlines()) <= 20, f"{name} contains reusable behavior"
+        assert f"capsem_builder.image.tools.bootstrap.{module}" in source
+        assert not any(isinstance(node, (ast.FunctionDef, ast.ClassDef)) for node in tree.body)
+        exits = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Raise)
+            and isinstance(node.exc, ast.Call)
+            and isinstance(node.exc.func, ast.Name)
+            and node.exc.func.id == "SystemExit"
+        ]
+        assert len(exits) == 1, f"{name} does not propagate its owned command status"

@@ -28,6 +28,8 @@ packages = [
     "capsem_builder.gate.tools",
     "capsem_builder.gate.tools.audit",
     "capsem_builder.image",
+    "capsem_builder.image.tools",
+    "capsem_builder.image.tools.bootstrap",
     "capsem_builder.policy",
     "capsem_builder.release",
 ]

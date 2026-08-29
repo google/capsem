@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from importlib import util
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 
 import yaml
@@ -14,6 +12,7 @@ from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import hostimage
 from capsem_builder.gate.context import Context
 from capsem_builder.gate.packageinputs import pinned_toolchain
+from capsem_builder.image.tools.bootstrap import cargo_tools
 from helpers.gate import RecordingJournal, RecordingRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -60,15 +59,6 @@ def _context(runner: RecordingRunner) -> Context:
         journal=RecordingJournal(),
         outside_runner=runner,
     )
-
-
-def _load_cargo_tool_installer() -> ModuleType:
-    path = PROJECT_ROOT / "scripts/install-configured-cargo-tools.py"
-    spec = util.spec_from_file_location("install_configured_cargo_tools", path)
-    assert spec is not None and spec.loader is not None
-    module = util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _workflow_steps(value: Any) -> list[dict[str, Any]]:
@@ -220,7 +210,10 @@ def test_macos_release_installs_only_config_owned_cargo_tools() -> None:
     job = str(steps)
     assert "cargo install" not in job
     assert "cargo-auditable" not in job
-    source = (PROJECT_ROOT / "scripts/install-configured-cargo-tools.py").read_text(
+    source = (
+        PROJECT_ROOT
+        / "build_system/builder/image/tools/bootstrap/cargo_tools.py"
+    ).read_text(
         encoding="utf-8"
     )
     assert "subprocess.run(tool.install, check=True)" in source
@@ -230,7 +223,7 @@ def test_macos_release_installs_only_config_owned_cargo_tools() -> None:
 def test_configured_cargo_tool_installer_executes_the_exact_config_argv(
     monkeypatch,
 ) -> None:
-    module = _load_cargo_tool_installer()
+    module = cargo_tools
     tool = next(crate for crate in CONFIG.toolchain.crates if crate.name == "cargo-tauri")
     installed = False
     commands: list[tuple[str, ...]] = []
@@ -297,14 +290,14 @@ def test_probing_a_tool_that_is_not_installed_yet_is_not_fatal() -> None:
     anything. The macOS release job died exactly here -- FileNotFoundError,
     'cargo-tauri' -- having never reached the install it was about to do.
     """
-    module = _load_cargo_tool_installer()
+    module = cargo_tools
 
     assert module._probe(("capsem-tool-that-is-not-installed", "--version")) == ""
 
 
 def test_a_tool_that_is_absent_is_installed_rather_than_fatal(monkeypatch) -> None:
     """Absent and wrong-version mean the same thing to the caller: install it."""
-    module = _load_cargo_tool_installer()
+    module = cargo_tools
     tool = next(crate for crate in CONFIG.toolchain.crates if crate.name == "cargo-tauri")
     installs: list[tuple[str, ...]] = []
     present = False

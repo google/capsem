@@ -13,14 +13,12 @@ attempt cost a rebuild to learn nothing.
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 import variables
@@ -34,6 +32,7 @@ from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.harnessschema import SandboxConfig
 from capsem_builder.gate.proc import Runner
 from capsem_builder.gate.processgroup import StopPolicy
+from capsem_builder.image.tools.bootstrap import linux_sandbox
 from helpers.gate import RecordingRunner
 from helpers.workflow_contract import assert_unmasked_step
 from pydantic import ValidationError
@@ -76,18 +75,8 @@ ONLINE_FAST = {
 }
 
 
-def _linux_sandbox_preparer() -> ModuleType:
-    path = PROJECT_ROOT / "scripts" / "prepare-linux-sandbox.py"
-    spec = importlib.util.spec_from_file_location("prepare_linux_sandbox", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_hosted_linux_sandbox_repairs_only_the_known_apparmor_restriction() -> None:
-    module = _linux_sandbox_preparer()
+    module = linux_sandbox
     calls: list[tuple[str, ...]] = []
     results = iter(
         (
@@ -124,7 +113,7 @@ def test_hosted_linux_sandbox_repairs_only_the_known_apparmor_restriction() -> N
 
 
 def test_hosted_linux_sandbox_requires_the_complete_probe_after_repair() -> None:
-    module = _linux_sandbox_preparer()
+    module = linux_sandbox
     calls: list[tuple[str, ...]] = []
     results = iter(
         (
@@ -165,7 +154,7 @@ def test_hosted_linux_sandbox_requires_the_complete_probe_after_repair() -> None
 def test_hosted_linux_sandbox_refuses_unknown_or_unhosted_failures(
     stderr: str, environment: dict[str, str]
 ) -> None:
-    module = _linux_sandbox_preparer()
+    module = linux_sandbox
     calls: list[tuple[str, ...]] = []
 
     def run(argv: tuple[str, ...], **_kwargs) -> subprocess.CompletedProcess[str]:

@@ -1,30 +1,18 @@
 from __future__ import annotations
 
-import importlib.util
 import subprocess
-import sys
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import hostimage
 from capsem_builder.gate.configschema import Arch as ArchConfig
 from capsem_builder.gate.toolchainschema import LinuxWorkspaceConfig
+from capsem_builder.image.tools.bootstrap import linux_workspace as provisioner
 from pydantic import ValidationError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-PROVISIONER = PROJECT_ROOT / "scripts" / "provision-linux-workspace.py"
-
-
-def _provisioner():
-    spec = importlib.util.spec_from_file_location("provision_linux_workspace", PROVISIONER)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_linux_workspace_prerequisites_are_one_validated_config_value() -> None:
     config = gate_config.load(PROJECT_ROOT)
     linux = config.toolchain.linux
@@ -70,8 +58,6 @@ def test_linux_workspace_prerequisites_are_one_validated_config_value() -> None:
 
 
 def test_cross_rust_target_requires_the_existing_architecture_enum() -> None:
-    provisioner = _provisioner()
-
     assert (
         provisioner.cross_rust_target(PROJECT_ROOT / "config/gate.toml", provisioner.Arch.X86_64)
         == "aarch64-unknown-linux-gnu"
@@ -84,7 +70,6 @@ def test_cross_rust_target_requires_the_existing_architecture_enum() -> None:
 
 
 def test_cross_compiler_packages_require_the_existing_architecture_enum() -> None:
-    provisioner = _provisioner()
     config_path = PROJECT_ROOT / "config/gate.toml"
 
     assert provisioner.cross_compiler_packages(config_path, provisioner.Arch.X86_64) == (
@@ -100,7 +85,7 @@ def test_cross_compiler_packages_require_the_existing_architecture_enum() -> Non
     )
     assert provisioner.cross_compiler_packages.__annotations__["architecture"] == "Arch"
     with pytest.raises(TypeError, match="architecture must be Arch"):
-        provisioner.cross_compiler_packages(config_path, "arm64")
+        provisioner.cross_compiler_packages(config_path, cast(Any, "arm64"))
 
 
 def test_cross_compiler_packages_are_safe_config_tokens() -> None:
@@ -128,15 +113,12 @@ def test_cross_compiler_authority_changes_the_host_builder_identity() -> None:
     [("x86_64", "X86_64"), ("amd64", "X86_64"), ("aarch64", "ARM64"), ("arm64", "ARM64")],
 )
 def test_external_machine_spelling_is_parsed_once(machine: str, expected: str) -> None:
-    provisioner = _provisioner()
-
     assert (
         provisioner.host_architecture(PROJECT_ROOT / "config/gate.toml", machine).name == expected
     )
 
 
 def test_cross_rust_target_refuses_unknown_or_ambiguous_architecture_config(tmp_path: Path) -> None:
-    provisioner = _provisioner()
     unknown = tmp_path / "unknown.toml"
     unknown.write_text(
         '[architectures.arm64]\nrust_target = "aarch64-unknown-linux-gnu"\n'
@@ -188,7 +170,6 @@ def test_cross_host_packages_must_come_from_the_native_apt_inventory() -> None:
 def test_provisioner_installs_configured_packages_then_proves_pkg_config(
     manager: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    provisioner = _provisioner()
     calls: list[tuple[str, ...]] = []
 
     def record(argv: list[str], *, check: bool) -> subprocess.CompletedProcess[str]:
