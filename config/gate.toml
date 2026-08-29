@@ -2468,6 +2468,10 @@ sockets = ["~/.colima/default/docker.sock", "~/.colima/_lima/colima/ha.sock"]
 # `/private/var/folders` and not `/tmp` at all -- the reason a rule naming
 # `/tmp/capsem-` looked complete and was not.
 local_socket_prefixes = [
+    # `colima ssh` creates a nonce control socket next to `ssh.sock`; allowing
+    # only the stable HA and Docker sockets makes image clock sync fail under
+    # Seatbelt before the Docker build starts.
+    "~/.colima/_lima/colima/ssh.sock",
     "/tmp/capsem-",
     "/private/tmp/capsem-",
     "/private/var/folders/",

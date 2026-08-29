@@ -14,6 +14,7 @@ attempt cost a rebuild to learn nothing.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -332,9 +333,25 @@ def test_every_rule_comes_from_configuration() -> None:
     for socket in settings.sockets:
         assert str(Path(socket).expanduser()) in text
     for prefix in settings.local_socket_prefixes:
-        assert prefix in text
+        assert re.escape(str(Path(prefix).expanduser())) in text
     for address in settings.loopback:
         assert address in text
+
+
+def test_colima_ssh_nonce_socket_is_allowed_without_widening_network_access() -> None:
+    """Colima SSH creates ``ssh.sock.<nonce>`` beside its control socket.
+
+    The gate synchronizes the VM clock before every image build. Allowing only
+    Colima's Docker and HA sockets makes that deterministic preflight fail
+    under Seatbelt even though Docker itself remains reachable.
+    """
+    prefix = "~/.colima/_lima/colima/ssh.sock"
+    assert prefix in CONFIG.sandbox.local_socket_prefixes
+
+    text = sandbox.profile(CONFIG, report=False)
+    expanded = Path(prefix).expanduser()
+    assert f'(allow network* (regex #"^{re.escape(str(expanded))}"))' in text
+    assert "(deny network*)" in text
 
 
 def test_the_loopback_rule_names_a_host_sbpl_accepts() -> None:
@@ -410,6 +427,28 @@ def test_docker_still_answers_through_its_unix_socket(tmp_path: Path) -> None:
         f"UNIX socket looks like: {answered.stderr.strip()}"
     )
     assert answered.stdout.strip(), "the daemon answered with nothing"
+
+
+@macos_only
+@unnested_only
+def test_colima_ssh_answers_inside_the_kernel_boundary(tmp_path: Path) -> None:
+    """Image clock synchronization keeps its narrow Colima control channel."""
+    if subprocess.run(["colima", "status"], capture_output=True).returncode != 0:
+        pytest.skip("no running Colima VM to ask")
+
+    written = tmp_path / CONFIG.sandbox.profile_name
+    written.write_text(sandbox.profile(CONFIG, report=False), encoding="utf-8")
+    answered = subprocess.run(
+        sandbox.wrap(CONFIG, written, ("colima", "ssh", "--", "true")),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert answered.returncode == 0, (
+        "Colima SSH is unreachable under the profile, so image clock sync cannot "
+        f"run: {answered.stderr.strip()}"
+    )
 
 
 def test_linux_enforcement_uses_bubblewrap_network_namespace(monkeypatch) -> None:

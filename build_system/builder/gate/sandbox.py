@@ -6,7 +6,6 @@ nothing mid-run" checkable instead of believed -- and it is the only mechanism
 here that a mistake in the gate's own code cannot talk its way past. macOS uses
 Seatbelt. Linux uses Bubblewrap to enter a network namespace with loopback but
 no external interface while preserving the filesystem and AF_UNIX sockets.
-
 Shaped by measurement, not preference. `(deny default)` widened by enumerated
 allows produced a silent `SIGABRT`, while the kernel's denial log needs sudo;
 each iteration cost a rebuild to learn nothing. The
@@ -14,7 +13,6 @@ viable shape is `(allow default)` narrowed by targeted denials. That is also
 where the value is: every failure this work chased was a write, a link or a
 fetch, and denying reads buys little for a great deal of undiagnosable
 debugging.
-
 Two facts that are easy to get wrong and expensive to rediscover:
 
   `(deny network*)` denies **UNIX-domain sockets** as well as the internet.
@@ -31,6 +29,7 @@ Two facts that are easy to get wrong and expensive to rediscover:
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -123,7 +122,8 @@ def profile(config: GateConfig, *, report: bool) -> str:
     for socket_path in _sockets(config):
         lines.append(f'(allow network* (literal "{socket_path}"))')
     for prefix in settings.local_socket_prefixes:
-        lines.append(f'(allow network* (regex #"^{prefix}"))')
+        expanded = str(Path(prefix).expanduser())
+        lines.append(f'(allow network* (regex #"^{re.escape(expanded)}"))')
     # Unanchored: the workspace lives inside a per-run prefix, so its absolute
     # path is not known when this profile is written.
     for pattern in settings.local_socket_regexes:
