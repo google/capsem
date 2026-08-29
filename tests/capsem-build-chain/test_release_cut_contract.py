@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from capsem_builder.release.tools import release_binaries
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -181,7 +182,7 @@ def test_release_commands_require_source_commit_without_a_parallel_just_surface(
 
 def test_binary_release_recipe_uses_one_adversarial_script() -> None:
     justfile = _read_text_exact_case("justfile")
-    script = _read_text_exact_case("scripts/release-binaries.py")
+    script = Path(release_binaries.__file__).read_text(encoding="utf-8")
 
     # One adversarial script owns the publish, and the release plan reaches it
     # without rebuilding assets on the way -- read from the plan, because the

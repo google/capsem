@@ -15,6 +15,7 @@ from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.execution import Kind
 from capsem_builder.gate.shellnodes import Command, arm_named, commands
 from capsem_builder.gate.shellparse import parse
+from capsem_builder.release.tools import build_complete_release_channel
 from helpers.gate import gate_plan
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -126,6 +127,26 @@ def python_argvs(source: str) -> list[tuple[str, ...]]:
     return found
 
 
+def python_owner_paths(source: str) -> list[Path]:
+    """Package-owned implementations imported by a thin Python launcher."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    owners = []
+    prefix = "capsem_builder."
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or node.module is None:
+            continue
+        if not node.module.startswith(prefix) or not any(
+            alias.name == "main" for alias in node.names
+        ):
+            continue
+        module_path = Path(*node.module.removeprefix(prefix).split(".")).with_suffix(".py")
+        owners.append(ROOT / "build_system" / "builder" / module_path)
+    return owners
+
+
 def reaches_compiler(path: Path, arm: str | None, seen: frozenset[Path]) -> bool:
     """Whether running `path` (optionally one arm of it) builds Rust.
 
@@ -136,7 +157,14 @@ def reaches_compiler(path: Path, arm: str | None, seen: frozenset[Path]) -> bool
     source = path.read_text(encoding="utf-8")
     if path.suffix == ".py":
         argvs = python_argvs(source)
-        return any(cargo_builds(argv) for argv in argvs)
+        if any(cargo_builds(argv) for argv in argvs):
+            return True
+        for owner in python_owner_paths(source):
+            if owner in seen or not owner.is_file():
+                continue
+            if reaches_compiler(owner, None, seen | {owner}):
+                return True
+        return False
 
     tree = parse(source)
     body = tree if arm is None else arm_named(tree, arm)
@@ -261,8 +289,8 @@ def test_the_guard_catches_the_bug_it_was_written_for() -> None:
     each for a different reason and each reading as clean. A guard that misses
     its own founding case is decoration.
     """
-    channel = ROOT / "scripts" / "build-complete-release-channel.py"
-    assert channel.is_file(), "the script the original bug hid behind has moved"
+    channel = Path(build_complete_release_channel.__file__)
+    assert channel.is_file(), "the package owner for the original bug has moved"
     assert any(cargo_builds(argv) for argv in python_argvs(channel.read_text())), (
         "cargo built as a Python argv list is no longer detected"
     )

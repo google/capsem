@@ -6,12 +6,12 @@ Artifact correctness remains covered by the executable lane and glow-up suites.
 
 from __future__ import annotations
 
-import importlib.util
-import sys
+import importlib
 from itertools import product
 from pathlib import Path
 
 import pytest
+from capsem_builder.release.tools import nightly_release_scheduler, release_binaries
 from helpers.workflow_contract import (
     emitted_assignment_names,
     parsed_commands,
@@ -35,13 +35,7 @@ def _workflow(name: str) -> str:
 
 
 def _nightly_scheduler():
-    path = ROOT / "scripts" / "nightly_release_scheduler.py"
-    spec = importlib.util.spec_from_file_location("nightly_release_scheduler", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return importlib.reload(nightly_release_scheduler)
 
 
 def _recipe_block(justfile: str, recipe: str) -> str:
@@ -466,7 +460,7 @@ def test_daily_scheduler_forwards_the_channel_source_token() -> None:
 
 def test_nightly_binary_rebuild_is_correlated_but_does_not_republish_identity() -> None:
     workflow = _workflow("release.yaml")
-    script = _read("scripts/release-binaries.py")
+    script = Path(release_binaries.__file__).read_text(encoding="utf-8")
     create = _job_block(workflow, "create-release")
 
     assert (

@@ -12,22 +12,18 @@ whose artifacts are missing a `.deb` must stop, and say which.
 
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import json
 from pathlib import Path
 
 import pytest
+from capsem_builder.release.tools import write_release_summary
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = PROJECT_ROOT / "scripts" / "write-release-summary.py"
 
 
 def _module():
-    spec = importlib.util.spec_from_file_location("write_release_summary", SCRIPT)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.reload(write_release_summary)
 
 
 def _artifacts(root: Path, *, debs: tuple[str, ...], pkg: str | None, sbom: int | None) -> Path:

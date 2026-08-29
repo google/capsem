@@ -16,6 +16,8 @@ from typing import Any, cast
 import embedded_shell
 import pytest
 from capsem_builder.release.tools import (
+    local_release_glowup,
+    marketing_install_surface,
     release_first_release,
     release_glowup,
     release_transition,
@@ -23,12 +25,12 @@ from capsem_builder.release.tools import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-LOCAL_GLOWUP_PATH = PROJECT_ROOT / "scripts" / "local-release-glowup.py"
+LOCAL_GLOWUP_PATH = Path(local_release_glowup.__file__)
 INSTALLED_PROBE_PATH = (
     PROJECT_ROOT
     / "build_system/builder/release/tools/release_installed_probe.py"
 )
-MARKETING_SURFACE_PATH = PROJECT_ROOT / "scripts" / "marketing_install_surface.py"
+MARKETING_SURFACE_PATH = Path(marketing_install_surface.__file__)
 AUTOMATIC_UPDATE_POLL_CLEANUP = [
     "systemctl",
     "--user",
@@ -47,30 +49,11 @@ def _load_transition_module():
 
 
 def _load_local_glowup():
-    spec = importlib.util.spec_from_file_location(
-        "local_release_glowup",
-        LOCAL_GLOWUP_PATH,
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
-    sys.modules[spec.name] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.path.remove(str(PROJECT_ROOT / "scripts"))
-    return module
+    return importlib.reload(local_release_glowup)
 
 
 def _load_marketing_surface():
-    spec = importlib.util.spec_from_file_location(
-        "marketing_install_surface",
-        MARKETING_SURFACE_PATH,
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.reload(marketing_install_surface)
 
 
 def _load_first_release():
@@ -2530,7 +2513,7 @@ def test_the_polling_url_is_shaped_like_a_channel_manifest() -> None:
     accepted any failed cycle -- and the incompatible-profile proof, which
     names its own cause, timed out. Neither had exercised an update.
     """
-    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(encoding="utf-8")
+    source = LOCAL_GLOWUP_PATH.read_text(encoding="utf-8")
     routes = re.findall(r'current_route = f?"([^"]+)"', source)
     assert routes, "no polling route found; this guard is reading the wrong thing"
 

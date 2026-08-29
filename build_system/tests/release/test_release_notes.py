@@ -7,21 +7,15 @@ of it.
 
 from __future__ import annotations
 
-import importlib.util
+import os
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from capsem_builder.release.tools import write_release_notes as notes
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
-_spec = importlib.util.spec_from_file_location(
-    "write_release_notes", PROJECT_ROOT / "scripts" / "write-release-notes.py"
-)
-assert _spec and _spec.loader
-notes = importlib.util.module_from_spec(_spec)
-sys.modules["write_release_notes"] = notes
-_spec.loader.exec_module(notes)
 
 COMMIT = "4391e6d249f2c0a1b3d4e5f60718293a4b5c6d7e"
 FIELDS = {
@@ -59,3 +53,23 @@ def test_the_workflow_calls_this_script() -> None:
     )
     assert "scripts/write-release-notes.py" in workflow
     assert "Qualified source:" not in workflow, "the heredoc is still there"
+
+
+def test_launcher_forwards_the_output_argument(tmp_path: Path) -> None:
+    output = tmp_path / "release-notes.md"
+    result = subprocess.run(
+        [sys.executable, "-I", "scripts/write-release-notes.py", str(output)],
+        cwd=PROJECT_ROOT,
+        env={
+            **os.environ,
+            "SOURCE_COMMIT": COMMIT,
+            "GITHUB_REPOSITORY": FIELDS["repository"],
+            "ASSET_MANIFEST_URL": FIELDS["manifest_url"],
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert output.read_text(encoding="utf-8") == notes.render(**FIELDS)

@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from scripts.marketing_install_surface import validate_rendered_marketing_install_surface
+from capsem_builder.release.tools.marketing_install_surface import (
+    validate_rendered_marketing_install_surface,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 

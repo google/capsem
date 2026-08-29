@@ -25,7 +25,15 @@ or remain wired into CI after their producers move. See the target/ contract in
 the approved repository cleanup proposal and config/README.md.
 """
 
-PRODUCTION_ROOTS = ("src/", "scripts/", ".github/", "config/", "release-site/")
+PRODUCTION_ROOTS = (
+    "src/",
+    "scripts/",
+    "build_system/builder/",
+    ".github/",
+    "config/",
+    "release-site/",
+)
+AMBIENT_ROOTS = ("src/", "scripts/", "build_system/builder/")
 PRODUCER_WORDS = re.compile(
     r"(?:\b(?:mkdir|cp|mv)\b|write(?:_text|_bytes)?\s*\(|"
     r"\bOUTPUT(?:_[A-Z]+)?\s*=|\bout(?:put)?[_-]?(?:dir|path|pkg)\s*=|"
@@ -119,7 +127,7 @@ def _ambient_asset_records(sources: dict[str, str]) -> tuple[str, ...]:
     records = [
         f"{path}:{line.strip()}"
         for path, text in sources.items()
-        if path.startswith(("src/", "scripts/"))
+        if path.startswith(AMBIENT_ROOTS)
         for line in text.splitlines()
         if not line.lstrip().startswith(("#", "//", "*", "<!--", "`"))
         if re.search(r"(?<!target/)assets(?:/|\b)", line)

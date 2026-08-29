@@ -101,8 +101,8 @@ MATCH_GUARDS = (
         r"urlopen\(\s*(?:source|url|manifest_url)\s*,",
         (
             "scripts/materialize-config.sh",
-            "scripts/build-complete-release-channel.py",
-            "scripts/local-release-glowup.py",
+            "build_system/builder/release/tools/build_complete_release_channel.py",
+            "build_system/builder/release/tools/local_release_glowup.py",
         ),
     ),
     (

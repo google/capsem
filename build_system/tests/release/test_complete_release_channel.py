@@ -2,26 +2,22 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
+import importlib
 from email.message import Message
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 
 import pytest
-from capsem_builder.release.tools import check_channel_deploy_freshness
+from capsem_builder.release.tools import (
+    build_complete_release_channel,
+    check_channel_deploy_freshness,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _module():
-    path = PROJECT_ROOT / "scripts" / "build-complete-release-channel.py"
-    spec = importlib.util.spec_from_file_location("build_complete_release_channel", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return importlib.reload(build_complete_release_channel)
 
 
 def _freshness_module():
@@ -129,7 +125,7 @@ def test_asset_workflow_and_local_gate_share_complete_dist_builder() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text()
     release = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
     local_web_gate = (PROJECT_ROOT / "scripts/check-web-surface.sh").read_text()
-    builder = (PROJECT_ROOT / "scripts/build-complete-release-channel.py").read_text()
+    builder = Path(build_complete_release_channel.__file__).read_text()
 
     assert "scripts/build-complete-release-channel.py" in workflow
     assert "scripts/build-complete-release-channel.py" in release
@@ -152,7 +148,7 @@ def test_asset_workflow_and_local_gate_share_complete_dist_builder() -> None:
 
 
 def test_complete_builder_preserves_public_mirror_from_public_bytes() -> None:
-    builder = (PROJECT_ROOT / "scripts/build-complete-release-channel.py").read_text()
+    builder = Path(build_complete_release_channel.__file__).read_text()
 
     assert "is_public_mirror" in builder
     assert 'command.extend(["--public-base", args.release_site])' in builder
@@ -237,9 +233,7 @@ def test_only_the_channels_that_resolved_are_built_and_checked() -> None:
 
 def test_both_loops_read_the_same_channel_list() -> None:
     """Stated in the source, because the failure was the two drifting apart."""
-    source = (PROJECT_ROOT / "scripts" / "build-complete-release-channel.py").read_text(
-        encoding="utf-8"
-    )
+    source = Path(build_complete_release_channel.__file__).read_text(encoding="utf-8")
 
     assert source.count("channels_to_assemble(") == 2, (
         "one definition and one call: a second inline list is how the build and "

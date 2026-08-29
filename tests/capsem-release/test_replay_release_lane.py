@@ -1,20 +1,13 @@
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from capsem_builder.release.tools import replay_release_lane as REPLAY
 from helpers.workflow_contract import emitted_assignment_names, workflow_step
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts" / "replay-release-lane.py"
-SPEC = importlib.util.spec_from_file_location("replay_release_lane", SCRIPT)
-assert SPEC is not None and SPEC.loader is not None
-REPLAY = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(REPLAY)
-
-
 def _cohort(tmp_path: Path) -> dict[str, str]:
     content = (tmp_path / "content").resolve()
     return {

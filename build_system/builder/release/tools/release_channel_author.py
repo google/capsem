@@ -13,40 +13,21 @@ to be served rather than named as a file.
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 from capsem_builder.gate.releaseauthoring import author_native_candidate
 from capsem_builder.gate.sourcecommit import source_commit_for_checkout
 
-from . import repository_root
+from . import local_release_glowup, repository_root
 
 PROJECT_ROOT = repository_root()
 
 
 def glowup_helpers():
-    """The staging helpers, from the script that already owns them.
-
-    Loaded by path because the file is named with hyphens and cannot be
-    imported. Copying the three functions instead would put a second
-    implementation of the asset layout beside the one a release depends on, and
-    a rehearsal that stages artifacts differently from the thing it rehearses
-    is worse than no rehearsal.
-    """
-    path = PROJECT_ROOT / "scripts/local-release-glowup.py"
-    spec = importlib.util.spec_from_file_location("capsem_local_release_glowup", path)
-    if spec is None or spec.loader is None:
-        raise SystemExit(f"cannot load release staging helpers from {path}")
-    module = importlib.util.module_from_spec(spec)
-    # Registered before it is executed. `@dataclass` resolves `cls.__module__`
-    # through `sys.modules`, so a module that is not there yet raises inside
-    # the decorator rather than anywhere near the import.
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    """Return the package-owned staging helpers used by the real release."""
+    return local_release_glowup
 
 
 def _source_profiles(config) -> Path:

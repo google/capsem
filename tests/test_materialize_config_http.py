@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import http.server
-import importlib.util
 import json
 import os
 import subprocess
@@ -11,6 +10,7 @@ import threading
 from pathlib import Path
 
 import pytest
+from capsem_builder.release.tools import build_complete_release_channel, local_release_glowup
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MATERIALIZER = PROJECT_ROOT / "scripts" / "materialize-config.sh"
@@ -376,26 +376,7 @@ def test_materializer_rejects_incomplete_manifest_schemas(
     assert message in result.stderr
 
 
-def _load_script(path: str):
-    script = PROJECT_ROOT / path
-    spec = importlib.util.spec_from_file_location(script.stem.replace("-", "_"), script)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-@pytest.mark.parametrize(
-    ("path", "reader_name"),
-    [
-        ("scripts/build-complete-release-channel.py", "read_json_source"),
-    ],
-)
-def test_public_release_readers_identify_capsem_to_http_edge(
-    tmp_path: Path,
-    path: str,
-    reader_name: str,
-) -> None:
+def test_public_release_readers_identify_capsem_to_http_edge() -> None:
     observed_user_agents: list[str] = []
     manifest = {"channel": "stable", "profiles": {}, "packages": []}
 
@@ -421,8 +402,9 @@ def test_public_release_readers_identify_capsem_to_http_edge(
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        module = _load_script(path)
-        value = getattr(module, reader_name)(f"http://127.0.0.1:{server.server_port}/manifest.json")
+        value = build_complete_release_channel.read_json_source(
+            f"http://127.0.0.1:{server.server_port}/manifest.json"
+        )
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -434,12 +416,12 @@ def test_public_release_readers_identify_capsem_to_http_edge(
 
 def test_public_release_readers_never_pass_a_url_string_to_urlopen() -> None:
     readers = {
-        "scripts/materialize-config.sh": ("urlopen(source",),
-        "scripts/build-complete-release-channel.py": ("urlopen(source",),
-        "scripts/local-release-glowup.py": ("urlopen(manifest_url",),
+        PROJECT_ROOT / "scripts/materialize-config.sh": ("urlopen(source",),
+        Path(build_complete_release_channel.__file__): ("urlopen(source",),
+        Path(local_release_glowup.__file__): ("urlopen(manifest_url",),
     }
 
     for path, forbidden_calls in readers.items():
-        source = (PROJECT_ROOT / path).read_text()
+        source = path.read_text()
         for forbidden_call in forbidden_calls:
             assert forbidden_call not in source, f"{path} uses {forbidden_call}"

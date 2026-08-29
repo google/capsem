@@ -4,12 +4,11 @@ import ast
 import errno
 import functools
 import hashlib
-import importlib.util
+import importlib
 import json
 import os
 import re
 import subprocess
-import sys
 import tomllib
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -17,9 +16,10 @@ from types import ModuleType, SimpleNamespace
 import pytest
 import yaml
 from blake3 import blake3
-from capsem_builder.release.tools import check_public_binary_release
+from capsem_builder.release.tools import check_public_binary_release, local_release_glowup
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+LOCAL_RELEASE_GLOWUP_SOURCE = Path(local_release_glowup.__file__)
 
 
 def _skill_text(skill_path: Path) -> str:
@@ -217,20 +217,7 @@ def _workflow_job_blocks(workflow: str) -> dict[str, str]:
 
 
 def _load_local_release_glowup() -> ModuleType:
-    path = PROJECT_ROOT / "scripts" / "local-release-glowup.py"
-    spec = importlib.util.spec_from_file_location("local_release_glowup", path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    scripts_path = str(PROJECT_ROOT / "scripts")
-    sys.path.insert(0, scripts_path)
-    sys.modules[spec.name] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.path.remove(scripts_path)
-        sys.modules.pop(spec.name, None)
-    return module
+    return importlib.reload(local_release_glowup)
 
 
 def _load_release_installed_probe() -> ModuleType:
@@ -928,7 +915,7 @@ def test_install_test_consumes_exact_publishable_package_without_rebuild() -> No
 
 
 def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> None:
-    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    script = LOCAL_RELEASE_GLOWUP_SOURCE.read_text()
     authoring = (PROJECT_ROOT / "build_system/builder/gate/releaseauthoring.py").read_text()
     tree = ast.parse(script)
     clone_functions = [
@@ -1044,7 +1031,7 @@ def test_installed_glowup_uses_the_materialized_python_without_project_sync(
     assert f"{quoted} scripts/run-installed-winterfell.py" in probe
     assert "uv run" not in probe
 
-    source = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(encoding="utf-8")
+    source = LOCAL_RELEASE_GLOWUP_SOURCE.read_text(encoding="utf-8")
     assert "uv run" not in source
     assert "python3" not in "\n".join(source.splitlines()[1:])
 
@@ -1759,7 +1746,7 @@ def test_binary_release_sbom_jobs_install_zstd_for_deb_payloads() -> None:
 
 
 def test_local_release_glowup_channel_build_uses_local_release_urls() -> None:
-    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    script = LOCAL_RELEASE_GLOWUP_SOURCE.read_text()
     authoring = (PROJECT_ROOT / "build_system/builder/gate/releaseauthoring.py").read_text()
 
     assert "CAPSEM_RELEASE_URL" not in authoring
@@ -1770,7 +1757,7 @@ def test_local_release_glowup_channel_build_uses_local_release_urls() -> None:
 
 
 def test_local_release_glowup_uses_preserved_admin_binary_without_rebuild() -> None:
-    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    script = LOCAL_RELEASE_GLOWUP_SOURCE.read_text()
     authoring = (PROJECT_ROOT / "build_system/builder/gate/releaseauthoring.py").read_text()
 
     assert 'admin = args.bin_dir / "capsem-admin"' in script
@@ -2060,7 +2047,7 @@ def test_local_release_glowup_clones_graph_with_only_channel_identity_changed(
 
 
 def test_local_release_glowup_projects_both_switch_channels_from_any_candidate() -> None:
-    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    script = LOCAL_RELEASE_GLOWUP_SOURCE.read_text()
     setup = script.split('stable_manifest = manifests / "stable-assets-manifest.json"', maxsplit=1)[
         1
     ].split("record_binary(", maxsplit=1)[0]
@@ -2264,7 +2251,7 @@ def test_release_skills_require_space_efficient_immutable_staging() -> None:
 
 
 def test_local_release_glowup_uses_the_safe_manifest_url_resolver() -> None:
-    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    script = LOCAL_RELEASE_GLOWUP_SOURCE.read_text()
     checker = script.split("def check_generated_release(", maxsplit=1)[1].split(
         "\ndef release_asset_urls", maxsplit=1
     )[0]
@@ -2278,7 +2265,7 @@ def test_local_release_glowup_uses_the_safe_manifest_url_resolver() -> None:
 
 
 def test_local_release_glowup_validates_vm_asset_blobs_are_served() -> None:
-    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    script = LOCAL_RELEASE_GLOWUP_SOURCE.read_text()
 
     assert "release_asset_urls" in script
     assert "release is missing VM asset blob" in script
@@ -2287,7 +2274,7 @@ def test_local_release_glowup_validates_vm_asset_blobs_are_served() -> None:
 
 
 def test_local_release_glowup_preflights_stable_and_nightly_manifests() -> None:
-    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    script = LOCAL_RELEASE_GLOWUP_SOURCE.read_text()
 
     assert "stable_artifact = check_generated_release(" in script
     assert "nightly_artifact = check_generated_release(" in script
@@ -2601,7 +2588,7 @@ def test_local_release_glowup_installed_path_asserts_channel_round_trip_and_prov
 
 
 def test_local_release_glowup_asserts_channel_isolation_and_corp_manifest() -> None:
-    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    script = LOCAL_RELEASE_GLOWUP_SOURCE.read_text()
 
     assert "stable_channel_sha_before_nightly" in script
     assert "nightly channel build mutated stable manifest" in script
@@ -2614,7 +2601,7 @@ def test_local_release_glowup_asserts_channel_isolation_and_corp_manifest() -> N
 
 
 def test_local_release_glowup_forbids_metadata_only_binary_cohorts() -> None:
-    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    script = LOCAL_RELEASE_GLOWUP_SOURCE.read_text()
 
     assert "rewrite_deb_version" not in script
     assert "next_patch_version" not in script
@@ -2623,7 +2610,7 @@ def test_local_release_glowup_forbids_metadata_only_binary_cohorts() -> None:
 
 def test_native_glowup_owns_exact_manifest_and_installed_shell_evidence() -> None:
     macos = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "macos_release_glowup.py").read_text()
-    linux = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    linux = LOCAL_RELEASE_GLOWUP_SOURCE.read_text()
     installed_probe = (
         PROJECT_ROOT
         / "build_system/builder/release/tools/release_installed_probe.py"
@@ -2642,7 +2629,7 @@ def test_native_glowup_owns_exact_manifest_and_installed_shell_evidence() -> Non
 def test_every_native_glowup_uses_graph_first_binary_authoring() -> None:
     """Linux and macOS must not stamp provenance into a legacy projection."""
     gate = (PROJECT_ROOT / "build_system/builder/gate/releasegraph.py").read_text()
-    linux = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    linux = LOCAL_RELEASE_GLOWUP_SOURCE.read_text()
     macos = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "macos_release_glowup.py").read_text()
 
     assert "author_binary_graph(" in gate

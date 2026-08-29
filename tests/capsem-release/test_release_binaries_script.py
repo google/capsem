@@ -1,27 +1,16 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
-import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from capsem_builder.release.tools import extract_release_notes as NOTES
+from capsem_builder.release.tools import release_binaries as RELEASE
 from capsem_builder.release.tools import release_version_tag as TAGS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = PROJECT_ROOT / "scripts" / "release-binaries.py"
-SPEC = importlib.util.spec_from_file_location("release_binaries", SCRIPT)
-assert SPEC is not None and SPEC.loader is not None
-RELEASE = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = RELEASE
-SPEC.loader.exec_module(RELEASE)
-NOTES_SCRIPT = PROJECT_ROOT / "scripts" / "extract-release-notes.py"
-NOTES_SPEC = importlib.util.spec_from_file_location("extract_release_notes", NOTES_SCRIPT)
-assert NOTES_SPEC is not None and NOTES_SPEC.loader is not None
-NOTES = importlib.util.module_from_spec(NOTES_SPEC)
-NOTES_SPEC.loader.exec_module(NOTES)
 SOURCE = "0123456789abcdef0123456789abcdef01234567"
 VERSION = f"{RELEASE.RELEASE_LINE}.2"
 TAG = f"v{VERSION}"
@@ -141,7 +130,7 @@ class FakeRunner:
 
 
 def test_release_script_never_edits_or_pushes_tracked_source() -> None:
-    source = SCRIPT.read_text(encoding="utf-8")
+    source = Path(RELEASE.__file__).read_text(encoding="utf-8")
 
     for forbidden in (
         "OwnedMutation",

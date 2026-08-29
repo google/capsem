@@ -424,7 +424,7 @@ source_commit = "CAPSEM_GATE_SOURCE_COMMIT"
 # set for every run, including an ordinary `just test`, and it exists so a step
 # can be told which commit it is proving instead of resolving one itself.
 #
-# `scripts/local-release-glowup.py` is the reason. It authors a release graph
+# `capsem_builder.release.tools.local_release_glowup` is the reason. It authors a release graph
 # with package provenance, and a graph that invented its own commit from
 # whatever tree the script happened to sit in would be provenance about the
 # wrong bytes -- inside the install container, that tree is a mount. So the
@@ -848,7 +848,7 @@ invalid-return-type = 4
 no-matching-overload = 7
 not-iterable = 2
 not-subscriptable = 144
-unresolved-attribute = 88
+unresolved-attribute = 86
 unresolved-import = 21
 unsupported-operator = 4
 unused-ignore-comment = 3
@@ -1070,15 +1070,12 @@ max_lines = 300
 "build_system/packaging/macos/build-pkg.sh" = 349
 "scripts/doctor-common.sh" = 446
 "scripts/integration_test.py" = 1182
-"scripts/local-release-glowup.py" = 1957
 "build_system/packaging/macos/macos_release_glowup.py" = 369
 "build_system/packaging/macos/macos_tart_glowup.py" = 565
 "build_system/packaging/macos/macos_tart_guest.sh" = 317
 "scripts/preflight.sh" = 338
 "scripts/protocol_fixture_recorder.py" = 500
 "scripts/prove-installed-shell.py" = 318
-"scripts/release-binaries.py" = 429
-"scripts/release_collect_evidence.py" = 462
 
 # ---------------------------------------------------------------------------
 # What may not run beside what

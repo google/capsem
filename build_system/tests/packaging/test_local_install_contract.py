@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.gate.command import GateCommand
+from capsem_builder.release.tools import local_release_glowup
 from helpers.gate import RecordingRunner
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -287,7 +288,7 @@ def test_public_installer_stops_the_user_service_before_package_replacement() ->
 
 
 def test_installed_glowup_owns_the_release_regression_story_matrix() -> None:
-    local_glowup = (ROOT / "scripts/local-release-glowup.py").read_text(encoding="utf-8")
+    local_glowup = Path(local_release_glowup.__file__).read_text(encoding="utf-8")
     macos_glowup = (ROOT / "build_system/packaging/macos/macos_release_glowup.py").read_text(encoding="utf-8")
     tart_host = (ROOT / "build_system/packaging/macos/macos_tart_glowup.py").read_text(encoding="utf-8")
     tart_guest = (ROOT / "build_system/packaging/macos/macos_tart_guest.sh").read_text(encoding="utf-8")

@@ -21,8 +21,14 @@ import yaml
 from capsem_builder.gate.shellnodes import arm_named
 from capsem_builder.gate.shellparse import parse as parse_shell
 from capsem_builder.gate.tools.audit import release_selections
+from capsem_builder.release.tools import build_complete_release_channel as COMPLETE_CHANNEL
 from capsem_builder.release.tools import check_remote_release_readiness as READINESS
+from capsem_builder.release.tools import local_release_glowup as LOCAL_GLOWUP
 from capsem_builder.release.tools import verify_channel_downloads as VERIFY_DOWNLOADS
+from capsem_builder.release.tools import (
+    write_binary_channel_staging_proof as BINARY_STAGING_PROOF,
+)
+from capsem_builder.release.tools import write_release_summary as RELEASE_SUMMARY
 from helpers.workflow_contract import assert_unmasked_step, parsed_commands, workflow_reachable_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -305,8 +311,12 @@ def _workflow_text(name: str) -> str:
 
 def _source_text(path: str) -> str:
     package_sources = {
+        "scripts/build-complete-release-channel.py": Path(COMPLETE_CHANNEL.__file__),
         "scripts/check-remote-release-readiness.py": Path(READINESS.__file__),
+        "scripts/local-release-glowup.py": Path(LOCAL_GLOWUP.__file__),
         "scripts/verify-channel-downloads.py": Path(VERIFY_DOWNLOADS.__file__),
+        "scripts/write-binary-channel-staging-proof.py": Path(BINARY_STAGING_PROOF.__file__),
+        "scripts/write-release-summary.py": Path(RELEASE_SUMMARY.__file__),
     }
     if source := package_sources.get(path):
         return source.read_text()
@@ -1830,7 +1840,7 @@ def test_binary_release_summary_names_pkg_and_deb_sbom_coverage() -> None:
     create_release = _workflow_job_block("create-release", "release.yaml")
     assert "scripts/write-release-summary.py" in create_release
 
-    summary = (PROJECT_ROOT / "scripts" / "write-release-summary.py").read_text(encoding="utf-8")
+    summary = _source_text("scripts/write-release-summary.py")
     assert "SBOM attested (SPDX 2.3, pkg + deb)" in summary
     assert "SBOM attested (SPDX 2.3, pkg)\n" not in summary
 
@@ -5555,8 +5565,8 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         "build_system/packaging/linux/deb-postinst.sh",
         "build_system/packaging/macos/pkg-scripts/postinstall",
         "scripts/materialize-config.sh",
-        "scripts/build-complete-release-channel.py",
-        "scripts/local-release-glowup.py",
+        "build_system/builder/release/tools/build_complete_release_channel.py",
+        "build_system/builder/release/tools/local_release_glowup.py",
         "tests/capsem-install",
         "justfile",
     )
@@ -5824,7 +5834,9 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         assert "legacy split manifest/update sidecar" in rejected.stderr
     update.write_text(original)
 
-    release_reader = tmp_path / "scripts/build-complete-release-channel.py"
+    release_reader = (
+        tmp_path / "build_system/builder/release/tools/build_complete_release_channel.py"
+    )
     original_reader = release_reader.read_text()
     release_reader.write_text(original_reader + "\n# urllib.request.urlopen(url, timeout=60)\n")
     rejected = run_guard()

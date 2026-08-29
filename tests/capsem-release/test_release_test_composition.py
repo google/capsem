@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 from capsem_builder.gate import config as _gate_config
 from capsem_builder.gate.tools.ci import justfile_graph as GRAPH
+from capsem_builder.release.tools import local_release_glowup
 from helpers.workflow_contract import parsed_commands, workflow_job_source, workflow_jobs
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -654,7 +655,7 @@ def test_standalone_functional_scripts_use_the_project_python() -> None:
 
 def test_release_glowup_consumes_the_exact_pairing_environment() -> None:
     runner = _all_modules()
-    adapter = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(encoding="utf-8")
+    owner = Path(local_release_glowup.__file__).read_text(encoding="utf-8")
 
     assert "scripts/local-release-glowup.py" in runner
     for variable in (
@@ -666,8 +667,8 @@ def test_release_glowup_consumes_the_exact_pairing_environment() -> None:
         "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS",
         "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS",
     ):
-        assert variable in adapter
-    assert "validate_exact_release_pairing(args)" in adapter
+        assert variable in owner
+    assert "validate_exact_release_pairing(args)" in owner
 
 
 def test_release_glowup_runs_one_exact_candidate_transition() -> None:

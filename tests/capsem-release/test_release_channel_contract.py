@@ -28,20 +28,12 @@ from typing import Any
 from urllib.parse import urlparse
 
 import pytest
-from capsem_builder.release.tools import (
-    check_channel_deploy_freshness as DEPLOY_FRESHNESS,
-)
+from capsem_builder.release.tools import build_complete_release_channel as BUILD_COMPLETE
+from capsem_builder.release.tools import check_channel_deploy_freshness as DEPLOY_FRESHNESS
 from helpers.release_site import build_release_channel_site
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL = "stable"
-BUILD_COMPLETE_SPEC = importlib.util.spec_from_file_location(
-    "build_complete_release_channel",
-    PROJECT_ROOT / "scripts" / "build-complete-release-channel.py",
-)
-assert BUILD_COMPLETE_SPEC is not None and BUILD_COMPLETE_SPEC.loader is not None
-BUILD_COMPLETE = importlib.util.module_from_spec(BUILD_COMPLETE_SPEC)
-BUILD_COMPLETE_SPEC.loader.exec_module(BUILD_COMPLETE)
 SNAPSHOT_SPEC = importlib.util.spec_from_file_location(
     "release_site_snapshot",
     PROJECT_ROOT / "scripts" / "release_site_snapshot.py",

@@ -16,11 +16,12 @@ allowed_generated_support = [
   "config/settings/ui-metadata.generated.json",
 ]
 
-# Exact shrinking transition inventory captured after the adversarial RED run.
-producer_count = 3
-producer_sha256 = "faf8ec83cc9ba04d95023ff0d475624f3cbd029e3d519724d5a390e5ecc292ef"
-ambient_asset_count = 7
-ambient_asset_sha256 = "ec9cd8f389ede4696e157d6717201bc49efc91526f9cf692d9d9984fb5e845cf"
+# Exact shrinking transition inventory. S09-004 added build_system/builder to
+# the production scan, making pre-existing package-owned debt visible.
+producer_count = 5
+producer_sha256 = "76b9eccf51b12b359350bfb7f7a49772116d744bb3f9c8e39f1fd5aeb840d054"
+ambient_asset_count = 10
+ambient_asset_sha256 = "52a29ecc467626a42dde13a444f4a954e683cc483da3ea6b16827f9d2a0feaa1"
 ci_transfer_count = 12
 ci_transfer_sha256 = "954abd1459c4db5cc83b4ef5820fa65127ed3e80a6c76077f7b2c67227bbca6b"
 prefix_exports = [
