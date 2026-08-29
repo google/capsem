@@ -8,10 +8,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "build_system" / "builder"))
-from bootstrap import mount_builder_package
+from bootstrap import mount_builder_package  # noqa: E402
 
 mount_builder_package(ROOT)
-from capsem_builder.gate.tools.audit.pnpm_bulk import entrypoint
+from capsem_builder.gate.tools.audit.pnpm_bulk import entrypoint  # noqa: E402
 
 if __name__ == "__main__":
     raise SystemExit(entrypoint())

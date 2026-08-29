@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 import variables
 from capsem_builder.gate.tools.audit import public_surface as checker
 
