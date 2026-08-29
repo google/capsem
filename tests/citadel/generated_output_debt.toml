@@ -22,12 +22,13 @@ producer_count = 0
 producer_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 ambient_asset_count = 0
 ambient_asset_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-ci_transfer_count = 5
-ci_transfer_sha256 = "36cd416af8e8c45116d354d9bceef3c81b095ad5fe18eef5ac559c2ff8b82c6e"
+ci_transfer_count = 0
+ci_transfer_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 prefix_exports = [
   "target/assets",
   "target/config",
+  "target/coverage",
   "target/gate-runs",
   "target/packages",
-  "test-artifacts",
+  "target/test-artifacts",
 ]

@@ -1023,7 +1023,7 @@ jobs:
         with:
           name: binary-pairing-evidence-${{ github.run_attempt }}
           path: |
-            test-artifacts/
+            target/test-artifacts/
             target/gate-runs/
             target/test-home/.capsem/run/sessions/
             target/test-home/.capsem/logs/

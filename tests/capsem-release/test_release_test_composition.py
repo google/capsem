@@ -511,7 +511,7 @@ def test_functional_coverage_replays_cheap_contracts_after_the_early_gate() -> N
     broad = pytestsuite.broad(CONFIG, profile=CONFIG.suites.pytest.base_profile)
     argv = broad.argv(CONFIG)
 
-    assert "--cov=src/capsem" in argv
+    assert "--cov=build_system/builder" in argv
     # The floor is `fail_under` in pyproject's [tool.coverage.report], so any
     # run that reports inherits it. What this module must still do is measure.
     assert any(flag.startswith("--cov-report=") for flag in argv)

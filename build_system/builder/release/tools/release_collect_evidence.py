@@ -448,7 +448,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("test-artifacts") / "release",
+        default=Path("target/test-artifacts") / "release",
     )
     parser.add_argument("--timestamp", help="Deterministic bundle timestamp")
     args = parser.parse_args(argv)

@@ -36,6 +36,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from capsem_builder.gate import config as gate_config
 from helpers.constants import ASSETS_DIR as _SELECTED_ASSETS_DIR
 
+_PROJECT_ROOT = Path(__file__).parent.parent
+_GATE_CONFIG = gate_config.load(_PROJECT_ROOT)
+
 # Every service this suite starts spawns a real capsem-tray: the spawn falls
 # back to `find_sibling_binary("capsem-tray")` when --tray-binary is omitted,
 # and the tray's singleton lock lives under CAPSEM_RUN_DIR, which each service
@@ -56,11 +59,11 @@ os.environ["CAPSEM_TRAY_HEADLESS"] = "1"
 # that archive their tmp_dir when this worker session saw any failure.
 FAILED_NODEIDS: list[str] = []
 
-# test-artifacts/ at the repo root is the preserve-on-failure destination.
+# target/test-artifacts/ is the preserve-on-failure destination.
 # Gitignored. Fixtures copy their tmp_dir here so service.log /
 # sessions/<vm>/process.log / sessions/<vm>/serial.log / session.db all
 # survive the normal shutil.rmtree teardown.
-ARTIFACTS_ROOT = Path(__file__).parent.parent / "test-artifacts"
+ARTIFACTS_ROOT = _PROJECT_ROOT / _GATE_CONFIG.outputs.test_artifacts
 _TESTS_ROOT = Path(__file__).parent.parent / "tests"
 
 
@@ -172,8 +175,6 @@ threading.excepthook = _thread_exception_hook
 # (CI sets this explicitly) rather than the ambient `CI` env, which is
 # set by every developer's Docker dev-loop and would turn local iteration
 # into a fail-fast trap.
-_PROJECT_ROOT = Path(__file__).parent.parent
-_GATE_CONFIG = gate_config.load(_PROJECT_ROOT)
 _GATE_SOURCE_COMMIT_VARIABLE = _GATE_CONFIG.environment.source_commit
 # The variables that decide whether a gate command is a local run or half of a
 # release. `qualification.from_environment` reads exactly these, so a test that

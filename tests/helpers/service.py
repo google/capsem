@@ -267,7 +267,7 @@ def materialize_test_profiles(tmp_dir: Path) -> Path:
 def preserve_tmp_dir_on_failure(
     tmp_dir, *, force: bool = False, any_worker_failure: bool = False
 ):
-    """Copy tmp_dir to test-artifacts/ when this worker saw any failure.
+    """Copy tmp_dir to target/test-artifacts/ when this worker saw any failure.
 
     Called by integration-test fixture teardowns BEFORE they rmtree the
     tmp dir, so service.log, sessions/<vm>/process.log, sessions/<vm>/serial.log,
@@ -287,7 +287,7 @@ def preserve_tmp_dir_on_failure(
     concurrently during teardown. A per-file try/except isolates those
     transient errors so one flaky file doesn't vanish the entire subtree.
 
-    Also rotates `test-artifacts/` after each preserve, keeping only the
+    Also rotates `target/test-artifacts/` after each preserve, keeping only the
     most recent `ARTIFACT_MAX_KEPT_DIRS` failure dirs.
     """
     try:

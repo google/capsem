@@ -1,3 +1,6 @@
+[store]
+dir = "target/coverage/nextest"
+
 [profile.ci]
 slow-timeout = { period = "120s", terminate-after = 3, grace-period = "10s", on-timeout = "fail" }
 
@@ -6,3 +9,17 @@ path = "junit.xml"
 report-name = "capsem-tests"
 store-success-output = false
 store-failure-output = true
+
+[profile.ci-unit]
+inherits = "ci"
+
+[profile.ci-unit.junit]
+path = "junit.xml"
+report-name = "capsem-unit-tests"
+
+[profile.ci-integration]
+inherits = "ci"
+
+[profile.ci-integration.junit]
+path = "junit.xml"
+report-name = "capsem-integration-tests"

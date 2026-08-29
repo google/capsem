@@ -426,6 +426,81 @@ def test_native_package_owners_use_the_canonical_target_root() -> None:
     assert 'PKG="$ROOT/target/packages/Capsem-$VERSION.pkg"' in local_macos_builder
 
 
+def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
+    config = _gate_config()
+    coverage = FINAL_OUTPUT_ROOTS["coverage"]
+    evidence = FINAL_OUTPUT_ROOTS["test_artifacts"]
+    workflow = (ROOT / ".github/workflows/ci.yaml").read_text(encoding="utf-8")
+    release_workflow = (ROOT / ".github/workflows/release.yaml").read_text(
+        encoding="utf-8"
+    )
+    storage = tomllib.loads(
+        (ROOT / "config/storage-policy.toml").read_text(encoding="utf-8")
+    )
+    nextest = tomllib.loads(
+        (ROOT / ".config/nextest.toml").read_text(encoding="utf-8")
+    )
+    linux_runner = (ROOT / "scripts/test-linux-rust.sh").read_text(encoding="utf-8")
+    frontend_vitest = (ROOT / "frontend/vitest.config.ts").read_text(encoding="utf-8")
+    release_vitest = (ROOT / "build_system/release_site/vitest.config.ts").read_text(
+        encoding="utf-8"
+    )
+    conftest = (ROOT / "tests/conftest.py").read_text(encoding="utf-8")
+    collector = (
+        ROOT / "build_system/builder/release/tools/release_collect_evidence.py"
+    ).read_text(encoding="utf-8")
+
+    assert storage["debug_artifacts"]["root"] == evidence, RATIONALE
+    assert {coverage, evidence} <= set(config["prefix"]["exports"]), RATIONALE
+    assert config["hostimage"]["extract_to"] == f"{coverage}/linux", RATIONALE
+    assert config["workspace"]["coverage_file"] == f"{coverage}/.coverage", RATIONALE
+    assert config["workspace"]["evidence_dir"] == evidence, RATIONALE
+    assert config["suites"]["pytest"]["coverage_flags"] == [
+        "--cov=build_system/builder",
+        f"--cov-report=xml:{coverage}/python/codecov.xml",
+    ], RATIONALE
+    assert nextest["store"]["dir"] == f"{coverage}/nextest", RATIONALE
+    assert nextest["profile"]["ci-unit"]["inherits"] == "ci", RATIONALE
+    assert nextest["profile"]["ci-integration"]["inherits"] == "ci", RATIONALE
+    assert nextest["profile"]["ci-unit"]["junit"]["path"] == "junit.xml", RATIONALE
+    assert nextest["profile"]["ci-integration"]["junit"]["path"] == "junit.xml", (
+        RATIONALE
+    )
+    assert f'$ROOT/{coverage}/linux' in linux_runner, RATIONALE
+    assert f"reportsDirectory: '../{coverage}/web-app'" in frontend_vitest, RATIONALE
+    assert f"reportsDirectory: '../../{coverage}/distribution-site'" in release_vitest, RATIONALE
+    assert "_GATE_CONFIG.outputs.test_artifacts" in conftest, RATIONALE
+    assert f'Path("{evidence}") / "release"' in collector, RATIONALE
+
+    required_ci_paths = {
+        f"{coverage}/linux/codecov.json",
+        f"{coverage}/linux/summary.txt",
+        f"{coverage}/linux/nextest/ci/junit.xml",
+        f"{coverage}/rust/unit.json",
+        f"{coverage}/rust/integration.json",
+        f"{coverage}/rust/summary.txt",
+        f"{coverage}/python/codecov.xml",
+        f"{coverage}/web-app/coverage-final.json",
+        f"{coverage}/distribution-site/lcov.info",
+        f"{coverage}/nextest/ci-unit/junit.xml",
+        f"{coverage}/nextest/ci-integration/junit.xml",
+        f"{coverage}/junit/frontend.xml",
+        f"{coverage}/junit/python-cross-system.xml",
+        f"{coverage}/junit/python-build-system.xml",
+        f"{evidence}/",
+    }
+    assert not sorted(path for path in required_ci_paths if path not in workflow), RATIONALE
+    assert f"{evidence}/" in release_workflow, RATIONALE
+    for stale in (
+        "frontend/test-artifacts/",
+        "frontend/coverage/coverage-final.json",
+        "build_system/release_site/coverage/lcov.info",
+        "target/linux-rust-coverage",
+        "target/nextest/ci/junit.xml",
+    ):
+        assert stale not in workflow, RATIONALE
+
+
 def test_current_generated_output_boundary_is_exact() -> None:
     policy = tomllib.loads(POLICY.read_text(encoding="utf-8"))
     assert policy.get("version") == 1

@@ -2,8 +2,9 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-OUTPUT_DIR=${CAPSEM_LINUX_RUST_OUTPUT_DIR:-$ROOT}
+OUTPUT_DIR=${CAPSEM_LINUX_RUST_OUTPUT_DIR:-$ROOT/target/coverage/linux}
 mkdir -p "$OUTPUT_DIR"
+export NEXTEST_STATE_DIR="$OUTPUT_DIR/nextest"
 
 packages=(
     capsem-core
@@ -48,11 +49,11 @@ cargo llvm-cov nextest \
     --bins \
     --profile ci \
     --codecov \
-    --output-path "$OUTPUT_DIR/codecov-linux.json" \
+    --output-path "$OUTPUT_DIR/codecov.json" \
     "${package_args[@]}"
 
 set -o pipefail
 cargo llvm-cov report \
     --summary-only \
     "${package_args[@]}" \
-    2>&1 | tee "$OUTPUT_DIR/coverage-summary-linux.txt"
+    2>&1 | tee "$OUTPUT_DIR/summary.txt"

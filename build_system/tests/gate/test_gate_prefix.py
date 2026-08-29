@@ -633,8 +633,9 @@ def test_the_export_list_covers_what_a_release_publishes() -> None:
     assert {
         "target/assets",
         "target/config",
+        "target/coverage",
         "target/packages",
-        "test-artifacts",
+        "target/test-artifacts",
     } <= exports
     assert any(export.startswith("target/gate-runs") for export in exports), (
         "the run log is the evidence a failure is argued from, and it is written inside the prefix"

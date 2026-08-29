@@ -63,6 +63,7 @@ def test_failure_artifact_limits_come_from_storage_policy() -> None:
     with (svc_mod.PROJECT_ROOT / "config" / "storage-policy.toml").open("rb") as stream:
         debug = tomllib.load(stream)["debug_artifacts"]
 
+    assert svc_mod.PROJECT_ROOT / debug["root"] == tests_conftest.ARTIFACTS_ROOT
     assert debug["minimum_runs"] == svc_mod.ARTIFACT_MIN_KEPT_DIRS
     assert debug["maximum_runs"] == svc_mod.ARTIFACT_MAX_KEPT_DIRS
     assert debug["maximum_total_gib"] * 1024**3 == svc_mod.ARTIFACT_MAX_TOTAL_BYTES

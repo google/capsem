@@ -41,7 +41,6 @@ flags:
       - build_system/release_site/scripts/**
       - build_system/release_site/src/**
       - build_system/builder/**
-      - src/capsem/**
     carryforward: true
   integration:
     paths:
@@ -271,7 +270,6 @@ component_management:
       name: Builder
       paths:
         - build_system/builder/**
-        - src/capsem/**
 
     # Local fixture server used for doctor, benchmark, recorder, and Ironbank proof.
     - component_id: mock-server

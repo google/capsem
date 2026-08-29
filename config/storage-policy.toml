@@ -319,7 +319,7 @@ owner = "none"
 reason = "No lane mounts a named volume: the base image carries the toolchain and dependency graph, and every build directory is an anonymous volume."
 
 [debug_artifacts]
-root = "test-artifacts"
+root = "target/test-artifacts"
 minimum_runs = 5
 maximum_runs = 30
 maximum_age_days = 14

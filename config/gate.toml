@@ -1540,7 +1540,7 @@ container_output_dir = "/linux-rust-output"
 # without it the coverage nests at `<dest>/linux-rust-output/` where nothing
 # looks for it.
 container_output_contents = "/linux-rust-output/."
-extract_to = "target/linux-rust-coverage"
+extract_to = "target/coverage/linux"
 lane_container = "capsem-linux-rust-run"
 # The Linux builder image, and the Linux-Rust parity lane that runs inside it.
 tag = "capsem-host-builder:latest"
@@ -2034,7 +2034,7 @@ base_flags = ["-v", "--tb=short"]
 # enough to show a pattern and few enough to stop a cascade.
 stop_at_first = "--maxfail=5"
 parallel_flags = ["-n", "4", "--dist=loadfile"]
-coverage_flags = ["--cov=src/capsem", "--cov-report=xml:codecov-python.xml"]
+coverage_flags = ["--cov=build_system/builder", "--cov-report=xml:target/coverage/python/codecov.xml"]
 
 # Directories the broad suite never collects, each for its own reason.
 #
@@ -2380,7 +2380,7 @@ resumable = ["target/install-image"]
 
 # What must come back out before the prefix is reclaimed. A release publishes
 # from these, and without the export they die with the copy that made them.
-exports = ["target/assets", "target/config", "target/gate-runs", "target/packages", "test-artifacts"]
+exports = ["target/assets", "target/config", "target/coverage", "target/gate-runs", "target/packages", "target/test-artifacts"]
 
 # Trees a run writes but nothing publishes. `exports` establishes provenance
 # for everything a release takes out of a prefix; this establishes it for
@@ -2934,7 +2934,8 @@ reclaimable = [
     "target/test-home",
     "target/image-workspace",
     "target/test-benchmarks",
-    "target/linux-rust-coverage",
+    "target/coverage",
+    "target/test-artifacts",
     "target/install-test-assets",
     "target/distribution",
     "target/release-module-glowup",

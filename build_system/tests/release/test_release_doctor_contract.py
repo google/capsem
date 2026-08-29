@@ -5072,8 +5072,8 @@ def test_frontend_coverage_artifacts_are_not_typechecked_or_misuploaded() -> Non
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     tsconfig = json.loads((PROJECT_ROOT / "frontend" / "tsconfig.json").read_text())
 
-    assert "frontend/coverage/coverage-final.json" in workflow
-    assert "coverage/frontend/coverage-final.json" not in workflow
+    assert "target/coverage/web-app/coverage-final.json" in workflow
+    assert "frontend/coverage/coverage-final.json" not in workflow
     assert "coverage" in tsconfig["exclude"]
 
 
@@ -5103,10 +5103,10 @@ def test_pr_ci_coverage_reports_without_local_threshold_abort() -> None:
         "--doc",
     ):
         assert test_selector not in report_command.split()
-    assert "codecov-unit.json" in workflow
-    assert "coverage-summary.txt" in workflow
-    assert "codecov-linux.json" in workflow
-    assert "coverage-summary-linux.txt" in workflow
+    assert "target/coverage/rust/unit.json" in workflow
+    assert "target/coverage/rust/summary.txt" in workflow
+    assert "target/coverage/linux/codecov.json" in workflow
+    assert "target/coverage/linux/summary.txt" in workflow
 
 
 def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
@@ -5405,7 +5405,7 @@ def test_binary_pairing_failure_uploads_exported_prefix_evidence() -> None:
 
     assert step["if"] == "failure()"
     assert set(step["with"]["path"].splitlines()) >= {
-        "test-artifacts/",
+        "target/test-artifacts/",
         "target/gate-runs/",
         "target/test-home/.capsem/run/sessions/",
         "target/test-home/.capsem/logs/",

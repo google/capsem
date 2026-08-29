@@ -166,7 +166,7 @@ def test_vm_suites_do_not_bypass_the_manifest_content_selector() -> None:
 
 
 def test_only_the_broad_suite_measures_coverage() -> None:
-    """Four suites all writing `codecov-python.xml` would each overwrite the
+    """Four suites all writing one Python Codecov XML would each overwrite the
     last, and the file would report whichever finished last."""
     measured = [
         build
