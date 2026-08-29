@@ -68,7 +68,7 @@ cargo build --release \
     -p capsem-admin \
     -p capsem-mock-server \
     -p capsem-bench
-bash scripts/check-build-provenance.sh "$ROOT/target/release/capsem"
+bash build_system/scripts/build/check-build-provenance.sh "$ROOT/target/release/capsem"
 bash "$SCRIPT_DIR/build-pkg.sh" \
     --manifest "$MANIFEST_URL" \
     "$ROOT/target/release/bundle/macos/Capsem.app" \

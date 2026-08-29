@@ -5,14 +5,16 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import tomllib
 from pathlib import Path
 
 import pytest
+import tomllib
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPO_ROOT / "crates" / "capsem" / "build.rs"
-PROVENANCE_CHECK = REPO_ROOT / "scripts" / "check-build-provenance.sh"
+PROVENANCE_CHECK = (
+    REPO_ROOT / "build_system" / "scripts" / "build" / "check-build-provenance.sh"
+)
 
 
 def test_release_profile_keeps_codegen_parallel_without_weakening_artifacts() -> None:
@@ -179,14 +181,23 @@ def test_every_package_builder_enforces_exact_provenance() -> None:
     ).read_text()
     release_workflow = (REPO_ROOT / ".github" / "workflows" / "release.yaml").read_text()
 
-    assert 'bash scripts/check-build-provenance.sh "$ROOT/target/release/capsem"' in macos_builder
+    assert (
+        'bash build_system/scripts/build/check-build-provenance.sh '
+        '"$ROOT/target/release/capsem"'
+        in macos_builder
+    )
     # Was asserted against the justfile, where this lived as an escaped
     # fragment of a `docker run ... bash -c` argument.
     assert (
-        'bash scripts/check-build-provenance.sh "/cargo-target/$RUST_TARGET/release/capsem"'
+        'bash build_system/scripts/build/check-build-provenance.sh '
+        '"/cargo-target/$RUST_TARGET/release/capsem"'
         in linux_builder
     )
     assert (
-        release_workflow.count("bash scripts/check-build-provenance.sh target/release/capsem") == 1
+        release_workflow.count(
+            "bash build_system/scripts/build/check-build-provenance.sh "
+            "target/release/capsem"
+        )
+        == 1
     ), "the macOS publication builder must reject stale provenance directly"
     assert "uv run --project build_system --frozen capsem-gate cross-compile" in release_workflow

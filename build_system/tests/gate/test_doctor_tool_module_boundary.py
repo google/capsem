@@ -9,6 +9,7 @@ from pathlib import Path
 BUILD_SYSTEM_ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY_ROOT = BUILD_SYSTEM_ROOT.parent
 DOCTOR_TOOL_ROOT = BUILD_SYSTEM_ROOT / "builder" / "gate" / "tools" / "doctor"
+DOCTOR_SCRIPT_ROOT = BUILD_SYSTEM_ROOT / "scripts" / "doctor"
 
 LAUNCHERS = {
     "check_session.py": "check_session",
@@ -35,12 +36,7 @@ def test_doctor_tools_have_one_exact_gate_owned_package() -> None:
 
 def test_doctor_script_boundaries_are_thin_status_launchers() -> None:
     for name, module in LAUNCHERS.items():
-        script_root = (
-            REPOSITORY_ROOT / "scripts"
-            if name == "kvm-diagnostic.py"
-            else REPOSITORY_ROOT / "build_system" / "scripts" / "doctor"
-        )
-        source = (script_root / name).read_text(encoding="utf-8")
+        source = (DOCTOR_SCRIPT_ROOT / name).read_text(encoding="utf-8")
         tree = ast.parse(source)
         assert len(source.splitlines()) <= 21, f"{name} contains reusable behavior"
         imports = {

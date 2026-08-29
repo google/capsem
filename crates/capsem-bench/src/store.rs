@@ -305,12 +305,12 @@ pub fn subjects(connection: &Connection) -> Result<Vec<(Dimension, String, Strin
 /// subject -- an arm64 number and an x86_64 number are not two samples of one
 /// thing.
 ///
-/// This is the rule `scripts/prune-benchmark-history.py` states and could not
-/// apply. Its filename pattern requires a six-digit timestamp, which the
-/// retired `1.5.1783712334` scheme had and semver does not, so under `0.6.0`
-/// every recording fell through to "curated baseline, never pruned". The tree
-/// reached 82 files. A table would have reached the same place more quietly,
-/// having no filenames for anyone to notice.
+/// This is the rule `build_system/scripts/build/prune-benchmark-history.py`
+/// states and could not apply. Its filename pattern requires a six-digit
+/// timestamp, which the retired `1.5.1783712334` scheme had and semver does
+/// not, so under `0.6.0` every recording fell through to "curated baseline,
+/// never pruned". The tree reached 82 files. A table would have reached the
+/// same place more quietly, having no filenames for anyone to notice.
 ///
 /// Returns how many runs were removed. Their metrics go with them: rows with
 /// no run are growth nothing queries and nothing counts.

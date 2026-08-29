@@ -5,7 +5,7 @@ Run on a Cloudtop or any machine where Capsem boot fails with:
 
 Tests each KVM ioctl individually to pinpoint the failure.
 
-Usage: python3 scripts/kvm-diagnostic.py
+Usage: python3 build_system/scripts/doctor/kvm-diagnostic.py
 """
 import array
 import fcntl

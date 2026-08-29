@@ -99,12 +99,9 @@ def test_build_script_boundaries_are_thin_image_owned_launchers() -> None:
         "tart_readiness.py": "tart_readiness",
     }
     for name, module in launchers.items():
-        script_root = (
-            REPOSITORY_ROOT / "scripts"
-            if name == "prune-benchmark-history.py"
-            else REPOSITORY_ROOT / "build_system" / "scripts" / "build"
-        )
-        source = (script_root / name).read_text(encoding="utf-8")
+        source = (
+            REPOSITORY_ROOT / "build_system" / "scripts" / "build" / name
+        ).read_text(encoding="utf-8")
         tree = ast.parse(source)
         assert len(source.splitlines()) <= 21, f"{name} contains reusable behavior"
         imports = {

@@ -29,9 +29,10 @@ fn main() {
     // developer build.
     //
     // Falling back to "unknown" silently is deliberate here and checked
-    // elsewhere: `scripts/check-build-provenance.sh` refuses a binary whose
-    // embedded revision is not the expected one, so an unset variable fails
-    // loudly at that gate rather than shipping a mislabelled package.
+    // elsewhere: `build_system/scripts/build/check-build-provenance.sh`
+    // refuses a binary whose embedded revision is not the expected one, so an
+    // unset variable fails loudly at that gate rather than shipping a
+    // mislabelled package.
     let git_hash = std::env::var("CAPSEM_BUILD_REVISION")
         .ok()
         .filter(|value| !value.is_empty())

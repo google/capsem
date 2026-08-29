@@ -68,7 +68,7 @@ cargo build --release --locked --offline --target "$RUST_TARGET" \
     -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp \
     -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway \
     -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench
-bash scripts/check-build-provenance.sh "/cargo-target/$RUST_TARGET/release/capsem" \
+bash build_system/scripts/build/check-build-provenance.sh "/cargo-target/$RUST_TARGET/release/capsem" \
     "${CAPSEM_BUILD_REVISION:-}"
 
 echo "--- Resolve Tauri signing key ---"

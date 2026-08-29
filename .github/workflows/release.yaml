@@ -388,7 +388,7 @@ jobs:
             -p capsem-admin \
             -p capsem-mock-server \
             -p capsem-bench
-          bash scripts/check-build-provenance.sh target/release/capsem
+          bash build_system/scripts/build/check-build-provenance.sh target/release/capsem
 
       - name: Codesign companion binaries
         env:

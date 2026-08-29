@@ -2,7 +2,7 @@
 # Fail unless a freshly built Capsem CLI embeds the exact source revision.
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 BINARY="${1:?usage: $0 BINARY [EXPECTED_GIT_REVISION]}"
 EXPECTED_REVISION="${2:-}"
 

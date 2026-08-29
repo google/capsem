@@ -1098,7 +1098,9 @@ fn run_kvm_diagnostics(kvm: &sys::KvmFd) {
     }
 
     tracing::error!("--- end KVM diagnostics ---");
-    tracing::error!("For detailed probing, run: python3 scripts/kvm-diagnostic.py");
+    tracing::error!(
+        "For detailed probing, run: python3 build_system/scripts/doctor/kvm-diagnostic.py"
+    );
 }
 
 /// Minimal uname wrapper for diagnostics.

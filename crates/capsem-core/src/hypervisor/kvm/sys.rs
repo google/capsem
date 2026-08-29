@@ -534,7 +534,8 @@ impl VmFd {
                      This typically indicates a restricted or nested KVM environment \
                      (e.g., cloud workstation, CI runner) where the hypervisor \
                      pre-creates vCPU state. Capsem requires unrestricted KVM access. \
-                     Debug: run `python3 scripts/kvm-diagnostic.py` for detailed probing."
+                     Debug: run `python3 build_system/scripts/doctor/kvm-diagnostic.py` \
+                     for detailed probing."
                 );
             }
             bail!("KVM_CREATE_VCPU({id}) failed: {err}");
