@@ -3007,7 +3007,7 @@ subject = "cargo build --locked --workspace --all-targets"
 reason = "a cache prewarm, not a proof; the lane that consumes it surfaces anything missing"
 
 [[boundary.discarded_verdicts]]
-digest = "b8d451b10f8a"
+digest = "fb3b3fac4613"
 where = ".github/workflows/release.yaml"
 subject = "bash build_system/packaging/macos/macos-install-user-request.sh clear"
 reason = "clears a request that may never have been set"

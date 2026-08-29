@@ -11,7 +11,10 @@ import sys
 import time
 from pathlib import Path
 
-from macos_tart_glowup import (
+ROOT = Path(__file__).resolve().parents[1]
+sys.path[:0] = [str(ROOT), str(ROOT / "build_system/packaging/macos")]
+
+from build_system.packaging.macos.macos_tart_glowup import (  # noqa: E402
     DEFAULT_IMAGE,
     OWNED_VM_PREFIX,
     cleanup_vm,
@@ -21,8 +24,6 @@ from macos_tart_glowup import (
     wait_for_guest_ip,
     wait_for_ssh,
 )
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def cached_oci_images() -> set[str]:
