@@ -11,7 +11,11 @@ import yaml
 from capsem_builder.gate import config as _gate_config
 from capsem_builder.gate.tools.ci import justfile_graph as GRAPH
 from capsem_builder.release.tools import local_release_glowup
-from helpers.workflow_contract import parsed_commands, workflow_job_source, workflow_jobs
+from helpers.workflow_contract import (
+    parsed_commands,
+    workflow_job_source,
+    workflow_jobs,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 JUSTFILE = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
@@ -354,8 +358,10 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
         # ratchet identical on Linux and macOS. The project/config flags keep
         # the nested build-system project explicit after the root facade is gone.
         "ruff check --config build_system/pyproject.toml .",
-        "ty check --project build_system --error-on-warning --python-platform all "
-        "build_system/builder",
+        (
+            "ty check --project build_system --error-on-warning --python-platform all "
+            "build_system/builder"
+        ),
         "cargo clippy --workspace --all-targets -- -D warnings",
         "check-web-surface.sh frontend",
         "check-web-surface.sh release-site",
@@ -882,10 +888,10 @@ def test_source_state_digest_accepts_a_tracked_deletion(tmp_path: Path) -> None:
 def test_source_state_digest_ignores_the_generated_asset_selector(tmp_path: Path) -> None:
     """Asset selection is build output, not a mid-gate source mutation.
 
-    ``AssetGate`` creates the checkout-root ``assets`` symlink only after the
-    sealed install image has been built.  The Docker context already excludes
-    every assets tree, so the shared source subject must exclude that selector
-    too; otherwise the exact install-image key changes between build and use.
+    ``AssetGate`` creates selectors below the target-owned output root only
+    after the sealed install image has been built.  The shared source subject
+    must exclude those selectors, while a retired checkout-root selector must
+    remain visible as unexpected source state.
     """
     subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
     (tmp_path / ".gitignore").write_bytes((PROJECT_ROOT / ".gitignore").read_bytes())
@@ -895,11 +901,14 @@ def test_source_state_digest_ignores_the_generated_asset_selector(tmp_path: Path
     module = _source_digest_module()
 
     before = module.source_state_digest(tmp_path)
-    selected = tmp_path / "target" / "ironbank-assets" / "code" / "assets"
-    selected.mkdir(parents=True)
-    (tmp_path / "assets").symlink_to("target/ironbank-assets/code/assets")
+    selected = tmp_path / "target" / "assets" / "current"
+    selected.parent.mkdir(parents=True)
+    selected.symlink_to("arm64")
 
     assert module.source_state_digest(tmp_path) == before
+
+    (tmp_path / "assets").symlink_to("target/assets")
+    assert module.source_state_digest(tmp_path) != before
 
 
 def test_source_state_digest_ignores_node_workspace_atomic_scratch(tmp_path: Path) -> None:
