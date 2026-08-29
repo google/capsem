@@ -7,7 +7,9 @@ from pathlib import Path
 from helpers.mock_server import start_mock_server, stop_process
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-RECORDER_PATH = PROJECT_ROOT / "scripts" / "protocol_fixture_recorder.py"
+RECORDER_PATH = (
+    PROJECT_ROOT / "build_system" / "tests" / "helpers" / "protocol_fixture_recorder.py"
+)
 
 
 def _load_recorder():

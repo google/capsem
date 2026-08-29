@@ -10,7 +10,9 @@ from pathlib import Path
 from rust_sources import production
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-PROOF_SCRIPT = PROJECT_ROOT / "scripts" / "prove-installed-shell.py"
+PROOF_SCRIPT = (
+    PROJECT_ROOT / "build_system" / "tests" / "helpers" / "prove_installed_shell.py"
+)
 CLI_CLIENT = PROJECT_ROOT / "crates" / "capsem" / "src" / "client.rs"
 
 

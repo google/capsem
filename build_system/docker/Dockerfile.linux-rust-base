@@ -89,7 +89,7 @@ RUN bash -lc 'eval "$(cargo llvm-cov show-env --export-prefix)" \
     || echo "prewarm incomplete; the lane will surface anything missing"
 
 # `capsem-app` embeds `web/app/dist` at compile time, so
-# `scripts/test-linux-rust.sh` builds the frontend when that directory is
+# `build_system/scripts/test/test-linux-rust.sh` builds the frontend when that directory is
 # missing -- with `pnpm install`, over the network. Sealed, that is a hard
 # failure, which is how it was found: every previous run of this lane had been
 # quietly pulling from npm. Built here instead, with network, like every other

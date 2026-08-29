@@ -428,8 +428,8 @@ def test_modules_retain_complete_named_quality_gates() -> None:
         "cargo test --workspace --doc",
         "tests/capsem-mcp/test_state_transitions.py",
         "tests/ironbank/test_route_health.py",
-        "scripts/injection_test.py",
-        "scripts/integration_test.py",
+        "build_system/scripts/test/injection_test.py",
+        "build_system/scripts/test/integration_test.py",
         "test_capsem_bench_baseline.py",
         "build_system/scripts/release/local-release-glowup.py",
         "install the exact package and prove the installed product",
@@ -656,7 +656,7 @@ def test_standalone_functional_scripts_use_the_project_python() -> None:
     the interpreter the lockfile pins."""
     for module in ("test-functional", "smoke"):
         planned = _planned(module)
-        for script in ("scripts/injection_test.py", "scripts/integration_test.py"):
+        for script in ("build_system/scripts/test/injection_test.py", "build_system/scripts/test/integration_test.py"):
             assert f"uv run --project build_system --frozen python {script}" in planned
             assert f"python3 {script}" not in planned
 
@@ -772,7 +772,7 @@ def test_standalone_local_functional_uses_its_declared_canonical_inputs() -> Non
 
 def test_release_functional_helpers_never_hide_host_binary_builds() -> None:
     helper_paths = (
-        "scripts/mock_server.py",
+        "build_system/tests/helpers/mock_server.py",
         "tests/helpers/gateway.py",
         "tests/capsem-service/test_profile_assets.py",
         "tests/capsem-admin/test_profile_materialization.py",

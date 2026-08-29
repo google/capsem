@@ -35,7 +35,7 @@ from capsem_builder.gate.tools.doctor.doctor_session_verify import (
 )
 
 PROJECT_ROOT = Path(os.environ.get("CAPSEM_REPOSITORY_ROOT", Path.cwd())).resolve()
-SCRIPT_DIR = PROJECT_ROOT / "scripts"
+SCRIPT_DIR = PROJECT_ROOT / "build_system" / "scripts" / "test"
 
 
 class _MockServerModule(Protocol):

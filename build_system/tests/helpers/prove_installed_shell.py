@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Prove that an installed Capsem can open and execute in a guest shell."""
 
 from __future__ import annotations

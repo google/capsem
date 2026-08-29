@@ -19,13 +19,19 @@ from .conftest import (
     get_build_hash,
 )
 
-SCRIPT = Path(__file__).parent.parent.parent / "scripts" / "simulate-install.sh"
+SCRIPT = (
+    Path(__file__).parent.parent.parent
+    / "build_system"
+    / "scripts"
+    / "test"
+    / "simulate-install.sh"
+)
 
 
 @pytest.fixture
 def _needs_cargo():
     """Skip if cargo is not available (e.g., in some Docker images)."""
-    result = subprocess.run(["cargo", "--version"], capture_output=True)
+    result = subprocess.run(["cargo", "--version"], capture_output=True, check=False)
     if result.returncode != 0:
         pytest.skip("cargo not available")
 

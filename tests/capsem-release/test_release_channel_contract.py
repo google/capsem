@@ -1145,7 +1145,7 @@ def test_untouched_public_graph_render_is_byte_idempotent(tmp_path: Path) -> Non
 
 def _prepare_install_test_assets(path: Path) -> dict[str, Any]:
     _run(
-        ["bash", "scripts/prepare-install-test-assets.sh"],
+        ["bash", "build_system/scripts/test/prepare-install-test-assets.sh"],
         env={
             "CAPSEM_ARCH": "arm64",
             "CAPSEM_ASSETS_DIR": str(path),
@@ -1237,7 +1237,7 @@ def _build_release_channel(
     if manifest_path is None:
         prepared_assets = dist.parent / "prepared-assets"
         _run(
-            ["bash", "scripts/prepare-install-test-assets.sh"],
+            ["bash", "build_system/scripts/test/prepare-install-test-assets.sh"],
             env={"CAPSEM_ASSETS_DIR": str(prepared_assets)},
         )
         manifest_path = prepared_assets / "manifest.json"
@@ -1600,7 +1600,7 @@ def test_fresh_install_assets_generate_release_channel_evidence(
     assets_dir = tmp_path / "assets"
     dist = tmp_path / "dist"
     _run(
-        ["bash", "scripts/prepare-install-test-assets.sh"],
+        ["bash", "build_system/scripts/test/prepare-install-test-assets.sh"],
         env={"CAPSEM_ASSETS_DIR": str(assets_dir)},
     )
     _build_release_channel(
@@ -1642,7 +1642,7 @@ def test_channel_build_never_hydrates_historical_release_from_current_asset_path
     assets_dir = tmp_path / "assets"
     dist = tmp_path / "dist"
     _run(
-        ["bash", "scripts/prepare-install-test-assets.sh"],
+        ["bash", "build_system/scripts/test/prepare-install-test-assets.sh"],
         env={"CAPSEM_ASSETS_DIR": str(assets_dir)},
     )
     manifest_path = assets_dir / "manifest.json"
@@ -1670,7 +1670,7 @@ def test_remote_channel_build_uses_manifest_digests_without_reopening_vm_blobs(
     assets_dir = tmp_path / "assets"
     dist = tmp_path / "dist"
     _run(
-        ["bash", "scripts/prepare-install-test-assets.sh"],
+        ["bash", "build_system/scripts/test/prepare-install-test-assets.sh"],
         env={"CAPSEM_ASSETS_DIR": str(assets_dir)},
     )
     manifest_path = assets_dir / "manifest.json"
@@ -1694,7 +1694,7 @@ def test_local_channel_copy_fails_closed_on_asset_byte_mutation(tmp_path: Path) 
     assets_dir = tmp_path / "assets"
     dist = tmp_path / "dist"
     _run(
-        ["bash", "scripts/prepare-install-test-assets.sh"],
+        ["bash", "build_system/scripts/test/prepare-install-test-assets.sh"],
         env={"CAPSEM_ASSETS_DIR": str(assets_dir)},
     )
     manifest_path = assets_dir / "manifest.json"

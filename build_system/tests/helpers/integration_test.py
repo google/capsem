@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """End-to-end integration test: boot VM, exercise all telemetry pipelines,
 verify every event type is logged in the session DB.
 
@@ -11,8 +10,8 @@ Exercises:
   6. main.db      -- rollup counters match session.db actuals
 
 Usage:
-    uv run --project build_system --frozen python scripts/integration_test.py              # uses target/debug/capsem
-    uv run --project build_system --frozen python scripts/integration_test.py --binary ./capsem --assets ./assets
+    uv run --project build_system --frozen python build_system/scripts/test/integration_test.py              # uses target/debug/capsem
+    uv run --project build_system --frozen python build_system/scripts/test/integration_test.py --binary ./capsem --assets ./assets
 
 Ironbank note: this is black-box product proof. Do not close a release gate
 with status-only replay, row-exists checks, skipped/slow cases, public
@@ -23,6 +22,7 @@ client result + parsed facts + security rows + protocol rows + logs + routes.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -36,15 +36,9 @@ import tempfile
 import time
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+from .mock_server import local_fixture_env, start_mock_server, stop_process
 
-import contextlib
-
-from mock_server import local_fixture_env, start_mock_server, stop_process
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _integration_home() -> Path:

@@ -10,6 +10,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 BIN_SRC="${1:?usage: simulate-install.sh <bin_dir> <assets_dir> <config_root>}"
 ASSETS_SRC="${2:?usage: simulate-install.sh <bin_dir> <assets_dir> <config_root>}"
 CONFIG_ROOT="${3:?usage: simulate-install.sh <bin_dir> <assets_dir> <config_root>}"
@@ -84,7 +85,7 @@ codesign_identifier_for_bin() {
 # Codesign real macOS Mach-O binaries with Virtualization entitlements. Fake
 # shell-script binaries used by install tests are intentionally skipped.
 if [[ "$(uname -s)" == "Darwin" ]]; then
-    ENTITLEMENTS="$(cd "$SCRIPT_DIR/.." && pwd)/build_system/packaging/macos/entitlements.plist"
+    ENTITLEMENTS="$REPO_ROOT/build_system/packaging/macos/entitlements.plist"
     for bin in "$INSTALL_DIR"/capsem*; do
         [[ -f "$bin" ]] || continue
         if file "$bin" | grep -q "Mach-O"; then
@@ -100,7 +101,7 @@ fi
 
 # Copy assets through the same manifest-driven path used by local packages.
 if [[ -f "$ASSETS_SRC/manifest.json" ]]; then
-    bash "$SCRIPT_DIR/../build_system/scripts/build/sync-dev-assets.sh" "$ASSETS_SRC" "$ASSETS_DST"
+    bash "$REPO_ROOT/build_system/scripts/build/sync-dev-assets.sh" "$ASSETS_SRC" "$ASSETS_DST"
 fi
 
 rm -rf "$PROFILES_DST"

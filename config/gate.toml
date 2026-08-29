@@ -622,7 +622,7 @@ password_variable = "TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
 container = "capsem-qualified-deb-proof"
 systemd_ready_attempts = 60
 verify_script = "build_system/scripts/release/verify-installed-release.py"
-shell_proof_script = "scripts/prove-installed-shell.py"
+shell_proof_script = "build_system/scripts/test/prove-installed-shell.py"
 shell_marker = "CAPSEM_QUALIFIED_DEB_SHELL_OK"
 session_name = "qualification-exact-deb-shell"
 shell_timeout_seconds = 300
@@ -716,7 +716,7 @@ shell_proof_timeout_seconds = 300
 admin_command = ["cargo", "run", "-p", "capsem-admin", "--"]
 capsem_binary = "target/debug/capsem"
 hash_assets_script = "build_system/scripts/build/create_hash_assets.py"
-shell_proof_script = "scripts/prove-installed-shell.py"
+shell_proof_script = "build_system/scripts/test/prove-installed-shell.py"
 container_cleanup_script = "build_system/scripts/build/cleanup-docker-containers-by-mount.sh"
 
 # Docker must be able to execute the *other* architecture before any lane
@@ -1083,12 +1083,9 @@ max_lines = 300
 
 [boundary.scripts.oversized_line_counts]
 "build_system/packaging/macos/build-pkg.sh" = 349
-"scripts/integration_test.py" = 1182
 "build_system/packaging/macos/macos_release_glowup.py" = 369
 "build_system/packaging/macos/macos_tart_glowup.py" = 565
 "build_system/packaging/macos/macos_tart_guest.sh" = 317
-"scripts/protocol_fixture_recorder.py" = 500
-"scripts/prove-installed-shell.py" = 318
 
 # ---------------------------------------------------------------------------
 # What may not run beside what
@@ -1554,7 +1551,7 @@ pnpm_version = "10.34.5"
 rust_image = "rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97"
 uv_image = "ghcr.io/astral-sh/uv:0.12.3@sha256:2d890623d310b57771ce840f0da5eed5fc6d657da05ffaa45d82797b53fa3abc"
 cargo_tool_args = { TAURI_CLI_VERSION = "cargo-tauri", CARGO_NEXTEST_VERSION = "cargo-nextest", CARGO_LLVM_COV_VERSION = "cargo-llvm-cov" }
-script = "scripts/test-linux-rust.sh"
+script = "build_system/scripts/test/test-linux-rust.sh"
 mount = "/src"
 # `probe_user` and `probe_network` are gone with the probe they configured.
 # It reproduced Linux CI's "dubious ownership" case -- a checkout owned by
@@ -2085,8 +2082,8 @@ test_manifest = "target/assets/manifest.json"
 # The two legacy VM drivers. Neither is pytest, both need a real VM, and both
 # take the same three coordinates -- which is why they are here rather than
 # spelled out at each of their four call sites.
-injection_script = "scripts/injection_test.py"
-integration_script = "scripts/integration_test.py"
+injection_script = "build_system/scripts/test/injection_test.py"
+integration_script = "build_system/scripts/test/integration_test.py"
 binary = "target/debug/capsem"
 assets_dir = "target/assets"
 config_root = "target/config"
@@ -3218,19 +3215,19 @@ reason = "bounded diagnostics printed only after the persistent resume probe has
 
 [[boundary.discarded_verdicts]]
 digest = "fc53e3713fe4"
-where = "scripts/simulate-install.sh"
+where = "build_system/scripts/test/simulate-install.sh"
 subject = "pkill -9 -f $INSTALL_DIR/$name"
 reason = "nothing to kill is the common case; pkill exits non-zero on no match"
 
 [[boundary.discarded_verdicts]]
 digest = "9c3827670aea"
-where = "scripts/simulate-install.sh"
+where = "build_system/scripts/test/simulate-install.sh"
 subject = "$BIN_SRC/capsem version"
 reason = "a banner printed before the real assertions; those are what decide the run"
 
 [[boundary.discarded_verdicts]]
 digest = "0ba21369ba00"
-where = "scripts/simulate-install.sh"
+where = "build_system/scripts/test/simulate-install.sh"
 subject = "head -1"
 reason = "reads the first line of a stream that may be empty"
 

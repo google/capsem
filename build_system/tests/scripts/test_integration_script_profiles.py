@@ -1,4 +1,4 @@
-import importlib.util
+import importlib
 import os
 import re
 import subprocess
@@ -10,20 +10,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def load_integration_script():
-    script_path = PROJECT_ROOT / "scripts" / "integration_test.py"
-    spec = importlib.util.spec_from_file_location("capsem_integration_test", script_path)
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+    from build_system.tests.helpers import integration_test
+
+    return importlib.reload(integration_test)
 
 
 def _just_python_entrypoints() -> list[Path]:
     justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
     referenced = {
         PROJECT_ROOT / relative
-        for relative in re.findall(r"scripts/[A-Za-z0-9_.-]+\.py", justfile)
+        for relative in re.findall(
+            r"(?:build_system/)?scripts/[A-Za-z0-9_./-]+\.py", justfile
+        )
     }
     referenced.add(
         PROJECT_ROOT / "build_system" / "scripts" / "doctor" / "doctor_session_test.py"

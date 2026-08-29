@@ -392,7 +392,7 @@ def test_release_workflow_runs_public_package_gate_and_native_install() -> None:
     assert "Enable KVM for live public-install VM proof" in verify_downloads
     assert "build_system/scripts/build/prove-live-public-install.sh" in verify_downloads
     assert 'curl -fsSL https://capsem.org/install.sh | CAPSEM_CHANNEL="$channel" sh' in live_proof
-    assert '"$repo_root/scripts/prove-installed-shell.py"' in live_proof
+    assert '"$repo_root/build_system/scripts/test/prove-installed-shell.py"' in live_proof
     assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in live_proof
     assert '"$repo_root/build_system/scripts/release/verify-installed-release.py"' in live_proof
     assert '"$HOME/.capsem/bin/capsem" run' not in verify_downloads

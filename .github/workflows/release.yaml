@@ -861,7 +861,7 @@ jobs:
       - name: Prove exact-package guest shell execution
         if: matrix.arch == 'x86_64'
         run: |
-          python3 scripts/prove-installed-shell.py \
+          python3 build_system/scripts/test/prove-installed-shell.py \
             --capsem /usr/bin/capsem \
             --marker CAPSEM_EXACT_PACKAGE_SHELL_OK \
             --session-name release-exact-shell-x86_64 \

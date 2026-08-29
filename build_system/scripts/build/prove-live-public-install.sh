@@ -36,7 +36,7 @@ python3 "$repo_root/build_system/scripts/release/verify-installed-release.py" \
   --manifest-url "$manifest_url" \
   --channel "$channel" \
   --package-version "$expected_version"
-python3 "$repo_root/scripts/prove-installed-shell.py" \
+python3 "$repo_root/build_system/scripts/test/prove-installed-shell.py" \
   --capsem "$capsem" \
   --marker CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK \
   --session-name release-live-public-shell-x86_64 \

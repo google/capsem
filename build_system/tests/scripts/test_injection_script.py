@@ -4,7 +4,9 @@ from pathlib import Path
 
 
 def load_injection_script():
-    script_path = Path(__file__).resolve().parents[3] / "scripts" / "injection_test.py"
+    script_path = (
+        Path(__file__).resolve().parents[1] / "helpers" / "injection_test.py"
+    )
     spec = importlib.util.spec_from_file_location("capsem_injection_test", script_path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

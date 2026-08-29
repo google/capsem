@@ -65,7 +65,7 @@ entrypoint with a local gate. Current required mappings are:
 - package assembly and acceptance: local and release CI share
   `build_system/packaging/macos/build-pkg.sh`, `build_system/packaging/linux/repack-deb.sh`,
   `build_system/scripts/release/verify-installed-release.py`, and
-  `scripts/prove-installed-shell.py`; macOS-local `just test-clean` builds the real
+  `build_system/scripts/test/prove-installed-shell.py`; macOS-local `just test-clean` builds the real
   release-mode app and unsigned `.pkg`, both Linux release-mode `.deb`
   architectures, and runs `build_system/scripts/release/generate-host-binary-sbom.py` over those
   exact artifacts. The native glow-up must finish with the same

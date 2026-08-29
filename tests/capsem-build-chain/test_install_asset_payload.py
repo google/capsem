@@ -575,7 +575,7 @@ def test_exact_linux_deb_proof_uses_systemd_and_proves_guest_shell() -> None:
 
     assert config.install.systemd_command == "/usr/lib/systemd/systemd"
     assert config.install.vm_devices == ("/dev/kvm", "/dev/vhost-vsock")
-    assert proof.shell_proof_script == "scripts/prove-installed-shell.py"
+    assert proof.shell_proof_script == "build_system/scripts/test/prove-installed-shell.py"
     assert proof.shell_marker == "CAPSEM_QUALIFIED_DEB_SHELL_OK"
     assert proof.verify_script == "build_system/scripts/release/verify-installed-release.py"
 
@@ -662,7 +662,7 @@ def test_binary_release_requires_exact_linux_deb_proof() -> None:
         "install-manifest-request.sh write"
     )
     assert "build_system/scripts/release/verify-installed-release.py" in native
-    assert "scripts/prove-installed-shell.py" in native
+    assert "build_system/scripts/test/prove-installed-shell.py" in native
     # Both native runners install and exercise their exact package. GitHub's
     # ARM64 runner has no KVM device, so only the x86_64 row owns the additional
     # guest-shell marker.
@@ -2665,7 +2665,7 @@ def test_installers_remove_retired_user_and_service_config_rails() -> None:
     scripts = [
         PROJECT_ROOT / "build_system" / "packaging" / "macos" / "pkg-scripts" / "postinstall",
         PROJECT_ROOT / "build_system" / "packaging" / "linux" / "deb-postinst.sh",
-        PROJECT_ROOT / "scripts" / "simulate-install.sh",
+        PROJECT_ROOT / "build_system" / "scripts" / "test" / "simulate-install.sh",
     ]
 
     for path in scripts:
@@ -2679,7 +2679,7 @@ def test_installers_remove_retired_python_admin_bundle() -> None:
     scripts = [
         PROJECT_ROOT / "build_system" / "packaging" / "macos" / "pkg-scripts" / "postinstall",
         PROJECT_ROOT / "build_system" / "packaging" / "linux" / "deb-postinst.sh",
-        PROJECT_ROOT / "scripts" / "simulate-install.sh",
+        PROJECT_ROOT / "build_system" / "scripts" / "test" / "simulate-install.sh",
     ]
 
     for path in scripts:
@@ -3111,7 +3111,7 @@ def test_ci_install_job_selects_exact_profiles_before_building_packages() -> Non
     assert install_job.count("--content-root target/ci-install-content") == 1
     assert install_job.count("--selected-content-root target/ci-install-content") == 1
     assert "CAPSEM_INSTALL_PROFILE_INPUTS" not in install_job
-    assert "scripts/prepare-install-test-assets.sh" not in install_job
+    assert "build_system/scripts/test/prepare-install-test-assets.sh" not in install_job
 
 
 def test_installed_doctor_failure_is_printed_and_preserved() -> None:

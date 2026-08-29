@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """End-to-end boot-config test for non-secret settings materialization.
 
 Each scenario writes a temporary settings.toml (and optionally corp.toml), boots the VM
@@ -7,8 +6,8 @@ with `capsem-doctor -k injection`, and checks the exit code. The in-VM tests rea
 well-formed.
 
 Usage:
-    uv run --project build_system --frozen python scripts/injection_test.py              # uses target/debug/capsem
-    uv run --project build_system --frozen python scripts/injection_test.py --binary ./capsem --assets ./assets
+    uv run --project build_system --frozen python build_system/scripts/test/injection_test.py              # uses target/debug/capsem
+    uv run --project build_system --frozen python build_system/scripts/test/injection_test.py --binary ./capsem --assets ./assets
 """
 
 import argparse
@@ -130,7 +129,7 @@ match = 'http.host == "example.invalid"'
 
 def default_materialized_profiles_dir() -> str:
     """Return the generated profile catalog used by packages and CI."""
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = Path(__file__).resolve().parents[3]
     return str(repo_root / "target" / "config" / "profiles")
 
 

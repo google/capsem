@@ -85,7 +85,7 @@ PKG_SHARE=$(find "$EXPANDED" -type d -path '*/usr/local/share/capsem')
 echo "=== Materializing exact package payload for physical-host VZ proof ==="
 CAPSEM_HOME="$CAPSEM_HOME_DIR" \
 CAPSEM_RUN_DIR="$RUN_DIR" \
-    bash "$ROOT/scripts/simulate-install.sh" \
+    bash "$ROOT/build_system/scripts/test/simulate-install.sh" \
         "$PKG_SHARE/bin" \
         "$ASSETS_DIR" \
         "$PKG_SHARE"
@@ -100,7 +100,7 @@ CAPSEM_HOME="$CAPSEM_HOME_DIR" \
 CAPSEM_RUN_DIR="$RUN_DIR" \
 CAPSEM_ASSETS_DIR="$CAPSEM_HOME_DIR/assets" \
 CAPSEM_PROFILES_DIR="$CAPSEM_HOME_DIR/profiles" \
-    python3 "$ROOT/scripts/prove-installed-shell.py" \
+    python3 "$ROOT/build_system/scripts/test/prove-installed-shell.py" \
         --capsem "$CAPSEM_HOME_DIR/bin/capsem" \
         --marker CAPSEM_MACOS_PACKAGE_VM_BOOT_OK \
         --session-name macos-package-vm-boot \

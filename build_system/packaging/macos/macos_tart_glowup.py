@@ -456,13 +456,17 @@ def main() -> int:
     stage_file(Path(__file__).resolve().parent / "macos_tart_guest.sh", share / "guest.sh")
     request = PROJECT_ROOT / "build_system/packaging/shared/install-manifest-request.sh"
     stage_file(request, share / request.name)
+    release_script_root = PROJECT_ROOT / "build_system" / "scripts" / "release"
     for name in (
         "verify-installed-release.py",
         "release_fixture_server.py",
         "release_transition.py",
-        "serve-release-test-root.py",
     ):
-        stage_file(PROJECT_ROOT / "scripts" / name, share / name)
+        stage_file(release_script_root / name, share / name)
+    stage_file(
+        PROJECT_ROOT / "scripts" / "serve-release-test-root.py",
+        share / "serve-release-test-root.py",
+    )
     for name in ("macos-install-user-request.sh", "macos_tart_transition_support.py", "macos-tart-regression-probes.sh"):
         stage_file(Path(__file__).resolve().parent / name, share / name)
     vm_name = f"{OWNED_VM_PREFIX}{os.getpid()}-{int(time.time())}"

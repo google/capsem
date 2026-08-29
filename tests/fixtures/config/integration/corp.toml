@@ -1,5 +1,5 @@
 # Corporate policy for integration tests.
-# Used by scripts/integration_test.py.
+# Used by build_system/scripts/test/integration_test.py.
 
 [corp.rules.block_local_deny_target]
 name = "block_local_deny_target"

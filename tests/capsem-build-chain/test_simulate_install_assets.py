@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = PROJECT_ROOT / "scripts" / "simulate-install.sh"
+SCRIPT = PROJECT_ROOT / "build_system" / "scripts" / "test" / "simulate-install.sh"
 BINARIES = [
     "capsem",
     "capsem-service",

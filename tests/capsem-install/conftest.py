@@ -136,6 +136,7 @@ def fresh_capsem_binary() -> Path:
     result = subprocess.run(
         ["cargo", "build", "--locked", "-p", "capsem", "--bin", "capsem"],
         cwd=repo_root,
+        check=False,
         capture_output=True,
         text=True,
         timeout=120,
@@ -153,6 +154,7 @@ def run_capsem(*args: str, timeout: int = DEFAULT_TIMEOUT) -> subprocess.Complet
     """Run the installed capsem binary with capture + timeout."""
     return subprocess.run(
         [str(INSTALL_DIR / "capsem"), *args],
+        check=False,
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -265,6 +267,7 @@ def _kill_service() -> None:
         with suppress(subprocess.TimeoutExpired):
             subprocess.run(
                 ["systemctl", "--user", "stop", "capsem"],
+                check=False,
                 capture_output=True,
                 timeout=10,
             )
@@ -279,6 +282,7 @@ def _kill_service() -> None:
     ]:
         subprocess.run(
             ["pkill", "-f", f"{install_prefix}{proc_name}"],
+            check=False,
             capture_output=True,
         )
 
@@ -302,11 +306,17 @@ def _ensure_installed() -> None:
     bin_src = os.environ.get("CAPSEM_BIN_SRC", "target/debug")
     assets_src = os.environ.get("CAPSEM_ASSETS_SRC", "assets")
     config_src = os.environ.get("CAPSEM_CONFIG_SRC", "target/config")
-    script = Path(__file__).parent.parent.parent / "scripts" / "simulate-install.sh"
+    script = (
+        Path(__file__).parent.parent.parent
+        / "build_system"
+        / "scripts"
+        / "test"
+        / "simulate-install.sh"
+    )
     assert script.exists(), f"simulate-install.sh not found at {script}"
     result = subprocess.run(
         ["bash", str(script), bin_src, assets_src, config_src],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, timeout=60, check=False,
     )
     assert result.returncode == 0, (
         f"simulate-install.sh failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
@@ -351,6 +361,7 @@ def systemd_available():
     try:
         result = subprocess.run(
             ["systemctl", "--user", "status"],
+            check=False,
             capture_output=True,
             text=True,
         )

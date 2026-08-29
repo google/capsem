@@ -578,7 +578,7 @@ def test_ci_materializes_runtime_profiles_after_generating_settings() -> None:
     workflow = _workflow_job_block("test")
 
     generate_pos = workflow.find("bash build_system/scripts/build/generate-settings.sh")
-    prepare_assets_pos = workflow.find("bash scripts/prepare-install-test-assets.sh")
+    prepare_assets_pos = workflow.find("bash build_system/scripts/test/prepare-install-test-assets.sh")
     materialize_pos = workflow.find("bash build_system/scripts/build/materialize-config.sh")
     python_pos = workflow.find("Python schema tests with coverage")
 
@@ -776,7 +776,13 @@ def test_release_workflows_run_disjoint_lane_policy_gates() -> None:
 
 
 def test_install_e2e_generates_manifest_through_admin_rail() -> None:
-    script = (PROJECT_ROOT / "scripts" / "prepare-install-test-assets.sh").read_text()
+    script = (
+        PROJECT_ROOT
+        / "build_system"
+        / "scripts"
+        / "test"
+        / "prepare-install-test-assets.sh"
+    ).read_text()
 
     assert "cargo run -p capsem-admin -- manifest generate" in script
     assert "arm64|aarch64)" in script
@@ -2007,7 +2013,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "Enable KVM for exact-package VM proof" in linux
     assert linux.count("if: matrix.arch == 'x86_64'") == 2
     assert "test -r /dev/kvm -a -w /dev/kvm" in linux
-    assert "scripts/prove-installed-shell.py" in linux
+    assert "build_system/scripts/test/prove-installed-shell.py" in linux
     assert "--session-name release-exact-shell-x86_64" in linux
     assert "CAPSEM_EXACT_PACKAGE_SHELL_OK" in linux
     assert "/usr/bin/capsem run" not in linux
@@ -2701,7 +2707,7 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
     assert 'grep -F "Running:   true" /tmp/capsem-live-status.txt' in live_proof
     assert 'grep -F "Service:   ok" /tmp/capsem-live-status.txt' in live_proof
     assert 'grep -F "Gateway:   ok" /tmp/capsem-live-status.txt' in live_proof
-    assert '"$repo_root/scripts/prove-installed-shell.py"' in live_proof
+    assert '"$repo_root/build_system/scripts/test/prove-installed-shell.py"' in live_proof
     assert '"$repo_root/build_system/scripts/release/verify-installed-release.py"' in live_proof
     assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in live_proof
     assert '"$HOME/.capsem/bin/capsem" run' not in verify_downloads
@@ -3149,7 +3155,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     for shared_script in (
         "build_system/packaging/macos/build-pkg.sh",
         "build_system/scripts/release/verify-installed-release.py",
-        "scripts/prove-installed-shell.py",
+        "build_system/scripts/test/prove-installed-shell.py",
     ):
         assert shared_script in release
     assert "uv run --project build_system --frozen capsem-gate cross-compile" in release
@@ -3181,7 +3187,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     for shared_script in (
         '"$SCRIPT_DIR/repack-deb.sh"',
         "build_system/scripts/release/verify-installed-release.py",
-        "scripts/prove-installed-shell.py",
+        "build_system/scripts/test/prove-installed-shell.py",
     ):
         assert shared_script in local_rail
 
@@ -4458,7 +4464,9 @@ def test_guest_network_doctor_exercises_oauth_fixture() -> None:
 
 
 def test_mock_server_helper_exports_https_fixture_for_host_callers() -> None:
-    helper = (PROJECT_ROOT / "scripts" / "mock_server.py").read_text()
+    helper = (
+        PROJECT_ROOT / "build_system" / "tests" / "helpers" / "mock_server.py"
+    ).read_text()
 
     assert "CAPSEM_MOCK_SERVER_HTTPS_BASE_URL" in helper
     assert "https_base_url" in helper
@@ -4504,7 +4512,7 @@ def test_doctor_session_validation_starts_mock_server() -> None:
 
 
 def test_release_scripts_use_shared_mock_server_helper() -> None:
-    helper = PROJECT_ROOT / "scripts" / "mock_server.py"
+    helper = PROJECT_ROOT / "build_system" / "tests" / "helpers" / "mock_server.py"
     assert helper.exists(), "release scripts need one shared mock-server helper"
 
     doctor = (
@@ -4516,13 +4524,13 @@ def test_release_scripts_use_shared_mock_server_helper() -> None:
     assert "def _read_mock_server_ready" not in doctor
     assert "def _start_mock_server" not in doctor
 
-    direct_imports = ["scripts/integration_test.py"]
+    direct_imports = ["build_system/tests/helpers/integration_test.py"]
     helper_imports = [
         "tests/capsem-serial/test_mock_server_protocol_benchmark.py",
     ]
     for rel in direct_imports:
         source = (PROJECT_ROOT / rel).read_text()
-        assert "from mock_server import" in source
+        assert "from .mock_server import" in source
         assert "def _read_mock_server_ready" not in source
         assert "def _start_mock_server" not in source
     for rel in helper_imports:
@@ -4534,7 +4542,8 @@ def test_release_scripts_use_shared_mock_server_helper() -> None:
 
 def test_mock_server_is_the_only_hermetic_fixture_server_contract() -> None:
     current_files = [
-        PROJECT_ROOT / "scripts" / "mock_server.py",
+        PROJECT_ROOT / "build_system" / "tests" / "helpers" / "mock_server.py",
+        PROJECT_ROOT / "build_system" / "scripts" / "test" / "mock_server.py",
         PROJECT_ROOT / "tests" / "helpers" / "mock_server.py",
         PROJECT_ROOT / "crates" / "capsem-mock-server" / "src" / "main.rs",
         PROJECT_ROOT / "guest" / "artifacts" / "capsem_bench" / "__main__.py",
@@ -4752,7 +4761,9 @@ def test_installer_codesigns_helpers_with_stable_identifiers() -> None:
     """
 
     postinstall = (PROJECT_ROOT / "build_system" / "packaging" / "macos" / "pkg-scripts" / "postinstall").read_text()
-    simulate_install = (PROJECT_ROOT / "scripts" / "simulate-install.sh").read_text()
+    simulate_install = (
+        PROJECT_ROOT / "build_system" / "scripts" / "test" / "simulate-install.sh"
+    ).read_text()
     expected = [
         "org.capsem.cli",
         "org.capsem.service",
@@ -5124,7 +5135,7 @@ def test_pr_ci_coverage_reports_without_local_threshold_abort() -> None:
 
 def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
     workflow = _workflow_job_block("test-linux")
-    runner = _source_text("scripts/test-linux-rust.sh")
+    runner = _source_text("build_system/scripts/test/test-linux-rust.sh")
     nextest = tomllib.loads((PROJECT_ROOT / ".config" / "nextest.toml").read_text())
 
     coverage_step = workflow.split("- name: Unit tests (KVM backend) with coverage", maxsplit=1)[
@@ -5161,7 +5172,7 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
     canonical_gate = _dispatched_text("test-clean:")
     linux_rust_recipe = _recipe_body("_gate-linux-rust:")
     linux_ci = _workflow_job_block("test-linux")
-    runner = _source_text("scripts/test-linux-rust.sh")
+    runner = _source_text("build_system/scripts/test/test-linux-rust.sh")
     host_builder = _source_text("build_system/docker/Dockerfile.host-builder")
 
     # Linux owns its cfg(target_os = "linux") coverage natively. macOS owns
@@ -5897,7 +5908,7 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
         "# Verify all integration test suites", maxsplit=1
     )[0]
 
-    asset_pos = block.find("bash scripts/prepare-install-test-assets.sh")
+    asset_pos = block.find("bash build_system/scripts/test/prepare-install-test-assets.sh")
     build_pos = block.find(
         "cargo build -p capsem-process -p capsem-service -p capsem -p capsem-mcp"
     )
@@ -6002,7 +6013,9 @@ def test_benchmark_release_path_wires_mock_server_and_forbids_http_skip() -> Non
 
 
 def test_integration_script_has_no_live_ai_provider_escape_hatch() -> None:
-    source = (PROJECT_ROOT / "scripts" / "integration_test.py").read_text()
+    source = (
+        PROJECT_ROOT / "build_system" / "tests" / "helpers" / "integration_test.py"
+    ).read_text()
 
     assert "GEMINI_API_KEY" not in source
     assert "GOOGLE_API_KEY" not in source
@@ -6011,7 +6024,9 @@ def test_integration_script_has_no_live_ai_provider_escape_hatch() -> None:
 
 
 def test_integration_script_uses_current_tool_call_arguments_column() -> None:
-    source = (PROJECT_ROOT / "scripts" / "integration_test.py").read_text()
+    source = (
+        PROJECT_ROOT / "build_system" / "tests" / "helpers" / "integration_test.py"
+    ).read_text()
 
     assert "request_preview FROM tool_calls" not in source
     assert "SELECT id, arguments FROM tool_calls WHERE origin = 'mcp'" in source

@@ -612,8 +612,8 @@ def test_physical_mac_boots_a_guest_from_the_exact_package_payload() -> None:
     source = HOST_BOOT.read_text()
 
     assert "pkgutil --expand-full" in source
-    assert "scripts/simulate-install.sh" in source
-    assert "scripts/prove-installed-shell.py" in source
+    assert "build_system/scripts/test/simulate-install.sh" in source
+    assert "build_system/scripts/test/prove-installed-shell.py" in source
     assert "CAPSEM_MACOS_PACKAGE_VM_BOOT_OK" in source
     assert '"$CAPSEM_HOME_DIR/bin/capsem" doctor' in source
     assert "build_system/scripts/build/run-installed-winterfell.py" in source

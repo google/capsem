@@ -230,7 +230,7 @@ introduced.
 `crates/capsem-mock-server` is the single reusable local fixture server for
 benchmarks, doctor, protocol recording/replay, gateway/integration tests, and
 Ironbank. It owns mock protocol responses and deterministic local upstream
-behavior. Tests may launch it through `scripts/mock_server.py`,
+behavior. Tests may launch it through `build_system/scripts/test/mock_server.py`,
 `tests/helpers/mock_server.py`, or `CAPSEM_MOCK_SERVER_BASE_URL`.
 
 Do not add another local HTTP/MCP/OAuth/model mock server for a feature. Extend

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Record sanitized protocol fixtures from capsem-mock-server.
 
 Ironbank note: recorder fixtures are inputs, not proof. The release proof lives
