@@ -3548,7 +3548,7 @@ jobs:
         "release-site-build",
     }.issubset(module.workflow_job_needs(module.workflow_job_block(stale, "pr-gate")))
     current_gate = module.workflow_job_block(_workflow_text("ci.yaml"), "pr-gate")
-    verdict = _source_text("scripts/require-ci-jobs.sh")
+    verdict = _source_text("build_system/scripts/ci/require-ci-jobs.sh")
     assert module.pr_gate_contract_failures(current_gate, verdict) == []
     assert module.pr_gate_contract_failures(
         module.workflow_job_block(stale, "pr-gate"), verdict
@@ -4389,7 +4389,7 @@ def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
     import re
     import tomllib
 
-    select_pos = workflow.find("scripts/gate-tool-list.py")
+    select_pos = workflow.find("build_system/scripts/ci/gate-tool-list.py")
     install_pos = workflow.find("- name: Install prebuilt Rust tools")
     bootstrap_pos = workflow.find("uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml tests/capsem-bootstrap/")
 
@@ -6563,7 +6563,7 @@ def test_independent_ci_owners_keep_the_fast_gate_and_fail_closed() -> None:
 
     assert "fetch-depth: 0" in scope_job
     assert 'git diff --name-only -z "$base_sha"...HEAD' in scope_job
-    assert scope_job.count("scripts/classify-ci-scope.py --owners") == 2
+    assert scope_job.count("build_system/scripts/ci/classify-ci-scope.py --owners") == 2
     assert "owners: ${{ steps.scope.outputs.owners }}" in scope_job
     assert ".github/workflows/ci.yaml" in scope_job
 

@@ -46,7 +46,7 @@ def selected_tools(job: str) -> set[str]:
     """The crates a job installs, resolved through the sets it names.
 
     A job used to spell its tools; now it names a set and
-    `scripts/gate-tool-list.py` derives them, so a guard asking "does this job
+    `build_system/scripts/ci/gate-tool-list.py` derives them, so a guard asking "does this job
     install X" has to resolve the same way. That indirection is the point: the
     membership lives in one file, and a job cannot quietly hold a different
     subset from another job running the same suite.
@@ -89,7 +89,7 @@ def test_every_fresh_ci_test_runner_preinstalls_the_exact_nextest() -> None:
         ),
     )
 
-    marker = "scripts/gate-tool-list.py"
+    marker = "build_system/scripts/ci/gate-tool-list.py"
     for workflow_name, job_name, seal, consumer in jobs:
         job = _job_block(_read(f".github/workflows/{workflow_name}"), job_name)
         assert pin in selected_tools(job), f"{workflow_name}:{job_name} does not install {pin}"

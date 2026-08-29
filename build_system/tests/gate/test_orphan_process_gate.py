@@ -29,8 +29,8 @@ from capsem_builder.gate.tools.ci import run_bounded_command as BOUNDED_MODULE
 from helpers.sign import sign_binary
 
 ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = ROOT / "scripts" / "check-orphan-processes.py"
-BOUNDED = ROOT / "scripts" / "run-bounded-command.py"
+SCRIPT = ROOT / "build_system" / "scripts" / "ci" / "check-orphan-processes.py"
+BOUNDED = ROOT / "build_system" / "scripts" / "ci" / "run-bounded-command.py"
 JUSTFILE = ROOT / "justfile"
 SEALED_MACOS = (
     sys.platform == "darwin" and os.environ.get("CAPSEM_GATE_COMMAND_SANDBOX_MODE") == "enforce"

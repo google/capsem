@@ -14,7 +14,7 @@ from helpers.workflow_contract import canonical_shell_commands, referenced_need_
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yaml"
-SCRIPT = ROOT / "scripts" / "require-ci-jobs.sh"
+SCRIPT = ROOT / "build_system" / "scripts" / "ci" / "require-ci-jobs.sh"
 
 #: The job that aggregates the others. It cannot require itself, so it is the
 #: one job excluded from the derivation rather than an entry in a list.
@@ -64,7 +64,7 @@ comparison is a bare command whose exit status reaches the shell, because
 `test X = success || true` turns a failing gate green. That guards how the
 check runs. This guards *what it checks*.
 
-See .github/workflows/ci.yaml and scripts/require-ci-jobs.sh.
+See .github/workflows/ci.yaml and build_system/scripts/ci/require-ci-jobs.sh.
 """
 
 

@@ -38,10 +38,10 @@ jobs:
 
           if [ -n "$base_sha" ] && git cat-file -e "$base_sha^{commit}" 2>/dev/null; then
             owners=$(git diff --name-only -z "$base_sha"...HEAD | \
-              python3 scripts/classify-ci-scope.py --owners)
+              python3 build_system/scripts/ci/classify-ci-scope.py --owners)
           else
             owners=$(printf '%s\0' '.github/workflows/ci.yaml' | \
-              python3 scripts/classify-ci-scope.py --owners)
+              python3 build_system/scripts/ci/classify-ci-scope.py --owners)
           fi
           echo "owners=$owners" >> "$GITHUB_OUTPUT"
 
@@ -101,7 +101,7 @@ jobs:
       - name: Select the declared tool set
         id: gate_tools
         run: |
-          list=$(python3 scripts/gate-tool-list.py --sets coverage)
+          list=$(python3 build_system/scripts/ci/gate-tool-list.py --sets coverage)
           echo "list=$list" >> "$GITHUB_OUTPUT"
       - name: Install prebuilt Rust tools
         uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
@@ -218,7 +218,7 @@ jobs:
       - name: Select the declared tool set
         id: gate_tools
         run: |
-          list=$(python3 scripts/gate-tool-list.py --sets coverage,digest)
+          list=$(python3 build_system/scripts/ci/gate-tool-list.py --sets coverage,digest)
           echo "list=$list" >> "$GITHUB_OUTPUT"
       - name: Install prebuilt Rust tools
         uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
@@ -649,4 +649,4 @@ jobs:
           DOCS_BUILD_REQUIRED: ${{ contains(fromJSON(needs.scope.outputs.owners), 'docs-build') }}
           SITE_BUILD_REQUIRED: ${{ contains(fromJSON(needs.scope.outputs.owners), 'site-build') }}
           RELEASE_SITE_BUILD_REQUIRED: ${{ contains(fromJSON(needs.scope.outputs.owners), 'release-site-build') }}
-        run: bash scripts/require-ci-jobs.sh
+        run: bash build_system/scripts/ci/require-ci-jobs.sh

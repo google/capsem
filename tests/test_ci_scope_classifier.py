@@ -10,7 +10,7 @@ import pytest
 from capsem_builder.gate.tools.ci import classify_ci_scope as CLASSIFIER
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "classify-ci-scope.py"
+SCRIPT = ROOT / "build_system" / "scripts" / "ci" / "classify-ci-scope.py"
 
 
 def _classifier():
@@ -161,8 +161,8 @@ def test_shared_hidden_and_root_inputs_fan_out() -> None:
         "config/gate.toml",
         "scripts/check-web-surface.sh",
         "scripts/lib/exec_lock.sh",
-        "scripts/classify-ci-scope.py",
-        "scripts/require-ci-jobs.sh",
+        "build_system/scripts/ci/classify-ci-scope.py",
+        "build_system/scripts/ci/require-ci-jobs.sh",
         "build_system/builder/gate/tools/ci/classify_ci_scope.py",
     ):
         assert module.ci_scopes((path,)) == {"shared"}

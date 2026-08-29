@@ -11,7 +11,7 @@ from capsem_builder.release.tools import remote_ci_gate as REMOTE_GATE
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = (PROJECT_ROOT / ".github/workflows/ci.yaml").read_text(encoding="utf-8")
-VERDICT = (PROJECT_ROOT / "scripts/require-ci-jobs.sh").read_text(encoding="utf-8")
+VERDICT = (PROJECT_ROOT / REMOTE_GATE.GATE_SCRIPT_PATH).read_text(encoding="utf-8")
 
 
 def gate_block(workflow: str = WORKFLOW) -> str:
@@ -27,8 +27,8 @@ def test_current_workflow_and_dispatched_script_form_one_fail_closed_contract() 
     [
         lambda text: text.replace("if: ${{ always() }}", "if: ${{ success() }}", 1),
         lambda text: text.replace(
-            "run: bash scripts/require-ci-jobs.sh",
-            "run: bash scripts/require-ci-jobs.sh || true",
+            "run: bash build_system/scripts/ci/require-ci-jobs.sh",
+            "run: bash build_system/scripts/ci/require-ci-jobs.sh || true",
             1,
         ),
         lambda text: text.replace(

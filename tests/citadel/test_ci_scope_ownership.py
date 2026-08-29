@@ -88,7 +88,7 @@ def _workflow_problems(workflow: dict[str, Any]) -> list[str]:
         if classifier.get("continue-on-error") in {True, "true", "True"}:
             problems.append("CI scope classifier discards failure")
         run = classifier.get("run", "")
-        if "python3 scripts/classify-ci-scope.py --owners" not in run:
+        if "python3 build_system/scripts/ci/classify-ci-scope.py --owners" not in run:
             problems.append("CI scope classifier does not call the owned script")
         if any(token in run for token in ("|| true", "; true", "set +e")):
             problems.append("CI scope classifier neutralizes a failing command")
@@ -148,7 +148,9 @@ def test_ci_jobs_are_selected_by_one_fail_closed_owner_stream() -> None:
     )
     assert classifier.get("continue-on-error") is None
     assert "git diff --name-only -z" in classifier["run"]
-    assert classifier["run"].count("scripts/classify-ci-scope.py --owners") == 2
+    assert classifier["run"].count(
+        "build_system/scripts/ci/classify-ci-scope.py --owners"
+    ) == 2
     assert ".github/workflows/ci.yaml" in classifier["run"]
 
     assert "if" not in jobs["fast-gate"]

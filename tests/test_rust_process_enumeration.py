@@ -20,7 +20,7 @@ always the one nobody rechecks -- so the invariant is a test rather than three
 fixed call sites.
 
 `sysctl(KERN_PROC_ALL)` plus `KERN_PROCARGS2` is the replacement, which is
-what psutil uses on macOS and what `scripts/check-orphan-processes.py` already
+what psutil uses on macOS and what `build_system/scripts/ci/check-orphan-processes.py` already
 reads full command lines with from inside a sandboxed run.
 """
 

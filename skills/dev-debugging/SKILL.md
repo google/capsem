@@ -36,7 +36,7 @@ Direct diagnostics which may block, build, launch children, or wait on input
 must use the portable bounded-process wrapper rather than a bare shell command:
 
 ```bash
-python3 scripts/run-bounded-command.py --timeout-seconds 1800 -- <command> <args...>
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 1800 -- <command> <args...>
 ```
 
 The wrapper closes stdin, creates a dedicated process group, and terminates the

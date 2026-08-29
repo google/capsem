@@ -136,7 +136,7 @@ def _result_env(step: dict) -> dict[str, frozenset[str]]:
 
 
 def _step_shell(step: dict) -> str:
-    """A step's shell, following a dispatch into `scripts/`.
+    """A step's shell, following a dispatch into an owned script root.
 
     The gate body moved out of the workflow so ShellCheck could read it, and
     reading only `run:` would then see one harmless line and pronounce the
@@ -181,11 +181,11 @@ def _decides_the_gate(command: tuple[str, ...], results: dict[str, frozenset[str
     `test` and mention one of the environment names carrying a dependency's
     result.
 
-    A dispatch into `scripts/` decides it too, and by exactly as much. Once the
+    A dispatch into an owned script decides it too, and by exactly as much. Once the
     body moved out of the workflow the whole gate hangs off that one line's
-    exit status, so `bash scripts/require-ci-jobs.sh || true` is the same
-    evasion as `test "$X" = success || true` and mentions no result name at
-    all. Recognising only the comparison let the mutation battery pass a
+    exit status, so neutralizing the dispatched `require-ci-jobs.sh` is the
+    same evasion as `test "$X" = success || true` and mentions no result name
+    at all. Recognising only the comparison let the mutation battery pass a
     workflow whose gate had been switched off.
     """
     if command[:1] in {("bash",), ("sh",)} and direct_script_paths(command):

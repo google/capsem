@@ -4,7 +4,7 @@ GitHub jobs start with an empty workspace. Moving a gate body from inline YAML
 to ``scripts/`` makes it lintable and testable, but also creates a runtime
 dependency on checkout in that *same job*. The branch-protection aggregator
 once made exactly that move without adding checkout; every PR would have died
-with ``scripts/require-ci-jobs.sh: No such file or directory`` before judging
+with ``build_system/scripts/ci/require-ci-jobs.sh: No such file or directory`` before judging
 any dependency result.
 """
 

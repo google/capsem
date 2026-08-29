@@ -752,7 +752,7 @@ keep_awake_command = ["caffeinate", "-dimsu"]
 keep_awake_marker = "CAPSEM_TEST_CAFFEINATED"
 
 source_digest_script = "scripts/source-state-digest.py"
-orphan_script = "scripts/check-orphan-processes.py"
+orphan_script = "build_system/scripts/ci/check-orphan-processes.py"
 # Where the recorded state waits between the step that measures it and the one
 # that re-asserts it.
 source_state_file = "target/gate-source-state.json"
@@ -805,7 +805,7 @@ key = "version"
 # ---------------------------------------------------------------------------
 
 [lint]
-python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/tests", "scripts", "tests", "guest"]
+python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "scripts", "tests", "guest"]
 # Already passes every rule, and must keep doing so.
 strict_roots = ["build_system/builder", "build_system/sdist_command.py"]
 # Match the import roots exercised by the sole pytest project plus the guest
@@ -817,6 +817,7 @@ ty_search_paths = [
     "build_system/builder",
     "tests",
     ".",
+    "build_system/scripts",
     "scripts",
     "build_system/tests/release",
     "build_system/tests/release_site",
@@ -1020,7 +1021,7 @@ direct_concurrency = ["planrunner.py"]
 # shrink must update or remove its entry immediately. This is debt inventory,
 # not an exemption list.
 [boundary.scripts]
-roots = ["scripts", "build_system/packaging"]
+roots = ["scripts", "build_system/scripts", "build_system/packaging"]
 suffixes = [".py", ".sh"]
 max_lines = 300
 
@@ -1333,7 +1334,7 @@ line = "0.6"
 # machine-local candidate-journal prerequisite to invalidate after each fix.
 # A release publishes a commit, not the working tree, so uncommitted edits are
 # silently excluded. Refuse before anything is accepted or published.
-clean_worktree = "scripts/require-clean-worktree.py"
+clean_worktree = "build_system/scripts/ci/require-clean-worktree.py"
 source = "scripts/publish-release-source.py"
 source_ref_template = "capsem-source-{source_commit}"
 tagger_name = "Capsem Release Gate"

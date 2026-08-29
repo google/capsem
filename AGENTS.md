@@ -185,7 +185,7 @@ Any direct development command that can block, build, launch children, or wait
 on input must run through:
 
 ```text
-python3 scripts/run-bounded-command.py --timeout-seconds <finite> -- <command>
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds <finite> -- <command>
 ```
 
 The wrapper closes stdin and owns a process group so timeout or interruption

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Functional CI boundary invoked by the required aggregate workflow job.
 # The single required status behind branch protection: every CI job that had to
 # pass, passed, and every job that had to be skipped was skipped.
 #

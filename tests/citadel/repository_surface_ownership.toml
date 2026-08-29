@@ -91,7 +91,7 @@ reason = "Release-distribution generation and its package-local source are owned
 [[surface]]
 id = "build-system-scripts"
 state = "migrating"
-current = ["scripts/"]
+current = ["build_system/scripts/", "scripts/"]
 targets = ["build_system/scripts/"]
 lint = ["python.ruff", "python.ty.relaxed", "fast.audit.shell", "fast.citadel"]
 tests = ["build_system/tests/scripts/", "build_system/tests/gate/test_path_and_log_wrappers_are_mandatory.py"]

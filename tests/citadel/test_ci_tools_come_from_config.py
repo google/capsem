@@ -11,7 +11,7 @@ Three of them failed on a missing tool ten minutes into a release job where
 every binary had already built and installed. Nobody chose that subset -- it was
 never compared with any other.
 
-So a workflow names a declared set and `scripts/gate-tool-list.py` derives the
+So a workflow names a declared set and `build_system/scripts/ci/gate-tool-list.py` derives the
 rest. This keeps the restatement from coming back.
 """
 
@@ -56,7 +56,7 @@ def test_no_workflow_pins_a_tool_the_config_declares(workflow: Path) -> None:
     assert not restated, (
         f"{workflow.name} spells {restated}, which config/gate.toml already "
         "declares. Name a set from [toolchain.sets] and let "
-        "scripts/gate-tool-list.py derive it."
+        "build_system/scripts/ci/gate-tool-list.py derive it."
     )
 
 
@@ -64,7 +64,12 @@ def test_no_workflow_pins_a_tool_the_config_declares(workflow: Path) -> None:
 def test_every_declared_set_resolves_to_installable_pins(label: str) -> None:
     """The deriver must actually work for each set a workflow may name."""
     rendered = subprocess.run(
-        ["python3", str(PROJECT_ROOT / "scripts" / "gate-tool-list.py"), "--sets", label],
+        [
+            "python3",
+            str(PROJECT_ROOT / "build_system/scripts/ci/gate-tool-list.py"),
+            "--sets",
+            label,
+        ],
         check=True,
         capture_output=True,
         text=True,

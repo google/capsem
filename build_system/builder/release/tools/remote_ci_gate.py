@@ -7,7 +7,7 @@ import re
 import subprocess
 
 WORKFLOW_PATH = ".github/workflows/ci.yaml"
-GATE_SCRIPT_PATH = "scripts/require-ci-jobs.sh"
+GATE_SCRIPT_PATH = "build_system/scripts/ci/require-ci-jobs.sh"
 REQUIRED_PR_GATE_JOBS = (
     "scope",
     "fast-gate",

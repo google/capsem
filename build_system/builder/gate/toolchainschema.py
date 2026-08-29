@@ -121,7 +121,7 @@ class ToolchainConfig(Strict):
 
     Workflows select a set rather than restating tool names and versions, so a
     hand-written list cannot quietly differ from another job running the same
-    suite. See `scripts/gate-tool-list.py`.
+    suite. See `build_system/scripts/ci/gate-tool-list.py`.
     """
 
     @model_validator(mode="after")

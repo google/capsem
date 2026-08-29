@@ -24,7 +24,9 @@ _GITHUB_EXPRESSION = re.compile(r"\$\{\{\s*(.*?)\s*}}")
 # text outside one is prose, and matching it anywhere would make a comment
 # authoritative.
 _NEEDS_RESULT = re.compile(r"\bneeds\.([A-Za-z0-9_-]+)\.result\b")
-_DIRECT_SCRIPT = re.compile(r"^scripts/[A-Za-z0-9_./-]+\.(?:sh|py)$")
+_DIRECT_SCRIPT = re.compile(
+    r"^(?:scripts|build_system/scripts)/[A-Za-z0-9_./-]+\.(?:sh|py)$"
+)
 
 
 def workflow_document(path: Path) -> dict[str, Any]:
@@ -165,7 +167,8 @@ def direct_script_paths(command: tuple[str, ...]) -> tuple[str, ...]:
 
     Kept beside the shell tokenizer because both the reachable-source reader
     and the checkout guard need the same answer. A second token scan in the
-    guard would eventually disagree about ``./scripts`` or supported suffixes.
+    guard would eventually disagree about the owned script roots or supported
+    suffixes.
     """
     return tuple(
         candidate
