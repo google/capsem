@@ -14,19 +14,19 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urljoin
 
+from capsem_builder.image.tools.build.stage_profile_assets import (
+    active_profile_architectures,
+    configured_evidence_artifacts,
+    finalize_profile,
+    local_file,
+    stage_profile_architecture_assets,
+)
 from release_binary_cohort import REQUIRED_LINUX_RELEASE_BINARIES
 from release_inputs import (
     load_verified_release_inputs,
     safe_component,
     safe_relative,
     verify_payload,
-)
-from stage_profile_assets import (
-    active_profile_architectures,
-    configured_evidence_artifacts,
-    finalize_profile,
-    local_file,
-    stage_profile_architecture_assets,
 )
 
 SCRIPT_DIR = Path(__file__).resolve().parent

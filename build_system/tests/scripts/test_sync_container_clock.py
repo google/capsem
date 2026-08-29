@@ -10,7 +10,10 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = PROJECT_ROOT / "scripts" / "sync-container-clock.py"
+SCRIPT = (
+    PROJECT_ROOT
+    / "build_system/builder/image/tools/build/sync_container_clock.py"
+)
 
 
 def _module():

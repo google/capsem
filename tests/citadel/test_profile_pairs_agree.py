@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 RUST = ROOT / "crates/capsem-core/src/net/policy_config/profile_contract.rs"
-PYTHON = ROOT / "scripts/stage_profile_assets.py"
+PYTHON = ROOT / "build_system/builder/image/tools/build/stage_profile_assets.py"
 
 #: `if self.a.is_some() != self.b.is_some()` -- the Rust contract's way of
 #: saying two profile file entries must appear together or not at all.
@@ -50,8 +50,8 @@ This does not merge the two implementations; a Rust type and a staging script
 legitimately live apart. It requires them to agree about *which* pairs exist,
 which is the only part that can silently diverge.
 
-See crates/capsem-core/src/net/policy_config/profile_contract.rs and
-scripts/stage_profile_assets.py.
+See crates/capsem-core/src/net/policy_config/profile_contract.rs and the
+image-owned stage_profile_assets.py module.
 """
 
 

@@ -42,6 +42,7 @@ def test_builder_distribution_owns_image_package_and_command() -> None:
     assert "capsem_builder.image" in project["tool"]["setuptools"]["packages"]
     assert "capsem_builder.image.tools" in project["tool"]["setuptools"]["packages"]
     assert "capsem_builder.image.tools.bootstrap" in project["tool"]["setuptools"]["packages"]
+    assert "capsem_builder.image.tools.build" in project["tool"]["setuptools"]["packages"]
     assert project["project"]["scripts"]["capsem-builder"] == (
         "capsem_builder.image.cli:main"
     )
@@ -75,3 +76,36 @@ def test_bootstrap_script_boundaries_are_thin_exit_status_launchers() -> None:
             and node.exc.func.id == "SystemExit"
         ]
         assert len(exits) == 1, f"{name} does not propagate its owned command status"
+
+
+def test_build_script_boundaries_are_thin_image_owned_launchers() -> None:
+    launchers = {
+        "archive_db_writer_benchmark.py": "archive_db_writer_benchmark",
+        "benchmark_report.py": "benchmark_report",
+        "check-macos-native-glowup.py": "check_macos_native_glowup",
+        "clean_stale.py": "clean_stale",
+        "create_hash_assets.py": "create_hash_assets",
+        "docker-storage-policy.py": "docker_storage_policy",
+        "gen_manifest.py": "gen_manifest",
+        "materialize-package-ort.py": "materialize_package_ort",
+        "print-gate-digest.py": "print_gate_digest",
+        "prune-benchmark-history.py": "prune_benchmark_history",
+        "resolve-reusable-profile-assets.py": "resolve_reusable_profile_assets",
+        "run-installed-winterfell.py": "run_installed_winterfell",
+        "stage_profile_assets.py": "stage_profile_assets",
+        "sync-container-clock.py": "sync_container_clock",
+        "tart_readiness.py": "tart_readiness",
+    }
+    for name, module in launchers.items():
+        source = (REPOSITORY_ROOT / "scripts" / name).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        assert len(source.splitlines()) <= 21, f"{name} contains reusable behavior"
+        imports = {
+            alias.name
+            for node in tree.body
+            if isinstance(node, ast.ImportFrom)
+            and node.module == "capsem_builder.image.tools.build"
+            for alias in node.names
+        }
+        assert module in imports
+        assert not any(isinstance(node, (ast.FunctionDef, ast.ClassDef)) for node in tree.body)

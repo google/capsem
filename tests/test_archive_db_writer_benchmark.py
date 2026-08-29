@@ -3,7 +3,10 @@ import json
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
-SCRIPT = PROJECT_ROOT / "scripts" / "archive_db_writer_benchmark.py"
+SCRIPT = (
+    PROJECT_ROOT
+    / "build_system/builder/image/tools/build/archive_db_writer_benchmark.py"
+)
 
 
 def _load_module():

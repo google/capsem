@@ -16,6 +16,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 POLICY_PATH = ROOT / "config" / "storage-policy.toml"
 POLICY_SCRIPT = ROOT / "scripts" / "docker-storage-policy.py"
+POLICY_IMPLEMENTATION = (
+    ROOT
+    / "build_system/builder/image/tools/build/docker_storage_policy.py"
+)
 
 
 def _storage_release_callers() -> tuple[Path, ...]:
@@ -50,7 +54,9 @@ def _gate_labels(name: str = "candidate") -> tuple[str, ...]:
 
 
 def load_policy_module():
-    spec = importlib.util.spec_from_file_location("docker_storage_policy", POLICY_SCRIPT)
+    spec = importlib.util.spec_from_file_location(
+        "docker_storage_policy", POLICY_IMPLEMENTATION
+    )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -511,9 +517,9 @@ def test_the_evidence_bundle_says_what_it_could_not_collect(tmp_path: Path) -> N
     # checkout, so using POLICY_SCRIPT in place made this "empty glob" test
     # depend on whether asset lanes happened to run before broad pytest.
     checkout = tmp_path / "checkout"
-    policy_script = checkout / "scripts" / POLICY_SCRIPT.name
+    policy_script = checkout / "scripts" / POLICY_IMPLEMENTATION.name
     policy_script.parent.mkdir(parents=True)
-    policy_script.write_bytes(POLICY_SCRIPT.read_bytes())
+    policy_script.write_bytes(POLICY_IMPLEMENTATION.read_bytes())
 
     policy_text = POLICY_PATH.read_text().replace(
         'root = "test-artifacts"', f'root = "{tmp_path.as_posix()}"'
@@ -539,6 +545,7 @@ def test_the_evidence_bundle_says_what_it_could_not_collect(tmp_path: Path) -> N
             "--offline",
         ],
         cwd=ROOT,
+        env={**os.environ, "CAPSEM_REPOSITORY_ROOT": str(checkout)},
         check=True,
         capture_output=True,
         text=True,

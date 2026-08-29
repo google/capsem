@@ -25,7 +25,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = gate_config.load(PROJECT_ROOT)
 
 SETTINGS = PROJECT_ROOT / ".claude" / "settings.json"
-SCRIPT = PROJECT_ROOT / "scripts" / "print-gate-digest.py"
+LAUNCHER = PROJECT_ROOT / "scripts" / "print-gate-digest.py"
+SCRIPT = PROJECT_ROOT / "build_system/builder/image/tools/build/print_gate_digest.py"
 #: Every agent contract that has to name it, because three agents work here and
 #: only one of them gets the hook.
 CONTRACTS = ("AGENTS.md", "CLAUDE.md", "GEMINI.md")
@@ -97,8 +98,8 @@ def test_the_hook_is_registered() -> None:
     assert SETTINGS.is_file(), DIGEST_ECHO_RATIONALE + f"\n{SETTINGS} is missing"
     commands = hook_commands(json.loads(SETTINGS.read_text(encoding="utf-8")))
     assert commands, DIGEST_ECHO_RATIONALE + "\nno SessionStart hook is registered"
-    assert any(SCRIPT.name in command for command in commands), (
-        DIGEST_ECHO_RATIONALE + f"\nno SessionStart hook runs {SCRIPT.name}: {commands}"
+    assert any(LAUNCHER.name in command for command in commands), (
+        DIGEST_ECHO_RATIONALE + f"\nno SessionStart hook runs {LAUNCHER.name}: {commands}"
     )
 
 

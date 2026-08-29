@@ -19,6 +19,10 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 SCRIPT = PROJECT_ROOT / "scripts" / "create_hash_assets.py"
+IMPLEMENTATION = (
+    PROJECT_ROOT
+    / "build_system/builder/image/tools/build/create_hash_assets.py"
+)
 
 pytestmark = pytest.mark.build_chain
 
@@ -31,7 +35,9 @@ def _run(assets_dir: Path) -> subprocess.CompletedProcess:
 
 
 def _load_script_module():
-    spec = importlib.util.spec_from_file_location("create_hash_assets_under_test", SCRIPT)
+    spec = importlib.util.spec_from_file_location(
+        "create_hash_assets_under_test", IMPLEMENTATION
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)

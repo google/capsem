@@ -22,6 +22,14 @@ GUEST_SUPPORT = MACOS_PACKAGING / "macos_tart_transition_support.py"
 HOST_BOOT = MACOS_PACKAGING / "prove-macos-package-boot.sh"
 INSTALLED_WINTERFELL = PROJECT_ROOT / "scripts" / "run-installed-winterfell.py"
 NATIVE_REPORT_CHECK = PROJECT_ROOT / "scripts" / "check-macos-native-glowup.py"
+INSTALLED_WINTERFELL_IMPLEMENTATION = (
+    PROJECT_ROOT
+    / "build_system/builder/image/tools/build/run_installed_winterfell.py"
+)
+NATIVE_REPORT_CHECK_IMPLEMENTATION = (
+    PROJECT_ROOT
+    / "build_system/builder/image/tools/build/check_macos_native_glowup.py"
+)
 LOCAL_PACKAGE_BUILD = MACOS_PACKAGING / "build-test-macos-package.sh"
 LOCAL_SIGNING = PROJECT_ROOT / "scripts" / "macos_signing.py"
 RELEASE_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "release.yaml"
@@ -637,7 +645,9 @@ def test_macos_glowup_requires_physical_doctor_and_winterfell_evidence() -> None
 
 
 def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> None:
-    module = _load_script(NATIVE_REPORT_CHECK, "macos_native_report_check")
+    module = _load_script(
+        NATIVE_REPORT_CHECK_IMPLEMENTATION, "macos_native_report_check"
+    )
     cargo_toml = tmp_path / "Cargo.toml"
     cargo_toml.write_text('[workspace.package]\nversion = "1.2.3"\n')
     report_path = tmp_path / "report.json"
@@ -728,7 +738,9 @@ def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> N
 
 
 def test_installed_winterfell_runner_loads_without_pytest_path_side_effects() -> None:
-    module = _load_script(INSTALLED_WINTERFELL, "installed_winterfell_direct")
+    module = _load_script(
+        INSTALLED_WINTERFELL_IMPLEMENTATION, "installed_winterfell_direct"
+    )
 
     assert module.WINTERFELL_TESTS == (
         "tests/capsem-mcp/test_winterfell_rw.py",

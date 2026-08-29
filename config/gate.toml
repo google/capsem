@@ -841,15 +841,15 @@ error_on_warning = true
 # Reductions must lower the count immediately, so stale exemptions fail too.
 [lint.ty_ratchet]
 call-top-callable = 1
-invalid-argument-type = 94
+invalid-argument-type = 92
 invalid-assignment = 9
-invalid-method-override = 2
+invalid-method-override = 1
 invalid-return-type = 5
 no-matching-overload = 7
 not-iterable = 2
 not-subscriptable = 144
 unresolved-attribute = 88
-unresolved-import = 22
+unresolved-import = 21
 unsupported-operator = 4
 unused-ignore-comment = 3
 unused-type-ignore-comment = 3
@@ -1071,8 +1071,6 @@ max_lines = 300
 "scripts/check-public-binary-release.py" = 934
 "scripts/check-remote-release-readiness.py" = 1973
 "scripts/check_session.py" = 381
-"scripts/clean_stale.py" = 769
-"scripts/docker-storage-policy.py" = 1458
 "scripts/doctor-common.sh" = 446
 "scripts/doctor_session_test.py" = 548
 "scripts/fetch-release-artifacts.py" = 353
@@ -1087,8 +1085,7 @@ max_lines = 300
 "scripts/release-binaries.py" = 435
 "scripts/release_collect_evidence.py" = 462
 "scripts/release_glowup.py" = 807
-"scripts/release_inputs.py" = 337
-"scripts/resolve-reusable-profile-assets.py" = 334
+"scripts/release_inputs.py" = 317
 "scripts/stage-release-test-inputs.py" = 459
 
 # ---------------------------------------------------------------------------

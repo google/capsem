@@ -10,6 +10,7 @@ dependencies = [
     "blake3>=1.0.8",
     "psutil>=7.2.2",
     "pyyaml>=6.0.3",
+    "tomli-w>=1.2",
     "watchdog>=6.0.0",
 ]
 
@@ -30,6 +31,7 @@ packages = [
     "capsem_builder.image",
     "capsem_builder.image.tools",
     "capsem_builder.image.tools.bootstrap",
+    "capsem_builder.image.tools.build",
     "capsem_builder.policy",
     "capsem_builder.release",
 ]

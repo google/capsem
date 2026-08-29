@@ -71,7 +71,10 @@ def _policy_parser():
     import importlib.util
     import sys
 
-    script = PROJECT_ROOT / "scripts" / "docker-storage-policy.py"
+    script = (
+        PROJECT_ROOT
+        / "build_system/builder/image/tools/build/docker_storage_policy.py"
+    )
     spec = importlib.util.spec_from_file_location("docker_storage_policy_args", script)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

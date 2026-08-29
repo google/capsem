@@ -743,7 +743,10 @@ def test_foreign_package_swap_stops_when_native_removal_fails(tmp_path: Path) ->
 
 
 def _ort_materializer():
-    path = PROJECT_ROOT / CONFIG.toolchain.ort.script
+    path = (
+        PROJECT_ROOT
+        / "build_system/builder/image/tools/build/materialize_package_ort.py"
+    )
     spec = importlib.util.spec_from_file_location("package_ort_materializer", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

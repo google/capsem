@@ -23,7 +23,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _pruner():
-    script = PROJECT_ROOT / "scripts" / "prune-benchmark-history.py"
+    script = (
+        PROJECT_ROOT
+        / "build_system/builder/image/tools/build/prune_benchmark_history.py"
+    )
     spec = importlib.util.spec_from_file_location("prune_benchmark_history", script)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

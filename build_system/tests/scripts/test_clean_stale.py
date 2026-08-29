@@ -15,7 +15,10 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT_PATH = REPO_ROOT / "scripts" / "clean_stale.py"
+SCRIPT_PATH = (
+    REPO_ROOT
+    / "build_system/builder/image/tools/build/clean_stale.py"
+)
 
 
 def _load_module():

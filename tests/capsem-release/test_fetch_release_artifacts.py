@@ -31,7 +31,8 @@ assert STAGE_SPEC is not None and STAGE_SPEC.loader is not None
 STAGE = importlib.util.module_from_spec(STAGE_SPEC)
 STAGE_SPEC.loader.exec_module(STAGE)
 PROFILE_STAGE_SPEC = importlib.util.spec_from_file_location(
-    "stage_profile_assets", ROOT / "scripts" / "stage_profile_assets.py"
+    "stage_profile_assets",
+    ROOT / "build_system/builder/image/tools/build/stage_profile_assets.py",
 )
 assert PROFILE_STAGE_SPEC is not None and PROFILE_STAGE_SPEC.loader is not None
 PROFILE_STAGE = importlib.util.module_from_spec(PROFILE_STAGE_SPEC)

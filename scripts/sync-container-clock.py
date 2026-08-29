@@ -1,43 +1,19 @@
 #!/usr/bin/env python3
-"""Synchronize Colima's VM clock with a bounded host-side command."""
+"""Compatibility launcher for the image-owned container clock synchronizer."""
 
-from __future__ import annotations
-
-import datetime
-import subprocess
+import os
 import sys
+from pathlib import Path
 
-
-def sync_container_clock(*, timeout_seconds: float = 10) -> None:
-    timestamp = datetime.datetime.now(datetime.UTC).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-    command = ["colima", "ssh", "--", "sudo", "date", "-u", "-s", timestamp]
-    try:
-        subprocess.run(
-            command,
-            check=True,
-            text=True,
-            capture_output=True,
-            timeout=timeout_seconds,
-        )
-    except subprocess.TimeoutExpired as error:
-        raise RuntimeError(
-            f"Colima clock synchronization timed out after {timeout_seconds:g} seconds"
-        ) from error
-    except subprocess.CalledProcessError as error:
-        detail = (error.stderr or error.stdout or str(error)).strip()
-        raise RuntimeError(f"Colima clock synchronization failed: {detail}") from error
-
-
-def main() -> int:
-    try:
-        sync_container_clock()
-    except (OSError, RuntimeError) as error:
-        print(f"ERROR: {error}", file=sys.stderr)
-        return 1
-    return 0
-
+ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("CAPSEM_REPOSITORY_ROOT", str(ROOT))
+try:
+    import capsem_builder  # noqa: F401
+except ModuleNotFoundError:
+    sys.path.insert(0, str(ROOT / "build_system" / "builder"))
+    from bootstrap import mount_builder_package
+    mount_builder_package(ROOT)
+from capsem_builder.image.tools.build import sync_container_clock as _implementation  # noqa: E402
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_implementation.main())
