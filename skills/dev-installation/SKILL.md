@@ -71,14 +71,14 @@ The package is the install unit. It may accept a manifest URL override for corp
 and development installs, records that URL in packaged
 `manifest-metadata.json`, hydrates the live manifest through
 `capsem update --assets --manifest <URL>` during postinstall, installs/restarts
-service files, and writes timestamped install logs. Packages do not carry an
-`assets/manifest.json` payload. They do not run an AI-provider setup wizard and
+service files, and writes timestamped install logs. Packages do not carry a
+`~/.capsem/assets/manifest.json` payload. They do not run an AI-provider setup wizard and
 they do not create a user policy file.
 
 Postinstall writes the selected verified release document unchanged to
-`assets/manifest.json`. The boot resolver derives its compact runtime view in
+`~/.capsem/assets/manifest.json`. The boot resolver derives its compact runtime view in
 memory; it must never serialize that view over the installed release graph.
-`assets/manifest-metadata.json`, with schema
+The adjacent `manifest-metadata.json` sidecar, with schema
 `capsem.manifest_metadata.v1`, is the only sidecar for provenance and update
 state. CLI status and About Capsem both read the service's canonical
 `GET /system/status` response, which includes those exact two JSON documents.
@@ -119,7 +119,7 @@ retry after failure; postinstall removes both only after success.
 ## Self-update (update.rs)
 
 - `read_cached_update_notice()` -> sync file read on every command
-- `refresh_update_cache_if_stale()` -> background 24h-cached check merged atomically into `assets/manifest-metadata.json`
+- `refresh_update_cache_if_stale()` -> background 24h-cached check merged atomically into the installed `manifest-metadata.json` sidecar
 - `run_update()` -> check the selected manifest URL and stage one complete compatible release transaction before mutating the installation
 - `capsem update --yes` -> verifies every changed package/profile artifact, prints the tested package-manager apply command for audit, executes it through `sudo` when the native package changes, and atomically activates the selected profile graph; this is the one ordinary update path used by the installed service
 - `capsem update --assets` -> low-level diagnostic/repair rail for hydrating the locally installed manifest or an explicit `--manifest` URL; normal product surfaces never direct users to apply assets separately

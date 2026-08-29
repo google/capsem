@@ -85,9 +85,9 @@ constraints from the shared immutable Ubuntu snapshot; `apt-get install -f`
 and ambient runner indexes are not release proof.
 
 The installed source of truth remains the exact verified
-`assets/manifest.json`, byte-for-byte. Installation and update code must not
+`~/.capsem/assets/manifest.json`, byte-for-byte. Installation and update code must not
 rewrite it into a reduced runtime schema. The only metadata sidecar is
-`assets/manifest-metadata.json` with schema
+`~/.capsem/assets/manifest-metadata.json` with schema
 `capsem.manifest_metadata.v1`; do not create a separate origin file. Runtime
 adapters may derive an in-memory boot view. `GET /system/status` returns that
 manifest, metadata, readiness, corporate state, and update comparison. CLI and

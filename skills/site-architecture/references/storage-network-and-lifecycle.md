@@ -123,7 +123,7 @@ downloads verified binary installers, prints the package-manager apply command
 for audit, executes it with `--yes`, materializes VM assets from URL-shaped
 manifest sources, and reports manifest metadata/hash plus update availability
 through the canonical `/system/status` service endpoint. Background update state
-is merged into `assets/manifest-metadata.json` and refreshes on ordinary CLI commands.
+is merged into `~/.capsem/assets/manifest-metadata.json` and refreshes on ordinary CLI commands.
 
 Key source files: `crates/capsem/src/paths.rs`,
 `crates/capsem/src/service_install.rs`, `crates/capsem/src/update.rs`, and

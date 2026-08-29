@@ -41,11 +41,11 @@ SCOPE_JOBS = {
 KNOWN_DIRECTORIES = frozenset(
     {
         ".agents", ".cargo", ".claude", ".codex", ".config", ".cursor",
-        ".gemini", ".github", "assets", "bench", "benchmarks",
-        "build_system", "config", "crates", "data", "dist", "docker",
-        "docs", "frontend", "graphics", "guest", "packages",
+        ".gemini", ".github", "bench", "benchmarks",
+        "build_system", "config", "crates", "data", "docker",
+        "docs", "frontend", "graphics", "guest",
         "scripts", "sdk", "security", "site", "skills",
-        "sprints", "src", "target", "test-artifacts", "tests", "tmp",
+        "sprints", "src", "tests", "tmp",
         "web",
     }
 )
@@ -69,16 +69,11 @@ BUILD_SYSTEM_FILES = frozenset(
 RUST_GUEST_CONFIG_ROOTS = frozenset(
     {
         ".cargo",
-        "assets",
         "config",
         "crates",
         "data",
-        "dist",
         "guest",
-        "packages",
         "security",
-        "target",
-        "test-artifacts",
     }
 )
 RUST_GUEST_CONFIG_FILES = frozenset({"Cargo.lock", "Cargo.toml", "rust-toolchain.toml"})

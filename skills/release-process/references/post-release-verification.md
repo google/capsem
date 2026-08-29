@@ -24,8 +24,8 @@ uv run --project build_system --frozen python3 scripts/check-public-binary-relea
 
 Use `scripts/check-public-binary-release.py` for post-deploy glow-up instead of
 ad hoc `tar`/`strings` checks. It validates public `install.sh`, package URLs,
-package SHA-256, package-owned binary hashes, absence of packaged
-`assets/manifest.json`, `manifest-metadata.json` source provenance, Docker
+package SHA-256, package-owned binary hashes, absence of a packaged
+`~/.capsem/assets/manifest.json`, `manifest-metadata.json` source provenance, Docker
 install, stable/nightly asset switching, and the binary updater path. Package
 scripts must not normalize or convert manifest JSON; the selected channel
 manifest is the only runtime manifest format.

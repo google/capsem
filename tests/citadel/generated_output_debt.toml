@@ -28,7 +28,9 @@ prefix_exports = [
   "target/assets",
   "target/config",
   "target/coverage",
+  "target/distribution",
   "target/gate-runs",
   "target/packages",
   "target/test-artifacts",
+  "target/test-benchmarks",
 ]

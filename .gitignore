@@ -1,7 +1,5 @@
 #capsem log
 *.log
-# Preserved service logs / session dirs from failing integration tests.
-test-artifacts/
 # Python virtualenv lib (but NOT frontend/src/lib/)
 /lib/
 dist/
@@ -43,7 +41,6 @@ env/
 *.swp
 *.h5
 *.egg-info
-dist/*
 *.pickle
 *.bak
 .s.yml
@@ -59,31 +56,16 @@ private/
 .sprinty/
 .sprinty-*/
 
-# Coverage output
-coverage/
-.coverage
-codecov-*.json
-codecov-*.xml
-*-junit.xml
-
 # Benchmark recordings are generated evidence. Existing tracked files are the
 # reviewed baselines; new data must be explicitly force-added to become approved.
 benchmarks/**/data_*.json
 
-# Rust
+# Canonical repository-generated output root: Rust builds, VM assets,
+# packages, distributions, coverage, benchmarks, and failure evidence.
 target/
 
 # Git worktrees
 worktrees/
-
-# VM assets and the root selector produced by AssetGate. Docker excludes the
-# same tree with `**/assets`; neither the bytes nor this generated symlink are
-# source inputs, so they must not change the mid-gate source/image identity.
-/assets
-
-# Built packages (.pkg, .deb)
-/packages/
-/build_system/packaging/packages/
 
 # Tauri
 crates/capsem-app/gen/
@@ -97,7 +79,7 @@ frontend/node_modules/
 # churn on every `just _generate-settings` run. See commit 97ab1b5.
 frontend/src/lib/mock-settings.generated.ts
 
-# Site
+# Web project outputs that remain owner-local rather than repository products.
 site/dist/
 site/node_modules/
 site/.astro/

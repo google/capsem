@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import re
 import subprocess
@@ -177,6 +178,26 @@ def _output_roots() -> dict[str, str]:
 
 def _gate_config() -> dict[str, Any]:
     return tomllib.loads((ROOT / "config/gate.toml").read_text(encoding="utf-8"))
+
+
+def _literal_assignment(path: Path, name: str) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for statement in tree.body:
+        if not isinstance(statement, ast.Assign):
+            continue
+        if any(isinstance(target, ast.Name) and target.id == name for target in statement.targets):
+            expression = statement.value
+            if (
+                isinstance(expression, ast.Call)
+                and isinstance(expression.func, ast.Name)
+                and expression.func.id == "frozenset"
+                and len(expression.args) == 1
+                and not expression.keywords
+            ):
+                expression = expression.args[0]
+            value = ast.literal_eval(expression)
+            return set(value)
+    raise AssertionError(f"{path}: missing literal assignment {name}")
 
 
 def _observe(probes: list[str]) -> Observed:
@@ -499,6 +520,62 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
         "target/nextest/ci/junit.xml",
     ):
         assert stale not in workflow, RATIONALE
+
+
+def test_generated_output_transfer_and_cleanup_ownership_is_symmetric() -> None:
+    config = _gate_config()
+    exports = set(config["prefix"]["exports"])
+    reclaimable = set(config["disk"]["reclaimable"])
+    generated = set(FINAL_OUTPUT_ROOTS.values())
+
+    assert exports == generated, RATIONALE
+    protected = {
+        FINAL_OUTPUT_ROOTS["assets"],
+        FINAL_OUTPUT_ROOTS["materialized_config"],
+        FINAL_OUTPUT_ROOTS["packages"],
+    }
+    assert generated - protected <= reclaimable, RATIONALE
+    assert protected.isdisjoint(reclaimable), RATIONALE
+    assert all(path.startswith("target/") for path in reclaimable), RATIONALE
+
+    gitignore = {
+        line.strip()
+        for line in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    assert "target/" in gitignore, RATIONALE
+    assert not {
+        "test-artifacts/",
+        "coverage/",
+        ".coverage",
+        "codecov-*.json",
+        "codecov-*.xml",
+        "*-junit.xml",
+        "/assets",
+        "/packages/",
+        "/build_system/packaging/packages/",
+    } & gitignore, RATIONALE
+    assert "dist/" in gitignore, RATIONALE
+
+    dockerignore = {
+        line.strip()
+        for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    assert "**/target" in dockerignore, RATIONALE
+    assert not {"**/assets", "**/packages", "**/test-artifacts"} & dockerignore, (
+        RATIONALE
+    )
+    assert "**/dist" in dockerignore, RATIONALE
+
+    classifier = ROOT / "build_system/builder/gate/tools/ci/classify_ci_scope.py"
+    retired = {"assets", "dist", "packages", "target", "test-artifacts"}
+    assert retired.isdisjoint(_literal_assignment(classifier, "KNOWN_DIRECTORIES")), (
+        RATIONALE
+    )
+    assert retired.isdisjoint(_literal_assignment(classifier, "RUST_GUEST_CONFIG_ROOTS")), (
+        RATIONALE
+    )
 
 
 def test_current_generated_output_boundary_is_exact() -> None:

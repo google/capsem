@@ -9,12 +9,9 @@
 **/node_modules
 **/.venv
 **/dist
-**/assets
-**/packages
 .claude
 .git
 **/.pnpm-store
-**/test-artifacts
 # Local benchmark-framework experiments are source checkouts with their own
 # archives and Git object store. They are not Capsem build inputs; keep the
 # tracked RELEASE.md available to the lane.
