@@ -242,7 +242,7 @@ def _build_and_prove(plan: Plan, phase, config: GateConfig, after: tuple) -> Ste
         )
 
     # Nothing releases capsem-host-builder here. Both package builds need it,
-    # and so does `docker/Dockerfile.install-test`, which the install proof
+    # and so does `build_system/docker/Dockerfile.install-test`, which the install proof
     # always rebuilds from -- so `after-install` is the earliest boundary at
     # which nothing derives from that tag any more.
     if host.on_macos():

@@ -214,7 +214,7 @@ def test_provisioner_installs_configured_packages_then_proves_pkg_config(
 def test_ci_and_host_builder_consume_the_same_prerequisite_authority() -> None:
     ci = (PROJECT_ROOT / ".github/workflows/ci.yaml").read_text(encoding="utf-8")
     fast = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(encoding="utf-8")
-    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text(encoding="utf-8")
+    host_builder = (PROJECT_ROOT / "build_system/docker/Dockerfile.host-builder").read_text(encoding="utf-8")
     hostimage = (PROJECT_ROOT / "build_system/builder/gate/hostimage.py").read_text(encoding="utf-8")
     invocation = "sudo python3 scripts/provision-linux-workspace.py --install apt"
 

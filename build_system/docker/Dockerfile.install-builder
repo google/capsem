@@ -38,7 +38,7 @@ ARG INPUT_IDENTITY
 LABEL org.capsem.install-builder.input-key=${INPUT_IDENTITY}
 
 COPY --chmod=555 scripts/configure-apt-snapshot.sh /usr/local/bin/configure-apt-snapshot
-COPY --chmod=555 docker/materialize-install-os.sh /usr/local/bin/materialize-install-os
+COPY --chmod=555 build_system/docker/materialize-install-os.sh /usr/local/bin/materialize-install-os
 RUN test -n "${APT_SNAPSHOT_BASE}" \
     && test -n "${APT_SNAPSHOT_ID}" \
     && test -n "${APT_PACKAGES}" \

@@ -445,14 +445,14 @@ def test_declared_asset_materializers_match_the_exact_mutator_inventory() -> Non
         ),
         "config/profiles/co-work/build.sh": Counter({"curl": 3}),
         "config/profiles/code/build.sh": Counter({"curl": 3}),
-        "docker/Dockerfile.asset-tools": Counter({"apt": 5, "curl": 3, "apt-get": 2}),
-        "docker/Dockerfile.guest-rust-builder": Counter({"rustup": 3, "apk": 1, "cargo": 1}),
+        "build_system/docker/Dockerfile.asset-tools": Counter({"apt": 5, "curl": 3, "apt-get": 2}),
+        "build_system/docker/Dockerfile.guest-rust-builder": Counter({"rustup": 3, "apk": 1, "cargo": 1}),
     }
     candidates = {
         *PROJECT_ROOT.glob("config/docker/**/*.j2"),
         *PROJECT_ROOT.glob("config/profiles/*/build.sh"),
-        PROJECT_ROOT / "docker/Dockerfile.asset-tools",
-        PROJECT_ROOT / "docker/Dockerfile.guest-rust-builder",
+        PROJECT_ROOT / "build_system/docker/Dockerfile.asset-tools",
+        PROJECT_ROOT / "build_system/docker/Dockerfile.guest-rust-builder",
     }
     actual = {
         path.relative_to(PROJECT_ROOT).as_posix(): inventory

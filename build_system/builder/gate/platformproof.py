@@ -5,7 +5,7 @@ the release lane plans it as a step against the pulled package, and the local
 install transaction runs it against the package it just built.
 
 Neither could be left to the install proof itself. That runs inside
-`docker/Dockerfile.install-test`, whose base is `ubuntu:24.04` -- the same
+`build_system/docker/Dockerfile.install-test`, whose base is `ubuntu:24.04` -- the same
 glibc the binaries are built against -- so a wrong platform floor is invisible
 to it by construction. The 0.6.0 package declared no libc dependency at all,
 passed the whole suite, and then failed on every user below glibc 2.39.

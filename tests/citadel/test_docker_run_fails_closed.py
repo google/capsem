@@ -57,7 +57,7 @@ def run_bodies() -> dict[str, str]:
     the rendered output is what runs.
     """
     return shellsurfaces.dockerfile_bodies(
-        ROOT / "docker",
+        ROOT / "build_system" / "docker",
         ROOT / "config" / "docker",
         lambda templates: shellsurfaces.rendered_templates(
             templates, ROOT / "config" / "docker" / "image"

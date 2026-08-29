@@ -73,7 +73,7 @@ def _build(**kw):
     asset_tools = cast(AssetToolsConfig | None, kw.get("asset_tools"))
     if asset_tools is None:
         asset_tools = AssetToolsConfig(
-            dockerfile="docker/Dockerfile.asset-tools",
+            dockerfile="build_system/docker/Dockerfile.asset-tools",
             tag_template="capsem-asset-tools-{arch}:{digest}",
             debian_snapshot_base="http://snapshot.example/debian",
             debian_security_snapshot_base="http://snapshot.example/debian-security",
@@ -104,7 +104,7 @@ def _build(**kw):
             forbidden_path_prefixes=("usr/lib/ollama/cuda_",),
         ),
         "guest_rust_builder": GuestRustBuilderConfig(
-            dockerfile="docker/Dockerfile.guest-rust-builder",
+            dockerfile="build_system/docker/Dockerfile.guest-rust-builder",
             tag_template="capsem-guest-rust-{arch}:{digest}",
             identity_inputs=("Cargo.lock", "rust-toolchain.toml"),
             cross_packages=("clang21=21.1.2-r2",),

@@ -131,7 +131,7 @@ def test_host_builder_mutable_tool_inventory_is_closed() -> None:
 
 
 def test_host_builder_multiarch_sources_require_the_shared_snapshot() -> None:
-    source = (PROJECT_ROOT / "docker/sources-multiarch.sh").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "build_system/docker/sources-multiarch.sh").read_text(encoding="utf-8")
 
     required_base = source.index("${1:?Ubuntu snapshot base is required}")
     required_id = source.index("${2:?Ubuntu snapshot ID is required}")

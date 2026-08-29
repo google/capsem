@@ -240,7 +240,7 @@ def test_every_piping_bash_recipe_sets_pipefail() -> None:
 
 
 def test_dockerfile_fail_open_instructions_are_an_exact_reviewed_inventory() -> None:
-    sources = sorted((PROJECT_ROOT / "docker").glob("Dockerfile*"))
+    sources = sorted((PROJECT_ROOT / "build_system/docker").glob("Dockerfile*"))
     sources += sorted((PROJECT_ROOT / "config/docker").rglob("Dockerfile*.j2"))
     found: defaultdict[str, list[str]] = defaultdict(list)
     for path in sources:
@@ -250,8 +250,8 @@ def test_dockerfile_fail_open_instructions_are_an_exact_reviewed_inventory() -> 
                 found[relative].append(_docker_fail_open_kind(instruction))
 
     assert dict(found) == {
-        "docker/Dockerfile.install-builder": ["missing-user-cleanup"],
-        "docker/Dockerfile.linux-rust-base": [
+        "build_system/docker/Dockerfile.install-builder": ["missing-user-cleanup"],
+        "build_system/docker/Dockerfile.linux-rust-base": [
             "ordinary-cache-prewarm",
             "coverage-cache-prewarm",
         ],

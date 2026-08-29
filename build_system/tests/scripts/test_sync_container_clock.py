@@ -66,7 +66,7 @@ def test_production_never_sets_clock_through_privileged_docker() -> None:
     roots = (
         PROJECT_ROOT / "src",
         PROJECT_ROOT / "scripts",
-        PROJECT_ROOT / "docker",
+        PROJECT_ROOT / "build_system" / "docker",
         PROJECT_ROOT / ".github" / "workflows",
     )
     paths = [PROJECT_ROOT / "justfile"]

@@ -496,7 +496,7 @@ Guest cross-build containers use the exact per-platform
 `config/docker/image/build.toml`, never a mutable Rust tag. Those children
 already own the exact toolchain, native musl target, musl headers, and compiler.
 At the guarded asset-prefetch boundary,
-`docker/Dockerfile.guest-rust-builder` resolves the Cargo.lock graph and, only
+`build_system/docker/Dockerfile.guest-rust-builder` resolves the Cargo.lock graph and, only
 for a foreign target, adds the exact config-pinned C compiler package and Rust
 target. Do not add package installation, target installation, index updates, or
 downloads to `container_compile_agent()`; its runtime network is deliberately

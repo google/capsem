@@ -470,12 +470,12 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
         'swap-dev-libs "${DPKG_ARCH}" "${APT_SNAPSHOT_BASE}" '
         '"${APT_SNAPSHOT_ID}" "${CROSS_DEV_PACKAGES}" "${HOST_PACKAGES}"'
     ) in normalized_dockerfile
-    assert "COPY --chmod=555 docker/swap-dev-libs.sh /usr/local/bin/swap-dev-libs" in dockerfile
+    assert "COPY --chmod=555 build_system/docker/swap-dev-libs.sh /usr/local/bin/swap-dev-libs" in dockerfile
     assert "ARG INPUT_IDENTITY" in dockerfile
     assert "org.capsem.package-builder.input-key=${INPUT_IDENTITY}" in dockerfile
     assert "ARG INPUT_KEY" not in dockerfile
 
-    swap = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text(encoding="utf-8")
+    swap = (PROJECT_ROOT / "build_system/docker/swap-dev-libs.sh").read_text(encoding="utf-8")
     assert 'SNAPSHOT_URL="${APT_SNAPSHOT_BASE%/}/${APT_SNAPSHOT_ID}"' in swap
     assert 'APT_SNAPSHOT_BASE="${2:?' in swap
     assert 'APT_SNAPSHOT_ID="${3:?' in swap
@@ -591,7 +591,7 @@ def _stubbed_swap(tmp_path: Path, *, native: str, remove_status: int = 0):
     apt_lists = tmp_path / "apt-lists"
     apt_lists.mkdir()
     script = tmp_path / "swap-dev-libs.sh"
-    source = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "build_system/docker/swap-dev-libs.sh").read_text(encoding="utf-8")
     script.write_text(
         source.replace("/etc/apt", str(apt_root)).replace("/var/lib/apt/lists", str(apt_lists)),
         encoding="utf-8",

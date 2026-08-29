@@ -260,7 +260,7 @@ def _shell_bodies() -> dict[str, str]:
     bodies = dict(shellsurfaces.workflow_bodies(PROJECT_ROOT / ".github" / "workflows"))
     bodies.update(
         shellsurfaces.dockerfile_bodies(
-            PROJECT_ROOT / "docker",
+            PROJECT_ROOT / "build_system" / "docker",
             PROJECT_ROOT / "config" / "docker",
             lambda templates: shellsurfaces.rendered_templates(
                 templates, PROJECT_ROOT / "config" / "docker" / "image"

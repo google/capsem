@@ -96,14 +96,14 @@ version = "9.9.9"
 sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 [build.guest_rust_builder]
-dockerfile = "docker/Dockerfile.guest-rust-builder"
+dockerfile = "build_system/docker/Dockerfile.guest-rust-builder"
 tag_template = "capsem-guest-rust-{arch}:{digest}"
 identity_inputs = ["Cargo.lock", "rust-toolchain.toml"]
 cross_packages = ["clang21=21.1.2-r2"]
 runtime_network = "none"
 
 [build.asset_tools]
-dockerfile = "docker/Dockerfile.asset-tools"
+dockerfile = "build_system/docker/Dockerfile.asset-tools"
 tag_template = "capsem-asset-tools-{arch}:{digest}"
 debian_snapshot_base = "http://snapshot.example/debian"
 debian_security_snapshot_base = "http://snapshot.example/debian-security"
@@ -495,14 +495,14 @@ version = "9.9.9"
 sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 [build.guest_rust_builder]
-dockerfile = "docker/Dockerfile.guest-rust-builder"
+dockerfile = "build_system/docker/Dockerfile.guest-rust-builder"
 tag_template = "capsem-guest-rust-{arch}:{digest}"
 identity_inputs = ["Cargo.lock", "rust-toolchain.toml"]
 cross_packages = ["clang21=21.1.2-r2"]
 runtime_network = "none"
 
 [build.asset_tools]
-dockerfile = "docker/Dockerfile.asset-tools"
+dockerfile = "build_system/docker/Dockerfile.asset-tools"
 tag_template = "capsem-asset-tools-{arch}:{digest}"
 debian_snapshot_base = "http://snapshot.example/debian"
 debian_security_snapshot_base = "http://snapshot.example/debian-security"

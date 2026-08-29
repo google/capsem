@@ -136,9 +136,9 @@ def test_builder_emits_obom_and_keeps_build_ledger_debug_scoped() -> None:
 
 def test_cdxgen_is_digest_pinned_in_the_one_asset_helper() -> None:
     config = load_guest_config(PROJECT_ROOT / "config/docker/image")
-    host_builder = _read("docker/Dockerfile.host-builder")
+    host_builder = _read("build_system/docker/Dockerfile.host-builder")
     asset_workflow = _read(".github/workflows/release-assets.yaml")
-    helper = _read("docker/Dockerfile.asset-tools")
+    helper = _read("build_system/docker/Dockerfile.asset-tools")
 
     assert set(config.build.asset_tools.architectures) == set(config.build.architectures)
     for downloads in config.build.asset_tools.architectures.values():

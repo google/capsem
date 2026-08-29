@@ -25,7 +25,7 @@ or remain wired into CI after their producers move. See the target/ contract in
 the approved repository cleanup proposal and config/README.md.
 """
 
-PRODUCTION_ROOTS = ("src/", "scripts/", ".github/", "config/", "docker/", "release-site/")
+PRODUCTION_ROOTS = ("src/", "scripts/", ".github/", "config/", "release-site/")
 PRODUCER_WORDS = re.compile(
     r"(?:\b(?:mkdir|cp|mv)\b|write(?:_text|_bytes)?\s*\(|"
     r"\bOUTPUT(?:_[A-Z]+)?\s*=|\bout(?:put)?[_-]?(?:dir|path|pkg)\s*=|"

@@ -1104,7 +1104,7 @@ def test_native_packages_include_the_release_functional_benchmark() -> None:
     config = gate_config.load(PROJECT_ROOT)
     package_paths = [
         "crates/capsem-app/tauri.conf.json",
-        "docker/Dockerfile.host-builder",
+        "build_system/docker/Dockerfile.host-builder",
     ]
     for path in package_paths:
         if (PROJECT_ROOT / path).is_file():
@@ -1173,7 +1173,7 @@ def test_full_gate_runs_fast_checks_before_install_harness_preflight() -> None:
     assert _at(order, "install.materialize") < _at(order, "install.image-build")
     assert _at(order, "install.image-build") < _at(order, "install.image-smoke")
 
-    assert "docker/Dockerfile.install-test" in preflight
+    assert "build_system/docker/Dockerfile.install-test" in preflight
     assert "source /src/scripts/doctor-linux.sh" in preflight
     assert "linux_musl_toolchain_available" in preflight
     assert "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test" in preflight
@@ -1193,8 +1193,8 @@ def test_install_source_image_prebuilds_fresh_cli_before_sealed_runtime() -> Non
     from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    helper = (PROJECT_ROOT / "docker/Dockerfile.install-builder").read_text()
-    source = (PROJECT_ROOT / "docker/Dockerfile.install-test").read_text()
+    helper = (PROJECT_ROOT / "build_system/docker/Dockerfile.install-builder").read_text()
+    source = (PROJECT_ROOT / "build_system/docker/Dockerfile.install-test").read_text()
     builder = (PROJECT_ROOT / "build_system/builder/gate/installbuilder.py").read_text()
     proof = (PROJECT_ROOT / "build_system/builder/gate/installproof.py").read_text()
     tests = "\n".join(
@@ -1227,8 +1227,8 @@ def test_install_source_image_prebuilds_fresh_cli_before_sealed_runtime() -> Non
 def test_dependency_helpers_verify_installed_rust_without_channel_sync() -> None:
     """A verification probe must not become a mutable Rustup fetch edge."""
     for relative in (
-        "docker/Dockerfile.install-builder",
-        "docker/Dockerfile.package-builder",
+        "build_system/docker/Dockerfile.install-builder",
+        "build_system/docker/Dockerfile.package-builder",
     ):
         source = (PROJECT_ROOT / relative).read_text(encoding="utf-8")
         dependency_stage = source.split("FROM ${BASE}", 2)[1]
@@ -1242,8 +1242,8 @@ def test_dependency_helpers_verify_installed_rust_without_channel_sync() -> None
 
 def test_install_preflight_does_not_claim_asset_only_cdxgen() -> None:
     """The install rail cannot inherit an asset materializer by accident."""
-    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
-    asset_tools = (PROJECT_ROOT / "docker/Dockerfile.asset-tools").read_text()
+    host_builder = (PROJECT_ROOT / "build_system/docker/Dockerfile.host-builder").read_text()
+    asset_tools = (PROJECT_ROOT / "build_system/docker/Dockerfile.asset-tools").read_text()
     preflight = _planned("install-image")
 
     assert "cdxgen" not in host_builder
@@ -1257,7 +1257,7 @@ def test_cross_arch_tauri_swap_covers_every_native_dev_package() -> None:
     from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    swap_script = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text()
+    swap_script = (PROJECT_ROOT / "build_system/docker/swap-dev-libs.sh").read_text()
 
     assert set(config.toolchain.linux.cross_dev_packages) <= set(
         config.toolchain.linux.apt_packages
@@ -1274,8 +1274,8 @@ def test_cross_arch_tauri_swap_covers_every_native_dev_package() -> None:
 
 def test_cross_arch_tauri_swap_excludes_non_crossable_introspection_toolchain() -> None:
     """Cross builds must not pull foreign executables that require emulation."""
-    swap_script = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text()
-    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+    swap_script = (PROJECT_ROOT / "build_system/docker/swap-dev-libs.sh").read_text()
+    host_builder = (PROJECT_ROOT / "build_system/docker/Dockerfile.host-builder").read_text()
 
     # librsvg2-dev depends on gobject-introspection for the target architecture
     # on Ubuntu 24.04. That dependency is a target executable/Python toolchain,
@@ -1341,7 +1341,7 @@ def test_deb_repacker_strips_each_elf_with_its_target_tool_and_fails_closed() ->
 
 def test_cross_compile_reuses_only_the_exact_host_builder_identity() -> None:
     """A warm retry skips six minutes without accepting a stale Dockerfile."""
-    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+    host_builder = (PROJECT_ROOT / "build_system/docker/Dockerfile.host-builder").read_text()
     issued = _planned("cross-compile", arch="arm64")
 
     assert "docker image inspect --format" in issued
@@ -1567,14 +1567,14 @@ def test_install_gate_has_no_disposable_compiler_state_before_pytest() -> None:
 
 
 def test_cross_compile_does_not_bypass_apt_date_validation() -> None:
-    swap_script = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text()
+    swap_script = (PROJECT_ROOT / "build_system/docker/swap-dev-libs.sh").read_text()
 
     assert "Acquire::Check-Valid-Until=false" not in swap_script
     assert "Acquire::Check-Date=false" not in swap_script
 
 
 def test_cross_compile_apt_sources_are_encrypted_retried_and_fail_closed() -> None:
-    sources = (PROJECT_ROOT / "docker/sources-multiarch.sh").read_text()
+    sources = (PROJECT_ROOT / "build_system/docker/sources-multiarch.sh").read_text()
 
     assert "${1:?Ubuntu snapshot base is required}" in sources
     assert "${2:?Ubuntu snapshot ID is required}" in sources
@@ -1588,7 +1588,7 @@ def test_cross_compile_apt_sources_are_encrypted_retried_and_fail_closed() -> No
 
 
 def test_host_builder_bootstraps_https_trust_before_ubuntu_package_fetches() -> None:
-    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+    host_builder = (PROJECT_ROOT / "build_system/docker/Dockerfile.host-builder").read_text()
 
     trust_stage = (
         "FROM alpine:3.22@sha256:"
@@ -1618,7 +1618,7 @@ def test_host_builder_bootstraps_https_trust_before_ubuntu_package_fetches() -> 
 
 
 def test_cross_arch_tauri_swap_refreshes_indexes_before_removing_native_libs() -> None:
-    swap_script = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text()
+    swap_script = (PROJECT_ROOT / "build_system/docker/swap-dev-libs.sh").read_text()
 
     update = swap_script.index("apt-get update -qq")
     remove = swap_script.index('apt-get remove -y "${DEV_PACKAGES[@]}"')
@@ -1628,7 +1628,7 @@ def test_cross_arch_tauri_swap_refreshes_indexes_before_removing_native_libs() -
 
 
 def test_host_builder_uses_shared_apt_authority_without_refetching_for_python() -> None:
-    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+    host_builder = (PROJECT_ROOT / "build_system/docker/Dockerfile.host-builder").read_text()
     gate = tomllib.loads((PROJECT_ROOT / "config/gate.toml").read_text())
     native_tools = host_builder.split(
         "# ---- Native build tools + cross-compilation toolchains ----", maxsplit=1
@@ -1648,7 +1648,7 @@ def test_host_builder_uses_shared_apt_authority_without_refetching_for_python() 
 
 
 def test_host_builder_uses_digest_pinned_prebuilt_node_runtime() -> None:
-    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+    host_builder = (PROJECT_ROOT / "build_system/docker/Dockerfile.host-builder").read_text()
 
     node_stage = (
         "FROM node:24-bookworm-slim@sha256:"

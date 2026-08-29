@@ -30,7 +30,7 @@ DIRECT_BUILDER_INPUTS = {
     "build_system/builder/image/docker.py",
     "build_system/builder/image/guestbuilder.py",
     "config/docker/image/build.toml",
-    "docker/Dockerfile.guest-rust-builder",
+    "build_system/docker/Dockerfile.guest-rust-builder",
 }
 
 

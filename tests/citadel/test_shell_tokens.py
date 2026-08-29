@@ -107,7 +107,7 @@ def test_every_shell_surface_in_the_repository_tokenizes() -> None:
     sources.extend(lint_harness.tracked_files(root, "*.sh")())
     sources.extend(
         shellsurfaces.dockerfile_bodies(
-            root / "docker",
+            root / "build_system" / "docker",
             root / "config" / "docker",
             lambda templates: shellsurfaces.rendered_templates(
                 templates, root / "config" / "docker" / "image"

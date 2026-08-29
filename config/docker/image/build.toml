@@ -91,7 +91,7 @@ url = "https://github.com/ollama/ollama/releases/download/v0.32.9/ollama-linux-a
 sha256 = "5d747a43369f61e38f20b5a39fcc5c90647e562cdc61e2e56034f1c5b113d540"
 
 [build.guest_rust_builder]
-dockerfile = "docker/Dockerfile.guest-rust-builder"
+dockerfile = "build_system/docker/Dockerfile.guest-rust-builder"
 tag_template = "capsem-guest-rust-{arch}:{digest}"
 identity_inputs = ["Cargo.lock", "rust-toolchain.toml"]
 # The cross helper is allowed one network-open APK materialization edge. Pin
@@ -101,7 +101,7 @@ cross_packages = ["clang21=21.1.2-r2"]
 runtime_network = "none"
 
 [build.asset_tools]
-dockerfile = "docker/Dockerfile.asset-tools"
+dockerfile = "build_system/docker/Dockerfile.asset-tools"
 tag_template = "capsem-asset-tools-{arch}:{digest}"
 debian_snapshot_base = "https://snapshot.debian.org/archive/debian"
 debian_security_snapshot_base = "https://snapshot.debian.org/archive/debian-security"

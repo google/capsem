@@ -54,15 +54,15 @@ reason = "The capsem-builder distribution moves atomically and retains capsem-bu
 
 [[surface]]
 id = "build-system-docker"
-state = "migrating"
-current = ["docker/"]
+state = "retained"
+current = ["build_system/docker/"]
 targets = ["build_system/docker/"]
 lint = ["fast.audit.docker", "fast.audit.shell"]
-tests = ["build_system/tests/image/test_docker.py", "build_system/tests/scripts/", "build_system/tests/gate/test_guest_rust_builder_hermetic.py"]
+tests = ["build_system/tests/image/test_docker.py", "build_system/tests/scripts/", "build_system/tests/gate/test_guest_rust_builder_hermetic.py", "build_system/tests/gate/test_host_docker_ownership.py"]
 ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
 coverage = "not-applicable: Docker and shell boundaries are exercised by build and install acceptance"
 debt = "tests/citadel/repository_path_debt.toml"
-reason = "Host build and package containers move; product profile templates stay in config/docker."
+reason = "Host build and package containers are build-system owned; product profile templates stay in config/docker."
 
 [[surface]]
 id = "build-system-packaging"

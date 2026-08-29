@@ -3061,7 +3061,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requires Capsem 1.0.0 or newer, selected 0.6.0", and seven update-state tests
   failed as soon as the install proof got far enough to run them.
 - `capsem-gate install` builds the image its Dockerfile derives from.
-  `docker/Dockerfile.install-test` is `FROM capsem-host-builder:latest`, and
+  `build_system/docker/Dockerfile.install-test` is `FROM capsem-host-builder:latest`, and
   the lane's plan was a single step, so it only worked when an earlier phase of
   a larger plan had left that tag behind. Run on its own -- or on any machine
   where the previous run released it at `after-install` -- it failed with
@@ -3099,7 +3099,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so an early release is simply destruction. The extra boundary is gone, and a
   guard now fails when any resource is reclaimed before the step its own policy
   names as its last consumer. Its real last consumer turned out not to be a
-  package build at all: `docker/Dockerfile.install-test` is `FROM
+  package build at all: `build_system/docker/Dockerfile.install-test` is `FROM
   capsem-host-builder:latest` and the install proof always rebuilds -- on
   purpose, so a stale tag cannot hide a new prerequisite -- so releasing at
   `after-packages` broke `glowup.install` with `pull access denied` fifty-three

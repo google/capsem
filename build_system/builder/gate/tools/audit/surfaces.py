@@ -216,7 +216,7 @@ def main() -> int:
             lintharness.run(
                 "Dockerfiles",
                 docker_tool(tuple(c for c in arguments.exclude.split(",") if c)),
-                lintharness.tracked_files(root, "docker/Dockerfile*"),
+                lintharness.tracked_files(root, "build_system/docker/Dockerfile*"),
                 on_disk=True,
             )
         ]
@@ -232,7 +232,7 @@ def main() -> int:
 
 def _docker_run_bodies(root: Path) -> dict[str, str]:
     return shellsurfaces.dockerfile_bodies(
-        root / "docker",
+        root / "build_system" / "docker",
         root / "config" / "docker",
         lambda templates: shellsurfaces.rendered_templates(
             templates, root / "config" / "docker" / "image"

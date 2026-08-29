@@ -1354,7 +1354,7 @@ def test_cdxgen_is_owned_only_by_the_digest_pinned_asset_helper() -> None:
     assert "npm install -g @cyclonedx/cdxgen" not in asset_workflow
     assert "CAPSEM_CDXGEN_CMD" not in asset_workflow
     assert 'elif [ "$PLATFORM" = "Darwin" ]' in release_preflight
-    assert 'dockerfile = "docker/Dockerfile.asset-tools"' in _source_text(
+    assert 'dockerfile = "build_system/docker/Dockerfile.asset-tools"' in _source_text(
         "config/docker/image/build.toml"
     )
 
@@ -5150,7 +5150,7 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
     linux_rust_recipe = _recipe_body("_gate-linux-rust:")
     linux_ci = _workflow_job_block("test-linux")
     runner = _source_text("scripts/test-linux-rust.sh")
-    host_builder = _source_text("docker/Dockerfile.host-builder")
+    host_builder = _source_text("build_system/docker/Dockerfile.host-builder")
 
     # Linux owns its cfg(target_os = "linux") coverage natively. macOS owns
     # the same checked-in runner through the sealed Docker lane, including the
@@ -5220,7 +5220,7 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
 
     # `--user` kept the container off root, because the suite chmods an asset
     # to 0o000 and demands the read fail. That is now baked into the image.
-    lane_dockerfile = _source_text("docker/Dockerfile.linux-rust")
+    lane_dockerfile = _source_text("build_system/docker/Dockerfile.linux-rust")
     assert "USER 1000:1000" in lane_dockerfile
 
     # And the property none of the originals asserted, because it was not true:

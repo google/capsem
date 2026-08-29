@@ -28,9 +28,9 @@ def test_install_test_inherits_uv_through_its_exact_local_helper() -> None:
     """One parent owns uv; neither sealed child resolves a second image."""
     from capsem_builder.gate import config as gate_config
 
-    parent = _read("docker/Dockerfile.host-builder")
-    helper = _read("docker/Dockerfile.install-builder")
-    child = _read("docker/Dockerfile.install-test")
+    parent = _read("build_system/docker/Dockerfile.host-builder")
+    helper = _read("build_system/docker/Dockerfile.install-builder")
+    child = _read("build_system/docker/Dockerfile.install-test")
     config = gate_config.load(PROJECT_ROOT)
 
     assert "FROM ${UV_IMAGE} AS uv-runtime" in parent
@@ -131,7 +131,7 @@ def test_host_builder_installs_the_same_exact_nextest() -> None:
     from capsem_builder.gate import hostimage
 
     config = gate_config.load(PROJECT_ROOT)
-    host_builder = _read("docker/Dockerfile.host-builder")
+    host_builder = _read("build_system/docker/Dockerfile.host-builder")
     argument = next(
         name for name, tool in config.hostimage.cargo_tool_args.items() if tool == "cargo-nextest"
     )
@@ -339,7 +339,7 @@ def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
         # of the toolchain is. See tests/citadel/test_ci_tools_come_from_config.
         assert handed == "${{ steps.gate_tools.outputs.list }}", handed
 
-    builder = _read("docker/Dockerfile.host-builder")
+    builder = _read("build_system/docker/Dockerfile.host-builder")
     config = gate_config.load(PROJECT_ROOT)
     assert "FROM ${RUST_IMAGE} AS rust-toolchain" in builder
     assert PINNED_RUST in config.hostimage.rust_image
@@ -383,7 +383,7 @@ def test_host_builder_base_images_are_immutable() -> None:
     from capsem_builder.gate import config as gate_config
 
     config = gate_config.load(PROJECT_ROOT)
-    builder = _read("docker/Dockerfile.host-builder")
+    builder = _read("build_system/docker/Dockerfile.host-builder")
     bases = [line.split()[1] for line in builder.splitlines() if line.startswith("FROM ")]
     dynamic = {"${RUST_IMAGE}", "${UV_IMAGE}"}
 

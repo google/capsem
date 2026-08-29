@@ -199,7 +199,7 @@ configure_script = "scripts/configure-apt-snapshot.sh"
 runtime_network = "none"
 container = "capsem-install-test"
 image = "capsem-install-test"
-dockerfile = "docker/Dockerfile.install-test"
+dockerfile = "build_system/docker/Dockerfile.install-test"
 # The build context. `.` -- the checkout root -- because the Dockerfile copies
 # from it; named here so the wrapper is told rather than assuming.
 context = "."
@@ -306,7 +306,7 @@ package_runtime_packages = [
 ]
 
 [install.builder]
-dockerfile = "docker/Dockerfile.install-builder"
+dockerfile = "build_system/docker/Dockerfile.install-builder"
 tag_template = "capsem-install-builder:{digest}"
 source_tag_template = "capsem-install-test:{digest}"
 source_identity_file = "target/install-image/receipt.json"
@@ -320,8 +320,8 @@ identity_inputs = [
     "release-site/package.json",
     "release-site/pnpm-lock.yaml",
     "release-site/pnpm-workspace.yaml",
-    "docker/Dockerfile.install-builder",
-    "docker/materialize-install-os.sh",
+    "build_system/docker/Dockerfile.install-builder",
+    "build_system/docker/materialize-install-os.sh",
     "scripts/configure-apt-snapshot.sh",
 ]
 identity_globs = ["crates/*/Cargo.toml"]
@@ -530,7 +530,7 @@ dist_dir = "dist"
 # image build and the qualifying container below are explicitly network-none.
 lane_container = "capsem-package-{arch}"
 # The source goes in as an image layer, not a mount. See
-# `docker/Dockerfile.package` for why a mount could not be sealed: the frontend
+# `build_system/docker/Dockerfile.package` for why a mount could not be sealed: the frontend
 # bundler writes atomic temporaries in `frontend/` itself, so `:ro` was
 # impossible and scratch over `frontend/` would have masked the source.
 # One tag for every architecture -- the source is the same, and `COPY`
@@ -540,7 +540,7 @@ lane_container = "capsem-package-{arch}"
 # materialized profile catalog `repack-deb.sh` reads. Both are produced by
 # earlier steps, so they are mounted read-only rather than copied.
 generated_inputs = ["assets", "target/config"]
-lane_dockerfile = "docker/Dockerfile.package"
+lane_dockerfile = "build_system/docker/Dockerfile.package"
 lane_image = "capsem-package-lane:latest"
 # The checkout is copied into the source image; these three paths get
 # container-local scratch grafted over them, because the build genuinely
@@ -564,7 +564,7 @@ container_output_contents = "/package-output/."
 # there is no name for two gates to share.
 
 [package.builder]
-dockerfile = "docker/Dockerfile.package-builder"
+dockerfile = "build_system/docker/Dockerfile.package-builder"
 tag_template = "capsem-package-builder-{arch}:{digest}"
 identity_inputs = [
     "Cargo.toml",
@@ -574,8 +574,8 @@ identity_inputs = [
     "frontend/package.json",
     "frontend/pnpm-lock.yaml",
     "frontend/pnpm-workspace.yaml",
-    "docker/Dockerfile.package-builder",
-    "docker/swap-dev-libs.sh",
+    "build_system/docker/Dockerfile.package-builder",
+    "build_system/docker/swap-dev-libs.sh",
     "scripts/materialize-package-ort.py",
 ]
 identity_globs = ["crates/*/Cargo.toml"]
@@ -1417,7 +1417,7 @@ freshness_inputs = [
     "build_system/builder/image/docker.py",
     "build_system/builder/image/guestbuilder.py",
     "config/docker/image/build.toml",
-    "docker/Dockerfile.guest-rust-builder",
+    "build_system/docker/Dockerfile.guest-rust-builder",
 ]
 build = ["uv", "run", "--project", "build_system", "--frozen", "capsem-builder", "agent", "config/docker/image"]
 
@@ -1507,8 +1507,8 @@ log_level = "capsem=debug"
 # never again. These four named volumes used to hold them and persisted
 # between runs, which is what made a warm machine and a clean checkout
 # disagree about the same commit.
-base_dockerfile = "docker/Dockerfile.linux-rust-base"
-lane_dockerfile = "docker/Dockerfile.linux-rust"
+base_dockerfile = "build_system/docker/Dockerfile.linux-rust-base"
+lane_dockerfile = "build_system/docker/Dockerfile.linux-rust"
 base_tag_template = "capsem-linux-rust-base:{digest}"
 lane_tag = "capsem-linux-rust:latest"
 # The files that decide what the base image contains, and therefore its
@@ -1542,12 +1542,12 @@ extract_to = "target/linux-rust-coverage"
 lane_container = "capsem-linux-rust-run"
 # The Linux builder image, and the Linux-Rust parity lane that runs inside it.
 tag = "capsem-host-builder:latest"
-dockerfile = "docker/Dockerfile.host-builder"
-context = "docker/"
+dockerfile = "build_system/docker/Dockerfile.host-builder"
+context = "build_system/docker/"
 builder_identity_inputs = [
-    "docker/Dockerfile.host-builder",
-    "docker/sources-multiarch.sh",
-    "docker/swap-dev-libs.sh",
+    "build_system/docker/Dockerfile.host-builder",
+    "build_system/docker/sources-multiarch.sh",
+    "build_system/docker/swap-dev-libs.sh",
     "rust-toolchain.toml",
 ]
 materialize_network = "default"
@@ -1796,7 +1796,7 @@ enforced_by = ["fast.audit.shell"]
 
 [[lint_surfaces]]
 name = "dockerfile"
-pattern = "docker/Dockerfile*"
+pattern = "build_system/docker/Dockerfile*"
 enforced_by = ["fast.audit.docker"]
 
 [[lint_surfaces]]
@@ -2996,13 +2996,13 @@ reason = "starts a system dbus that may already be running and whose absence the
 
 [[boundary.discarded_verdicts]]
 digest = "7538ffecc5da"
-where = "docker/Dockerfile.install-builder"
+where = "build_system/docker/Dockerfile.install-builder"
 subject = "userdel -r $(getent passwd 1000 | cut -d: -f1)"
 reason = "the base image may not carry a uid-1000 account; absence is the desired end state"
 
 [[boundary.discarded_verdicts]]
 digest = "6b02fa1146cb"
-where = "docker/Dockerfile.linux-rust-base"
+where = "build_system/docker/Dockerfile.linux-rust-base"
 subject = "cargo build --locked --workspace --all-targets"
 reason = "a cache prewarm, not a proof; the lane that consumes it surfaces anything missing"
 

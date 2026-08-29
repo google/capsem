@@ -57,7 +57,7 @@ ARG INPUT_IDENTITY
 
 LABEL org.capsem.package-builder.input-key=${INPUT_IDENTITY}
 
-COPY --chmod=555 docker/swap-dev-libs.sh /usr/local/bin/swap-dev-libs
+COPY --chmod=555 build_system/docker/swap-dev-libs.sh /usr/local/bin/swap-dev-libs
 
 # Snapshot-pinned Ubuntu packages are the final stage's only network-open
 # materialization. Missing authority is a hard failure, never ambient latest.
