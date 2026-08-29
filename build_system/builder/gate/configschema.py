@@ -8,9 +8,10 @@ can disagree with the file.
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator, model_validator
 
 SafeToken = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9+._-]*$")]
 
@@ -64,6 +65,34 @@ class StorageConfig(Strict):
     policy_script: str
     ensure_space_script: str
     phases: dict[str, StoragePhase]
+
+
+class OutputRootsConfig(Strict):
+    """Canonical repository-generated output owners inside ``target/``."""
+
+    assets: str
+    benchmarks: str
+    coverage: str
+    distribution: str
+    gate_runs: str
+    materialized_config: str
+    packages: str
+    test_artifacts: str
+
+    @field_validator("*")
+    @classmethod
+    def _is_target_owned(cls, value: str) -> str:
+        path = PurePosixPath(value)
+        if path.is_absolute() or ".." in path.parts or path.parts[:1] != ("target",):
+            raise ValueError(f"generated output root {value!r} must stay under target/")
+        return value
+
+    @model_validator(mode="after")
+    def _roots_are_distinct(self) -> OutputRootsConfig:
+        values = tuple(str(value) for value in self.__dict__.values())
+        if len(values) != len(set(values)):
+            raise ValueError("generated output roots must be distinct")
+        return self
 
 
 class PidfileConfig(Strict):

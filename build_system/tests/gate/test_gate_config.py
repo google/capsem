@@ -54,6 +54,52 @@ def test_the_checked_in_configuration_is_valid(config: gate_config.GateConfig) -
     assert config.root == PROJECT_ROOT
 
 
+def test_generated_output_roots_are_target_owned_and_distinct(
+    config: gate_config.GateConfig,
+) -> None:
+    assert config.outputs.model_dump() == {
+        "assets": "target/assets",
+        "benchmarks": "target/test-benchmarks",
+        "coverage": "target/coverage",
+        "distribution": "target/distribution",
+        "gate_runs": "target/gate-runs",
+        "materialized_config": "target/config",
+        "packages": "target/packages",
+        "test_artifacts": "target/test-artifacts",
+    }
+
+
+@pytest.mark.parametrize("replacement", ('assets = "assets"', 'assets = "../assets"'))
+def test_generated_output_roots_cannot_escape_target(
+    tmp_path: Path, replacement: str
+) -> None:
+    root = _checkout(tmp_path)
+    source = root / "config" / "gate.toml"
+    source.write_text(
+        source.read_text(encoding="utf-8").replace(
+            'assets = "target/assets"', replacement, 1
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(GateError, match="must stay under target"):
+        gate_config.load(root)
+
+
+def test_generated_output_roots_cannot_alias(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    source = root / "config" / "gate.toml"
+    source.write_text(
+        source.read_text(encoding="utf-8").replace(
+            'packages = "target/packages"', 'packages = "target/assets"', 1
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(GateError, match="must be distinct"):
+        gate_config.load(root)
+
+
 def test_retired_public_graph_authority_is_typed_and_unique(
     config: gate_config.GateConfig,
 ) -> None:
