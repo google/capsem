@@ -125,7 +125,8 @@ class Gating(RecordingRunner):
             materialized = output / "profiles" / profile
             materialized.mkdir(parents=True, exist_ok=True)
             (materialized / "profile.toml").write_text(f'id = "{profile}"\n')
-            manifest = output / "assets" / "manifest.json"
+            config = gate_config.for_root(self.root)
+            manifest = output / config.suites.pytest.test_manifest
             manifest.parent.mkdir(parents=True, exist_ok=True)
             manifest.write_text("{}")
         return completed
