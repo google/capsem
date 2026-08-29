@@ -25,7 +25,10 @@ import re
 import shutil
 import sys
 
-HASH_TAG_RE = re.compile(r"^(?P<stem>[A-Za-z0-9_]+)-(?P<hex>[0-9a-f]{16})(?P<ext>\.[A-Za-z0-9_.]+)?$")
+HASH_TAG_RE = re.compile(
+    r"^(?P<stem>[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*)-"
+    r"(?P<hex>[0-9a-f]{16})(?P<ext>\.[A-Za-z0-9_.]+)?$"
+)
 
 
 def _expected_hashed_names(manifest: dict) -> dict[str, set[str]]:

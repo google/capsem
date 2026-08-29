@@ -25,9 +25,16 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 ASSETS_DIR = PROJECT_ROOT / "target" / "assets"
 
-HASH_TAG_RE = re.compile(r"^(?P<stem>[A-Za-z0-9_]+)-(?P<hex>[0-9a-f]{16})(?P<ext>\.[A-Za-z0-9_.]+)?$")
+HASH_TAG_RE = re.compile(
+    r"^(?P<stem>[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*)-"
+    r"(?P<hex>[0-9a-f]{16})(?P<ext>\.[A-Za-z0-9_.]+)?$"
+)
 
 pytestmark = pytest.mark.build_chain
+
+
+def test_hash_tagged_alias_pattern_accepts_hyphenated_logical_names():
+    assert HASH_TAG_RE.fullmatch("software-inventory-1111111111111111.json")
 
 
 def _host_arch() -> str:

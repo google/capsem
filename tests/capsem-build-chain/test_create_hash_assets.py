@@ -48,11 +48,19 @@ def _load_script_module():
 def _arch_hashed_files(arch_dir: Path) -> set[str]:
     """Filenames in arch_dir matching the hash-tagged pattern."""
     import re
-    pat = re.compile(r"^[A-Za-z0-9_]+-[0-9a-f]{16}(\.[A-Za-z0-9_.]+)?$")
+    pat = re.compile(
+        r"^[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*-"
+        r"[0-9a-f]{16}(\.[A-Za-z0-9_.]+)?$"
+    )
     return {f.name for f in arch_dir.iterdir() if f.is_file() and pat.match(f.name)}
 
 
-def _write_manifest(assets_dir: Path, initrd_hash: str) -> None:
+def _write_manifest(
+    assets_dir: Path,
+    asset_hash: str,
+    *,
+    asset_name: str = "initrd.img",
+) -> None:
     manifest = {
         "format": 2,
         "refresh_policy": "24h",
@@ -65,7 +73,7 @@ def _write_manifest(assets_dir: Path, initrd_hash: str) -> None:
                     "min_binary": "1.0.0",
                     "arches": {
                         "arm64": {
-                            "initrd.img": {"hash": initrd_hash, "size": 100},
+                            asset_name: {"hash": asset_hash, "size": 100},
                         },
                     },
                 },
@@ -124,6 +132,28 @@ def test_removes_stale_hash_tagged_aliases(tmp_path):
     )
     assert not stale_a.exists()
     assert not stale_b.exists()
+
+
+def test_removes_stale_alias_for_hyphenated_logical_asset(tmp_path):
+    """A hyphen in the logical stem must not hide an obsolete alias."""
+    arch_dir = tmp_path / "arm64"
+    arch_dir.mkdir()
+    asset_name = "software-inventory.json"
+    (arch_dir / asset_name).write_bytes(b"current-content")
+    current_hash = "aaaaaaaaaaaaaaaa" + "0" * 48
+    _write_manifest(tmp_path, current_hash, asset_name=asset_name)
+
+    stale = arch_dir / "software-inventory-1111111111111111.json"
+    stale.write_bytes(b"old-data")
+    unrelated = arch_dir / "release-notes.json"
+    unrelated.write_text("keep me")
+
+    _run(tmp_path)
+
+    expected = arch_dir / f"software-inventory-{current_hash[:16]}.json"
+    assert expected.exists()
+    assert not stale.exists()
+    assert unrelated.read_text() == "keep me"
 
 
 def test_preserves_non_hash_tagged_files(tmp_path):
