@@ -30,7 +30,7 @@ node_modules/
 frontend/_tmp_*
 docs/_tmp_*
 site/_tmp_*
-release-site/_tmp_*
+build_system/release_site/_tmp_*
 *.pyc
 __pycache__/
 .ipynb_checkpoints
@@ -82,7 +82,8 @@ worktrees/
 /assets
 
 # Built packages (.pkg, .deb)
-packages/
+/packages/
+/build_system/packaging/packages/
 
 # Tauri
 crates/capsem-app/gen/

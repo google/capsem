@@ -21,7 +21,7 @@ from test_release_site_html_contract import (
 
 PROFILE_PAGE = (
     PROJECT_ROOT
-    / "release-site"
+    / "build_system" / "release_site"
     / "src"
     / "pages"
     / "channels"

@@ -167,7 +167,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: |
             frontend/pnpm-lock.yaml
-            release-site/pnpm-lock.yaml
+            build_system/release_site/pnpm-lock.yaml
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync --project build_system --frozen
       - name: macOS release portability preflight
@@ -182,7 +182,7 @@ jobs:
       - name: Build frontend bundle
         run: bash scripts/check-web-surface.sh frontend-build
       - name: Install release site dependencies
-        run: cd release-site && pnpm install --frozen-lockfile
+        run: cd build_system/release_site && pnpm install --frozen-lockfile
 
       - name: Select the declared tool set
         id: gate_tools
@@ -573,7 +573,7 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: release-site/pnpm-lock.yaml
+          cache-dependency-path: build_system/release_site/pnpm-lock.yaml
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
@@ -589,7 +589,7 @@ jobs:
         run: uv sync --project build_system --frozen
 
       - name: Install release site dependencies
-        run: cd release-site && pnpm install --frozen-lockfile
+        run: cd build_system/release_site && pnpm install --frozen-lockfile
 
       - name: Release site type-check and coverage
         run: bash scripts/check-web-surface.sh release-site
@@ -601,7 +601,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
         with:
-          files: release-site/coverage/lcov.info
+          files: build_system/release_site/coverage/lcov.info
           flags: unit
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false

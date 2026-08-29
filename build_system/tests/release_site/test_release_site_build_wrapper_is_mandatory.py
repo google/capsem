@@ -3,7 +3,7 @@
 Astro stages prerendered chunks at a path fixed under the project root, so two
 concurrent builds of `release-site` delete each other's staging mid-prerender
 and no `--outDir` makes them independent. Every build on a host must therefore
-serialize, and -- because the pages land in the one shared `release-site/dist`
+serialize, and -- because the pages land in the one shared `build_system/release_site/dist`
 -- every reader must take its own copy before the next build overwrites them.
 
 Both rules had been rediscovered by hand seven times across thirteen files.
@@ -15,7 +15,7 @@ assertion every run under `pytest -n`.
 through `helpers.release_site` -- `build_release_site` for a rendered graph,
 `release_site_build_lock` for a `build:channel` that manages its own output.
 
-**Snapshot.** `release-site/dist` is the shared staging area, not a place to
+**Snapshot.** `build_system/release_site/dist` is the shared staging area, not a place to
 read results from. Only the helper may name it; callers read the private
 directory a build returns.
 
@@ -45,17 +45,23 @@ BUILD_SURFACES = ("frontend-build", "docs", "site", "release-site-build")
 # asserting on a command is not spawning one.
 PNPM_ARGV = re.compile(r'\[\s*"pnpm"')
 
-# A direct install mutates the same release-site/node_modules tree every Astro
+# A direct install mutates the same build_system/release_site/node_modules tree every Astro
 # build reads. The shared helper owns that transaction with the build lock.
 PNPM_INSTALL_ARGV = re.compile(r'\[\s*"pnpm"[^\]]*"install"', re.DOTALL)
 
-# Builds `release-site` either by naming it in the argv or by running there.
-RELEASE_SITE_BUILD = re.compile(r'"--dir",\s*"release-site"|cwd=\w+\s*/\s*"release-site"')
+# Builds the release generator either by naming it in argv or by running there.
+RELEASE_SITE_BUILD = re.compile(
+    r'"--dir",\s*"build_system/release_site"|'
+    r'cwd=\w+\s*/\s*"build_system"\s*/\s*"release_site"'
+)
 
-# The host `release-site/dist`, built as a path. Container-side literals such
-# as "/src/release-site/dist" name a bind mount inside the install image and
+# The host `build_system/release_site/dist`, built as a path. Container-side literals such
+# as "/src/build_system/release_site/dist" name a bind mount inside the install image and
 # are a different thing entirely.
-HOST_DIST = re.compile(r'"release-site"\s*(?:/|,)\s*"dist"')
+HOST_DIST = re.compile(
+    r'"build_system/release_site/dist"|'
+    r'"build_system"\s*/\s*"release_site"\s*/\s*"dist"'
+)
 
 REACHES_HELPER = re.compile(r"from helpers\.release_site import|helpers\.release_site")
 
@@ -88,7 +94,7 @@ def test_only_the_helper_installs_release_site_dependencies() -> None:
             offenders.append(path.relative_to(PROJECT_ROOT))
 
     assert not offenders, (
-        "these modules mutate release-site/node_modules outside the shared "
+        "these modules mutate build_system/release_site/node_modules outside the shared "
         "workspace lock; move install and build into helpers.release_site: "
         f"{[str(path) for path in offenders]}"
     )
@@ -102,7 +108,7 @@ def test_only_the_helper_names_the_shared_dist() -> None:
     ]
 
     assert not offenders, (
-        "release-site/dist is shared staging that the next build overwrites; "
+        "build_system/release_site/dist is shared staging that the next build overwrites; "
         "read the private directory build_release_site returns instead of "
         f"naming it: {[str(path) for path in offenders]}"
     )

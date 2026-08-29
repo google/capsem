@@ -55,7 +55,7 @@ crates/capsem-mock-server/     Hermetic mock upstream (HTTP/TLS/WS) for tests an
 frontend/                 Astro 7 + Svelte 5 + Tailwind v4 + owned semantic CSS
 site/                     Marketing website (Astro + Svelte 5)
 docs/                     Documentation site (Astro Starlight)
-release-site/             Release channel site (Astro, built from target/release-channel/)
+build_system/release_site/ Release channel site generator (Astro, writes target/distribution/)
 config/                   Runtime product config source -- never developer skills (see Skills)
 config/profiles/<id>/     Profile ledgers (code, co-work): profile.toml + packages, MCP, rules, root seed
 src/capsem/builder/       capsem-builder backend helpers (image builds are driven by capsem-admin)

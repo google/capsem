@@ -82,7 +82,7 @@ def test_default_bulk_audit_covers_every_web_workspace() -> None:
         Path("frontend"),
         Path("docs"),
         Path("site"),
-        Path("release-site"),
+        Path("build_system/release_site"),
     ) == audit.DEFAULT_PROJECT_DIRS
     for project in audit.DEFAULT_PROJECT_DIRS:
         assert (PROJECT_ROOT / project / "package.json").is_file()
@@ -111,7 +111,7 @@ def test_every_fast_gate_blocks_on_bulk_dependency_advisories() -> None:
         "frontend/pnpm-lock.yaml",
         "docs/pnpm-lock.yaml",
         "site/pnpm-lock.yaml",
-        "release-site/pnpm-lock.yaml",
+        "build_system/release_site/pnpm-lock.yaml",
     ):
         assert lockfile in fast_gate
         assert lockfile in scheduled

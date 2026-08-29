@@ -538,7 +538,7 @@ def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) 
     install = _recipe("_release-site-pnpm-install")
 
     assert "_release-site-pnpm-install" in contracts.splitlines()[0]
-    assert "release-site" in install
+    assert "build_system/release_site" in install
     assert "pnpm install --frozen-lockfile" in install
     for workflow_path, job in (
         (".github/workflows/release.yaml", "test-binary-pairing"),
@@ -546,9 +546,9 @@ def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) 
     ):
         pairing = _workflow_job(workflow_path, job)
         assert "cache: pnpm" in pairing
-        assert "release-site/pnpm-lock.yaml" in pairing
+        assert "build_system/release_site/pnpm-lock.yaml" in pairing
         assert "cd frontend && pnpm install --frozen-lockfile" in pairing
-        assert "cd release-site && pnpm install --frozen-lockfile" in pairing
+        assert "cd build_system/release_site && pnpm install --frozen-lockfile" in pairing
 
     real_just = shutil.which("just")
     assert real_just is not None
@@ -580,7 +580,7 @@ def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) 
     trace_lines = trace.read_text(encoding="utf-8").splitlines()
     pnpm_command, pnpm_cwd, pnpm_args = trace_lines[0].split(":", maxsplit=2)
     assert pnpm_command == "pnpm"
-    assert Path(pnpm_cwd).resolve() == (PROJECT_ROOT / "release-site").resolve()
+    assert Path(pnpm_cwd).resolve() == (PROJECT_ROOT / "build_system" / "release_site").resolve()
     assert pnpm_args == "install --frozen-lockfile"
     # The recipe dispatches rather than implementing: one install, then the
     # gate command. Nothing between them, and no nested `just`.

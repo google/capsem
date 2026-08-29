@@ -21,6 +21,7 @@ OWNER_PREFIXES = {
     "release_site": "build_system/tests/release_site/",
     "scripts": "build_system/tests/scripts/",
 }
+PACKAGE_LOCAL_TEST_SOURCES = frozenset({"build_system/release_site/src/lib/release-data.test.ts"})
 
 # Boundary guards created while their source owners moved were not part of the
 # starting test ledger. They are declared here instead of weakening the exact
@@ -28,7 +29,11 @@ OWNER_PREFIXES = {
 BOUNDARY_FILES = frozenset(
     {
         "build_system/tests/gate/test_gate_module_boundary.py",
+        "build_system/tests/gate/test_host_docker_ownership.py",
         "build_system/tests/image/test_image_module_boundary.py",
+        "build_system/tests/packaging/test_linux_packaging_boundary.py",
+        "build_system/tests/packaging/test_macos_packaging_boundary.py",
+        "build_system/tests/packaging/test_shared_packaging_boundary.py",
         "build_system/tests/policy/test_policy_modules.py",
         "build_system/tests/release/test_release_module_boundary.py",
         "build_system/tests/scripts/test_audit_python_lock.py",
@@ -85,8 +90,11 @@ def _problems(rows: Iterable[Mapping[str, Any]], tracked: frozenset[str]) -> lis
             problems.append(f"{source}: unknown build-system test owner {owner!r}")
         elif not target.startswith(prefix):
             problems.append(f"{source}: {owner} test targets the wrong owner path {target}")
-        if not source.startswith("tests/"):
-            problems.append(f"{source}: migration source must be under root tests/")
+        if not source.startswith("tests/") and source not in PACKAGE_LOCAL_TEST_SOURCES:
+            problems.append(
+                f"{source}: migration source must be under root tests/ or be an "
+                "explicit package-local test"
+            )
         if not target.startswith("build_system/tests/"):
             problems.append(f"{source}: package-owned target escapes build_system/tests/: {target}")
         if target.startswith("config/") or "/config/fixtures/" in target:

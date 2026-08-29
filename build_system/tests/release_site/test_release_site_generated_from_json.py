@@ -74,10 +74,10 @@ def test_no_profile_catalog_side_channel() -> None:
         RELEASE_SITE_DIST / "channels" / "nightly" / "profiles" / "co-work" / "index.html",
     ]
     source_files = [
-        PROJECT_ROOT / "release-site" / "src" / "lib" / "release-data.ts",
-        PROJECT_ROOT / "release-site" / "src" / "pages" / "index.astro",
-        PROJECT_ROOT / "release-site" / "src" / "pages" / "channels" / "[id].astro",
-        PROJECT_ROOT / "release-site" / "src" / "pages" / "profiles" / "[id].astro",
+        PROJECT_ROOT / "build_system" / "release_site" / "src" / "lib" / "release-data.ts",
+        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "index.astro",
+        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "channels" / "[id].astro",
+        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "profiles" / "[id].astro",
     ]
 
     for path in generated_pages + source_files:

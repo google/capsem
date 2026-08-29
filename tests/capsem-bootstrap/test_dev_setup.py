@@ -52,4 +52,7 @@ class TestDevSetup:
         assert "uv run --project build_system --frozen capsem-gate install-node" in bootstrap
         assert "pnpm install --frozen-lockfile" not in bootstrap
         assert 'node_env = { CI = "true" }' in gate
-        assert 'node_workspaces = ["frontend", "docs", "site", "release-site"]' in gate
+        assert (
+            'node_workspaces = ["frontend", "docs", "site", '
+            '"build_system/release_site"]' in gate
+        )

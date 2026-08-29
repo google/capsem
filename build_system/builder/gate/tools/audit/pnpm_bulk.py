@@ -16,7 +16,7 @@ DEFAULT_PROJECT_DIRS = (
     Path("frontend"),
     Path("docs"),
     Path("site"),
-    Path("release-site"),
+    Path("build_system/release_site"),
 )
 
 

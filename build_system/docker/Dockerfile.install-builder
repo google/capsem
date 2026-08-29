@@ -12,8 +12,8 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml /prefetch/
 COPY .cargo/config.toml /prefetch/.cargo/config.toml
 COPY crates /prefetch/crates
 COPY build_system/pyproject.toml build_system/uv.lock /prefetch/build_system/
-COPY release-site/package.json release-site/pnpm-lock.yaml \
-    release-site/pnpm-workspace.yaml /prefetch/release-site/
+COPY build_system/release_site/package.json build_system/release_site/pnpm-lock.yaml \
+    build_system/release_site/pnpm-workspace.yaml /prefetch/build_system/release_site/
 
 WORKDIR /prefetch
 RUN selected="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" \
@@ -23,7 +23,7 @@ RUN selected="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" \
 RUN mkdir -p /capsem-deps/cargo/registry /capsem-deps/cargo/git \
     && CARGO_HOME=/capsem-deps/cargo cargo fetch --locked --target "${RUST_TARGET}"
 RUN UV_PROJECT_ENVIRONMENT="${INSTALL_VENV}" uv sync --project build_system --locked --no-install-project
-RUN cd release-site && pnpm fetch --frozen-lockfile --store-dir /capsem-deps/pnpm
+RUN cd build_system/release_site && pnpm fetch --frozen-lockfile --store-dir /capsem-deps/pnpm
 
 FROM ${BASE}
 

@@ -31,7 +31,7 @@ jobs:
             frontend/pnpm-lock.yaml
             docs/pnpm-lock.yaml
             site/pnpm-lock.yaml
-            release-site/pnpm-lock.yaml
+            build_system/release_site/pnpm-lock.yaml
 
       - name: Select the declared tool set
         id: gate_tools
@@ -54,7 +54,7 @@ jobs:
 
       - name: Install all web dependencies
         run: |
-          for project in frontend docs site release-site; do
+          for project in frontend docs site build_system/release_site; do
             pnpm --dir "$project" install --frozen-lockfile
           done
 

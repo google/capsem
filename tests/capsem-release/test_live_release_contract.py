@@ -20,11 +20,11 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     _materialize_graph_dist(graph, dist)
 
-    # build:channel renders through the shared release-site/dist before
+    # build:channel renders through the shared build_system/release_site/dist before
     # overlaying into `dist`, so it has to serialize with every other build.
     with release_site_build_lock():
         result = subprocess.run(
-            ["pnpm", "--dir", "release-site", "run", "build:channel"],
+            ["pnpm", "--dir", "build_system/release_site", "run", "build:channel"],
             cwd=PROJECT_ROOT,
             env={
                 **os.environ,

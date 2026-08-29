@@ -121,7 +121,7 @@ def functional(
 
     # This module owns its prerequisites, the same way `module_contracts` had
     # to learn to. The broad suite renders the release site from fixtures with
-    # `pnpm --dir release-site run build`, and `node_modules` is gitignored --
+    # `pnpm --dir build_system/release_site run build`, and `node_modules` is gitignored --
     # so a local run worked on whatever an earlier phase had installed, and the
     # release lane, whose prefix carries only tracked files, died on a missing
     # Astro. Idempotent, and the `node_modules` exclusive keeps the two

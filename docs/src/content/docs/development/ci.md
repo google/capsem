@@ -341,13 +341,13 @@ signing material.
 
 `release.capsem.org` is the asset channel publication surface. It is generated
 from the release graph JSON and profile image files produced by the asset
-workflow. The generated deploy root is `target/release-channel/`; the machine
+workflow. The generated deploy root is `target/distribution/`; the machine
 manifests live at:
 
 ```text
-target/release-channel/assets/stable/manifest.json
-target/release-channel/assets/nightly/manifest.json
-target/release-channel/channels.json
+target/distribution/assets/stable/manifest.json
+target/distribution/assets/nightly/manifest.json
+target/distribution/channels.json
 ```
 
 After deployment, clients read them as:

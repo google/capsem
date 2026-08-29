@@ -7,12 +7,12 @@ import {
   loadReleaseData,
   packageRows,
   profileList,
-} from './release-data';
+} from '../../release_site/src/lib/release-data';
 
 describe('release-site graph data', () => {
   beforeEach(() => {
     process.env.CAPSEM_RELEASE_GRAPH =
-      '../tests/capsem-release/fixtures/release-graph-stable-nightly.json';
+      '../../tests/capsem-release/fixtures/release-graph-stable-nightly.json';
     process.env.CAPSEM_RELEASE_CHANNEL = 'stable';
   });
 

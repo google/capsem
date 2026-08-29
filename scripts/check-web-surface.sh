@@ -6,8 +6,8 @@ cd "$ROOT"
 source "$ROOT/scripts/lib/exec_lock.sh"
 
 require_release_site_astro() {
-    if [[ ! -x "$ROOT/release-site/node_modules/.bin/astro" ]]; then
-        echo "release-site Astro is missing; run the CI step 'Install release site dependencies' (cd release-site && pnpm install --frozen-lockfile)." >&2
+    if [[ ! -x "$ROOT/build_system/release_site/node_modules/.bin/astro" ]]; then
+        echo "release-site Astro is missing; run the CI step 'Install release site dependencies' (cd build_system/release_site && pnpm install --frozen-lockfile)." >&2
         exit 1
     fi
 }
@@ -72,7 +72,7 @@ case "$surface" in
         # survived as long as it did. Other callers pass a graph *file*.
         : "${CAPSEM_RELEASE_GRAPH:?CAPSEM_RELEASE_GRAPH is required}"
         : "${CAPSEM_RELEASE_CHANNEL_DIST:?CAPSEM_RELEASE_CHANNEL_DIST is required}"
-        astro_build pnpm --dir release-site run build:channel
+        astro_build pnpm --dir build_system/release_site run build:channel
         test -s "$CAPSEM_RELEASE_CHANNEL_DIST/404.html"
         grep -q "Artifact not found" "$CAPSEM_RELEASE_CHANNEL_DIST/404.html"
         ;;
@@ -83,8 +83,8 @@ case "$surface" in
         # `astro_build` claim across a Rust build stalled the one surface that
         # gates clippy.
         require_release_site_astro
-        pnpm --dir release-site run check
-        pnpm --dir release-site run test:coverage
+        pnpm --dir build_system/release_site run check
+        pnpm --dir build_system/release_site run test:coverage
         ;;
     release-channel)
         require_release_site_astro

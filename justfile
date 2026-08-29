@@ -393,7 +393,7 @@ _pnpm-install:
 
 
 _release-site-pnpm-install:
-    cd release-site && CI=true pnpm install --frozen-lockfile
+    cd build_system/release_site && CI=true pnpm install --frozen-lockfile
 
 _frontend: _pnpm-install
     bash scripts/check-web-surface.sh frontend-build

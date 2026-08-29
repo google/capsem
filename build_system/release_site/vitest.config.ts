@@ -8,6 +8,6 @@ export default defineConfig({
       reporter: ['text', 'lcov'],
       reportsDirectory: 'coverage',
     },
-    include: ['src/**/*.test.ts'],
+    include: ['../tests/release_site/**/*.test.ts'],
   },
 });

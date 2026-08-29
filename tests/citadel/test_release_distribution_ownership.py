@@ -1,0 +1,149 @@
+"""Keep the release-distribution generator and its output under one owner."""
+
+from __future__ import annotations
+
+import re
+import stat
+import subprocess
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+OWNER = ROOT / "build_system" / "release_site"
+UNIT_TEST = ROOT / "build_system" / "tests" / "release_site" / "release-data.test.ts"
+SHARED_DIST = Path("build_system", "release_site", "dist").as_posix()
+EXPECTED = {
+    ".gitignore",
+    "astro.config.mjs",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "scripts/overlay-dist.mjs",
+    "src/layouts/ReleaseLayout.astro",
+    "src/lib/release-data.ts",
+    "src/pages/404.astro",
+    "src/pages/channels/[channel]/packages/[id].astro",
+    "src/pages/channels/[channel]/profiles/[id].astro",
+    "src/pages/channels/[id].astro",
+    "src/pages/index.astro",
+    "src/pages/profiles/[id].astro",
+    "src/styles/global.css",
+    "tsconfig.json",
+    "vitest.config.ts",
+}
+LEGACY = re.compile(
+    r"(?<![A-Za-z0-9_./-])release-site/|target/release-channel(?=$|[/\'\"\s])"
+)
+RATIONALE = """\
+The Astro release site is a build-time distribution generator, not an
+independent product website. Its source and unit tests belong to build_system,
+while cross-system deployment acceptance stays under root tests. Generated
+distribution bytes have one repository output root, target/distribution. Old
+source or output literals can make local, CI, package, and deployment lanes
+build different trees. See T3 and target/ in the repository cleanup proposal.
+"""
+
+
+def _toml(path: Path) -> dict[str, object]:
+    return tomllib.loads(path.read_text(encoding="utf-8"))
+
+
+def _tracked_text() -> dict[str, str]:
+    paths = subprocess.run(
+        ("git", "ls-files"),
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    sources: dict[str, str] = {}
+    for relative in paths:
+        if relative.startswith("tests/citadel/"):
+            continue
+        path = ROOT / relative
+        if path.is_symlink() or not path.is_file():
+            continue
+        raw = path.read_bytes()
+        if b"\0" in raw:
+            continue
+        try:
+            sources[relative] = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+    return sources
+
+
+def _legacy_literals(sources: dict[str, str]) -> list[str]:
+    return sorted(path for path, text in sources.items() if LEGACY.search(text))
+
+
+def test_legacy_literal_detector_observes_both_old_owners() -> None:
+    found = _legacy_literals(
+        {
+            "source": "release-site/package.json",
+            "output": "--out-dir target/release-channel",
+            "valid": "build_system/release_site and target/distribution",
+        }
+    )
+    assert found == ["output", "source"], RATIONALE
+
+
+def test_release_generator_and_unit_test_have_exact_build_system_owners() -> None:
+    found = {
+        Path(path).relative_to("build_system/release_site").as_posix()
+        for path in subprocess.run(
+            ("git", "ls-files", "build_system/release_site"),
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+    }
+    assert found == EXPECTED, RATIONALE
+    assert not (ROOT / "release-site").exists(), RATIONALE
+    assert UNIT_TEST.is_file(), RATIONALE
+    for relative in EXPECTED:
+        mode = stat.S_IMODE((OWNER / relative).stat().st_mode)
+        assert mode == 0o644, f"{RATIONALE}\n{relative}: mode is {mode:o}"
+        ignored = subprocess.run(
+            (
+                "git",
+                "check-ignore",
+                "--no-index",
+                "--quiet",
+                f"build_system/release_site/{relative}",
+            ),
+            cwd=ROOT,
+            check=False,
+        )
+        assert ignored.returncode == 1, f"{RATIONALE}\n{relative}: source is ignored"
+
+
+def test_config_owns_new_source_and_distribution_paths() -> None:
+    config = _toml(ROOT / "config" / "gate.toml")
+    install = config["install"]
+    assert isinstance(install, dict)
+    assert install["release_site_dir"] == "build_system/release_site"
+    identity = install["builder"]["identity_inputs"]
+    assert all(
+        f"build_system/release_site/{name}" in identity
+        for name in ("package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml")
+    ), RATIONALE
+    assert install["layout"]["extra_owned_paths"] == [
+        "build_system/release_site/node_modules",
+        SHARED_DIST,
+    ], RATIONALE
+    disk = config["disk"]
+    assert isinstance(disk, dict)
+    reclaimable = disk["reclaimable"]
+    assert "target/distribution" in reclaimable, RATIONALE
+    assert "target/release-channel" not in reclaimable, RATIONALE
+
+
+def test_no_old_release_source_or_distribution_output_literal_remains() -> None:
+    assert not _legacy_literals(_tracked_text()), RATIONALE
+
+
+def test_cross_system_release_acceptance_stays_at_repository_root() -> None:
+    assert (ROOT / "tests/capsem-release/test_release_channel_contract.py").is_file()
+    assert (ROOT / "tests/capsem-release/test_release_output_contract.py").is_file()

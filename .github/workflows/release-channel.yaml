@@ -58,7 +58,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CHANNEL: ${{ inputs.channel }}
-      DIST_DIR: target/release-channel
+      DIST_DIR: target/distribution
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -100,14 +100,14 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: ${{ inputs.dist_artifact }}
-          path: target/release-channel/
+          path: target/distribution/
 
       - name: Reuse verified asset channel from failed release
         if: ${{ inputs.artifact_run_id != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: ${{ inputs.dist_artifact }}
-          path: target/release-channel/
+          path: target/distribution/
           github-token: ${{ github.token }}
           run-id: ${{ inputs.artifact_run_id }}
 
@@ -195,7 +195,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy target/release-channel/ --project-name=release --branch=${{ inputs.activate_production && format('capsem-preview-{0}-{1}', github.run_id, github.run_attempt) || inputs.deploy_branch }}
+          command: pages deploy target/distribution/ --project-name=release --branch=${{ inputs.activate_production && format('capsem-preview-{0}-{1}', github.run_id, github.run_attempt) || inputs.deploy_branch }}
 
       - name: Validate preview distribution
         env:
@@ -224,7 +224,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy target/release-channel/ --project-name=release
+          command: pages deploy target/distribution/ --project-name=release
 
       - name: Verify canonical production deployment
         id: production_identity

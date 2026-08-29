@@ -38,9 +38,9 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: release-site/pnpm-lock.yaml
+          cache-dependency-path: build_system/release_site/pnpm-lock.yaml
       - name: Install release site dependencies
-        run: cd release-site && pnpm install --frozen-lockfile
+        run: cd build_system/release_site && pnpm install --frozen-lockfile
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:

@@ -671,11 +671,11 @@ def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
 
 def test_macos_ci_installs_release_site_dependencies_before_integration() -> None:
     job = _workflow_job_block("test")
-    install = "cd release-site && pnpm install --frozen-lockfile"
+    install = "cd build_system/release_site && pnpm install --frozen-lockfile"
     integration = "Python integration tests (non-VM suites)"
 
     assert "frontend/pnpm-lock.yaml" in job
-    assert "release-site/pnpm-lock.yaml" in job
+    assert "build_system/release_site/pnpm-lock.yaml" in job
     assert install in job
     assert job.index(install) < job.index(integration)
 
@@ -842,7 +842,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "CLOUDFLARE_API_TOKEN:" in workflow
     assert "required: true" in workflow
     assert "actions/download-artifact@" in workflow
-    assert "DIST_DIR: target/release-channel" in workflow
+    assert "DIST_DIR: target/distribution" in workflow
     assert 'test -f "$DIST_DIR/index.html"' in workflow
     assert 'test -f "$DIST_DIR/health.json"' in workflow
     assert 'test -f "$DIST_DIR/_headers"' in workflow
@@ -863,7 +863,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert workflow.index("Verify Cloudflare Pages project") < workflow.index(
         "cloudflare/wrangler-action@"
     )
-    assert "pages deploy target/release-channel/ --project-name=release" in workflow
+    assert "pages deploy target/distribution/ --project-name=release" in workflow
     assert "assets/stable/manifest.json" not in workflow
     assert (
         "RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}"
@@ -947,7 +947,7 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
     assert "release_site_url: ${{ inputs.release_site_url }}" in workflow
     assert "activate_production: false" in workflow
     assert (
-        "pages deploy target/release-channel/ --project-name=release "
+        "pages deploy target/distribution/ --project-name=release "
         "--branch=${{ inputs.activate_production && format('capsem-preview-{0}-{1}', github.run_id, github.run_attempt) || inputs.deploy_branch }}"
     ) in reusable
 
@@ -2751,8 +2751,8 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
     for text in (docs,):
         normalized_text = " ".join(text.split())
         assert "https://release.capsem.org/assets/stable/manifest.json" in text
-        assert "target/release-channel/assets/<channel>/manifest.json" in text or (
-            "target/release-channel/assets/stable/manifest.json" in text
+        assert "target/distribution/assets/<channel>/manifest.json" in text or (
+            "target/distribution/assets/stable/manifest.json" in text
         )
         assert "https://release.capsem.org/assets/nightly/manifest.json" in text
         assert "https://release.capsem.org/channels.json" in text
@@ -2773,7 +2773,7 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
 
     asset_skill_text = " ".join(asset_skill.split())
     assert "https://release.capsem.org/assets/stable/manifest.json" in asset_skill
-    assert "target/release-channel/assets/<channel>/manifest.json" in asset_skill
+    assert "target/distribution/assets/<channel>/manifest.json" in asset_skill
     assert "`channels.json`" in asset_skill
     assert "package artifacts separate from per-binary inventory" in asset_skill_text
     assert (
@@ -2783,7 +2783,7 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
     assert "channels/stable/index.json" not in asset_skill
 
     assert "https://release.capsem.org/assets/stable/manifest.json" in release_skill
-    assert "target/release-channel/assets/<channel>/manifest.json" in release_skill
+    assert "target/distribution/assets/<channel>/manifest.json" in release_skill
     assert "`channels.json`" in release_skill
     assert "Profiles belong to channels" in release_skill
     assert "Packages are delivery containers" in release_skill_text
@@ -3224,7 +3224,7 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
         "cd frontend && pnpm build",
         "cd docs && pnpm run build",
         "cd site && pnpm run build",
-        "cd release-site && pnpm run build:channel",
+        "cd build_system/release_site && pnpm run build:channel",
     )
     for text in (
         just,
@@ -3243,7 +3243,7 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
 
     assert "write-release-site-ci-fixture.py" in script
     assert "build-complete-release-channel.py" in script
-    assert "pnpm --dir release-site run build:channel" in script
+    assert "pnpm --dir build_system/release_site run build:channel" in script
     assert 'test -s "$CAPSEM_RELEASE_CHANNEL_DIST/404.html"' in script
     assert 'grep -q "Artifact not found"' in script
     complete_builder = _source_text("scripts/build-complete-release-channel.py")

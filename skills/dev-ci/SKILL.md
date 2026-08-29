@@ -51,7 +51,7 @@ release-site run build:channel` and friends. Those subprocesses need their
 dependency installs done by earlier workflow steps -- `astro: command not
 found` means a workflow install step is missing, not a test bug. The shared
 web-surface script must fail immediately with a message naming the `Install
-release site dependencies` step when `release-site/node_modules/.bin/astro`
+release site dependencies` step when `build_system/release_site/node_modules/.bin/astro`
 is absent.
 
 That whole class is now mechanized, so it should never cost a CI round-trip

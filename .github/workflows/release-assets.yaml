@@ -333,11 +333,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: |
             frontend/pnpm-lock.yaml
-            release-site/pnpm-lock.yaml
+            build_system/release_site/pnpm-lock.yaml
       - name: Install shared functional web dependencies
         run: |
           (cd frontend && pnpm install --frozen-lockfile)
-          (cd release-site && pnpm install --frozen-lockfile)
+          (cd build_system/release_site && pnpm install --frozen-lockfile)
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: 1.97.1
@@ -459,9 +459,9 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: release-site/pnpm-lock.yaml
+          cache-dependency-path: build_system/release_site/pnpm-lock.yaml
       - name: Install release site dependencies
-        run: cd release-site && pnpm install --frozen-lockfile
+        run: cd build_system/release_site && pnpm install --frozen-lockfile
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync --project build_system --frozen
@@ -636,9 +636,9 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: release-site/pnpm-lock.yaml
+          cache-dependency-path: build_system/release_site/pnpm-lock.yaml
       - name: Install release site dependencies
-        run: cd release-site && pnpm install --frozen-lockfile
+        run: cd build_system/release_site && pnpm install --frozen-lockfile
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync --project build_system --frozen
@@ -683,7 +683,7 @@ jobs:
             --assets-dir assets \
             --manifest-version "$(python3 -c 'import json; print(json.load(open("target/source-channel/manifest.json"))["version"])')" \
             --profile-source-root target/profile-candidate \
-            --out-dir target/release-channel
+            --out-dir target/distribution
 
       - name: Attest VM asset provenance
         if: ${{ inputs.dry_run == false }}
@@ -749,7 +749,7 @@ jobs:
         if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
         with:
           name: asset-channel-preview
-          path: target/release-channel/
+          path: target/distribution/
 
   deploy-channel:
     needs: publish-profile-release

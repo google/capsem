@@ -31,7 +31,7 @@ OUTPUT = "CAPSEM_RELEASE_CHANNEL_DIST"
 #: Everything that could name either variable. Generated rather than listed, so
 #: a new caller cannot be added without this noticing.
 SEARCHED = (
-    "release-site",
+    "build_system/release_site",
     "scripts",
     "src/capsem",
     ".github/workflows",
@@ -82,14 +82,14 @@ def _code(path: Path) -> str:
 
 def test_the_renderer_reads_the_input_variable() -> None:
     """`loadReleaseData` chooses what to render, so it reads the graph name."""
-    source = _code(PROJECT_ROOT / "release-site/src/lib/release-data.ts")
+    source = _code(PROJECT_ROOT / "build_system/release_site/src/lib/release-data.ts")
 
     assert f"process.env.{INPUT}" in source
 
 
 def test_the_renderer_does_not_read_the_output_variable() -> None:
     """The whole point of the split: an output name cannot select an input."""
-    source = _code(PROJECT_ROOT / "release-site/src/lib/release-data.ts")
+    source = _code(PROJECT_ROOT / "build_system/release_site/src/lib/release-data.ts")
 
     assert OUTPUT not in source
 
@@ -106,7 +106,7 @@ def test_the_overlay_no_longer_guesses_from_the_paths_type() -> None:
     meant "overlay here". With the names separated the output is always a
     directory, and a file arriving there is a caller's bug rather than a mode.
     """
-    source = _code(PROJECT_ROOT / "release-site/scripts/overlay-dist.mjs")
+    source = _code(PROJECT_ROOT / "build_system/release_site/scripts/overlay-dist.mjs")
 
     assert "statSync(target).isFile()" not in source, (
         "the overlay still branches on whether its target is a file"
@@ -114,7 +114,7 @@ def test_the_overlay_no_longer_guesses_from_the_paths_type() -> None:
 
 
 def test_the_overlay_reads_only_the_output_variable() -> None:
-    source = _code(PROJECT_ROOT / "release-site/scripts/overlay-dist.mjs")
+    source = _code(PROJECT_ROOT / "build_system/release_site/scripts/overlay-dist.mjs")
 
     assert OUTPUT in source
     assert INPUT not in source

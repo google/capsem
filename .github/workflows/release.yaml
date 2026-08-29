@@ -888,11 +888,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: |
             frontend/pnpm-lock.yaml
-            release-site/pnpm-lock.yaml
+            build_system/release_site/pnpm-lock.yaml
       - name: Install shared functional web dependencies
         run: |
           (cd frontend && pnpm install --frozen-lockfile)
-          (cd release-site && pnpm install --frozen-lockfile)
+          (cd build_system/release_site && pnpm install --frozen-lockfile)
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: 1.97.1
@@ -1118,9 +1118,9 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: release-site/pnpm-lock.yaml
+          cache-dependency-path: build_system/release_site/pnpm-lock.yaml
       - name: Install release site dependencies
-        run: cd release-site && pnpm install --frozen-lockfile
+        run: cd build_system/release_site && pnpm install --frozen-lockfile
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
@@ -1153,12 +1153,12 @@ jobs:
             --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
             --manifest-version "1.0.${{ github.run_number }}" \
             --generated-at "$generated_at" \
-            --out-dir target/release-channel
+            --out-dir target/distribution
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-preview
-          path: target/release-channel/
+          path: target/distribution/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

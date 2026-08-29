@@ -30,7 +30,7 @@ RUN uv sync --project /src/build_system --offline --frozen
 # Materialize the source-specific release-site links from the locked helper
 # store without registry access. Runtime rendering performs no install/sync.
 USER capsem
-RUN cd /src/release-site \
+RUN cd /src/build_system/release_site \
     && pnpm install --offline --frozen-lockfile \
         --store-dir "${CAPSEM_INSTALL_PNPM_STORE}"
 USER root
@@ -39,4 +39,4 @@ COPY --from=source-cli --chmod=0555 \
     /tmp/capsem-install-current-cli/debug/capsem ${FRESH_CLI}
 RUN test -x "${UV_PROJECT_ENVIRONMENT}/bin/python" \
     && test -x "${FRESH_CLI}" \
-    && test -x /src/release-site/node_modules/.bin/astro
+    && test -x /src/build_system/release_site/node_modules/.bin/astro

@@ -59,6 +59,7 @@ EXCLUDED_POLICY_FILES = frozenset(
         "tests/citadel/test_static_ca_boundary.py",
         "tests/citadel/test_web_benchmark_boundary.py",
         "tests/citadel/test_release_authority_is_canonical.py",
+        "tests/citadel/test_release_distribution_ownership.py",
         "tests/citadel/test_repository_path_ownership.py",
         "tests/citadel/test_repository_surface_ownership.py",
         "tests/citadel/test_sprint_system_is_sprinty.py",

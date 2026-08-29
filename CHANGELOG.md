@@ -1836,11 +1836,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existed so `pnpm install` would not write into a bind-mounted checkout; the
   source is an image layer now, so its reason is gone and what remained was
   worse -- an older run's `node_modules` mounted over a different
-  `release-site/`, which pnpm rightly refused to reconcile unprompted. Baked,
+  `build_system/release_site/`, which pnpm rightly refused to reconcile unprompted. Baked,
   the runtime `pnpm install --frozen-lockfile` finds a tree that already
   matches and does nothing.
 - The install proof's `pnpm install` no longer stops waiting for an answer.
-  `/src/release-site` comes from the image while its `node_modules` is a
+  `/src/build_system/release_site` comes from the image while its `node_modules` is a
   cross-run volume, so the two can legitimately disagree, and pnpm refuses to
   purge a modules directory it did not create without a TTY to confirm on --
   `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`. The gate has no terminal and
@@ -2270,7 +2270,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   surfaced by the first complete run from a private checkout and all invisible
   on a warm machine:
 
-  `test-release-contracts` ran `pnpm --dir release-site run build:channel`
+  `test-release-contracts` ran `pnpm --dir build_system/release_site run build:channel`
   without installing `node_modules`, which is gitignored -- so on a clean tree
   the suite died with `sh: astro: command not found`. It now installs the Node
   workspaces itself, which AGENTS.md requires of every module and this one did
@@ -3389,7 +3389,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   someone adds a second consumer of one root.
 - `pnpm install` claims a `node_modules` exclusive: it rewrites a workspace
   in place and every web build reads it.
-- `release-site/scripts/overlay-dist.mjs` takes its source directory as an
+- `build_system/release_site/scripts/overlay-dist.mjs` takes its source directory as an
   argument instead of hardcoding Astro's default `outDir`, where a change to
   that setting would have broken the overlay silently.
 
@@ -3635,7 +3635,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Every release-site gate rendered into the one shared `release-site/dist` and
+- Every release-site gate rendered into the one shared `build_system/release_site/dist` and
   then read its pages back after dropping the build lock, so a build started by
   another `pytest -n` worker swapped the HTML out from under a test's
   assertions -- the eight top-level release-site files failed eight or nine
@@ -3648,10 +3648,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protect. One `tests/helpers/release_site.py` now owns the lock, and each build
   snapshots its output into a private directory while that lock is still held;
   callers read the snapshot, and nothing outside the helper touches
-  `release-site/dist`. Snapshots are keyed by graph content, so the gates that
+  `build_system/release_site/dist`. Snapshots are keyed by graph content, so the gates that
   share the fixture graph still share one build. A contract gate holds both
   halves: a module that spawns a release-site build must reach the shared
-  lock, and only the helper may name `release-site/dist`.
+  lock, and only the helper may name `build_system/release_site/dist`.
 - Three defects the widened source gates found immediately: an ironbank ledger
   assertion called with a required argument missing, so that path raised
   `TypeError` rather than asserting anything; a gateway test whose assertion
@@ -5330,7 +5330,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to own executable binary inventory in release-channel tests.
 - Added named release-site HTML gate tests for Sprinty closure and serialized
   Astro fixture builds so concurrent release-site contract checks cannot corrupt
-  `release-site/dist`.
+  `build_system/release_site/dist`.
 - Added named release architecture and package/binary contract gates for the
   canonical channel manifest URL, package-owned executable inventory, and
   package-level SBOM evidence.

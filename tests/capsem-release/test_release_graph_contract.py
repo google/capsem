@@ -146,13 +146,13 @@ def test_ledger_is_derived_not_authoritative() -> None:
 
 def test_health_json_not_release_truth() -> None:
     release_site_loader = (
-        PROJECT_ROOT / "release-site" / "src" / "lib" / "release-data.ts"
+        PROJECT_ROOT / "build_system" / "release_site" / "src" / "lib" / "release-data.ts"
     ).read_text(encoding="utf-8")
     release_site_index = (
-        PROJECT_ROOT / "release-site" / "src" / "pages" / "index.astro"
+        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "index.astro"
     ).read_text(encoding="utf-8")
     release_site_profile = (
-        PROJECT_ROOT / "release-site" / "src" / "pages" / "profiles" / "[id].astro"
+        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "profiles" / "[id].astro"
     ).read_text(encoding="utf-8")
 
     assert "channels.json" in release_site_loader

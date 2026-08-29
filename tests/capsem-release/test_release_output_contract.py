@@ -342,17 +342,17 @@ def test_deterministic_graph_profile_software_inventory_is_hashed() -> None:
 
 def test_release_site_source_does_not_render_fields_missing_from_contract() -> None:
     all_release_site_sources = [
-        PROJECT_ROOT / "release-site" / "src" / "pages" / "index.astro",
-        PROJECT_ROOT / "release-site" / "src" / "pages" / "channels" / "[id].astro",
+        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "index.astro",
+        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "channels" / "[id].astro",
         PROJECT_ROOT
-        / "release-site"
+        / "build_system" / "release_site"
         / "src"
         / "pages"
         / "channels"
         / "[channel]"
         / "profiles"
         / "[id].astro",
-        PROJECT_ROOT / "release-site" / "src" / "lib" / "release-data.ts",
+        PROJECT_ROOT / "build_system" / "release_site" / "src" / "lib" / "release-data.ts",
     ]
     forbidden_everywhere = {
         "hmac",
@@ -370,8 +370,8 @@ def test_release_site_source_does_not_render_fields_missing_from_contract() -> N
                 hits.append(f"{source.relative_to(PROJECT_ROOT)} contains {token}")
 
     channel_sources = [
-        PROJECT_ROOT / "release-site" / "src" / "pages" / "index.astro",
-        PROJECT_ROOT / "release-site" / "src" / "pages" / "channels" / "[id].astro",
+        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "index.astro",
+        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "channels" / "[id].astro",
     ]
     forbidden_on_channel_pages = {
         "Evidence",

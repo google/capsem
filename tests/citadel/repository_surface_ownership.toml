@@ -78,15 +78,15 @@ reason = "Packaging resources are moving into shared and platform-owned rails."
 
 [[surface]]
 id = "build-system-release-site"
-state = "migrating"
-current = ["release-site/"]
+state = "retained"
+current = ["build_system/release_site/"]
 targets = ["build_system/release_site/"]
 lint = ["fast.audit.source-syntax", "fast.audit.markdown"]
-tests = ["build_system/tests/release_site/", "build_system/tests/release_site/test_release_site_generation_contract.py"]
+tests = ["build_system/tests/release_site/", "build_system/tests/release_site/test_release_site_generation_contract.py", "tests/citadel/test_release_distribution_ownership.py"]
 ci = ["fast-gate", "release-site-build", "pr-gate"]
 coverage = "codecov unit flag and release-site component"
 debt = "tests/citadel/repository_path_debt.toml"
-reason = "The release site is release-distribution machinery, not a product website."
+reason = "Release-distribution generation and its package-local source are owned by the build system."
 
 [[surface]]
 id = "build-system-scripts"

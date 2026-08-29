@@ -812,9 +812,9 @@ def test_install_test_does_not_rebuild_frontend_and_owns_release_site_scratch() 
     issued = _planned("install")
 
     # Was: two named volumes, asserted by name and mount point. They are gone.
-    # `release-site/node_modules` is baked into the install image, so the
+    # `build_system/release_site/node_modules` is baked into the install image, so the
     # runtime `pnpm install --frozen-lockfile` finds a tree that already
-    # matches the lockfile; `release-site/dist` is an anonymous volume,
+    # matches the lockfile; `build_system/release_site/dist` is an anonymous volume,
     # allocated per container and reclaimed with it.
     #
     # The property both protected is unchanged and is what is asserted now:
@@ -828,8 +828,8 @@ def test_install_test_does_not_rebuild_frontend_and_owns_release_site_scratch() 
     assert "capsem-install-frontend-node-modules" not in issued
     assert "pnpm build" not in issued
     owned = config.install.layout.owned_paths(config.install.mount)
-    assert "/src/release-site/node_modules" in owned
-    assert "/src/release-site/dist" in owned
+    assert "/src/build_system/release_site/node_modules" in owned
+    assert "/src/build_system/release_site/dist" in owned
 
 
 def test_install_test_removes_stale_container_before_controller_preflight(
@@ -2209,7 +2209,7 @@ def test_local_release_glowup_reports_capacity_before_late_asset_staging(
 def test_release_site_overlay_replaces_partial_files_without_clobbering_artifacts(
     tmp_path: Path,
 ) -> None:
-    site = tmp_path / "release-site"
+    site = tmp_path / "build_system" / "release_site"
     source = site / "dist"
     source.joinpath("profiles", "code").mkdir(parents=True)
     source.joinpath("index.html").write_text("complete-index", encoding="utf-8")
@@ -2228,7 +2228,7 @@ def test_release_site_overlay_replaces_partial_files_without_clobbering_artifact
     result = subprocess.run(
         [
             "node",
-            str(PROJECT_ROOT / "release-site" / "scripts" / "overlay-dist.mjs"),
+            str(PROJECT_ROOT / "build_system" / "release_site" / "scripts" / "overlay-dist.mjs"),
         ],
         cwd=site,
         env={**os.environ, "CAPSEM_RELEASE_CHANNEL_DIST": str(target)},

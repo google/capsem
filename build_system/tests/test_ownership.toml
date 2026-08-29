@@ -810,6 +810,11 @@ source = "tests/test_release_site_review_regressions.py"
 target = "build_system/tests/release_site/test_release_site_review_regressions.py"
 
 [[owned]]
+owner = "release_site"
+source = "build_system/release_site/src/lib/release-data.test.ts"
+target = "build_system/tests/release_site/release-data.test.ts"
+
+[[owned]]
 owner = "scripts"
 source = "tests/test_bootstrap_contract.py"
 target = "build_system/tests/scripts/test_bootstrap_contract.py"

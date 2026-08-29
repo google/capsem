@@ -127,7 +127,7 @@ def test_policy_declares_last_consumers_before_release_boundaries() -> None:
     # Obsolete too: the install image bakes the release-site dependencies, so
     # nothing mounts this. It was a cache for a bind-mounted checkout that no
     # longer exists, and a stale copy of it mounted over an image-provided
-    # `release-site/` is what pnpm refused to reconcile without a TTY.
+    # `build_system/release_site/` is what pnpm refused to reconcile without a TTY.
     assert resources["capsem-install-release-site-node-modules"]["retention"] == "obsolete"
     assert resources["capsem-linux-python-venv"]["retention"] == "obsolete"
 

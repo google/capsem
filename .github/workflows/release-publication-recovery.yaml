@@ -77,8 +77,8 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: release-site/pnpm-lock.yaml
-      - run: cd release-site && pnpm install --frozen-lockfile
+          cache-dependency-path: build_system/release_site/pnpm-lock.yaml
+      - run: cd build_system/release_site && pnpm install --frozen-lockfile
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: 1.97.1
@@ -110,19 +110,19 @@ jobs:
             --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
             --manifest-version "1.0.${{ github.run_number }}" \
             --generated-at "$generated_at" \
-            --out-dir target/release-channel
+            --out-dir target/distribution
 
       - name: Verify public package storage from recovered candidate
         run: |
           uv run --project build_system --frozen python scripts/release-package-contract.py verify-storage \
-            --manifest "target/release-channel/assets/$RELEASE_CHANNEL/manifest.json" \
+            --manifest "target/distribution/assets/$RELEASE_CHANNEL/manifest.json" \
             --expected-prefix "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/" \
             --expected-version "${RELEASE_TAG#v}" \
             --work-dir /tmp/candidate-packages
 
       - name: Prove install.sh selects recovered candidate Linux package
         run: >
-          scripts/prove-candidate-installer.sh target/release-channel
+          scripts/prove-candidate-installer.sh target/distribution
           "$RELEASE_CHANNEL" "${RELEASE_TAG#v}"
 
       - name: Persist recovered source manifest on immutable release
@@ -138,7 +138,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-preview
-          path: target/release-channel/
+          path: target/distribution/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-before

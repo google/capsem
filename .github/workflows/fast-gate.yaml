@@ -46,7 +46,7 @@ jobs:
             frontend/pnpm-lock.yaml
             docs/pnpm-lock.yaml
             site/pnpm-lock.yaml
-            release-site/pnpm-lock.yaml
+            build_system/release_site/pnpm-lock.yaml
 
       - name: Install Linux workspace lint prerequisites
         run: sudo python3 scripts/provision-linux-workspace.py --install apt
@@ -71,7 +71,7 @@ jobs:
         run: |
           uv sync --project build_system --frozen
           cargo fetch --locked
-          for workspace in frontend docs site release-site; do
+          for workspace in frontend docs site build_system/release_site; do
             pnpm --dir "$workspace" install --frozen-lockfile
           done
 

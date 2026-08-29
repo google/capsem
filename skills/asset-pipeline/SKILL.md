@@ -62,9 +62,9 @@ rerun the failing recipe.
 | Built assets (dev) | `assets/{arch}/vmlinuz, initrd.img, rootfs.erofs` |
 | Installed assets | `~/.capsem/assets/{name}-{hash16}.{ext}` (flat, hash-based) |
 | Manifest | `assets/manifest.json` |
-| Asset channel deploy root | `target/release-channel/` |
-| Asset channel manifest | `target/release-channel/assets/<channel>/manifest.json` |
-| Asset channel human site | `release-site/` Astro app, built from `target/release-channel/` JSON |
+| Asset channel deploy root | `target/distribution/` |
+| Asset channel manifest | `target/distribution/assets/<channel>/manifest.json` |
+| Asset channel human site | `build_system/release_site/` Astro app, built from `target/distribution/` JSON |
 | Checksums | `assets/B3SUMS` |
 | Manifest generator | `capsem-admin manifest generate <assets_dir>` |
 | Asset types + cleanup | `crates/capsem-core/src/asset_manager.rs` |

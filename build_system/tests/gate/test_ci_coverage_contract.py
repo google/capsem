@@ -286,7 +286,7 @@ def test_rust_coverage_includes_bins() -> None:
 def test_release_critical_crates_are_reported() -> None:
     codecov = (PROJECT_ROOT / "codecov.yml").read_text()
     ci = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
-    release_site_package = json.loads((PROJECT_ROOT / "release-site" / "package.json").read_text())
+    release_site_package = json.loads((PROJECT_ROOT / "build_system" / "release_site" / "package.json").read_text())
 
     required_component_paths = {
         "crates/capsem-admin/src/**",
@@ -301,8 +301,8 @@ def test_release_critical_crates_are_reported() -> None:
         "crates/capsem-service/src/**",
         "crates/capsem-tray/src/**",
         "crates/capsem-tui/src/**",
-        "release-site/scripts/**",
-        "release-site/src/**",
+        "build_system/release_site/scripts/**",
+        "build_system/release_site/src/**",
         "src/capsem/**",
     }
     missing_components = sorted(path for path in required_component_paths if path not in codecov)
@@ -317,7 +317,7 @@ def test_release_critical_crates_are_reported() -> None:
         "codecov-integration.json",
         "codecov-python.xml",
         "frontend/coverage/coverage-final.json",
-        "release-site/coverage/lcov.info",
+        "build_system/release_site/coverage/lcov.info",
     }
     uploaded_files = codecov_upload_files(ci)
     missing_uploads = sorted(required_uploads - uploaded_files)
@@ -330,7 +330,7 @@ def test_release_critical_crates_are_reported() -> None:
     assert "test:coverage" in scripts, "release-site must generate coverage metadata"
     web_gate = (PROJECT_ROOT / "scripts" / "check-web-surface.sh").read_text()
     assert "bash scripts/check-web-surface.sh release-site" in ci
-    assert "pnpm --dir release-site run test:coverage" in web_gate, (
+    assert "pnpm --dir build_system/release_site run test:coverage" in web_gate, (
         "the shared release-site gate must generate coverage before the PR gate can pass"
     )
 

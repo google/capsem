@@ -53,9 +53,9 @@ def test_shell_prepends_the_working_directory_once(tmp_path: Path) -> None:
     """Nearly every call site opened with `cd /src && `, and one did not."""
     runner = RecordingRunner(tmp_path)
 
-    Docker(runner).shell("box", "pnpm install", cwd="/src/release-site")
+    Docker(runner).shell("box", "pnpm install", cwd="/src/build_system/release_site")
 
-    assert "cd /src/release-site && pnpm install" in runner.rendered[0]
+    assert "cd /src/build_system/release_site && pnpm install" in runner.rendered[0]
 
 
 def test_a_shell_fragment_keeps_its_quoting_intact(tmp_path: Path) -> None:

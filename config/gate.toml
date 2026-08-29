@@ -265,7 +265,7 @@ manifest_name = "manifest.json"
 sbom_name = "capsem-sbom.spdx.json"
 candidate_prefix = "v"
 file_url_scheme = "file://"
-release_site_dir = "release-site"
+release_site_dir = "build_system/release_site"
 storage_ledger = "target/storage"
 test_output_root = "/tmp/capsem-test-output"
 
@@ -317,9 +317,9 @@ identity_inputs = [
     ".cargo/config.toml",
     "build_system/pyproject.toml",
     "build_system/uv.lock",
-    "release-site/package.json",
-    "release-site/pnpm-lock.yaml",
-    "release-site/pnpm-workspace.yaml",
+    "build_system/release_site/package.json",
+    "build_system/release_site/pnpm-lock.yaml",
+    "build_system/release_site/pnpm-workspace.yaml",
     "build_system/docker/Dockerfile.install-builder",
     "build_system/docker/materialize-install-os.sh",
     "scripts/configure-apt-snapshot.sh",
@@ -380,7 +380,7 @@ glowup = "target/local-release-glowup"
 glowup_evidence = "target/local-release-glowup-evidence"
 
 # Written by the container as its own user, and handed back on the way out.
-extra_owned_paths = ["release-site/node_modules", "release-site/dist"]
+extra_owned_paths = ["build_system/release_site/node_modules", "build_system/release_site/dist"]
 
 # ---------------------------------------------------------------------------
 # The Linux package rail
@@ -444,7 +444,7 @@ test_output_root = "CAPSEM_TEST_OUTPUT_ROOT"
 project_environment = "UV_PROJECT_ENVIRONMENT"
 # pnpm asks before purging a `node_modules` it did not create, and refuses when
 # it cannot ask: `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`. The install
-# proof reaches that state legitimately now -- `/src/release-site` comes from
+# proof reaches that state legitimately now -- `/src/build_system/release_site` comes from
 # the image while its `node_modules` is a cross-run volume, so the two can
 # disagree. This is a gate; there is never a TTY and never anyone to ask.
 ci = "CI"
@@ -1174,7 +1174,7 @@ run_marker = "CAPSEM_GATE_RUN"
 # near-identical `if ! ... ; then ... fi` blocks in shell, where the only thing
 # that varied was the probe and the install.
 sync = ["uv", "sync", "--project", "build_system", "--frozen"]
-node_workspaces = ["frontend", "docs", "site", "release-site"]
+node_workspaces = ["frontend", "docs", "site", "build_system/release_site"]
 # CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
 # prompt, which hangs an unattended gate when the store layout drifts from the
 # lockfile.
@@ -2096,7 +2096,7 @@ config_root = "target/config"
 # module needs and more than a release lane has warmed: the docs and site
 # stores are not populated there, so installing them reached the network from
 # inside a namespace that has none.
-node_workspaces = ["release-site"]
+node_workspaces = ["build_system/release_site"]
 profiles_subdir = "profiles"
 # Overridable so a release lane can point the same proof at pulled artifacts
 # instead of source-built ones.
@@ -2932,7 +2932,7 @@ reclaimable = [
     "target/test-benchmarks",
     "target/linux-rust-coverage",
     "target/install-test-assets",
-    "target/release-channel",
+    "target/distribution",
     "target/release-module-glowup",
     "target/release-module-channel-switch",
 ]

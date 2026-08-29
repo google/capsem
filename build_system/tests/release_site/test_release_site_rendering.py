@@ -11,7 +11,7 @@ from helpers.release_site import (
     build_release_site_from_fixture,
 )
 
-RELEASE_SITE_SRC = PROJECT_ROOT / "release-site" / "src"
+RELEASE_SITE_SRC = PROJECT_ROOT / "build_system" / "release_site" / "src"
 
 
 def test_site_loader_reads_channels_not_health() -> None:

@@ -81,7 +81,7 @@ def release_contracts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]
 
     # This module owns its prerequisites, which AGENTS.md requires of every
     # one of them and this one did not do. `test_local_multichannel_dist_contract`
-    # runs `pnpm --dir release-site run build:channel`, and `node_modules` is
+    # runs `pnpm --dir build_system/release_site run build:channel`, and `node_modules` is
     # gitignored -- so on a warm machine an earlier build had installed it and
     # on a clean one the suite died with `sh: astro: command not found`.
     #
