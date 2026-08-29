@@ -113,10 +113,12 @@ uv run --project build_system --frozen python scripts/check-remote-release-readi
 ```
 
 It verifies that the local checkout has no unpublished commits relative to
-`origin/main`; remote `ci.yaml` exposes `pr-gate`, aggregates `scope`, `fast-gate`,
-`test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and
-`release-site-build`, runs with `if: ${{ always() }}` and asserts every
-dependency result; branch protection or active branch rulesets require
+`origin/main`; resolves the remote branch to one immutable commit; reads both
+`ci.yaml` and its dispatched verdict script from that commit; proves that
+`pr-gate` aggregates `scope`, `fast-gate`, `test-linux`, `test`, `test-install`,
+`docs-build`, `site-build`, and `release-site-build`, runs with
+`if: ${{ always() }}`, and rejects every failing, cancelled, or unexpectedly
+skipped dependency result; branch protection or active branch rulesets require
 `pr-gate`; and `release.capsem.org` resolves and serves the generated release
 graph. The public contract is the root
 `channels.json`, one selectable channel manifest URL

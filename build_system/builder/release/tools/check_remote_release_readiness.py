@@ -17,7 +17,14 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
+
+from capsem_builder.release.tools.remote_ci_gate import (
+    GATE_SCRIPT_PATH,
+    WORKFLOW_PATH,
+    pr_gate_contract_failures,
+    workflow_job_block,
+)
 
 try:
     import blake3
@@ -28,26 +35,6 @@ else:
     BLAKE3_IMPORT_ERROR = None
 
 
-REQUIRED_PR_GATE_JOBS = (
-    "scope",
-    "fast-gate",
-    "test-linux",
-    "test",
-    "test-install",
-    "docs-build",
-    "site-build",
-    "release-site-build",
-)
-REQUIRED_PR_GATE_RESULT_CHECKS = (
-    ("scope", "SCOPE_RESULT"),
-    ("fast-gate", "FAST_GATE_RESULT"),
-    ("test-linux", "TEST_LINUX_RESULT"),
-    ("test", "TEST_MACOS_RESULT"),
-    ("test-install", "TEST_INSTALL_RESULT"),
-    ("docs-build", "DOCS_BUILD_RESULT"),
-    ("site-build", "SITE_BUILD_RESULT"),
-    ("release-site-build", "RELEASE_SITE_BUILD_RESULT"),
-)
 ALLOWED_PROFILE_CONFIG_KINDS = {
     "profile",
     "mcp",
@@ -104,7 +91,7 @@ def main() -> int:
 
     checks = [
         check_local_branch_publication(args.remote, args.branch),
-        check_remote_pr_gate(args.repo),
+        check_remote_pr_gate(args.repo, args.branch),
         check_remote_branch_protection(args.repo, args.branch),
         check_release_site_dns(args.release_site),
         check_release_site_contract(args.release_site, args.channel),
@@ -154,15 +141,28 @@ def check_local_branch_publication(remote: str, branch: str) -> CheckResult:
     return CheckResult("local branch publication", True, f"HEAD matches {base}")
 
 
-def check_remote_pr_gate(repo: str) -> CheckResult:
-    workflow = run_text(["gh", "workflow", "view", "ci.yaml", "--repo", repo, "--yaml"])
+def check_remote_pr_gate(repo: str, branch: str) -> CheckResult:
+    registered = run_text(["gh", "workflow", "view", "ci.yaml", "--repo", repo, "--yaml"])
+    if registered.returncode != 0:
+        return CheckResult("remote ci.yaml pr-gate", False, registered.stderr.strip())
+    revision = run_text(
+        ["gh", "api", f"repos/{repo}/commits/{quote(branch, safe='')}", "--jq", ".sha"]
+    )
+    source_commit = revision.stdout.strip().lower()
+    if revision.returncode != 0 or re.fullmatch(r"[0-9a-f]{40}", source_commit) is None:
+        detail = revision.stderr.strip() or f"invalid remote {branch} commit: {source_commit!r}"
+        return CheckResult("remote ci.yaml pr-gate", False, detail)
+
+    workflow = _remote_source(repo, source_commit, WORKFLOW_PATH)
+    verdict = _remote_source(repo, source_commit, GATE_SCRIPT_PATH)
     if workflow.returncode != 0:
         return CheckResult("remote ci.yaml pr-gate", False, workflow.stderr.strip())
-    text = workflow.stdout
-    if "pr-gate:" not in text:
+    if verdict.returncode != 0:
+        return CheckResult("remote ci.yaml pr-gate", False, verdict.stderr.strip())
+    if "pr-gate:" not in workflow.stdout:
         return CheckResult("remote ci.yaml pr-gate", False, "remote ci.yaml lacks pr-gate")
-    pr_gate = workflow_job_block(text, "pr-gate")
-    failures = pr_gate_contract_failures(pr_gate)
+    pr_gate = workflow_job_block(workflow.stdout, "pr-gate")
+    failures = pr_gate_contract_failures(pr_gate, verdict.stdout)
     if failures:
         return CheckResult(
             "remote ci.yaml pr-gate",
@@ -172,63 +172,19 @@ def check_remote_pr_gate(repo: str) -> CheckResult:
     return CheckResult(
         "remote ci.yaml pr-gate",
         True,
-        "pr-gate aggregates required jobs and asserts all results",
+        f"pr-gate at {source_commit[:12]} aggregates required jobs and asserts all results",
     )
 
 
-def workflow_job_block(workflow: str, name: str) -> str:
-    lines = workflow.splitlines()
-    start = next((i for i, line in enumerate(lines) if line == f"  {name}:"), None)
-    if start is None:
-        return ""
-    end = len(lines)
-    for i in range(start + 1, len(lines)):
-        line = lines[i]
-        if line.startswith("  ") and not line.startswith("    ") and line.endswith(":"):
-            end = i
-            break
-    return "\n".join(lines[start:end])
-
-
-def workflow_job_needs(job_block: str) -> set[str]:
-    inline = re.search(r"(?m)^\s+needs:\s*\[([^\]]+)\]\s*$", job_block)
-    if inline:
-        return {part.strip() for part in inline.group(1).split(",") if part.strip()}
-
-    needs: set[str] = set()
-    lines = job_block.splitlines()
-    for i, line in enumerate(lines):
-        if re.match(r"^\s+needs:\s*$", line):
-            for item in lines[i + 1 :]:
-                if not item.startswith("      - "):
-                    break
-                needs.add(item.removeprefix("      - ").strip())
-            break
-    return needs
-
-
-def pr_gate_contract_failures(job_block: str) -> list[str]:
-    failures: list[str] = []
-    missing = sorted(set(REQUIRED_PR_GATE_JOBS) - workflow_job_needs(job_block))
-    if missing:
-        failures.append("does not aggregate required jobs: " + ", ".join(missing))
-    if not re.search(r"(?m)^\s+if:\s*\$\{\{\s*always\(\)\s*\}}\s*$", job_block):
-        failures.append("pr-gate does not run with if: ${{ always() }}")
-    for job, env_name in REQUIRED_PR_GATE_RESULT_CHECKS:
-        if f"needs.{job}.result" not in job_block or not result_success_asserted(
-            job_block, env_name
-        ):
-            failures.append(f"pr-gate does not assert {job} result")
-    return failures
-
-
-def result_success_asserted(job_block: str, env_name: str) -> bool:
-    return (
-        re.search(
-            rf"(?m)^\s*(?:test|\[)\s+[\"']?\${re.escape(env_name)}[\"']?\s*=\s*success",
-            job_block,
-        )
-        is not None
+def _remote_source(repo: str, revision: str, path: str) -> TextResult:
+    return run_text(
+        [
+            "gh",
+            "api",
+            "--header",
+            "Accept: application/vnd.github.raw+json",
+            f"repos/{repo}/contents/{path}?ref={revision}",
+        ]
     )
 
 

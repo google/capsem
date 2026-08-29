@@ -25,6 +25,7 @@ from capsem_builder.gate.tools.web import check_cloudflare_pages_project as CLOU
 from capsem_builder.release.tools import build_complete_release_channel as COMPLETE_CHANNEL
 from capsem_builder.release.tools import check_remote_release_readiness as READINESS
 from capsem_builder.release.tools import local_release_glowup as LOCAL_GLOWUP
+from capsem_builder.release.tools import remote_ci_gate as REMOTE_CI_GATE
 from capsem_builder.release.tools import verify_channel_downloads as VERIFY_DOWNLOADS
 from capsem_builder.release.tools import (
     write_binary_channel_staging_proof as BINARY_STAGING_PROOF,
@@ -3337,12 +3338,14 @@ def test_release_channel_deploy_validates_the_deployed_channel_shape() -> None:
 
 def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -> None:
     script = _source_text("scripts/check-remote-release-readiness.py")
+    remote_gate = _source_text("build_system/builder/release/tools/remote_ci_gate.py")
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
 
     assert "Read-only remote release readiness checks" in script
     assert 'git", "rev-list", "--left-right", "--count"' in script
     assert 'gh", "workflow", "view", "ci.yaml"' in script
+    assert "application/vnd.github.raw+json" in script
     assert "branches/{branch}/protection" in script
     assert "repos/{repo}/rules/branches/{branch}" in script
     assert "socket.getaddrinfo" in script
@@ -3353,8 +3356,9 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     assert "channels catalog" in script
     assert "channel manifest BLAKE3 mismatch" in script
     assert "pr-gate" in script
-    assert "REQUIRED_PR_GATE_JOBS" in script
-    assert '"release-site-build"' in script
+    assert "REQUIRED_PR_GATE_JOBS" in remote_gate
+    assert "gate_script_contract_failures" in remote_gate
+    assert '"release-site-build"' in remote_gate
     assert "current asset release date" in script
     assert 'RELEASE_VALIDATOR_USER_AGENT = "CapsemReleaseValidator/1.0"' in script
     assert "release_site_request(url)" in script
@@ -3372,12 +3376,13 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
 
     assert "scripts/check-remote-release-readiness.py" in docs
     assert "read-only" in docs
-    assert "remote `ci.yaml` exposes `pr-gate`" in docs_text
+    assert "reads both `ci.yaml` and its dispatched verdict script from that commit" in docs_text
     assert (
         "aggregates `scope`, `fast-gate`, `test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and `release-site-build`"
         in (docs_text)
     )
-    assert "runs with `if: ${{ always() }}` and asserts every dependency result" in docs_text
+    assert "runs with `if: ${{ always() }}`" in docs_text
+    assert "rejects every failing, cancelled, or unexpectedly skipped dependency result" in docs_text
     assert "branch protection or active branch rulesets require `pr-gate`" in docs_text
     assert "`release.capsem.org` resolves and serves the generated release graph" in docs_text
 
@@ -3479,7 +3484,7 @@ def test_dependent_release_activation_order_is_documented() -> None:
 
 
 def test_remote_release_readiness_requires_expanded_pr_gate() -> None:
-    module = _readiness_checker_module()
+    module = REMOTE_CI_GATE
 
     inline = """
 jobs:
@@ -3517,34 +3522,6 @@ jobs:
     if: ${{ always() }}
 """.strip()
     stale = inline.replace(", docs-build, site-build, release-site-build", "")
-    non_failing = inline + "\n    steps:\n      - run: echo ok\n"
-    fail_closed = (
-        inline
-        + """
-    if: ${{ always() }}
-    steps:
-      - name: Require all CI jobs
-        env:
-          FAST_GATE_RESULT: ${{ needs.fast-gate.result }}
-          SCOPE_RESULT: ${{ needs.scope.result }}
-          TEST_LINUX_RESULT: ${{ needs.test-linux.result }}
-          TEST_MACOS_RESULT: ${{ needs.test.result }}
-          TEST_INSTALL_RESULT: ${{ needs.test-install.result }}
-          DOCS_BUILD_RESULT: ${{ needs.docs-build.result }}
-          SITE_BUILD_RESULT: ${{ needs.site-build.result }}
-          RELEASE_SITE_BUILD_RESULT: ${{ needs.release-site-build.result }}
-        run: |
-          test "$FAST_GATE_RESULT" = success
-          test "$SCOPE_RESULT" = success
-          test "$TEST_LINUX_RESULT" = success
-          test "$TEST_MACOS_RESULT" = success
-          test "$TEST_INSTALL_RESULT" = success
-          test "$DOCS_BUILD_RESULT" = success
-          test "$SITE_BUILD_RESULT" = success
-          test "$RELEASE_SITE_BUILD_RESULT" = success
-"""
-    )
-
     assert module.workflow_job_needs(module.workflow_job_block(inline, "pr-gate")) == {
         "scope",
         "fast-gate",
@@ -3570,18 +3547,12 @@ jobs:
         "site-build",
         "release-site-build",
     }.issubset(module.workflow_job_needs(module.workflow_job_block(stale, "pr-gate")))
-    assert module.pr_gate_contract_failures(module.workflow_job_block(fail_closed, "pr-gate")) == []
-    assert module.pr_gate_contract_failures(module.workflow_job_block(non_failing, "pr-gate")) == [
-        "pr-gate does not run with if: ${{ always() }}",
-        "pr-gate does not assert scope result",
-        "pr-gate does not assert fast-gate result",
-        "pr-gate does not assert test-linux result",
-        "pr-gate does not assert test result",
-        "pr-gate does not assert test-install result",
-        "pr-gate does not assert docs-build result",
-        "pr-gate does not assert site-build result",
-        "pr-gate does not assert release-site-build result",
-    ]
+    current_gate = module.workflow_job_block(_workflow_text("ci.yaml"), "pr-gate")
+    verdict = _source_text("scripts/require-ci-jobs.sh")
+    assert module.pr_gate_contract_failures(current_gate, verdict) == []
+    assert module.pr_gate_contract_failures(
+        module.workflow_job_block(stale, "pr-gate"), verdict
+    )
 
 
 def test_remote_release_readiness_checker_reports_unpublished_local_commits() -> None:

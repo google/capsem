@@ -192,6 +192,27 @@ def test_a_job_removed_from_the_gate_is_caught() -> None:
     assert mismatches(document, script)[Gap.UNWAITED] == [dropped]
 
 
+def optional_required_jobs(document: dict) -> list[str]:
+    """Required jobs whose own failure GitHub is allowed to ignore."""
+    return sorted(
+        name
+        for name in declared_jobs(document)
+        if document[Key.JOBS][name].get("continue-on-error")
+        not in {None, False, "false", "${{ false }}"}
+    )
+
+
+def test_no_required_job_is_optional() -> None:
+    document, _script = real()
+    assert not optional_required_jobs(document), DERIVED_RATIONALE
+
+
+def test_a_job_level_continue_on_error_is_caught() -> None:
+    document, _script = real()
+    document[Key.JOBS]["test-install"]["continue-on-error"] = True
+    assert optional_required_jobs(document) == ["test-install"]
+
+
 def test_shell_presentation_does_not_change_the_required_set() -> None:
     """Quoting a loop word is not a change to what the shell requires."""
     _document, script = real()
