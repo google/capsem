@@ -126,7 +126,7 @@ class Gating(RecordingRunner):
             materialized.mkdir(parents=True, exist_ok=True)
             (materialized / "profile.toml").write_text(f'id = "{profile}"\n')
             config = gate_config.for_root(self.root)
-            manifest = output / config.suites.pytest.test_manifest
+            manifest = output / config.assets.merged_assets_dir / config.install.manifest_name
             manifest.parent.mkdir(parents=True, exist_ok=True)
             manifest.write_text("{}")
         return completed
@@ -370,7 +370,9 @@ def test_verified_base_profile_becomes_the_canonical_following_input(
     stale_profiles.mkdir(parents=True)
     (stale_profiles / "stale.toml").write_text("stale = true\n")
     stale_config = root / CONFIG.functional.config_root
-    stale_config_manifest = stale_config / CONFIG.suites.pytest.test_manifest
+    stale_config_manifest = (
+        stale_config / CONFIG.assets.merged_assets_dir / CONFIG.install.manifest_name
+    )
     stale_config_manifest.parent.mkdir(parents=True, exist_ok=True)
     stale_config_manifest.write_text('{"stale":true}\n')
     stale_sibling = stale_config / "retired" / "stale.toml"

@@ -210,7 +210,9 @@ class AssetGate:
         config_root = profile_root / self._assets.merged_config_dir
         profiles_dir = config_root / self._assets.materialized_profiles_dir
         manifest = assets / self._config.install.manifest_name
-        config_manifest = config_root / self._config.suites.pytest.test_manifest
+        config_manifest = (
+            config_root / self._assets.merged_assets_dir / self._config.install.manifest_name
+        )
         if not manifest.is_file():
             raise GateError(f"verified base asset manifest is missing: {manifest}")
         if not profiles_dir.is_dir():
