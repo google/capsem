@@ -2,24 +2,17 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
+import importlib
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate.tools.web import check_cloudflare_pages_project as CLOUDFLARE_PROJECT
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _checker_module():
-    module_path = PROJECT_ROOT / "scripts/check-cloudflare-pages-project.py"
-    spec = importlib.util.spec_from_file_location("check_cloudflare_pages_project", module_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return importlib.reload(CLOUDFLARE_PROJECT)
 
 
 def _project(checker, production_branch: object) -> object:

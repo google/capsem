@@ -30,6 +30,7 @@ packages = [
     "capsem_builder.gate.tools.audit",
     "capsem_builder.gate.tools.ci",
     "capsem_builder.gate.tools.doctor",
+    "capsem_builder.gate.tools.web",
     "capsem_builder.image",
     "capsem_builder.image.tools",
     "capsem_builder.image.tools.bootstrap",

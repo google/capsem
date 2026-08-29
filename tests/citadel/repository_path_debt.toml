@@ -212,7 +212,6 @@ version = 1
 "tests/capsem-install/test_manifest_hydration.py" = "fd86e7449a0c736a31dfaee12ab1899977cdbd5f62ad79d3f6e69b8992bd3d86"
 "tests/capsem-mcp/test_stress_suspend_resume.py" = "4678617f3cc53b17785a8ea897e7346732b78fbc99154af1c530cb96f4ab6930"
 "build_system/tests/gate/test_run_doctor.py" = "b45932b98e4df6c10de1324359a9be6ac1ae5c906d64276a04075c62ccc1e9d0"
-"tests/capsem-release/test_cloudflare_project_contract.py" = "d820b8dc51e61d365f0c1fa05ceef484a99916d9c2c843ccbdf43907b586c56b"
 "tests/capsem-release/test_fetch_release_artifacts.py" = "e125287b7a60c20e2ba0c4bcc39c572bbbd7d5ac2cf5d682f0823224b35aa6b0"
 "tests/capsem-release/test_public_binary_release_gate.py" = "d989926ca5a035a39e45dade38f1256149c14206bed3f94167ae00f74757141b"
 "tests/capsem-release/test_release_binaries_script.py" = "84d1aeef37a0b289fcbf40e9d08d33297129da0f36f7cb09097655a29e187959"

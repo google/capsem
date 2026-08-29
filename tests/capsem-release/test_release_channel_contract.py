@@ -28,6 +28,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import pytest
+from capsem_builder.gate.tools.web import cloudflare_pages_rollback as ROLLBACK
 from capsem_builder.release.tools import build_complete_release_channel as BUILD_COMPLETE
 from capsem_builder.release.tools import check_channel_deploy_freshness as DEPLOY_FRESHNESS
 from helpers.release_site import build_release_channel_site
@@ -41,13 +42,6 @@ SNAPSHOT_SPEC = importlib.util.spec_from_file_location(
 assert SNAPSHOT_SPEC is not None and SNAPSHOT_SPEC.loader is not None
 SNAPSHOT = importlib.util.module_from_spec(SNAPSHOT_SPEC)
 SNAPSHOT_SPEC.loader.exec_module(SNAPSHOT)
-ROLLBACK_SPEC = importlib.util.spec_from_file_location(
-    "cloudflare_pages_rollback",
-    PROJECT_ROOT / "scripts" / "cloudflare_pages_rollback.py",
-)
-assert ROLLBACK_SPEC is not None and ROLLBACK_SPEC.loader is not None
-ROLLBACK = importlib.util.module_from_spec(ROLLBACK_SPEC)
-ROLLBACK_SPEC.loader.exec_module(ROLLBACK)
 pytestmark = pytest.mark.build_chain
 
 

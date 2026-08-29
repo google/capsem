@@ -21,6 +21,7 @@ import yaml
 from capsem_builder.gate.shellnodes import arm_named
 from capsem_builder.gate.shellparse import parse as parse_shell
 from capsem_builder.gate.tools.audit import release_selections
+from capsem_builder.gate.tools.web import check_cloudflare_pages_project as CLOUDFLARE_PROJECT
 from capsem_builder.release.tools import build_complete_release_channel as COMPLETE_CHANNEL
 from capsem_builder.release.tools import check_remote_release_readiness as READINESS
 from capsem_builder.release.tools import local_release_glowup as LOCAL_GLOWUP
@@ -110,14 +111,7 @@ def _release_site_contract_module():
 
 
 def _cloudflare_pages_project_module():
-    module_path = PROJECT_ROOT / "scripts/check-cloudflare-pages-project.py"
-    spec = importlib.util.spec_from_file_location("check_cloudflare_pages_project", module_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return importlib.reload(CLOUDFLARE_PROJECT)
 
 
 def _boot_timing_module():
@@ -312,6 +306,7 @@ def _workflow_text(name: str) -> str:
 def _source_text(path: str) -> str:
     package_sources = {
         "scripts/build-complete-release-channel.py": Path(COMPLETE_CHANNEL.__file__),
+        "scripts/check-cloudflare-pages-project.py": Path(CLOUDFLARE_PROJECT.__file__),
         "scripts/check-remote-release-readiness.py": Path(READINESS.__file__),
         "scripts/local-release-glowup.py": Path(LOCAL_GLOWUP.__file__),
         "scripts/verify-channel-downloads.py": Path(VERIFY_DOWNLOADS.__file__),

@@ -2,28 +2,23 @@
 
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import json
 import tomllib
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate.tools.web import check_docs_holding_build as DOCS_HOLDING_BUILD
 from helpers.workflow_contract import workflow_reachable_text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DOCS_ROOT = PROJECT_ROOT / "docs"
-VERIFIER = PROJECT_ROOT / "scripts" / "check-docs-holding-build.py"
 GATE_CONFIG = PROJECT_ROOT / "config" / "gate.toml"
 RELEASE_LINE = tomllib.loads(GATE_CONFIG.read_text(encoding="utf-8"))["release"]["line"]
 
 
 def _verifier_module():
-    assert VERIFIER.is_file(), "the docs build has no artifact-level holding-page verifier"
-    spec = importlib.util.spec_from_file_location("check_docs_holding_build", VERIFIER)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.reload(DOCS_HOLDING_BUILD)
 
 
 def _holding_html() -> str:
