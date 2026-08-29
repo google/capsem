@@ -51,7 +51,7 @@ fi
 echo "--- Build frontend ---"
 (cd web/app && CI=true pnpm install --offline --frozen-lockfile \
     --store-dir "$CAPSEM_PNPM_STORE")
-bash scripts/check-web-surface.sh frontend-build
+bash build_system/scripts/web/check-web-surface.sh frontend-build
 
 echo "--- Build agent binaries ---"
 cargo build --release --locked --offline --target "$RUST_TARGET" -p capsem-agent

@@ -423,7 +423,7 @@ def test_modules_retain_complete_named_quality_gates() -> None:
         "build_system/scripts/audit/check-cargo-audit.py",
         "build_system/scripts/audit/audit-pnpm-bulk.py",
         "cargo clippy --workspace --all-targets -- -D warnings",
-        "bash scripts/check-web-surface.sh frontend",
+        "bash build_system/scripts/web/check-web-surface.sh frontend",
         "cargo llvm-cov nextest --workspace --bins --lib --tests",
         "cargo test --workspace --doc",
         "tests/capsem-mcp/test_state_transitions.py",

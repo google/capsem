@@ -164,14 +164,14 @@ jobs:
         env:
           RELEASE_CHANNEL_PROJECT: release
         run: |
-          python scripts/check-cloudflare-pages-project.py \
+          python build_system/scripts/web/check-cloudflare-pages-project.py \
             --project "$RELEASE_CHANNEL_PROJECT" \
             --production-branch "${{ inputs.deploy_branch || 'main' }}"
 
       - name: Capture current production deployment
         if: ${{ inputs.activate_production }}
         run: |
-          python scripts/cloudflare_pages_rollback.py capture \
+          python build_system/scripts/web/cloudflare_pages_rollback.py capture \
             --project release \
             --state target/release-channel-deployment/prior-cloudflare.json
 
@@ -180,7 +180,7 @@ jobs:
         env:
           RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
         run: |
-          uv run --project build_system --frozen python scripts/check-release-site-contract.py \
+          uv run --project build_system --frozen python build_system/release_site/scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
             --catalog-members \
             --snapshot-only \
@@ -206,7 +206,7 @@ jobs:
           if [ "$VALIDATE_COMPLETE_PUBLIC_CHANNELS" = "true" ]; then
             CHANNEL_ARGS=(--catalog-members)
           fi
-          uv run --project build_system --frozen python scripts/check-release-site-contract.py \
+          uv run --project build_system --frozen python build_system/release_site/scripts/check-release-site-contract.py \
             --base-url "$PREVIEW_URL" \
             "${CHANNEL_ARGS[@]}" \
             --dist "$DIST_DIR" \
@@ -232,7 +232,7 @@ jobs:
         continue-on-error: true
         env:
           PRODUCTION_DEPLOYMENT_ID: ${{ steps.production.outputs.pages-deployment-id }}
-        run: python scripts/cloudflare_pages_rollback.py verify --project release --deployment-id "$PRODUCTION_DEPLOYMENT_ID" --attempts 30 --delay-seconds 2
+        run: python build_system/scripts/web/cloudflare_pages_rollback.py verify --project release --deployment-id "$PRODUCTION_DEPLOYMENT_ID" --attempts 30 --delay-seconds 2
 
       - name: Validate activated production bytes
         id: production_check
@@ -246,7 +246,7 @@ jobs:
           if [ "$VALIDATE_COMPLETE_PUBLIC_CHANNELS" = "true" ]; then
             CHANNEL_ARGS=(--catalog-members)
           fi
-          uv run --project build_system --frozen python scripts/check-release-site-contract.py \
+          uv run --project build_system --frozen python build_system/release_site/scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
             "${CHANNEL_ARGS[@]}" \
             --attempts 30 \
@@ -260,7 +260,7 @@ jobs:
           PRODUCTION_OUTCOME: ${{ steps.production.outcome }}
           PRODUCTION_CHECK_OUTCOME: ${{ steps.production_check.outcome }}
         run: |
-          python scripts/cloudflare_pages_rollback.py decision \
+          python build_system/scripts/web/cloudflare_pages_rollback.py decision \
             --production-outcome "$PRODUCTION_OUTCOME" \
             --validation-outcome "$PRODUCTION_CHECK_OUTCOME" \
             --github-output "$GITHUB_OUTPUT"
@@ -269,7 +269,7 @@ jobs:
         id: rollback
         if: ${{ !cancelled() && steps.recovery.outputs.restore == 'true' }}
         run: |
-          python scripts/cloudflare_pages_rollback.py restore \
+          python build_system/scripts/web/cloudflare_pages_rollback.py restore \
             --project release \
             --state target/release-channel-deployment/prior-cloudflare.json \
             --attempts 30 \
@@ -281,7 +281,7 @@ jobs:
         env:
           RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
         run: |
-          uv run --project build_system --frozen python scripts/check-release-site-contract.py \
+          uv run --project build_system --frozen python build_system/release_site/scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
             --catalog-members \
             --snapshot-only \

@@ -102,8 +102,8 @@ _build-ui profile="debug": _pnpm-install _generate-settings
 # Frontend release gate used by Sprinty and docs.
 # Build both public documentation surfaces.
 build-docs: _pnpm-install
-    bash scripts/check-web-surface.sh docs
-    bash scripts/check-web-surface.sh site
+    bash build_system/scripts/web/check-web-surface.sh docs
+    bash build_system/scripts/web/check-web-surface.sh site
 
 # Select one deliberate development surface.
 dev surface="ui": _ensure-dev-ready _pnpm-install
@@ -396,7 +396,7 @@ _release-site-pnpm-install:
     cd build_system/release_site && CI=true pnpm install --frozen-lockfile
 
 _frontend: _pnpm-install
-    bash scripts/check-web-surface.sh frontend-build
+    bash build_system/scripts/web/check-web-surface.sh frontend-build
 
 _compile: _frontend _clean-stale
     cargo build -p capsem

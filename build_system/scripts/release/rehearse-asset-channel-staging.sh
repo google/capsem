@@ -33,7 +33,7 @@ for path in "$FIXTURE_DIR" "$DIST_DIR" "$EVIDENCE_DIR"; do
     fi
 done
 
-uv run --project build_system --frozen python scripts/write-release-site-ci-fixture.py "$FIXTURE_DIR"
+uv run --project build_system --frozen python build_system/release_site/scripts/write-release-site-ci-fixture.py "$FIXTURE_DIR"
 cargo run -p capsem-admin -- assets channel build \
     --manifest "file://$FIXTURE_DIR/assets/manifest.json" \
     --assets-dir "$FIXTURE_DIR/assets" \
@@ -42,12 +42,12 @@ cargo run -p capsem-admin -- assets channel build \
     --out-dir "$DIST_DIR"
 CAPSEM_RELEASE_GRAPH="$DIST_DIR" \
     CAPSEM_RELEASE_CHANNEL_DIST="$DIST_DIR" \
-    bash scripts/check-web-surface.sh release-site-build
+    bash build_system/scripts/web/check-web-surface.sh release-site-build
 cargo run -p capsem-admin -- assets channel check \
     --channel "$CHANNEL" \
     --dist "$DIST_DIR"
 mkdir -p "$EVIDENCE_DIR"
-uv run --project build_system --frozen python scripts/check-release-site-contract.py \
+uv run --project build_system --frozen python build_system/release_site/scripts/check-release-site-contract.py \
     --base-url "file://$DIST_DIR" \
     --channel "$CHANNEL" \
     --dist "$DIST_DIR" \

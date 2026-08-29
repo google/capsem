@@ -375,9 +375,9 @@ asset_manifest = "/home/capsem/.capsem/assets/manifest.json"
 path = "tests/capsem-install/"
 glowup_script = "build_system/scripts/release/local-release-glowup.py"
 macos_report_check = "build_system/scripts/build/check-macos-native-glowup.py"
-serve_script = "scripts/serve-release-test-root.py"
+serve_script = "build_system/release_site/scripts/serve-release-test-root.py"
 sbom_script = "build_system/scripts/release/generate-host-binary-sbom.py"
-web_surface_script = "scripts/check-web-surface.sh"
+web_surface_script = "build_system/scripts/web/check-web-surface.sh"
 runtime_dependencies_script = "build_system/packaging/linux/install-deb-runtime-dependencies.py"
 runtime_dependencies_config = "config/gate.toml"
 # The Debian package name, as dpkg-query reports it.
@@ -1621,7 +1621,7 @@ guest_crate = "capsem-agent"
 release_binary = "target/debug/capsem"
 
 [frontend]
-build_script = "scripts/check-web-surface.sh"
+build_script = "build_system/scripts/web/check-web-surface.sh"
 build_target = "frontend-build"
 # capsem-app embeds web/app/dist at compile time, so the bundle has to exist
 # before cargo reads it.
@@ -1830,7 +1830,7 @@ enforced_by = ["fast.audit.skills", "fast.citadel"]
 # An entry that no longer applies fails as well, so this cannot quietly refill.
 
 [websurfaces]
-script = "scripts/check-web-surface.sh"
+script = "build_system/scripts/web/check-web-surface.sh"
 # Each is a separate target of the same script, so a failure names the surface.
 #
 # `frontend` was one target running a type-check, a unit-test run and a build.

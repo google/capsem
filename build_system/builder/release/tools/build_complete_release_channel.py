@@ -221,7 +221,7 @@ def build_complete_dist(args: argparse.Namespace) -> None:
     # output, and callers that pass a graph fixture set only the first.
     env["CAPSEM_RELEASE_GRAPH"] = str(out_dir)
     env["CAPSEM_RELEASE_CHANNEL_DIST"] = str(out_dir)
-    run(["bash", "scripts/check-web-surface.sh", "release-site-build"], env=env)
+    run(["bash", "build_system/scripts/web/check-web-surface.sh", "release-site-build"], env=env)
     for channel in graph_channels:
         command = [
             "uv",

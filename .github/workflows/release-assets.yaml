@@ -211,7 +211,7 @@ jobs:
             echo "Dry run: skipping Cloudflare Pages project preflight."
             exit 0
           fi
-          python scripts/check-cloudflare-pages-project.py \
+          python build_system/scripts/web/check-cloudflare-pages-project.py \
             --project "$RELEASE_CHANNEL_PROJECT"
 
   resolve-profile-assets:

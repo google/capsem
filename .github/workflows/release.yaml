@@ -315,7 +315,7 @@ jobs:
       - run: cd web/app && pnpm install --frozen-lockfile
 
       - name: Build frontend
-        run: bash scripts/check-web-surface.sh frontend-build
+        run: bash build_system/scripts/web/check-web-surface.sh frontend-build
 
       - name: Install exact config-owned Cargo tools
         env:

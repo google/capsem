@@ -5,7 +5,7 @@ on:
     paths:
       - .github/workflows/site.yaml
       - README.md
-      - scripts/check-web-surface.sh
+      - build_system/scripts/web/check-web-surface.sh
       - build_system/scripts/build/lib/exec_lock.sh
       - web/graphics/**
       - web/marketing/**
@@ -34,7 +34,7 @@ jobs:
       - name: Install
         run: cd web/marketing && pnpm install --frozen-lockfile
       - name: Build
-        run: bash scripts/check-web-surface.sh site
+        run: bash build_system/scripts/web/check-web-surface.sh site
       - name: Deploy
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd
@@ -56,7 +56,7 @@ jobs:
               && grep -qi '^content-type: text/html' /tmp/site-headers.txt \
               && curl -fsSL "$SITE_URL/" -o /tmp/site-index.html \
               && grep -q '<main id="main">' /tmp/site-index.html \
-              && python3 scripts/marketing_install_surface.py /tmp/site-index.html \
+              && python3 build_system/scripts/web/marketing_install_surface.py /tmp/site-index.html \
               && curl -fsSL "$SITE_URL/later/" -o /tmp/site-later.html \
               && grep -q '<main id="main">' /tmp/site-later.html
             then

@@ -51,7 +51,7 @@ jobs:
           # Few attempts, short delay: this is observing steady state, not
           # waiting for a deploy to propagate. A channel that needs thirty
           # retries to answer is already failing its users.
-          uv run --project build_system --frozen python scripts/check-release-site-contract.py \
+          uv run --project build_system --frozen python build_system/release_site/scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
             --catalog-members \
             --attempts 3 \

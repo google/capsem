@@ -47,7 +47,7 @@ def test_web_tools_import_without_a_repository_checkout(
 
 def test_web_launchers_are_thin_direct_commands() -> None:
     for name, module in COMMANDS.items():
-        path = REPOSITORY_ROOT / "scripts" / name
+        path = REPOSITORY_ROOT / "build_system" / "scripts" / "web" / name
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source)
         assert len(source.splitlines()) <= 21, f"{name} contains reusable behavior"

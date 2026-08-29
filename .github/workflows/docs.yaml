@@ -7,8 +7,8 @@ on:
       - README.md
       - build_system/builder/gate/tools/web/check_docs_holding_build.py
       - config/gate.toml
-      - scripts/check-docs-holding-build.py
-      - scripts/check-web-surface.sh
+      - build_system/scripts/web/check-docs-holding-build.py
+      - build_system/scripts/web/check-web-surface.sh
       - build_system/scripts/build/lib/exec_lock.sh
       - web/docs/**
 
@@ -36,7 +36,7 @@ jobs:
       - name: Install
         run: cd web/docs && pnpm install --frozen-lockfile
       - name: Build
-        run: bash scripts/check-web-surface.sh docs
+        run: bash build_system/scripts/web/check-web-surface.sh docs
       - name: Deploy
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd
@@ -52,4 +52,4 @@ jobs:
         env:
           SITE_URL: https://docs.capsem.org
           OLD_ROUTE_URL: https://docs.capsem.org/getting-started/
-        run: bash scripts/smoke-docs-site.sh
+        run: bash build_system/scripts/web/smoke-docs-site.sh

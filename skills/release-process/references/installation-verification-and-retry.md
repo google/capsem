@@ -122,7 +122,7 @@ that tests the status code passes while the manifest is absent.
 
 Validate the bytes: parse the JSON, confirm the expected channel and version,
 and verify the digest the catalog claims matches what was served.
-`scripts/check-release-site-contract.py` does this and fetches every artifact a
+`build_system/release_site/scripts/check-release-site-contract.py` does this and fetches every artifact a
 manifest references, verifying size and sha256.
 
 It runs at deploy time and, via `live-channel-watch.yaml`, daily and on demand.
@@ -135,7 +135,7 @@ first.
 Run it by hand whenever you need to answer "is the channel healthy right now?":
 
 ```bash
-uv run --project build_system --frozen python scripts/check-release-site-contract.py \
+uv run --project build_system --frozen python build_system/release_site/scripts/check-release-site-contract.py \
   --base-url https://release.capsem.org --channel stable --attempts 1
 ```
 
@@ -181,6 +181,6 @@ learned from prior failures.
 Before running a live binary or profile channel deploy, verify the Cloudflare
 Pages project serving `release.capsem.org`, its `release.capsem.org` custom
 domain, and both `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`.
-After deployment, run `scripts/check-release-site-contract.py`; it validates
+After deployment, run `build_system/release_site/scripts/check-release-site-contract.py`; it validates
 BLAKE3/SHA-256 content, graph agreement, attestation references, and cache
 headers rather than only checking that files exist.

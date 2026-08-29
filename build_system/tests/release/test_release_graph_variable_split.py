@@ -133,7 +133,7 @@ def test_no_caller_sets_the_output_name_where_a_graph_fixture_goes() -> None:
     to survive exactly that. Fixtures set the input name now, and a file
     reaching the output is a bug rather than a mode.
     """
-    surface = _code(PROJECT_ROOT / "scripts/check-web-surface.sh")
+    surface = _code(PROJECT_ROOT / "build_system/scripts/web/check-web-surface.sh")
 
     fixture_lines = [
         line for line in surface.splitlines() if ".json" in line and OUTPUT in line

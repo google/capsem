@@ -33,7 +33,7 @@ VALIDATOR = "check-release-site-contract.py"
 
 
 def _validator_module() -> Any:
-    path = PROJECT_ROOT / "scripts" / VALIDATOR
+    path = PROJECT_ROOT / "build_system" / "release_site" / "scripts" / VALIDATOR
     spec = importlib.util.spec_from_file_location("live_channel_validator", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

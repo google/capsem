@@ -94,7 +94,7 @@ OBOM, existing attestations, and GitHub logs are the evidence; do not add a
 parallel result or provenance file. Corporate manifest/profile authoring also
 goes through `capsem-admin`; corporations do not build Capsem binaries.
 
-The deploy workflow runs `scripts/check-release-site-contract.py` against
+The deploy workflow runs `build_system/release_site/scripts/check-release-site-contract.py` against
 `https://release.capsem.org` after Cloudflare publishes the generated site. That
 Python validator reuses the remote release readiness contract and must validate
 the root channel catalog, selected manifest, profile-owned
@@ -126,8 +126,8 @@ Cloudflare Pages project serving `release.capsem.org`, attach the `release.capse
 custom domain, and configure `CLOUDFLARE_ACCOUNT_ID` plus
 `CLOUDFLARE_API_TOKEN` in GitHub Actions secrets. `release-channel.yaml` fails
 before deploy if either secret is missing or
-`scripts/check-cloudflare-pages-project.py` cannot see the Pages project through
-the configured account/token, then runs `scripts/check-release-site-contract.py`
+`build_system/scripts/web/check-cloudflare-pages-project.py` cannot see the Pages project through
+the configured account/token, then runs `build_system/release_site/scripts/check-release-site-contract.py`
 and smokes `https://release.capsem.org/`, `/channels.json`, and the channel
 manifest through the public custom domain after Cloudflare publishes the
 generated site. `release-channel-staging.yaml` proves this reusable deploy path

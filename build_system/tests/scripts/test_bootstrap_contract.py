@@ -898,7 +898,7 @@ def test_bootstrap_and_doctor_do_not_require_an_external_flock_binary() -> None:
 
 def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     justfile = _read("justfile")
-    web_gate = _read("scripts/check-web-surface.sh")
+    web_gate = _read("build_system/scripts/web/check-web-surface.sh")
 
     # Quoted: a checkout under a path with a space split into two arguments
     # otherwise, so the recipe was not portable to `~/My Projects/capsem`.
@@ -913,10 +913,10 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     for command in [
         "uv run --project build_system --frozen capsem-builder validate-skills skills",
         "cargo clippy --workspace --all-targets -- -D warnings",
-        "bash scripts/check-web-surface.sh frontend",
-        "bash scripts/check-web-surface.sh docs",
-        "bash scripts/check-web-surface.sh site",
-        "bash scripts/check-web-surface.sh release-site",
+        "bash build_system/scripts/web/check-web-surface.sh frontend",
+        "bash build_system/scripts/web/check-web-surface.sh docs",
+        "bash build_system/scripts/web/check-web-surface.sh site",
+        "bash build_system/scripts/web/check-web-surface.sh release-site",
     ]:
         assert command in _gate_issues()
     for command in [
@@ -943,11 +943,11 @@ def test_both_release_lanes_reuse_fail_closed_static_module() -> None:
 
 def test_frontend_release_gate_is_owned_by_the_canonical_test() -> None:
     justfile = _read("justfile")
-    web_gate = _read("scripts/check-web-surface.sh")
+    web_gate = _read("build_system/scripts/web/check-web-surface.sh")
 
     assert "\ntest-frontend:" not in justfile
     block = justfile.split("\n_test-candidate:", 1)[1].split("\n_build-host-image:", 1)[0]
-    assert "bash scripts/check-web-surface.sh frontend" in block
+    assert "bash build_system/scripts/web/check-web-surface.sh frontend" in block
     assert "pnpm --dir web/app run check" in web_gate
     assert "pnpm --dir web/app run test" in web_gate
     assert "pnpm --dir web/app run build" in web_gate

@@ -328,8 +328,10 @@ def test_release_critical_crates_are_reported() -> None:
 
     scripts = release_site_package.get("scripts", {})
     assert "test:coverage" in scripts, "release-site must generate coverage metadata"
-    web_gate = (PROJECT_ROOT / "scripts" / "check-web-surface.sh").read_text()
-    assert "bash scripts/check-web-surface.sh release-site" in ci
+    web_gate = (
+        PROJECT_ROOT / "build_system" / "scripts" / "web" / "check-web-surface.sh"
+    ).read_text()
+    assert "bash build_system/scripts/web/check-web-surface.sh release-site" in ci
     assert "pnpm --dir build_system/release_site run test:coverage" in web_gate, (
         "the shared release-site gate must generate coverage before the PR gate can pass"
     )

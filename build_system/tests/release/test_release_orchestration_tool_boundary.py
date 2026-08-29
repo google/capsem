@@ -82,7 +82,7 @@ def test_release_orchestration_tools_close_the_exact_owned_package() -> None:
 def test_release_orchestration_launchers_are_thin_direct_commands() -> None:
     for name, module in COMMANDS.items():
         script_root = (
-            REPOSITORY_ROOT / "scripts"
+            REPOSITORY_ROOT / "build_system" / "scripts" / "web"
             if name == "marketing_install_surface.py"
             else REPOSITORY_ROOT / "build_system" / "scripts" / "release"
         )

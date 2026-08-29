@@ -879,7 +879,7 @@ def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> No
     assert layout.assets == "target/install-test-assets"
     assert layout.config == "target/install-test-config"
     assert config.install.generated_inputs == (config.outputs.packages,)
-    assert config.install.suite.serve_script == "scripts/serve-release-test-root.py"
+    assert config.install.suite.serve_script == "build_system/release_site/scripts/serve-release-test-root.py"
     assert "stage_content" in proof
     assert "cmp -s" in proof
     assert "stage-release-test-inputs" not in proof

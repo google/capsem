@@ -41,7 +41,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL = "stable"
 SNAPSHOT_SPEC = importlib.util.spec_from_file_location(
     "release_site_snapshot",
-    PROJECT_ROOT / "scripts" / "release_site_snapshot.py",
+    PROJECT_ROOT / "build_system" / "release_site" / "scripts" / "release_site_snapshot.py",
 )
 assert SNAPSHOT_SPEC is not None and SNAPSHOT_SPEC.loader is not None
 SNAPSHOT = importlib.util.module_from_spec(SNAPSHOT_SPEC)
@@ -56,7 +56,7 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
 
     assert "validate_complete_public_channels:" in workflow
     assert "default: true" in workflow
-    assert "scripts/check-release-site-contract.py" in workflow
+    assert "build_system/release_site/scripts/check-release-site-contract.py" in workflow
     assert workflow.count("CHANNEL_ARGS=(--catalog-members)") == 2
     assert "--dist-verification-only" in workflow
     assert "CHANNEL_ARGS=(--channel stable --channel nightly)" not in workflow
@@ -133,7 +133,7 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     assert "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86" in staging
     assert "uv sync --project build_system --frozen" in staging
     assert "bash build_system/scripts/release/rehearse-asset-channel-staging.sh" in staging
-    assert "scripts/write-release-site-ci-fixture.py" not in staging
+    assert "build_system/release_site/scripts/write-release-site-ci-fixture.py" not in staging
     assert "--without-binary-files" not in staging
 
 
@@ -1217,7 +1217,13 @@ def _run_admin(
 
 
 def _load_release_validator() -> Any:
-    module_path = PROJECT_ROOT / "scripts" / "check-release-site-contract.py"
+    module_path = (
+        PROJECT_ROOT
+        / "build_system"
+        / "release_site"
+        / "scripts"
+        / "check-release-site-contract.py"
+    )
     spec = importlib.util.spec_from_file_location("check_release_site_contract", module_path)
     assert spec is not None
     assert spec.loader is not None

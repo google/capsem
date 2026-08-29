@@ -37,7 +37,7 @@ manual VM asset releases, and the `release.capsem.org` asset-channel workflow.
   deletion, so each former URL must be replaced explicitly.
 - `web/docs/public-holding/_headers` applies no-store browser/CDN policy and an
   `X-Robots-Tag` to the complete qualification surface.
-- `scripts/check-docs-holding-build.py` independently derives the exact
+- `build_system/scripts/web/check-docs-holding-build.py` independently derives the exact
   tombstone inventory from the manual sources. It permits only those files,
   the root holding page, a top-level `404.html`, and `_headers`; it rejects
   unexpected artifacts and old Starlight, installation, release, or deep-doc

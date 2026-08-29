@@ -387,11 +387,11 @@ Cloudflare Pages project serving `release.capsem.org`, attach the
 | `CLOUDFLARE_API_TOKEN` | API token with Pages Write permission to deploy and roll back the Pages project serving `release.capsem.org` |
 
 `release-channel.yaml` fails before deploy if either secret is missing or
-`scripts/check-cloudflare-pages-project.py` cannot see the Pages project serving
+`build_system/scripts/web/check-cloudflare-pages-project.py` cannot see the Pages project serving
 `release.capsem.org` through the configured account/token. It captures the
 exact canonical production deployment and a byte snapshot of the current
 catalog, then deploys the complete generated distribution to an immutable
-preview. `scripts/check-release-site-contract.py` validates that preview's
+preview. `build_system/release_site/scripts/check-release-site-contract.py` validates that preview's
 index, `channels.json`, selected channel manifest records, package-owned
 binaries, profile-owned evidence documents, BLAKE3/SHA-256 content,
 attestation references, and cache headers rather than only checking that files
@@ -476,7 +476,7 @@ Neither rail is complete until `release.capsem.org` reflects the exact
 preview-verified channel state. After Cloudflare activates production,
 `release-channel.yaml` checks the public `https://release.capsem.org/` index,
 `/channels.json`, and `/assets/<channel>/manifest.json` before the workflow can
-pass, using `scripts/check-release-site-contract.py`. The checks also
+pass, using `build_system/release_site/scripts/check-release-site-contract.py`. The checks also
 reject stale public HTML: the human index must show the same generated
 timestamp, channel list, manifest URL, manifest version, package inventory,
 per-binary inventory, profile revision, image artifact URLs, and evidence URLs

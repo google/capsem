@@ -46,7 +46,7 @@ def test_publish_site_smoke_uses_the_rendered_install_surface_contract() -> None
         encoding="utf-8"
     )
 
-    assert "python3 scripts/marketing_install_surface.py /tmp/site-index.html" in workflow
+    assert "python3 build_system/scripts/web/marketing_install_surface.py /tmp/site-index.html" in workflow
     assert "Available Summer 2026" not in workflow
 
 

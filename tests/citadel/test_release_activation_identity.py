@@ -32,7 +32,7 @@ def test_production_identity_precedes_custom_hostname_byte_proof() -> None:
         "Verify canonical production deployment"
     ) < names.index("Validate activated production bytes"), ACTIVATION_RATIONALE
     assert any(
-        "scripts/cloudflare_pages_rollback.py" in command.argv and "verify" in command.argv
+        "build_system/scripts/web/cloudflare_pages_rollback.py" in command.argv and "verify" in command.argv
         for command in identity_commands
     ), ACTIVATION_RATIONALE
     assert "steps.production_identity.outcome == 'success'" in public_step["if"], (

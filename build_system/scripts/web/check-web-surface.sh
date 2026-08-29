@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$ROOT"
 source "$ROOT/build_system/scripts/build/lib/exec_lock.sh"
 
@@ -97,7 +97,7 @@ case "$surface" in
         rm -rf "$work"
         mkdir -p "$work"
 
-        uv run --project build_system --frozen python scripts/write-release-site-ci-fixture.py "$fixture"
+        uv run --project build_system --frozen python build_system/release_site/scripts/write-release-site-ci-fixture.py "$fixture"
         uv run --project build_system --frozen python build_system/scripts/release/build-complete-release-channel.py \
             --channel-source "stable=file://$fixture/assets/manifest.json" \
             --primary-channel stable \

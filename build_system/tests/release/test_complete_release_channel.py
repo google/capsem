@@ -124,7 +124,7 @@ def test_asset_workflow_and_local_gate_share_complete_dist_builder() -> None:
     module = _module()
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text()
     release = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
-    local_web_gate = (PROJECT_ROOT / "scripts/check-web-surface.sh").read_text()
+    local_web_gate = (PROJECT_ROOT / "build_system/scripts/web/check-web-surface.sh").read_text()
     builder = Path(build_complete_release_channel.__file__).read_text()
 
     assert "build_system/scripts/release/build-complete-release-channel.py" in workflow

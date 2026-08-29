@@ -9,7 +9,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[3]
-SERVER = ROOT / "scripts" / "serve-release-test-root.py"
+SERVER = ROOT / "build_system" / "release_site" / "scripts" / "serve-release-test-root.py"
 
 
 def _wait_for_ready(path: Path, process: subprocess.Popen[str]) -> dict[str, str]:

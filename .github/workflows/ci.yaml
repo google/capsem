@@ -220,7 +220,7 @@ jobs:
       - run: bash build_system/scripts/build/materialize-config.sh
       - run: cd web/app && pnpm install --frozen-lockfile
       - name: Build frontend bundle
-        run: bash scripts/check-web-surface.sh frontend-build
+        run: bash build_system/scripts/web/check-web-surface.sh frontend-build
       - name: Install release site dependencies
         run: cd build_system/release_site && pnpm install --frozen-lockfile
 
@@ -268,7 +268,7 @@ jobs:
       - name: Frontend type-check and test
         env:
           CAPSEM_FRONTEND_JUNIT: ${{ github.workspace }}/target/coverage/junit/frontend.xml
-        run: bash scripts/check-web-surface.sh frontend-verify
+        run: bash build_system/scripts/web/check-web-surface.sh frontend-verify
 
       # Python schema tests with coverage
       - name: Python lint and type check
@@ -563,7 +563,7 @@ jobs:
         run: cd web/docs && pnpm install --frozen-lockfile
 
       - name: Build docs
-        run: bash scripts/check-web-surface.sh docs
+        run: bash build_system/scripts/web/check-web-surface.sh docs
 
   site-build:
     needs: scope
@@ -585,7 +585,7 @@ jobs:
         run: cd web/marketing && pnpm install --frozen-lockfile
 
       - name: Build site
-        run: bash scripts/check-web-surface.sh site
+        run: bash build_system/scripts/web/check-web-surface.sh site
 
   release-site-build:
     needs: scope
@@ -620,10 +620,10 @@ jobs:
         run: cd build_system/release_site && pnpm install --frozen-lockfile
 
       - name: Release site type-check and coverage
-        run: bash scripts/check-web-surface.sh release-site
+        run: bash build_system/scripts/web/check-web-surface.sh release-site
 
       - name: Release channel build parity
-        run: bash scripts/check-web-surface.sh release-channel
+        run: bash build_system/scripts/web/check-web-surface.sh release-channel
 
       - name: Upload release site coverage
         if: ${{ !cancelled() }}

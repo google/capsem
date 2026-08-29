@@ -23,7 +23,7 @@ def _classifier():
         (),
         (".github/workflows/docs.yaml",),
         (".github/workflows/ci.yaml",),
-        ("scripts/smoke-docs-site.sh",),
+        ("build_system/scripts/web/smoke-docs-site.sh",),
         ("tests/test_docs_holding_contract.py",),
         ("site/public/install.sh",),
         ("docs/public/install.sh",),
@@ -159,7 +159,7 @@ def test_shared_hidden_and_root_inputs_fan_out() -> None:
         ".config/ty.toml",
         "justfile",
         "config/gate.toml",
-        "scripts/check-web-surface.sh",
+        "build_system/scripts/web/check-web-surface.sh",
         "build_system/scripts/build/lib/exec_lock.sh",
         "build_system/scripts/ci/classify-ci-scope.py",
         "build_system/scripts/ci/require-ci-jobs.sh",
@@ -173,7 +173,7 @@ def test_shared_hidden_and_root_inputs_fan_out() -> None:
 @pytest.mark.parametrize(
     "path",
     [
-        "scripts/check-docs-holding-build.py",
+        "build_system/scripts/web/check-docs-holding-build.py",
         "build_system/builder/gate/tools/web/check_docs_holding_build.py",
     ],
 )

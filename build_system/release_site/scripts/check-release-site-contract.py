@@ -10,12 +10,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def _release_dependencies(root: Path):
     sys.path.insert(0, str(root / "build_system" / "builder"))
-    sys.path.insert(0, str(root / "scripts"))
+    sys.path.insert(0, str(root / "build_system" / "release_site" / "scripts"))
     from bootstrap import mount_builder_package
     from release_site_snapshot import (
         load_readiness_checker,

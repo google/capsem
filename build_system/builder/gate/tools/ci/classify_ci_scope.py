@@ -101,7 +101,7 @@ SHARED_CONTROL_FILES = frozenset(
     {
         "build_system/builder/gate/tools/ci/classify_ci_scope.py",
         "config/gate.toml",
-        "scripts/check-web-surface.sh",
+        "build_system/scripts/web/check-web-surface.sh",
         "build_system/scripts/ci/classify-ci-scope.py",
         "build_system/scripts/build/lib/exec_lock.sh",
         "build_system/scripts/ci/require-ci-jobs.sh",
@@ -114,7 +114,7 @@ MULTI_OWNER_FILES = {
     "build_system/builder/gate/tools/web/check_docs_holding_build.py": frozenset(
         {"build_system", "docs"}
     ),
-    "scripts/check-docs-holding-build.py": frozenset({"build_system", "docs"}),
+    "build_system/scripts/web/check-docs-holding-build.py": frozenset({"build_system", "docs"}),
 }
 
 

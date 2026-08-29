@@ -295,7 +295,7 @@ def test_the_guard_catches_the_bug_it_was_written_for() -> None:
         "cargo built as a Python argv list is no longer detected"
     )
 
-    surface = ROOT / "scripts" / "check-web-surface.sh"
+    surface = ROOT / "build_system" / "scripts" / "web" / "check-web-surface.sh"
     arm = arm_named(parse(surface.read_text()), "release-channel")
     assert arm is not None, "the arm that carries the parity proof is gone"
     assert not any(command_builds(item) for item in commands(arm)), (
@@ -317,6 +317,6 @@ def test_an_arm_the_step_does_not_select_is_not_charged_to_it() -> None:
     Charging `web.release-site` for the cargo in the `release-channel` arm
     would make the guard unactionable, and an unactionable guard gets deleted.
     """
-    surface = ROOT / "scripts" / "check-web-surface.sh"
+    surface = ROOT / "build_system" / "scripts" / "web" / "check-web-surface.sh"
     assert not reaches_compiler(surface, "release-site", frozenset({surface}))
     assert not reaches_compiler(surface, "docs", frozenset({surface}))

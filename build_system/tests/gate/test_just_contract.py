@@ -105,8 +105,8 @@ def test_justfile_exposes_one_docs_build() -> None:
     docs_block = justfile.split("\nbuild-docs: _pnpm-install\n", maxsplit=1)[1].split(
         "\n\n", maxsplit=1
     )[0]
-    assert "bash scripts/check-web-surface.sh docs" in docs_block
-    assert "bash scripts/check-web-surface.sh site" in docs_block
+    assert "bash build_system/scripts/web/check-web-surface.sh docs" in docs_block
+    assert "bash build_system/scripts/web/check-web-surface.sh site" in docs_block
 
 
 def test_every_recipe_the_gate_tells_an_operator_to_run_exists() -> None:

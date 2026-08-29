@@ -37,7 +37,7 @@ cd "$ROOT"
 # the independent native-Linux CI job has to materialize it for itself.
 if [[ ! -s "$ROOT/web/app/dist/index.html" ]]; then
     pnpm --dir web/app install --frozen-lockfile
-    bash scripts/check-web-surface.sh frontend-build
+    bash build_system/scripts/web/check-web-surface.sh frontend-build
 fi
 
 cross_target=$(python3 build_system/scripts/bootstrap/provision-linux-workspace.py --cross-rust-target)

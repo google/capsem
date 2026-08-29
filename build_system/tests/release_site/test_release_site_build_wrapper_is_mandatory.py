@@ -37,7 +37,7 @@ TESTS_ROOT = PROJECT_ROOT / "tests"
 
 # Owns both rules, so it is the one place allowed to implement them.
 OWNER = TESTS_ROOT / "helpers" / "release_site.py"
-SHELL_OWNER = PROJECT_ROOT / "scripts" / "check-web-surface.sh"
+SHELL_OWNER = PROJECT_ROOT / "build_system" / "scripts" / "web" / "check-web-surface.sh"
 BUILD_SURFACES = ("frontend-build", "docs", "site", "release-site-build")
 
 # `["pnpm", ...]` as a subprocess argv. Deliberately not a bare "pnpm" match:

@@ -464,7 +464,11 @@ def main() -> int:
     ):
         stage_file(release_script_root / name, share / name)
     stage_file(
-        PROJECT_ROOT / "scripts" / "serve-release-test-root.py",
+        PROJECT_ROOT
+        / "build_system"
+        / "release_site"
+        / "scripts"
+        / "serve-release-test-root.py",
         share / "serve-release-test-root.py",
     )
     for name in ("macos-install-user-request.sh", "macos_tart_transition_support.py", "macos-tart-regression-probes.sh"):

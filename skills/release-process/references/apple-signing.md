@@ -76,8 +76,8 @@ Cloudflare Pages project serving `release.capsem.org`, attach the `release.capse
 custom domain, and configure `CLOUDFLARE_ACCOUNT_ID` plus
 `CLOUDFLARE_API_TOKEN` in GitHub Actions secrets. `release-channel.yaml` fails
 before deploy if either secret is missing or
-`scripts/check-cloudflare-pages-project.py` cannot see the Pages project through
-the configured account/token, then runs `scripts/check-release-site-contract.py`
+`build_system/scripts/web/check-cloudflare-pages-project.py` cannot see the Pages project through
+the configured account/token, then runs `build_system/release_site/scripts/check-release-site-contract.py`
 and smokes `https://release.capsem.org/`, `/channels.json`, and the channel
 manifest through the public custom domain after Cloudflare publishes the
 generated site. Live VM asset releases use the same project preflight before

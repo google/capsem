@@ -102,7 +102,7 @@ def _readiness_checker_module():
 
 
 def _release_site_contract_module():
-    module_path = PROJECT_ROOT / "scripts/check-release-site-contract.py"
+    module_path = PROJECT_ROOT / "build_system/release_site/scripts/check-release-site-contract.py"
     spec = importlib.util.spec_from_file_location("check_release_site_contract", module_path)
     assert spec is not None
     assert spec.loader is not None
@@ -308,7 +308,7 @@ def _workflow_text(name: str) -> str:
 def _source_text(path: str) -> str:
     package_sources = {
         "build_system/scripts/release/build-complete-release-channel.py": Path(COMPLETE_CHANNEL.__file__),
-        "scripts/check-cloudflare-pages-project.py": Path(CLOUDFLARE_PROJECT.__file__),
+        "build_system/scripts/web/check-cloudflare-pages-project.py": Path(CLOUDFLARE_PROJECT.__file__),
         "build_system/scripts/release/check-remote-release-readiness.py": Path(READINESS.__file__),
         "build_system/scripts/release/local-release-glowup.py": Path(LOCAL_GLOWUP.__file__),
         "build_system/scripts/release/verify-channel-downloads.py": Path(VERIFY_DOWNLOADS.__file__),
@@ -634,7 +634,7 @@ def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     assert 'test "$RELEASE_SITE_BUILD_RESULT" = success' in gate
     assert "astral-sh/setup-uv@" in release_site_job
     assert "uv sync --project build_system --frozen" in release_site_job
-    assert "bash scripts/check-web-surface.sh release-site" in release_site_job
+    assert "bash build_system/scripts/web/check-web-surface.sh release-site" in release_site_job
 
 
 def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
@@ -662,12 +662,12 @@ def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
 
     assert "cache-dependency-path: web/docs/pnpm-lock.yaml" in docs_job
     assert "cd web/docs && pnpm install --frozen-lockfile" in docs_job
-    assert "bash scripts/check-web-surface.sh docs" in docs_job
+    assert "bash build_system/scripts/web/check-web-surface.sh docs" in docs_job
     assert "pages deploy" not in docs_job
 
     assert "cache-dependency-path: web/marketing/pnpm-lock.yaml" in site_job
     assert "cd web/marketing && pnpm install --frozen-lockfile" in site_job
-    assert "bash scripts/check-web-surface.sh site" in site_job
+    assert "bash build_system/scripts/web/check-web-surface.sh site" in site_job
     assert "pages deploy" not in site_job
 
     assert "pull_request:" not in docs_deploy
@@ -876,7 +876,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "CLOUDFLARE_API_TOKEN secret is required to deploy release.capsem.org" in workflow
     assert "Verify Cloudflare Pages project" in workflow
     assert "RELEASE_CHANNEL_PROJECT: release" in workflow
-    assert "python scripts/check-cloudflare-pages-project.py" in workflow
+    assert "python build_system/scripts/web/check-cloudflare-pages-project.py" in workflow
     assert '--project "$RELEASE_CHANNEL_PROJECT"' in workflow
     assert workflow.index("Require Cloudflare credentials") < workflow.index(
         "Verify Cloudflare Pages project"
@@ -896,7 +896,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "Validate activated production bytes" in workflow
     assert "Restore prior production deployment" in workflow
     assert "Verify restored production bytes" in workflow
-    assert "uv run --project build_system --frozen python scripts/check-release-site-contract.py" in workflow
+    assert "uv run --project build_system --frozen python build_system/release_site/scripts/check-release-site-contract.py" in workflow
     assert '--base-url "$RELEASE_SITE_URL"' in workflow
     assert 'CHANNEL_ARGS=(--channel "$CHANNEL")' in workflow
     assert "CHANNEL_ARGS=(--catalog-members)" in workflow
@@ -921,7 +921,7 @@ def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_
     ].split("\n      - name:", maxsplit=1)[0]
 
     assert "Validate activated production bytes" in workflow
-    assert "uv run --project build_system --frozen python scripts/check-release-site-contract.py" in validator_step
+    assert "uv run --project build_system --frozen python build_system/release_site/scripts/check-release-site-contract.py" in validator_step
     assert '--base-url "$RELEASE_SITE_URL"' in validator_step
     assert "--catalog-members" in validator_step
     assert 'CHANNEL_ARGS=(--channel "$CHANNEL")' in validator_step
@@ -958,8 +958,8 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
     assert '"$RUNNER_TEMP/release-channel-staging-fixture"' in workflow
     assert '"$RUNNER_TEMP/release-channel-staging-validation"' in workflow
     assert "--asset-source-base" not in workflow
-    assert "scripts/write-release-site-ci-fixture.py" not in workflow
-    assert "bash scripts/check-web-surface.sh release-site-build" not in workflow
+    assert "build_system/release_site/scripts/write-release-site-ci-fixture.py" not in workflow
+    assert "bash build_system/scripts/web/check-web-surface.sh release-site-build" not in workflow
     assert "cargo run -p capsem-admin -- assets channel check" not in workflow
     assert "name: asset-channel-staging-preview" in workflow
     assert "uses: ./.github/workflows/release-channel.yaml" in workflow
@@ -1210,7 +1210,7 @@ def test_release_site_contract_retries_refresh_site_cache_but_reuse_external_byt
 def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
     workflow = _workflow_text("release-channel.yaml")
     release_assets = _workflow_text("release-assets.yaml")
-    checker = _source_text("scripts/check-cloudflare-pages-project.py")
+    checker = _source_text("build_system/scripts/web/check-cloudflare-pages-project.py")
     docs = (PROJECT_ROOT / "web/docs/src/content/docs/development/ci.md").read_text()
     release_skill = _skill_text("skills/release-process/SKILL.md")
     asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
@@ -1238,7 +1238,7 @@ def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
         assert "`release.capsem.org` custom domain" in text
         assert "`CLOUDFLARE_ACCOUNT_ID`" in text
         assert "`CLOUDFLARE_API_TOKEN`" in text
-        assert "`scripts/check-release-site-contract.py`" in text
+        assert "`build_system/release_site/scripts/check-release-site-contract.py`" in text
         assert "BLAKE3/SHA-256" in text
         assert "cache headers" in text_lower
         assert "rather than only checking that files exist" in text_lower
@@ -1290,7 +1290,7 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
     docs_text = " ".join(docs.split())
 
     assert "astral-sh/setup-uv@" in workflow
-    assert "uv run --project build_system --frozen python scripts/check-release-site-contract.py" in workflow
+    assert "uv run --project build_system --frozen python build_system/release_site/scripts/check-release-site-contract.py" in workflow
     assert "import hashlib" in script
     assert "import blake3" in script
     assert "def fetch_and_verify_evidence_artifact" in script
@@ -1340,7 +1340,7 @@ def test_release_channel_cache_header_documentation_matches_deploy_smoke() -> No
     asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
 
     script = _source_text("build_system/scripts/release/check-remote-release-readiness.py")
-    assert "uv run --project build_system --frozen python scripts/check-release-site-contract.py" in workflow
+    assert "uv run --project build_system --frozen python build_system/release_site/scripts/check-release-site-contract.py" in workflow
     assert "def check_release_cache_headers" in script
     assert '("no-cache", "must-revalidate")' in script
     assert '("public", "max-age=31536000", "immutable")' in script
@@ -1594,10 +1594,10 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         assert "paths:" in push_trigger, workflow_name
         assert f"cache-dependency-path: {directory}/pnpm-lock.yaml" in ci_block
         assert f"cd {directory} && pnpm install --frozen-lockfile" in ci_block
-        assert f"bash scripts/check-web-surface.sh {surface}" in ci_block
+        assert f"bash build_system/scripts/web/check-web-surface.sh {surface}" in ci_block
         assert frozenset(_workflow_job("pr-gate")["needs"]) == REQUIRED_PR_GATE_JOBS
         assert f"cd {directory} && pnpm install --frozen-lockfile" in workflow
-        assert f"bash scripts/check-web-surface.sh {surface}" in workflow
+        assert f"bash build_system/scripts/web/check-web-surface.sh {surface}" in workflow
         assert (
             "if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}" in workflow
         )
@@ -2836,7 +2836,7 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
         in release_skill_text
     )
     assert "`release-channel.yaml` may deploy production only" in release_skill_text
-    assert "scripts/check-release-site-contract.py" in release_skill
+    assert "build_system/release_site/scripts/check-release-site-contract.py" in release_skill
 
 
 def test_release_process_skill_documents_multi_channel_graph() -> None:
@@ -3202,7 +3202,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
 
 
 def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
-    script = _source_text("scripts/check-web-surface.sh")
+    script = _source_text("build_system/scripts/web/check-web-surface.sh")
     shell = parse_shell(script)
     just = (PROJECT_ROOT / "justfile").read_text()
     ci = _workflow_text("ci.yaml")
@@ -3231,20 +3231,20 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     for surface in ("frontend-verify", "docs", "site", "release-site"):
         assert f"check-web-surface.sh {surface}" in fast
 
-    assert "bash scripts/check-web-surface.sh frontend-verify" in ci
-    assert "bash scripts/check-web-surface.sh docs" in ci
-    assert "bash scripts/check-web-surface.sh site" in ci
-    assert "bash scripts/check-web-surface.sh release-site" in ci
-    assert "bash scripts/check-web-surface.sh docs" in docs
-    assert "bash scripts/check-web-surface.sh site" in site
-    assert release.count("bash scripts/check-web-surface.sh frontend-build") == 1
-    assert "bash scripts/check-web-surface.sh frontend-build" in _source_text(
+    assert "bash build_system/scripts/web/check-web-surface.sh frontend-verify" in ci
+    assert "bash build_system/scripts/web/check-web-surface.sh docs" in ci
+    assert "bash build_system/scripts/web/check-web-surface.sh site" in ci
+    assert "bash build_system/scripts/web/check-web-surface.sh release-site" in ci
+    assert "bash build_system/scripts/web/check-web-surface.sh docs" in docs
+    assert "bash build_system/scripts/web/check-web-surface.sh site" in site
+    assert release.count("bash build_system/scripts/web/check-web-surface.sh frontend-build") == 1
+    assert "bash build_system/scripts/web/check-web-surface.sh frontend-build" in _source_text(
         "build_system/packaging/linux/build-linux-package.sh"
     )
     assert "build_system/scripts/release/build-complete-release-channel.py" in binary_staging
-    assert '"scripts/check-web-surface.sh", "release-site-build"' in binary_staging_builder
+    assert '"build_system/scripts/web/check-web-surface.sh", "release-site-build"' in binary_staging_builder
     assert "bash build_system/scripts/release/rehearse-asset-channel-staging.sh" in channel_staging
-    assert "bash scripts/check-web-surface.sh release-site-build" in channel_staging_rehearsal
+    assert "bash build_system/scripts/web/check-web-surface.sh release-site-build" in channel_staging_rehearsal
     assert "build_system/scripts/release/build-complete-release-channel.py" in release
     assert "build_system/scripts/release/build-complete-release-channel.py" in release_assets
 
@@ -3284,7 +3284,7 @@ def test_release_channel_fixture_keeps_obom_evidence_architecture_owned(tmp_path
     """The fixture must model the architecture identity of real OBOM evidence."""
     fixture = tmp_path / "fixture"
     subprocess.run(
-        [sys.executable, "scripts/write-release-site-ci-fixture.py", str(fixture)],
+        [sys.executable, "build_system/release_site/scripts/write-release-site-ci-fixture.py", str(fixture)],
         cwd=PROJECT_ROOT,
         check=True,
     )
@@ -3841,7 +3841,7 @@ def test_remote_release_readiness_checker_verifies_vm_asset_file_content() -> No
     )
     assert "fetch_and_verify_evidence_artifact(" in script
     assert '"VM asset file"' in script
-    assert "uv run --project build_system --frozen python scripts/check-release-site-contract.py" in workflow
+    assert "uv run --project build_system --frozen python build_system/release_site/scripts/check-release-site-contract.py" in workflow
 
 
 def test_remote_release_readiness_rejects_evidence_content_drift() -> None:
@@ -4147,7 +4147,7 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
     assert '"host SBOM evidence"' in script
     assert "VM asset attestation predicate_url missing" in script
     assert "missing from {predicate_label}" in script
-    assert "uv run --project build_system --frozen python scripts/check-release-site-contract.py" in workflow
+    assert "uv run --project build_system --frozen python build_system/release_site/scripts/check-release-site-contract.py" in workflow
 
 
 def test_remote_readiness_rejects_attestation_rail_drift() -> None:
@@ -4584,7 +4584,7 @@ def test_ci_workflow_references_only_live_workspace_packages_and_skills() -> Non
 
 def test_ci_builds_frontend_before_compiling_tauri_app_tests() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
-    build_pos = workflow.find("bash scripts/check-web-surface.sh frontend-build")
+    build_pos = workflow.find("bash build_system/scripts/web/check-web-surface.sh frontend-build")
     capsem_app_pos = workflow.find("-p capsem-app")
     coverage_pos = workflow.rfind("cargo llvm-cov nextest --no-cfg-coverage", 0, capsem_app_pos)
 
@@ -4600,11 +4600,11 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     profile_release = _workflow_text("release-assets.yaml")
     fast_gate = _workflow_text("fast-gate.yaml")
     just = (PROJECT_ROOT / "justfile").read_text()
-    web_gate = _source_text("scripts/check-web-surface.sh")
+    web_gate = _source_text("build_system/scripts/web/check-web-surface.sh")
 
     generate_pos = workflow.find("bash build_system/scripts/build/generate-settings.sh")
-    first_frontend_build_pos = workflow.find("bash scripts/check-web-surface.sh frontend-build")
-    frontend_check_pos = workflow.find("bash scripts/check-web-surface.sh frontend")
+    first_frontend_build_pos = workflow.find("bash build_system/scripts/web/check-web-surface.sh frontend-build")
+    frontend_check_pos = workflow.find("bash build_system/scripts/web/check-web-surface.sh frontend")
 
     assert generate_pos != -1
     assert first_frontend_build_pos != -1

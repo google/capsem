@@ -53,7 +53,7 @@ done
 }
 
 cd "$ROOT"
-bash scripts/check-web-surface.sh frontend-build
+bash build_system/scripts/web/check-web-surface.sh frontend-build
 cargo tauri build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
 cargo build --release \
     -p capsem \

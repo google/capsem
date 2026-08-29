@@ -27,7 +27,7 @@ import blake3
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
-SERVER = ROOT / "scripts" / "serve-release-test-root.py"
+SERVER = ROOT / "build_system" / "release_site" / "scripts" / "serve-release-test-root.py"
 VERIFY = ROOT / "build_system" / "scripts" / "release" / "verify-channel-downloads.py"
 
 
