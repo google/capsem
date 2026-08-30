@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import stat
 import tomllib
 from pathlib import Path
+
+from helpers.source_modes import tracked_source_modes
 
 ROOT = Path(__file__).resolve().parents[3]
 LINUX = ROOT / "build_system" / "packaging" / "linux"
@@ -34,10 +35,7 @@ def test_linux_packaging_resources_have_one_exact_owner() -> None:
 
 
 def test_linux_packaging_resources_preserve_reviewed_modes() -> None:
-    for name, expected_mode in EXPECTED_MODES.items():
-        path = LINUX / name
-        assert path.is_file() and not path.is_symlink()
-        assert stat.S_IMODE(path.stat().st_mode) == expected_mode
+    assert tracked_source_modes(ROOT, LINUX) == EXPECTED_MODES
 
 
 def test_gate_selects_every_linux_packaging_entrypoint_from_its_owner() -> None:

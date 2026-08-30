@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import stat
 import subprocess
 import tomllib
 from pathlib import Path
+
+from helpers.source_modes import tracked_source_modes
 
 ROOT = Path(__file__).resolve().parents[3]
 SHARED = ROOT / "build_system" / "packaging" / "shared"
@@ -49,10 +50,7 @@ def test_shared_packaging_resources_have_one_exact_owner() -> None:
 
 
 def test_shared_packaging_resources_preserve_reviewed_source_modes() -> None:
-    for name, expected_mode in EXPECTED_RESOURCE_MODES.items():
-        path = SHARED / name
-        assert path.is_file() and not path.is_symlink()
-        assert stat.S_IMODE(path.stat().st_mode) == expected_mode
+    assert tracked_source_modes(ROOT, SHARED) == EXPECTED_RESOURCE_MODES
 
 
 def test_native_package_rails_select_shared_lifecycle_helpers() -> None:

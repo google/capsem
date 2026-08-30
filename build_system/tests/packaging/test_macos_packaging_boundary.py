@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import stat
 import tomllib
 from pathlib import Path
+
+from helpers.source_modes import tracked_source_modes
 
 ROOT = Path(__file__).resolve().parents[3]
 MACOS = ROOT / "build_system" / "packaging" / "macos"
@@ -49,10 +50,7 @@ def test_macos_packaging_resources_have_one_exact_owner() -> None:
 
 
 def test_macos_packaging_resources_preserve_reviewed_modes() -> None:
-    for name, expected_mode in EXPECTED_MODES.items():
-        path = MACOS / name
-        assert path.is_file() and not path.is_symlink()
-        assert stat.S_IMODE(path.stat().st_mode) == expected_mode
+    assert tracked_source_modes(ROOT, MACOS) == EXPECTED_MODES
 
 
 def test_gate_selects_macos_packaging_resources_from_their_owner() -> None:

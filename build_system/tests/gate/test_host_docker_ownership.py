@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import stat
 import tomllib
 from pathlib import Path
+
+from helpers.source_modes import tracked_source_modes
 
 ROOT = Path(__file__).resolve().parents[3]
 OWNER = ROOT / "build_system/docker"
@@ -37,9 +38,7 @@ def test_host_docker_resources_have_one_exact_owner() -> None:
     }
     assert found == EXPECTED
     assert not (ROOT / "docker").exists()
-    for relative in EXPECTED:
-        mode = stat.S_IMODE((OWNER / relative).stat().st_mode)
-        assert mode == 0o644, f"{relative} mode is {mode:o}"
+    assert tracked_source_modes(ROOT, OWNER) == dict.fromkeys(EXPECTED, 0o644)
 
 
 def test_product_image_templates_and_root_secret_exclusions_stay_owned() -> None:
