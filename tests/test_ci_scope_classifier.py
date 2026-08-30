@@ -157,6 +157,7 @@ def test_shared_hidden_and_root_inputs_fan_out() -> None:
     for path in (
         ".github/workflows/ci.yaml",
         ".config/ty.toml",
+        "MIGRATION_HANDOFF.md",
         "justfile",
         "config/gate.toml",
         "build_system/scripts/web/check-web-surface.sh",

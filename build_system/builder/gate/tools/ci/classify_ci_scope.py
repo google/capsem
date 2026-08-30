@@ -53,7 +53,7 @@ KNOWN_ROOT_FILES = frozenset(
         ".dockerignore", ".gitignore", "AGENTS.md", "CHANGELOG.md",
         "CITATION.cff", "CLAUDE.md", "CONTRIBUTING.md", "Cargo.lock",
         "Cargo.toml", "GEMINI.md", "LATEST_RELEASE.md", "LICENSE",
-        "README.md", "RELEASE.md", "SECURITY.md",
+        "MIGRATION_HANDOFF.md", "README.md", "RELEASE.md", "SECURITY.md",
         "bootstrap.sh", "codecov.yml", "justfile",
         "rust-toolchain.toml",
     }
