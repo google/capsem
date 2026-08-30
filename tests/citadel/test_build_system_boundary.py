@@ -27,7 +27,7 @@ approved repository cleanup proposal and [boundary.scripts] in config/gate.toml.
 
 MIGRATING_ROOT_FILES: tuple[str, ...] = ()
 LEGACY_PLAN_PATH = re.compile(
-    r"(?:^|[\s'\"])(?:scripts|docker|release-site)/|(?:^|/)entitlements[.]plist$"
+    r"(?:^|[\s'\"])(?:scripts|docker|release-site)/|^entitlements[.]plist$"
 )
 
 

@@ -34,11 +34,8 @@ APPROVED_DIRECTORIES = frozenset(
         "config",
         "crates",
         "guest",
-        "release-site",
-        "scripts",
         "sdk",
         "skills",
-        "src",
         "target",
         "tests",
         "web",
@@ -65,18 +62,8 @@ APPROVED_ROOT_FILES = frozenset(
         "bootstrap.sh",
         "codecov.yml",
         "justfile",
-        "pyproject.toml",
         "rust-toolchain.toml",
         "test-dev-null.sh",
-        "uv.lock",
-    }
-)
-
-MIGRATING_DIRECTORIES = frozenset(
-    {
-        "release-site",
-        "scripts",
-        "src",
     }
 )
 
@@ -86,11 +73,24 @@ RETIRED_DIRECTORIES = frozenset(
         "bench",
         "data",
         "dist",
+        "docker",
         "packages",
+        "release-site",
+        "scripts",
         "security",
         "sprints",
+        "src",
         "test-artifacts",
         "tmp",
+    }
+)
+
+RETIRED_ROOT_FILES = frozenset(
+    {
+        "audit.toml",
+        "entitlements.plist",
+        "pyproject.toml",
+        "uv.lock",
     }
 )
 
@@ -152,8 +152,8 @@ def test_unknown_tracked_root_is_rejected() -> None:
     assert violations, ROOT_OWNERSHIP_RATIONALE
 
 
-def test_migrating_root_cannot_become_a_compatibility_symlink() -> None:
-    violations = _violations([TrackedEntry(PurePosixPath("src"), "120000")])
+def test_retired_root_cannot_become_a_compatibility_symlink() -> None:
+    violations = _violations([TrackedEntry(PurePosixPath("scripts"), "120000")])
     assert violations, ROOT_OWNERSHIP_RATIONALE
 
 
@@ -208,3 +208,10 @@ def test_current_tracked_repository_roots_are_owned() -> None:
 def test_retired_repository_roots_are_absent() -> None:
     present = sorted(name for name in RETIRED_DIRECTORIES if (ROOT / name).exists())
     assert not present, ROOT_OWNERSHIP_RATIONALE + "\nretired roots: " + ", ".join(present)
+
+
+def test_retired_repository_root_files_are_absent() -> None:
+    present = sorted(name for name in RETIRED_ROOT_FILES if (ROOT / name).exists())
+    assert not present, (
+        ROOT_OWNERSHIP_RATIONALE + "\nretired root files: " + ", ".join(present)
+    )
