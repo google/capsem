@@ -26,7 +26,7 @@ COPY profile-root/ /usr/local/share/capsem/profile-root/
 RUN chmod -R go-rwx /usr/local/share/capsem/profile-root
 {% endif %}
 
-COPY diagnostics/ /usr/local/lib/capsem-tests/
+COPY diagnostics/ /usr/local/lib/capsem_tests/
 COPY capsem-doctor /usr/local/bin/capsem-doctor
 RUN chmod 755 /usr/local/bin/capsem-doctor && \
     ln -sf capsem-doctor /usr/local/bin/capsem-test

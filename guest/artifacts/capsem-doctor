@@ -12,7 +12,7 @@ set -o pipefail
 # Do NOT override PATH here -- capsem-doctor must run with the same PATH
 # that the interactive shell sees, otherwise it masks PATH bugs.
 
-TESTS_DIR="/usr/local/lib/capsem-tests"
+TESTS_DIR="/usr/local/lib/capsem_tests"
 
 # T4: --bundle [PATH] flag. Strip it from "$@" before invoking pytest so
 # pytest doesn't see an unknown option. Default path is on the virtiofs

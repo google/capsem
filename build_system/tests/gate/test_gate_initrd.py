@@ -5,8 +5,11 @@ from __future__ import annotations
 import gzip
 import importlib
 import os
+import re
+import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -79,6 +82,35 @@ def test_guest_diagnostics_have_one_importable_support_module(monkeypatch) -> No
 
     assert environment.run is support.run
     assert result.stdout == "capsem-diagnostics"
+
+
+def test_guest_doctor_installs_diagnostics_as_an_importable_package(
+    tmp_path: Path,
+) -> None:
+    """The installed directory must preserve the diagnostics package context."""
+    artifacts = PROJECT_ROOT / "guest" / "artifacts"
+    doctor = (artifacts / "capsem-doctor").read_text()
+    match = re.search(r'^TESTS_DIR="([^"]+)"$', doctor, re.MULTILINE)
+
+    assert match is not None
+    installed = Path(match.group(1))
+    assert installed.name.isidentifier()
+    assert str(installed) in (artifacts / "capsem-init").read_text()
+    assert str(installed) in (
+        PROJECT_ROOT / "config" / "docker" / "Dockerfile.rootfs.j2"
+    ).read_text()
+
+    staged = tmp_path / installed.name
+    shutil.copytree(artifacts / "diagnostics", staged)
+    result = subprocess.run(
+        (sys.executable, "-m", "pytest", str(staged), "--collect-only", "-q"),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == pytest.ExitCode.NO_TESTS_COLLECTED
+    assert "ImportError" not in result.stderr
 
 
 @pytest.mark.parametrize("arch", tuple(CONFIG.architectures))

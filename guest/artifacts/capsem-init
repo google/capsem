@@ -517,7 +517,8 @@ if [ -x /snapshots ]; then
     echo "[capsem-init] snapshots deployed"
 fi
 if [ -d /diagnostics ]; then
-    cp -a /diagnostics/* /newroot/usr/local/lib/capsem-tests/
+    rm -rf /newroot/usr/local/lib/capsem-tests /newroot/usr/local/lib/capsem_tests
+    cp -a /diagnostics /newroot/usr/local/lib/capsem_tests
     echo "[capsem-init] diagnostics deployed"
 fi
 boot_mark "deploy"
