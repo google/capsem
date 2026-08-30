@@ -360,7 +360,6 @@ fn watch_parent_with_does_not_fire_while_parent_alive() {
 }
 
 #[test]
-#[ignore = "subprocess helper invoked by parent_watch_exits_after_real_parent_sigkill"]
 fn parent_watch_sigkill_helper() {
     let Some(ready_path) = std::env::var_os("CAPSEM_GUARD_READY_PATH") else {
         return;
@@ -379,7 +378,7 @@ fn parent_watch_exits_after_real_parent_sigkill() {
     let test_binary = std::env::current_exe().unwrap();
     let script = r#"
 exec 3>&1
-"$1" --exact tests::parent_watch_sigkill_helper --ignored --nocapture >/dev/null 2>&1 &
+"$1" --exact tests::parent_watch_sigkill_helper --nocapture >/dev/null 2>&1 &
 child=$!
 printf '%s\n' "$child"
 wait "$child"
