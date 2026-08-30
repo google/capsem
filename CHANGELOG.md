@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- MITM response telemetry now applies async backpressure at HTTP completion
+  when the bounded logger queue fills, preserving every session-ledger event
+  under high request concurrency instead of dropping the saturated tail.
 - Suspend now treats the guest's `Suspended` state as an acknowledgement and
   waits for the VM process to exit before allowing resume, preventing Apple VZ
   checkpoint restores from racing the old process's checkpoint ownership.

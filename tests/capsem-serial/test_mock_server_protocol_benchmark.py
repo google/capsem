@@ -108,18 +108,19 @@ def _assert_session_db_contains_protocol_events(
 
     assert db_path.exists(), f"session.db not found at {db_path}"
     assert len(rows) >= expected_count, (
-        f"expected at least {expected_count} local mock-server protocol net_events, got {len(rows)}: {rows}"
+        f"expected at least {expected_count} local mock-server protocol net_events, "
+        f"got {len(rows)}; sample={rows[:20]}"
     )
     paths = {row[0] for row in rows}
     assert expected_paths.issubset(paths), (
-        f"session.db missing benchmark paths: {expected_paths - paths}; rows={rows}"
+        f"session.db missing benchmark paths: {expected_paths - paths}; sample={rows[:20]}"
     )
     if include_websocket:
         assert any(row[1] == 101 for row in rows), (
-            f"session.db should include WebSocket 101 upgrade events: {rows}"
+            f"session.db should include WebSocket 101 upgrade events; sample={rows[:20]}"
         )
     assert all(row[2] == "allowed" for row in rows), (
-        f"all benchmark events should be allowed: {rows}"
+        f"all benchmark events should be allowed; sample={rows[:20]}"
     )
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)

@@ -477,7 +477,8 @@ fn chunk_hooks_run_in_registration_order_and_can_rewrite() {
     pipeline.dispatch_response_chunk(&mut b, &mut state, &conn, None);
     assert_eq!(&b[..], b"WORLD!");
 
-    pipeline.dispatch_response_end(&mut state, &conn, None);
+    let end = pipeline.dispatch_response_end(&mut state, &conn, None);
+    assert!(end.pending.is_empty());
 
     let cs = state.peek::<CountState>().expect("count state present");
     assert_eq!(cs.chunks, 2);
@@ -497,9 +498,10 @@ fn response_tail_runs_through_later_hooks_before_their_end_callbacks() {
     let mut state = super::super::hooks::HookState::default();
     let conn = super::super::hooks::ConnMeta::default();
 
-    let tail = pipeline.dispatch_response_end(&mut state, &conn, None);
+    let end = pipeline.dispatch_response_end(&mut state, &conn, None);
 
-    assert_eq!(tail.as_ref(), b"TAIL");
+    assert_eq!(end.tail.as_ref(), b"TAIL");
+    assert!(end.pending.is_empty());
     let counted = state.peek::<CountState>().unwrap();
     assert_eq!(counted.chunks, 1);
     assert_eq!(counted.bytes, 4);

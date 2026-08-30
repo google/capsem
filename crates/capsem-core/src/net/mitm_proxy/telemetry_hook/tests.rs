@@ -40,6 +40,17 @@ fn ctx_for<'a>(state: &'a mut HookState, conn: &'a ConnMeta) -> ChunkCtx<'a> {
     }
 }
 
+async fn complete_response(hook: &TelemetryHook, state: &mut HookState, conn: &ConnMeta) {
+    let pending = {
+        let mut ctx = ctx_for(state, conn);
+        hook.on_response_end(&mut ctx);
+        hook.take_response_end_future(&mut ctx)
+    };
+    if let Some(future) = pending {
+        future.await;
+    }
+}
+
 fn any_conn() -> ConnMeta {
     ConnMeta {
         domain: "api.anthropic.com".into(),
@@ -587,6 +598,7 @@ fn shadow_mode_when_request_context_unseeded() {
     {
         let mut ctx = ctx_for(&mut state, &conn);
         hook.on_response_end(&mut ctx);
+        assert!(hook.take_response_end_future(&mut ctx).is_none());
     }
 
     // Hook must not have allocated a response stats slot.
@@ -606,6 +618,7 @@ fn telemetry_completion_must_not_block_on_security_ledger_writes() {
 
     for forbidden in [
         "emit_security_write_blocking",
+        "emit_security_write_try",
         "emit_matching_security_rules_for_evaluated_event_blocking",
         "emit_matching_security_rules_blocking",
     ] {
@@ -614,10 +627,14 @@ fn telemetry_completion_must_not_block_on_security_ledger_writes() {
             "MITM telemetry completion must not call {forbidden}. The HTTP response path must enqueue/spawn ledger work asynchronously; blocking forensic JSON/SQLite work caused route latency collapse under tiny HTTP load."
         );
     }
+    assert!(
+        completion.contains("PendingTelemetryCompletion"),
+        "MITM telemetry completion must hand bounded logger work to the body-owned async EOF barrier"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn hook_accepts_primary_net_event_before_returning() {
+async fn hook_accepts_primary_net_event_before_completing_response() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
@@ -659,10 +676,7 @@ async fn hook_accepts_primary_net_event_before_returning() {
             };
     }
 
-    {
-        let mut c = ctx_for(&mut state, &conn);
-        hook.on_response_end(&mut c);
-    }
+    complete_response(&hook, &mut state, &conn).await;
 
     db.shutdown_blocking();
     let conn = rusqlite::Connection::open(&db_path).unwrap();
@@ -681,6 +695,60 @@ async fn hook_accepts_primary_net_event_before_returning() {
             10 * 1024 * 1024
         )
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bounded_logger_backpressure_keeps_every_completed_response_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 1).expect("test db"));
+    let hook = TelemetryHook::new(Arc::new(TelemetryDeps {
+        db: Arc::clone(&db),
+        pricing: Arc::new(PricingTable::load()),
+        trace_state: Arc::new(Mutex::new(TraceState::new())),
+        security_rules: empty_security_rules(),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
+    }));
+    let conn = ConnMeta {
+        domain: "127.0.0.1".to_string(),
+        port: 443,
+        process_name: Some("capsem-bench-rs".to_string()),
+        ..Default::default()
+    };
+    let mut completions = Vec::new();
+
+    for index in 0..512 {
+        let mut req_ctx = anthropic_req_ctx();
+        req_ctx.domain = "127.0.0.1".to_string();
+        req_ctx.ai_provider = None;
+        req_ctx.ai_protocol = None;
+        req_ctx.model_traffic = false;
+        req_ctx.path = format!("/bounded/{index}");
+        req_ctx.process_name = Some("capsem-bench-rs".to_string());
+        let mut state = HookState::default();
+        let completion = {
+            let mut ctx = ctx_for(&mut state, &conn);
+            *ctx.state::<Option<TelemetryRequestContext>>(|| None) = Some(req_ctx);
+            hook.on_response_end(&mut ctx);
+            hook.take_response_end_future(&mut ctx)
+                .expect("seeded telemetry must return async completion work")
+        };
+        completions.push(completion);
+    }
+
+    futures::future::join_all(completions).await;
+    db.flush().await;
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let count: usize = conn
+        .query_row(
+            "SELECT COUNT(*) FROM net_events WHERE domain = '127.0.0.1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    assert_eq!(count, 512);
+    db.shutdown_blocking();
 }
 
 /// With a seeded request context, the hook tallies bytes + preview
@@ -757,10 +825,7 @@ async fn hook_writes_substitution_event_and_shared_credential_ref() {
         let mut c = ctx_for(&mut state, &conn);
         *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(req_ctx);
     }
-    {
-        let mut c = ctx_for(&mut state, &conn);
-        hook.on_response_end(&mut c);
-    }
+    complete_response(&hook, &mut state, &conn).await;
 
     let seen = wait_for_db(&db, &db_path, |conn| {
         let net_count: i64 = conn
@@ -839,10 +904,7 @@ async fn hook_does_not_repay_capture_ledger_for_repeated_identical_credential() 
             let mut c = ctx_for(&mut state, &conn);
             *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(req_ctx);
         }
-        {
-            let mut c = ctx_for(&mut state, &conn);
-            hook.on_response_end(&mut c);
-        }
+        complete_response(&hook, &mut state, &conn).await;
     }
 
     let seen = wait_for_db(&db, &db_path, |conn| {
@@ -933,10 +995,7 @@ match = 'http.host == "api.anthropic.com" && http.path == "/v1/messages" && tcp.
         let mut c = ctx_for(&mut state, &conn);
         *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(anthropic_req_ctx());
     }
-    {
-        let mut c = ctx_for(&mut state, &conn);
-        hook.on_response_end(&mut c);
-    }
+    complete_response(&hook, &mut state, &conn).await;
 
     let mut seen = false;
     for _ in 0..50 {
@@ -1004,10 +1063,7 @@ match = 'model.provider == "anthropic" && model.name == "claude-test"'
         let mut c = ctx_for(&mut state, &conn);
         *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(anthropic_req_ctx());
     }
-    {
-        let mut c = ctx_for(&mut state, &conn);
-        hook.on_response_end(&mut c);
-    }
+    complete_response(&hook, &mut state, &conn).await;
 
     let mut seen = false;
     for _ in 0..50 {
@@ -1081,10 +1137,7 @@ async fn hook_writes_injected_substitution_event_for_broker_ref_replay() {
         let mut c = ctx_for(&mut state, &conn);
         *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(req_ctx);
     }
-    {
-        let mut c = ctx_for(&mut state, &conn);
-        hook.on_response_end(&mut c);
-    }
+    complete_response(&hook, &mut state, &conn).await;
 
     let seen = wait_for_db(&db, &db_path, |conn| {
         let injected_count: i64 = conn
@@ -1161,10 +1214,7 @@ async fn hook_detects_response_body_token_exchange_and_redacts_preview() {
                 max_body_capture: 4096,
             };
     }
-    {
-        let mut c = ctx_for(&mut state, &conn);
-        hook.on_response_end(&mut c);
-    }
+    complete_response(&hook, &mut state, &conn).await;
 
     let seen = wait_for_db(&db, &db_path, |conn| {
         let row: Option<(String, String)> = conn

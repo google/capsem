@@ -12,7 +12,8 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
@@ -265,9 +266,9 @@ pub type ArcHook = Arc<dyn Hook>;
 ///
 /// Why sync: per-chunk work is fundamentally CPU-bound byte
 /// transformation -- decompression, regex match-and-replace,
-/// streaming parsers -- none of which need an `.await`. Hooks that
-/// genuinely need async per-chunk (rare) push to an `mpsc` from the
-/// sync method and drain in their own task.
+/// streaming parsers -- none of which need an `.await`. Response-end
+/// work that needs async backpressure returns a `ChunkEndFuture`; genuinely
+/// async per-chunk work (rare) pushes to an `mpsc` and drains in its own task.
 ///
 /// Per-connection state for a chunk hook lives in the same
 /// `HookCtx` slot map the async hooks use, keyed by the chunk
@@ -295,6 +296,15 @@ pub trait ChunkHook: Send + Sync {
     /// Called once when the response body finishes.
     fn on_response_end(&self, _ctx: &mut ChunkCtx<'_>) {}
 
+    /// Return async completion work prepared by `on_response_end`.
+    ///
+    /// The body polls returned work before exposing EOF. Most chunk hooks are
+    /// CPU-only and return `None`; telemetry uses this handoff to await the
+    /// logger's bounded queue without blocking inside the sync callback.
+    fn take_response_end_future(&self, _ctx: &mut ChunkCtx<'_>) -> Option<ChunkEndFuture> {
+        None
+    }
+
     /// Return bytes withheld while classifying or transforming the response.
     /// The pipeline feeds this tail through later chunk hooks before their end
     /// callbacks, then the body wrapper emits it as the final data frame.
@@ -304,6 +314,32 @@ pub trait ChunkHook: Send + Sync {
 }
 
 pub type ArcChunkHook = Arc<dyn ChunkHook>;
+
+/// Async work produced by a sync chunk-end callback.
+///
+/// Chunk callbacks run inside `Body::poll_frame`, so they cannot await a
+/// bounded downstream queue directly. The body wrapper polls this future
+/// before exposing end-of-stream, turning queue saturation into ordinary HTTP
+/// backpressure without blocking a Tokio worker or dropping the work.
+pub struct ChunkEndFuture {
+    inner: Mutex<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+}
+
+impl ChunkEndFuture {
+    pub fn new(future: impl Future<Output = ()> + Send + 'static) -> Self {
+        Self {
+            inner: Mutex::new(Box::pin(future)),
+        }
+    }
+}
+
+impl Future for ChunkEndFuture {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.inner.lock().unwrap().as_mut().poll(cx)
+    }
+}
 
 /// Per-connection sync context passed to every `ChunkHook` callback.
 /// Cheap to construct each call -- it borrows the long-lived

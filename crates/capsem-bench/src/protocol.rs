@@ -785,6 +785,3 @@ pub(crate) fn hostname() -> String {
         .or_else(|_| std::env::var("COMPUTERNAME"))
         .unwrap_or_else(|_| "unknown".to_string())
 }
-
-
-

@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use super::events::{Event, ALL_KINDS, KIND_COUNT};
 use super::hooks::{
-    ArcChunkHook, ArcHook, ChunkCtx, ConnMeta, DynEmitter, EmitError, HookCtx, HookOutcome,
-    HookState, Registration, StopAction,
+    ArcChunkHook, ArcHook, ChunkCtx, ChunkEndFuture, ConnMeta, DynEmitter, EmitError, HookCtx,
+    HookOutcome, HookState, Registration, StopAction,
 };
 use super::metrics as m;
 use bytes::{Bytes, BytesMut};
@@ -35,6 +35,11 @@ pub enum DispatchOutcome {
     Completed,
     /// A hook returned `Stop(StopAction)`. Caller acts on it.
     Stopped(StopAction),
+}
+
+pub(super) struct ResponseEnd {
+    pub tail: Bytes,
+    pub pending: Vec<ChunkEndFuture>,
 }
 
 /// Builder for a `Pipeline`. Each `register` call assigns the next
@@ -209,14 +214,17 @@ impl Pipeline {
     }
 
     /// Notify ChunkHooks the response body has finished.
-    pub fn dispatch_response_end(
+    pub(super) fn dispatch_response_end(
         &self,
         state: &mut HookState,
         conn: &ConnMeta,
         trace_id: Option<&str>,
-    ) -> Bytes {
+    ) -> ResponseEnd {
         if self.chunk_hooks.is_empty() {
-            return Bytes::new();
+            return ResponseEnd {
+                tail: Bytes::new(),
+                pending: Vec::new(),
+            };
         }
         let mut ctx = ChunkCtx {
             state,
@@ -224,6 +232,7 @@ impl Pipeline {
             trace_id,
         };
         let mut tail = Bytes::new();
+        let mut pending = Vec::new();
         for hook in self.chunk_hooks.iter() {
             if !tail.is_empty() {
                 self.run_chunk(hook.as_ref(), "response_tail", &mut ctx, |h, c| {
@@ -233,6 +242,9 @@ impl Pipeline {
             self.run_chunk(hook.as_ref(), "response_end", &mut ctx, |h, c| {
                 h.on_response_end(c)
             });
+            if let Some(future) = hook.take_response_end_future(&mut ctx) {
+                pending.push(future);
+            }
             let produced = hook.take_response_tail(&mut ctx);
             if !produced.is_empty() {
                 if tail.is_empty() {
@@ -245,7 +257,7 @@ impl Pipeline {
                 }
             }
         }
-        tail
+        ResponseEnd { tail, pending }
     }
 
     /// Common timing + counter wrapper for sync chunk-hook calls. Cheap

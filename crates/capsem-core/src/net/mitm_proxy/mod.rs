@@ -2874,7 +2874,7 @@ async fn handle_request(
     //   DecompressionHook (gzip) → SseParserHook (AI) →
     //   InterpreterHook* → TelemetryHook. The TelemetryHook reads the
     //   seeded TelemetryRequestContext at on_response_end, builds the
-    //   NetEvent (+ ModelCall for AI), and spawns the DB writes.
+    //   NetEvent (+ ModelCall for AI), then hands off async DB writes.
     let chunk_dispatched = body::ChunkDispatchBody::new(
         resp_body,
         Arc::clone(&config.pipeline),

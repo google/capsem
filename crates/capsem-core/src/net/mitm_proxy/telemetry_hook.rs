@@ -27,7 +27,7 @@ use capsem_logger::{
 use tracing::{info, warn};
 
 use super::body::BodyStats;
-use super::hooks::{ChunkCtx, ChunkHook};
+use super::hooks::{ChunkCtx, ChunkEndFuture, ChunkHook};
 use super::interpreter_hook::LlmEventStream;
 use super::metrics as m;
 use super::util::is_llm_api_path;
@@ -44,11 +44,12 @@ use crate::net::ai_traffic::provider::{
     extract_model_from_path, tool_origin, ModelProtocol, ProviderKind,
 };
 use crate::net::ai_traffic::{request_parser, TraceState};
-use crate::net::policy_config::{snapshot_plugin_policy, SecurityRuleSet, SharedPluginPolicy};
+use crate::net::policy_config::{
+    snapshot_plugin_policy, PluginPolicySnapshot, SecurityRuleSet, SharedPluginPolicy,
+};
 use crate::security_engine::{
-    delegate_matching_security_rules_for_evaluated_event, emit_security_write_try,
-    HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, RuntimeSecurityEventType,
-    SecurityEvent, TcpSecurityEvent,
+    delegate_matching_security_rules_for_evaluated_event, emit_security_write, HttpSecurityEvent,
+    IpSecurityEvent, ModelSecurityEvent, RuntimeSecurityEventType, SecurityEvent, TcpSecurityEvent,
 };
 
 /// Per-request snapshot of the request-side fields that the response
@@ -122,6 +123,67 @@ pub struct TelemetryDeps {
 /// `ModelCall` for the request just completed.
 pub struct TelemetryHook {
     deps: Arc<TelemetryDeps>,
+}
+
+struct PendingTelemetryCompletion {
+    db: Arc<DbWriter>,
+    rules: Arc<SecurityRuleSet>,
+    plugin_policy: PluginPolicySnapshot,
+    net_event: NetEvent,
+    net_security_event: SecurityEvent,
+    model_call: Option<ModelCall>,
+    credential_observations: Vec<CredentialObservation>,
+    credential_injections: Vec<CredentialInjection>,
+}
+
+impl PendingTelemetryCompletion {
+    async fn run(self) {
+        let Self {
+            db,
+            rules,
+            plugin_policy,
+            net_event,
+            net_security_event,
+            model_call,
+            credential_observations,
+            credential_injections,
+        } = self;
+
+        if let Some(event_id) = emit_security_write(&db, WriteOp::NetEvent(net_event)).await {
+            delegate_matching_security_rules_for_evaluated_event(
+                Arc::clone(&db),
+                event_id,
+                RuntimeSecurityEventType::HttpRequest,
+                Arc::clone(&rules),
+                Arc::clone(&plugin_policy),
+                net_security_event,
+                current_unix_ms(),
+                "http",
+            );
+        }
+        if let Some(model_call) = model_call {
+            let model_security_event = security_event_from_model_call(&model_call);
+            if let Some(event_id) = emit_security_write(&db, WriteOp::ModelCall(model_call)).await {
+                delegate_matching_security_rules_for_evaluated_event(
+                    Arc::clone(&db),
+                    event_id,
+                    RuntimeSecurityEventType::ModelCall,
+                    Arc::clone(&rules),
+                    plugin_policy,
+                    model_security_event,
+                    current_unix_ms(),
+                    "model",
+                );
+            }
+        }
+
+        if !credential_observations.is_empty() || !credential_injections.is_empty() {
+            tokio::spawn(async move {
+                log_brokered_injections(&db, &rules, credential_injections).await;
+                broker_and_log_observations(&db, &rules, credential_observations).await;
+            });
+        }
+    }
 }
 
 impl TelemetryHook {
@@ -272,46 +334,26 @@ impl ChunkHook for TelemetryHook {
 
         let stage_started = Instant::now();
         let has_model_call = model_call.is_some();
-        if let Some(event_id) = emit_security_write_try(&db, WriteOp::NetEvent(net_event)) {
-            delegate_matching_security_rules_for_evaluated_event(
-                Arc::clone(&db),
-                event_id,
-                RuntimeSecurityEventType::HttpRequest,
-                Arc::clone(&rules),
-                plugin_policy.clone(),
+        *ctx.state::<Option<PendingTelemetryCompletion>>(|| None) =
+            Some(PendingTelemetryCompletion {
+                db,
+                rules,
+                plugin_policy,
+                net_event,
                 net_security_event,
-                current_unix_ms(),
-                "http",
-            );
-        }
-        if let Some(mc) = model_call {
-            let model_security_event = security_event_from_model_call(&mc);
-            if let Some(event_id) = emit_security_write_try(&db, WriteOp::ModelCall(mc)) {
-                delegate_matching_security_rules_for_evaluated_event(
-                    Arc::clone(&db),
-                    event_id,
-                    RuntimeSecurityEventType::ModelCall,
-                    Arc::clone(&rules),
-                    plugin_policy,
-                    model_security_event,
-                    current_unix_ms(),
-                    "model",
-                );
-            }
-        }
-        record_telemetry_stage(stage_started, "ledger_enqueue");
-
-        let stage_started = Instant::now();
-        let broker_db = Arc::clone(&db);
-        let broker_rules = rules.clone();
-        let broker_observations = credential_observations;
-        let broker_injections = credential_injections;
-        tokio::spawn(async move {
-            log_brokered_injections(&broker_db, &broker_rules, broker_injections).await;
-            broker_and_log_observations(&broker_db, &broker_rules, broker_observations).await;
-        });
-        record_telemetry_stage(stage_started, "broker_task_spawn");
+                model_call,
+                credential_observations,
+                credential_injections,
+            });
+        record_telemetry_stage(stage_started, "ledger_handoff");
         record_telemetry_response_end(response_end_started, has_model_call);
+    }
+
+    fn take_response_end_future(&self, ctx: &mut ChunkCtx<'_>) -> Option<ChunkEndFuture> {
+        let completion = ctx
+            .state::<Option<PendingTelemetryCompletion>>(|| None)
+            .take()?;
+        Some(ChunkEndFuture::new(completion.run()))
     }
 }
 
