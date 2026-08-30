@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from capsem_builder.gate.tools.doctor import (
@@ -74,7 +75,8 @@ def test_session_list_success_returns_zero_status(
 def test_kvm_diagnostic_preserves_missing_device_failure_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(kvm_diagnostic.os.path, "exists", lambda _path: False)
+    missing_kvm = SimpleNamespace(path=SimpleNamespace(exists=lambda _path: False))
+    monkeypatch.setattr(kvm_diagnostic, "os", missing_kvm)
 
     with pytest.raises(SystemExit) as failure:
         kvm_diagnostic.main()
