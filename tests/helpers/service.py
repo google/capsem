@@ -65,17 +65,21 @@ ARTIFACT_MAX_KEPT_DIRS = int(_DEBUG_ARTIFACT_POLICY["maximum_runs"])
 ARTIFACT_MAX_AGE_S = int(_DEBUG_ARTIFACT_POLICY["maximum_age_days"]) * 24 * 60 * 60
 ARTIFACT_MAX_TOTAL_BYTES = int(_DEBUG_ARTIFACT_POLICY["maximum_total_gib"]) * 1024**3
 DEFAULT_TEST_RUST_LOG = "debug,notify::poll::data=error"
-REQUIRED_TEST_RUST_LOG = "service=info"
+REQUIRED_TEST_RUST_LOG = "service=info,capsem=debug"
 
 
 def test_rust_log_filter(environ: Mapping[str, str] = os.environ) -> str:
-    """Return the VM fixture filter with required service-owned evidence."""
+    """Return the VM fixture filter with required first-party evidence."""
     selected = (
         environ.get("CAPSEM_TEST_RUST_LOG")
         or environ.get("RUST_LOG")
         or DEFAULT_TEST_RUST_LOG
     )
-    return f"{selected},{REQUIRED_TEST_RUST_LOG}"
+    # Keep the required targets before the selected filter. Target directives
+    # remain more specific than an ambient global level such as ``warn``, while
+    # a selected ``capsem=trace`` directive may still replace the required
+    # minimum for focused diagnostics.
+    return f"{REQUIRED_TEST_RUST_LOG},{selected}"
 
 
 @dataclass(frozen=True)

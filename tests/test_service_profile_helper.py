@@ -15,21 +15,24 @@ def test_exec_ready_timeout_covers_parallel_kvm_boot_pressure() -> None:
 def test_service_fixture_log_filter_suppresses_expected_notify_races() -> None:
     value = service_helper.test_rust_log_filter({})
 
-    assert value.startswith("debug")
+    assert value.startswith("service=info,capsem=debug")
     assert "notify::poll::data=error" in value
-    assert value.endswith("service=info")
+    assert value.endswith("debug,notify::poll::data=error")
 
 
 @pytest.mark.parametrize("variable", ["RUST_LOG", "CAPSEM_TEST_RUST_LOG"])
 def test_service_fixture_log_filter_honors_diagnostic_override(variable: str) -> None:
     assert (
         service_helper.test_rust_log_filter({variable: "capsem=trace"})
-        == "capsem=trace,service=info"
+        == "service=info,capsem=debug,capsem=trace"
     )
 
 
 def test_service_fixture_log_filter_keeps_required_evidence_under_ambient_warn() -> None:
-    assert service_helper.test_rust_log_filter({"RUST_LOG": "warn"}) == "warn,service=info"
+    assert (
+        service_helper.test_rust_log_filter({"RUST_LOG": "warn"})
+        == "service=info,capsem=debug,warn"
+    )
 
 
 def test_materialize_test_profiles_rejects_empty_generated_catalog(
