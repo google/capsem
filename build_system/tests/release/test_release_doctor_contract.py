@@ -391,8 +391,8 @@ def test_bootstrap_and_doctor_prove_tart_cache_clone_boot_and_ssh() -> None:
     assert "CAPSEM_GATE_COMMAND_SANDBOX_MODE" in bootstrap
     assert "authenticated outside-sandbox action" in bootstrap
     assert "--require-cache" in doctor
-    assert "CAPSEM_GATE_COMMAND_SANDBOX_MODE" in doctor
-    assert "authenticated outside-sandbox action" in doctor
+    assert "CAPSEM_GATE_COMMAND_SANDBOX_MODE" not in doctor
+    assert "CAPSEM_SKIP_TART_CHECK" in doctor
     assert "cached, cloned, booted, and SSH-ready" in doctor
     assert '"tart", "clone"' in readiness
     assert '"tart",\n                "run",' in readiness

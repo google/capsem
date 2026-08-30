@@ -1657,7 +1657,7 @@ config_root = "config"
 output = "target/assets"
 # Doctor is run first, with the checks that would fail on the very thing this
 # is about to build turned off.
-doctor_skips = { CAPSEM_SKIP_ASSET_CHECK = "1", CAPSEM_SKIP_KVM_CHECK = "1" }
+doctor_skips = { CAPSEM_SKIP_ASSET_CHECK = "1", CAPSEM_SKIP_KVM_CHECK = "1", CAPSEM_SKIP_TART_CHECK = "1" }
 # What a per-architecture asset tree must contain to count as built comes from
 # `[artifacts]`; it was spelled here and in `[assets]`, and `initrd.py` spelled
 # one of them a third time.

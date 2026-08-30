@@ -107,6 +107,8 @@ def test_macos_doctor_does_not_interpret_the_linux_command_policy() -> None:
     macos = (PROJECT_ROOT / "build_system/scripts/doctor/doctor-macos.sh").read_text(encoding="utf-8")
 
     assert CONFIG.environment.command_sandbox_mode not in macos
+    assert "CAPSEM_SKIP_TART_CHECK" in macos
+    assert CONFIG.imagebuild.doctor_skips["CAPSEM_SKIP_TART_CHECK"] == "1"
 
 
 def _checkout(tmp_path: Path, *, gate_toml: str | None = None) -> Path:

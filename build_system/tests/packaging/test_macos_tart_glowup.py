@@ -774,8 +774,8 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke(
     assert "tart --version" in doctor
     assert "sshpass" in doctor
     assert 'uv run --project build_system --frozen python "$PROJECT_ROOT/build_system/scripts/build/tart_readiness.py"' in doctor
-    assert "CAPSEM_GATE_COMMAND_SANDBOX_MODE" in doctor
-    assert "authenticated outside-sandbox action" in doctor
+    assert "CAPSEM_GATE_COMMAND_SANDBOX_MODE" not in doctor
+    assert "CAPSEM_SKIP_TART_CHECK" in doctor
     assert "test-macos-install:" not in justfile
     from capsem_builder.gate import config as gate_config
 
@@ -798,6 +798,7 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke(
     # And the whole gate is the only thing that boots a Tart VM -- `just smoke`
     # dispatches a different command, whose plan cannot reach the script.
     issues = _gate_issues("candidate")
+    assert "CAPSEM_SKIP_TART_CHECK=1" in issues
     readiness = next(line for line in issues.splitlines() if "tart_readiness.py" in line)
     assert "--require-cache" in readiness
     assert "[outside kernel sandbox]" in readiness
