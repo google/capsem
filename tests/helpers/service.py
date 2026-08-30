@@ -65,11 +65,17 @@ ARTIFACT_MAX_KEPT_DIRS = int(_DEBUG_ARTIFACT_POLICY["maximum_runs"])
 ARTIFACT_MAX_AGE_S = int(_DEBUG_ARTIFACT_POLICY["maximum_age_days"]) * 24 * 60 * 60
 ARTIFACT_MAX_TOTAL_BYTES = int(_DEBUG_ARTIFACT_POLICY["maximum_total_gib"]) * 1024**3
 DEFAULT_TEST_RUST_LOG = "debug,notify::poll::data=error"
+REQUIRED_TEST_RUST_LOG = "service=info"
 
 
 def test_rust_log_filter(environ: Mapping[str, str] = os.environ) -> str:
-    """Return the VM fixture log filter while retaining explicit diagnostics."""
-    return environ.get("CAPSEM_TEST_RUST_LOG") or environ.get("RUST_LOG") or DEFAULT_TEST_RUST_LOG
+    """Return the VM fixture filter with required service-owned evidence."""
+    selected = (
+        environ.get("CAPSEM_TEST_RUST_LOG")
+        or environ.get("RUST_LOG")
+        or DEFAULT_TEST_RUST_LOG
+    )
+    return f"{selected},{REQUIRED_TEST_RUST_LOG}"
 
 
 @dataclass(frozen=True)

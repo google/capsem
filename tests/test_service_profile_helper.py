@@ -17,11 +17,19 @@ def test_service_fixture_log_filter_suppresses_expected_notify_races() -> None:
 
     assert value.startswith("debug")
     assert "notify::poll::data=error" in value
+    assert value.endswith("service=info")
 
 
 @pytest.mark.parametrize("variable", ["RUST_LOG", "CAPSEM_TEST_RUST_LOG"])
 def test_service_fixture_log_filter_honors_diagnostic_override(variable: str) -> None:
-    assert service_helper.test_rust_log_filter({variable: "capsem=trace"}) == "capsem=trace"
+    assert (
+        service_helper.test_rust_log_filter({variable: "capsem=trace"})
+        == "capsem=trace,service=info"
+    )
+
+
+def test_service_fixture_log_filter_keeps_required_evidence_under_ambient_warn() -> None:
+    assert service_helper.test_rust_log_filter({"RUST_LOG": "warn"}) == "warn,service=info"
 
 
 def test_materialize_test_profiles_rejects_empty_generated_catalog(
