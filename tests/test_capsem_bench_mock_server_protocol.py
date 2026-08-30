@@ -68,8 +68,10 @@ def test_python_hot_bench_modes_fail_closed_and_point_to_rust(mode, monkeypatch)
     assert "capsem-bench-rs" in output
 
 
-def test_protocol_mode_delegates_to_rust_bench(monkeypatch):
+def test_protocol_mode_delegates_to_rust_bench(monkeypatch, tmp_path):
     calls = []
+    rust_bench = tmp_path / "capsem-bench-rs"
+    rust_bench.touch()
 
     class Completed:
         returncode = 7
@@ -79,7 +81,7 @@ def test_protocol_mode_delegates_to_rust_bench(monkeypatch):
         "argv",
         ["capsem-bench", "protocol", "--base-url", "http://127.0.0.1:3713"],
     )
-    monkeypatch.setattr(bench_main.os.path, "exists", lambda path: path == bench_main.RUST_BENCH)
+    monkeypatch.setattr(bench_main, "RUST_BENCH", str(rust_bench))
     monkeypatch.setattr(
         bench_main.subprocess,
         "run",
