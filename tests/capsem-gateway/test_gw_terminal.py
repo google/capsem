@@ -97,7 +97,7 @@ def ws_env():
     server's socket path must be under that same run/instances/ dir.
     """
     # Use a short path to stay under the 108-byte AF_UNIX limit
-    tmp_dir = Path(tempfile.mkdtemp(prefix="gw-ws-", dir="/tmp"))
+    tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-gw-ws-", dir="/tmp"))
     run_dir = tmp_dir / ".capsem" / "run"
     instances_dir = run_dir / "instances"
     instances_dir.mkdir(parents=True)
@@ -272,7 +272,7 @@ def test_mock_ws_process_stop_does_not_leak_thread_exception():
         captured.append(args)
 
     threading.excepthook = hook
-    tmp_dir = Path(tempfile.mkdtemp(prefix="mockws-", dir="/tmp"))
+    tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-mockws-", dir="/tmp"))
     try:
         sock_path = str(tmp_dir / "ws.sock")
         proc = MockWsProcess(sock_path)
