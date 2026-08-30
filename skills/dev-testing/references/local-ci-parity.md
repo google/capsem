@@ -1,13 +1,13 @@
 # Local/CI Execution Parity (Ironbank parity rule)
 
-Reference for /dev-testing: every portable release gate must be owned by just test-clean. Read before editing any release workflow, gate recipe, or CI job.
+Reference for /dev-testing: every portable release gate must be owned by just test-full. Read before editing any release workflow, gate recipe, or CI job.
 
 ## Local/CI execution parity
 
 ### Ironbank parity rule
 
 The Ironbank parity rule is that every portable release gate must be owned by
-`just test-clean`. Local development rebuilds every package and every profile, then
+`just test-full`. Local development rebuilds every package and every profile, then
 runs the complete gate. Release CI calls the same checked-in modules while
 building only the lane-owned artifact family and resolving the unchanged
 family from the selected channel manifest. Specialized CI jobs may provide
@@ -16,13 +16,13 @@ portable requirement.
 
 The first shared module is `_test-fast`. It must run before Docker/Colima or
 artifact preparation and must be independently callable by `just fast-test`,
-`just test-clean`, ordinary CI, and both release lanes. YAML/source syntax, source
+`just test-full`, ordinary CI, and both release lanes. YAML/source syntax, source
 contracts, Clippy, Python/JavaScript checks, web builds, and all locked
 dependency audits belong there and nowhere else.
 
-Treat `just test-clean` as a strict superset, not merely a collection of similar
+Treat `just test-full` as a strict superset, not merely a collection of similar
 assertions. Anything a CI workflow builds locally-portably must be built and
-tested by `just test-clean` through the same production primitive. CI is allowed to
+tested by `just test-full` through the same production primitive. CI is allowed to
 run only the slice it needs; the local canonical gate is not allowed to omit
 that slice. A workflow-only build, even when another test validates its input
 schema, is an Ironbank violation because the produced artifact is unaccounted
@@ -53,7 +53,7 @@ Capture verbose successful helper output so per-file progress cannot starve a
 runner. A release runner blackout during an expensive tool is a missing
 local/CI resource contract, not permission to rerun unchanged.
 
-Run `build_system/scripts/audit/check-hardcoded-release-selections.sh` at the start of `just test-clean`.
+Run `build_system/scripts/audit/check-hardcoded-release-selections.sh` at the start of `just test-full`.
 This source guard is a release contract, not a style check: user-facing and
 profile-scoped requests must obtain profile ids from arguments or the installed
 catalog, package rails must materialize the catalog, native installers must use
@@ -80,7 +80,7 @@ This includes workspace/runtime tests, Rust and Python coverage floors,
 `capsem-doctor` and Ironbank acceptance, benchmarks, artifact completeness,
 web app, docs, marketing, and release-site validation, and the Docker/systemd Linux
 package install and guest-shell proof. It also includes the full profile-owned
-VM asset matrix: `just test-clean` calls `just _gate-assets`, which rebuilds every
+VM asset matrix: `just test-full` calls `just _gate-assets`, which rebuilds every
 checked-in profile for arm64 and x86_64 through `just _build-kernel` and
 `just _build-rootfs`, validates the release payload and manifest, and boots each
 host-architecture result to a real guest-shell marker. Truly non-portable
@@ -109,7 +109,7 @@ historical releases cannot resolve through current-file paths, and local copy
 mode fails closed on byte mutation. Use an unreadable/directory blob or an
 instrumented open counter as evidence; a timing threshold alone is not a gate.
 
-Artifact accounting is literal: macOS-local `just test-clean` builds the real
+Artifact accounting is literal: macOS-local `just test-full` builds the real
 release-mode `.pkg`, builds both Linux release-mode `.deb` architectures, and
 runs the production host-SBOM generator over those exact packages. Generated
 settings are regenerated under a before/after idempotence gate. A fixture-only
@@ -117,7 +117,7 @@ package test or a generator source inspection does not account for the artifact
 that a release workflow will publish.
 
 Run Linux-only build, doctor, package, and service prerequisites in Docker from
-`just test-clean` whenever the host is macOS. Match the CI architecture, command
+`just test-full` whenever the host is macOS. Match the CI architecture, command
 names, environment variables, permissions, and service manager as closely as
 the container permits. Add a contract test that ties the workflow command to
 the local entrypoint, plus an executable container regression for the failed
@@ -165,7 +165,7 @@ clock primitive.
 When an unavoidable platform boundary prevents local execution, name it in the
 release skill and retain the nearest deterministic local proof. Hardware and
 external-service gates still require evidence from their owning release job.
-macOS VZ behavior requires the complete local `just test-clean`, while hosted CI owns
+macOS VZ behavior requires the complete local `just test-full`, while hosted CI owns
 final package signing, notarization, installation, and structural verification.
 Never silently omit either gate because one environment cannot run the other
 environment's proof.

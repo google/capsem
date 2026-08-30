@@ -1,6 +1,6 @@
 """One gate per machine, and the three ways that used to go wrong silently.
 
-A second `just test-clean` on the same machine is not a queueing inconvenience. The
+A second `just test-full` on the same machine is not a queueing inconvenience. The
 first thing a run does is remove `$CAPSEM_HOME` (justfile:502) and stop the
 service in it, so two runs means one deletes the other's home mid-flight and
 both report failures that belong to neither.
@@ -106,7 +106,7 @@ def _is_free(lockfile: str) -> bool:
 def test_a_second_holder_is_refused_while_the_first_holds(tmp_path: Path) -> None:
     """The whole point: the second run must not start wiping the first's home."""
     settings = _settings(tmp_path)
-    lock = ExclusiveLock(settings, purpose="just test-clean")
+    lock = ExclusiveLock(settings, purpose="just test-full")
     lock.acquire()
 
     try:
@@ -117,7 +117,7 @@ def test_a_second_holder_is_refused_while_the_first_holds(tmp_path: Path) -> Non
 
 def test_the_lock_is_free_again_once_released(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
-    lock = ExclusiveLock(settings, purpose="just test-clean")
+    lock = ExclusiveLock(settings, purpose="just test-full")
     lock.acquire()
     lock.release()
 
@@ -171,7 +171,7 @@ def test_a_launched_daemon_does_not_inherit_the_lock(tmp_path: Path) -> None:
                 from capsem_builder.gate.locks import ExclusiveLock
 
                 ExclusiveLock(LockConfig(**json.loads(sys.argv[1])),
-                              purpose="just test-clean").acquire()
+                              purpose="just test-full").acquire()
                 daemon = subprocess.Popen(
                     [sys.executable, "-c", "import time; time.sleep(60)"],
                     close_fds=False,
@@ -206,7 +206,7 @@ def test_the_lock_fd_is_explicitly_marked_uninheritable(tmp_path: Path) -> None:
     """Python's default since PEP 446, stated in the code so that adding
     `pass_fds` to a launch is a visible decision rather than a quiet one."""
     settings = _settings(tmp_path)
-    lock = ExclusiveLock(settings, purpose="just test-clean")
+    lock = ExclusiveLock(settings, purpose="just test-full")
     lock.acquire()
 
     try:
@@ -221,7 +221,7 @@ def test_the_lock_fd_is_explicitly_marked_uninheritable(tmp_path: Path) -> None:
 
 
 def test_contention_names_the_holder_rather_than_hanging(tmp_path: Path) -> None:
-    """Someone who left `just test-clean` running in another terminal deserves to be
+    """Someone who left `just test-full` running in another terminal deserves to be
     told that, not to watch a cursor for two hours."""
     settings = _settings(tmp_path)
     first = ExclusiveLock(settings, purpose="just release-binaries nightly")
@@ -229,7 +229,7 @@ def test_contention_names_the_holder_rather_than_hanging(tmp_path: Path) -> None
 
     try:
         with pytest.raises(GateError) as failure:
-            ExclusiveLock(settings, purpose="just test-clean").acquire()
+            ExclusiveLock(settings, purpose="just test-full").acquire()
 
         message = str(failure.value)
         assert "release-binaries" in message, "say what is holding it"
@@ -240,7 +240,7 @@ def test_contention_names_the_holder_rather_than_hanging(tmp_path: Path) -> None
 
 def test_the_holder_record_says_who_when_and_where(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
-    lock = ExclusiveLock(settings, purpose="just test-clean")
+    lock = ExclusiveLock(settings, purpose="just test-full")
 
     lock.acquire()
     try:
@@ -249,7 +249,7 @@ def test_the_holder_record_says_who_when_and_where(tmp_path: Path) -> None:
         lock.release()
 
     assert record["pid"] == os.getpid()
-    assert record["purpose"] == "just test-clean"
+    assert record["purpose"] == "just test-full"
     assert record["started"] <= time.time()
     assert record["host"]
 
@@ -258,7 +258,7 @@ def test_the_holder_record_is_cleared_on_release(tmp_path: Path) -> None:
     """A stale record would name a process that finished, sending whoever
     reads it to inspect the wrong pid."""
     settings = _settings(tmp_path)
-    lock = ExclusiveLock(settings, purpose="just test-clean")
+    lock = ExclusiveLock(settings, purpose="just test-full")
     lock.acquire()
     lock.release()
 
@@ -272,7 +272,7 @@ def test_a_missing_holder_record_still_reports_useful_contention(
     where it is absent -- and a crash can leave it absent for good. Contention
     must still say something rather than raising about the record."""
     settings = _settings(tmp_path)
-    first = ExclusiveLock(settings, purpose="just test-clean")
+    first = ExclusiveLock(settings, purpose="just test-full")
     first.acquire()
     Path(settings.holder_record).unlink()
 
@@ -288,7 +288,7 @@ def test_a_corrupt_holder_record_does_not_mask_the_contention(
 ) -> None:
     """Half a JSON object is what a killed writer leaves behind."""
     settings = _settings(tmp_path)
-    first = ExclusiveLock(settings, purpose="just test-clean")
+    first = ExclusiveLock(settings, purpose="just test-full")
     first.acquire()
     Path(settings.holder_record).write_text('{"pid": 4')
 
@@ -308,7 +308,7 @@ def test_the_lock_waits_for_its_timeout_before_giving_up(tmp_path: Path) -> None
     """Queueing behind another run is normal; failing instantly would make
     two developers on one machine unable to work."""
     settings = _settings(tmp_path, wait_timeout_seconds=0.3)
-    first = ExclusiveLock(settings, purpose="just test-clean")
+    first = ExclusiveLock(settings, purpose="just test-full")
     first.acquire()
 
     started = time.monotonic()
@@ -325,7 +325,7 @@ def test_a_waiting_gate_takes_the_lock_when_it_is_freed(tmp_path: Path) -> None:
     """Otherwise queued work fails rather than running."""
     settings = _settings(tmp_path, wait_timeout_seconds=10)
     with _holding(settings.path, seconds=0.4) as holder:
-        waiting = ExclusiveLock(settings, purpose="just test-clean")
+        waiting = ExclusiveLock(settings, purpose="just test-full")
         try:
             waiting.acquire()
         finally:
@@ -364,7 +364,7 @@ def test_the_lock_is_a_resource_so_teardown_is_not_optional() -> None:
 
 def test_asking_for_the_fd_of_an_unheld_lock_says_so(tmp_path: Path) -> None:
     """Rather than returning a stale descriptor from a previous acquisition."""
-    lock = ExclusiveLock(_settings(tmp_path), purpose="just test-clean")
+    lock = ExclusiveLock(_settings(tmp_path), purpose="just test-full")
 
     with pytest.raises(GateError, match="not held"):
         _ = lock.fileno
@@ -373,12 +373,12 @@ def test_asking_for_the_fd_of_an_unheld_lock_says_so(tmp_path: Path) -> None:
 def test_releasing_a_lock_never_taken_is_harmless(tmp_path: Path) -> None:
     """`held` releases only what it acquired, but teardown runs against
     whatever state a failure left, so this must not raise."""
-    ExclusiveLock(_settings(tmp_path), purpose="just test-clean").release()
+    ExclusiveLock(_settings(tmp_path), purpose="just test-full").release()
 
 
 def test_the_gate_lock_is_built_from_the_checked_in_policy() -> None:
     """One lockfile, named once, so two callers cannot take different ones."""
-    lock = ExclusiveLock.for_gate(CONFIG, purpose="just test-clean")
+    lock = ExclusiveLock.for_gate(CONFIG, purpose="just test-full")
 
     assert lock.path == Path(CONFIG.locks.gate.path).expanduser()
 

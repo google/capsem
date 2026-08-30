@@ -469,14 +469,14 @@ to compatible official binaries.
 
 ### 8.1 Purpose
 
-Local `just test-clean` is the exceptional comprehensive construction and
+Local `just test-full` is the exceptional comprehensive construction and
 integration diagnostic. It exists to catch incompatibilities throughout the
 complete pipeline when focused proof is insufficient; it is not the routine
 edit loop or a journal prerequisite for publication.
 
 ### 8.2 Required scope
 
-Local `just test-clean` MUST exercise 100% of the configured release pipeline,
+Local `just test-full` MUST exercise 100% of the configured release pipeline,
 including:
 
 - Building Capsem binaries.
@@ -495,10 +495,10 @@ including:
 - Running all other correctness, security, integration, and regression gates
   included in the complete local diagnostic command.
 
-The exact internal steps may evolve, but the public meaning of `just test-clean`
+The exact internal steps may evolve, but the public meaning of `just test-full`
 remains “construct and verify the whole system.”
 
-`just test-clean <source-commit>` selects one canonical full lowercase commit that is
+`just test-full <source-commit>` selects one canonical full lowercase commit that is
 already prepared, committed, and reachable from local `main`. It MUST
 materialize and diagnose an independent detached repository at a prefix named
 by that full commit. The mutable outer checkout and branch are not
@@ -513,7 +513,7 @@ channel resolution, immutable source publication, and dispatch MUST run fresh
 on every release attempt.
 
 The runner MUST archive each exact-source attempt journal independently of
-ordinary run rotation. A repeated `just test-clean <source-commit>` MUST return
+ordinary run rotation. A repeated `just test-full <source-commit>` MUST return
 ordinary success immediately when a complete journal still validates, naming
 the original run ID, path, and content digest. A failed attempt MAY resume only
 from its retained full-SHA prefix and the deepest frontier whose graph-derived
@@ -523,7 +523,7 @@ declared step is required before the chain becomes complete. A reuse-only run,
 manual marker, skill, or guessed continuation MUST NOT become evidence.
 
 Before starting Docker/Colima, bootstrap, package, profile, asset, or VM work,
-`just test-clean` MUST run one checked-in private `_test-fast` module. That same
+`just test-full` MUST run one checked-in private `_test-fast` module. That same
 module MUST be called independently by ordinary CI, both release workflows,
 and `just fast-test`. It MUST own all cheap deterministic failures, including YAML
 and workflow parsing, Python/shell/JSON/TOML syntax, generated-file drift,
@@ -1617,13 +1617,13 @@ No additional evidence ledger or result document is introduced.
 
 An implementation conforming to this specification MUST demonstrate:
 
-- [ ] Local `just test-clean` constructs and validates the complete pipeline.
+- [ ] Local `just test-full` constructs and validates the complete pipeline.
 - [ ] Nightly binary and selected profile/asset rebuilds are scheduled daily
       through separate public commands rather than per push.
 - [ ] Existing nightly identities are rebuilt and tested without overwriting
       immutable publications.
 - [ ] Stable binary and profile publication is manual.
-- [ ] `just test-clean <source-commit>` requires one canonical full commit already
+- [ ] `just test-full <source-commit>` requires one canonical full commit already
       on local `main`, diagnoses its detached full-SHA prefix once, reuses or
       structurally resumes its journal, and remains valid while the outer
       checkout advances.
@@ -1687,7 +1687,7 @@ binary policy, and the profiles belonging to that channel. Profiles contain
 their assets. The same profile name may exist independently in multiple
 channels, and a profile need not exist in every channel.
 
-Local `just test-clean` rebuilds and verifies the complete world. CI is selective:
+Local `just test-full` rebuilds and verifies the complete world. CI is selective:
 the binary lane builds binaries and packages and tests them against existing
 profiles; the profile lane rebuilds exactly one channel/profile and tests it
 against the channel's existing selected binary. When both must move, CI builds

@@ -202,7 +202,7 @@ def require_complete(config: GateConfig, commit: SourceCommit) -> QualificationE
     if found is None:
         raise GateError(
             f"source commit {commit} has no complete exact qualification run log; "
-            f"run `just test-clean {commit}` first"
+            f"run `just test-full {commit}` first"
         )
     return found
 

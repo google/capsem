@@ -1,4 +1,4 @@
-"""`just test-clean`: the exceptional complete local diagnostic.
+"""`just test-full`: the exceptional complete local diagnostic.
 
 Two of this command's three guarantees cannot be steps, and understanding why
 is most of the design.
@@ -57,7 +57,7 @@ def keep_awake(runner: Runner) -> list[str] | None:
     command = settings.keep_awake_command[0]
     if shutil.which(command) is None:
         raise GateError(
-            f"macOS just test-clean requires {command} to prevent an unattended "
+            f"macOS just test-full requires {command} to prevent an unattended "
             "release gate from sleeping"
         )
     return [*settings.keep_awake_command, "env", f"{settings.keep_awake_marker}=1"]
@@ -183,7 +183,7 @@ class CandidateCommand(
     in report mode to measure a rule without creating qualification evidence.
     """
 
-    # The run this whole mechanism was built for. `just test-clean` is this command,
+    # The run this whole mechanism was built for. `just test-full` is this command,
     # and it composes the modules' plan *fragments* in-process rather than
     # invoking their commands -- so declaring `private_checkout` on the modules
     # protects `capsem-gate test-fast` typed by hand and does nothing for the

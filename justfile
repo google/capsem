@@ -14,7 +14,7 @@
 #   fast-test              incomplete source feedback; never qualification
 #   focus-test             one named functional group, optionally cold
 #   install                build and install the complete local macOS product
-#   test-clean             exceptional cold complete diagnostic
+#   test-full             exceptional cold complete diagnostic
 #   release-binaries       publish packages for one channel
 #   release-profile        publish one channel/profile
 #
@@ -175,7 +175,7 @@ _bootstrap:
 # the escape hatch, for when a local pass has to mean a pass on a cold runner:
 # diagnose with nothing reused, compiling every artifact from nothing. Release
 # qualification belongs to the release rails; agents must not run this by habit.
-test-clean source_commit="":
+test-full source_commit="":
     @uv run --project build_system --frozen capsem-gate candidate {{quote(source_commit)}} --clean-build
 
 # After the source-only fast gate passes, local composition constructs every

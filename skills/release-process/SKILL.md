@@ -55,7 +55,7 @@ just release-profile <channel> <profile> <source-commit>
 ```
 
 Do not dispatch downstream workflows or author source manifests by hand. Use
-`just test-clean <source-commit>` only as the exceptional cold diagnostic; use
+`just test-full <source-commit>` only as the exceptional cold diagnostic; use
 focused tests during ordinary development. The release commands and complete
 diagnostic own their sandbox, egress, machine lock, journal, and teardown, so
 do not nest or wrap them.

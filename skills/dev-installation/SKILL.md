@@ -175,7 +175,7 @@ install, receipt/app/binary verification, and service health. Because Tart
 macOS guests cannot expose nested virtualization, the recipe then extracts the
 same package on the physical Mac and boots a real Capsem guest from its exact
 binary/profile payload to a shell marker. Both focused scripts remain
-debugging tools; `just test-clean` is the release gate that owns them.
+debugging tools; `just test-full` is the release gate that owns them.
 
 The Linux qualification image is a visible four-step graph: capacity,
 dependency materialization, sealed source build, and sealed smoke. Only the

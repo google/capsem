@@ -1,4 +1,4 @@
-"""The three guarantees `just test-clean` makes on the way out.
+"""The three guarantees `just test-full` makes on the way out.
 
 These were text assertions against the recipe when the gate was shell: the trap
 had to be armed, had to `return "$status"` rather than `exit "$status"`, and

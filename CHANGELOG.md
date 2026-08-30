@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The exceptional cold whole-system diagnostic is now `just test-full`; the
+  previous spelling has no compatibility alias, and release,
+  testing, CI, and developer guidance use the new public command consistently.
 - Brand and Tauri icon sources now have one canonical owner under
   `web/graphics/`; native packaging, CI, documentation, and web callers no
   longer depend on the retired root or a duplicate crate-local icon set.
@@ -34,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `functional`), `release-system` stays source-only instead of demanding a
   locally built package, and `just install` builds and installs the complete local
   macOS package for hands-on testing. The duplicate public `test` and
-  `vm-smoke` spellings are gone; `just test-clean` remains the exceptional
+  `vm-smoke` spellings are gone; `just test-full` remains the exceptional
   cold whole-system diagnostic. Release qualification belongs to the hosted
   `release-profile` and `release-binaries` lanes, which reuse immutable inputs
   and do not require a developer-machine journal.

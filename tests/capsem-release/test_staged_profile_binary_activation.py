@@ -345,7 +345,7 @@ def test_hosted_macos_never_claims_the_local_apple_vz_proof() -> None:
 
     assert "test-profile-arm64-boot:" not in workflow
     assert "build_system/scripts/release/prove-release-profile-assets.py" not in workflow
-    assert "Local Apple Silicon `just test-clean` owns that VZ proof" in release_skill
+    assert "Local Apple Silicon `just test-full` owns that VZ proof" in release_skill
     assert "_gate-assets" in local_gate
 
     # Local Apple VZ remains a deliberate pre-release diagnostic; the hosted

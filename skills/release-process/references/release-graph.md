@@ -168,7 +168,7 @@ activates the channel. Nothing is rebuilt twice.
 
 ## Test composition
 
-Local `just test-clean` rebuilds every package and profile, then runs all shared
+Local `just test-full` rebuilds every package and profile, then runs all shared
 modules. Release CI calls those modules against the exact lane output plus
 digest-resolved complementary artifacts.
 

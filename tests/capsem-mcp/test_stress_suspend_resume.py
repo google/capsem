@@ -9,7 +9,7 @@ the full story. A deployed host always has exactly one service, so
 the serial measurement matches production; -n 2+ measures a state
 that never occurs outside the test harness.
 
-Gated behind `CAPSEM_STRESS` so `just test-clean` runs don't get swamped.
+Gated behind `CAPSEM_STRESS` so `just test-full` runs don't get swamped.
 
 Run with:
     CAPSEM_STRESS=1 uv run --project build_system --frozen pytest \

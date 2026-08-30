@@ -174,7 +174,7 @@ the public profile command for `code` and `co-work` and the separate public
 binary command with that same SHA. The release commands validate and publish
 one immutable source ref; their hosted lanes build, install, and qualify the
 exact artifact family they may publish. They do not consume a machine-local
-`just test-clean` journal.
+`just test-full` journal.
 
 It contains no release implementation and never dispatches `release.yaml` or
 `release-assets.yaml` directly. Its `capsem-nightly-release-scheduler` lock
@@ -189,24 +189,24 @@ signing/notarization changes bytes and immutable release assets cannot be
 overwritten. A new version identity publishes and activates normally. Stable
 has no schedule and is started explicitly through the same two public commands.
 
-## PR gate compared with `just test-clean`
+## PR gate compared with `just test-full`
 
 The Ironbank parity rule is that every portable release gate has the same
-checked-in owner locally and in release CI. `just test-clean` is the exceptional
+checked-in owner locally and in release CI. `just test-full` is the exceptional
 cold whole-system diagnostic; release CI calls the same modules while pulling
 the unchanged family and is the publication authority. GitHub-hosted PR CI may
 split feedback across jobs. Unavoidable runner substitutions are named below.
 
-| `just test-clean` stage | PR CI proof | Difference |
+| `just test-full` stage | PR CI proof | Difference |
 |-------------------|-------------|------------|
-| YAML/source syntax, source contracts, audits, lint, and all web surfaces | `fast-gate` calls the same `_test-fast` module used first by `just test-clean` and run alone by `just fast-test`; dedicated web jobs retain platform/deployment evidence | One independently executable fast module, including blocking vulnerability audits across all locked ecosystems |
+| YAML/source syntax, source contracts, audits, lint, and all web surfaces | `fast-gate` calls the same `_test-fast` module used first by `just test-full` and run alone by `just fast-test`; dedicated web jobs retain platform/deployment evidence | One independently executable fast module, including blocking vulnerability audits across all locked ecosystems |
 | Cross-compile agent (both arches) | `test` job: musl target check for `capsem-agent`; `test-linux` covers Linux host crates | Hosted PR substitution for Docker release cross-compile |
 | Rust workspace coverage | `test` and `test-linux` jobs run `cargo llvm-cov nextest` on macOS and Linux crate sets | Same coverage rail with runner-specific package sets |
 | Host binary signing prerequisites | `test` job builds and ad-hoc signs host binaries before non-VM integration suites | Same PR prerequisite for artifact-dependent Python suites |
 | Python schema and no-VM integration suites | `test` job runs schema coverage plus bootstrap, codesign, rootfs artifact, and release-channel suites | Same no-VM suites, scoped to generated artifacts available in CI |
-| Docs, marketing, and release-channel site builds | When selected by the fail-closed path owner, `docs-build`, `site-build`, and `release-site-build` call the same web-surface entrypoint as `just test-clean` before `pr-gate` can pass | Owner-scoped duplicate execution of the canonical local gate; deploy happens only after an owned or shared merge, or explicit release-channel publication |
+| Docs, marketing, and release-channel site builds | When selected by the fail-closed path owner, `docs-build`, `site-build`, and `release-site-build` call the same web-surface entrypoint as `just test-full` before `pr-gate` can pass | Owner-scoped duplicate execution of the canonical local gate; deploy happens only after an owned or shared merge, or explicit release-channel publication |
 | VM-heavy Python suites (`pytest tests/ -n 4`) | Import collection only on hosted PR runners | Runner substitution: full execution remains a local/release gate until PR runners can host Apple VZ reliably |
-| Serial timing, build-chain, release-channel, and route-health suites | Import collection only on hosted PR runners | Runner substitution: local `just test-clean` and release gates remain authoritative |
+| Serial timing, build-chain, release-channel, and route-health suites | Import collection only on hosted PR runners | Runner substitution: local `just test-full` and release gates remain authoritative |
 | Legacy injection/integration scripts and benchmark recording | Not run in hosted PR CI | Run through the owning focus group during diagnosis and by hosted release qualification before publication |
 | Docker cross-compile and install e2e | `test-install` runs install e2e in Docker; release workflow owns full package matrix | Split by runner capability |
 
@@ -321,7 +321,7 @@ packaged `assets/manifest.json`, checks `manifest-metadata.json` points at the
 selected channel manifest URL, then runs Docker install, stable/nightly asset
 switching, and the binary updater path against the public channel.
 
-Before deployment, `just test-clean` owns both native install boundaries. Linux uses
+Before deployment, `just test-full` owns both native install boundaries. Linux uses
 `just test-install`: the gate serves generated stable and nightly release
 channels from package and manifest artifacts built in Docker, then proves
 `install.sh`, `capsem update --assets --manifest`, and `capsem update --yes`.
@@ -503,7 +503,7 @@ Before pushing a PR, run the same checks CI will:
 
 ```bash
 # Full test suite (what CI runs)
-just test-clean
+just test-full
 
 # The fast gate alone; never release qualification
 just fast-test

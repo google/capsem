@@ -56,7 +56,7 @@ def _recipe_block(name: str) -> str:
             end = i
             break
     block = "\n".join(lines[start:end])
-    if name == "test-clean:":
+    if name == "test-full:":
         block = f"{block}\n{_recipe_block('_test-candidate:')}"
     return block
 
@@ -197,7 +197,7 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
 
     Read out of the recipe text when this was shell. The steps are now asserted
     against the commands the gate issues, in build_system/tests/gate/test_gate_assets.py; what
-    stays here is that `just test-clean` still owns the gate and that the gate still
+    stays here is that `just test-full` still owns the gate and that the gate still
     does each of these things at all.
     """
     from capsem_builder.gate import config as gate_config
@@ -206,7 +206,7 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
     assets = _source_text("build_system/builder/gate/assets.py")
     lanes = _source_text("build_system/builder/gate/assetlanes.py")
 
-    # `just test-clean` still owns the gate -- as a composed phase now rather than a
+    # `just test-full` still owns the gate -- as a composed phase now rather than a
     # recipe that dispatched to another recipe, so it is read from the plan.
     assert "assets.preflight" in _planned("candidate")
 

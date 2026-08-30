@@ -21,8 +21,8 @@ Python under `src/capsem/gate/` owns the release graph:
 - Actions perform work, resources own lifecycle/evidence, and
   `config/gate.toml` owns values.
 
-The release command does **not** launch or compose `just test-clean`, Just, or
-another `capsem-gate`. `just test-clean <commit>` owns its diagnostic plan
+The release command does **not** launch or compose `just test-full`, Just, or
+another `capsem-gate`. `just test-full <commit>` owns its diagnostic plan
 under one process, lock, workspace, and run log. Release does not consume that
 journal; its hosted lane qualifies the selected artifact family. A nested gate
 still deadlocks on its parent's lock.
@@ -65,7 +65,7 @@ Before its terminal event, every exact-source attempt hard-links its event
 journal into the config-owned per-commit archive. Ordinary run rotation may
 delete bulky step logs but cannot delete this qualification spine. A complete
 event is emitted only after the whole candidate plan returns and the source
-receipt binds the same commit and digest. A second `just test-clean <commit>` either
+receipt binds the same commit and digest. A second `just test-full <commit>` either
 records a normal lightweight success pointing to that archived run, or selects
 the deepest graph-derived resume frontier supported by a retained full-SHA
 prefix and an archived partial attempt. Resumed attempts name the exact parent
@@ -106,7 +106,7 @@ command remains in the owning `GuardedRunner`, step log, and run journal. No
 other candidate-module action may use `outside_sandbox=True`.
 
 `just fast-test` remains explicitly incomplete developer feedback. It is the exact
-private `_test-fast` module used by `just test-clean` and release CI, including YAML
+private `_test-fast` module used by `just test-full` and release CI, including YAML
 and source syntax, every source/release contract, Clippy, Python lint/type
 checks, JavaScript checks/builds, and blocking Rust/Python/JavaScript
 vulnerability audits. It is not release qualification; use a named
@@ -167,11 +167,11 @@ explicit product/API decision.
 
 ## Local proof and release-CI composition
 
-Local `just test-clean` is the whole-world proof. Release commands run it in full
+Local `just test-full` is the whole-world proof. Release commands run it in full
 before any release side effect, then CI reuses the same private modules against
 the manifest-selected complementary artifact family.
 
-`just test-clean` is the complete local CI-equivalent proof, not a smaller developer
+`just test-full` is the complete local CI-equivalent proof, not a smaller developer
 smoke test. Before any Docker/Colima, bootstrap, package, profile, asset, or VM
 work, it runs the independently executable `_test-fast` module. It then
 rebuilds every package and every checked-in profile and runs all six checked-in
@@ -187,7 +187,7 @@ modules:
 Every test, scanner, contract, build validation, and tool dependency required
 by release CI must be reachable from this command. A gate that exists only as
 inline workflow YAML is a parity defect until it is extracted into a
-checked-in module called by `just test-clean`. Each module must own its prerequisites
+checked-in module called by `just test-full`. Each module must own its prerequisites
 and must also be executable independently in a clean local environment. Never
 rely on a package installed incidentally by an earlier workflow job or by a
 developer machine.
@@ -258,7 +258,7 @@ non-ignored source bytes. It supports ordinary uncommitted development and
 fails if the source state changes while tests run.
 
 Before dispatching a real release, use focused proof and, when Mac-only risk
-justifies it, one `just test-clean <source-commit>` diagnostic. Then run the
+justifies it, one `just test-full <source-commit>` diagnostic. Then run the
 actual public release command, never a hand-written workflow dispatch. The
 release command is the only supported bridge into qualifying CI.
 

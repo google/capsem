@@ -9,7 +9,7 @@ The justfile dispatches; `src/capsem/gate/` decides. No recipe carries a shell
 body, none exceeds five lines, and both are contract tests rather than
 conventions.
 
-`just test-clean` is **one process, one machine lock, one workspace, one plan**. Its
+`just test-full` is **one process, one machine lock, one workspace, one plan**. Its
 dry run reports the current totals; conditional asset staging makes a literal
 step/action count depend on machine state. Release commands consume its exact
 commit journal at their first edge rather than repeating that plan.

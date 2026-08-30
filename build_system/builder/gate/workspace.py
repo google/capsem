@@ -92,7 +92,7 @@ class Workspace(Resource, name="workspace"):
             (self.home / relative).mkdir(parents=True, exist_ok=True)
         self.run_dir.mkdir(mode=0o700, parents=True)
         self._config.path(self._settings.coverage_file).parent.mkdir(parents=True, exist_ok=True)
-        # Deliberately not the benchmark root: `just test-clean` runs several modules
+        # Deliberately not the benchmark root: `just test-full` runs several modules
         # through one workspace, the VM recordings come from the functional
         # one, and a later module clearing them is why a fortnight of gates
         # left that directory empty.

@@ -220,7 +220,7 @@ def _workflow_job_names(path: str) -> tuple[str, ...]:
 
 
 def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
-    """Local `just test-clean` runs where every tool is already on PATH, so it cannot
+    """Local `just test-full` runs where every tool is already on PATH, so it cannot
     observe that a CI job never installed one. That blind spot is what let
     `test` lose `just` and `test-install` lose `pnpm` while every local gate
     stayed green. This test moves CI tool provisioning into the checked-in
@@ -280,7 +280,7 @@ def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() ->
     that `_test-candidate` is a command. The module order is edges, so it
     holds however the source is arranged.
     """
-    assert "capsem-gate candidate" in _recipe("test-clean")
+    assert "capsem-gate candidate" in _recipe("test-full")
 
     # The fast phase precedes every expensive one, and Colima is given back on
     # every path. Both used to be read out of `candidate.py` as source text --
@@ -343,7 +343,7 @@ def test_private_release_modules_select_one_shared_runner() -> None:
 
 
 def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -> None:
-    public = _recipe("test-clean")
+    public = _recipe("test-full")
     fast = _recipe("_test-source-checks")
     planned = _planned("test-fast")
 
@@ -591,7 +591,7 @@ def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
     """Cheap failures come back before anything starts a container.
 
     Asserted across modules now: the audits and clippy live in the fast plan,
-    the Docker preflight lives in the static one, and `just test-clean` runs fast
+    the Docker preflight lives in the static one, and `just test-full` runs fast
     before static. In shell all three were regions of one file and the order
     was where the lines sat.
     """

@@ -27,7 +27,7 @@ allowlist update in the same change.
 | `just fast-test` | Explicitly incomplete source feedback; it prints the targeted and release rails. |
 | `just focus-test <group> [reuse\|clean]` | Rerun one existing owner: assets, binaries, benchmark, install, release-system, or functional. `release-system` is source-only and needs no package or install. |
 | `just install` | Optional hands-on local package testing; never a release prerequisite and never release authority. |
-| `just test-clean [source-commit]` | Exceptional cold complete diagnostic; never the routine edit loop. |
+| `just test-full [source-commit]` | Exceptional cold complete diagnostic; never the routine edit loop. |
 | `just release-binaries <channel> <source-commit>` | Dispatch qualification and publication of packages against pulled profiles. |
 | `just release-profile <channel> <profile> <source-commit>` | Dispatch qualification and publication of one profile against the pulled package. |
 
@@ -110,7 +110,7 @@ exchange for no decision made.
 - No separate UI aliases. Use `just dev <surface>` or `just build`.
 - No public build primitives for kernel, rootfs, Docker images, architectures,
   or package rails.
-- No public continuation recipe. Exact-commit `just test-clean` derives a partial
+- No public continuation recipe. Exact-commit `just test-full` derives a partial
   frontier only from its archived event graph and retained full-SHA prefix;
   working-tree diagnostic continuation is not qualification. Both release
   commands refuse continuation flags.
@@ -123,7 +123,7 @@ branching, reporting, cleanup, or resource ownership.
 
 ## Canonical testing
 
-`just test-clean` owns the complete graph:
+`just test-full` owns the complete graph:
 
 - fail-fast bootstrap and clean install-harness proof;
 - audits, lint, frontend, Rust and Python coverage;
@@ -139,7 +139,7 @@ branching, reporting, cleanup, or resource ownership.
 Release CI calls the checked-in `_test-fast`, `_test-static`,
 `_test-artifacts`, `_test-functional`, `_test-glowup`, and
 `_test-release-contracts` modules. `_test-fast` is also the first phase of
-`just test-clean` and `just fast-test`; it owns YAML/source syntax, source contracts,
+`just test-full` and `just fast-test`; it owns YAML/source syntax, source contracts,
 Clippy, Python and JavaScript checks, and every locked-ecosystem vulnerability
 audit. Callers must reuse it whole rather than duplicating a subset.
 Binary CI builds packages and pulls profiles; profile CI builds one profile and

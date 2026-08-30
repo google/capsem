@@ -216,7 +216,7 @@ flowchart TD
 | Hidden/builtin settings exist | All three |
 | `enabled_by` references a valid bool | Python, TypeScript |
 
-Any schema change requires updating the golden fixture, expected.json, and all three test suites. `just test-clean` runs all of them.
+Any schema change requires updating the golden fixture, expected.json, and all three test suites. `just test-full` runs all of them.
 
 ## Data Flow
 

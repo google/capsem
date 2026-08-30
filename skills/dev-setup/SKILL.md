@@ -11,7 +11,7 @@ description: Setting up a Capsem dev environment from scratch. Use when onboardi
 - **macOS 13+** (Ventura or later) -- required for Virtualization.framework
 - **Apple Silicon** (arm64) -- primary macOS target. Intel Macs are not supported for VM features.
 - **Docker** (native on Linux, Colima on macOS) -- needed for `just _build-assets` (kernel + rootfs builds)
-- **Tart + sshpass (macOS)** -- needed for the clean-macOS package install owned by `just test-clean`
+- **Tart + sshpass (macOS)** -- needed for the clean-macOS package install owned by `just test-full`
 
 ## Required tools
 
@@ -187,7 +187,7 @@ If step 4 prints "hello from capsem" and exits cleanly, you're set.
 ```bash
 just shell            # Build + boot VM interactively (~10s)
 just exec "CMD"        # Build + boot + run command + exit
-just test-clean             # Full release gate, including clean Tart .pkg install on macOS
+just test-full             # Full release gate, including clean Tart .pkg install on macOS
 just dev ui               # Frontend dev server (mock mode, no VM)
 just dev              # Full Tauri app with hot-reload
 ```
@@ -250,7 +250,7 @@ the entitlements, and verifies the operation succeeds. Run `just doctor` after i
 confirm signing works.
 
 **Linux developers**: codesign is not available and not needed on Linux. VM features use the
-KVM backend when `/dev/kvm` and `/dev/vhost-vsock` are available. Use `just test-clean`
+KVM backend when `/dev/kvm` and `/dev/vhost-vsock` are available. Use `just test-full`
 for the same artifact-recording performance suite as macOS.
 
 ## Troubleshooting
