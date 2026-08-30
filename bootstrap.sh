@@ -215,9 +215,13 @@ fi
 if [ "$(uname -s)" = "Darwin" ] \
     && command -v tart >/dev/null 2>&1 \
     && command -v sshpass >/dev/null 2>&1; then
-    printf "  Tart base image + boot readiness...\n"
-    uv run --project build_system --frozen python "$SCRIPT_DIR/build_system/scripts/build/tart_readiness.py"
-    export CAPSEM_BOOTSTRAP_TART_PROVEN=1
+    if [ "${CAPSEM_GATE_COMMAND_SANDBOX_MODE:-}" = "enforce" ]; then
+        printf "  [DEFER] Tart boot readiness (owned by the gate's authenticated outside-sandbox action)\n"
+    else
+        printf "  Tart base image + boot readiness...\n"
+        uv run --project build_system --frozen python "$SCRIPT_DIR/build_system/scripts/build/tart_readiness.py"
+        export CAPSEM_BOOTSTRAP_TART_PROVEN=1
+    fi
 fi
 
 PNPM_READY=0

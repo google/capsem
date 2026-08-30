@@ -769,9 +769,13 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke(
     assert "brew install cirruslabs/cli/tart cirruslabs/cli/sshpass" in bootstrap
     assert "brew trust --formula cirruslabs/cli/softnet" in bootstrap
     assert 'uv run --project build_system --frozen python "$SCRIPT_DIR/build_system/scripts/build/tart_readiness.py"' in bootstrap
+    assert "CAPSEM_GATE_COMMAND_SANDBOX_MODE" in bootstrap
+    assert "authenticated outside-sandbox action" in bootstrap
     assert "tart --version" in doctor
     assert "sshpass" in doctor
     assert 'uv run --project build_system --frozen python "$PROJECT_ROOT/build_system/scripts/build/tart_readiness.py"' in doctor
+    assert "CAPSEM_GATE_COMMAND_SANDBOX_MODE" in doctor
+    assert "authenticated outside-sandbox action" in doctor
     assert "test-macos-install:" not in justfile
     from capsem_builder.gate import config as gate_config
 
@@ -785,18 +789,26 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke(
     monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "arm64")
     # The recipe is a dispatch and the ordering is an edge in the plan: the
     # bootstrap that installs Tart runs before anything that needs it.
-    labels = _gate_labels("test-candidate")
-    assert labels.index("prepare.bootstrap") < min(
+    labels = _gate_labels("candidate")
+    assert labels.index("prepare.bootstrap") < labels.index("prepare.tart-readiness")
+    assert labels.index("prepare.tart-readiness") < min(
         index for index, label in enumerate(labels) if label.startswith("glowup.")
     )
 
     # And the whole gate is the only thing that boots a Tart VM -- `just smoke`
     # dispatches a different command, whose plan cannot reach the script.
-    assert "macos_release_glowup.py" in _gate_issues("candidate")
+    issues = _gate_issues("candidate")
+    readiness = next(line for line in issues.splitlines() if "tart_readiness.py" in line)
+    assert "--require-cache" in readiness
+    assert "[outside kernel sandbox]" in readiness
+    macos_glowup = next(
+        line for line in issues.splitlines() if "macos_release_glowup.py" in line
+    )
+    assert "[outside kernel sandbox]" in macos_glowup
     config = gate_config.load(PROJECT_ROOT)
     content_root = Path(config.assets.test_root) / config.suites.pytest.base_profile
-    assert "--content-root " in _gate_issues("candidate")
-    assert f"/{content_root}" in _gate_issues("candidate")
+    assert "--content-root " in issues
+    assert f"/{content_root}" in issues
     assert "macos_release_glowup.py" not in _gate_issues("test-fast")
     assert "tart" not in _gate_issues("test-fast").lower()
 

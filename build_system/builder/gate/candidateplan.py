@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from . import (
     audits,
+    host,
     hostpackage,
     imagebuild,
     initrd,
@@ -196,6 +197,24 @@ def _prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
         ),
         after=after,
     )
+    prepared = bootstrapped
+    if host.on_macos():
+        prepared = phase.add(
+            step(
+                "tart-readiness",
+                Script(
+                    config,
+                    settings.tart_readiness_script,
+                    "--require-cache",
+                    outside_sandbox=True,
+                ),
+                contends=(config.exclusive("apple_vz"),),
+                kind=Kind.STATIC_TEST,
+                needs=frozenset({Needs.DISK, Needs.NETWORK}),
+                speed=Speed.SLOW,
+            ),
+            after=(bootstrapped,),
+        )
     bounded = phase.add(
         step(
             "storage-budget",
@@ -206,7 +225,7 @@ def _prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
             needs=frozenset({Needs.DISK}),
             speed=Speed.FAST,
         ),
-        after=(bootstrapped,),
+        after=(prepared,),
     )
     cleaned = phase.add(
         step(
