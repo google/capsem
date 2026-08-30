@@ -25,7 +25,12 @@ from helpers.constants import (
     PROFILES_DIR,
 )
 from helpers.mock_server import start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
+from helpers.service import (
+    ServiceInstance,
+    vm_name,
+    vm_session_db_path,
+    wait_exec_ready,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -403,7 +408,11 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
                     "SELECT * FROM fs_events WHERE path = ? OR path LIKE ? ORDER BY id",
                     (script_name, "ironbank-package-probe/%"),
                 ).fetchall(),
-                lambda rows: len(rows) >= 6,
+                lambda rows: (
+                    len(rows) >= 6
+                    and any(row["path"].endswith("package.json") for row in rows)
+                    and any(row["path"].endswith(".whl") for row in rows)
+                ),
                 timeout_s=20,
             )
             paths = {row["path"] for row in fs_rows}
