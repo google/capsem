@@ -817,8 +817,10 @@
    "clap",
    "futures",
    "reqwest",
+   "rusqlite",
    "serde",
    "serde_json",
+   "tempfile",
    "tokio"
   ]
  },
@@ -1011,6 +1013,7 @@
    "anyhow",
    "base64",
    "bytes",
+   "capsem-guard",
    "clap",
    "flate2",
    "futures",

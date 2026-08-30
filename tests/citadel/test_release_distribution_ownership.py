@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import stat
 import subprocess
 import tomllib
 from pathlib import Path
@@ -92,6 +91,22 @@ def _legacy_local_outputs(sources: dict[str, str]) -> list[str]:
     )
 
 
+def _release_source_modes() -> dict[str, str]:
+    modes: dict[str, str] = {}
+    output = subprocess.run(
+        ("git", "ls-files", "--stage", "build_system/release_site"),
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    for line in output.splitlines():
+        mode, _object, _stage, path = line.split(maxsplit=3)
+        relative = Path(path).relative_to("build_system/release_site").as_posix()
+        modes[relative] = mode
+    return modes
+
+
 def test_legacy_literal_detector_observes_both_old_owners() -> None:
     found = _legacy_literals(
         {
@@ -116,22 +131,14 @@ def test_local_output_detector_observes_pre_convergence_paths() -> None:
 
 
 def test_release_generator_and_unit_test_have_exact_build_system_owners() -> None:
-    found = {
-        Path(path).relative_to("build_system/release_site").as_posix()
-        for path in subprocess.run(
-            ("git", "ls-files", "build_system/release_site"),
-            cwd=ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.splitlines()
-    }
-    assert found == EXPECTED, RATIONALE
+    modes = _release_source_modes()
+    assert set(modes) == EXPECTED, RATIONALE
     assert not (ROOT / "release-site").exists(), RATIONALE
     assert UNIT_TEST.is_file(), RATIONALE
-    for relative in EXPECTED:
-        mode = stat.S_IMODE((OWNER / relative).stat().st_mode)
-        assert mode == 0o644, f"{RATIONALE}\n{relative}: mode is {mode:o}"
+    for relative, mode in modes.items():
+        assert mode == "100644", (
+            f"{RATIONALE}\n{relative}: tracked mode is {mode}, expected 100644"
+        )
         ignored = subprocess.run(
             (
                 "git",
