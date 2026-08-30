@@ -17,6 +17,7 @@ The two assertions below capture both observed failure modes:
    nothing because the directory inode itself is corrupt.
 """
 
+import sys
 import uuid
 
 import pytest
@@ -131,6 +132,10 @@ class TestSuspendOverlayDurability:
         finally:
             client.delete(f"/vms/{name}/delete")
 
+    @pytest.mark.skipif(
+        sys.platform == "darwin",
+        reason="KVM must restore its userspace VirtioFS handle table; Apple VZ owns that device state",
+    )
     def test_open_workspace_file_and_directory_fds_survive_suspend_resume(self, client):
         """Warm resume preserves pre-existing VirtioFS file and directory handles."""
         name = vm_name("openfd")
