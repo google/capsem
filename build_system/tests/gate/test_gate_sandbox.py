@@ -354,6 +354,49 @@ def test_colima_ssh_nonce_socket_is_allowed_without_widening_network_access() ->
     assert "(deny network*)" in text
 
 
+def test_product_fallback_sockets_are_allowed_without_widening_network_access() -> None:
+    """Long UDS paths still bind under the product's short fallback root.
+
+    The gate's ``/tmp/capsem-*`` prefix covers its per-run sockets, but not
+    ``/tmp/capsem/<digest>.sock``: the dash and slash are different paths.
+    Denying that AF_UNIX namespace makes the real bindability contract fail
+    while adding no protection against internet egress.
+    """
+    text = sandbox.profile(CONFIG, report=False)
+    for prefix in ("/tmp/capsem/", "/private/tmp/capsem/"):
+        assert prefix in CONFIG.sandbox.local_socket_prefixes
+        assert f'(allow network* (regex #"^{re.escape(prefix)}"))' in text
+    assert "(deny network*)" in text
+
+
+@macos_only
+@unnested_only
+def test_product_fallback_socket_really_binds_under_seatbelt(tmp_path: Path) -> None:
+    """The configured exception must authorize a real AF_UNIX bind."""
+    written = tmp_path / CONFIG.sandbox.profile_name
+    written.write_text(sandbox.profile(CONFIG, report=False), encoding="utf-8")
+    socket_path = Path("/tmp/capsem") / f"sandbox-contract-{os.getpid()}.sock"
+    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    socket_path.unlink(missing_ok=True)
+    script = (
+        "import socket,sys; "
+        "listener=socket.socket(socket.AF_UNIX); "
+        "listener.bind(sys.argv[1]); "
+        "listener.close()"
+    )
+    try:
+        bound = subprocess.run(
+            sandbox.wrap(CONFIG, written, (sys.executable, "-c", script, str(socket_path))),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    finally:
+        socket_path.unlink(missing_ok=True)
+
+    assert bound.returncode == 0, bound.stderr.strip()
+
+
 def test_the_loopback_rule_names_a_host_sbpl_accepts() -> None:
     """SBPL refuses any host but `*` or `localhost` in a network address.
 

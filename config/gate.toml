@@ -2466,6 +2466,12 @@ local_socket_prefixes = [
     # only the stable HA and Docker sockets makes image clock sync fail under
     # Seatbelt before the Docker build starts.
     "~/.colima/_lima/colima/ssh.sock",
+    # Long product UDS paths deliberately fall back here. This is a local
+    # AF_UNIX namespace, not an internet route; omitting the trailing-slash
+    # form leaves it outside the neighbouring `/tmp/capsem-*` gate prefix.
+    "/tmp/capsem/",
+    # Seatbelt matches the canonical target of macOS's `/tmp` symlink.
+    "/private/tmp/capsem/",
     "/tmp/capsem-",
     "/private/tmp/capsem-",
     "/private/var/folders/",

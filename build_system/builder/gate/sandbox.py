@@ -122,7 +122,10 @@ def profile(config: GateConfig, *, report: bool) -> str:
     for socket_path in _sockets(config):
         lines.append(f'(allow network* (literal "{socket_path}"))')
     for prefix in settings.local_socket_prefixes:
-        expanded = str(Path(prefix).expanduser())
+        # Prefix punctuation is policy. ``Path`` normalizes a trailing slash
+        # away, turning a configured ``/tmp/capsem/`` namespace into the
+        # broader ``/tmp/capsem`` match (which also accepts arbitrary suffixes).
+        expanded = os.path.expanduser(prefix)
         lines.append(f'(allow network* (regex #"^{re.escape(expanded)}"))')
     # Unanchored: the workspace lives inside a per-run prefix, so its absolute
     # path is not known when this profile is written.
