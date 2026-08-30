@@ -1,9 +1,9 @@
 """Core no-state service endpoints: /version, /stats, /service-logs, profile reload."""
 
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 from log_streams import assert_service_log_evidence
 
 pytestmark = pytest.mark.integration
