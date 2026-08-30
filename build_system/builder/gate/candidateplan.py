@@ -21,10 +21,7 @@ from __future__ import annotations
 
 from . import (
     audits,
-    host,
-    hostpackage,
-    imagebuild,
-    initrd,
+    candidateprepare,
     module_contracts,
     module_rehearsal,
     staticmodule,
@@ -32,14 +29,12 @@ from . import (
     toolchain,
     vmmodules,
 )
-from .actions import Call, Run, Script
+from .actions import Run
 from .config import GateConfig
-from .execution import Kind, Needs, Speed, Step, step
-from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
+from .execution import Kind, Speed, Step, step
 from .plan import Plan
 from .qualification import Qualification
 from .sourcestate import record_step, verify_step
-from .storage import Storage
 from .timingratchet import EnforceTimingRegression, TimingBoundary
 
 
@@ -119,7 +114,7 @@ def compose_modules(
     `test-candidate`, which is what a developer reaches for when the fast
     checks already passed and they do not want to repeat them.
     """
-    prepared = _prepare(plan, config, after=after)
+    prepared = candidateprepare.prepare(plan, config, after=after)
     # `generated` is the fast phase's settings step when there was a fast phase.
     # `test-candidate` runs this composition alone, where there was not, so each
     # module still makes its own.
@@ -161,152 +156,4 @@ def compose_modules(
             speed=Speed.FAST,
         ),
         after=(rehearsed,),
-    )
-
-
-def _prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
-    """Everything the expensive phases assume is already true.
-
-    The benchmark recordings are cleared exactly once, here, before any module
-    runs. Clearing them per module is what left a fortnight of full gates with
-    an empty directory and froze the published arm64 history.
-    """
-    from .fileactions import Remove
-
-    settings = config.candidate
-    phase = plan.phase("prepare")
-
-    # Both doctor passes run with the checks that would fail on the very thing
-    # this gate is about to build turned off -- the same pair `imagebuild`
-    # already passes for the same reason. `assets/` and the guest binaries are
-    # build output, so a run that does not inherit a warm checkout has neither,
-    # and doctor was reporting `manifest.json missing` about a manifest
-    # `assets.assemble` produces sixty steps later.
-    #
-    # Skipping the *check* rather than letting the fix run: the fix is
-    # `just _build-assets`, which takes the machine lock this run is holding.
-    doctor_env = dict(config.imagebuild.doctor_skips)
-    bootstrapped = phase.add(
-        step(
-            "bootstrap",
-            Run(["sh", str(config.path(settings.bootstrap_script)), "-y"], env=doctor_env),
-            Run(["bash", config.doctor.common_script], env=doctor_env),
-            kind=Kind.COMPILE,
-            needs=frozenset({Needs.DISK}),
-            speed=Speed.FAST,
-        ),
-        after=after,
-    )
-    prepared = bootstrapped
-    if host.on_macos():
-        prepared = phase.add(
-            step(
-                "tart-readiness",
-                Script(
-                    config,
-                    settings.tart_readiness_script,
-                    "--require-cache",
-                    outside_sandbox=True,
-                ),
-                contends=(config.exclusive("apple_vz"),),
-                kind=Kind.STATIC_TEST,
-                needs=frozenset({Needs.DISK, Needs.NETWORK}),
-                speed=Speed.SLOW,
-            ),
-            after=(bootstrapped,),
-        )
-    bounded = phase.add(
-        step(
-            "storage-budget",
-            _ensure_space(config),
-            Remove(config.path(config.workspace.benchmark_root)),
-            contends=(config.exclusive("docker_daemon"),),
-            kind=Kind.STATIC_TEST,
-            needs=frozenset({Needs.DISK}),
-            speed=Speed.FAST,
-        ),
-        after=(prepared,),
-    )
-    cleaned = phase.add(
-        step(
-            "clean-stale",
-            Script(config, settings.clean_stale_script),
-            kind=Kind.STATIC_TEST,
-            needs=frozenset({Needs.DISK}),
-            speed=Speed.FAST,
-        ),
-        after=(bounded,),
-    )
-    # Its own step, and not because deleting stale files and checking the
-    # generated settings are unrelated -- though they are. The check runs
-    # `generate-settings.sh`, which runs `cargo run -p capsem-core`, so a step
-    # named for a cleanup was building Rust and claiming nothing while it did.
-    # One step is one measurement, and this one was measuring two things.
-    checked = phase.add(
-        step(
-            "verify-generated-settings",
-            Run(["bash", settings.generated_settings_script, str(config.root)]),
-            contends=(config.exclusive("workspace_binaries"),),
-            kind=Kind.COMPILE,
-            needs=frozenset({Needs.DISK}),
-            speed=Speed.FAST,
-        ),
-        after=(cleaned,),
-    )
-    return _runtime(plan, config, after=(checked,))
-
-
-def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
-    """`_prepared-runtime`: the assets, the initrd, and the generated config.
-
-    Three recipes that were `just` dependencies of one another. As edges the
-    order is the same and the reason is visible: the initrd is repacked against
-    assets that must already exist, and the service reads config materialised
-    from them.
-    """
-    phase = plan.phase("prepare")
-    settings = config.candidate
-
-    assets = imagebuild.check_assets(plan, config, after=after)
-    packed = initrd.pack(plan, config, after=assets)
-    materialised = phase.add(
-        # `COMPILE`, and claiming the workspace, because the script runs
-        # `cargo run -p capsem-admin` once per profile. It reads as
-        # configuration work from the label alone, which is exactly the
-        # mismatch `tests/citadel/test_step_actions_are_atomic.py` refuses.
-        step(
-            "materialize-config",
-            Run(["bash", settings.materialize_script]),
-            contends=(config.exclusive("workspace_binaries"),),
-            kind=Kind.COMPILE,
-            needs=frozenset({Needs.DISK}),
-            speed=Speed.FAST,
-        ),
-        after=(packed,),
-    )
-    # Built, then signed. `sign_step` codesigns `target/debug/*` and nothing
-    # in this plan ever produced them -- it worked because a developer machine
-    # had run `just build` at some point, and failed with `No such file or
-    # directory` the first time a run got a checkout of its own.
-    built = phase.add(hostpackage.build_step(config), after=(materialised,))
-    return phase.add(hostpackage.sign_step(config), after=(built,))
-
-
-def _ensure_space(config: GateConfig):
-    """Refuse to start a gate the daemon has no room to finish.
-
-    The second configured argument is an evidence label for the capacity
-    check, not a release boundary. There is no working resource to release at
-    candidate start; a release action here would only take two snapshots and
-    reclaim nothing.
-    """
-    settings = config.candidate
-    return Call(
-        "refuse to start a gate the daemon has no room to finish",
-        lambda ctx: Storage(ctx.runner).ensure_space(*settings.candidate_budget),
-        justification=CallJustification(
-            kind=OpaqueKind.PURE_INSPECTION,
-            reason="reads the daemon's free space and refuses a gate it has no room to finish",
-            effects=machine_effects(Effect.PROCESS),
-        ),
     )
