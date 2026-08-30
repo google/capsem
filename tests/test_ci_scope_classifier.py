@@ -209,7 +209,9 @@ def test_release_site_generator_tests_and_graph_inputs_reach_the_site_owner(
 
 
 def test_deletion_is_classified_by_its_absent_path() -> None:
-    assert _classifier().ci_scopes(("web/docs/src/removed.mdx",)) == {"docs"}
+    classifier = _classifier()
+    assert classifier.ci_scopes(("web/docs/src/removed.mdx",)) == {"docs"}
+    assert classifier.ci_scopes(("test-dev-null.sh",)) == {"build_system"}
 
 
 def test_rename_unions_old_and_new_independent_scopes() -> None:

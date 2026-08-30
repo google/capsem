@@ -47,6 +47,7 @@ KNOWN_DIRECTORIES = frozenset(
         "web",
     }
 )
+RETIRED_BUILD_SYSTEM_FILES = frozenset({"test-dev-null.sh"})
 KNOWN_ROOT_FILES = frozenset(
     {
         ".dockerignore", ".gitignore", "AGENTS.md", "CHANGELOG.md",
@@ -54,16 +55,16 @@ KNOWN_ROOT_FILES = frozenset(
         "Cargo.toml", "GEMINI.md", "LATEST_RELEASE.md", "LICENSE",
         "README.md", "RELEASE.md", "SECURITY.md",
         "bootstrap.sh", "codecov.yml", "justfile",
-        "rust-toolchain.toml", "test-dev-null.sh",
+        "rust-toolchain.toml",
     }
-)
+) | RETIRED_BUILD_SYSTEM_FILES
 BUILD_SYSTEM_ROOTS = frozenset({"src", "scripts", "docker"})
 BUILD_SYSTEM_FILES = frozenset(
     {
         ".dockerignore",
         "bootstrap.sh",
     }
-)
+) | RETIRED_BUILD_SYSTEM_FILES
 RUST_GUEST_CONFIG_ROOTS = frozenset(
     {
         ".cargo",

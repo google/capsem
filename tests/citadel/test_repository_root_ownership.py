@@ -63,7 +63,6 @@ APPROVED_ROOT_FILES = frozenset(
         "codecov.yml",
         "justfile",
         "rust-toolchain.toml",
-        "test-dev-null.sh",
     }
 )
 
@@ -90,6 +89,7 @@ RETIRED_ROOT_FILES = frozenset(
         "audit.toml",
         "entitlements.plist",
         "pyproject.toml",
+        "test-dev-null.sh",
         "uv.lock",
     }
 )
