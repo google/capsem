@@ -259,9 +259,7 @@ def _group_exists(group: int) -> bool:
     try:
         os.killpg(group, 0)
     except (ProcessLookupError, PermissionError):
-        # Once the owned leader is reaped, macOS can report EPERM for a group
-        # id that is no longer signalable by this process. It is not safe to
-        # keep treating that numeric id as ours and escalate into it.
+        # A reaped leader's unsignalable or reused numeric group may no longer be ours.
         return False
     return True
 
