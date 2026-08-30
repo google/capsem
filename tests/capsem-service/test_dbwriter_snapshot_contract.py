@@ -181,5 +181,7 @@ def test_dbwriter_and_snapshot_source_boundaries_are_single_rail() -> None:
     assert "DROP TABLE IF EXISTS snapshot_events" in logger_schema
     assert "snapshot.event must not be a security-event type" in logger_schema
     assert "pub struct DbWriter" in logger_writer
-    assert "mpsc::channel()" in logger_writer
+    assert "type WriterSender = mpsc::SyncSender<WriterMessage>;" in logger_writer
+    assert "mpsc::sync_channel(capacity.max(1))" in logger_writer
+    assert "mpsc::channel()" not in logger_writer
     assert '.name("capsem-db-writer".into())' in logger_writer
