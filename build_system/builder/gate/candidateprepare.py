@@ -26,7 +26,7 @@ def prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
     # this gate is about to build turned off. Assets and guest binaries are
     # build output, and their nested fix would try to reacquire this gate's
     # machine lock.
-    doctor_env = dict(config.imagebuild.doctor_skips)
+    doctor_env = dict(settings.doctor_skips)
     bootstrapped = phase.add(
         step(
             "bootstrap",

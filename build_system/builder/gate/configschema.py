@@ -211,6 +211,7 @@ class CandidateConfig(Strict):
     colima: str
     bootstrap_script: str
     tart_readiness_script: str
+    doctor_skips: dict[str, str]
     clean_stale_script: str
     generated_settings_script: str
     materialize_script: str

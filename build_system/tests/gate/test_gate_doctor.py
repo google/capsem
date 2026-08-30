@@ -108,7 +108,8 @@ def test_macos_doctor_does_not_interpret_the_linux_command_policy() -> None:
 
     assert CONFIG.environment.command_sandbox_mode not in macos
     assert "CAPSEM_SKIP_TART_CHECK" in macos
-    assert CONFIG.imagebuild.doctor_skips["CAPSEM_SKIP_TART_CHECK"] == "1"
+    assert CONFIG.candidate.doctor_skips["CAPSEM_SKIP_TART_CHECK"] == "1"
+    assert "CAPSEM_SKIP_TART_CHECK" not in CONFIG.imagebuild.doctor_skips
 
 
 def _checkout(tmp_path: Path, *, gate_toml: str | None = None) -> Path:
