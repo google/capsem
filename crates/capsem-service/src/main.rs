@@ -79,13 +79,25 @@ enum SuspendConfirmation {
     TimedOut,
 }
 
-fn observe_suspend_message(message: ProcessToService) -> Option<SuspendConfirmation> {
+fn observe_suspend_message(
+    message: ProcessToService,
+    suspended: &mut bool,
+) -> Option<SuspendConfirmation> {
     match message {
         ProcessToService::StateChanged { state, .. } if state == "Suspended" => {
-            Some(SuspendConfirmation::Suspended)
+            *suspended = true;
+            None
         }
         ProcessToService::SuspendFailed { error, .. } => Some(SuspendConfirmation::Failed(error)),
         _ => None,
+    }
+}
+
+fn suspend_channel_closed(suspended: bool) -> SuspendConfirmation {
+    if suspended {
+        SuspendConfirmation::Suspended
+    } else {
+        SuspendConfirmation::ChannelClosed
     }
 }
 
@@ -11815,16 +11827,21 @@ async fn handle_suspend(
     let confirmation = match tokio::time::timeout(
         std::time::Duration::from_secs(SUSPEND_CONFIRM_TIMEOUT_SECS),
         async {
+            let mut suspended = false;
             loop {
                 match rx.recv().await {
                     Ok(message) => {
-                        if let Some(confirmation) = observe_suspend_message(message) {
+                        if let Some(confirmation) =
+                            observe_suspend_message(message, &mut suspended)
+                        {
                             return confirmation;
                         }
                     }
                     Err(error) => {
-                        tracing::warn!(%error, "suspend IPC channel closed before confirmation");
-                        return SuspendConfirmation::ChannelClosed;
+                        if !suspended {
+                            tracing::warn!(%error, "suspend IPC channel closed before confirmation");
+                        }
+                        return suspend_channel_closed(suspended);
                     }
                 }
             }
@@ -11854,22 +11871,11 @@ async fn handle_suspend(
         return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, error));
     }
 
-    // Poll for process exit (up to 500ms) instead of unconditional sleep.
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(500);
-    loop {
-        if pid == 0 || unsafe { nix::libc::kill(pid as i32, 0) } != 0 {
-            break;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            let _ = nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(pid as i32),
-                nix::sys::signal::Signal::SIGKILL,
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
+    // Channel closure proves the process released IPC; prove the process also
+    // released its VZ checkpoint and VirtioFS share before resume can spawn a
+    // replacement. The helper bounds natural exit, then SIGKILLs and waits for
+    // reaping instead of guessing that a fixed post-kill sleep was sufficient.
+    wait_for_process_exit(pid, std::time::Duration::from_millis(500)).await;
 
     tracing::warn!(id, "handle_suspend (success) removing instance");
     state.instances.lock().unwrap().remove(&id);

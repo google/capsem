@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Suspend now treats the guest's `Suspended` state as an acknowledgement and
+  waits for the VM process to exit before allowing resume, preventing Apple VZ
+  checkpoint restores from racing the old process's checkpoint ownership.
 - Parent-watched companions now terminate before attempting best-effort
   reparenting logs, so a launcher that closes their stdout/stderr pipes cannot
   strand a gateway, tray, MCP server, or mock server on PID 1 holding its
