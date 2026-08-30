@@ -8,16 +8,15 @@ so a future "helpful" loosening that reintroduces the bloat surfaces
 in CI rather than on the next `just test-full` run.
 """
 
-import tomllib
 from pathlib import Path
 
+import conftest as tests_conftest
 import pytest
-
-from tests import conftest as tests_conftest
+import tomllib
 
 # Import the module under test. Fixture below resets the module-level
 # FAILED_NODEIDS / ARTIFACTS_ROOT state that the helper reads from
-# tests.conftest.
+# the root conftest.
 from tests.helpers import service as svc_mod
 
 

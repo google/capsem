@@ -6,12 +6,12 @@ import subprocess
 import sys
 import tempfile
 import time
-import tomllib
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+import tomllib
 from log_streams import read_log_stream
 
 from .constants import (
@@ -26,7 +26,7 @@ from .constants import (
 from .sign import sign_binary
 from .uds_client import UdsHttpClient
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SERVICE_BINARY = BIN_DIR / "capsem-service"
 PROCESS_BINARY = BIN_DIR / "capsem-process"
 GATEWAY_BINARY = BIN_DIR / "capsem-gateway"
@@ -291,7 +291,7 @@ def preserve_tmp_dir_on_failure(
     most recent `ARTIFACT_MAX_KEPT_DIRS` failure dirs.
     """
     try:
-        from tests.conftest import ARTIFACTS_ROOT, FAILED_NODEIDS
+        from conftest import ARTIFACTS_ROOT, FAILED_NODEIDS
     except ImportError:
         return
     tmp_dir = Path(tmp_dir)

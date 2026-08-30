@@ -261,9 +261,8 @@ def test_required_artifacts_manifest_path_is_flat():
     never resolve on a freshly built tree and would fail the CI gate for a
     successful build -- which is exactly how we found this.
     """
+    from conftest import _REQUIRED_ARTIFACTS
     from helpers.constants import ASSETS_DIR
-
-    from tests.conftest import _REQUIRED_ARTIFACTS
 
     assert "target/assets/manifest.json" in _REQUIRED_ARTIFACTS
     assert _REQUIRED_ARTIFACTS["target/assets/manifest.json"] == ASSETS_DIR / "manifest.json"

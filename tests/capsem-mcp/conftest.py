@@ -304,7 +304,7 @@ def fresh_vm(request, mcp_session):
 
     yield _create
 
-    from tests.conftest import FAILED_NODEIDS
+    from conftest import FAILED_NODEIDS
 
     if request.node.nodeid in FAILED_NODEIDS:
         print(f"\n@@@ Skipping cleanup for {created} due to failure", file=sys.stderr)
