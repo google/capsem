@@ -258,13 +258,16 @@ def _wait_for_owned(group: int, descendants: tuple[SystemProcess, ...], policy: 
 def _group_exists(group: int) -> bool:
     try:
         os.killpg(group, 0)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
+        # Once the owned leader is reaped, macOS can report EPERM for a group
+        # id that is no longer signalable by this process. It is not safe to
+        # keep treating that numeric id as ours and escalate into it.
         return False
     return True
 
 
 def _signal_group(group: int, sent: signal.Signals) -> None:
-    with suppress(ProcessLookupError):
+    with suppress(ProcessLookupError, PermissionError):
         os.killpg(group, sent)
 
 

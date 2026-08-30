@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 import pytest
-from capsem_builder.gate import cancellation
+from capsem_builder.gate import cancellation, processgroup
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.invocation import Command
@@ -248,6 +248,18 @@ def test_cancellation_escalates_only_its_own_sigterm_resistant_group(tmp_path: P
             )
         trigger.join(timeout=2)
     _assert_gone(pids)
+
+
+def test_cancellation_does_not_adopt_an_unsignalable_process_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def denied(_group: int, _sent: int) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(processgroup.os, "killpg", denied)
+
+    assert not processgroup._group_exists(42)
+    processgroup._signal_group(42, signal.SIGKILL)
 
 
 def test_a_foreground_command_cannot_hide_a_daemon_in_a_new_session(tmp_path: Path) -> None:
