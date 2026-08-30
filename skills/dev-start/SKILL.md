@@ -14,7 +14,7 @@ git clone <repo> && cd capsem
 just exec "echo hello"           # verify VM boots (build-assets runs as part of bootstrap)
 ```
 
-`bootstrap.sh` lives at the **repo root**, not under `scripts/`.
+`bootstrap.sh` is the deliberately public **repo-root** bootstrap entrypoint.
 
 ## What bootstrap.sh does
 

@@ -281,8 +281,8 @@ def test_the_error_says_what_to_do_instead(journal) -> None:
 def test_an_ordinary_program_is_not_mistaken_for_re_entry(journal) -> None:
     """The check must see through `uv run --project build_system --frozen` without swallowing what it wraps.
 
-    `uv run --project build_system --frozen python scripts/...` is how nearly every gate step runs, so a rule
-    that flags it is a rule that gets deleted within a day.
+    `uv run --project build_system --frozen python build_system/scripts/...`
+    is how command boundaries run, so a rule that flags it gets deleted.
     """
     runner = RecordingRunner(PROJECT_ROOT)
     command = _probe(
@@ -551,7 +551,13 @@ def test_the_acquired_resources_environment_reaches_every_command(journal) -> No
     command = _probe(
         runner,
         holdings=(Recorder(log, "workspace", CAPSEM_HOME="/tmp/isolated"),),
-        steps=(step("one", Run(["cargo", "build"]), Script(CONFIG, "scripts/x.py")),),
+        steps=(
+            step(
+                "one",
+                Run(["cargo", "build"]),
+                Script(CONFIG, "build_system/scripts/build/x.py"),
+            ),
+        ),
     )
 
     command.execute()

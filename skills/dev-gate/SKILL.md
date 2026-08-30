@@ -392,8 +392,8 @@ instead of before, `${{ }}` masked to a literal producing three phantom SC2050
 five steps into a collision. Add a surface there, not in a second extractor.
 
 `[boundary.shell_bodies]` keeps them simple: 20 executable lines, with an exact
-debt inventory. The fix for an oversized body is a script under `scripts/`,
-which ShellCheck already lints and a test can call.
+debt inventory. The fix for an oversized body is an owned boundary under
+`build_system/scripts/`, which ShellCheck already lints and a test can call.
 
 ## Shell is parsed, not matched
 

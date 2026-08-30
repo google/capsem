@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `release-profile` and `release-binaries` lanes, which reuse immutable inputs
   and do not require a developer-machine journal.
 
-- `scripts/write-release-notes.py`: the GitHub release notes are rendered by a
+- `build_system/scripts/release/write-release-notes.py`: the GitHub release notes are rendered by a
   program with tests instead of a shell heredoc. The heredoc's tag was
   unquoted, which makes backticks command substitution -- so the line meant to
   read ``Qualified source: `<commit>` `` ran the commit hash as a program,
@@ -798,8 +798,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The CI branch-protection gate and the rootfs dependency setup left the two
   places they were unreadable from. `ci.yaml:pr-gate` -- the single required
   status deciding whether a PR can merge -- became
-  `scripts/require-ci-jobs.sh`, and `test_workflow_enforcement.py` now follows
-  a dispatch into `scripts/` so it still analyses the shell that decides. Two
+  `build_system/scripts/ci/require-ci-jobs.sh`, and `test_workflow_enforcement.py` now follows
+  a dispatch into `build_system/scripts/ci/` so it still analyses the shell that decides. Two
   holes surfaced while proving that: a dispatch line mentions no job result, so
   `bash gate.sh || true` was not recognised as deciding the gate; and a result
   compared only against `skipped` on the web-only branch satisfied "every
@@ -830,7 +830,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the release contract.
 
 - The docs-site smoke check moved out of `docs.yaml` into
-  `scripts/smoke-docs-site.sh`. Twenty-three executable lines of YAML holding a
+  `build_system/scripts/web/smoke-docs-site.sh`. Twenty-three executable lines of YAML holding a
   retry loop and a thirteen-term conjunction, reachable by no linter and
   callable by nothing; ShellCheck now reads it like any other script. The
   conjunction is split into two named checks, because after a deploy the useful
@@ -1048,7 +1048,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It found two real defects in the kernel template -- an unquoted
   `make -j$(nproc)` and a `for cmd in modprobe` loop over a single item -- both
   fixed. `[boundary.shell_bodies]` then holds the line at 20 executable lines
-  per body, median being 3, so the next unwieldy program goes into `scripts/`
+  per body, median being 3, so the next unwieldy program goes into its owner
+  under `build_system/scripts/`
   where a test can call it.
 - Shell scripts are linted. Python has Ruff and strict Ty, Rust has Clippy with
   `warnings = "deny"`, the web surfaces fail on warnings -- and 6,991 lines of
@@ -2232,7 +2233,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its `HEAD`. The gate deliberately supports uncommitted work, so an ordinary
   save during a forty-minute run changes the tree being released without moving
   `HEAD` at all -- and against a private copy every other comparison is frozen
-  by construction, so nothing saw it. `scripts/source-state-digest.py` takes
+  by construction, so nothing saw it. `build_system/scripts/build/source-state-digest.py` takes
   `--root` for this: a run inside a copy has to be able to hash the tree it was
   copied from.
 
@@ -3339,7 +3340,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is right for work and wrong for cleanup. The orphan-process accounting is one
   (an aborted run is exactly the run whose survivors need counting), and so is
   the Colima lifecycle, which was a shell trap wrapping only the commands that
-  happened to sit inside the wrapper. `scripts/with-gate-colima.sh` goes.
+  happened to sit inside the wrapper. `with-gate-colima.sh` goes.
 - A cleanup that cannot happen now says so. `Remove` used
   `shutil.rmtree(ignore_errors=True)`, so every removal succeeded on paper: a
   busy or unwritable path survived into the next qualification while the plan
@@ -3381,7 +3382,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   where a plan can be built from it without a subprocess. The base profile is
   named in config rather than by a sort key comparing against the string
   `code` inside a script -- a product decision that had been spelled as a
-  lambda. `scripts/release-test-profiles.py` stays as the command-line surface
+  lambda. `build_system/scripts/release/release-test-profiles.py` stays as the command-line surface
   CI already calls.
 ### Fixed
 
@@ -3637,8 +3638,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dispatches to exists. Wired into `just doctor`, so an operator meets these at
   setup rather than mid-release.
 - `ruff` and `ty` now cover every first-party Python tree through one
-  `capsem-gate lint` step. `ty` had run on `src/capsem` alone, so `scripts/` --
-  release machinery, not scratch -- and every test helper went unchecked; a
+  `capsem-gate lint` step. `ty` had run on the retired Python package alone,
+  so release machinery and every test helper went unchecked; a
   type error in a release script had no gate at all. `ruff`'s rule set widens
   from four families to twelve, adding the ones that find defects rather than
   style: likely bugs, comprehension misuse, exception chaining, and syntax
@@ -4416,7 +4417,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `config/profiles/<id>/` and are named as runtime product config rather than
   developer skill source, `src/capsem/builder/` is described as the admin-driven
   backend it became, and the four shipped crates plus `config/`, `tests/`, and
-  `scripts/` are no longer missing from the map.
+  build automation boundaries are no longer missing from the map.
 - Repointed the MITM skill's static CA keypair at `security/keys/`, where
   `net/cert_authority.rs` actually reads it from, instead of a `config/` path
   that the five-directory config contract would never allow.
@@ -4438,7 +4439,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of accepting one hardcoded recipe name, so every just-driven CI job
   can cache its pnpm store. Re-enabled that cache on the install and Linux
   gates, and factored the recipe reachability both contracts need into one
-  shared `scripts/justfile-graph.py`.
+  shared `build_system/scripts/ci/justfile-graph.py`.
 - Installed the musl C toolchain in the ordinary CI install gate, which runs
   `just doctor` through `_cross-compile` and needs it to build guest binaries.
 - Provisioned the tools each CI job actually invokes: `just` in the macOS
@@ -6619,7 +6620,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ad-hoc sign them with the canonical entitlement before asserting the package
   and signing contracts.
 - Fixed PR CI frontend coverage by moving generated settings/mock fixture
-  creation onto a shared `scripts/generate-settings.sh` rail, running that rail
+  creation onto a shared `build_system/scripts/build/generate-settings.sh` rail, running that rail
   before frontend build/check in CI, declaring the Vitest coverage provider,
   uploading the actual `web/app/coverage/coverage-final.json`, and excluding
   generated coverage output from later frontend type checks.
@@ -7148,7 +7149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CAPSEM_BENCH_DURATION_S`, `CAPSEM_BENCH_TOTAL_REQUESTS`, and
   `CAPSEM_BENCH_SCENARIOS` now drive one tested config path, and load rows
   share the same request/error/rps/p50/p95/p99/p999/RSS schema.
-- Added `scripts/benchmark_report.py`, a Pydantic-validated host reporter that
+- Added `build_system/scripts/build/benchmark_report.py`, a Pydantic-validated host reporter that
   renders benchmark JSON as Markdown and can produce matplotlib PNG graphs for
   committed load artifacts.
 - Expanded the security-action Criterion benchmark to cover runtime event
@@ -7744,7 +7745,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   processes preserve `mcp_calls.process_name`, tool timeouts record
   terminal errors, external stdio MCP tools still dispatch, and legacy
   `vsock:5003` refuses guest connections.
-- Fixed `scripts/check_session.py` so `just inspect-session <id>` works
+- Fixed `build_system/scripts/doctor/check_session.py` so `just inspect-session <id>` works
   with current run-session directories and older system Python versions.
 
 ### Changed (development process)
@@ -9692,7 +9693,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backend image spec.
 
 ### Changed (bootstrap)
-- `bootstrap.sh` moved to the repo root (was `scripts/bootstrap.sh`).
+- `bootstrap.sh` moved to the repo root (was `bootstrap.sh`).
 - Phase 1 now auto-installs `rustup` (sh.rustup.rs) and `just` (just.systems
   -> `~/.local/bin`) instead of printing hints and bailing.
 - Phase 2 auto-installs `uv` (astral.sh), `pnpm` (brew on macOS,
@@ -9710,7 +9711,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed (bootstrap)
 - `cargo install cargo-tauri` was wrong -- the crate is `tauri-cli` (the
-  binary it produces is `cargo-tauri`). Fixed in `scripts/doctor-common.sh`.
+  binary it produces is `cargo-tauri`). Fixed in `build_system/scripts/doctor/doctor-common.sh`.
 
 ### Fixed
 - **Asset download URL.** `download_missing_assets` built the URL from the
@@ -9767,7 +9768,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (Colima default)
 - **Bumped Colima default RAM from 8 GB to 16 GB** across `bootstrap.sh`,
-  `scripts/doctor-macos.sh`, three skills (`dev-setup`, `dev-start`,
+  `build_system/scripts/doctor/doctor-macos.sh`, three skills (`dev-setup`, `dev-start`,
   `build-images`), and four docs pages (architecture/build-system,
   architecture/custom-images, development/getting-started, development/stack).
   The Tauri install-test cold build (`just test-install`) blew past 8 GB
@@ -10272,7 +10273,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proved the stale-alias gate with a planted `initrd-deadbeef12345678.img`
   that correctly fails the check.
 
-- **`scripts/create_hash_assets.py` left stale hash-tagged aliases that lied
+- **`build_system/scripts/build/create_hash_assets.py` left stale hash-tagged aliases that lied
   about their content.** The script creates `<stem>-<hex16>.<ext>` hardlinks
   mirroring manifest entries so the dev layout matches the installed layout.
   It unconditionally unlinked-and-relinked each expected destination, but
@@ -10296,8 +10297,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the manifest at `assets/<arch>/manifest.json`, but the canonical layout
   is flat top-level (`assets/manifest.json`). Every production reader --
   `capsem-service` boot at `crates/capsem-service/src/main.rs:2740`,
-  `capsem setup` at `crates/capsem/src/setup.rs:187`, `scripts/gen_manifest.py`,
-  `scripts/check-release-workflow.sh` -- and the builder's
+  `capsem setup` at `crates/capsem/src/setup.rs:187`, `build_system/scripts/build/gen_manifest.py`,
+  `build_system/scripts/release/check-release-workflow.sh` -- and the builder's
   `generate_checksums` writer at `src/capsem/builder/docker.py:700` all agree
   on the flat path. The per-arch entry was introduced with the gate itself
   in this release cycle and never resolved on a real build, so the pre-flight
@@ -10385,7 +10386,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fd / socket / thread-resource leaks in both tests and production
   scripts therefore shipped green. Set `filterwarnings = ["error"]` and
   fixed every leak surfaced:
-  - `scripts/clean_stale.py` -- all six `os.scandir(...)` call sites
+  - `build_system/scripts/build/clean_stale.py` -- all six `os.scandir(...)` call sites
     were either unbracketed (iterator GC'd eventually, but not
     deterministically) or, in `_target_release_has_old_content` and
     `_dir_has_no_recent`, returned early mid-iteration leaving the
@@ -10669,7 +10670,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   temp VMs never share a first word. The adjective and noun rosters were
   expanded (68 adjectives, 85 nouns) to keep the avoid-set useful even
   under heavy concurrency, and the generator falls back to a random
-  adjective if every one is already claimed. `scripts/integration_test.py`
+  adjective if every one is already claimed. `build_system/scripts/test/integration_test.py`
   was updated to match on the `-tmp` suffix instead of the prefix.
 
 ### Changed
@@ -10800,7 +10801,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at 72 GB on `/System/Volumes/Data` (23 GB of that in
   `target/debug/incremental/` alone; push to 100% full triggered
   ENOSPC in several integration tests). Added a second pass to
-  `scripts/clean_stale.py::clean_cargo_artifacts` that, for each
+  `build_system/scripts/build/clean_stale.py::clean_cargo_artifacts` that, for each
   profile (debug/release/llvm-cov-target), enforces a per-kind size
   budget (`deps` 12 GB, `incremental` 3 GB, `build` 1 GB,
   `.fingerprint` 500 MB) by deleting oldest-mtime entries until the
@@ -10953,7 +10954,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `target/capsem-test-execution.lock` (outside `$CAPSEM_HOME`, survives
   the wipe) and acquired it *before* `rm -rf`. Extracted the
   mkdir/exec/flock dance into a single shell helper
-  (`scripts/lib/exec_lock.sh::acquire_exec_lock`) and replaced all 8
+  (`build_system/scripts/build/lib/exec_lock.sh::acquire_exec_lock`) and replaced all 8
   inline copies in the justfile (`dev`, `shell`, `run`, `test`,
   `smoke`, `build-gateway`, `bench`, `release`) with two-line
   `source + acquire_exec_lock <path>` calls. Added
@@ -11034,7 +11035,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     isolation vars are set, telling the caller to `unset` them.
   - The `just install` recipe explicitly `unset`s them before running, so
     shells that accidentally still have them exported install cleanly.
-  `scripts/integration_test.py::_kill_dev_service` also switched from
+  `build_system/scripts/test/integration_test.py::_kill_dev_service` also switched from
   `pkill -f capsem-service.*--foreground` (which catches any installed
   LaunchAgent/systemd unit on the box) to a strict pidfile-based kill,
   mirroring the discipline `_ensure-service` already follows.
@@ -11045,7 +11046,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `$HOME/.capsem` layout, so under an isolated test run
   (`CAPSEM_HOME=target/test-home/.capsem`) the kicked service bound a
   socket in the *real* home while the client kept polling the test home
-  until the 5s `AwaitStartup` budget expired -- `scripts/integration_test.py`'s
+  until the 5s `AwaitStartup` budget expired -- `build_system/scripts/test/integration_test.py`'s
   ephemeral-model check always failed on machines with capsem installed.
   `UdsClient::try_ensure_service` now skips the service-manager branch
   whenever `CAPSEM_HOME` is set and goes straight to direct-spawn, so the
@@ -11058,7 +11059,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kept stdout/stderr open long after the CLI returned. Python's
   `communicate()` waited for EOF on those pipes and always timed out at
   its outer 120s deadline -- the same symptom
-  `scripts/integration_test.py::check_persistence` hit under a test
+  `build_system/scripts/test/integration_test.py::check_persistence` hit under a test
   harness without an existing running service. The spawn now redirects
   all three fds to `/dev/null`; service logs still land in
   `<run_dir>/service.log` as before.
@@ -11074,12 +11075,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and assets are on independent shipping cadences), and `capsem setup` was a
   stub with a TODO, so a fresh install left the UI banner stuck on "VM assets
   are missing" and every VM boot failed asset resolution. Added
-  `scripts/sync-dev-assets.sh`, invoked by the `install` recipe after the
+  `build_system/scripts/build/sync-dev-assets.sh`, invoked by the `install` recipe after the
   installer runs, which mirrors the locally built `assets/$arch/*` hash-named
   files into `~/.capsem/assets/$arch/` (the exact paths
   `ManifestV2::resolve()` looks up) and removes the legacy `v1.0.*/`
   directories that accumulated from the old v1 layout. Also updated
-  `scripts/simulate-install.sh` to honor the same layout so
+  `build_system/scripts/test/simulate-install.sh` to honor the same layout so
   `tests/capsem-install/` agrees with production.
 
 ### Added
@@ -11161,7 +11162,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **`just test` no longer kills or mutates a locally installed capsem.**
-  Previously the test harness (`scripts/integration_test.py`,
+  Previously the test harness (`build_system/scripts/test/integration_test.py`,
   `_ensure-service`, and every Rust site that computed `$HOME/.capsem/...`
   directly) ran against the shared `~/.capsem/` directory, so a pkill-by-name
   on `capsem-service --foreground` took down the user's installed daemon,
@@ -11234,7 +11235,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     policy's actual read/write denial is still exercised by
     `test_post_to_random_domain_denied`, which doesn't depend on the
     user's toggles.
-  - `scripts/integration_test.py` looked for `run-*` session
+  - `build_system/scripts/test/integration_test.py` looked for `run-*` session
     directories; current `capsem-service` generates
     `tmp-<adj>-<noun>` IDs (see `generate_tmp_name`). Also relaxed
     the `~/.capsem/logs` check -- that directory only exists after
@@ -11245,7 +11246,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `network.custom_{allow,block}` / `network.default_action`
     setting IDs; migrated to current `security.web.*` keys so the
     deny list (`deny.example.com`) actually takes effect.
-- **`scripts/integration_test.py` restarts `capsem-service` with
+- **`build_system/scripts/test/integration_test.py` restarts `capsem-service` with
   `CAPSEM_{USER,CORP}_CONFIG` in its env before booting the test VM**,
   then tears it down on exit. Required because the dev service
   (started by `_ensure-service`) inherits no test config, and
@@ -11294,7 +11295,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   there are no stale lockfiles on crash/SIGKILL. `flock` is now
   checked by `just doctor` (hints point at `brew install flock` on
   macOS, `util-linux` on Linux) and auto-installed by
-  `scripts/bootstrap.sh` on macOS when Homebrew is available.
+  `bootstrap.sh` on macOS when Homebrew is available.
 
 ### Changed
 - **`UdsClient::connect_with_timeout` now uses
@@ -11461,7 +11462,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   down -- reproducibly -- pushing ~148 tests into "service refused
   connection" / "VM never exec-ready" cascades. Each site now scopes the
   match to its own install prefix:
-  - `scripts/simulate-install.sh` matches `$INSTALL_DIR/<name>`.
+  - `build_system/scripts/test/simulate-install.sh` matches `$INSTALL_DIR/<name>`.
   - `tests/capsem-install/conftest.py::_kill_service` matches
     `$INSTALL_DIR/<name>`.
   - `tests/capsem-install/test_service_install.py` matches
@@ -11670,7 +11671,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scans every process's FD table (~200 ms), so after ~1700 dead sockets
   accumulated the loop took ~6 minutes and made `just test` / `just smoke` /
   `just install` / `just build-assets` look stuck. Replaced the entire recipe
-  with `scripts/clean_stale.py`, which probes socket liveness via
+  with `build_system/scripts/build/clean_stale.py`, which probes socket liveness via
   `socket.connect()` (~4 us per socket, ~50000x faster) and ports the other
   stages (stale rootfs/`_up_` dirs, stale test fixtures, cargo artifact
   age-prune) to Python. Measured: 1772 orphan sockets + 926 stale cargo dirs
@@ -12036,13 +12037,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Panicking `unwrap()` in MCP service relaunch** -- `Path::parent().unwrap()` replaced with proper error propagation.
 - **`snapshots` CLI missing from release rootfs** -- the `snapshots` tool was never copied into the rootfs Docker build context or Dockerfile template, so release builds shipped without it. Added `ROOTFS_ARTIFACTS` constant as single source of truth in `docker.py`, plus 6 validation layers: builder unit tests, builder doctor pre-build check, config validator, rootfs artifacts test suite, CI release workflow validation, and in-VM guest binary assertions (changed from `pytest.skip` to `pytest.fail`).
 - **`just doctor-fix` fails on fresh machines** -- `build-assets` triggered `_ensure-setup` which ran `doctor` which failed on missing assets, creating a circular dependency. Fix commands now set `CAPSEM_SKIP_ASSET_CHECK=1` and `touch .dev-setup` to break the cycle. Guest binary checks are also skipped when asset check is skipped (no assets = no binaries). Fixes bail on first failure instead of continuing to run dependent steps.
-- **Docker cross-arch builds fail (legacy builder cache poisoning)** -- Docker's legacy builder shared intermediate layer cache across `--platform` values, reusing arm64 layers for x86_64 builds. Fixed by requiring Docker BuildKit (buildx). Added buildx and Colima Rosetta checks to `just doctor` and `scripts/bootstrap.sh`.
+- **Docker cross-arch builds fail (legacy builder cache poisoning)** -- Docker's legacy builder shared intermediate layer cache across `--platform` values, reusing arm64 layers for x86_64 builds. Fixed by requiring Docker BuildKit (buildx). Added buildx and Colima Rosetta checks to `just doctor` and `bootstrap.sh`.
 
 ## [0.16.1] - 2026-04-02
 
 ### Added
 - **KVM boot diagnostics** -- when vCPU creation fails on Linux, Capsem now runs automatic diagnostic probes: kernel version, nested KVM status, KVM capabilities, and a fresh-VM-without-IRQCHIP test to isolate the root cause. All results logged at ERROR level so they appear without `RUST_LOG=debug`.
-- **`scripts/kvm-diagnostic.py`** -- standalone diagnostic script for manual KVM environment debugging. Tests 7 phases: /dev/kvm basics, capabilities, Capsem boot sequence, no-irqchip mode, reversed ordering, split IRQCHIP, and environment info.
+- **`build_system/scripts/doctor/kvm-diagnostic.py`** -- standalone diagnostic script for manual KVM environment debugging. Tests 7 phases: /dev/kvm basics, capabilities, Capsem boot sequence, no-irqchip mode, reversed ordering, split IRQCHIP, and environment info.
 
 ### Fixed
 - **KVM boot errors are now actionable** -- `/dev/kvm` missing explains how to enable KVM (modprobe, BIOS). Permission denied suggests `usermod -aG kvm`. EEXIST on vCPU creation explains restricted/nested KVM and points to the diagnostic script.
@@ -12050,7 +12051,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **LATEST_RELEASE.md stale at v0.15.1** -- boot screen showed wrong version. Regenerated from CHANGELOG.md.
 
 ### Changed
-- **`just doctor` rewritten as standalone scripts** -- moved from 265-line inline justfile recipe to `scripts/doctor-common.sh` + platform-specific `doctor-macos.sh` and `doctor-linux.sh`. Colored output (green/red/yellow), structured recap table, and auto-fix: detects fixable issues (missing rustup targets, cargo tools, broken symlinks) and prompts to fix them automatically. `--fix` flag for non-interactive auto-fix.
+- **`just doctor` rewritten as standalone scripts** -- moved from 265-line inline justfile recipe to `build_system/scripts/doctor/doctor-common.sh` + platform-specific `doctor-macos.sh` and `doctor-linux.sh`. Colored output (green/red/yellow), structured recap table, and auto-fix: detects fixable issues (missing rustup targets, cargo tools, broken symlinks) and prompts to fix them automatically. `--fix` flag for non-interactive auto-fix.
 
 ## [0.16.0] - 2026-04-02
 
@@ -12066,7 +12067,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Doctor: Docker BuildKit (buildx) and Colima Rosetta checks** -- `just doctor` now validates that buildx is installed and Colima has Rosetta enabled for cross-arch container builds.
 
 ### Fixed
-- **Cross-arch Docker builds fail on macOS** -- Docker's legacy builder shared intermediate layer cache across `--platform` values, causing arm64 layers to be reused for x86_64 builds. Fixed by requiring Docker BuildKit (buildx), which properly includes platform in cache keys. Added buildx to `just doctor` and `scripts/bootstrap.sh`.
+- **Cross-arch Docker builds fail on macOS** -- Docker's legacy builder shared intermediate layer cache across `--platform` values, causing arm64 layers to be reused for x86_64 builds. Fixed by requiring Docker BuildKit (buildx), which properly includes platform in cache keys. Added buildx to `just doctor` and `bootstrap.sh`.
 - **Snapshots tab shows nothing during long sessions** -- the tab called `callMcpTool('snapshots_list')` once on mount, never refreshed, and failed silently if the MCP gateway wasn't wired yet. An intermediate implementation used SQL rows, but the current 1.3 contract supersedes that: snapshot state is exposed through VM snapshot routes and is not stored in `session.db`.
 - **Symlink loop hangs app on startup** -- `disk_usage_bytes()` used `is_dir()` / `metadata()` which follow symlinks. A `.venv/lib64 -> lib` relative symlink in session workspaces caused infinite recursion, hanging the app at boot. Fixed to use `symlink_metadata()` throughout. Added regression tests for symlink loops, absolute escapes, and real session timing.
 - **Wizard flashes briefly on app launch** -- the setup wizard appeared for one frame before settings finished loading. Added `!settingsStore.loading` guard to prevent the wizard from rendering until settings are fully resolved.
@@ -12234,7 +12235,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Developer getting-started documentation** -- full setup guide at capsem.org/development/getting-started/ covering prerequisites, container runtime setup, cross-compilation, and troubleshooting.
-- **Bootstrap script** -- `scripts/bootstrap.sh` checks all required tools, installs Python and frontend deps, and runs `just doctor`.
+- **Bootstrap script** -- `bootstrap.sh` checks all required tools, installs Python and frontend deps, and runs `just doctor`.
 - **`.dev-setup` sentinel** -- `just doctor` writes a `.dev-setup` file on success. All recipes (`run`, `test`, `dev`, `bench`) auto-run doctor if the sentinel is missing, preventing new developers from skipping setup.
 - **`uv` check in `just doctor`** -- doctor now validates that `uv` is installed (previously missing, causing silent `build-assets` failures).
 - **README prerequisites** -- "Build from source" section now lists required tools and links to the full development guide.
@@ -12265,7 +12266,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Direct clonefile(2) syscall** -- `ApfsSnapshot` uses `libc::clonefile()` directly. Snapshot create dropped from 50ms to 3.7ms (93% faster).
 - **Hardlink-based incremental snapshots** -- `SnapshotBackend` trait with `ApfsSnapshot` (macOS) and `HardlinkSnapshot` (cross-platform) implementations.
 - **FUSE ops unit tests** -- 30+ tests covering file I/O, directory operations, metadata, and adversarial cases.
-- **Doctor session validation test** -- `scripts/doctor_session_test.py` verifies session.db telemetry after capsem-doctor run.
+- **Doctor session validation test** -- `build_system/scripts/doctor/doctor_session_test.py` verifies session.db telemetry after capsem-doctor run.
 - **Container runtime resource checks** -- `just doctor` and `capsem-builder doctor` verify podman/Docker have enough memory (min 4GB).
 - **Asset resolution test suite** -- 28 new tests across Rust and Python for manifest parsing, hash verification, and per-arch resolution.
 - **`manifest_compat` module** -- shared `extract_hashes()` for manifest hash extraction, testable independently from `build.rs`.
@@ -12502,7 +12503,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multi-version asset manifest (`manifest.json`) replaces single-version `B3SUMS` -- supports multiple release versions, merge across releases, and future checkpoint restore
 - Version-scoped asset directories (`~/.capsem/assets/v{version}/`) with automatic migration from flat layout and cleanup of old versions
 - `pinned.json` support for keeping specific asset versions during cleanup (for future checkpointing)
-- `scripts/gen_manifest.py` for manifest generation in justfile and build.py
+- `build_system/scripts/build/gen_manifest.py` for manifest generation in justfile and build.py
 - First-run setup wizard -- 6-step guided configuration (Welcome, Security, AI Providers, Repositories, MCP Servers, All Set) that runs while the VM image downloads in the background
 - Host config auto-detection -- wizard scans ~/.gitconfig, ~/.ssh/*.pub, environment variables, and `gh auth token` to pre-populate settings with detected values
 - SSH public key setting (`vm.environment.ssh.public_key`) -- injected as /root/.ssh/authorized_keys in the guest VM at boot
@@ -12526,7 +12527,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - CI release workflow now accumulates manifest.json across releases and uploads it alongside rootfs
-- `_pack-initrd` regenerates manifest.json on every `just run` via `scripts/gen_manifest.py`
+- `_pack-initrd` regenerates manifest.json on every `just run` via `build_system/scripts/build/gen_manifest.py`
 - `build.rs` reads hashes from manifest.json (preferred) with B3SUMS fallback
 - Settings restructured: "Web" and "Package Registries" merged under new "Security" top-level section with "Web", "Services > Search Engines", and "Services > Package Registries" sub-groups
 - MCP gateway rewritten to use rmcp (official Rust MCP SDK) -- replaces hand-rolled JSON-RPC/SSE client with proper Streamable HTTP transport, automatic pagination, and typed tool/resource/prompt routing
@@ -12584,7 +12585,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `web/docs/performance.md`: documents all benchmark modes, baseline numbers, proxy data path, and domain allow list setup
 - `just run` now kills any existing Capsem instance before booting, preventing a stale GUI window from appearing alongside a CLI run
 - Notarization credential verification in CI preflight job: validates Apple API key against `notarytool history` before spending time on build-assets and tests
-- Notarization preflight check in `scripts/preflight.sh`: verifies `.p8` key, API Key ID, Issuer ID, and runs a live `notarytool history` test
+- Notarization preflight check in `build_system/scripts/bootstrap/preflight.sh`: verifies `.p8` key, API Key ID, Issuer ID, and runs a live `notarytool history` test
 
 ### Fixed
 - `capsem-init` now aborts boot (kernel panic) if the tmpfs mount for the overlay upper layer fails, preventing a silent degraded boot where writes land on the initramfs instead of the intended tmpfs
@@ -12603,8 +12604,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Package lists pre-populated at rootfs build time so `apt-get install` works inside a running VM without a prior `apt-get update`.
 - `force-unsafe-io` dpkg config in `capsem-init`: skips redundant fsyncs on overlayfs.
 - Claude Code installed as a native binary (downloaded directly from Anthropic's GCS release bucket) instead of via npm, removing the Node.js dependency for the Claude CLI.
-- Ephemeral model preflight check (`check_ephemeral_model` in `scripts/preflight.sh`): statically verifies `capsem-init` never skips `mke2fs` and never uses the scratch disk as overlay upper layer.
-- Ephemeral model end-to-end test (`check_persistence` in `scripts/integration_test.py`): boots two consecutive VMs, writes a sentinel file in the first, and asserts it is absent in the second.
+- Ephemeral model preflight check (`check_ephemeral_model` in `build_system/scripts/bootstrap/preflight.sh`): statically verifies `capsem-init` never skips `mke2fs` and never uses the scratch disk as overlay upper layer.
+- Ephemeral model end-to-end test (`check_persistence` in `build_system/scripts/test/integration_test.py`): boots two consecutive VMs, writes a sentinel file in the first, and asserts it is absent in the second.
 
 ### Changed
 - `images/README.md` developer section now documents how to add packages from all sources (apt, pip, npm, runtime) with copy-paste examples.
@@ -12614,7 +12615,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `just doctor` command: checks all required dev tools, container runtime (docker/podman), Rust targets, and cargo tools are installed
-- Release preflight checks (`scripts/preflight.sh`): validates Apple certificate format, keychain import, and base64 sync before CI release
+- Release preflight checks (`build_system/scripts/bootstrap/preflight.sh`): validates Apple certificate format, keychain import, and base64 sync before CI release
 - `build_system/packaging/macos/fix_p12_legacy.sh`: converts OpenSSL 3.x p12 files to legacy 3DES format macOS Keychain accepts
 - CI preflight job in release workflow: fails fast on certificate/credential issues before slow build jobs
 

@@ -214,7 +214,7 @@ def test_deletion_is_classified_by_its_absent_path() -> None:
 
 def test_rename_unions_old_and_new_independent_scopes() -> None:
     scopes = _classifier().ci_scopes(
-        ("scripts/build.py", "web/app/src/build-status.ts")
+        ("build_system/scripts/build/build.py", "web/app/src/build-status.ts")
     )
     assert scopes == {"build_system", "app"}
 

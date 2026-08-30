@@ -25,8 +25,9 @@ SHELLCHECK_LINE = re.compile(
 #: A relative markdown link or image target, ignoring anchors and URLs.
 MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(<?([^)>\s#]+)")
 #: A skill's bundled resources, which the skill format says live beside it:
-#: `references/`, `agents/`, `scripts/`, `assets/`. Only checked under
-#: `skills/`, because a backticked `scripts/...` in ordinary prose is a
+#: `skills/<name>/references/`, `skills/<name>/agents/`,
+#: `skills/<name>/scripts/`, and `skills/<name>/assets/`. Only checked under
+#: `skills/`, because a backticked `skills/<name>/scripts/...` in ordinary prose is a
 #: repository-root path and resolving it against the document reports a
 #: missing file that is simply elsewhere.
 BACKTICK_REFERENCE = re.compile(

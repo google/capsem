@@ -68,7 +68,7 @@ def shell_surfaces() -> list[tuple[str, str]]:
     """Every body in the repository that bash will execute.
 
     All three surfaces, because the bug does not care which file it lives in
-    and a guard that covered only `scripts/` would have missed the nine in
+    and a guard that covered only tracked shell files would have missed the nine in
     `release.yaml`.
     """
     found = [(name, (ROOT / name).read_text(encoding="utf-8")) for name in tracked("*.sh")]

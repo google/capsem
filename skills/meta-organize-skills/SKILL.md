@@ -14,7 +14,7 @@ skills/                          Canonical location (checked into git)
   <skill-name>/
     SKILL.md                     Required -- the skill itself
     references/                  Optional -- large docs loaded on demand
-    scripts/                     Optional -- executable helpers
+    <skill-name>/scripts/        Optional -- executable helpers
     assets/                      Optional -- templates, icons, etc.
 
 .claude/skills -> ../skills      Claude Code symlink

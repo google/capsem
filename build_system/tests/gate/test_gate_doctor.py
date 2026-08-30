@@ -290,8 +290,7 @@ def _lint_plan(tmp_path: Path):
 
 
 def test_lint_runs_ruff_and_both_ty_passes(tmp_path: Path) -> None:
-    """`ty` used to run on `src/capsem` alone, so `scripts/` -- release
-    machinery, not scratch -- had no type gate at all."""
+    """Ty used to omit release machinery from its checked source owners."""
     plan = _lint_plan(tmp_path)
     described = plan.describe()
 

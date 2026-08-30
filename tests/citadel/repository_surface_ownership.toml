@@ -90,15 +90,15 @@ reason = "Release-distribution generation and its package-local source are owned
 
 [[surface]]
 id = "build-system-scripts"
-state = "migrating"
-current = ["build_system/scripts/", "scripts/"]
+state = "retained"
+current = ["build_system/scripts/"]
 targets = ["build_system/scripts/"]
 lint = ["python.ruff", "python.ty.relaxed", "fast.audit.shell", "fast.citadel"]
 tests = ["build_system/tests/scripts/", "build_system/tests/gate/test_path_and_log_wrappers_are_mandatory.py"]
 ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
 coverage = "codecov unit flag for Python modules; shell boundaries use contract and acceptance proof"
-debt = "tests/citadel/repository_path_debt.toml"
-reason = "Only thin executable boundaries remain scripts; reusable behavior belongs in builder modules."
+debt = "none: the obsolete root is absent and Citadel rejects its recreation"
+reason = "Thin executable boundaries are functionally owned; reusable behavior belongs in builder modules."
 
 [[surface]]
 id = "build-system-tests"

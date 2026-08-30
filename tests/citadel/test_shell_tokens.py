@@ -126,7 +126,7 @@ def test_every_shell_surface_in_the_repository_tokenizes() -> None:
 
 
 def _workflow_fixture(root: Path, *, track_script: bool) -> Path:
-    script = root / "scripts" / "phase.sh"
+    script = root / "build_system" / "scripts" / "ci" / "phase.sh"
     script.parent.mkdir(parents=True)
     script.write_text("echo from-script\n", encoding="utf-8")
     workflow = root / ".github" / "workflows" / "fixture.yaml"
@@ -137,7 +137,7 @@ jobs:
   lane:
     steps:
       - run: echo before
-      - run: bash scripts/phase.sh
+      - run: bash build_system/scripts/ci/phase.sh
       - run: echo after
 """,
         encoding="utf-8",
@@ -163,5 +163,8 @@ def test_workflow_reader_inlines_a_direct_script_at_its_execution_point(
 def test_workflow_reader_refuses_an_untracked_dispatch(tmp_path: Path) -> None:
     workflow = _workflow_fixture(tmp_path, track_script=False)
 
-    with pytest.raises(AssertionError, match=r"dispatches untracked scripts/phase\.sh"):
+    with pytest.raises(
+        AssertionError,
+        match=r"dispatches untracked build_system/scripts/ci/phase\.sh",
+    ):
         workflow_reachable_text(tmp_path, workflow, job="lane")

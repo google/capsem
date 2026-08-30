@@ -798,8 +798,8 @@ def test_install_e2e_generates_manifest_through_admin_rail() -> None:
 
 
 def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
-    # The workflow plus every script it dispatches to. A step that grew past
-    # the shell-body ceiling and moved into `scripts/` runs the same commands;
+    # The workflow plus every command boundary it dispatches to. A step that
+    # grew past the shell-body ceiling and moved under its functional owner runs the same commands;
     # asserting against the workflow text alone made that refactor look like a
     # regression, which is how a literal contract punishes the right change.
     workflow = workflow_reachable_text(PROJECT_ROOT, _workflow_path("release-assets.yaml"))

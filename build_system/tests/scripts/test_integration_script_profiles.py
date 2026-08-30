@@ -20,7 +20,7 @@ def _just_python_entrypoints() -> list[Path]:
     referenced = {
         PROJECT_ROOT / relative
         for relative in re.findall(
-            r"(?:build_system/)?scripts/[A-Za-z0-9_./-]+\.py", justfile
+            r"build_system/scripts/[A-Za-z0-9_./-]+\.py", justfile
         )
     }
     referenced.add(

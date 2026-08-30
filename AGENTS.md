@@ -55,10 +55,11 @@ crates/capsem-mock-server/     Hermetic mock upstream (HTTP/TLS/WS) for tests an
 web/app/                 Astro 7 + Svelte 5 + Tailwind v4 + owned semantic CSS
 web/marketing/                     Marketing website (Astro + Svelte 5)
 web/docs/                     Documentation site (Astro Starlight)
+build_system/builder/      capsem-builder backend and gate implementation
 build_system/release_site/ Release channel site generator (Astro, writes target/distribution/)
+build_system/scripts/      Thin functional command boundaries for build and release tooling
 config/                   Runtime product config source -- never developer skills (see Skills)
 config/profiles/<id>/     Profile ledgers (code, co-work): profile.toml + packages, MCP, rules, root seed
-src/capsem/builder/       capsem-builder backend helpers (image builds are driven by capsem-admin)
 guest/artifacts/          Guest scripts and diagnostics (capsem-init, bashrc, tests)
 target/assets/            Built VM assets (gitignored, per-arch: target/assets/{arch}/)
 web/graphics/             Brand icons and Tauri app icons (source of truth)
@@ -67,8 +68,6 @@ tests/                    Cross-crate suites (ironbank/ black-box gates, citadel
                           citadel/ is source-level and runs in the fast phase: a
                           recorded mistake must fail before the expensive work, and
                           each guard carries the reason in its failure message
-src/capsem/gate/          The build and release gate: the justfile dispatches, this decides
-scripts/                  CI and release gate scripts invoked by the gate
 ```
 
 ## Read the Gate Digest First

@@ -146,7 +146,7 @@ def test_with_env_leaves_the_parent_context_alone(runner: RecordingRunner) -> No
 def test_a_script_runs_through_the_projects_environment(
     context: Context, runner: RecordingRunner
 ) -> None:
-    """`python3 scripts/x.py` picks up whatever interpreter is on PATH, which
+    """A raw `python3 tool.py` picks up whatever interpreter is on PATH, which
     on a release runner is not the one the lockfile pins."""
     Script(context.config, "build_system/scripts/build/clean_stale.py", "--force").perform(context)
 

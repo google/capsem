@@ -1,7 +1,7 @@
 """Citadel guard: workflow scripts run only after their repository exists.
 
 GitHub jobs start with an empty workspace. Moving a gate body from inline YAML
-to ``scripts/`` makes it lintable and testable, but also creates a runtime
+to an owned command boundary makes it lintable and testable, but also creates a runtime
 dependency on checkout in that *same job*. The branch-protection aggregator
 once made exactly that move without adding checkout; every PR would have died
 with ``build_system/scripts/ci/require-ci-jobs.sh: No such file or directory`` before judging

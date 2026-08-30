@@ -5,11 +5,11 @@ from __future__ import annotations
 import hashlib
 import re
 import subprocess
-import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 DEBT = Path(__file__).with_name("repository_path_debt.toml")
@@ -62,6 +62,7 @@ EXCLUDED_POLICY_FILES = frozenset(
         "tests/citadel/test_release_distribution_ownership.py",
         "tests/citadel/test_repository_path_ownership.py",
         "tests/citadel/test_repository_surface_ownership.py",
+        "tests/citadel/test_shape_boundaries.py",
         "tests/citadel/test_sprint_system_is_sprinty.py",
     }
 )

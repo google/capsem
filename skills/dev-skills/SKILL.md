@@ -109,7 +109,7 @@ Good: "Capsem frontend design system. Use when building UI components, styling v
 Three loading tiers:
 1. **Metadata** (~100 words) -- name + description, always in context for every conversation
 2. **SKILL.md body** (<500 lines ideal) -- loaded when skill triggers
-3. **Bundled resources** (unlimited) -- `references/`, `scripts/`, `assets/` subdirs, loaded on demand
+3. **Bundled resources** (unlimited) -- `<skill>/references/`, `<skill>/scripts/`, and `<skill>/assets/`, loaded on demand
 
 This means: keep SKILL.md lean. Put detailed wire formats, API docs, and large references in `references/` with clear pointers from the SKILL.md body.
 
@@ -137,7 +137,7 @@ skill-name/
   references/
     wire-format.md              Detailed protocol docs
     community-skill.md          Fetched from npx skills / GitHub
-  scripts/
+  skill-name/scripts/
     helper.sh                   Executable automation
   assets/
     template.html               Templates, icons

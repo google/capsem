@@ -1,6 +1,6 @@
 """Functional contracts for gate-owned Colima lifecycle cleanup.
 
-These drove `scripts/with-gate-colima.sh`, a wrapper whose EXIT trap stopped a
+These drove the retired `with-gate-colima.sh` wrapper, whose EXIT trap stopped a
 Colima the gate had started. The trap was correct, and correct only for the
 commands that happened to sit inside the wrapper -- which was the expensive
 half of `just test-clean` and nothing else.

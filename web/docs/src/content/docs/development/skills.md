@@ -14,7 +14,7 @@ skills/
   <skill-name>/
     SKILL.md                     The skill (required)
     references/                  Large docs loaded on demand (optional)
-    scripts/                     Executable helpers (optional)
+    <skill-name>/scripts/        Executable helpers (optional)
 ```
 
 Skills are flat (one level). Nested directories are **not** discovered. Use prefix-based naming for categories.

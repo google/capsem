@@ -717,7 +717,11 @@ def test_an_outside_action_uses_only_the_capability_runner() -> None:
         env={variable: sandbox.REPORT.value},
         outside_sandbox=True,
     ).perform(context)
-    Script(CONFIG, "scripts/networked.py", outside_sandbox=True).perform(context)
+    Script(
+        CONFIG,
+        "build_system/scripts/release/networked.py",
+        outside_sandbox=True,
+    ).perform(context)
 
     assert ordinary.commands == []
     assert len(capability.commands) == 2

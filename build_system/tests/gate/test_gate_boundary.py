@@ -223,12 +223,12 @@ def test_every_gate_module_imports_on_its_own(module: str) -> None:
 
 
 def test_the_strict_python_tree_needs_no_rules_held_back() -> None:
-    """`src/` is checked with nothing disabled, and must stay that way.
+    """The strict package is checked with nothing disabled and stays that way.
 
-    `ty` ran on `src/capsem` alone for a long time, so `scripts/` -- release
-    machinery, not scratch -- had no type gate at all. Widening it meant
-    holding some rules back on the trees that were never checked; holding any
-    back on `src/` would give that ground away again.
+    Ty once ran on only the retired package while release machinery had no
+    type gate at all. Widening it meant holding some rules back on the trees
+    that were never checked; holding any back on the strict owner would give
+    that ground away again.
     """
     settings = CONFIG.lint
 

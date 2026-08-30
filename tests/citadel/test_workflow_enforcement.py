@@ -395,9 +395,9 @@ def _apply(document: dict, mutation: Mutation) -> dict:
             job[Key.STEPS][index] = {
                 **step,
                 # Whichever line decides the gate: the comparison when the
-                # body is inline, the dispatch when the body has moved into a
-                # script. `bash scripts/gate.sh || true` is the same evasion in
-                # the new shape, and is what somebody would actually write.
+                # body is inline, the dispatch when the body has moved into an
+                # owned boundary. Appending `|| true` is the same evasion in
+                # either shape and is what somebody would actually write.
                 Key.RUN: "\n".join(
                     line + FAIL_OPEN_SUFFIX
                     if (

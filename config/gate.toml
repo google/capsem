@@ -1726,8 +1726,8 @@ max_skill_body_lines = 600
 #
 # The measurement says simple is already the norm and only the tail is a
 # problem: across 274 bodies the median is 3 executable lines and p90 is 14.
-# The fix for an entry below is a script under `scripts/`, which ShellCheck
-# lints and a test can call -- not a bigger parser.
+# The fix for an entry below is an owned boundary under `build_system/scripts/`,
+# which ShellCheck lints and a test can call -- not a bigger parser.
 [boundary.shell_bodies]
 max_lines = 20
 

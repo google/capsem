@@ -136,7 +136,7 @@ git clone <repo> && cd capsem
 just exec "echo hello from capsem"
 ```
 
-`bootstrap.sh` lives at the **repo root** (not under `scripts/`). It runs `just _build-assets` as part of doctor's auto-fix, so step 3 just confirms the VM boots.
+`bootstrap.sh` is the deliberately public **repo-root** bootstrap entrypoint. It runs `just _build-assets` as part of doctor's auto-fix, so step 3 just confirms the VM boots.
 
 ### What bootstrap installs
 
@@ -220,7 +220,7 @@ To avoid repeated permission prompts when using `just` and `capsem` commands, ad
       "Bash(pnpm *)",
       "Bash(cd web/app && pnpm *)",
       "Bash(npx *)",
-      "Bash(python3 scripts/*)",
+      "Bash(python3 build_system/scripts/*)",
       "Bash(rustup *)"
     ]
   }
@@ -233,7 +233,7 @@ This allows:
 - `cargo *` -- Rust builds, tests, checks
 - `pnpm *` -- frontend package management and builds
 - `npx *` -- skills CLI and other npx tools
-- `python3 scripts/*` -- project scripts (check_session, list_sessions, etc.)
+- `python3 build_system/scripts/*` -- project build and diagnostic boundaries
 - `rustup *` -- target/component management
 
 ## Codesigning
@@ -328,7 +328,7 @@ Fix: set `credsStore` to empty string in `~/.docker/config.json`:
 The doctor system is three bash scripts:
 
 ```
-scripts/
+build_system/scripts/doctor/
   doctor-common.sh    # Entry point, cross-platform checks, fix registry, recap
   doctor-macos.sh     # macOS: Tart, Colima, Rosetta, codesigning, brew hints
   doctor-linux.sh     # Linux: KVM, apt/dnf hints
