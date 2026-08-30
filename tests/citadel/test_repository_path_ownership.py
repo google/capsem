@@ -5,11 +5,11 @@ from __future__ import annotations
 import hashlib
 import re
 import subprocess
+import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 DEBT = Path(__file__).with_name("repository_path_debt.toml")

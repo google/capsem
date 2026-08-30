@@ -14,7 +14,7 @@ from pathlib import Path
 
 from log_streams import read_log_stream
 
-from scripts.release_test_binary import ensure_host_test_binary
+from build_system.scripts.release.release_test_binary import ensure_host_test_binary
 
 from .constants import BIN_DIR
 

@@ -6,12 +6,12 @@ import ast
 import hashlib
 import re
 import subprocess
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
-import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path(__file__).with_name("generated_output_debt.toml")
@@ -358,7 +358,7 @@ def test_empty_output_surface_fails_closed() -> None:
 def test_producer_scanner_distinguishes_repository_roots() -> None:
     records = _producer_records(
         {
-            "scripts/new.py": '\n'.join(  # noqa: FLY002
+            "scripts/new.py": '\n'.join(
                 (
                     'Path("assets/cache").mkdir(parents=True)',
                     'output_pkg = Path("../packages/Capsem.pkg")',
@@ -378,7 +378,7 @@ def test_producer_scanner_distinguishes_repository_roots() -> None:
 def test_ambient_scanner_distinguishes_path_defaults_from_asset_data() -> None:
     records = _ambient_asset_records(
         {
-            "scripts/new.py": '\n'.join(  # noqa: FLY002
+            "scripts/new.py": '\n'.join(
                 (
                     'parser.add_argument("--assets", default=Path("assets"))',
                     'ASSETS_DIR="${CAPSEM_ASSETS_DIR:-$ROOT/assets}"',

@@ -184,17 +184,17 @@ def _push_paths(name: str) -> set[str]:
 
 
 def test_public_web_deployments_run_only_for_owned_and_shared_inputs() -> None:
-    script_root = "scr" + "ipts"
+    script_root = "build_system/scripts"
     shared = {
         "README.md",
-        f"{script_root}/check-web-surface.sh",
-        f"{script_root}/lib/exec_lock.sh",
+        f"{script_root}/web/check-web-surface.sh",
+        f"{script_root}/build/lib/exec_lock.sh",
     }
     assert _push_paths("docs.yaml") == shared | {
         ".github/workflows/docs.yaml",
         "config/gate.toml",
         "web/docs/**",
-        f"{script_root}/check-docs-holding-build.py",
+        f"{script_root}/web/check-docs-holding-build.py",
         "build_system/builder/gate/tools/web/check_docs_holding_build.py",
     }
     assert _push_paths("site.yaml") == shared | {

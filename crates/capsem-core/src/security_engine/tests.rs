@@ -3789,7 +3789,7 @@ async fn plugin_aware_emitter_leaves_an_allowing_plugin_alone() {
 fn published_field_table_matches_the_cel_contract() {
     const POLICY_DOC: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../docs/src/content/docs/security/policy.md"
+        "/../../web/docs/src/content/docs/security/policy.md"
     ));
 
     let section = POLICY_DOC

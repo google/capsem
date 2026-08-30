@@ -12,11 +12,12 @@ from pathlib import Path
 from typing import cast
 from urllib.request import Request, urlopen
 
-from build_system.tests.helpers import mock_server as mock_server_launcher
 from helpers.mock_server import (
     start_mock_server,
     stop_process,
 )
+
+from build_system.tests.helpers import mock_server as mock_server_launcher
 
 
 def test_mock_server_freshness_tracks_the_shared_parent_guard() -> None:

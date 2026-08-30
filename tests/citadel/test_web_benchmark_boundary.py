@@ -28,7 +28,8 @@ surface. See the T5 section of the approved repository cleanup proposal.
 """
 
 OLD_WEB_ROOTS = ("frontend/", "docs/", "site/", "graphics/")
-WEB_PROJECT_ROOTS = OLD_WEB_ROOTS[:3] + (
+WEB_PROJECT_ROOTS = (
+    *OLD_WEB_ROOTS[:3],
     "web/app/",
     "web/docs/",
     "web/marketing/",

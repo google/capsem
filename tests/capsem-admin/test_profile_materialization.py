@@ -12,7 +12,7 @@ from pathlib import Path
 from blake3 import blake3
 from helpers.constants import ASSETS_DIR
 
-from scripts.release_test_binary import ensure_host_test_binary
+from build_system.scripts.release.release_test_binary import ensure_host_test_binary
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ADMIN = PROJECT_ROOT / "target" / "debug" / "capsem-admin"

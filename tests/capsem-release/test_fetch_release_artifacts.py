@@ -5,11 +5,11 @@ import json
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import blake3
 import pytest
-import tomllib
 from capsem_builder.image.tools.build import stage_profile_assets as PROFILE_STAGE
 from capsem_builder.release.tools import fetch_channel_source_manifest as SOURCE
 from capsem_builder.release.tools import fetch_release_artifacts as FETCH

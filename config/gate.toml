@@ -820,7 +820,7 @@ key = "version"
 # ---------------------------------------------------------------------------
 
 [lint]
-python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "scripts", "tests", "guest"]
+python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest"]
 # Already passes every rule, and must keep doing so.
 strict_roots = ["build_system/builder", "build_system/sdist_command.py"]
 # Match the import roots exercised by the sole pytest project plus the guest
@@ -833,7 +833,6 @@ ty_search_paths = [
     "tests",
     ".",
     "build_system/scripts",
-    "scripts",
     "build_system/tests/release",
     "build_system/tests/release_site",
     "guest/artifacts",
@@ -1036,7 +1035,7 @@ direct_concurrency = ["planrunner.py"]
 # shrink must update or remove its entry immediately. This is debt inventory,
 # not an exemption list.
 [boundary.scripts]
-roots = ["scripts", "build_system/scripts", "build_system/packaging"]
+roots = ["build_system/scripts", "build_system/packaging"]
 suffixes = [".py", ".sh"]
 max_lines = 300
 
@@ -1084,7 +1083,7 @@ max_lines = 300
 [boundary.scripts.oversized_line_counts]
 "build_system/packaging/macos/build-pkg.sh" = 349
 "build_system/packaging/macos/macos_release_glowup.py" = 369
-"build_system/packaging/macos/macos_tart_glowup.py" = 565
+"build_system/packaging/macos/macos_tart_glowup.py" = 563
 "build_system/packaging/macos/macos_tart_guest.sh" = 317
 
 # ---------------------------------------------------------------------------
@@ -2574,6 +2573,15 @@ coverage rebuilds them, and again after artifact materialization may run
 capsem-admin through Cargo. Each signature follows a producer that can replace
 the Mach-O bytes; Linux renders these signing steps as actionless ordering
 edges, which is why the duplication is visible only on macOS.
+"""
+
+[[boundary.repeated_actions]]
+subject = "cargo build --bin capsem --bin capsem-admin"
+reason = """
+The prepared runtime builds the host binaries before its first signature. The
+asset phase deliberately rebuilds them after profile materialization may run
+capsem-admin through Cargo and replace workspace outputs, then signs the exact
+post-materialization bytes used by the VM and package lanes.
 """
 
 # ---------------------------------------------------------------------------

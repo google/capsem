@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import importlib
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 from capsem_builder.gate.tools.web import check_docs_holding_build as DOCS_HOLDING_BUILD
 from helpers.workflow_contract import workflow_reachable_text
 

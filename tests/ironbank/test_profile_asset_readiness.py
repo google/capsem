@@ -17,7 +17,7 @@ from pathlib import Path
 
 from helpers.service import PROJECT_ROOT, ServiceInstance, wait_profile_assets_settled
 
-from scripts.release_test_binary import ensure_host_test_binary
+from build_system.scripts.release.release_test_binary import ensure_host_test_binary
 
 
 def _arch() -> str:
