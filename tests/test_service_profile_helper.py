@@ -97,6 +97,24 @@ def test_service_instance_can_keep_shutdown_flushed_state_for_assertions(
     assert not home.exists()
 
 
+def test_service_instance_stop_and_read_log_reads_complete_rotated_stream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "capsem-home"
+    home.mkdir()
+    monkeypatch.setattr(service_helper, "make_capsem_tmp_dir", lambda _prefix: home)
+    monkeypatch.setattr(service_helper, "preserve_tmp_dir_on_failure", lambda _path: None)
+    service = service_helper.ServiceInstance()
+    (service.tmp_dir / "service.log").write_text("first\n")
+    (service.tmp_dir / "service.2026-08-30.log").write_text("second\n")
+
+    assert service.stop_and_read_log() == "first\nsecond\n"
+    assert home.exists()
+
+    service.stop()
+    assert not home.exists()
+
+
 def test_service_instance_preserves_artifacts_during_exception_teardown(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -446,8 +446,10 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert by_action["allow"] >= 1
         assert by_event_type["http.request"] >= 1
 
-        service_log = client.get_text("/service-logs", timeout=30)
         gateway_log = gateway.stop_and_read_log()
+        client.delete(f"/vms/{session_id}/delete", timeout=60)
+        client = None
+        service_log = service.stop_and_read_log()
         assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:
@@ -811,8 +813,10 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
             assert by_action["allow"] >= 5
             assert by_event_type["http.request"] >= 5
 
-        service_log = client.get_text("/service-logs", timeout=30)
         gateway_log = gateway.stop_and_read_log()
+        client.delete(f"/vms/{session_id}/delete", timeout=60)
+        client = None
+        service_log = service.stop_and_read_log()
         assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:
@@ -1574,8 +1578,10 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert by_action["block"] >= 1
         assert by_event_type["http.request"] >= 1
 
-        service_log = client.get_text("/service-logs", timeout=30)
         gateway_log = gateway.stop_and_read_log()
+        client.delete(f"/vms/{session_id}/delete", timeout=60)
+        client = None
+        service_log = service.stop_and_read_log()
         assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:
@@ -1875,8 +1881,10 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert by_action["ask"] >= 1
         assert by_event_type["http.request"] >= 1
 
-        service_log = client.get_text("/service-logs", timeout=30)
         gateway_log = gateway.stop_and_read_log()
+        client.delete(f"/vms/{session_id}/delete", timeout=60)
+        client = None
+        service_log = service.stop_and_read_log()
         assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:

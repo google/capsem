@@ -611,6 +611,16 @@ class ServiceInstance:
         if self.home_dir.exists():
             shutil.rmtree(self.home_dir, ignore_errors=True)
 
+    def stop_and_read_log(self) -> str:
+        """Stop the service, flush its tracing worker, and retain test state.
+
+        The non-blocking tracing appender only guarantees that its worker has
+        flushed after graceful shutdown. Keep the temporary home until the
+        caller has asserted on the complete rotated log stream.
+        """
+        self.stop(cleanup=False)
+        return read_log_stream(self.tmp_dir / "service.log")
+
 
 def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):
     """Wait until a VM responds to exec.
