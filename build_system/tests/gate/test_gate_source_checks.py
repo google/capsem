@@ -161,6 +161,7 @@ def test_the_argv_each_step_issues() -> None:
     ) in described
     assert (
         "uv run --isolated --no-editable --reinstall-package capsem-builder "
+        "--no-build-isolation-package capsem-builder --offline "
         "--project build_system --frozen ty check --project build_system "
         "--error-on-warning --python-platform all"
     ) in described
@@ -175,6 +176,7 @@ def test_ty_uses_the_installed_package_and_scoped_relaxed_search_paths() -> None
         rendered = " ".join(arguments)
         assert rendered.startswith(
             "uv run --isolated --no-editable --reinstall-package capsem-builder "
+            "--no-build-isolation-package capsem-builder --offline "
             "--project build_system --frozen ty check"
         )
 
