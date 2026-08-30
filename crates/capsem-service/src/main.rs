@@ -50,10 +50,14 @@ use session_cleanup::{
 };
 mod shutdown_policy;
 mod startup;
+mod suspend_confirmation;
 mod update_command;
 
 use profile_status_cache::*;
 use shutdown_policy::*;
+use suspend_confirmation::{
+    observe_suspend_message, suspend_channel_closed, suspend_failure, SuspendConfirmation,
+};
 use update_command::{update_command_plan, UpdateCommandKind};
 
 /// Ceiling on a session log tail returned over the API. `serial.log` is guest
@@ -70,54 +74,6 @@ const AUTOMATIC_UPDATE_BUSY_RETRY_SECS: u64 = 5 * 60;
 const AUTOMATIC_UPDATE_MAX_BACKOFF_SECS: u64 = 24 * 60 * 60;
 const AUTOMATIC_UPDATE_INITIAL_DELAY_ENV: &str = "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS";
 const AUTOMATIC_UPDATE_POLL_ENV: &str = "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS";
-
-#[derive(Debug, PartialEq, Eq)]
-enum SuspendConfirmation {
-    Suspended,
-    Failed(String),
-    ChannelClosed,
-    TimedOut,
-}
-
-fn observe_suspend_message(
-    message: ProcessToService,
-    suspended: &mut bool,
-) -> Option<SuspendConfirmation> {
-    match message {
-        ProcessToService::StateChanged { state, .. } if state == "Suspended" => {
-            *suspended = true;
-            None
-        }
-        ProcessToService::SuspendFailed { error, .. } => Some(SuspendConfirmation::Failed(error)),
-        _ => None,
-    }
-}
-
-fn suspend_channel_closed(suspended: bool) -> SuspendConfirmation {
-    if suspended {
-        SuspendConfirmation::Suspended
-    } else {
-        SuspendConfirmation::ChannelClosed
-    }
-}
-
-fn suspend_failure(confirmation: SuspendConfirmation) -> Option<(&'static str, String)> {
-    match confirmation {
-        SuspendConfirmation::Suspended => None,
-        SuspendConfirmation::Failed(error) => Some((
-            "failed",
-            format!("suspend failed before checkpoint completion: {error} (process killed)"),
-        )),
-        SuspendConfirmation::ChannelClosed => Some((
-            "channel-closed",
-            "suspend process exited before checkpoint confirmation (process killed)".into(),
-        )),
-        SuspendConfirmation::TimedOut => Some((
-            "timed-out",
-            "suspend timed out: VM did not confirm suspended state (process killed)".into(),
-        )),
-    }
-}
 
 use capsem_core::paths::checkpoint_complete_path;
 
