@@ -1001,6 +1001,7 @@ def test_install_image_has_one_network_open_materializer_and_no_runtime_repairs(
     config = gate_config.load(PROJECT_ROOT)
     helper = (PROJECT_ROOT / config.install.builder.dockerfile).read_text(encoding="utf-8")
     image = (PROJECT_ROOT / config.install.dockerfile).read_text(encoding="utf-8")
+    collapsed_image = " ".join(re.sub(r"\\\s*\n\s*", " ", image).split())
     image_gate = (PROJECT_ROOT / "build_system/builder/gate/installimage.py").read_text(encoding="utf-8")
     install = (PROJECT_ROOT / "build_system/builder/gate/installproof.py").read_text(encoding="utf-8")
     deb = (PROJECT_ROOT / "build_system/builder/gate/debproof.py").read_text(encoding="utf-8")
@@ -1014,6 +1015,10 @@ def test_install_image_has_one_network_open_materializer_and_no_runtime_repairs(
     assert image.splitlines()[0] == "# check=skip=InvalidDefaultArgInFrom"
     assert "ARG BASE" in image and "FROM ${BASE}" in image
     assert "apt-get" not in image
+    assert (
+        "uv sync --project /src/build_system --no-build-isolation-package "
+        "capsem-builder --offline --frozen"
+    ) in collapsed_image
     assert "pnpm install --offline --frozen-lockfile" in image
     assert "uv run" not in image_gate
     assert "uv run" not in install
