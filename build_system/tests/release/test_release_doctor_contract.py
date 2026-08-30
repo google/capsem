@@ -797,6 +797,16 @@ def test_install_e2e_generates_manifest_through_admin_rail() -> None:
     assert "build_system/scripts/build/gen_manifest.py" not in script
 
 
+def test_moved_test_scripts_resolve_the_repository_root() -> None:
+    prepare_assets = _source_text(
+        "build_system/scripts/test/prepare-install-test-assets.sh"
+    )
+    linux_rust = _source_text("build_system/scripts/test/test-linux-rust.sh")
+
+    assert '$(dirname "${BASH_SOURCE[0]}")/../../..' in prepare_assets
+    assert '$(dirname "${BASH_SOURCE[0]}")/../../..' in linux_rust
+
+
 def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     # The workflow plus every command boundary it dispatches to. A step that
     # grew past the shell-body ceiling and moved under its functional owner runs the same commands;
