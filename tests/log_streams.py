@@ -11,7 +11,10 @@ resolve it here.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+SERVICE_LOG_TARGETS = frozenset({"service", "capsem_service"})
 
 
 def log_stream_files(stream: Path) -> list[Path]:
@@ -33,4 +36,22 @@ def read_log_stream(stream: Path) -> str:
     return "".join(
         path.read_text(encoding="utf-8", errors="replace")
         for path in log_stream_files(stream)
+    )
+
+
+def assert_service_log_evidence(text: str) -> None:
+    """Require at least one structured record owned by the service."""
+    records = []
+    for line in text.splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+
+    assert records, f"service log contains no structured records: {text[:300]!r}"
+    targets = {record.get("target") for record in records}
+    assert targets & SERVICE_LOG_TARGETS, (
+        f"service log contains no service-owned records: {text[:300]!r}"
     )

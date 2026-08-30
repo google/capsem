@@ -23,8 +23,13 @@ from helpers.constants import (
 )
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
-from log_streams import read_log_stream
+from helpers.service import (
+    ServiceInstance,
+    vm_name,
+    vm_session_db_path,
+    wait_exec_ready,
+)
+from log_streams import assert_service_log_evidence, read_log_stream
 
 pytestmark = pytest.mark.integration
 
@@ -441,9 +446,9 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert by_action["allow"] >= 1
         assert by_event_type["http.request"] >= 1
 
-        service_log = read_log_stream(service.tmp_dir / "service.log")
+        service_log = client.get_text("/service-logs", timeout=30)
         gateway_log = gateway.stop_and_read_log()
-        assert "handle_exec" in service_log or "exec" in service_log
+        assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:
         stop_process(mock_proc)
@@ -806,9 +811,9 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
             assert by_action["allow"] >= 5
             assert by_event_type["http.request"] >= 5
 
-        service_log = read_log_stream(service.tmp_dir / "service.log")
+        service_log = client.get_text("/service-logs", timeout=30)
         gateway_log = gateway.stop_and_read_log()
-        assert "handle_exec" in service_log or "exec" in service_log
+        assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:
         stop_process(mock_proc)
@@ -1569,9 +1574,9 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert by_action["block"] >= 1
         assert by_event_type["http.request"] >= 1
 
-        service_log = read_log_stream(service.tmp_dir / "service.log")
+        service_log = client.get_text("/service-logs", timeout=30)
         gateway_log = gateway.stop_and_read_log()
-        assert "handle_exec" in service_log or "exec" in service_log
+        assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:
         stop_process(mock_proc)
@@ -1870,9 +1875,9 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert by_action["ask"] >= 1
         assert by_event_type["http.request"] >= 1
 
-        service_log = read_log_stream(service.tmp_dir / "service.log")
+        service_log = client.get_text("/service-logs", timeout=30)
         gateway_log = gateway.stop_and_read_log()
-        assert "handle_exec" in service_log or "exec" in service_log
+        assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:
         stop_process(mock_proc)

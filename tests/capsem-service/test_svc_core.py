@@ -1,9 +1,10 @@
 """Core no-state service endpoints: /version, /stats, /service-logs, profile reload."""
 
-import tomllib
 from pathlib import Path
 
 import pytest
+import tomllib
+from log_streams import assert_service_log_evidence
 
 pytestmark = pytest.mark.integration
 
@@ -54,10 +55,10 @@ class TestServiceLogs:
         text = client.get_text("/service-logs")
         assert isinstance(text, str) and text, "service-logs returned empty"
         assert len(text) > 10, f"service-logs implausibly short: {text!r}"
-        # Service log lines are JSON-structured; expect at least one `"target":"capsem_service"` entry.
-        assert "capsem_service" in text, (
-            f"no capsem_service target lines in service-logs output: {text[:300]!r}"
-        )
+        # Both the daemon lifecycle (`capsem_service`) and its HTTP boundary
+        # (`service`) are service-owned structured evidence. A bounded tail
+        # need not retain the startup record after a busy shared test cohort.
+        assert_service_log_evidence(text)
 
 
 class TestReloadConfig:
