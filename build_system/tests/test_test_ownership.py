@@ -23,19 +23,35 @@ OWNER_PREFIXES = {
 }
 PACKAGE_LOCAL_TEST_SOURCES = frozenset({"build_system/release_site/src/lib/release-data.test.ts"})
 
-# Boundary guards created while their source owners moved were not part of the
-# starting test ledger. They are declared here instead of weakening the exact
-# reconciliation for the 176 inventoried files.
+# Boundary guards and support files created during the migration, or moved from
+# non-test roots, were not part of the starting root-test ledger. Declare them
+# exactly instead of weakening reconciliation for the 176 inventoried files.
 BOUNDARY_FILES = frozenset(
     {
+        "build_system/tests/gate/test_ci_tool_module_boundary.py",
+        "build_system/tests/gate/test_doctor_tool_commands.py",
+        "build_system/tests/gate/test_doctor_tool_module_boundary.py",
         "build_system/tests/gate/test_gate_module_boundary.py",
         "build_system/tests/gate/test_host_docker_ownership.py",
+        "build_system/tests/gate/test_web_tool_module_boundary.py",
+        "build_system/tests/helpers/__init__.py",
+        "build_system/tests/helpers/injection_test.py",
+        "build_system/tests/helpers/integration_test.py",
+        "build_system/tests/helpers/mock_server.py",
+        "build_system/tests/helpers/protocol_fixture_recorder.py",
+        "build_system/tests/helpers/prove_installed_shell.py",
         "build_system/tests/image/test_image_module_boundary.py",
         "build_system/tests/packaging/test_linux_packaging_boundary.py",
         "build_system/tests/packaging/test_macos_packaging_boundary.py",
         "build_system/tests/packaging/test_shared_packaging_boundary.py",
         "build_system/tests/policy/test_policy_modules.py",
         "build_system/tests/release/test_release_module_boundary.py",
+        "build_system/tests/release/test_release_foundation_tool_boundary.py",
+        "build_system/tests/release/test_release_foundation_tools.py",
+        "build_system/tests/release/test_release_orchestration_tool_boundary.py",
+        "build_system/tests/release/test_release_staging_tool_boundary.py",
+        "build_system/tests/release/test_release_verification_tool_boundary.py",
+        "build_system/tests/release/test_remote_ci_verdict_contract.py",
         "build_system/tests/scripts/test_audit_python_lock.py",
         "build_system/tests/conftest.py",
         "build_system/tests/test_ownership.toml",
