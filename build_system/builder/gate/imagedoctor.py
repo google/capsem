@@ -8,7 +8,7 @@ from .execution import Kind, Speed, Step, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 
 
-def doctor(config: GateConfig) -> Step:
+def doctor(config: GateConfig, *, skips: dict[str, str] | None = None) -> Step:
     """Check host wiring while omitting assets and KVM that are not built yet."""
     from . import doctor as diagnosis
 
@@ -25,7 +25,7 @@ def doctor(config: GateConfig) -> Step:
         ),
         Run(
             ["bash", config.doctor.common_script],
-            env=dict(config.imagebuild.doctor_skips),
+            env=dict(config.imagebuild.doctor_skips if skips is None else skips),
         ),
         kind=Kind.STATIC_TEST,
         speed=Speed.FAST,

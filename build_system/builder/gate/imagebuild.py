@@ -187,7 +187,11 @@ class CheckAssetsCommand(
 
 
 def check_assets(
-    plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()
+    plan: Plan,
+    config: GateConfig,
+    *,
+    after: tuple[Step, ...] = (),
+    doctor_skips: dict[str, str] | None = None,
 ) -> tuple[Step, ...]:
     """Build this host's VM assets if they are not already there.
 
@@ -212,7 +216,10 @@ def check_assets(
         ),
         after=after,
     )
-    checked = phase.add(_when_missing(recovery, doctor(config)), after=(bases,))
+    checked = phase.add(
+        _when_missing(recovery, doctor(config, skips=doctor_skips)),
+        after=(bases,),
+    )
     ready = phase.add(
         _when_missing(
             recovery,

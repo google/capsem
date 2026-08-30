@@ -99,7 +99,12 @@ def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
     phase = plan.phase("prepare")
     settings = config.candidate
 
-    assets = imagebuild.check_assets(plan, config, after=after)
+    assets = imagebuild.check_assets(
+        plan,
+        config,
+        after=after,
+        doctor_skips=dict(config.candidate.doctor_skips),
+    )
     packed = initrd.pack(plan, config, after=assets)
     materialised = phase.add(
         step(

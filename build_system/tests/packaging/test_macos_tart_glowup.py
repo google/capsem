@@ -799,6 +799,9 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke(
     # dispatches a different command, whose plan cannot reach the script.
     issues = _gate_issues("candidate")
     assert "CAPSEM_SKIP_TART_CHECK=1" in issues
+    candidate_doctors = [line for line in issues.splitlines() if "doctor-common.sh" in line]
+    assert candidate_doctors
+    assert all("CAPSEM_SKIP_TART_CHECK=1" in line for line in candidate_doctors)
     readiness = next(line for line in issues.splitlines() if "tart_readiness.py" in line)
     assert "--require-cache" in readiness
     assert "[outside kernel sandbox]" in readiness
