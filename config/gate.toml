@@ -783,7 +783,6 @@ colima = "colima"
 
 bootstrap_script = "bootstrap.sh"
 tart_readiness_script = "build_system/scripts/build/tart_readiness.py"
-doctor_skips = { CAPSEM_SKIP_ASSET_CHECK = "1", CAPSEM_SKIP_KVM_CHECK = "1", CAPSEM_SKIP_TART_CHECK = "1" }
 clean_stale_script = "build_system/scripts/build/clean_stale.py"
 generated_settings_script = "build_system/scripts/build/check-generated-settings.sh"
 materialize_script = "build_system/scripts/build/materialize-config.sh"
@@ -794,7 +793,7 @@ candidate_budget = ["default", "candidate-boundary"]
 # source state was never recorded.
 failure_rail = "default"
 unknown_head = "unknown"
-
+doctor_skips = { CAPSEM_SKIP_ASSET_CHECK = "1", CAPSEM_SKIP_KVM_CHECK = "1", CAPSEM_SKIP_TART_CHECK = "1" }
 # ---------------------------------------------------------------------------
 # Version stamping
 # ---------------------------------------------------------------------------
