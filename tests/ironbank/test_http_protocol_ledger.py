@@ -180,6 +180,7 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
     gateway: GatewayInstance | None = None
     mock_proc = None
     client = None
+    vm_deleted = False
     session_name = vm_name("ironbank-http")
     session_id = session_name
     nonce = uuid.uuid4().hex
@@ -448,13 +449,13 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
 
         gateway_log = gateway.stop_and_read_log()
         client.delete(f"/vms/{session_id}/delete", timeout=60)
-        client = None
+        vm_deleted = True
         service_log = service.stop_and_read_log()
         assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:
         stop_process(mock_proc)
-        if client is not None:
+        if client is not None and not vm_deleted:
             with suppress(Exception):
                 client.delete(f"/vms/{session_id}/delete", timeout=60)
         if gateway is not None:
@@ -475,6 +476,7 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
     gateway: GatewayInstance | None = None
     mock_proc = None
     client = None
+    vm_deleted = False
     session_name = vm_name("ironbank-http-body")
     session_id = session_name
     nonce = uuid.uuid4().hex
@@ -815,13 +817,13 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
 
         gateway_log = gateway.stop_and_read_log()
         client.delete(f"/vms/{session_id}/delete", timeout=60)
-        client = None
+        vm_deleted = True
         service_log = service.stop_and_read_log()
         assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:
         stop_process(mock_proc)
-        if client is not None:
+        if client is not None and not vm_deleted:
             with suppress(Exception):
                 client.delete(f"/vms/{session_id}/delete", timeout=60)
         if gateway is not None:
@@ -1348,6 +1350,7 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
     gateway: GatewayInstance | None = None
     mock_proc = None
     client = None
+    vm_deleted = False
     session_name = vm_name("ironbank-http-deny")
     session_id = session_name
     nonce = uuid.uuid4().hex
@@ -1580,13 +1583,13 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
 
         gateway_log = gateway.stop_and_read_log()
         client.delete(f"/vms/{session_id}/delete", timeout=60)
-        client = None
+        vm_deleted = True
         service_log = service.stop_and_read_log()
         assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:
         stop_process(mock_proc)
-        if client is not None:
+        if client is not None and not vm_deleted:
             with suppress(Exception):
                 client.delete(f"/vms/{session_id}/delete", timeout=60)
         if gateway is not None:
@@ -1607,6 +1610,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
     gateway: GatewayInstance | None = None
     mock_proc = None
     client = None
+    vm_deleted = False
     session_name = vm_name("ironbank-http-ask")
     session_id = session_name
     nonce = uuid.uuid4().hex
@@ -1883,13 +1887,13 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
 
         gateway_log = gateway.stop_and_read_log()
         client.delete(f"/vms/{session_id}/delete", timeout=60)
-        client = None
+        vm_deleted = True
         service_log = service.stop_and_read_log()
         assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:
         stop_process(mock_proc)
-        if client is not None:
+        if client is not None and not vm_deleted:
             with suppress(Exception):
                 client.delete(f"/vms/{session_id}/delete", timeout=60)
         if gateway is not None:
