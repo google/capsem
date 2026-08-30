@@ -4423,7 +4423,10 @@ def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
 
     select_pos = workflow.find("build_system/scripts/ci/gate-tool-list.py")
     install_pos = workflow.find("- name: Install prebuilt Rust tools")
-    bootstrap_pos = workflow.find("uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml tests/capsem-bootstrap/")
+    bootstrap_pos = workflow.find(
+        "uv run --project build_system --frozen python -m pytest "
+        "-c build_system/pyproject.toml --rootdir . tests/capsem-bootstrap/"
+    )
 
     assert select_pos != -1, "the job no longer derives its tools from config"
     assert install_pos != -1
@@ -5929,7 +5932,10 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
     bench_package_pos = block.find("-p capsem-bench")
     bench_binary_pos = block.find("target/debug/capsem-bench-rs")
     sign_pos = block.find("codesign --sign - --entitlements build_system/packaging/macos/entitlements.plist --force")
-    pytest_pos = block.find("uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml tests/capsem-bootstrap/")
+    pytest_pos = block.find(
+        "uv run --project build_system --frozen python -m pytest "
+        "-c build_system/pyproject.toml --rootdir . tests/capsem-bootstrap/"
+    )
 
     assert asset_pos != -1
     assert build_pos != -1

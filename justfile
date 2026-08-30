@@ -216,7 +216,7 @@ _test-release-contracts: _release-site-pnpm-install
 # reuse speeds forward fixes without weakening the before/after tree invariant.
 
 _test-recipes:
-    uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml tests/capsem-recipes/ -v --tb=short -m recipe
+    uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml --rootdir . tests/capsem-recipes/ -v --tb=short -m recipe
 
 # Build the capsem-host-builder Docker image (cached, only rebuilds changed layers).
 

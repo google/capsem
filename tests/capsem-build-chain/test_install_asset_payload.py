@@ -1178,7 +1178,10 @@ def test_full_gate_runs_fast_checks_before_install_harness_preflight() -> None:
     assert "linux_musl_toolchain_available" in preflight
     assert "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test" in preflight
     assert "CAPSEM_TEST_OUTPUT_ROOT=/tmp/capsem-test-output" in preflight
-    assert "/home/capsem/.venv-install-test/bin/python -m pytest -c build_system/pyproject.toml --version" in preflight
+    assert (
+        "/home/capsem/.venv-install-test/bin/python -m pytest "
+        "-c build_system/pyproject.toml --rootdir . --version"
+    ) in preflight
     assert "sudo -n true" in preflight
 
     # A sealed smoke failure is a materialization defect. It cannot repair

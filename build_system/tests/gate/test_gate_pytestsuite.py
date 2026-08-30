@@ -219,7 +219,10 @@ def test_collection_is_cache_free_strict_and_artifact_independent() -> None:
     collection = pytestsuite.collection(CONFIG)
     rendered = " ".join(collection.render())
 
-    assert "uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml tests/" in rendered
+    assert (
+        "uv run --project build_system --frozen python -m pytest "
+        "-c build_system/pyproject.toml --rootdir . tests/"
+    ) in rendered
     for flag in (
         "--collect-only",
         "-qq",
@@ -238,7 +241,8 @@ def test_build_system_collection_uses_its_locked_project() -> None:
     rendered = " ".join(collection.render())
 
     assert (
-        "uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml build_system/tests/"
+        "uv run --project build_system --frozen python -m pytest "
+        "-c build_system/pyproject.toml --rootdir . build_system/tests/"
         in rendered
     )
     for flag in CONFIG.suites.pytest.collection_flags:

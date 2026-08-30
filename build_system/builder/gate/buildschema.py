@@ -203,6 +203,7 @@ class WebSurfacesConfig(Strict):
 
 class PytestConfig(Strict):
     root: str
+    repository_root: str
     build_system_root: str
     build_system_project: str
     project_distribution: str

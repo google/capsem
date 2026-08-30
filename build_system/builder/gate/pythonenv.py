@@ -45,5 +45,7 @@ def pytest(config: GateConfig, *arguments: object) -> list[str]:
         "pytest",
         "-c",
         config.suites.pytest.project_manifest,
+        "--rootdir",
+        config.suites.pytest.repository_root,
         *arguments,
     )

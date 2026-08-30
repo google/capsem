@@ -13,7 +13,7 @@ Gated behind `CAPSEM_STRESS` so `just test-full` runs don't get swamped.
 
 Run with:
     CAPSEM_STRESS=1 uv run --project build_system --frozen pytest \
-        -c build_system/pyproject.toml tests/capsem-mcp/test_stress_suspend_resume.py \
+        -c build_system/pyproject.toml --rootdir . tests/capsem-mcp/test_stress_suspend_resume.py \
         -n 1 --tb=line -q
 """
 

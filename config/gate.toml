@@ -786,7 +786,7 @@ tart_readiness_script = "build_system/scripts/build/tart_readiness.py"
 clean_stale_script = "build_system/scripts/build/clean_stale.py"
 generated_settings_script = "build_system/scripts/build/check-generated-settings.sh"
 materialize_script = "build_system/scripts/build/materialize-config.sh"
-recipe_suite = ["uv", "run", "--project", "build_system", "--frozen", "python", "-m", "pytest", "-c", "build_system/pyproject.toml", "tests/capsem-recipes/", "-v", "--tb=short", "-m", "recipe"]
+recipe_suite = ["uv", "run", "--project", "build_system", "--frozen", "python", "-m", "pytest", "-c", "build_system/pyproject.toml", "--rootdir", ".", "tests/capsem-recipes/", "-v", "--tb=short", "-m", "recipe"]
 # The rail and boundary the whole gate's disk budget is taken against.
 candidate_budget = ["default", "candidate-boundary"]
 # Where a failed gate's evidence is kept, and what to call a run whose
@@ -1997,6 +1997,12 @@ source_contract = [
 # Where the tests are. Spelled here rather than in the module, so the broad
 # suite and the compatibility runs cannot come to disagree about it.
 root = "tests/"
+# Pytest otherwise derives its root from the selected project manifest under
+# build_system/. After the test suites moved to repository-owned tests/, that
+# collapses sibling conftest scopes and lets same-named fixtures shadow each
+# other across domains. Keep the one locked Python project while restoring the
+# repository topology as pytest's collection and fixture boundary.
+repository_root = "."
 # Build-system tests have their own locked project and never borrow the root
 # environment. Keeping both values here makes the ownership boundary visible
 # in dry runs and prevents a caller from reconstructing either path.

@@ -76,9 +76,9 @@ def _smoke(runner: Runner, config: GateConfig, *, image: str) -> None:
     command = (
         "set -e; sudo -n true; cd /src; "
         "source /src/build_system/scripts/doctor/doctor-linux.sh; linux_musl_toolchain_available; "
-        f"{python} -m pytest -c build_system/pyproject.toml --version; "
+        f"{python} -m pytest -c build_system/pyproject.toml --rootdir . --version; "
         f"{settings.source_cli} version; "
-        f"{python} -m pytest -c build_system/pyproject.toml -p no:cacheprovider -q "
+        f"{python} -m pytest -c build_system/pyproject.toml --rootdir . -p no:cacheprovider -q "
         "tests/test_materialize_config_http.py"
     )
     passed = Docker(runner).probe(

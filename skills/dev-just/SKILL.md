@@ -157,7 +157,7 @@ Run:
 
 ```bash
 uv run --project build_system --frozen python build_system/scripts/audit/check_public_surface.py
-uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml tests/test_public_surface_contract.py
+uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml --rootdir . tests/test_public_surface_contract.py
 ```
 
 The gate also locks the Capsem CLI command tree and service HTTP method/path
