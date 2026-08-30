@@ -66,7 +66,7 @@ def short_sock_dir():
     """AF_UNIX paths on macOS are capped at 104 chars. pytest's tmp_path lives
     under /private/var/folders/... which already exceeds that. Give tests a
     short /tmp-rooted dir just for socket files."""
-    d = Path(tempfile.mkdtemp(prefix="cs-", dir="/tmp"))
+    d = Path(tempfile.mkdtemp(prefix="capsem-clean-stale-", dir="/tmp"))
     try:
         yield d
     finally:
