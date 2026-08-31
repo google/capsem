@@ -99,9 +99,17 @@ def _text_sources(tracked: tuple[str, ...]) -> dict[str, str]:
 def _legacy_references(sources: dict[str, str]) -> tuple[str, ...]:
     return tuple(
         sorted(
-            f"{path}:{line_number}:{family}:{line.strip()}"
+            json.dumps(
+                {
+                    "family": family,
+                    "path": path,
+                    "text": " ".join(line.split()),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
             for path, text in sources.items()
-            for line_number, line in enumerate(text.splitlines(), 1)
+            for line in text.splitlines()
             for family, pattern in REFERENCE_PATTERNS.items()
             if pattern.search(line)
         )
@@ -314,6 +322,30 @@ def test_each_web_benchmark_violation_is_observed_red(
 
 def test_missing_policy_fails_closed() -> None:
     assert len(_problems({}, _synthetic())) == 8, RATIONALE
+
+
+def test_legacy_reference_fingerprint_ignores_line_movement_and_source_order() -> None:
+    before = {
+        "z.txt": "use frontend/widget here\n",
+        "a.txt": "read docs/guide here\n",
+    }
+    after = {
+        "a.txt": "unrelated preface\nread   docs/guide   here\n",
+        "z.txt": "\nuse frontend/widget here\n",
+    }
+
+    assert _legacy_references(before) == _legacy_references(after)
+    assert _digest(_legacy_references(before)) == _digest(_legacy_references(after))
+
+
+def test_legacy_reference_fingerprint_changes_for_new_debt() -> None:
+    before = _legacy_references({"caller.txt": "use frontend/widget here\n"})
+    after = _legacy_references(
+        {"caller.txt": "use frontend/widget here\nalso read docs/guide\n"}
+    )
+
+    assert len(after) == len(before) + 1
+    assert _digest(after) != _digest(before)
 
 
 def test_tauri_asset_resolver_is_observed_red() -> None:
