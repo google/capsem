@@ -2,10 +2,10 @@ import ast
 import copy
 import importlib.util
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 from helpers import benchmark_gates
 from helpers.benchmark_gates import validate_capsem_bench_result
 
