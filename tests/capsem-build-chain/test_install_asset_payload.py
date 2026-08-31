@@ -150,7 +150,7 @@ def _selected_content(tmp_path: Path) -> str:
     (content.assets / config.install.manifest_name).write_bytes(payload)
     for arch in config.architectures:
         (content.assets / arch).mkdir()
-    config_manifest = content.config / config.suites.pytest.test_manifest
+    config_manifest = content.config_manifest(config)
     config_manifest.parent.mkdir(parents=True)
     config_manifest.write_bytes(payload)
     profile = content.profiles(config) / "code/profile.toml"

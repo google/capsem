@@ -1439,11 +1439,12 @@ def test_selected_install_transport_keeps_the_verified_source_graph(
 
     staged_manifest = STAGE.stage_profiles(inputs, assets, config_root, ROOT / "config")
     config = gate_config.load(ROOT)
-    config_manifest = config_root / config.suites.pytest.test_manifest
+    content = ProfileContent.isolated(config, root)
+    config_manifest = content.config_manifest(config)
     config_manifest.parent.mkdir(parents=True)
     config_manifest.write_bytes(staged_manifest.read_bytes())
 
-    selected = SelectedInstallContent(ProfileContent.isolated(config, root))
+    selected = SelectedInstallContent(content)
     selected.require_complete(config, arches=(config.architectures["x86_64"],))
 
     assert (inputs / "manifest.json").read_bytes() == original_manifest
