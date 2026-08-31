@@ -12,7 +12,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from capsem_builder.gate import audits
+import tomllib
+from capsem_builder.gate import audits, rustchecks
 from capsem_builder.gate import config as gate_config
 from helpers.gate import gate_plan
 
@@ -143,6 +144,31 @@ def test_rust_format_covers_the_workspace() -> None:
     )
     assert rendered == "cargo fmt --all -- --check", (
         RUST_COVERAGE_RATIONALE + f"\nRust format command drifted: {rendered}"
+    )
+
+
+def test_per_crate_coverage_ratchets_match_the_workspace() -> None:
+    expected = {
+        tomllib.loads(manifest.read_text())["package"]["name"]
+        for manifest in (PROJECT_ROOT / MODULES.rust_coverage_crate_root).glob("*/Cargo.toml")
+    }
+    configured = set(MODULES.rust_coverage_crate_floors)
+    assert configured == expected, (
+        RUST_COVERAGE_RATIONALE
+        + "\nper-crate coverage floor inventory drifted: "
+        + f"missing={sorted(expected - configured)}, stale={sorted(configured - expected)}"
+    )
+
+
+def test_coverage_run_emits_and_checks_one_owned_report() -> None:
+    rendered = "\n".join(action.render() for action in rustchecks.coverage(CONFIG).actions)
+    assert "--lcov" in MODULES.rust_coverage, RUST_COVERAGE_RATIONALE
+    assert MODULES.rust_coverage_report in MODULES.rust_coverage, (
+        RUST_COVERAGE_RATIONALE + "\ncoverage reports to a path the ratchet does not read"
+    )
+    assert MODULES.rust_coverage_report in rendered, RUST_COVERAGE_RATIONALE
+    assert MODULES.rust_coverage_ratchet in rendered, (
+        RUST_COVERAGE_RATIONALE + "\nthe per-crate ratchet is configured but never executed"
     )
 
 

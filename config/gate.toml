@@ -2190,12 +2190,20 @@ rust_format = ["cargo", "fmt", "--all", "--", "--check"]
 # Through Nextest, whose `ci` profile is the reason: a test that hangs
 # currently hangs the whole gate until the 7200-second lock timeout, and runs
 # have died past the two-hour mark. `slow-timeout` reports every 120s and fails
-# after three consecutive slow periods. The post-extraction workspace measured
-# 65.24% across 79,404 lines and 4,536 tests on Linux, leaving 1.24 percentage
-# points of headroom above the ratchet. The floor catches meaningful suite loss
+# after three consecutive slow periods. The guarded workspace measured 65.59%
+# across 73,820 instrumented lines and 4,536 tests on Linux, leaving 1.59
+# percentage points of headroom above the ratchet. The floor catches meaningful suite loss
 # without making ordinary platform-dependent coverage variation flaky.
-rust_coverage = ["cargo", "llvm-cov", "nextest", "--workspace", "--bins", "--lib", "--tests", "--no-cfg-coverage"]
+rust_coverage = ["cargo", "llvm-cov", "nextest", "--workspace", "--bins", "--lib", "--tests", "--no-cfg-coverage", "--lcov", "--output-path", "target/coverage/rust-workspace.lcov"]
 rust_coverage_floor = "--fail-under-lines=64"
+rust_coverage_report = "target/coverage/rust-workspace.lcov"
+rust_coverage_ratchet = "build_system/scripts/test/rust-coverage-ratchet.py"
+rust_coverage_crate_root = "crates"
+# A floor may trail a measured crate by at most this much. That small band
+# absorbs host-specific cfg variation; once added tests improve coverage past
+# it, the same patch must raise the floor instead of leaving stale headroom.
+rust_coverage_ratchet_headroom = 3.0
+rust_coverage_crate_floors = { capsem = 49.0, capsem-admin = 70.0, capsem-agent = 34.0, capsem-app = 40.0, capsem-assets = 85.0, capsem-bench = 39.0, capsem-config = 88.0, capsem-core = 74.0, capsem-credentials = 89.0, capsem-foundation = 76.0, capsem-gateway = 79.0, capsem-guard = 92.0, capsem-logger = 86.0, capsem-mcp = 22.0, capsem-mcp-aggregator = 60.0, capsem-mcp-builtin = 19.0, capsem-mock-server = 7.0, capsem-process = 20.0, capsem-proto = 88.0, capsem-service = 66.0, capsem-tray = 53.0, capsem-tui = 69.0 }
 # Nextest reads its profile from the environment; `--profile` on the command
 # line belongs to cargo-llvm-cov and would select a build profile instead.
 rust_test_profile_variable = "NEXTEST_PROFILE"

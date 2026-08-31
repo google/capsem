@@ -472,6 +472,7 @@ gate).
 | Component | Floor | Enforced | Where |
 |-----------|------:|:--------:|-------|
 | Rust workspace | Config-owned | `config/gate.toml` `rust_coverage_floor` | CI (`cargo llvm-cov`), `just test` |
+| Every Rust crate | Config-owned | `rust_coverage_crate_floors` + bounded headroom ratchet | CI (`cargo llvm-cov`), `just test` |
 | Python selected CI suite | 85% | `--cov-fail-under=85` | Ordinary CI |
 | Python full suite | 85% | `--cov-fail-under=85` | `just test` |
 | capsem-service | 80% | Codecov component | `codecov.yml` |
@@ -481,8 +482,10 @@ gate).
 
 ## Coverage
 
-- Rust: `cargo llvm-cov` via `just test`; the line floor is owned only by
-  `config/gate.toml` `rust_coverage_floor`.
+- Rust: `cargo llvm-cov` via `just test`; the workspace floor and exact
+  per-crate floor inventory are owned only by `config/gate.toml`. The per-crate
+  checker also rejects stale headroom, so meaningful coverage gains raise the
+  ratchet in the same change.
 - Python: ordinary CI and the full `just test` suite both enforce 85%.
 - `codecov.yml` maps components to code paths. Update it when files or directories are added, moved, or renamed.
 

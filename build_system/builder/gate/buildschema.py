@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
-from pydantic import PositiveInt, StringConstraints, model_validator
+from pydantic import PositiveFloat, PositiveInt, StringConstraints, model_validator
 
 from ..policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from .configschema import Strict
@@ -25,6 +25,11 @@ class ModulesConfig(Strict):
     rust_format: tuple[str, ...]
     rust_coverage: tuple[str, ...]
     rust_coverage_floor: str
+    rust_coverage_report: str
+    rust_coverage_ratchet: str
+    rust_coverage_crate_root: str
+    rust_coverage_ratchet_headroom: PositiveFloat
+    rust_coverage_crate_floors: dict[str, float]
     rust_test_profile_variable: str
     rust_test_profile: str
     rust_doctests: tuple[str, ...]

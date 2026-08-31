@@ -14,7 +14,7 @@ Nextest and doctests is held by
 from __future__ import annotations
 
 from . import toolchain
-from .actions import Run
+from .actions import Run, Script
 from .config import GateConfig
 from .execution import SATURATES, Kind, Needs, Speed, Step, step
 
@@ -41,6 +41,14 @@ def coverage(config: GateConfig) -> Step:
         Run(
             [*settings.rust_coverage, settings.rust_coverage_floor],
             env=environment(config),
+        ),
+        Script(
+            config,
+            settings.rust_coverage_ratchet,
+            "--report",
+            settings.rust_coverage_report,
+            "--crate-root",
+            settings.rust_coverage_crate_root,
         ),
         contends=(config.exclusive("workspace_binaries"),),
         kind=Kind.UNIT_TEST,
