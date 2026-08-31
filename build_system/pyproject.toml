@@ -25,6 +25,7 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = [
     "capsem_builder",
+    "capsem_builder.cache",
     "capsem_builder.gate",
     "capsem_builder.gate.tools",
     "capsem_builder.gate.tools.audit",

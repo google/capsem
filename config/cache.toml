@@ -1,0 +1,204 @@
+# One policy for repository caches, external runtime caches, and generated output.
+# Initial limits are based on the 2026-08-31 inventory. Later adjustments require
+# the calibration evidence declared here and a reviewed policy change.
+version = 1
+root = "cache"
+minimum_free_bytes = 42949672960 # 40 GiB
+
+[calibration]
+minimum_samples = 5
+warning_percentile = 95
+soft_generation_headroom = 1
+hard_generation_headroom = 1
+
+[stages.cargo-debug]
+path = "target/cargo/debug"
+warning_bytes = 38654705664
+soft_bytes = 51539607552
+hard_bytes = 68719476736
+prune = "generational"
+maximum_age_hours = 720
+maximum_count = 3
+
+[stages.cargo-release]
+path = "target/cargo/release"
+warning_bytes = 17179869184
+soft_bytes = 25769803776
+hard_bytes = 34359738368
+prune = "generational"
+maximum_age_hours = 720
+maximum_count = 3
+
+[stages.cargo-coverage]
+path = "target/cargo/coverage"
+warning_bytes = 21474836480
+soft_bytes = 30064771072
+hard_bytes = 38654705664
+prune = "generational"
+maximum_age_hours = 336
+maximum_count = 2
+
+[stages.cargo-cross]
+path = "target/cargo/cross"
+warning_bytes = 12884901888
+soft_bytes = 21474836480
+hard_bytes = 30064771072
+prune = "generational"
+maximum_age_hours = 336
+maximum_count = 2
+
+[stages.generated]
+path = "target/generated"
+warning_bytes = 1073741824
+soft_bytes = 2147483648
+hard_bytes = 4294967296
+prune = "generational"
+maximum_age_hours = 336
+maximum_count = 5
+
+[stages.assets]
+path = "target/assets"
+warning_bytes = 34359738368
+soft_bytes = 51539607552
+hard_bytes = 68719476736
+prune = "lru"
+maximum_age_hours = 720
+maximum_count = 12
+
+[stages.packages]
+path = "target/packages"
+warning_bytes = 8589934592
+soft_bytes = 12884901888
+hard_bytes = 17179869184
+prune = "lru"
+maximum_age_hours = 336
+maximum_count = 12
+
+[stages.coverage]
+path = "target/coverage"
+warning_bytes = 4294967296
+soft_bytes = 8589934592
+hard_bytes = 12884901888
+prune = "generational"
+maximum_age_hours = 168
+maximum_count = 3
+
+[stages.test-evidence]
+path = "target/tests/evidence"
+warning_bytes = 8589934592
+soft_bytes = 12884901888
+hard_bytes = 17179869184
+prune = "lru"
+maximum_age_hours = 720
+maximum_count = 20
+
+[stages.test-benchmarks]
+path = "target/tests/benchmarks"
+warning_bytes = 2147483648
+soft_bytes = 4294967296
+hard_bytes = 8589934592
+prune = "lru"
+maximum_age_hours = 2160
+maximum_count = 40
+
+[stages.release-staging]
+path = "target/release/staging"
+warning_bytes = 8589934592
+soft_bytes = 12884901888
+hard_bytes = 17179869184
+prune = "ephemeral"
+maximum_age_hours = 72
+maximum_count = 4
+
+[stages.release-distribution]
+path = "target/release/distribution"
+warning_bytes = 8589934592
+soft_bytes = 12884901888
+hard_bytes = 17179869184
+prune = "generational"
+maximum_age_hours = 720
+maximum_count = 4
+
+[stages.python-uv]
+path = "tools/python/uv"
+warning_bytes = 4294967296
+soft_bytes = 8589934592
+hard_bytes = 12884901888
+prune = "lru"
+maximum_age_hours = 720
+
+[stages.python-pycache]
+path = "tools/python/pycache"
+warning_bytes = 1073741824
+soft_bytes = 2147483648
+hard_bytes = 4294967296
+prune = "lru"
+maximum_age_hours = 168
+maximum_count = 20
+
+[stages.node-pnpm]
+path = "tools/node/pnpm"
+warning_bytes = 2147483648
+soft_bytes = 4294967296
+hard_bytes = 8589934592
+prune = "lru"
+maximum_age_hours = 720
+
+[stages.rust-sccache]
+path = "tools/rust/sccache"
+warning_bytes = 17179869184
+soft_bytes = 25769803776
+hard_bytes = 34359738368
+prune = "lru"
+maximum_age_hours = 336
+
+[stages.buildkit]
+path = "containers/buildkit"
+warning_bytes = 68719476736
+soft_bytes = 85899345920
+hard_bytes = 103079215104
+prune = "external"
+maximum_age_hours = 72
+external = true
+
+[stages.container-receipts]
+path = "containers/receipts"
+warning_bytes = 1073741824
+soft_bytes = 2147483648
+hard_bytes = 4294967296
+prune = "lru"
+maximum_age_hours = 2160
+
+[stages.container-logs]
+path = "containers/logs"
+warning_bytes = 2147483648
+soft_bytes = 4294967296
+hard_bytes = 8589934592
+prune = "lru"
+maximum_age_hours = 720
+
+[stages.worktrees]
+path = "worktrees"
+warning_bytes = 8589934592
+soft_bytes = 17179869184
+hard_bytes = 25769803776
+prune = "lru"
+maximum_age_hours = 168
+maximum_count = 2
+
+[stages.state]
+path = "state"
+warning_bytes = 1073741824
+soft_bytes = 2147483648
+hard_bytes = 4294967296
+prune = "lru"
+maximum_age_hours = 4320
+
+[stages.temporary]
+path = "tmp"
+warning_bytes = 8589934592
+soft_bytes = 17179869184
+hard_bytes = 25769803776
+prune = "ephemeral"
+maximum_age_hours = 24
+maximum_count = 8
