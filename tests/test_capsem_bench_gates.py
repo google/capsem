@@ -2,10 +2,10 @@ import ast
 import copy
 import importlib.util
 import re
-import tomllib
 from pathlib import Path
 
 import pytest
+import tomllib
 from helpers import benchmark_gates
 from helpers.benchmark_gates import validate_capsem_bench_result
 
@@ -174,7 +174,9 @@ def test_validate_capsem_bench_result_accepts_healthy_result():
     validate_capsem_bench_result(_valid_result())
 
 
-def test_validate_capsem_bench_result_accepts_linux_virtiofs_sync_write_floor(monkeypatch):
+def test_validate_capsem_bench_result_accepts_linux_virtiofs_sync_write_floor(
+    monkeypatch,
+):
     data = _valid_result()
     data["disk"]["rand_write_4k"]["iops"] = 425
     monkeypatch.setattr(benchmark_gates.sys, "platform", "linux")
@@ -182,7 +184,9 @@ def test_validate_capsem_bench_result_accepts_linux_virtiofs_sync_write_floor(mo
     validate_capsem_bench_result(data)
 
 
-def test_validate_capsem_bench_result_rejects_linux_virtiofs_sync_write_regression(monkeypatch):
+def test_validate_capsem_bench_result_rejects_linux_virtiofs_sync_write_regression(
+    monkeypatch,
+):
     data = _valid_result()
     data["disk"]["rand_write_4k"]["iops"] = 350
     monkeypatch.setattr(benchmark_gates.sys, "platform", "linux")
@@ -202,6 +206,30 @@ def test_release_protocol_benchmark_uses_release_scale():
 
     assert module.RELEASE_PROTOCOL_REQUESTS >= 50_000
     assert module.RELEASE_PROTOCOL_CONCURRENCY == 64
+
+
+def test_failed_capsem_bench_measurement_is_archived(monkeypatch):
+    spec = importlib.util.spec_from_file_location(
+        "test_capsem_bench_baseline",
+        PROJECT_ROOT / "tests" / "capsem-serial" / "test_capsem_bench_baseline.py",
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    data = _valid_result()
+    data["snapshot"]["100_files"]["changes_ms"] = 10_000
+    archived = []
+    monkeypatch.setattr(
+        module, "_save", lambda result: archived.append(copy.deepcopy(result))
+    )
+
+    with pytest.raises(AssertionError, match="snapshot 100_files changes"):
+        module._archive_and_validate(data, "http://127.0.0.1:1234")
+
+    assert archived == [data]
+    assert data["mock_server_base_url"] == "http://127.0.0.1:1234"
+    assert data["arch"]
+    assert data["host_recorded_at"] > 0
 
 
 @pytest.mark.parametrize(

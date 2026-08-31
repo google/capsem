@@ -244,11 +244,6 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
         check=False,
     )
     buildcache.export(path, config.root, config)
-    # After the export and before either outcome: a kept prefix is resumed into
-    # and will be lent the same trees back, and a reclaimed one salvages at the
-    # door anyway. Doing it here means a run that is killed after this point
-    # has already given the machine its build output back.
-    buildcache.salvage(config, path)
     if status == 0 and (reuse is None or commit is not None):
         reclaim(config, path)
     else:
@@ -280,8 +275,10 @@ def reclaim(config: GateConfig, path: Path) -> None:
     # The single door every prefix leaves by -- a sweep, a repopulated release
     # prefix, a run that succeeded -- which is why the build output is taken
     # back here rather than at the three call sites that would each have to
-    # remember. Deleting 42 GiB of `target/` was the whole reason a new commit
-    # qualified cold; see `buildcache`.
+    # remember. A failed or explicitly reused prefix has not left: moving its
+    # selected asset tree into the shared cache strips the exact profile path
+    # that its continuation consumes. Deleting 42 GiB of `target/` was the
+    # whole reason a new commit qualified cold; see `buildcache`.
     buildcache.salvage(config, resolved)
     shutil.rmtree(resolved, ignore_errors=True)
     if resolved.exists():

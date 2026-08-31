@@ -50,6 +50,16 @@ def _save(data):
     print(f"capsem-bench baseline archived to {out_path}")
 
 
+def _archive_and_validate(data, base_url):
+    """Persist the complete measurement before a gate assertion can fail."""
+    data["host_recorded_at"] = time.time()
+    data["arch"] = os.uname().machine
+    data["mock_server_base_url"] = base_url
+    _save(data)
+    validate_capsem_bench_result(data)
+    _assert_release_network_benchmarks_ran(data)
+
+
 def _assert_release_network_benchmarks_ran(data):
     http = data.get("http")
     assert isinstance(http, dict), "capsem-bench JSON missing http section"
@@ -67,8 +77,12 @@ def _assert_release_network_benchmarks_ran(data):
     assert throughput.get("throughput_mbps", 0) > 0, throughput
 
     mock_server_protocol = data.get("mock_server_protocol")
-    assert isinstance(mock_server_protocol, dict), "capsem-bench JSON missing mock_server_protocol section"
-    assert not mock_server_protocol.get("skipped"), f"protocol benchmark skipped: {mock_server_protocol}"
+    assert isinstance(mock_server_protocol, dict), (
+        "capsem-bench JSON missing mock_server_protocol section"
+    )
+    assert not mock_server_protocol.get("skipped"), (
+        f"protocol benchmark skipped: {mock_server_protocol}"
+    )
     assert mock_server_protocol.get("total_requests", 0) > 0, mock_server_protocol
     for row in mock_server_protocol.get("scenarios", []):
         assert row["successful"] == row["total_requests"], row
@@ -88,11 +102,14 @@ def test_capsem_bench_baseline():
     name = f"bench-{uuid.uuid4().hex[:8]}"
 
     try:
-        client.post("/vms/create", {
-            "name": name,
-            "ram_mb": DEFAULT_RAM_MB,
-            "cpus": DEFAULT_CPUS,
-        })
+        client.post(
+            "/vms/create",
+            {
+                "name": name,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+        )
         assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), (
             f"{name} not ready"
         )
@@ -136,14 +153,12 @@ def test_capsem_bench_baseline():
         )
         raw = resp.get("stdout", "").strip()
         data = json.loads(raw)
-        validate_capsem_bench_result(data)
-        _assert_release_network_benchmarks_ran(data)
-        # Stamp host-side metadata so a future comparison helper can group
-        # by arch and time without re-reading Cargo.toml.
-        data["host_recorded_at"] = time.time()
-        data["arch"] = os.uname().machine
-        data["mock_server_base_url"] = base_url
-        _save(data)
+        # Archive the raw measurement before judging it. A threshold failure
+        # is the run whose complete values matter most, and validating first
+        # discarded every dimension except pytest's first assertion message.
+        # Stamp host-side metadata so comparisons can group by arch and time
+        # without re-reading Cargo.toml.
+        _archive_and_validate(data, base_url)
     finally:
         with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")

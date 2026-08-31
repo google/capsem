@@ -143,10 +143,12 @@ def lend(config: GateConfig, prefix_path: Path) -> list[str]:
 def salvage(config: GateConfig, prefix_path: Path) -> list[str]:
     """Take the build output back before the prefix is gone.
 
-    Called on the way out of a run and again from `prefix.reclaim`, which is
-    every way a prefix ends. The second is not redundant: a run that is killed
-    between the two leaves its output in a tree the next sweep would delete,
-    and salvaging at the door recovers it instead.
+    Called from `prefix.reclaim`, the one door through which a prefix actually
+    leaves. A failed or explicitly reused prefix is retained precisely so its
+    continuation can consume its generated paths; moving a symlink's target
+    out early made its journal resumable while its assets were not. A killed
+    run leaves its output in the retained tree and the next sweep salvages it
+    before deletion.
 
     A cache entry that is already there wins. It is the one this machine lent
     out and has not been given back, so the prefix's copy is either the same

@@ -779,6 +779,48 @@ def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
     assert reused.is_dir()
 
 
+def test_a_failed_prefix_keeps_symlinked_assets_for_the_next_continuation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Retaining a journal without its selected assets cannot resume.
+
+    ``target/assets`` selects ``target/ironbank-assets/<profile>/assets``.
+    Salvaging the selector follows it and moves the real directory into the
+    shared cache, leaving the retained prefix with neither path. The next
+    exact-source attempt then carries ``assets.assemble`` and fails before its
+    first VM test because the profile-owned asset path disappeared.
+    """
+    from capsem_builder.gate import buildcache, prefix
+    from capsem_builder.gate import config as gate_config
+
+    failed = tmp_path / "aaaaaaaa"
+    config = gate_config.load(PROJECT_ROOT).model_copy(
+        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
+    )
+    config = config.model_copy(update={"root": _own_checkout(tmp_path)})
+
+    class FailedRunner:
+        def note(self, message: str) -> None:
+            if message.startswith("prefix kept"):
+                assert message == f"prefix kept for resuming: {failed}"
+
+        def run(self, *args, **kwargs) -> int:
+            selected = failed / "target" / "ironbank-assets" / "code" / "assets"
+            selected.mkdir(parents=True)
+            (selected / "manifest.json").write_text("{}", encoding="utf-8")
+            (failed / "target" / "assets").symlink_to("ironbank-assets/code/assets")
+            return 1
+
+    monkeypatch.setattr(prefix, "allocate", lambda *args: failed)
+    monkeypatch.setattr(prefix, "sweep", lambda *args: [])
+    monkeypatch.setattr(prefix.snapshot, "populate", lambda *args: failed.mkdir())
+    monkeypatch.setattr(buildcache, "export", lambda *args: None)
+
+    assert prefix.run_from_private_copy(FailedRunner(), config, ["candidate"]) == 1
+    assert (failed / "target" / "assets").is_symlink()
+    assert (failed / "target" / "ironbank-assets" / "code" / "assets").is_dir()
+
+
 def test_a_fresh_successful_prefix_is_still_reclaimed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
