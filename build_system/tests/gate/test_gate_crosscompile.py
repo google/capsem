@@ -85,7 +85,7 @@ def _checkout(tmp_path: Path, *, toolchain: str = "9.99.9") -> Path:
     (config_root / CONFIG.functional.profiles_subdir / "code" / "profile.toml").write_text(
         'id = "code"\n'
     )
-    config_manifest = config_root / CONFIG.suites.pytest.test_manifest
+    config_manifest = config_root / CONFIG.assets.merged_assets_dir / CONFIG.install.manifest_name
     config_manifest.parent.mkdir(parents=True, exist_ok=True)
     config_manifest.write_text(manifest)
     return tmp_path
@@ -155,6 +155,9 @@ def test_profile_content_derives_both_trees_from_one_root_without_reading_it(
     assert content.root == missing
     assert content.assets == missing / CONFIG.assets.merged_assets_dir
     assert content.config == missing / CONFIG.assets.merged_config_dir
+    assert content.config_manifest(CONFIG) == (
+        content.config / CONFIG.assets.merged_assets_dir / CONFIG.install.manifest_name
+    )
     assert content.profiles(CONFIG) == content.config / CONFIG.functional.profiles_subdir
 
 
@@ -287,7 +290,7 @@ def test_package_mounts_only_the_concrete_paired_content_dirs(
     profile = content.profiles(config) / "code" / "profile.toml"
     profile.parent.mkdir(parents=True)
     profile.write_text('id = "code"\n')
-    config_manifest = content.config / config.suites.pytest.test_manifest
+    config_manifest = content.config_manifest(config)
     config_manifest.parent.mkdir(parents=True)
     config_manifest.write_text(manifest)
 

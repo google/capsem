@@ -69,7 +69,10 @@ class InstallProof:
     def stage_content_from(self, *, assets: str, content_config: str) -> None:
         """Copy a read-only content projection into the proof's writable layout."""
         profiles = f"{content_config}/{self._config.functional.profiles_subdir}"
-        config_manifest = f"{content_config}/{self._config.suites.pytest.test_manifest}"
+        config_manifest = (
+            f"{content_config}/{self._config.assets.merged_assets_dir}/"
+            f"{self._settings.manifest_name}"
+        )
         self._docker.shell(
             self._container,
             f'test -f "{assets}/{self._settings.manifest_name}" '

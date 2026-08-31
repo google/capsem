@@ -266,7 +266,7 @@ def _complete_selected_content(tmp_path: Path) -> SelectedInstallContent:
         selected.content.assets,
         arches=(CONFIG.host_arch(),),
     )
-    config_manifest = selected.content.config / CONFIG.suites.pytest.test_manifest
+    config_manifest = selected.content.config_manifest(CONFIG)
     config_manifest.parent.mkdir(parents=True)
     config_manifest.write_bytes(runtime_encoded)
     profile = selected.content.profiles(CONFIG) / "code/profile.toml"
@@ -297,10 +297,7 @@ def test_selected_release_transport_is_distinct_from_the_runtime_projection(
     transport = selected.inputs(CONFIG) / CONFIG.install.manifest_name
     runtime = selected.content.assets / CONFIG.install.manifest_name
     assert transport.read_bytes() != runtime.read_bytes()
-    assert (
-        runtime.read_bytes()
-        == (selected.content.config / CONFIG.suites.pytest.test_manifest).read_bytes()
-    )
+    assert runtime.read_bytes() == selected.content.config_manifest(CONFIG).read_bytes()
 
 
 def test_systemd_that_never_comes_up_fails_with_the_wait_it_gave(

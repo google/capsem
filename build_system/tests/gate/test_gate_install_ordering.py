@@ -163,7 +163,7 @@ def _local_content(root: Path) -> ProfileContent:
     content.assets.mkdir(parents=True)
     (content.assets / config.install.manifest_name).write_bytes(payload)
     materialize_required_artifacts(config, content.assets)
-    config_manifest = content.config / config.suites.pytest.test_manifest
+    config_manifest = content.config_manifest(config)
     config_manifest.parent.mkdir(parents=True)
     config_manifest.write_bytes(payload)
     profile = content.profiles(config) / config.suites.pytest.base_profile / "profile.toml"
@@ -191,7 +191,7 @@ def _selected_content(root: Path) -> SelectedInstallContent:
     }
     manifest_bytes = json.dumps(manifest).encode()
     (content.assets / config.install.manifest_name).write_bytes(manifest_bytes)
-    (content.config / config.suites.pytest.test_manifest).write_bytes(manifest_bytes)
+    content.config_manifest(config).write_bytes(manifest_bytes)
     (inputs / config.install.manifest_name).write_bytes(manifest_bytes)
     (inputs / config.package.release_inputs_name).write_text("{}\n")
     return SelectedInstallContent(content)
