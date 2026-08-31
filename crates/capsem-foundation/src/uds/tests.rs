@@ -41,9 +41,8 @@ fn terminal_socket_prefers_the_readable_path() {
 
 #[test]
 fn terminal_socket_fits_under_a_long_run_dir() {
-    let run_dir = PathBuf::from(
-        "/Users/somebody/git/capsem/target/ironbank-assets/co-work/home/.capsem/run",
-    );
+    let run_dir =
+        PathBuf::from("/Users/somebody/git/capsem/target/ironbank-assets/co-work/home/.capsem/run");
     let path = terminal_socket_path(&run_dir, "322e7460-f1b2-4fdd-88f1-0c4b58c48e46");
 
     assert!(
@@ -60,9 +59,8 @@ fn the_terminal_fallback_is_the_same_in_every_process() {
     // the id, and never exchange it. A per-process hash would leave them
     // binding and dialling different paths -- which fails exactly like the
     // overflow it was meant to fix.
-    let run_dir = PathBuf::from(
-        "/Users/somebody/git/capsem/target/ironbank-assets/co-work/home/.capsem/run",
-    );
+    let run_dir =
+        PathBuf::from("/Users/somebody/git/capsem/target/ironbank-assets/co-work/home/.capsem/run");
     let id = "322e7460-f1b2-4fdd-88f1-0c4b58c48e46";
 
     assert_eq!(
@@ -94,7 +92,10 @@ fn walking_up_from_a_shortened_ipc_path_finds_the_wrong_run_dir() {
     let id = "bb61246d-1dec-489f-8a2f-48c263fe4d5c";
 
     let ipc = instance_socket_path(&run_dir, id);
-    assert!(ipc.starts_with("/tmp/capsem"), "this run dir must shorten: {ipc:?}");
+    assert!(
+        ipc.starts_with("/tmp/capsem"),
+        "this run dir must shorten: {ipc:?}"
+    );
 
     let walked = ipc.parent().and_then(|p| p.parent()).unwrap();
     assert_ne!(

@@ -1,0 +1,28 @@
+[package]
+name = "capsem-foundation"
+version.workspace = true
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+description = "Dependency-light host foundations shared by Capsem binaries."
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+blake3 = "1"
+capsem-proto = { path = "../capsem-proto" }
+libc = "0.2"
+rmp-serde = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile = "3"

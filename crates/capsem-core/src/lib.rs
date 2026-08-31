@@ -5,21 +5,16 @@ pub mod credential_broker;
 pub mod fs_monitor;
 pub mod host_state;
 pub mod hypervisor;
-pub mod ipc_handshake;
-pub mod log_layer;
-pub mod poll;
+pub use capsem_foundation::{ipc_handshake, log_layer, paths, poll, telemetry, uds};
 #[macro_use]
 pub mod macros;
 pub mod manifest_compat;
 pub mod mcp;
 pub mod net;
-pub mod paths;
 pub mod security_engine;
 pub mod session;
-pub mod telemetry;
 #[cfg(test)]
 pub(crate) mod test_support;
-pub mod uds;
 pub mod vm;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};

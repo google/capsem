@@ -15,7 +15,7 @@ pub type PollOpts = capsem_proto::poll::RetryOpts;
 /// Returns `Ok(T)` on success, `Err(TimedOut)` on timeout.
 ///
 /// ```no_run
-/// use capsem_core::poll::{poll_until, PollOpts};
+/// use capsem_foundation::poll::{poll_until, PollOpts};
 /// use std::{path::Path, time::Duration};
 ///
 /// # async fn example() {

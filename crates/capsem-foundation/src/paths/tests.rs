@@ -1,7 +1,7 @@
 use super::*;
 
-fn lock_env() -> tokio::sync::MutexGuard<'static, ()> {
-    crate::credential_broker::TEST_ENV_LOCK.blocking_lock()
+fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+    crate::TEST_ENV_LOCK.lock().unwrap()
 }
 
 struct EnvGuard {

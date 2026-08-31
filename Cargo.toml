@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/capsem-foundation",
     "crates/capsem-proto",
     "crates/capsem-core",
     "crates/capsem-app",
