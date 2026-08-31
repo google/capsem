@@ -35,6 +35,22 @@ this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
 | `capsem-bench` | Benchmark harness | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-mock-server` | Hermetic test upstream | Yes | Compile/no-run | Clippy | Yes |
 
+### Coverage enforcement
+
+| Component | Floor | Enforced | Where |
+|-----------|------:|:--------:|-------|
+| Rust workspace | Config-owned | `config/gate.toml` `rust_coverage_floor` | CI (`cargo llvm-cov`), `just test` |
+| Every Rust crate | Config-owned | `rust_coverage_crate_floors` + bounded headroom ratchet | CI (`cargo llvm-cov`), `just test` |
+| Python selected CI suite | 85% | `--cov-fail-under=85` | Ordinary CI |
+| Python full suite | 85% | `--cov-fail-under=85` | `just test` |
+| capsem-service | 80% | Codecov component | `codecov.yml` |
+| capsem-mcp | 80% | Codecov component | `codecov.yml` |
+| capsem-gateway | 80% | Codecov component | `codecov.yml` |
+| capsem (CLI) | 80% | Codecov component | `codecov.yml` |
+
+`codecov.yml` maps components to code paths. Update it when files or
+directories move. Do not copy the config-owned Rust floors into prose.
+
 ### Python integration suite tier map
 
 | Suite | Marker | VM? | CI | Smoke | Full |
