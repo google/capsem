@@ -1,4 +1,5 @@
 use super::*;
+use capsem_service::fs_utils::sanitize_file_path;
 
 // Settings handler tests
 // -----------------------------------------------------------------------

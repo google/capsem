@@ -27,7 +27,6 @@ use capsem_core::{
 use capsem_foundation::poll::{poll_until, PollOpts};
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
 use capsem_service::errors::AppError;
-use capsem_service::fs_utils::sanitize_file_path;
 use clap::Parser;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;

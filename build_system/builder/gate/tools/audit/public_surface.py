@@ -16,7 +16,7 @@ from capsem_builder.gate import project_root
 ROOT = project_root()
 POLICY_PATH = ROOT / "config" / "public-surface.toml"
 CLI_SOURCE = ROOT / "crates" / "capsem" / "src" / "main.rs"
-SERVICE_SOURCE = ROOT / "crates" / "capsem-service" / "src" / "main.rs"
+SERVICE_SOURCE = ROOT / "crates" / "capsem-service" / "src" / "router_runtime.rs"
 HTTP_METHODS = ("delete", "get", "patch", "post", "put")
 
 
@@ -92,9 +92,7 @@ def _top_level_entries(body: str) -> list[str]:
 
 
 def _command_name(entry: str, variant: str) -> str:
-    explicit = re.search(
-        r"#\[command\([^]]*\bname\s*=\s*\"([^\"]+)\"", entry, re.DOTALL
-    )
+    explicit = re.search(r"#\[command\([^]]*\bname\s*=\s*\"([^\"]+)\"", entry, re.DOTALL)
     return explicit.group(1) if explicit else _kebab_case(variant)
 
 
@@ -114,12 +112,8 @@ def _enum_variants(source: str, enum_name: str) -> list[dict[str, Any]]:
             {
                 "name": _command_name(entry, variant),
                 "child": tuple_type,
-                "flatten": bool(
-                    re.search(r"#\[command\([^]]*\bflatten\b", entry, re.DOTALL)
-                ),
-                "subcommand": bool(
-                    re.search(r"#\[command\([^]]*\bsubcommand\b", entry, re.DOTALL)
-                ),
+                "flatten": bool(re.search(r"#\[command\([^]]*\bflatten\b", entry, re.DOTALL)),
+                "subcommand": bool(re.search(r"#\[command\([^]]*\bsubcommand\b", entry, re.DOTALL)),
             }
         )
     if not variants:
@@ -162,15 +156,11 @@ def just_surface() -> list[str]:
         text=True,
     )
     recipes = json.loads(completed.stdout)["recipes"]
-    return sorted(
-        name for name, recipe in recipes.items() if not recipe.get("private", False)
-    )
+    return sorted(name for name, recipe in recipes.items() if not recipe.get("private", False))
 
 
 def _function_body(source: str, function_name: str) -> str:
-    match = re.search(
-        rf"\bfn\s+{re.escape(function_name)}\s*\([^)]*\)[^{{]*\{{", source
-    )
+    match = re.search(rf"\bfn\s+{re.escape(function_name)}\s*\([^)]*\)[^{{]*\{{", source)
     if not match:
         raise SurfaceError(f"missing function {function_name} in {SERVICE_SOURCE}")
     return _balanced_body(source, source.index("{", match.start()))
@@ -224,9 +214,7 @@ def http_surface() -> list[str]:
         handler = call[path_match.end() :]
         methods = {
             match.group(1).upper()
-            for match in re.finditer(
-                rf"(?:\b|\.)({'|'.join(HTTP_METHODS)})\s*\(", handler
-            )
+            for match in re.finditer(rf"(?:\b|\.)({'|'.join(HTTP_METHODS)})\s*\(", handler)
         }
         if not methods:
             raise SurfaceError(f"no HTTP method derived for route {path}")
@@ -268,8 +256,7 @@ def check_policy(policy_path: Path = POLICY_PATH) -> None:
     if failures:
         raise SurfaceError(
             "Public surface changed without approval. Review the API intentionally, "
-            "then update config/public-surface.toml in the same change:\n- "
-            + "\n- ".join(failures)
+            "then update config/public-surface.toml in the same change:\n- " + "\n- ".join(failures)
         )
 
 

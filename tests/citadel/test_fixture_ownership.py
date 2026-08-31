@@ -31,7 +31,7 @@ class Fixture:
     disposition: str
     owner: str
     item: str
-    consumer: str
+    consumers: tuple[str, ...]
     symbols: tuple[str, ...]
 
 
@@ -68,7 +68,11 @@ def _fixtures(policy: dict[str, Any]) -> list[Fixture]:
             disposition=row.get("disposition", ""),
             owner=row.get("owner", ""),
             item=row.get("item", ""),
-            consumer=row.get("consumer", ""),
+            consumers=(
+                tuple(row.get("consumers", []))
+                if isinstance(row.get("consumers"), list)
+                else (row.get("consumer", ""),)
+            ),
             symbols=tuple(row.get("symbols", [])),
         )
         for row in rows
@@ -79,7 +83,9 @@ def _fixtures(policy: dict[str, Any]) -> list[Fixture]:
 def _function_map(path: Path) -> dict[int, str]:
     current = "<module>"
     mapping: dict[int, str] = {}
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
         match = re.match(r"\s*(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z0-9_]+)", line)
         if match:
             current = match.group(1)
@@ -88,28 +94,33 @@ def _function_map(path: Path) -> dict[int, str]:
 
 
 def _consumer_symbols(fixture: Fixture) -> tuple[str, ...]:
-    if not fixture.consumer:
+    if not fixture.consumers or any(not consumer for consumer in fixture.consumers):
         return ()
-    path = ROOT / fixture.consumer
-    if not path.is_file():
-        return ()
-    functions = _function_map(path)
     name = Path(fixture.source).name
     symbols: list[str] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        if name.endswith(".html") and f'load_fixture("{name}")' in line:
-            symbols.append(functions[number])
-        elif name == "test.db" and "fixture_reader()" in line:
-            symbol = functions[number]
-            if symbol != "fixture_reader":
-                symbols.append(symbol)
+    for consumer in fixture.consumers:
+        path = ROOT / consumer
+        if not path.is_file():
+            return ()
+        functions = _function_map(path)
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if name.endswith(".html") and f'load_fixture("{name}")' in line:
+                symbols.append(functions[number])
+            elif name == "test.db" and "fixture_reader()" in line:
+                symbol = functions[number]
+                if symbol != "fixture_reader":
+                    symbols.append(symbol)
     return tuple(sorted(symbols))
 
 
 def _text_sources(paths: list[str]) -> dict[str, str]:
     sources: dict[str, str] = {}
     for path in paths:
-        if path in {SELF, POLICY_PATH} or path.startswith(("data/", "sprints/", "tmp/")):
+        if path in {SELF, POLICY_PATH} or path.startswith(
+            ("data/", "sprints/", "tmp/")
+        ):
             continue
         candidate = ROOT / path
         if candidate.is_symlink() or not candidate.is_file():
@@ -127,7 +138,9 @@ def _text_sources(paths: list[str]) -> dict[str, str]:
 def _audit(fixtures: list[Fixture]) -> Audit:
     tracked_all = _git("ls-files")
     tracked_data = _git("ls-files", "data")
-    ignored_data = _git("ls-files", "--others", "--ignored", "--exclude-standard", "data")
+    ignored_data = _git(
+        "ls-files", "--others", "--ignored", "--exclude-standard", "data"
+    )
     untracked_data = _git("ls-files", "--others", "--exclude-standard", "data")
     sources = _text_sources(tracked_all)
     consumers = {
@@ -140,7 +153,10 @@ def _audit(fixtures: list[Fixture]) -> Audit:
             f"{path}:{line.strip()}"
             for path, text in sources.items()
             if not path.startswith("tests/citadel/")
-            and (Path(path).suffix in {".py", ".rs", ".sh"} or Path(path).name == "justfile")
+            and (
+                Path(path).suffix in {".py", ".rs", ".sh"}
+                or Path(path).name == "justfile"
+            )
             for line in text.splitlines()
             if "data/fixtures" in line
         )
@@ -176,18 +192,24 @@ def _problems(policy: dict[str, Any], audit: Audit) -> list[str]:
     declared_root = sorted(source for source in sources if source.startswith("data/"))
     actual_root = sorted(audit.tracked_data)
     if declared_root != actual_root:
-        problems.append(f"root fixture ownership: expected {declared_root}, found {actual_root}")
+        problems.append(
+            f"root fixture ownership: expected {declared_root}, found {actual_root}"
+        )
     for fixture in fixtures:
         if not all((fixture.source, fixture.target, fixture.owner, fixture.item)):
             problems.append(f"incomplete fixture owner: {fixture.source!r}")
         if fixture.source not in audit.tracked_all:
             problems.append(f"missing fixture source: {fixture.source}")
         if fixture.target.startswith("config/"):
-            problems.append(f"fixture targets product config: {fixture.source} -> {fixture.target}")
+            problems.append(
+                f"fixture targets product config: {fixture.source} -> {fixture.target}"
+            )
         if fixture.disposition == "retain":
             actual = audit.consumers.get(fixture.source, ())
             if not actual:
-                problems.append(f"retained fixture has no executable consumer: {fixture.source}")
+                problems.append(
+                    f"retained fixture has no executable consumer: {fixture.source}"
+                )
             if actual != fixture.symbols:
                 problems.append(
                     f"stale fixture callers: {fixture.source}: "
@@ -196,12 +218,18 @@ def _problems(policy: dict[str, Any], audit: Audit) -> list[str]:
         elif fixture.disposition == "delete":
             references = audit.orphan_references.get(fixture.source, ())
             if references:
-                problems.append(f"orphan fixture still has callers: {fixture.source}: {references}")
+                problems.append(
+                    f"orphan fixture still has callers: {fixture.source}: {references}"
+                )
         else:
-            problems.append(f"invalid fixture disposition: {fixture.source}: {fixture.disposition!r}")
+            problems.append(
+                f"invalid fixture disposition: {fixture.source}: {fixture.disposition!r}"
+            )
     expected_reads = tuple(policy.get("root_reads", []))
     if audit.root_reads != expected_reads:
-        problems.append(f"root data reads: expected {expected_reads}, found {audit.root_reads}")
+        problems.append(
+            f"root data reads: expected {expected_reads}, found {audit.root_reads}"
+        )
     if audit.ignored_data or audit.untracked_data:
         problems.append(
             f"unowned data files: ignored={audit.ignored_data}, untracked={audit.untracked_data}"
@@ -243,10 +271,16 @@ def _synthetic_policy(**changes: object) -> dict[str, Any]:
         ({"version": 1, "root_reads": []}, _synthetic(), "missing fixture ownership"),
         (
             _synthetic_policy(),
-            _synthetic(tracked_data=("data/fixtures/live.html", "data/fixtures/rogue.json")),
+            _synthetic(
+                tracked_data=("data/fixtures/live.html", "data/fixtures/rogue.json")
+            ),
             "root fixture ownership",
         ),
-        (_synthetic_policy(target="config/fixtures/live.html"), _synthetic(), "product config"),
+        (
+            _synthetic_policy(target="config/fixtures/live.html"),
+            _synthetic(),
+            "product config",
+        ),
         (
             _synthetic_policy(),
             _synthetic(consumers={"data/fixtures/live.html": ()}),
@@ -266,7 +300,10 @@ def _synthetic_policy(**changes: object) -> dict[str, Any]:
             "orphan fixture still has callers",
         ),
         (
-            {**_synthetic_policy(), "root_reads": ["tests/test_live.py:data/fixtures/live.html"]},
+            {
+                **_synthetic_policy(),
+                "root_reads": ["tests/test_live.py:data/fixtures/live.html"],
+            },
             _synthetic(),
             "root data reads",
         ),
