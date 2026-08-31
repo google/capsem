@@ -56,7 +56,7 @@ async fn failed_run_preservation_noops_when_watcher_wins_after_shutdown_snapshot
         "the provisioning owner must not create a second preservation result"
     );
     assert_eq!(
-        capsem_core::telemetry::read_log_tail(&watcher_result.join("process.log"), usize::MAX)
+        capsem_foundation::telemetry::read_log_tail(&watcher_result.join("process.log"), usize::MAX)
             .unwrap(),
         "child exited with code 1"
     );
@@ -85,7 +85,7 @@ async fn failed_run_preservation_uses_shutdown_owned_instance_once() {
         Some(preserved.clone())
     );
     assert_eq!(
-        capsem_core::telemetry::read_log_tail(&preserved.join("process.log"), usize::MAX).unwrap(),
+        capsem_foundation::telemetry::read_log_tail(&preserved.join("process.log"), usize::MAX).unwrap(),
         "ready wait failed"
     );
 }
@@ -118,7 +118,7 @@ async fn failed_session_route_preserves_runtime_ipc_evidence() {
     let preserved = find_failed_session_dir(&state.run_dir, id)
         .expect("unexpected doctor IPC loss must retain the process evidence");
     assert_eq!(
-        capsem_core::telemetry::read_log_tail(&preserved.join("process.log"), usize::MAX).unwrap(),
+        capsem_foundation::telemetry::read_log_tail(&preserved.join("process.log"), usize::MAX).unwrap(),
         "process channel closed during doctor"
     );
 }
@@ -161,7 +161,7 @@ async fn one_shot_completion_deletes_success_and_preserves_ipc_failure() {
     let preserved = find_failed_session_dir(&state.run_dir, failed_id)
         .expect("one-shot exec IPC loss must retain the process evidence");
     assert_eq!(
-        capsem_core::telemetry::read_log_tail(&preserved.join("process.log"), usize::MAX).unwrap(),
+        capsem_foundation::telemetry::read_log_tail(&preserved.join("process.log"), usize::MAX).unwrap(),
         "exec IPC closed"
     );
 }

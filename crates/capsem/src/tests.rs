@@ -598,7 +598,7 @@ fn auto_update_setting_can_disable_background_refresh() {
 fn app_auto_update_false_disables_background_refresh_from_settings_file() {
     let _guard = lock_test_env();
     let capsem_home = tempfile::tempdir().unwrap();
-    let _capsem_paths = capsem_core::paths::CapsemPathsGuard::redirect(capsem_home.path());
+    let _capsem_paths = capsem_foundation::paths::CapsemPathsGuard::redirect(capsem_home.path());
     std::fs::write(
         capsem_home.path().join("settings.toml"),
         "[settings.\"app.auto_update\"]\nvalue = false\nmodified = \"test\"\n",

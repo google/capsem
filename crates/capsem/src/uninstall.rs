@@ -6,7 +6,7 @@ use crate::platform;
 
 /// Run full uninstall: stop service, remove unit, remove binaries and data.
 pub async fn run_uninstall(yes: bool) -> Result<()> {
-    let capsem_dir = capsem_core::paths::capsem_home_opt().context("HOME not set")?;
+    let capsem_dir = capsem_foundation::paths::capsem_home_opt().context("HOME not set")?;
 
     if !capsem_dir.exists() {
         println!(

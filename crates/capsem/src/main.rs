@@ -936,8 +936,8 @@ async fn wait_for_gateway_url(run_dir: &Path) -> Result<String> {
     }
 
     let run_dir = run_dir.to_path_buf();
-    match capsem_core::poll::poll_until(
-        capsem_core::poll::PollOpts::new("gateway-runtime-ready", Duration::from_secs(5)),
+    match capsem_foundation::poll::poll_until(
+        capsem_foundation::poll::PollOpts::new("gateway-runtime-ready", Duration::from_secs(5)),
         || {
             let run_dir = run_dir.clone();
             async move { gateway_url_from_runtime(&run_dir) }
@@ -1111,7 +1111,7 @@ fn cli_runtime_paths_from_run_dir(run_dir: &std::path::Path) -> CliRuntimePaths 
 }
 
 fn cli_runtime_paths() -> CliRuntimePaths {
-    cli_runtime_paths_from_run_dir(&capsem_core::paths::capsem_run_dir())
+    cli_runtime_paths_from_run_dir(&capsem_foundation::paths::capsem_run_dir())
 }
 
 fn cli_service_socket_path() -> PathBuf {
@@ -1476,7 +1476,7 @@ async fn main() -> Result<()> {
     // Resolve run_dir and uds_path together so they always agree.
     // If the user passed --uds-path explicitly, run_dir is its parent by
     // convention (service places instance sockets at <run_dir>/instances/{id}.sock).
-    // Otherwise fall back to capsem_core::paths::capsem_run_dir (CAPSEM_RUN_DIR
+    // Otherwise fall back to capsem_foundation::paths::capsem_run_dir (CAPSEM_RUN_DIR
     // env > <capsem_home>/run), matching the service.
     let (run_dir, uds_path) = match cli.uds_path {
         Some(p) => {
@@ -1487,7 +1487,7 @@ async fn main() -> Result<()> {
             (dir, p)
         }
         None => {
-            let dir = capsem_core::paths::capsem_run_dir();
+            let dir = capsem_foundation::paths::capsem_run_dir();
             let sock = dir.join("service.sock");
             (dir, sock)
         }
@@ -2401,14 +2401,14 @@ async fn main() -> Result<()> {
             let sock_path = provisioned
                 .uds_path
                 .clone()
-                .unwrap_or_else(|| capsem_core::uds::instance_socket_path(&run_dir, &vm_id));
+                .unwrap_or_else(|| capsem_foundation::uds::instance_socket_path(&run_dir, &vm_id));
 
             // Poll for the per-VM socket to exist and hand us an open IPC
             // channel. Uses the shared exponential-backoff helper instead of
             // a hand-rolled loop.
             let sock_path_for_poll = sock_path.clone();
-            let poll_ipc = capsem_core::poll::poll_until(
-                capsem_core::poll::PollOpts::new(
+            let poll_ipc = capsem_foundation::poll::poll_until(
+                capsem_foundation::poll::PollOpts::new(
                     "vm-ipc-ready",
                     std::time::Duration::from_secs(30),
                 ),
@@ -2420,10 +2420,10 @@ async fn main() -> Result<()> {
                         }
                         let stream = tokio::net::UnixStream::connect(&sock_path).await.ok()?;
                         let mut std_stream = stream.into_std().ok()?;
-                        capsem_core::ipc_handshake::negotiate_initiator(
+                        capsem_foundation::ipc_handshake::negotiate_initiator(
                             &mut std_stream,
                             "capsem-cli",
-                            capsem_core::telemetry::current_parent_traceparent(),
+                            capsem_foundation::telemetry::current_parent_traceparent(),
                         )
                         .ok()?;
                         channel_from_std::<ServiceToProcess, ProcessToService>(std_stream).ok()

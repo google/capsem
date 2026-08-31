@@ -234,11 +234,11 @@ fn resolve_uds_path(override_val: Option<&str>, run_dir: &std::path::Path) -> Pa
 ///
 /// `home` is accepted for backward compatibility with existing call sites and
 /// unit tests; the actual resolution goes through
-/// [`capsem_core::paths::capsem_run_dir`] so that `CAPSEM_HOME` is honored.
+/// [`capsem_foundation::paths::capsem_run_dir`] so that `CAPSEM_HOME` is honored.
 fn resolve_run_dir(_home: &str, override_val: Option<&str>) -> PathBuf {
     override_val
         .map(PathBuf::from)
-        .unwrap_or_else(capsem_core::paths::capsem_run_dir)
+        .unwrap_or_else(capsem_foundation::paths::capsem_run_dir)
 }
 
 struct UdsClient {
@@ -271,7 +271,7 @@ impl UdsClient {
         }
 
         // Assets: always <capsem_home>/assets/ (use `just install` or symlink for dev)
-        let assets_dir = capsem_core::paths::capsem_assets_dir();
+        let assets_dir = capsem_foundation::paths::capsem_assets_dir();
         let process_bin = bin_dir.join("capsem-process");
 
         info!(service = %service_bin.display(), assets = %assets_dir.display(), "spawning service");
@@ -286,8 +286,8 @@ impl UdsClient {
 
         // Wait up to 5s for socket with exponential backoff
         let uds = self.uds_path.clone();
-        capsem_core::poll::poll_until(
-            capsem_core::poll::PollOpts::new("service-socket", std::time::Duration::from_secs(5)),
+        capsem_foundation::poll::poll_until(
+            capsem_foundation::poll::PollOpts::new("service-socket", std::time::Duration::from_secs(5)),
             || {
                 let uds = uds.clone();
                 async move { UnixStream::connect(&uds).await.ok() }
@@ -1091,9 +1091,9 @@ async fn main() -> Result<()> {
 
     let _ = std::fs::create_dir_all(&run_dir);
 
-    let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
+    let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-mcp",
-        sink: capsem_core::telemetry::LogSink::File {
+        sink: capsem_foundation::telemetry::LogSink::File {
             path: run_dir.join("mcp.log"),
         },
         default_filter: "info",

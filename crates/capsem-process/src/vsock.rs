@@ -37,7 +37,7 @@ const HANDSHAKE_RETRY_MAX: usize = 3;
 const EXEC_OUTPUT_DEPOSIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const SERIAL_LOG_QUEUE_CAPACITY: usize = 8;
 
-use capsem_core::paths::checkpoint_complete_path;
+use capsem_foundation::paths::checkpoint_complete_path;
 
 pub(crate) struct VsockOptions {
     pub(crate) vm_id: String,
@@ -451,8 +451,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     // control bridge owns delivery/replay, so this layer just
                     // forwards without replacing the per-id capture slot.
                     let trace_id =
-                        capsem_core::telemetry::ambient_capsem_trace_id().or_else(|| {
-                            capsem_core::telemetry::child_trace_env(&format!(
+                        capsem_foundation::telemetry::ambient_capsem_trace_id().or_else(|| {
+                            capsem_foundation::telemetry::child_trace_env(&format!(
                                 "{vm_id_for_cmd}-exec-{id}"
                             ))
                             .into_iter()
@@ -1002,7 +1002,7 @@ fn dispatch_aux_connection(
                                 audit_id: Some(record.audit_id),
                                 exec_event_id: None,
                                 parent_exe: record.parent_exe,
-                                trace_id: capsem_core::telemetry::ambient_capsem_trace_id(),
+                                trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
                                 credential_ref: None,
                             },
                         );
@@ -1225,7 +1225,7 @@ async fn serve_dns_session(
             &result,
             Some(req.proto.as_str()),
             req.process_name.clone(),
-            capsem_core::telemetry::ambient_capsem_trace_id(),
+            capsem_foundation::telemetry::ambient_capsem_trace_id(),
         );
         emit_dns_security_write_and_rules(&db, &security_rules, event).await;
 
@@ -1720,7 +1720,7 @@ fn perform_handshake(
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let traceparent = capsem_core::telemetry::current_parent_traceparent().to_string();
+        let traceparent = capsem_foundation::telemetry::current_parent_traceparent().to_string();
         write_control_msg(
             fd,
             &HostToGuest::BootConfig {

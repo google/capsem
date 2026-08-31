@@ -75,7 +75,7 @@ fn fake_capsem_home() -> TempDir {
     // Held for the rest of the process on purpose: every test serializes on
     // lock_test_env and re-redirects, so restoring between fixtures would only
     // reintroduce the ambient values this exists to shut out.
-    std::mem::forget(capsem_core::paths::CapsemPathsGuard::redirect(dir.path()));
+    std::mem::forget(capsem_foundation::paths::CapsemPathsGuard::redirect(dir.path()));
     let home = dir.path();
     fs::create_dir_all(home.join("run")).unwrap();
     fs::create_dir_all(home.join("logs")).unwrap();

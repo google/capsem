@@ -53,9 +53,9 @@ async fn main() -> Result<()> {
     // mcp-aggregator.stderr.log in the VM's session dir). Matches the
     // format capsem-process + capsem-service already emit, so every
     // host-side log is machine-parseable with the same schema.
-    let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
+    let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-mcp-aggregator",
-        sink: capsem_core::telemetry::LogSink::Stderr,
+        sink: capsem_foundation::telemetry::LogSink::Stderr,
         default_filter: "capsem_mcp_aggregator=info",
     })?;
 

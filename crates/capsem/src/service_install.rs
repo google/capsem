@@ -6,7 +6,7 @@ use crate::paths;
 const EXPLICIT_STOP_MARKER: &str = "service.explicitly-stopped";
 
 pub fn explicit_stop_marker_path() -> PathBuf {
-    capsem_core::paths::capsem_run_dir().join(EXPLICIT_STOP_MARKER)
+    capsem_foundation::paths::capsem_run_dir().join(EXPLICIT_STOP_MARKER)
 }
 
 pub fn service_explicitly_stopped() -> bool {
@@ -154,7 +154,7 @@ pub fn is_service_installed() -> bool {
 ///
 /// `capsem install` writes a persistent LaunchAgent / systemd unit whose
 /// `--assets-dir` argument is resolved at install time from
-/// `capsem_core::paths::capsem_assets_dir()`. That helper honors
+/// `capsem_foundation::paths::capsem_assets_dir()`. That helper honors
 /// `CAPSEM_HOME` / `CAPSEM_ASSETS_DIR` / `CAPSEM_RUN_DIR`, which the test
 /// harness sets to transient paths like `target/test-home/.capsem`. If
 /// the install inherits any of them the generated unit permanently points
@@ -488,7 +488,7 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     // 5. Remove stale socket so the new service can bind cleanly
-    let sock_path = capsem_core::paths::service_socket_path();
+    let sock_path = capsem_foundation::paths::service_socket_path();
     let _ = std::fs::remove_file(&sock_path);
 
     // Install service plist
@@ -632,7 +632,7 @@ async fn uninstall_systemd_unit() -> Result<()> {
 
 async fn check_running() -> (bool, Option<u32>) {
     // Check via socket connectivity
-    let sock = capsem_core::paths::service_socket_path();
+    let sock = capsem_foundation::paths::service_socket_path();
     if tokio::net::UnixStream::connect(&sock).await.is_ok() {
         // Get actual PID via pgrep (pidfile may be stale)
         let pid = tokio::process::Command::new("pgrep")

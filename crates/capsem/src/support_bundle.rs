@@ -94,7 +94,7 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
     // metadata rather than from the DB itself) but adequate for the
     // user-facing "stays attachable to bug reports" goal.
     let _max_session_bytes = max_session_bytes; // consumed in the session-include loop below
-    let home = capsem_core::paths::capsem_home();
+    let home = capsem_foundation::paths::capsem_home();
     let support_dir = home.join("support");
     fs::create_dir_all(&support_dir)
         .with_context(|| format!("create {}", support_dir.display()))?;
@@ -112,13 +112,13 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
     let mut warnings: Vec<String> = Vec::new();
 
     // -- host logs --
-    let run_dir = capsem_core::paths::capsem_run_dir();
+    let run_dir = capsem_foundation::paths::capsem_run_dir();
     for name in ["service", "mcp", "gateway", "tray"] {
         let stream = run_dir.join(format!("{name}.log"));
         // Rotation means a stream is several files. Collect them newest-first
         // so a bundle taken days after the failure still carries the day it
         // happened, not just the day it was reported.
-        let files = capsem_core::telemetry::log_stream_files(&stream);
+        let files = capsem_foundation::telemetry::log_stream_files(&stream);
         if files.is_empty() {
             sections.push(Section {
                 path: format!("{bundle_root}/host/{name}.log"),
@@ -762,7 +762,7 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {
     // Delegates: the shared reader seeks to each file's tail, so guest console
     // output cannot decide how much memory `capsem support` allocates, and a
     // rotated stream resolves the same way it does for every other consumer.
-    capsem_core::telemetry::read_log_tail(path, max_bytes as usize).map(String::into_bytes)
+    capsem_foundation::telemetry::read_log_tail(path, max_bytes as usize).map(String::into_bytes)
 }
 
 fn config_diagnostics(home: &Path) -> serde_json::Value {

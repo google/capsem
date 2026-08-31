@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 capsem-core = { path = "../capsem-core" }
+capsem-foundation = { path = "../capsem-foundation" }
 capsem-proto = { path = "../capsem-proto" }
 anyhow.workspace = true
 tokio.workspace = true

@@ -4189,7 +4189,7 @@ async fn hydrate_release_channel_profile_configs(
         return Ok(());
     }
 
-    let capsem_home = capsem_core::paths::capsem_home();
+    let capsem_home = capsem_foundation::paths::capsem_home();
     std::fs::create_dir_all(&capsem_home)
         .with_context(|| format!("create {}", capsem_home.display()))?;
     let nonce = std::process::id();

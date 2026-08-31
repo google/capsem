@@ -130,7 +130,7 @@ fn terminal_uds_path(service_uds: &std::path::Path, id: &str) -> PathBuf {
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(std::path::Path::new("/tmp"));
-    capsem_core::uds::terminal_socket_path(run_dir, id)
+    capsem_foundation::uds::terminal_socket_path(run_dir, id)
 }
 
 pub async fn handle_terminal_ws(

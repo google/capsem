@@ -11,6 +11,7 @@ authors.workspace = true
 
 [dependencies]
 capsem-core = { path = "../capsem-core" }
+capsem-foundation = { path = "../capsem-foundation" }
 capsem-guard = { path = "../capsem-guard" }
 capsem-logger = { path = "../capsem-logger" }
 capsem-proto = { path = "../capsem-proto" }

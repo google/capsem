@@ -397,7 +397,7 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {
     // used to metadata() the stream name and return None the moment rotation
     // landed, silently reporting no errors for a daemon that was logging them.
     // Correct for unrotated paths too: the reader yields the single file.
-    capsem_core::telemetry::read_log_tail(path, max_bytes as usize)
+    capsem_foundation::telemetry::read_log_tail(path, max_bytes as usize)
         .map(String::into_bytes)
 }
 

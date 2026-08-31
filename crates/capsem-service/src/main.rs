@@ -6,7 +6,7 @@ use axum::{
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
-use capsem_core::poll::{poll_until, PollOpts};
+use capsem_foundation::poll::{poll_until, PollOpts};
 use capsem_core::{
     mcp::{
         policy::{McpManualServer, McpProfileConfig},
@@ -75,7 +75,7 @@ const AUTOMATIC_UPDATE_MAX_BACKOFF_SECS: u64 = 24 * 60 * 60;
 const AUTOMATIC_UPDATE_INITIAL_DELAY_ENV: &str = "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS";
 const AUTOMATIC_UPDATE_POLL_ENV: &str = "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS";
 
-use capsem_core::paths::checkpoint_complete_path;
+use capsem_foundation::paths::checkpoint_complete_path;
 
 /// Owns `$run_dir/service.pid` -- the only handle a harness has on a detached
 /// service. Written when this process takes the socket, removed on clean
@@ -838,11 +838,11 @@ const MAX_FAILED_SESSIONS: usize = 32;
 impl ServiceState {
     /// Build the Unix socket path for a VM instance.
     ///
-    /// Delegates to `capsem_core::uds::instance_socket_path`, the single
+    /// Delegates to `capsem_foundation::uds::instance_socket_path`, the single
     /// source of truth for the macOS `SUN_LEN` workaround. Logs when the
     /// fallback path is used so clients can correlate.
     fn instance_socket_path(&self, id: &str) -> PathBuf {
-        let path = capsem_core::uds::instance_socket_path(&self.run_dir, id);
+        let path = capsem_foundation::uds::instance_socket_path(&self.run_dir, id);
         if !path.starts_with(&self.run_dir) {
             let preferred = self.run_dir.join("instances").join(format!("{id}.sock"));
             tracing::info!(%id, original = %preferred.display(), short = %path.display(),
@@ -1651,13 +1651,13 @@ impl ServiceState {
         }
         // W4: propagate trace context to the child process.
         // CAPSEM_VM_ID, CAPSEM_TRACE_ID, TRACEPARENT, TRACESTATE.
-        for (k, v) in capsem_core::telemetry::child_trace_env(id) {
+        for (k, v) in capsem_foundation::telemetry::child_trace_env(id) {
             child_cmd.env(k, v);
         }
 
         let process_spawn_span = tracing::debug_span!(
             target: "capsem.launch",
-            capsem_core::telemetry::LAUNCH_PROCESS_SPAWN_SPAN,
+            capsem_foundation::telemetry::LAUNCH_PROCESS_SPAWN_SPAN,
             boot_mode = "provision",
             status = tracing::field::Empty,
         );
@@ -1666,7 +1666,7 @@ impl ServiceState {
                 .env(
                     "RUST_LOG",
                     std::env::var("RUST_LOG").unwrap_or_else(|_| {
-                        capsem_core::telemetry::with_subsys_targets("capsem=info")
+                        capsem_foundation::telemetry::with_subsys_targets("capsem=info")
                     }),
                 )
                 .arg("--id")
@@ -1935,13 +1935,13 @@ impl ServiceState {
             }
         }
         // W4: propagate trace context (resume path).
-        for (k, v) in capsem_core::telemetry::child_trace_env(&vm_id) {
+        for (k, v) in capsem_foundation::telemetry::child_trace_env(&vm_id) {
             child_cmd.env(k, v);
         }
 
         let process_spawn_span = tracing::debug_span!(
             target: "capsem.launch",
-            capsem_core::telemetry::LAUNCH_PROCESS_SPAWN_SPAN,
+            capsem_foundation::telemetry::LAUNCH_PROCESS_SPAWN_SPAN,
             boot_mode = "resume",
             status = tracing::field::Empty,
         );
@@ -1950,7 +1950,7 @@ impl ServiceState {
                 .env(
                     "RUST_LOG",
                     std::env::var("RUST_LOG").unwrap_or_else(|_| {
-                        capsem_core::telemetry::with_subsys_targets("capsem=info")
+                        capsem_foundation::telemetry::with_subsys_targets("capsem=info")
                     }),
                 )
                 .arg("--id")
@@ -2912,7 +2912,7 @@ fn read_session_log_lines(
     file_name: &str,
     n: usize,
 ) -> Option<String> {
-    let content = capsem_core::telemetry::read_log_tail(
+    let content = capsem_foundation::telemetry::read_log_tail(
         &session_dir.join(file_name),
         SESSION_LOG_TAIL_MAX_BYTES,
     )?;
@@ -3745,7 +3745,7 @@ async fn handle_provision(
     // Backoff lets launchd tick at least one PETRIFIED-cleanup entry
     // (9s wall-clock per entry) between retries; under a real cascade
     // the second attempt usually lands once one entry has drained.
-    let opts = capsem_core::poll::PollOpts {
+    let opts = capsem_foundation::poll::PollOpts {
         label: "provision-launchd-drain",
         timeout: std::time::Duration::from_secs(8),
         initial_delay: std::time::Duration::from_millis(200),
@@ -3754,7 +3754,7 @@ async fn handle_provision(
 
     let id_for_loop = id.clone();
     let attempt_num = std::sync::atomic::AtomicU32::new(0);
-    let result = capsem_core::poll::poll_until(opts, || {
+    let result = capsem_foundation::poll::poll_until(opts, || {
         let state = Arc::clone(&state);
         let id = id_for_loop.clone();
         let name = name.clone();
@@ -4483,11 +4483,11 @@ async fn handle_logs(
     // arbitrarily large -- reading the whole bare file lost the rotated slice
     // and let the guest choose the allocation.
     let (serial_logs, process_logs) = tokio::task::spawn_blocking(move || {
-        let serial = capsem_core::telemetry::read_log_tail(
+        let serial = capsem_foundation::telemetry::read_log_tail(
             &serial_log_path,
             SESSION_LOG_TAIL_MAX_BYTES,
         );
-        let process = capsem_core::telemetry::read_log_tail(
+        let process = capsem_foundation::telemetry::read_log_tail(
             &process_log_path,
             SESSION_LOG_TAIL_MAX_BYTES,
         );
@@ -4525,7 +4525,7 @@ async fn handle_panics(
     let limit = params.limit.unwrap_or(20).min(200);
 
     let run_dir = state.run_dir.clone();
-    let home = capsem_core::paths::capsem_home();
+    let home = capsem_foundation::paths::capsem_home();
 
     let mut all_panics: Vec<triage::PanicEvent> = Vec::new();
     for binary in ["service", "mcp", "gateway", "tray"] {
@@ -4561,7 +4561,7 @@ async fn handle_triage(
     let limit = params.limit.unwrap_or(20).min(200);
 
     let run_dir = state.run_dir.clone();
-    let home = capsem_core::paths::capsem_home();
+    let home = capsem_foundation::paths::capsem_home();
 
     let mut panics: Vec<triage::PanicEvent> = Vec::new();
     let mut errors: Vec<triage::ErrorEvent> = Vec::new();
@@ -4789,7 +4789,7 @@ async fn handle_host_logs(
     axum::extract::Query(params): axum::extract::Query<HostLogsQuery>,
 ) -> Result<String, AppError> {
     let path = if name == "app" {
-        triage::latest_app_log(&capsem_core::paths::capsem_home())
+        triage::latest_app_log(&capsem_foundation::paths::capsem_home())
             .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "no app log found".into()))?
     } else {
         triage::host_log_path(&state.run_dir, &name)
@@ -4802,7 +4802,7 @@ async fn handle_host_logs(
     // stream reader also removes the fourth hand-rolled copy of seek-from-end
     // and trim-the-partial-line in this crate.
     let text = tokio::task::spawn_blocking(move || {
-        capsem_core::telemetry::read_log_tail(&path, max_bytes as usize).unwrap_or_default()
+        capsem_foundation::telemetry::read_log_tail(&path, max_bytes as usize).unwrap_or_default()
     })
     .await
     .map_err(|e| {
@@ -4843,7 +4843,7 @@ async fn handle_service_logs(State(state): State<Arc<ServiceState>>) -> Result<S
     let text = tokio::task::spawn_blocking(move || -> Result<String, String> {
         // `service.log` names a daily-rotated stream, not a file. Resolution
         // and tailing live in one place so every consumer sees the same log.
-        capsem_core::telemetry::read_log_tail(&log_path, 100 * 1024)
+        capsem_foundation::telemetry::read_log_tail(&log_path, 100 * 1024)
             .ok_or_else(|| format!("no log files in stream {}", log_path.display()))
     })
     .await
@@ -4870,10 +4870,10 @@ async fn send_ipc_command(
     let mut std_stream = stream
         .into_std()
         .map_err(|e| format!("failed to convert stream: {e}"))?;
-    capsem_core::ipc_handshake::negotiate_initiator(
+    capsem_foundation::ipc_handshake::negotiate_initiator(
         &mut std_stream,
         "capsem-service",
-        capsem_core::telemetry::current_parent_traceparent(),
+        capsem_foundation::telemetry::current_parent_traceparent(),
     )
     .map_err(|e| format!("IPC handshake failed: {e}"))?;
     let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) =
@@ -4940,7 +4940,7 @@ async fn wait_for_vm_ready(
 ) -> Result<(), String> {
     let ready_span = tracing::debug_span!(
         target: "capsem.launch",
-        capsem_core::telemetry::LAUNCH_VSOCK_READY_SPAN,
+        capsem_foundation::telemetry::LAUNCH_VSOCK_READY_SPAN,
         status = tracing::field::Empty,
     );
     let ready_path = uds_path.with_extension("ready");
@@ -4953,7 +4953,7 @@ async fn wait_for_vm_ready(
     let opts = vm_ready_poll_opts(timeout_secs);
     let died: Arc<std::sync::atomic::AtomicBool> =
         Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let res = capsem_core::poll::poll_until(opts, || {
+    let res = capsem_foundation::poll::poll_until(opts, || {
         let ready = ready_path.clone();
         let state = state.cloned();
         let id = id.map(|s| s.to_string());
@@ -4991,11 +4991,11 @@ async fn wait_for_vm_ready(
     }
 }
 
-fn vm_ready_poll_opts(timeout_secs: u64) -> capsem_core::poll::PollOpts {
-    capsem_core::poll::PollOpts {
+fn vm_ready_poll_opts(timeout_secs: u64) -> capsem_foundation::poll::PollOpts {
+    capsem_foundation::poll::PollOpts {
         initial_delay: std::time::Duration::from_millis(5),
         max_delay: std::time::Duration::from_millis(50),
-        ..capsem_core::poll::PollOpts::new("vm-ready", std::time::Duration::from_secs(timeout_secs))
+        ..capsem_foundation::poll::PollOpts::new("vm-ready", std::time::Duration::from_secs(timeout_secs))
     }
 }
 
@@ -6409,7 +6409,7 @@ async fn handle_corp_config(
 ) -> Result<Json<serde_json::Value>, AppError> {
     use capsem_core::net::policy_config::corp_provision;
 
-    let capsem_dir = capsem_core::paths::capsem_home_opt().ok_or(AppError(
+    let capsem_dir = capsem_foundation::paths::capsem_home_opt().ok_or(AppError(
         StatusCode::INTERNAL_SERVER_ERROR,
         "HOME not set".into(),
     ))?;
@@ -6442,7 +6442,7 @@ async fn handle_corp_info() -> Result<Json<serde_json::Value>, AppError> {
 fn corp_info_value() -> Result<serde_json::Value, AppError> {
     use capsem_core::net::policy_config::{corp_config_paths, corp_provision};
 
-    let capsem_dir = capsem_core::paths::capsem_home_opt().ok_or(AppError(
+    let capsem_dir = capsem_foundation::paths::capsem_home_opt().ok_or(AppError(
         StatusCode::INTERNAL_SERVER_ERROR,
         "HOME not set".into(),
     ))?;
@@ -6493,7 +6493,7 @@ async fn handle_corp_reload(
 ) -> Result<Json<serde_json::Value>, AppError> {
     use capsem_core::net::policy_config::corp_provision;
 
-    let capsem_dir = capsem_core::paths::capsem_home_opt().ok_or(AppError(
+    let capsem_dir = capsem_foundation::paths::capsem_home_opt().ok_or(AppError(
         StatusCode::INTERNAL_SERVER_ERROR,
         "HOME not set".into(),
     ))?;
@@ -11609,10 +11609,10 @@ async fn shutdown_vm_process(
         let stream_res = tokio::net::UnixStream::connect(&uds_path).await;
         if let Ok(stream) = stream_res {
             if let Ok(mut std_stream) = stream.into_std() {
-                if capsem_core::ipc_handshake::negotiate_initiator(
+                if capsem_foundation::ipc_handshake::negotiate_initiator(
                     &mut std_stream,
                     "capsem-service",
-                    capsem_core::telemetry::current_parent_traceparent(),
+                    capsem_foundation::telemetry::current_parent_traceparent(),
                 )
                 .is_ok()
                 {
@@ -11747,10 +11747,10 @@ async fn handle_suspend(
             format!("failed to convert stream: {e}"),
         )
     })?;
-    capsem_core::ipc_handshake::negotiate_initiator(
+    capsem_foundation::ipc_handshake::negotiate_initiator(
         &mut std_stream,
         "capsem-service",
-        capsem_core::telemetry::current_parent_traceparent(),
+        capsem_foundation::telemetry::current_parent_traceparent(),
     )
     .map_err(|e| {
         AppError(
@@ -13018,23 +13018,23 @@ async fn handle_service_status(
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let mut run_dir = capsem_core::paths::capsem_run_dir();
+    let mut run_dir = capsem_foundation::paths::capsem_run_dir();
     let _ = std::fs::create_dir_all(&run_dir);
     if let Ok(resolved) = run_dir.canonicalize() {
         run_dir = resolved;
     }
 
-    let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
+    let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-service",
-        sink: capsem_core::telemetry::LogSink::File {
+        sink: capsem_foundation::telemetry::LogSink::File {
             path: run_dir.join("service.log"),
         },
         default_filter: "info",
     })?;
-    capsem_core::telemetry::install_panic_logger("capsem-service");
+    capsem_foundation::telemetry::install_panic_logger("capsem-service");
     let service_launch_span = tracing::info_span!(
         target: "capsem.launch",
-        capsem_core::telemetry::LAUNCH_SERVICE_SPAN,
+        capsem_foundation::telemetry::LAUNCH_SERVICE_SPAN,
         status = tracing::field::Empty,
     );
 
@@ -13791,7 +13791,7 @@ async fn spawn_companions(
     }
     let gateway_span = tracing::debug_span!(
         target: "capsem.launch",
-        capsem_core::telemetry::LAUNCH_GATEWAY_SPAN,
+        capsem_foundation::telemetry::LAUNCH_GATEWAY_SPAN,
         status = tracing::field::Empty,
     );
     match gateway_span.in_scope(|| {
@@ -13811,8 +13811,8 @@ async fn spawn_companions(
             {
                 let tp = token_path.clone();
                 let pp = port_path.clone();
-                let _ = capsem_core::poll::poll_until(
-                    capsem_core::poll::PollOpts::new(
+                let _ = capsem_foundation::poll::poll_until(
+                    capsem_foundation::poll::PollOpts::new(
                         "gateway-ready",
                         std::time::Duration::from_secs(5),
                     ),

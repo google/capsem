@@ -196,9 +196,9 @@ fn prepare_session_layout(session_dir: &Path, scratch_disk_size_gb: u32) -> Resu
 }
 
 fn main() -> Result<()> {
-    let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
+    let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-process",
-        sink: capsem_core::telemetry::LogSink::Stderr,
+        sink: capsem_foundation::telemetry::LogSink::Stderr,
         default_filter: "info",
     })?;
     let args = Args::parse();
@@ -717,7 +717,7 @@ async fn run_async_main_loop(
     }
     info!(socket = %uds_path.display(), "listening for IPC (mode 0600)");
 
-    // Through `capsem_core::uds`, which owns the length rule -- the gateway
+    // Through `capsem_foundation::uds`, which owns the length rule -- the gateway
     // derives this same path independently, so both must apply it identically
     // *and* start from the same run directory. The fallback keeps the old
     // derivation for a caller that passes no run directory; it is only correct
@@ -728,7 +728,7 @@ async fn run_async_main_loop(
         .and_then(|instances| instances.parent())
         .unwrap_or_else(|| std::path::Path::new("/tmp"));
     let ws_run_dir = args.run_dir.as_deref().unwrap_or(walked_up);
-    let ws_sock_path = capsem_core::uds::terminal_socket_path(ws_run_dir, &vm_id_ws);
+    let ws_sock_path = capsem_foundation::uds::terminal_socket_path(ws_run_dir, &vm_id_ws);
     if ws_sock_path.exists() {
         std::fs::remove_file(&ws_sock_path)?;
     }
@@ -868,7 +868,7 @@ async fn spawn_mcp_aggregator(
     // Caller already has `trace_id` from the root span; we re-derive via
     // child_trace_env so the aggregator inherits this process's parent
     // traceparent verbatim instead of getting a freshly-synthesized one.
-    for (k, v) in capsem_core::telemetry::child_trace_env(vm_id) {
+    for (k, v) in capsem_foundation::telemetry::child_trace_env(vm_id) {
         cmd.env(k, v);
     }
     // Keep the pre-W4 CAPSEM_TRACE_ID override path so callers that

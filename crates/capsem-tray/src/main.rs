@@ -44,11 +44,11 @@ enum PollResult {
 }
 
 fn main() -> Result<()> {
-    let run_dir = capsem_core::paths::capsem_run_dir();
+    let run_dir = capsem_foundation::paths::capsem_run_dir();
     let _ = std::fs::create_dir_all(&run_dir);
-    let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
+    let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-tray",
-        sink: capsem_core::telemetry::LogSink::File {
+        sink: capsem_foundation::telemetry::LogSink::File {
             path: run_dir.join("tray.log"),
         },
         default_filter: "capsem_tray=info",
@@ -538,7 +538,7 @@ fn launch_capsem_app(vm_id: Option<&str>, action: Option<&str>) {
 /// tray can acquire. Tests that need strict isolation override with
 /// `--lock-path`.
 fn tray_lock_path() -> std::path::PathBuf {
-    capsem_core::paths::capsem_run_dir().join("tray.lock")
+    capsem_foundation::paths::capsem_run_dir().join("tray.lock")
 }
 
 #[cfg(test)]

@@ -624,7 +624,7 @@ impl UdsClient {
     /// Connect to the service socket using the shared `poll_until`
     /// primitive. The 5 s deadline, 50ms-500ms exponential backoff, and
     /// "poll succeeded / poll timed out" tracing all come from
-    /// `capsem_core::poll`; this function only provides the
+    /// `capsem_foundation::poll`; this function only provides the
     /// connect-attempt closure and the retryable-vs-permanent
     /// classification (see `ConnectMode`).
     async fn connect_with_timeout(&self, mode: ConnectMode) -> Result<UnixStream> {
@@ -639,9 +639,9 @@ impl UdsClient {
         mode: ConnectMode,
         timeout: std::time::Duration,
     ) -> Result<UnixStream> {
-        let opts = capsem_core::poll::PollOpts::new("service-connect", timeout);
+        let opts = capsem_foundation::poll::PollOpts::new("service-connect", timeout);
         let uds_path = &self.uds_path;
-        let outcome = capsem_core::poll::poll_until(opts, || async move {
+        let outcome = capsem_foundation::poll::poll_until(opts, || async move {
             let attempt = tokio::time::timeout(
                 std::time::Duration::from_millis(500),
                 UnixStream::connect(uds_path),
@@ -767,7 +767,7 @@ impl UdsClient {
         // unlinking this file would not disturb the fd already open on it.
         // The service would go on writing panics into an inode nobody can
         // reach -- the same silence, harder to notice.
-        let stderr_dir = capsem_core::paths::capsem_run_dir().join("stderr");
+        let stderr_dir = capsem_foundation::paths::capsem_run_dir().join("stderr");
         let service_stderr = std::fs::create_dir_all(&stderr_dir)
             .and_then(|()| {
                 std::fs::OpenOptions::new()

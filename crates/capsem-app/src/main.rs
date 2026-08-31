@@ -224,7 +224,7 @@ fn open_log_file(path: &Path) -> std::io::Result<std::fs::File> {
 }
 
 /// Resolve the capsem home dir without pulling in capsem-core (thin-shell invariant).
-/// Mirrors `capsem_core::paths::capsem_home` priority: CAPSEM_HOME > $HOME/.capsem.
+/// Mirrors `capsem_foundation::paths::capsem_home` priority: CAPSEM_HOME > $HOME/.capsem.
 fn capsem_home_dir() -> PathBuf {
     if let Ok(h) = std::env::var("CAPSEM_HOME") {
         if !h.is_empty() {
@@ -271,7 +271,7 @@ fn main() {
         "starting capsem-app"
     );
     // C3: emit a `service.start` line that mirrors what other capsem
-    // binaries log via capsem_core::telemetry::init(). Lets the support
+    // binaries log via capsem_foundation::telemetry::init(). Lets the support
     // bundle parser key on cross-version-mix detection for capsem-app
     // too -- without taking a capsem-core dep (project invariant).
     info!(

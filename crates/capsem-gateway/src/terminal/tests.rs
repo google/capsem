@@ -259,7 +259,7 @@ async fn websocket_relay_echoes_text() {
     // meant the mock bound one path while the gateway dialled another as soon
     // as the temp directory was long enough to trip the fallback -- which is
     // the very failure the helper exists to prevent.
-    let ws_sock = capsem_core::uds::terminal_socket_path(dir.path(), "test-vm");
+    let ws_sock = capsem_foundation::uds::terminal_socket_path(dir.path(), "test-vm");
 
     let uds = tokio::net::UnixListener::bind(&ws_sock).unwrap();
     let mock_handle = tokio::spawn(async move {
@@ -343,7 +343,7 @@ async fn websocket_relay_handles_process_disconnect() {
     let dir = tempfile::tempdir().unwrap();
     let instances_dir = dir.path().join("instances");
     std::fs::create_dir_all(&instances_dir).unwrap();
-    let ws_sock = capsem_core::uds::terminal_socket_path(dir.path(), "dc-vm");
+    let ws_sock = capsem_foundation::uds::terminal_socket_path(dir.path(), "dc-vm");
 
     let uds = tokio::net::UnixListener::bind(&ws_sock).unwrap();
     let mock_handle = tokio::spawn(async move {
@@ -413,7 +413,7 @@ async fn ws_test_setup(
     let dir = tempfile::tempdir().unwrap();
     let instances_dir = dir.path().join("instances");
     std::fs::create_dir_all(&instances_dir).unwrap();
-    let ws_sock = capsem_core::uds::terminal_socket_path(dir.path(), vm_id);
+    let ws_sock = capsem_foundation::uds::terminal_socket_path(dir.path(), vm_id);
 
     let uds = tokio::net::UnixListener::bind(&ws_sock).unwrap();
     let mock_handle = mock_fn(uds);

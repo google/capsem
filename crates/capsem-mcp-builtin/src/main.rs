@@ -446,9 +446,9 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
+    let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-mcp-builtin",
-        sink: capsem_core::telemetry::LogSink::Stderr,
+        sink: capsem_foundation::telemetry::LogSink::Stderr,
         default_filter: "capsem_mcp_builtin=info",
     })?;
 

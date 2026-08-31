@@ -66,7 +66,7 @@ fn emit_guest_write_file_event(
         );
         return;
     };
-    let trace_id = capsem_core::telemetry::ambient_capsem_trace_id();
+    let trace_id = capsem_foundation::telemetry::ambient_capsem_trace_id();
     let event = capsem_logger::FileEvent {
         event_id: None,
         timestamp: std::time::SystemTime::now(),
@@ -102,10 +102,10 @@ pub(crate) async fn handle_ipc_connection(
     // First frame on every IPC connection is a Hello -- detect cross-version
     // mixes (capsem-service built before X, capsem-process built after) in
     // ~1s with a structured log line instead of a 30s silent timeout.
-    match capsem_core::ipc_handshake::negotiate_responder(
+    match capsem_foundation::ipc_handshake::negotiate_responder(
         &mut std_stream,
         "capsem-process",
-        capsem_core::telemetry::current_parent_traceparent(),
+        capsem_foundation::telemetry::current_parent_traceparent(),
     ) {
         Ok(peer) => {
             info!(target: "ipc", peer = %peer.peer, "IPC handshake ok");

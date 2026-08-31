@@ -964,7 +964,7 @@ async fn update_route_check_live_executes_non_mutating_cli_check() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "succeeded");
     assert_eq!(body["command"]["args"], json!(["update", "--check"]));
-    assert_eq!(capsem_core::telemetry::read_log_tail(&log, usize::MAX).unwrap(), "update --check\n");
+    assert_eq!(capsem_foundation::telemetry::read_log_tail(&log, usize::MAX).unwrap(), "update --check\n");
 }
 
 #[tokio::test]
@@ -1061,7 +1061,7 @@ async fn update_route_apply_confirmed_dispatches_one_atomic_update() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "succeeded");
     assert_eq!(body["command"]["args"], json!(["update", "--yes"]));
-    assert_eq!(capsem_core::telemetry::read_log_tail(&log, usize::MAX).unwrap(), "update --yes\n");
+    assert_eq!(capsem_foundation::telemetry::read_log_tail(&log, usize::MAX).unwrap(), "update --yes\n");
 }
 
 #[tokio::test]
@@ -1119,7 +1119,7 @@ async fn update_route_live_commands_share_one_serial_lock() {
     assert_eq!(first.1["status"], "succeeded");
     assert_eq!(second.0, StatusCode::OK);
     assert_eq!(second.1["status"], "succeeded");
-    let execution = capsem_core::telemetry::read_log_tail(&log, usize::MAX).unwrap();
+    let execution = capsem_foundation::telemetry::read_log_tail(&log, usize::MAX).unwrap();
     assert!(!execution.contains("overlap"), "{execution}");
     assert_eq!(execution, "start\nend\nstart\nend\n");
 }
@@ -1331,7 +1331,7 @@ async fn automatic_update_disabled_setting_skips_command_execution() {
         "[settings.\"app.auto_update\"]\nvalue = false\nmodified = \"test\"\n",
     )
     .unwrap();
-    let _capsem_paths = capsem_core::paths::CapsemPathsGuard::redirect(&capsem_home);
+    let _capsem_paths = capsem_foundation::paths::CapsemPathsGuard::redirect(&capsem_home);
     let state = make_test_state();
 
     let outcome = run_automatic_update_once(&state).await;
@@ -1343,7 +1343,7 @@ async fn automatic_update_disabled_setting_skips_command_execution() {
 async fn automatic_update_skips_without_queueing_when_explicit_update_is_active() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
-    let _capsem_paths = capsem_core::paths::CapsemPathsGuard::redirect(dir.path());
+    let _capsem_paths = capsem_foundation::paths::CapsemPathsGuard::redirect(dir.path());
     let state = make_test_state();
     let explicit_guard = state.update_lock.lock().await;
 
@@ -1371,7 +1371,7 @@ async fn automatic_update_runs_one_complete_apply_and_reloads_runtime() {
     std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
     std::fs::set_permissions(&cli, permissions).unwrap();
     let previous_cli = std::env::var_os("CAPSEM_CLI");
-    let _capsem_paths = capsem_core::paths::CapsemPathsGuard::redirect(&capsem_home);
+    let _capsem_paths = capsem_foundation::paths::CapsemPathsGuard::redirect(&capsem_home);
     std::env::set_var("CAPSEM_CLI", &cli);
     let state = make_asset_state(assets_dir);
 
@@ -1385,7 +1385,7 @@ async fn automatic_update_runs_one_complete_apply_and_reloads_runtime() {
         outcome,
         AutomaticUpdateOutcome::Succeeded(UpdateRuntimeDisposition::Reloaded)
     );
-    assert_eq!(capsem_core::telemetry::read_log_tail(&log, usize::MAX).unwrap(), "update --yes\n");
+    assert_eq!(capsem_foundation::telemetry::read_log_tail(&log, usize::MAX).unwrap(), "update --yes\n");
 }
 
 #[tokio::test]
@@ -1402,7 +1402,7 @@ async fn automatic_update_reports_command_failure_for_backoff() {
     std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
     std::fs::set_permissions(&cli, permissions).unwrap();
     let previous_cli = std::env::var_os("CAPSEM_CLI");
-    let _capsem_paths = capsem_core::paths::CapsemPathsGuard::redirect(dir.path());
+    let _capsem_paths = capsem_foundation::paths::CapsemPathsGuard::redirect(dir.path());
     std::env::set_var("CAPSEM_CLI", &cli);
     let state = make_test_state();
 
@@ -7301,9 +7301,9 @@ fn preserve_renames_session_dir_and_keeps_logs() {
         })
         .expect("a vm-abc-failed-* dir must exist");
     let preserved = failed.path().join("process.log");
-    assert_eq!(capsem_core::telemetry::read_log_tail(&preserved, usize::MAX).unwrap().into_bytes(), b"boot failed: ...");
+    assert_eq!(capsem_foundation::telemetry::read_log_tail(&preserved, usize::MAX).unwrap().into_bytes(), b"boot failed: ...");
     let preserved_serial = failed.path().join("serial.log");
-    assert_eq!(capsem_core::telemetry::read_log_tail(&preserved_serial, usize::MAX).unwrap().into_bytes(), b"kernel panic");
+    assert_eq!(capsem_foundation::telemetry::read_log_tail(&preserved_serial, usize::MAX).unwrap().into_bytes(), b"kernel panic");
 }
 
 #[test]
@@ -10665,7 +10665,7 @@ async fn stats_detail_ledger_exposes_orphan_tool_parent_inconsistency() {
 
 struct SettingsEnvGuard {
     // Holds the path redirect for the guard's lifetime; restores on drop.
-    _capsem_paths: capsem_core::paths::CapsemPathsGuard,
+    _capsem_paths: capsem_foundation::paths::CapsemPathsGuard,
     previous_corp: Option<std::ffi::OsString>,
 }
 
@@ -10762,7 +10762,7 @@ fn install_empty_settings_env(dir: &tempfile::TempDir) -> (SettingsEnvGuard, Pat
     .unwrap();
 
     let guard = SettingsEnvGuard {
-        _capsem_paths: capsem_core::paths::CapsemPathsGuard::redirect(dir.path()),
+        _capsem_paths: capsem_foundation::paths::CapsemPathsGuard::redirect(dir.path()),
         previous_corp: std::env::var_os("CAPSEM_CORP_CONFIG"),
     };
     std::env::set_var("CAPSEM_CORP_CONFIG", &corp_path);
@@ -11117,7 +11117,7 @@ async fn spawn_file_boundary_ipc(
             let std_stream = stream.into_std().unwrap();
             let std_stream = tokio::task::spawn_blocking(move || {
                 let mut std_stream = std_stream;
-                capsem_core::ipc_handshake::negotiate_responder(
+                capsem_foundation::ipc_handshake::negotiate_responder(
                     &mut std_stream,
                     "capsem-process-test",
                     "",
@@ -11392,7 +11392,7 @@ async fn upload_does_not_write_workspace_file_when_import_ledger_fails() {
         let std_stream = stream.into_std().unwrap();
         let std_stream = tokio::task::spawn_blocking(move || {
             let mut std_stream = std_stream;
-            capsem_core::ipc_handshake::negotiate_responder(
+            capsem_foundation::ipc_handshake::negotiate_responder(
                 &mut std_stream,
                 "capsem-process-test",
                 "",

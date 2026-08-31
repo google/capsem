@@ -71,9 +71,9 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let run_dir = gateway_run_dir(&args);
     let _ = std::fs::create_dir_all(&run_dir);
-    let _telemetry_guard = capsem_core::telemetry::init(capsem_core::telemetry::TelemetryConfig {
+    let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-gateway",
-        sink: capsem_core::telemetry::LogSink::File {
+        sink: capsem_foundation::telemetry::LogSink::File {
             path: run_dir.join("gateway.log"),
         },
         // tower_http + hyper at debug so request-level and connection-level
@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
     // Surface any gateway panic in the log instead of letting it vanish into
     // the void -- under test load a panicked task would otherwise just drop
     // the connection, leaving the client with no response and no trace.
-    capsem_core::telemetry::install_panic_logger("capsem-gateway");
+    capsem_foundation::telemetry::install_panic_logger("capsem-gateway");
 
     // Companion guards: refuse to run without a live parent service, and
     // refuse if another gateway already holds the singleton lock for this
@@ -203,7 +203,7 @@ async fn main() -> Result<()> {
 fn gateway_run_dir(args: &Args) -> PathBuf {
     args.run_dir
         .clone()
-        .unwrap_or_else(capsem_core::paths::capsem_run_dir)
+        .unwrap_or_else(capsem_foundation::paths::capsem_run_dir)
 }
 
 fn service_proxy_routes() -> Router<Arc<AppState>> {

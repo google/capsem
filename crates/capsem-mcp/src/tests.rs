@@ -972,7 +972,7 @@ fn resolve_run_dir_default_delegates_to_capsem_core() {
     // assertion is that it matches what capsem-core returns.
     assert_eq!(
         resolve_run_dir("/ignored", None),
-        capsem_core::paths::capsem_run_dir(),
+        capsem_foundation::paths::capsem_run_dir(),
     );
 }
 

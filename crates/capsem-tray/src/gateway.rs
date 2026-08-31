@@ -117,7 +117,7 @@ impl GatewayClient {
     /// Discover gateway connection info from well-known file paths.
     /// If `port_override` is set, use that instead of reading the file.
     pub async fn discover(port_override: Option<u16>) -> Result<Self> {
-        let run_dir = capsem_core::paths::capsem_run_dir();
+        let run_dir = capsem_foundation::paths::capsem_run_dir();
 
         let port = match port_override {
             Some(p) => p,
