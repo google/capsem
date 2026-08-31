@@ -207,7 +207,9 @@ Agents use these entrypoints rather than dispatching release workflows or
 authoring manifests directly. Each release command is sufficient on its own:
 its hosted lane performs release qualification, so `just test` is not a
 prerequisite. `just test <source-commit>` is optional reusable complete local
-verification. Direct release commands and `just test` own their timeouts,
+verification. Low-impact repeats are refused before expensive work and routed
+to focused owners; `just test <source-commit> force "<reason>"` is the audited
+exception and cannot be used twice consecutively. Direct release commands and `just test` own their timeouts,
 journal, teardown, and network boundary; do not wrap or nest them.
 
 Implementation-specific invariants belong beside their executable tests and in

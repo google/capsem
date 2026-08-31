@@ -32,7 +32,7 @@ import os
 import shutil
 import sys
 
-from . import candidateplan, host, sandbox
+from . import candidateplan, host, sandbox, testadmission
 from . import config as gate_config
 from .command import GateCommand
 from .errors import GateError
@@ -193,9 +193,17 @@ class CandidateCommand(
     @classmethod
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("source_commit", nargs="?", type=optional_source_commit)
+        parser.add_argument("mode", nargs="?", default="normal", choices=("normal", "force"))
+        parser.add_argument("reason", nargs="?", default="")
 
     def source_commit(self) -> SourceCommit | None:
         return getattr(self._args, "source_commit", None)
+
+    def admit(self, commit: SourceCommit | None) -> None:
+        testadmission.admit(self, commit)
+
+    def completed(self, commit: SourceCommit | None) -> None:
+        testadmission.complete(self, commit)
 
     def plan(self) -> Plan:
         plan = Plan(self.name)

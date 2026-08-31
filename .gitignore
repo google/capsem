@@ -63,6 +63,9 @@ benchmarks/**/data_*.json
 # Canonical repository-generated output root: Rust builds, VM assets,
 # packages, distributions, coverage, benchmarks, and failure evidence.
 target/
+# Replacement cache root. During the hard cut, every generated output and
+# reusable product moves here before the legacy target/ ignore is removed.
+/cache/
 
 # Git worktrees
 worktrees/

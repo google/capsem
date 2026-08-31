@@ -64,6 +64,7 @@ version = 1
 "build_system/tests/release/test_release_foundation_tool_boundary.py" = "50c86b7ed8ac2cf95bd48334961bf0530cdc77b5a56f852c5c61b89d735fd711"
 "build_system/tests/test_reproducible_sdist.py" = "50c86b7ed8ac2cf95bd48334961bf0530cdc77b5a56f852c5c61b89d735fd711"
 "config/README.md" = "df7594253ad90ebc2afd7577a485277ac0470e13aada8efa91627a3fdce59f21"
+"config/cache.toml" = "02cb9aea3d11ce7197100c75b7048f8f66fecd8920d58be70ccf4e4bd8f396cc"
 "config/gate.toml" = "6779dba9ed8bd8202d697d090d6d65d6e6f0ccaa2b332a186c300344de5808c3"
 "config/profiles/co-work/build.sh" = "dad640a873f3b344d7b84c41db251b06e7186d5f07bc0d36d2cfd7054883ffbf"
 "config/profiles/code/build.sh" = "dad640a873f3b344d7b84c41db251b06e7186d5f07bc0d36d2cfd7054883ffbf"

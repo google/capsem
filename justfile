@@ -184,8 +184,8 @@ _bootstrap:
 # verify it once. This is optional before release: each release command owns
 # its hosted qualification. Cold reproduction remains an explicit gate CLI
 # diagnostic, never the public complete-test default.
-test source_commit="":
-    @uv run --project build_system --frozen capsem-gate candidate {{quote(source_commit)}}
+test source_commit="" mode="normal" reason="":
+    @uv run --project build_system --frozen capsem-gate candidate {{quote(source_commit)}} {{quote(mode)}} {{quote(reason)}}
 
 # After the source-only fast gate passes, local composition constructs every
 # artifact family before running the remaining modules used by release CI.

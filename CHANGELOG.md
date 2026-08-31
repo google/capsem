@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Complete local tests now refuse low-impact repeats until ten commits have
+  accumulated since the latest successful proof and print the exact focused
+  owners to run instead. High-impact and unknown changes remain eligible;
+  exceptional forced attempts require a journaled reason and cannot occur
+  twice consecutively.
 - Complete local verification is `just test` again and reuses valid
   content-addressed build output between source commits. The cold-only
   `test-full` public command is removed without a compatibility alias. Release

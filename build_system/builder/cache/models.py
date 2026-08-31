@@ -23,6 +23,24 @@ class PruneMethod(StrEnum):
     NONE = "none"
 
 
+class FocusGroup(StrEnum):
+    """Existing public focused-test owners."""
+
+    ASSETS = "assets"
+    BENCHMARK = "benchmark"
+    BINARIES = "binaries"
+    FUNCTIONAL = "functional"
+    INSTALL = "install"
+    RELEASE_SYSTEM = "release-system"
+
+
+class AdmissionEventKind(StrEnum):
+    """Events that establish or reset the consecutive-force rail."""
+
+    FORCED_ATTEMPT = "forced-attempt"
+    COMPLETE_SUCCESS = "complete-success"
+
+
 def _relative_descendant(value: Path, *, field: str) -> Path:
     posix = PurePosixPath(value.as_posix())
     if value.is_absolute() or str(posix) in {"", "."} or ".." in posix.parts:
@@ -39,6 +57,44 @@ class CalibrationPolicy(BaseModel):
     warning_percentile: Annotated[StrictInt, Field(ge=1, le=100)]
     soft_generation_headroom: PositiveStrictInt
     hard_generation_headroom: PositiveStrictInt
+
+
+class TestRoute(BaseModel):
+    """One explicitly low-impact repository path prefix and its owners."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    prefix: str
+    groups: tuple[FocusGroup, ...]
+
+    @model_validator(mode="after")
+    def validate_route(self) -> TestRoute:
+        path = PurePosixPath(self.prefix)
+        if self.prefix.startswith("/") or ".." in path.parts or not self.prefix:
+            raise ValueError("test route prefix must be repository-relative")
+        if not self.groups:
+            raise ValueError("test route must name at least one focus group")
+        return self
+
+
+class TestAdmissionPolicy(BaseModel):
+    """How often explicitly low-impact source may request complete proof."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    minimum_commits: PositiveStrictInt
+    state_path: Path
+    routes: tuple[TestRoute, ...]
+
+    @model_validator(mode="after")
+    def validate_admission(self) -> TestAdmissionPolicy:
+        object.__setattr__(
+            self, "state_path", _relative_descendant(self.state_path, field="admission state path")
+        )
+        prefixes = [route.prefix for route in self.routes]
+        if len(prefixes) != len(set(prefixes)):
+            raise ValueError("test admission route prefixes must be unique")
+        return self
 
 
 class StagePolicy(BaseModel):
@@ -78,6 +134,11 @@ class CachePolicy(BaseModel):
         warning_percentile=95,
         soft_generation_headroom=1,
         hard_generation_headroom=1,
+    )
+    test_admission: TestAdmissionPolicy = TestAdmissionPolicy(
+        minimum_commits=10,
+        state_path=Path("state/test-admission.jsonl"),
+        routes=(),
     )
     stages: dict[str, StagePolicy]
 
@@ -178,3 +239,42 @@ class ApplyResult(BaseModel):
     removed: tuple[Path, ...]
     missing: tuple[Path, ...]
     journal: Path
+
+
+class AdmissionDecision(BaseModel):
+    """A complete-test admission answer with operator-facing evidence."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    allowed: StrictBool
+    forced: StrictBool
+    high_impact: StrictBool
+    baseline: str | None
+    target: str
+    commits_since_success: Annotated[StrictInt, Field(ge=0)]
+    changed_paths: tuple[str, ...]
+    groups: tuple[FocusGroup, ...]
+    explanation: str
+
+
+class AdmissionEvent(BaseModel):
+    """Durable force-attempt or successful-reset evidence."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: AdmissionEventKind
+    timestamp_ns: Annotated[StrictInt, Field(ge=0)]
+    source_identity: str
+    reason: str
+
+
+class GitImpact(BaseModel):
+    """Read-only Git facts used by the pure admission decision."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    baseline: str
+    target: str
+    ancestor: StrictBool
+    commits: Annotated[StrictInt, Field(ge=0)]
+    paths: tuple[str, ...]

@@ -263,6 +263,15 @@ is useful for the change. `just test <source-commit>` is optional and never a
 release prerequisite. Run the actual public release command, never a
 hand-written workflow dispatch; it is the supported bridge into qualifying CI.
 
+Complete local admission is impact-aware, but its proof is never partial. A
+valid identical-source journal returns immediately. Otherwise unknown and
+high-impact paths remain eligible, while explicitly low-impact paths under the
+ten-commit cadence are refused with their exact `focus-test` owners. The
+exceptional `just test <source-commit> force "<reason>"` records its reason
+before work and cannot be used twice consecutively; only a successful normal
+complete run resets it. None of this state authorizes release publication or
+reuses a behavioral verdict across source identities.
+
 ## `--force`: the commit that is not the product
 
 ```bash

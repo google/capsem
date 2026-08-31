@@ -159,6 +159,8 @@ class RecordingRunner(Runner):
     test can make one step fail and assert what the gate does next.
     """
 
+    observing = True
+
     def __init__(
         self,
         root: Path,

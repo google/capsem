@@ -526,6 +526,20 @@ content-addressed parent and every carried step. Recursive coverage of every
 declared step is required before the chain becomes complete. A reuse-only run,
 manual marker, skill, or guessed continuation MUST NOT become evidence.
 
+When no complete exact-source journal exists, admission MUST compare the
+requested source with the newest valid complete local proof. Unknown or
+high-impact paths MUST fail closed into allowing complete verification.
+Explicitly low-impact paths are declared with their existing `focus-test`
+owners in `config/cache.toml`; before ten commits have accumulated, `just test`
+MUST refuse and print those exact owners instead of spending the complete
+runtime. At ten commits the complete proof is eligible again.
+
+The exceptional spelling is
+`just test <source-commit> force "<reason>"`. Its non-empty reason MUST be
+recorded before work starts, and a second consecutive forced attempt MUST be
+refused. Only a successful non-forced complete run resets that rail. Admission
+state is cache control evidence, never a cross-source behavioral verdict.
+
 Before starting Docker/Colima, bootstrap, package, profile, asset, or VM work,
 `just test` MUST run one checked-in private `_test-fast` module. That same
 module MUST be called independently by ordinary CI, both release workflows,

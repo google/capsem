@@ -29,7 +29,7 @@ def test_stage_policy_is_strict_and_frozen() -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         StagePolicy.model_validate({**policy.model_dump(), "mystery": True})
     with pytest.raises(ValidationError, match="frozen"):
-        policy.soft_bytes = 40
+        setattr(policy, "soft_bytes", 40)
 
 
 @pytest.mark.parametrize(

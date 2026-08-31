@@ -11,6 +11,58 @@ warning_percentile = 95
 soft_generation_headroom = 1
 hard_generation_headroom = 1
 
+[test_admission]
+minimum_commits = 10
+state_path = "state/test-admission.jsonl"
+
+[[test_admission.routes]]
+prefix = "README.md"
+groups = ["release-system"]
+
+[[test_admission.routes]]
+prefix = "CHANGELOG.md"
+groups = ["release-system"]
+
+[[test_admission.routes]]
+prefix = "CITATION.cff"
+groups = ["release-system"]
+
+[[test_admission.routes]]
+prefix = "web/docs/"
+groups = ["release-system"]
+
+[[test_admission.routes]]
+prefix = "web/marketing/"
+groups = ["release-system"]
+
+[[test_admission.routes]]
+prefix = "build_system/release_site/"
+groups = ["release-system"]
+
+[[test_admission.routes]]
+prefix = "bench/"
+groups = ["benchmark"]
+
+[[test_admission.routes]]
+prefix = "benchmarks/"
+groups = ["benchmark"]
+
+[[test_admission.routes]]
+prefix = "sdk/"
+groups = ["binaries"]
+
+[[test_admission.routes]]
+prefix = "skills/"
+groups = ["release-system"]
+
+[[test_admission.routes]]
+prefix = "config/settings/"
+groups = ["binaries", "release-system"]
+
+[[test_admission.routes]]
+prefix = "config/data/"
+groups = ["binaries"]
+
 [stages.cargo-debug]
 path = "target/cargo/debug"
 warning_bytes = 38654705664
