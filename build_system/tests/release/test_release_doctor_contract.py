@@ -1919,6 +1919,7 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
     agents = _source_text("AGENTS.md")
     testing_skill = _source_text("skills/dev-testing/SKILL.md")
     release_skill = _skill_text("skills/release-process/SKILL.md")
+    normalized_release_skill = " ".join(release_skill.split())
 
     assert "run: just fast-test" in fast_gate
     assert "run: uv run --project build_system --frozen capsem-gate test-release-contracts" in fast_gate
@@ -1936,7 +1937,16 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
     assert "workflow_dispatch:" not in runtime_preflight
     assert "inputs.sha" not in runtime_preflight
     assert "EXPECTED_SHA" not in runtime_preflight
-    assert "Local `just test` is the whole-world proof" in release_skill
+    assert (
+        "Each release command is sufficient on its own because its hosted lane "
+        "performs release qualification"
+        in normalized_release_skill
+    )
+    assert (
+        "`just test <source-commit>` is optional reusable local whole-system "
+        "verification, not a release prerequisite"
+        in normalized_release_skill
+    )
     assert "Release CI reuses the same checked-in private modules" in testing_skill
     assert "Serialized Orthogonal Releases" in agents
 
