@@ -1049,23 +1049,73 @@ max_lines = 300
 # an outlier detector and would be deleted the first time it blocked someone.
 # 1000 sits just under p90 and flags 58 -- the genuine outliers.
 #
-# Rolled out by scope, one crate at a time, because the ceiling applies to
-# everything in `roots` and listing only some files would fail the rest.
-# capsem-service first: two entries freeze the two largest files in the
-# repository, in the crate CLAUDE.md calls a thin shell.
-# capsem-bench joins with no debt at all: its `main.rs` was 1496 lines -- the
-# CLI, the scenario catalogue, the HTTP and DNS engines and every arithmetic
-# helper in one file -- and was split into `scenarios.rs` and `protocol.rs`
-# rather than ratcheted. A root can be added without an entry, and that is the
-# better way to add one.
+# The entire workspace is covered. Every file above the ceiling is exact debt:
+# it may shrink, but any growth or stale entry fails. New crates enter this
+# boundary automatically because the root is `crates`, so a workspace split
+# cannot silently create an unguarded source tree.
 [boundary.rust]
-roots = ["crates/capsem-service", "crates/capsem-bench"]
+roots = ["crates"]
 suffixes = [".rs"]
 max_lines = 1000
 
 [boundary.rust.oversized_line_counts]
+"crates/capsem-admin/src/main.rs" = 9381
+"crates/capsem-admin/src/release_graph.rs" = 1192
+"crates/capsem-admin/src/release_graph/tests.rs" = 1411
+"crates/capsem-admin/src/tests.rs" = 4520
+"crates/capsem-agent/src/main.rs" = 1802
+"crates/capsem-agent/src/tests.rs" = 1882
+"crates/capsem-assets/src/asset_manager.rs" = 1667
+"crates/capsem-assets/src/asset_manager/tests.rs" = 1241
+"crates/capsem-config/src/security_rule_profile.rs" = 1184
+"crates/capsem-core/src/auto_snapshot.rs" = 1198
+"crates/capsem-core/src/auto_snapshot/tests.rs" = 1171
+"crates/capsem-core/src/hypervisor/kvm/mod.rs" = 1129
+"crates/capsem-core/src/hypervisor/kvm/sys.rs" = 1994
+"crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 2038
+"crates/capsem-core/src/hypervisor/kvm/virtio_blk/tests.rs" = 1270
+"crates/capsem-core/src/hypervisor/kvm/virtio_fs/tests.rs" = 2110
+"crates/capsem-core/src/hypervisor/kvm/virtio_vsock.rs" = 1105
+"crates/capsem-core/src/mcp/builtin_tools.rs" = 1143
+"crates/capsem-core/src/mcp/builtin_tools/tests.rs" = 1866
+"crates/capsem-core/src/mcp/file_tools.rs" = 1423
+"crates/capsem-core/src/mcp/file_tools/tests.rs" = 1231
+"crates/capsem-core/src/net/mitm_proxy/mcp_frame.rs" = 1072
+"crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2906
+"crates/capsem-core/src/net/mitm_proxy/telemetry_hook/tests.rs" = 1250
+"crates/capsem-core/src/net/policy_config/profile_contract.rs" = 2412
+"crates/capsem-core/src/net/policy_config/profile_contract/tests.rs" = 1357
+"crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1869
+"crates/capsem-core/src/net/policy_config/tests.rs" = 4868
+"crates/capsem-core/src/security_engine/mod.rs" = 3164
+"crates/capsem-core/src/security_engine/tests.rs" = 3827
+"crates/capsem-core/tests/mitm_integration.rs" = 2281
+"crates/capsem-gateway/src/terminal/tests.rs" = 1011
+"crates/capsem-logger/src/db/handle_tests.rs" = 1752
+"crates/capsem-logger/src/reader.rs" = 1892
+"crates/capsem-logger/src/schema.rs" = 1723
+"crates/capsem-logger/src/schema/tests.rs" = 1132
+"crates/capsem-logger/src/session_index.rs" = 1446
+"crates/capsem-logger/src/session_index/tests.rs" = 1265
+"crates/capsem-logger/src/writer.rs" = 1809
+"crates/capsem-logger/src/writer/tests.rs" = 2161
+"crates/capsem-logger/tests/roundtrip.rs" = 3547
+"crates/capsem-mcp/src/main.rs" = 1120
+"crates/capsem-mcp/src/tests.rs" = 1057
+"crates/capsem-mock-server/src/main.rs" = 1670
+"crates/capsem-process/src/ipc.rs" = 1057
+"crates/capsem-process/src/vsock.rs" = 1853
+"crates/capsem-process/src/vsock/tests.rs" = 1056
+"crates/capsem-proto/src/tests.rs" = 1734
 "crates/capsem-service/src/main.rs" = 13876
 "crates/capsem-service/src/tests.rs" = 11941
+"crates/capsem-tui/src/tests.rs" = 2292
+"crates/capsem-tui/src/ui.rs" = 1202
+"crates/capsem/src/main.rs" = 2689
+"crates/capsem/src/support_bundle.rs" = 1105
+"crates/capsem/src/tests.rs" = 1506
+"crates/capsem/src/update.rs" = 4945
+"crates/capsem/src/update/tests.rs" = 2976
 
 # The benchmark collectors. Their whole contract is that they print raw
 # samples and compute nothing, so one growing past this ceiling means

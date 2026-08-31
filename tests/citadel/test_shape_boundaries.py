@@ -79,9 +79,17 @@ def _tracked_line_counts(
         if not raw:
             continue
         relative = Path(raw.decode())
-        source = (root / relative).read_text(encoding="utf-8")
-        if relative.suffix in suffixes or source.startswith("#!"):
-            counts[relative.as_posix()] = len(source.splitlines())
+        path = root / relative
+        if relative.suffix in suffixes:
+            source = path.read_text(encoding="utf-8")
+        elif relative.suffix:
+            continue
+        else:
+            raw_source = path.read_bytes()
+            if not raw_source.startswith(b"#!"):
+                continue
+            source = raw_source.decode("utf-8")
+        counts[relative.as_posix()] = len(source.splitlines())
     return dict(sorted(counts.items()))
 
 
@@ -162,12 +170,21 @@ def test_only_tracked_first_party_programs_are_measured(tmp_path: Path) -> None:
     (tmp_path / "scripts" / "module.py").write_text("one\ntwo\n", encoding="utf-8")
     (tmp_path / "scripts" / "installer").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     (tmp_path / "scripts" / "data.xml").write_text("<data />\n", encoding="utf-8")
+    (tmp_path / "scripts" / "fixture.bin").write_bytes(b"\xff\x00\xfe")
     (tmp_path / "scripts" / "generated.py").write_text("generated\n", encoding="utf-8")
     (tmp_path / "vendor" / "tool.py").write_text("vendored\n", encoding="utf-8")
 
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(
-        ["git", "add", "scripts/module.py", "scripts/installer", "scripts/data.xml", "vendor"],
+        [
+            "git",
+            "add",
+            "scripts/module.py",
+            "scripts/installer",
+            "scripts/data.xml",
+            "scripts/fixture.bin",
+            "vendor",
+        ],
         cwd=tmp_path,
         check=True,
     )
