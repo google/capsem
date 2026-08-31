@@ -1062,7 +1062,6 @@ max_lines = 1000
 "crates/capsem-admin/src/main.rs" = 8047
 "crates/capsem-admin/src/release_graph.rs" = 1089
 "crates/capsem-admin/src/release_graph/tests.rs" = 1323
-"crates/capsem-admin/src/tests.rs" = 4051
 "crates/capsem-agent/src/main.rs" = 1733
 "crates/capsem-agent/src/tests.rs" = 1800
 "crates/capsem-assets/src/asset_manager.rs" = 1604
