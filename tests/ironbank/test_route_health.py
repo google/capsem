@@ -324,12 +324,13 @@ def _median_route_windows(windows: list[RouteTiming]) -> RouteTiming:
     )
 
 
-def _measure_hot_route(
+def _measure_route_windows(
     label: str,
     call: Callable[[], Any],
     *,
     service_proc: psutil.Process,
     gateway_proc: psutil.Process | None = None,
+    samples: int,
 ) -> RouteTiming:
     return _median_route_windows(
         [
@@ -338,10 +339,26 @@ def _measure_hot_route(
                 call,
                 service_proc=service_proc,
                 gateway_proc=gateway_proc,
-                samples=HOT_ROUTE_WINDOW_SAMPLES,
+                samples=samples,
             )
             for _ in range(HOT_ROUTE_WINDOWS)
         ]
+    )
+
+
+def _measure_hot_route(
+    label: str,
+    call: Callable[[], Any],
+    *,
+    service_proc: psutil.Process,
+    gateway_proc: psutil.Process | None = None,
+) -> RouteTiming:
+    return _measure_route_windows(
+        label,
+        call,
+        service_proc=service_proc,
+        gateway_proc=gateway_proc,
+        samples=HOT_ROUTE_WINDOW_SAMPLES,
     )
 
 
@@ -604,6 +621,23 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
     )
 
 
+def _scaled_hot_route_budget(
+    path: str,
+    *,
+    gateway: bool,
+    samples: int,
+) -> tuple[float, float, float]:
+    p95_ms, p99_ms, cpu_s = _hot_route_budget(path, gateway=gateway)
+    return (
+        p95_ms * HOT_ROUTE_REGRESSION_FACTOR,
+        p99_ms * HOT_ROUTE_REGRESSION_FACTOR,
+        cpu_s
+        * samples
+        / HOT_ROUTE_REFERENCE_SAMPLES
+        * HOT_ROUTE_REGRESSION_FACTOR,
+    )
+
+
 def _assert_hot_route_budget(
     timing: RouteTiming,
     *,
@@ -611,10 +645,11 @@ def _assert_hot_route_budget(
     gateway: bool = False,
 ) -> None:
     assert len(timing.samples_ms) == HOT_ROUTE_MEASUREMENT_SAMPLES
-    p95_ms, p99_ms, cpu_s = _hot_route_budget(path, gateway=gateway)
-    p95_ms *= HOT_ROUTE_REGRESSION_FACTOR
-    p99_ms *= HOT_ROUTE_REGRESSION_FACTOR
-    cpu_s *= HOT_ROUTE_WINDOW_SAMPLES / HOT_ROUTE_REFERENCE_SAMPLES * HOT_ROUTE_REGRESSION_FACTOR
+    p95_ms, p99_ms, cpu_s = _scaled_hot_route_budget(
+        path,
+        gateway=gateway,
+        samples=HOT_ROUTE_WINDOW_SAMPLES,
+    )
     _assert_timing_budget(
         timing,
         p95_ms=p95_ms,
@@ -1355,15 +1390,17 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
                 ),
                 RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
             ):
-                timing = _measure_route(
+                timing = _measure_route_windows(
                     f"{client_label} {contract.path}",
                     lambda c=contract, route_client=client: _assert_contract(route_client, c),
                     service_proc=service_proc,
                     gateway_proc=gateway_for_cpu,
+                    samples=HOT_ROUTE_REFERENCE_SAMPLES,
                 )
-                p95_ms, p99_ms, cpu_s = _hot_route_budget(
+                p95_ms, p99_ms, cpu_s = _scaled_hot_route_budget(
                     contract.path,
                     gateway=gateway_for_cpu is not None,
+                    samples=HOT_ROUTE_REFERENCE_SAMPLES,
                 )
                 _assert_timing_budget(
                     timing,
@@ -1371,6 +1408,7 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
                     p99_ms=max(p99_ms, 500.0),
                     max_ms=None,
                     cpu_s=cpu_s,
+                    cpu_slack_s=0.0,
                 )
 
         running_status = service_client.get(f"/vms/{source_id}/status", timeout=30)
