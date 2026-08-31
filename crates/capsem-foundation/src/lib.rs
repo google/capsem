@@ -9,6 +9,7 @@ pub mod log_layer;
 pub mod paths;
 pub mod poll;
 pub mod telemetry;
+pub mod time;
 pub mod uds;
 
 #[cfg(test)]

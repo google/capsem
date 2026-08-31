@@ -1,4 +1,4 @@
-pub mod asset_manager;
+pub use capsem_assets::{asset_manager, manifest_compat};
 pub mod auditfs;
 pub mod auto_snapshot;
 pub mod credential_broker;
@@ -8,7 +8,6 @@ pub mod hypervisor;
 pub use capsem_foundation::{ipc_handshake, log_layer, paths, poll, telemetry, uds};
 #[macro_use]
 pub mod macros;
-pub mod manifest_compat;
 pub mod mcp;
 pub mod net;
 pub mod security_engine;

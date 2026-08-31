@@ -755,6 +755,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "capsem-assets"
+version = "0.6.2"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "capsem-foundation",
+ "futures",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "capsem-bench"
 version = "0.6.2"
 dependencies = [
@@ -779,6 +795,7 @@ dependencies = [
  "blake3",
  "block2",
  "bytes",
+ "capsem-assets",
  "capsem-foundation",
  "capsem-logger",
  "capsem-proto",
@@ -898,6 +915,7 @@ version = "0.6.2"
 dependencies = [
  "anyhow",
  "blake3",
+ "capsem-foundation",
  "criterion",
  "humantime",
  "memmap2",

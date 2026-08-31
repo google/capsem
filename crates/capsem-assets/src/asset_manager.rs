@@ -971,7 +971,7 @@ pub fn hash_file(path: &Path) -> Result<String> {
 
 /// Return the default assets directory.
 ///
-/// Resolves via [`crate::paths::capsem_home_opt`], so the `CAPSEM_HOME` /
+/// Resolves via [`capsem_foundation::paths::capsem_home_opt`], so the `CAPSEM_HOME` /
 /// `CAPSEM_ASSETS_DIR` env overrides are honored.
 pub fn default_assets_dir() -> Option<PathBuf> {
     // Honor CAPSEM_ASSETS_DIR first, then <capsem_home>/assets.
@@ -980,7 +980,7 @@ pub fn default_assets_dir() -> Option<PathBuf> {
             return Some(PathBuf::from(v));
         }
     }
-    crate::paths::capsem_home_opt().map(|h| h.join("assets"))
+    capsem_foundation::paths::capsem_home_opt().map(|h| h.join("assets"))
 }
 
 /// Build the GitHub Releases download base URL for the given **binary**

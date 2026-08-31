@@ -59,7 +59,7 @@ pub mod time_format {
     where
         S: Serializer,
     {
-        let iso = crate::session::epoch_to_iso(
+        let iso = capsem_foundation::time::epoch_to_iso(
             time.duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),

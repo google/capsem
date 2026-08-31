@@ -158,8 +158,8 @@ fn public_release_graph_retains_every_profile_state_identity() {
     assert_eq!(revision_state.images_revision, state.images_revision);
 
     let mut evidence_changed = graph.clone();
-    evidence_changed["profiles"]["code"]["architectures"][0]["evidence"][0]["digest"]
-        ["blake3"] = serde_json::json!("1".repeat(64));
+    evidence_changed["profiles"]["code"]["architectures"][0]["evidence"][0]["digest"]["blake3"] =
+        serde_json::json!("1".repeat(64));
     let evidence_state = release_graph_profile_state(&evidence_changed).unwrap();
     assert_ne!(evidence_state.catalog_revision, state.catalog_revision);
     assert_eq!(evidence_state.images_revision, state.images_revision);
@@ -624,8 +624,7 @@ fn copy_missing_local_assets_materializes_hash_named_layout() {
     .unwrap();
 
     let copied =
-        copy_missing_local_assets(&manifest, "9.9.9", "arm64", &source, &install, |_| {})
-            .unwrap();
+        copy_missing_local_assets(&manifest, "9.9.9", "arm64", &source, &install, |_| {}).unwrap();
 
     assert_eq!(copied.len(), 3);
     for (logical, bytes) in [
@@ -802,8 +801,7 @@ fn asset_download_url_uses_asset_version_channel_base_and_arch_prefix() {
 fn remote_asset_release_base_preserves_asset_version_template() {
     let dir = tempfile::tempdir().unwrap();
     let mut manifest = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
-    let asset_base =
-        "https://github.com/google/capsem/releases/download/assets-v{asset_version}";
+    let asset_base = "https://github.com/google/capsem/releases/download/assets-v{asset_version}";
     manifest.asset_base = Some(asset_base.to_string());
 
     let resolved_base = remote_asset_release_base_url(&manifest, dir.path()).unwrap();
@@ -1020,8 +1018,7 @@ fn channel_cache_isolation() {
     let asset_dir = capsem_home.join("assets/arm64");
     std::fs::create_dir_all(&asset_dir).unwrap();
     let stable_rootfs_hash = "1111111111111111111111111111111111111111111111111111111111111111";
-    let nightly_rootfs_hash =
-        "2222222222222222222222222222222222222222222222222222222222222222";
+    let nightly_rootfs_hash = "2222222222222222222222222222222222222222222222222222222222222222";
     let stable_rootfs = asset_dir.join(hash_filename("rootfs.erofs", stable_rootfs_hash));
     let nightly_rootfs = asset_dir.join(hash_filename("rootfs.erofs", nightly_rootfs_hash));
     std::fs::write(&stable_rootfs, b"stable profile rootfs").unwrap();
@@ -1075,7 +1072,10 @@ fn cleanup_rejects_unsafe_architecture_directory_before_removing_files() {
     let error = cleanup_unused_assets(dir.path(), &manifest).unwrap_err();
 
     assert!(format!("{error:#}").contains("invalid asset architecture directory"));
-    assert!(orphan.exists(), "validation must finish before cleanup starts");
+    assert!(
+        orphan.exists(),
+        "validation must finish before cleanup starts"
+    );
 }
 
 #[test]
@@ -1195,9 +1195,16 @@ fn materializing_keeps_both_profiles_images_when_they_share_a_logical_name() {
     .unwrap();
 
     let wanted = arch_assets_to_materialize(&manifest, "9.9.9", "arm64").unwrap();
-    let hashes: Vec<&str> = wanted.iter().map(|(_, _, entry)| entry.hash.as_str()).collect();
+    let hashes: Vec<&str> = wanted
+        .iter()
+        .map(|(_, _, entry)| entry.hash.as_str())
+        .collect();
 
-    assert_eq!(wanted.len(), 2, "one profile's kernel was dropped: {hashes:?}");
+    assert_eq!(
+        wanted.len(),
+        2,
+        "one profile's kernel was dropped: {hashes:?}"
+    );
     for bytes in [code.as_slice(), cowork.as_slice()] {
         assert!(hashes.contains(&blake3::hash(bytes).to_hex().to_string().as_str()));
     }
