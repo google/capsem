@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `just cache` now provides a typed, repository-owned inventory and retention
+  interface. Status and verification are read-only, pruning previews its exact
+  plan unless `--apply` is supplied, and every applied deletion is contained
+  beneath `cache/` and journaled with its reason.
 - Developer verification now has explicit cost boundaries: `just fast-test`
   prints that it is incomplete, `just focus-test <group>` reruns one existing
   owner (`assets`, `binaries`, `benchmark`, `install`, `release-system`, or

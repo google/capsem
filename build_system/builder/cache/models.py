@@ -100,3 +100,81 @@ class CachePolicy(BaseModel):
                         f"{right_id}={right.path}"
                     )
         return self
+
+
+class CacheEntry(BaseModel):
+    """One independently removable generation beneath a stage root."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    key: str
+    relative_path: Path
+    logical_bytes: Annotated[StrictInt, Field(ge=0)]
+    allocated_bytes: Annotated[StrictInt, Field(ge=0)]
+    created_ns: Annotated[StrictInt, Field(ge=0)]
+    last_used_ns: Annotated[StrictInt, Field(ge=0)]
+    protected: StrictBool = False
+
+
+class StageInventory(BaseModel):
+    """Byte-accounted contents of one configured leaf stage."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    stage_id: str
+    path: Path
+    external: StrictBool
+    logical_bytes: Annotated[StrictInt, Field(ge=0)]
+    allocated_bytes: Annotated[StrictInt, Field(ge=0)]
+    protected_bytes: Annotated[StrictInt, Field(ge=0)]
+    entries: tuple[CacheEntry, ...]
+
+    @property
+    def entry_count(self) -> int:
+        return len(self.entries)
+
+
+class CacheInventory(BaseModel):
+    """A point-in-time inventory of the repository cache."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    root: Path
+    generated_ns: Annotated[StrictInt, Field(ge=0)]
+    filesystem_free_bytes: Annotated[StrictInt, Field(ge=0)]
+    logical_bytes: Annotated[StrictInt, Field(ge=0)]
+    allocated_bytes: Annotated[StrictInt, Field(ge=0)]
+    stages: tuple[StageInventory, ...]
+
+
+class PruneAction(BaseModel):
+    """One exact path selected by a pure retention plan."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    stage_id: str
+    key: str
+    path: Path
+    logical_bytes: Annotated[StrictInt, Field(ge=0)]
+    reason: str
+
+
+class PrunePlan(BaseModel):
+    """A deterministic deletion proposal, inert until explicitly applied."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    generated_ns: Annotated[StrictInt, Field(ge=0)]
+    reclaim_bytes: Annotated[StrictInt, Field(ge=0)]
+    actions: tuple[PruneAction, ...]
+    violations: tuple[str, ...]
+
+
+class ApplyResult(BaseModel):
+    """Paths actually removed by the mutation boundary."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    removed: tuple[Path, ...]
+    missing: tuple[Path, ...]
+    journal: Path

@@ -11,6 +11,7 @@
 #   run-service            idempotent local daemon
 #   logs [sandbox|failure] service, VM, or failure evidence
 #   doctor                 host, Docker/Colima, Tart, and asset readiness
+#   cache                  cache inventory, verification, and retention
 #   fast-test              incomplete source feedback; never qualification
 #   focus-test             one named functional group, optionally cold
 #   install                build and install the complete local macOS product
@@ -22,6 +23,12 @@
 # `tests/citadel/test_ci_calls_only_public_recipes.py` refuses it.
 
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
+
+# Inventory and control the repository cache. The variadic is deliberately one
+# quoted command string; capsem-cache parses it as data and never as shell.
+cache *command:
+    uv run --project build_system --frozen capsem-cache dispatch {{quote(command)}}
+
 # Propagate Cargo.toml's version across the release cohort (capsem.gate.versions).
 _stamp-version:
     @uv run --project build_system --frozen capsem-gate stamp-version
