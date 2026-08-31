@@ -1,3 +1,5 @@
+//! Aggregator runtime behavior and CLI contract tests.
+
 use std::collections::HashMap;
 
 use super::*;

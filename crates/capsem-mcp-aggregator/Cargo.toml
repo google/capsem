@@ -33,5 +33,6 @@ workspace = true
 
 [dev-dependencies]
 axum.workspace = true
+rmcp = { workspace = true, features = ["transport-streamable-http-server", "transport-streamable-http-server-session"] }
 tempfile = "3"
 tokio-util.workspace = true

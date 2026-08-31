@@ -1,5 +1,6 @@
 //! Low-privilege MCP aggregation primitives.
 
+pub mod runtime;
 pub mod server_manager;
 
 #[cfg(test)]
