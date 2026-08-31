@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import re
 import subprocess
-import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -121,6 +120,8 @@ def _tracked_rust_sources() -> dict[str, str]:
 
 
 def test_focused_crates_do_not_reacquire_heavyweight_owners() -> None:
+    import tomllib
+
     manifests = {
         crate: tomllib.loads(
             (PROJECT_ROOT / "crates" / crate / "Cargo.toml").read_text()
