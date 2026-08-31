@@ -64,6 +64,7 @@ APPROVED_ROOT_FILES = frozenset(
         "codecov.yml",
         "justfile",
         "rust-toolchain.toml",
+        "rustfmt.toml",
     }
 )
 
