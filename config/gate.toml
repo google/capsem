@@ -1109,7 +1109,8 @@ max_lines = 1000
 "crates/capsem/src/main.rs" = 2505
 "crates/capsem/src/support_bundle.rs" = 1047
 "crates/capsem/src/tests.rs" = 1452
-"crates/capsem/src/update.rs" = 4453
+"crates/capsem/src/update.rs" = 2488
+"crates/capsem/src/update/asset_install.rs" = 1400
 "crates/capsem/src/update/tests.rs" = 2776
 
 # The benchmark collectors. Their whole contract is that they print raw
