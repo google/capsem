@@ -48,7 +48,7 @@ fn write_read_control_msg_exec_roundtrip() {
     assert!(len < MAX_FRAME_SIZE as usize);
     let mut payload = vec![0u8; len];
     reader.read_exact(&mut payload).unwrap();
-    let decoded = crate::decode_host_msg(&payload).unwrap();
+    let decoded = capsem_proto::decode_host_msg(&payload).unwrap();
     match decoded {
         HostToGuest::Exec { id, command } => {
             assert_eq!(id, 42);

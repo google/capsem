@@ -12,7 +12,7 @@ use super::{
 
 /// Local UI settings path: `<capsem_home>/settings.toml`.
 pub fn settings_config_path() -> Option<std::path::PathBuf> {
-    crate::paths::capsem_home_opt().map(|h| h.join("settings.toml"))
+    capsem_foundation::paths::capsem_home_opt().map(|h| h.join("settings.toml"))
 }
 
 /// Corporate config path: returns the first available corp config path.
@@ -40,7 +40,7 @@ pub fn corp_config_paths() -> Vec<std::path::PathBuf> {
     if system.exists() {
         paths.push(system);
     }
-    if let Some(capsem_home) = crate::paths::capsem_home_opt() {
+    if let Some(capsem_home) = capsem_foundation::paths::capsem_home_opt() {
         let user_corp = capsem_home.join("corp.toml");
         if user_corp.exists() {
             paths.push(user_corp);

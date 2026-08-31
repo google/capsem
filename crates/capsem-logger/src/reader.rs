@@ -1114,7 +1114,7 @@ impl DbReader {
             self.model_call_columns()
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![pattern, limit as i64], |row| read_model_call_row(row))?;
+        let rows = stmt.query_map(params![pattern, limit as i64], read_model_call_row)?;
         rows.collect()
     }
 

@@ -407,7 +407,7 @@ pub fn build_net_event(req_ctx: &TelemetryRequestContext, resp_stats: &Telemetry
         policy_action: req_ctx.policy_action.clone(),
         policy_rule: req_ctx.policy_rule.clone(),
         policy_reason: req_ctx.policy_reason.clone(),
-        trace_id: crate::telemetry::ambient_capsem_trace_id(),
+        trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
         credential_ref: req_ctx.credential_ref.clone(),
     }
 }
@@ -607,7 +607,8 @@ pub fn maybe_build_model_call(
         let mut state = trace_state.lock().unwrap_or_else(|e| e.into_inner());
         let tid = state.lookup(&tool_response_ids).unwrap_or_else(|| {
             if tool_call_ids.is_empty() {
-                crate::telemetry::ambient_capsem_trace_id().unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+                capsem_foundation::telemetry::ambient_capsem_trace_id()
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
             } else {
                 uuid::Uuid::new_v4().to_string()
             }

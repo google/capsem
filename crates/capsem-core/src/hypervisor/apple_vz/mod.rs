@@ -43,14 +43,16 @@ impl Hypervisor for AppleVzHypervisor {
                 // Capped: guest console output is guest-controlled and a
                 // persistent VM runs for weeks, so appending forever bounds
                 // the log only by the disk.
-                let mut file =
-                    match crate::telemetry::CappedLogWriter::open(&path, crate::telemetry::SERIAL_LOG_MAX_BYTES) {
-                        Ok(f) => f,
-                        Err(e) => {
-                            tracing::warn!(error = %e, path = %path.display(), "failed to open serial log file");
-                            return;
-                        }
-                    };
+                let mut file = match capsem_foundation::telemetry::CappedLogWriter::open(
+                    &path,
+                    capsem_foundation::telemetry::SERIAL_LOG_MAX_BYTES,
+                ) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        tracing::warn!(error = %e, path = %path.display(), "failed to open serial log file");
+                        return;
+                    }
+                };
                 loop {
                     match rx.blocking_recv() {
                         Ok(bytes) => {

@@ -3,7 +3,7 @@ use crate::net::policy_config::{SecurityRuleProfile, SecurityRuleSource};
 
 struct EnvGuard {
     // Redirects CAPSEM_HOME/RUN_DIR/ASSETS_DIR together; restores on drop.
-    _capsem_paths: crate::paths::CapsemPathsGuard,
+    _capsem_paths: capsem_foundation::paths::CapsemPathsGuard,
     old_home: Option<String>,
     old_store: Option<String>,
 }
@@ -15,7 +15,7 @@ impl EnvGuard {
         std::env::set_var("HOME", home);
         std::env::set_var(crate::credential_broker::STORE_PATH_ENV, test_store);
         Self {
-            _capsem_paths: crate::paths::CapsemPathsGuard::redirect(capsem_home),
+            _capsem_paths: capsem_foundation::paths::CapsemPathsGuard::redirect(capsem_home),
             old_home,
             old_store,
         }

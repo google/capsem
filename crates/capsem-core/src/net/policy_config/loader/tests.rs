@@ -285,7 +285,8 @@ fn env_var_path_resolution() {
     let prev_corp = std::env::var("CAPSEM_CORP_CONFIG").ok();
 
     // Local settings are rooted by CAPSEM_HOME.
-    let _capsem_paths = crate::paths::CapsemPathsGuard::redirect(std::path::Path::new("/tmp/custom-capsem-home"));
+    let _capsem_paths =
+        capsem_foundation::paths::CapsemPathsGuard::redirect(std::path::Path::new("/tmp/custom-capsem-home"));
     assert_eq!(
         settings_config_path(),
         Some(std::path::PathBuf::from("/tmp/custom-capsem-home/settings.toml"))
@@ -336,7 +337,7 @@ upstreams = ["127.0.0.1:5353"]
     .unwrap();
 
     let prev_corp = std::env::var("CAPSEM_CORP_CONFIG").ok();
-    let _capsem_paths = crate::paths::CapsemPathsGuard::redirect(&settings_home);
+    let _capsem_paths = capsem_foundation::paths::CapsemPathsGuard::redirect(&settings_home);
     std::env::set_var("CAPSEM_CORP_CONFIG", &corp_path);
     let (_, corp) = load_settings_and_corp_files();
     match prev_corp {

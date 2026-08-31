@@ -937,7 +937,7 @@ pub fn handle_revert_file_with_security_event(
         action: file_action,
         path: format!("{} (from {})", path_str, cp_str_owned),
         size,
-        trace_id: crate::telemetry::ambient_capsem_trace_id(),
+        trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
         credential_ref: None,
     };
 

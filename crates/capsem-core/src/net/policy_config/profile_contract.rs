@@ -1786,10 +1786,10 @@ impl ProfileCatalog {
                 return Self::load_from_dir(Path::new(&path));
             }
         }
-        let installed = crate::paths::capsem_home().join("profiles");
+        let installed = capsem_foundation::paths::capsem_home().join("profiles");
         if installed.is_dir() {
             let mut catalog = Self::load_from_dir(&installed)?;
-            let manifest_path = crate::paths::capsem_assets_dir().join("manifest.json");
+            let manifest_path = capsem_foundation::paths::capsem_assets_dir().join("manifest.json");
             if manifest_path.is_file() {
                 overlay_release_manifest_assets(&mut catalog, &manifest_path)?;
             }

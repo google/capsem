@@ -7,9 +7,8 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
+use capsem_proto::{GuestToHost, HostToGuest};
 use serde::{Deserialize, Serialize};
-
-use crate::{GuestToHost, HostToGuest};
 
 // ---------------------------------------------------------------------------
 // Host state enum

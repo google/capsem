@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use capsem_proto::{decode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, MAX_FRAME_SIZE};
 use tokio::sync::mpsc;
 use tracing::{debug_span, info, info_span, warn};
 
@@ -17,7 +18,7 @@ use crate::hypervisor::kvm::KvmHypervisor;
 use crate::net::cert_authority::CertAuthority;
 use crate::net::mitm_proxy;
 use crate::net::policy_config;
-use crate::{decode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, VirtioFsShare, MAX_FRAME_SIZE};
+use crate::VirtioFsShare;
 use capsem_logger::DbWriter;
 
 use super::registry::SandboxNetworkState;
@@ -219,7 +220,7 @@ pub fn boot_vm(
     info!("[boot-audit] calling hypervisor boot");
     let boot_span = debug_span!(
         target: "capsem.launch",
-        crate::telemetry::LAUNCH_VM_BOOT_SPAN,
+        capsem_foundation::telemetry::LAUNCH_VM_BOOT_SPAN,
         status = tracing::field::Empty,
     );
     let (vm, vsock_rx) = {
@@ -317,7 +318,7 @@ pub fn send_boot_config(
     cli_env: &[(String, String)],
     preloaded_guest_config: Option<policy_config::GuestConfig>,
 ) -> Result<()> {
-    use crate::capsem_proto::{
+    use capsem_proto::{
         validate_env_key, validate_env_value, validate_file_path, MAX_BOOT_ENV_VARS, MAX_BOOT_FILES,
         MAX_BOOT_FILE_BYTES,
     };
@@ -328,7 +329,7 @@ pub fn send_boot_config(
         .as_secs();
 
     // 1. Send BootConfig with clock.
-    let traceparent = crate::telemetry::current_parent_traceparent().to_string();
+    let traceparent = capsem_foundation::telemetry::current_parent_traceparent().to_string();
     write_control_msg(
         file,
         &HostToGuest::BootConfig {

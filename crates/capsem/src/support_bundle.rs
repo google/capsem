@@ -867,7 +867,7 @@ fn host_label() -> String {
 }
 
 fn runtime_boundary_debug_contract() -> serde_json::Value {
-    let host_vsock_services: Vec<_> = capsem_core::capsem_proto::host_vsock_services()
+    let host_vsock_services: Vec<_> = capsem_proto::host_vsock_services()
         .iter()
         .map(|service| {
             serde_json::json!({

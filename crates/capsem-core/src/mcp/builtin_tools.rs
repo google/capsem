@@ -252,7 +252,7 @@ async fn emit_net_event(
             policy_action: Some(enforcement.action.as_str().to_string()),
             policy_rule: enforcement.rule_id.clone(),
             policy_reason: enforcement.reason.clone(),
-            trace_id: crate::telemetry::ambient_capsem_trace_id(),
+            trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
             credential_ref: None,
         }),
     )
@@ -711,7 +711,7 @@ fn evaluate_builtin_http_request(
             http::HeaderMap::new(),
             parsed.query().map(str::to_string),
         ));
-    if let Some(trace_id) = crate::telemetry::ambient_capsem_trace_id() {
+    if let Some(trace_id) = capsem_foundation::telemetry::ambient_capsem_trace_id() {
         event = event.with_trace_id(trace_id);
     }
     if let Some(port) = parsed.port_or_known_default() {

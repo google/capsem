@@ -1,4 +1,5 @@
 use super::*;
+use capsem_proto::{encode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, MAX_FRAME_SIZE};
 use std::io::{Seek, SeekFrom, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
@@ -210,7 +211,7 @@ fn reexport_surface_compiles() {
         VSOCK_PORT_LIFECYCLE,
     ];
 
-    // Proto re-exports
+    // Shared protocol contracts
     let _ = MAX_FRAME_SIZE;
     let _ = std::mem::size_of::<GuestToHost>();
     let _ = std::mem::size_of::<HostToGuest>();

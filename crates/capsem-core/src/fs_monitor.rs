@@ -407,7 +407,7 @@ impl FsMonitor {
             let state = trace_state.lock().unwrap_or_else(|e| e.into_inner());
             state
                 .lookup_file_path(path)
-                .or_else(crate::telemetry::ambient_capsem_trace_id)
+                .or_else(capsem_foundation::telemetry::ambient_capsem_trace_id)
         };
         let credential_ref = Self::broker_env_file_credentials(db, &rules, path, fs_path, action).await;
         crate::security_engine::emit_file_security_write_and_rules(

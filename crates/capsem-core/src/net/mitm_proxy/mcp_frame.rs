@@ -617,7 +617,7 @@ async fn log_mcp_call_with_policy(
         policy_action: policy_fields.policy_action,
         policy_rule: policy_fields.policy_rule,
         policy_reason: policy_fields.policy_reason,
-        trace_id: crate::telemetry::ambient_capsem_trace_id(),
+        trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
         credential_ref: None,
     };
     let security_event = security_event_from_mcp_call(&call);
@@ -718,7 +718,7 @@ fn mcp_security_event_from_summary(
             name: Some(process_name.to_string()),
             ..Default::default()
         });
-    match crate::telemetry::ambient_capsem_trace_id() {
+    match capsem_foundation::telemetry::ambient_capsem_trace_id() {
         Some(trace_id) => event.with_trace_id(trace_id),
         None => event,
     }

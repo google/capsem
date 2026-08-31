@@ -240,7 +240,7 @@ pub fn detect_name_collisions(tools: &[McpToolDef]) -> Vec<(String, Vec<String>)
 
 /// Tool cache file path inside the capsem home dir.
 fn tool_cache_path() -> Option<std::path::PathBuf> {
-    crate::paths::capsem_home_opt().map(|h| h.join("mcp_tool_cache.json"))
+    capsem_foundation::paths::capsem_home_opt().map(|h| h.join("mcp_tool_cache.json"))
 }
 
 /// Save tool cache to disk.

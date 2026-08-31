@@ -1,11 +1,9 @@
-pub use capsem_assets::{asset_manager, manifest_compat};
 pub mod auditfs;
 pub mod auto_snapshot;
 pub mod credential_broker;
 pub mod fs_monitor;
 pub mod host_state;
 pub mod hypervisor;
-pub use capsem_foundation::{ipc_handshake, log_layer, paths, poll, telemetry, uds};
 #[macro_use]
 pub mod macros;
 pub mod mcp;
@@ -18,10 +16,6 @@ pub mod vm;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-pub use capsem_proto;
-pub use capsem_proto::{
-    decode_guest_msg, decode_host_msg, encode_guest_msg, encode_host_msg, GuestToHost, HostToGuest, MAX_FRAME_SIZE,
-};
 pub use host_state::{validate_guest_msg, validate_host_msg, HostState, HostStateMachine, StateMachine, Transition};
 pub use vm::boot::{
     boot_vm, create_net_state, create_net_state_with_policy, read_control_msg, send_boot_config, write_control_msg,

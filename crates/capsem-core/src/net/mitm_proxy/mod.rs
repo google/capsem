@@ -318,7 +318,7 @@ impl ObservedMcpHttpRequest {
             .with_request_preview(self.request_preview.as_deref())
             .with_response_preview(response_preview),
         );
-        match crate::telemetry::ambient_capsem_trace_id() {
+        match capsem_foundation::telemetry::ambient_capsem_trace_id() {
             Some(trace_id) => event.with_trace_id(trace_id),
             None => event,
         }
@@ -613,7 +613,7 @@ pub async fn handle_connection(vsock_fd: RawFd, config: Arc<MitmProxyConfig>) {
                 policy_action: None,
                 policy_rule: None,
                 policy_reason: None,
-                trace_id: crate::telemetry::ambient_capsem_trace_id(),
+                trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
                 credential_ref: None,
             };
 
@@ -1052,7 +1052,7 @@ async fn handle_request(
     {
         let first_network_span = tracing::info_span!(
             target: "capsem.launch",
-            crate::telemetry::LAUNCH_FIRST_NETWORK_READY_SPAN,
+            capsem_foundation::telemetry::LAUNCH_FIRST_NETWORK_READY_SPAN,
             protocol = protocol.label(),
             provider = provider_label(ai_provider),
             status = "ok",
@@ -1104,7 +1104,7 @@ async fn handle_request(
                 ai_provider: conn_ai_provider,
                 ai_protocol: conn_ai_protocol,
             },
-            crate::telemetry::ambient_capsem_trace_id(),
+            capsem_foundation::telemetry::ambient_capsem_trace_id(),
         )
         .seed::<Option<TelemetryRequestContext>>(Some(req_ctx));
         dispatched.boxed()
@@ -1494,7 +1494,7 @@ async fn handle_request(
             RequestBodySource::Incoming(_) => None,
         },
     });
-    if let Some(trace_id) = crate::telemetry::ambient_capsem_trace_id() {
+    if let Some(trace_id) = capsem_foundation::telemetry::ambient_capsem_trace_id() {
         http_security_event = http_security_event.with_trace_id(trace_id);
     }
     let rules = config.telemetry.security_rules.read().unwrap().clone();
@@ -1700,7 +1700,7 @@ async fn handle_request(
                 policy_action: request_security_decision.policy_action.clone(),
                 policy_rule: request_security_decision.policy_rule.clone(),
                 policy_reason: request_security_decision.policy_reason.clone(),
-                trace_id: crate::telemetry::ambient_capsem_trace_id(),
+                trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
                 credential_ref: credential_ref.clone(),
             };
             if let Some(event_id) = emit_security_write(&config.db, WriteOp::McpCall(denied_call)).await {
@@ -2634,7 +2634,7 @@ async fn handle_request(
                 policy_action: mcp_request_security_decision.policy_action.clone(),
                 policy_rule: mcp_request_security_decision.policy_rule.clone(),
                 policy_reason: mcp_request_security_decision.policy_reason.clone(),
-                trace_id: crate::telemetry::ambient_capsem_trace_id(),
+                trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
                 credential_ref: credential_ref.clone(),
             };
             if let Some(event_id) = emit_security_write(&config.db, WriteOp::McpCall(call)).await {
@@ -2704,7 +2704,7 @@ async fn handle_request(
             ai_provider: effective_ai_provider,
             ai_protocol: effective_ai_protocol,
         },
-        crate::telemetry::ambient_capsem_trace_id(),
+        capsem_foundation::telemetry::ambient_capsem_trace_id(),
     )
     .seed::<decompression_hook::DecompressionConfig>(decompression_hook::DecompressionConfig { gzip: is_gzip })
     .seed::<Option<TelemetryRequestContext>>(Some(req_ctx));

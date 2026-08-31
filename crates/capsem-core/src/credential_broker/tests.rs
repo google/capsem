@@ -5,7 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 
 struct EnvGuard {
     // Redirects CAPSEM_HOME/RUN_DIR/ASSETS_DIR together; restores on drop.
-    _capsem_paths: crate::paths::CapsemPathsGuard,
+    _capsem_paths: capsem_foundation::paths::CapsemPathsGuard,
     old_home: Option<String>,
     old_store: Option<String>,
 }
@@ -18,7 +18,7 @@ impl EnvGuard {
         std::env::set_var("HOME", home);
         std::env::set_var(STORE_PATH_ENV, test_store);
         Self {
-            _capsem_paths: crate::paths::CapsemPathsGuard::redirect(capsem_home),
+            _capsem_paths: capsem_foundation::paths::CapsemPathsGuard::redirect(capsem_home),
             old_home,
             old_store,
         }
@@ -44,7 +44,7 @@ fn credential_store_uses_disk_backend_by_default() {
     let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let old_store = std::env::var(STORE_PATH_ENV).ok();
-    let _capsem_paths = crate::paths::CapsemPathsGuard::redirect(&dir.path().join("capsem-home"));
+    let _capsem_paths = capsem_foundation::paths::CapsemPathsGuard::redirect(&dir.path().join("capsem-home"));
     std::env::remove_var(STORE_PATH_ENV);
     CredentialStore::global().clear_for_test();
 
@@ -67,7 +67,7 @@ fn default_credential_store_writes_capsem_home_disk_file() {
     let dir = tempfile::tempdir().unwrap();
     let capsem_home = dir.path().join("capsem-home");
     let old_store = std::env::var(STORE_PATH_ENV).ok();
-    let _capsem_paths = crate::paths::CapsemPathsGuard::redirect(&capsem_home);
+    let _capsem_paths = capsem_foundation::paths::CapsemPathsGuard::redirect(&capsem_home);
     std::env::remove_var(STORE_PATH_ENV);
     CredentialStore::global().clear_for_test();
 

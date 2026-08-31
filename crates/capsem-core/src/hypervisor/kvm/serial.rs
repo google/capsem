@@ -75,7 +75,7 @@ fn read_loop(fd: RawFd, tx: &broadcast::Sender<Vec<u8>>, log_path: Option<PathBu
     // Same capped writer the Apple VZ backend uses: one rule, one function,
     // and a persistent VM cannot fill the disk with console output.
     let mut log_file = log_path.and_then(|path| {
-        crate::telemetry::CappedLogWriter::open(&path, crate::telemetry::SERIAL_LOG_MAX_BYTES)
+        capsem_foundation::telemetry::CappedLogWriter::open(&path, capsem_foundation::telemetry::SERIAL_LOG_MAX_BYTES)
             .map_err(|e| {
                 warn!(error = %e, path = %path.display(), "failed to open KVM serial log file");
                 e

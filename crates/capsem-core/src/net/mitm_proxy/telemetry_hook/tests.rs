@@ -63,7 +63,7 @@ fn any_conn() -> ConnMeta {
 struct EnvGuard {
     // Redirects CAPSEM_HOME/RUN_DIR/ASSETS_DIR together; restores on drop.
     // None for trace-only guards, which redirect no paths.
-    _capsem_paths: Option<crate::paths::CapsemPathsGuard>,
+    _capsem_paths: Option<capsem_foundation::paths::CapsemPathsGuard>,
     old_home: Option<String>,
     old_store: Option<String>,
     old_trace: Option<String>,
@@ -77,7 +77,7 @@ impl EnvGuard {
         std::env::set_var("HOME", home);
         std::env::set_var(crate::credential_broker::STORE_PATH_ENV, test_store);
         Self {
-            _capsem_paths: Some(crate::paths::CapsemPathsGuard::redirect(capsem_home)),
+            _capsem_paths: Some(capsem_foundation::paths::CapsemPathsGuard::redirect(capsem_home)),
             old_home,
             old_store,
             old_trace,
