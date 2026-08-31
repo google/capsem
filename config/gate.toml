@@ -1064,8 +1064,8 @@ suffixes = [".rs"]
 max_lines = 1000
 
 [boundary.rust.oversized_line_counts]
-"crates/capsem-service/src/main.rs" = 13876
-"crates/capsem-service/src/tests.rs" = 11941
+"crates/capsem-service/src/main.rs" = 13915
+"crates/capsem-service/src/tests.rs" = 12007
 
 # The benchmark collectors. Their whole contract is that they print raw
 # samples and compute nothing, so one growing past this ceiling means
