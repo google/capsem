@@ -17,6 +17,10 @@ def load_injection_script():
 def test_injection_scenario_uses_materialized_profiles_dir(monkeypatch, tmp_path):
     module = load_injection_script()
     captured = {}
+    shared_run_dir = tmp_path / "gate-run"
+    shared_run_dir.mkdir()
+    (shared_run_dir / "service.explicitly-stopped").write_text("stopped\n")
+    monkeypatch.setenv("CAPSEM_RUN_DIR", str(shared_run_dir))
 
     def fake_run(args, env, capture_output, text, timeout):
         captured["args"] = args
@@ -48,6 +52,10 @@ def test_injection_scenario_uses_materialized_profiles_dir(monkeypatch, tmp_path
     assert captured["env"]["CAPSEM_PROFILES_DIR"] == str(profiles_dir)
     assert captured["env"]["CAPSEM_HOME"] != str(profiles_dir)
     assert captured["env"]["CAPSEM_HOME"].startswith("/tmp/capsem-injection-proof-home-")
+    assert captured["env"]["CAPSEM_RUN_DIR"] == str(
+        Path(captured["env"]["CAPSEM_HOME"]) / "run"
+    )
+    assert captured["env"]["CAPSEM_RUN_DIR"] != str(shared_run_dir)
     assert captured["args"] == [
         "target/debug/capsem",
         "run",

@@ -172,6 +172,7 @@ def run_scenario(
         "CAPSEM_PROFILES_DIR": profiles_dir,
         "RUST_LOG": "capsem=warn",
         "CAPSEM_HOME": capsem_home.name,
+        "CAPSEM_RUN_DIR": os.path.join(capsem_home.name, "run"),
     }
     if corp_path:
         env["CAPSEM_CORP_CONFIG"] = corp_path
