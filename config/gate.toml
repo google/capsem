@@ -1053,10 +1053,15 @@ max_lines = 300
 # it may shrink, but any growth or stale entry fails. New crates enter this
 # boundary automatically because the root is `crates`, so a workspace split
 # cannot silently create an unguarded source tree.
+#
+# The exact debt ratchets every outlier below its present line count. The hard
+# limit separately records the completed workspace-wide milestone, so nobody
+# can make a larger file fit by merely raising or adding a debt entry.
 [boundary.rust]
 roots = ["crates"]
 suffixes = [".rs"]
 max_lines = 1000
+must_stay_below_lines = 3000
 
 [boundary.rust.oversized_line_counts]
 "crates/capsem-admin/src/assets_channel_render.rs" = 1720

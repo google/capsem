@@ -30,6 +30,7 @@ class ScriptSizeConfig(Strict):
     roots: tuple[SourcePath, ...]
     suffixes: tuple[ScriptSuffix, ...]
     max_lines: PositiveInt
+    must_stay_below_lines: PositiveInt | None = None
     oversized_line_counts: dict[SourcePath, PositiveInt]
 
     @field_validator("roots", "suffixes")
@@ -51,6 +52,8 @@ class ScriptSizeConfig(Strict):
 
     @model_validator(mode="after")
     def _ratchets_are_oversized_scripts_in_scope(self) -> ScriptSizeConfig:
+        if self.must_stay_below_lines is not None and self.must_stay_below_lines <= self.max_lines:
+            raise ValueError("the hard source limit must exceed the ordinary source ceiling")
         roots = tuple(PurePosixPath(root) for root in self.roots)
         for value, line_count in self.oversized_line_counts.items():
             path = PurePosixPath(value)
@@ -62,5 +65,10 @@ class ScriptSizeConfig(Strict):
                 raise ValueError(
                     f"{value!r} no longer exceeds the {self.max_lines}-line ceiling; "
                     "remove its stale ratchet"
+                )
+            if self.must_stay_below_lines is not None and line_count >= self.must_stay_below_lines:
+                raise ValueError(
+                    f"{value!r} has {line_count} lines and must stay below "
+                    f"the {self.must_stay_below_lines}-line hard limit"
                 )
         return self
