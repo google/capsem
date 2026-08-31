@@ -28,7 +28,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use capsem_core::mcp::aggregator::*;
-use capsem_core::mcp::server_manager::McpServerManager;
+use capsem_mcp_aggregator::server_manager::McpServerManager;
 use capsem_core::mcp::types::McpServerDef;
 
 #[derive(Parser, Debug)]

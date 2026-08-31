@@ -2,7 +2,6 @@ pub mod aggregator;
 pub mod builtin_tools;
 pub mod file_tools;
 pub mod policy;
-pub mod server_manager;
 pub mod types;
 
 use std::collections::HashMap;

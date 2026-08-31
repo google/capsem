@@ -976,15 +976,22 @@ name = "capsem-mcp-aggregator"
 version = "0.6.2"
 dependencies = [
  "anyhow",
+ "axum",
  "capsem-core",
  "capsem-foundation",
  "capsem-guard",
  "clap",
+ "futures",
+ "http",
  "reqwest 0.12.28",
+ "rmcp",
  "rmp-serde",
  "serde",
  "serde_json",
+ "sse-stream",
+ "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]

@@ -1,5 +1,7 @@
 use super::*;
 
+static TEST_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 struct EnvVarGuard {
     key: &'static str,
     old: Option<String>,
@@ -240,7 +242,7 @@ fn local_http_mcp_def(url: String, auth: Option<McpAuthConfig>) -> McpServerDef 
 
 #[tokio::test]
 async fn duplicate_tool_definitions_are_advertised_once() {
-    let harness = crate::test_support::mcp::spawn_duplicate_tool_mcp_server()
+    let harness = crate::test_support::spawn_duplicate_tool_mcp_server()
         .await
         .unwrap();
     let def = local_http_mcp_def(harness.url.clone(), None);
@@ -259,24 +261,24 @@ async fn duplicate_tool_definitions_are_advertised_once() {
 
 #[tokio::test]
 async fn local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
+    let _lock = TEST_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let _store_guard = EnvVarGuard::set(
-        crate::credential_broker::STORE_PATH_ENV,
+        "CAPSEM_CREDENTIAL_STORE_PATH",
         dir.path().join("store.json"),
     );
-    let harness = crate::test_support::mcp::spawn_recording_mcp_server()
+    let harness = crate::test_support::spawn_recording_mcp_server()
         .await
         .unwrap();
-    let observation = crate::credential_broker::CredentialObservation {
-        provider: crate::credential_broker::CredentialProvider::Mcp,
+    let observation = capsem_core::credential_broker::CredentialObservation {
+        provider: capsem_core::credential_broker::CredentialProvider::Mcp,
         raw_value: "local-mcp-oauth-token".to_string(),
         source: "mcp.auth.local_e2e".to_string(),
         event_type: Some("mcp.server.auth".to_string()),
         trace_id: Some("trace-local-mcp".to_string()),
         context_json: None,
     };
-    let brokered = crate::credential_broker::broker_observed_credential(&observation)
+    let brokered = capsem_core::credential_broker::broker_observed_credential(&observation)
         .expect("test credential should broker");
     let def = local_http_mcp_def(
         harness.url.clone(),
@@ -319,7 +321,7 @@ async fn local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call() {
     let tool_calls = harness.state.tool_calls();
     assert_eq!(
         tool_calls,
-        vec![crate::test_support::mcp::RecordedMcpToolCall {
+        vec![crate::test_support::RecordedMcpToolCall {
             tool: "echo".to_string(),
             arguments: serde_json::json!({ "message": "winter" }),
         }]
@@ -343,13 +345,13 @@ async fn local_http_mcp_e2e_uses_brokered_oauth_and_records_tool_call() {
 
 #[tokio::test]
 async fn local_http_mcp_unresolved_broker_ref_fails_before_network_dispatch() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
+    let _lock = TEST_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let _store_guard = EnvVarGuard::set(
-        crate::credential_broker::STORE_PATH_ENV,
+        "CAPSEM_CREDENTIAL_STORE_PATH",
         dir.path().join("store.json"),
     );
-    let harness = crate::test_support::mcp::spawn_recording_mcp_server()
+    let harness = crate::test_support::spawn_recording_mcp_server()
         .await
         .unwrap();
     let def = local_http_mcp_def(

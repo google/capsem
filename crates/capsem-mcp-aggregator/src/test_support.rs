@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::extract::{Request, State};
 use axum::middleware::Next;
+use axum::http::HeaderMap;
 use axum::Router;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool};
@@ -16,7 +17,17 @@ use serde::Deserialize;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::http::lower_headers;
+fn lower_headers(headers: &HeaderMap) -> HashMap<String, String> {
+    headers
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_ascii_lowercase(), value.to_string()))
+        })
+        .collect()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecordedMcpHttpRequest {

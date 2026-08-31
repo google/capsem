@@ -29,7 +29,7 @@ use rmcp::{RoleClient, ServiceExt};
 use sse_stream::{Sse, SseStream};
 use tracing::{debug, info, warn};
 
-use super::types::*;
+use capsem_core::mcp::types::*;
 
 /// One rmcp client connection. For stdio-pool servers, the manager keeps
 /// several of these in a `ServerPool`.
@@ -572,8 +572,8 @@ impl McpServerManager {
     async fn connect_http(&self, def: &McpServerDef) -> Result<RunningService<RoleClient, ()>> {
         let mut config = StreamableHttpClientTransportConfig::with_uri(def.url.as_str());
         if let Some(auth) = &def.auth {
-            let token = crate::credential_broker::resolve_broker_reference_for_provider(
-                crate::credential_broker::CredentialProvider::Mcp,
+            let token = capsem_core::credential_broker::resolve_broker_reference_for_provider(
+                capsem_core::credential_broker::CredentialProvider::Mcp,
                 &auth.credential_ref,
             )
             .map_err(|error| anyhow::anyhow!(error))?
