@@ -64,6 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Complete local qualification now retains the shared Cargo build directory
+  even when it crosses its advisory size threshold; only an explicit cold-build
+  diagnostic may discard reusable compiler output.
 - Session deletion now absorbs transient Linux `ENOTEMPTY` races from final
   SQLite or filesystem cleanup after VM exit, while remaining bounded and
   fail-closed for persistent or unrelated filesystem errors.

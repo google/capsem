@@ -2290,22 +2290,16 @@ vm_image_cache = "{parent}-vm-images"
 cargo_target = "{parent}-target"
 cargo_profiles = ["debug", "release"]
 
-# How large that shared directory may get before a run discards it whole.
+# The size at which a run warns that the shared directory deserves attention.
 #
-# The bound this system was missing. Prefixes are swept to `keep` on the way
-# into every run and `build_cache` is a rename target that never accumulates,
-# but cargo never garbage-collects: every dependency bump and deleted crate
-# leaves output here forever. Measured 8 GB in three days.
+# Advisory only. A normal gate must absolutely reuse this directory: selective
+# deletion underneath Cargo corrupts its fingerprint judgement, and deleting
+# it whole silently turns the expensive public qualification into a cold build.
+# `--clean-build` remains the explicit operator request to discard it.
 #
-# `[disk] required_free_gb` is not this. That is a floor on the filesystem --
-# it reports that something has already eaten the disk and stops whoever runs
-# next, rather than bounding whatever grew. It stays as the backstop; this is
-# the mechanism.
-#
-# Generous on purpose. Crossing it costs one cold build, so the number should
-# be large enough that a working week never does and small enough that the
-# floor is never what fires first.
-cargo_target_max_gb = 40.0
+# `[disk] required_free_gb` stays the fail-closed filesystem backstop. The
+# threshold is deliberately visible on every run so growth is not hidden.
+cargo_target_warning_gb = 40.0
 
 name_length = 8
 

@@ -25,7 +25,7 @@ class PrefixConfig(Strict):
     vm_image_cache: str
     cargo_target: str
     cargo_profiles: tuple[str, ...]
-    cargo_target_max_gb: float
+    cargo_target_warning_gb: float
     lease_template: str
     name_length: int
     keep: int
@@ -131,15 +131,15 @@ class PrefixConfig(Strict):
                 raise ValueError(f"cargo profile {profile!r} must be one plain directory name")
         return self
 
-    @field_validator("cargo_target_max_gb")
+    @field_validator("cargo_target_warning_gb")
     @classmethod
-    def _cap_is_a_real_size(cls, cap: float) -> float:
-        """A cap that can be switched off is not a cap.
+    def _warning_is_a_real_size(cls, threshold: float) -> float:
+        """The reported threshold must describe a real positive size.
 
-        `[disk] required_free_gb` is the floor and stays one; this is the bound
-        on the directory itself, and zero or negative would make every run
-        discard what the run before it built.
+        It is advisory rather than destructive: `[disk] required_free_gb` is
+        the fail-closed filesystem floor, and `--clean-build` is the explicit
+        way to discard compiler output.
         """
-        if cap <= 0:
-            raise ValueError("cargo_target_max_gb must be a positive size in GB")
-        return cap
+        if threshold <= 0:
+            raise ValueError("cargo_target_warning_gb must be a positive size in GB")
+        return threshold

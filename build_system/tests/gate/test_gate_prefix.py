@@ -1118,7 +1118,7 @@ def test_copying_a_tree_keeps_a_symlink_a_symlink(tmp_path: Path) -> None:
     assert (target / "arch" / "big.bin").read_bytes() == b"payload"
 
 
-def _capped(tmp_path: Path, cap_gb: float):
+def _shared_target_config(tmp_path: Path, warning_gb: float):
     """A config whose prefix root and shared build root are both disposable."""
     original = _config()
     return original.model_copy(
@@ -1127,41 +1127,42 @@ def _capped(tmp_path: Path, cap_gb: float):
                 update={
                     "parent": str(tmp_path / "prefixes"),
                     "cargo_target": "{parent}-target",
-                    "cargo_target_max_gb": cap_gb,
+                    "cargo_target_warning_gb": warning_gb,
                 }
             )
         }
     )
 
 
-def test_the_shared_build_directory_is_measured_and_kept_under_its_cap(
+def test_the_shared_build_directory_is_measured_and_never_automatically_discarded(
     tmp_path: Path,
 ) -> None:
-    """Under cap it is reported and left alone; over cap it goes, whole.
+    """Both sides of the advisory threshold retain the compiler cache.
 
-    The one part of this system nothing reclaimed. Cargo never garbage-collects,
-    so without a bound the directory only grows -- and `[disk] required_free_gb`
-    is a floor on the filesystem rather than a bound on this, which means it
-    reports that something already ate the disk instead of stopping the growth.
+    Cargo decides staleness from the tree as a whole. An automatic selective
+    prune would corrupt that judgement, while whole-tree eviction made an
+    ordinary `just test` unexpectedly cold. Destruction is an explicit
+    `--clean-build` operation; the configured size is a visible warning.
     """
     from capsem_builder.gate import cargotarget
 
-    config = _capped(tmp_path, cap_gb=1.0)
+    config = _shared_target_config(tmp_path, warning_gb=1.0)
     shared = cargotarget.path(config)
     (shared / "debug").mkdir(parents=True)
     (shared / "debug" / "libcapsem.rlib").write_bytes(b"\0" * 4096)
 
-    held = cargotarget.bound(config)
-    assert not held.discarded, "a directory well under its cap must survive"
+    held = cargotarget.measure(config)
     assert 0 < held.gb < 1.0
     assert (shared / "debug" / "libcapsem.rlib").exists()
 
-    # The same tree, against a cap it cannot fit under.
-    over = cargotarget.bound(_capped(tmp_path, cap_gb=4096 / 1024**3 / 2))
-    assert over.discarded
-    assert not shared.exists(), (
-        "the cap discards the build directory whole -- cargo decides staleness "
-        "by fingerprint, so removing chosen files underneath it corrupts that"
+    # The same tree, against a warning threshold it exceeds.
+    over = cargotarget.measure(
+        _shared_target_config(tmp_path, warning_gb=4096 / 1024**3 / 2)
+    )
+    assert over.gb > 4096 / 1024**3 / 2
+    assert (shared / "debug" / "libcapsem.rlib").exists(), (
+        "crossing the advisory threshold discarded reusable compiler output; "
+        "only an explicit --clean-build may make a qualification cold"
     )
 
 
@@ -1171,22 +1172,22 @@ def test_measuring_the_build_directory_does_not_follow_the_prefixes_into_it(
     """Every prefix points into this tree; counting through them double-bills.
 
     `target/debug` in each prefix is a symlink to the shared root. A size that
-    followed links would bill the same bytes once per run on disk and discard a
-    directory that had not grown at all.
+    followed links would bill the same bytes once per run on disk and report
+    growth that had not happened.
     """
     from capsem_builder.gate import cargotarget
 
-    config = _capped(tmp_path, cap_gb=1.0)
+    config = _shared_target_config(tmp_path, warning_gb=1.0)
     shared = cargotarget.path(config)
     (shared / "debug").mkdir(parents=True)
     (shared / "debug" / "libcapsem.rlib").write_bytes(b"\0" * 8192)
-    alone = cargotarget.bound(config).gb
+    alone = cargotarget.measure(config).gb
 
     prefix_path = tmp_path / "prefixes" / ("0" * 8)
     cargotarget.link_profiles(config, prefix_path)
     assert (prefix_path / "target" / "debug").is_symlink()
     # The link now resolves into the shared tree; the measurement must not.
-    assert cargotarget.bound(config).gb == alone
+    assert cargotarget.measure(config).gb == alone
 
 
 def test_a_lease_outlives_its_prefix_only_until_the_next_sweep(tmp_path: Path) -> None:
@@ -1198,7 +1199,7 @@ def test_a_lease_outlives_its_prefix_only_until_the_next_sweep(tmp_path: Path) -
     """
     from capsem_builder.gate.prefixlease import reclaim_orphan_leases
 
-    config = _capped(tmp_path, cap_gb=1.0)
+    config = _shared_target_config(tmp_path, warning_gb=1.0)
     root = Path(config.prefix.parent)
     root.mkdir(parents=True)
     live = root / ("a" * 8)
@@ -1223,7 +1224,7 @@ def test_a_held_lease_is_never_unlinked_from_under_its_owner(tmp_path: Path) -> 
     """
     from capsem_builder.gate.prefixlease import lease, reclaim_orphan_leases
 
-    config = _capped(tmp_path, cap_gb=1.0)
+    config = _shared_target_config(tmp_path, warning_gb=1.0)
     root = Path(config.prefix.parent)
     root.mkdir(parents=True)
     gone = root / ("c" * 8)
@@ -1249,7 +1250,7 @@ def test_a_pulled_lane_finds_its_binaries_where_every_test_looks(tmp_path: Path)
     """
     from capsem_builder.gate import cargotarget
 
-    config = _capped(tmp_path, cap_gb=1.0)
+    config = _shared_target_config(tmp_path, warning_gb=1.0)
     pulled = tmp_path / "pulled-bin"
     pulled.mkdir()
     (pulled / "capsem").write_text("#!/bin/sh\n", encoding="utf-8")
@@ -1267,7 +1268,7 @@ def test_a_pulled_lane_refuses_to_read_binaries_it_built_itself(tmp_path: Path) 
     from capsem_builder.gate import cargotarget
     from capsem_builder.gate.errors import GateError
 
-    config = _capped(tmp_path, cap_gb=1.0)
+    config = _shared_target_config(tmp_path, warning_gb=1.0)
     pulled = tmp_path / "pulled"
     pulled.mkdir()
     prefix_path = tmp_path / "prefixes" / ("b" * 8)
@@ -1292,7 +1293,9 @@ def test_a_pulled_lane_also_finds_the_config_it_was_handed(
 
     checkout = tmp_path / "checkout"
     (checkout / "target" / "config" / "profiles" / "code").mkdir(parents=True)
-    config = _capped(tmp_path, cap_gb=1.0).model_copy(update={"root": checkout})
+    config = _shared_target_config(tmp_path, warning_gb=1.0).model_copy(
+        update={"root": checkout}
+    )
     binaries = tmp_path / "pulled-bin"
     binaries.mkdir()
     prefix_path = tmp_path / "prefixes" / ("c" * 8)
@@ -1314,7 +1317,7 @@ def test_an_ordinary_run_still_compiles_into_the_shared_root(
     """No release variables means the build root, exactly as before."""
     from capsem_builder.gate import cargotarget
 
-    config = _capped(tmp_path, cap_gb=1.0)
+    config = _shared_target_config(tmp_path, warning_gb=1.0)
     monkeypatch.delenv(config.modules.release_bin_dir, raising=False)
     prefix_path = tmp_path / "prefixes" / ("d" * 8)
 

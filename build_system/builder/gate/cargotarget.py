@@ -20,7 +20,6 @@ One writer, because one gate runs per machine under `flock`.
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 from typing import NamedTuple
 
@@ -32,10 +31,9 @@ _GIB = 1024**3
 
 
 class Size(NamedTuple):
-    """How large the shared build directory was, and whether it survived."""
+    """How large the shared build directory was."""
 
     gb: float
-    discarded: bool
 
 
 def path(config: GateConfig) -> Path:
@@ -184,8 +182,8 @@ def _tree_bytes(root: Path) -> int:
     return total
 
 
-def bound(config: GateConfig) -> Size:
-    """Measure the shared build directory, and discard it if it is over cap.
+def measure(config: GateConfig) -> Size:
+    """Measure the shared build directory without changing it.
 
     The one part of this system nothing reclaimed. Prefixes are swept to
     `[prefix] keep` on the way into every run and the build cache is a rename
@@ -193,31 +191,14 @@ def bound(config: GateConfig) -> Size:
     dependency bump and deleted crate leaves output here forever. It reached
     8 GB in three days.
 
-    `[disk] required_free_gb` does not bound it and was never going to. That is
-    a floor on the whole filesystem: it reports that something has *already*
-    eaten the disk, and it stops whoever runs next rather than whatever grew. A
-    cap on the directory is what keeps the floor from ever being the mechanism.
-
-    Whole-directory, never selective. Cargo decides what is stale, by
-    fingerprint, and deleting chosen files underneath it corrupts exactly that
-    judgement -- the same reason `[prefix] lent` may only carry
-    content-addressed output. So the price of the cap is one cold build,
-    charged at a predictable size instead of at a full disk.
+    That growth is reported against an advisory threshold, but a normal gate
+    never reclaims it. Selective deletion underneath Cargo corrupts its
+    fingerprint judgement, while whole-directory deletion silently turns the
+    expensive public qualification into a cold build. The operator may still
+    request that deliberately with `--clean-build`; `[disk] required_free_gb`
+    remains the fail-closed filesystem backstop.
     """
     shared = path(config)
     if not shared.is_dir():
-        return Size(0.0, False)
-    gb = _tree_bytes(shared) / _GIB
-    if gb <= config.prefix.cargo_target_max_gb:
-        return Size(gb, False)
-    # The same shape as `prefix.reclaim`: a recursive delete of a path
-    # assembled in Python states out loud what it is allowed to be. Here that
-    # is the configured build root and nothing else -- not the prefix parent
-    # beside it, not a filesystem root, not the checkout.
-    resolved = Path(os.path.abspath(shared))
-    if resolved.parent == resolved or resolved == config.root.resolve():
-        raise GateError(f"refusing to discard {resolved}: that is not a build directory")
-    shutil.rmtree(resolved, ignore_errors=True)
-    if resolved.exists():
-        raise GateError(f"could not discard {resolved}; it is still on disk")
-    return Size(gb, True)
+        return Size(0.0)
+    return Size(_tree_bytes(shared) / _GIB)

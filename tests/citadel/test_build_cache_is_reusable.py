@@ -23,7 +23,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path, PurePosixPath
 
-from capsem_builder.gate import buildcache, prefix
+from capsem_builder.gate import buildcache, cargotarget, prefix
 from capsem_builder.gate import config as gate_config
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -61,6 +61,7 @@ def test_every_lent_path_is_invisible_to_the_source_digest() -> None:
         input="\n".join(lent),
         capture_output=True,
         text=True,
+        check=False,
     ).stdout.split()
 
     tracked = sorted(set(lent) - set(ignored))
@@ -175,6 +176,31 @@ def test_the_public_complete_gate_never_discards_reusable_output() -> None:
     assert "--clean-build" not in test_recipe, (
         "the public complete gate discards reusable build output; cold "
         "reproduction belongs to the explicit capsem-gate CLI flag"
+    )
+
+
+def test_an_over_threshold_compiler_cache_is_still_reused(tmp_path: Path) -> None:
+    """The reuse contract covers policy as well as the public recipe spelling.
+
+    The recipe guard above was green while a separate pre-run size policy
+    deleted 41.9 GiB of compiler output at a 40 GiB threshold. Exercise that
+    exact boundary: an advisory warning may become loud, but not destructive.
+    """
+    config = _relocated(tmp_path)
+    settings = config.prefix.model_copy(update={"cargo_target_warning_gb": 0.000001})
+    config = config.model_copy(update={"prefix": settings})
+    shared = cargotarget.path(config)
+    artifact = shared / "debug" / "deps" / "libcapsem.rlib"
+    artifact.parent.mkdir(parents=True)
+    payload = b"warm compiler output" * 128
+    artifact.write_bytes(payload)
+
+    observed = cargotarget.measure(config)
+
+    assert observed.gb > config.prefix.cargo_target_warning_gb
+    assert artifact.read_bytes() == payload, (
+        "crossing the compiler-cache warning discarded the warm gate output; "
+        "only an explicit --clean-build may do that"
     )
 
 

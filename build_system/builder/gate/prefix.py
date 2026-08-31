@@ -192,13 +192,18 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
             runner.note(f"reclaimed stale prefix {stale}")
         for orphan in reclaim_orphan_leases(config):
             runner.note(f"reclaimed orphan lease {orphan.name}")
-        # Reported every run, not only when it fires. A cap nobody sees the
-        # approach to is a cold build that arrives without warning.
-        held = cargotarget.bound(config)
+        # Reported every run. Crossing the advisory threshold must never turn
+        # a public qualification cold; only the explicit `--clean-build` path
+        # may discard compiler output.
+        held = cargotarget.measure(config)
         runner.note(
             f"shared build directory {held.gb:.1f} GB "
-            f"of {config.prefix.cargo_target_max_gb:.0f} GB"
-            + (" -- over cap, discarded; this run compiles from nothing" if held.discarded else "")
+            f"(advisory threshold {config.prefix.cargo_target_warning_gb:.0f} GB)"
+            + (
+                " -- above threshold, retained for warm reuse"
+                if held.gb > config.prefix.cargo_target_warning_gb
+                else ""
+            )
         )
     retained_commit = commit is not None and path.exists()
     if reuse is not None and commit is not None:
