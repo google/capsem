@@ -1086,7 +1086,6 @@ max_lines = 1000
 "crates/capsem-core/src/net/policy_config/profile_contract.rs" = 2163
 "crates/capsem-core/src/net/policy_config/profile_contract/tests.rs" = 1264
 "crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1724
-"crates/capsem-core/src/net/policy_config/tests.rs" = 4409
 "crates/capsem-core/src/security_engine/mod.rs" = 2986
 "crates/capsem-core/src/security_engine/tests.rs" = 3566
 "crates/capsem-core/tests/mitm_integration.rs" = 2164
