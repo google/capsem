@@ -11,6 +11,7 @@ authors.workspace = true
 
 [dependencies]
 capsem-core = { path = "../capsem-core" }
+capsem-proto = { path = "../capsem-proto" }
 capsem-foundation = { path = "../capsem-foundation" }
 tokio.workspace = true
 serde.workspace = true

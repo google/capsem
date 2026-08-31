@@ -980,6 +980,7 @@ dependencies = [
  "capsem-core",
  "capsem-foundation",
  "capsem-guard",
+ "capsem-proto",
  "clap",
  "futures",
  "http",

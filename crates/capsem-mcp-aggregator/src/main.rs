@@ -29,7 +29,7 @@ use tracing::{debug, error, info, warn};
 
 use capsem_core::mcp::aggregator::*;
 use capsem_mcp_aggregator::server_manager::McpServerManager;
-use capsem_core::mcp::types::McpServerDef;
+use capsem_proto::mcp_contracts::McpServerDef;
 
 #[derive(Parser, Debug)]
 #[command(

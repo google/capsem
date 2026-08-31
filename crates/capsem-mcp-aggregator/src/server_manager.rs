@@ -29,7 +29,7 @@ use rmcp::{RoleClient, ServiceExt};
 use sse_stream::{Sse, SseStream};
 use tracing::{debug, info, warn};
 
-use capsem_core::mcp::types::*;
+use capsem_proto::mcp_contracts::*;
 
 /// One rmcp client connection. For stdio-pool servers, the manager keeps
 /// several of these in a `ServerPool`.
