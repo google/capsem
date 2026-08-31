@@ -2128,7 +2128,7 @@ release_suites = ["tests/capsem-release/", "tests/capsem-build-chain/"]
 # filename. The `test_gate_*` files are already named in [suites].source_contract.
 contract_globs = ["tests/test_*contract.py", "tests/test_release_*.py"]
 
-# The Rust coverage floor is 63, not 100. Some files -- uninstall, completions
+# The Rust coverage floor is 64, not 100. Some files -- uninstall, completions
 # -- are intentionally at 0% because they are thin shells over OS and CLI
 # primitives, and some defensive paths only execute under live VM traffic and
 # are covered by the integration suites rather than by unit tests. The floor
@@ -2137,13 +2137,12 @@ contract_globs = ["tests/test_*contract.py", "tests/test_release_*.py"]
 # Through Nextest, whose `ci` profile is the reason: a test that hangs
 # currently hangs the whole gate until the 7200-second lock timeout, and runs
 # have died past the two-hour mark. `slow-timeout` reports every 120s and fails
-# after three consecutive slow periods. Measured at 99s against 115s for the
-# plain runner on a warm workspace -- 14% -- with line coverage 65.11% against
-# 65.13%. The 23-line
-# difference is process-per-test isolation, not a selector mismatch; it is the
-# same with and without the target flags, and both clear the floor by 2pp.
+# after three consecutive slow periods. The post-extraction workspace measured
+# 65.24% across 79,404 lines and 4,536 tests on Linux, leaving 1.24 percentage
+# points of headroom above the ratchet. The floor catches meaningful suite loss
+# without making ordinary platform-dependent coverage variation flaky.
 rust_coverage = ["cargo", "llvm-cov", "nextest", "--workspace", "--bins", "--lib", "--tests", "--no-cfg-coverage"]
-rust_coverage_floor = "--fail-under-lines=63"
+rust_coverage_floor = "--fail-under-lines=64"
 # Nextest reads its profile from the environment; `--profile` on the command
 # line belongs to cargo-llvm-cov and would select a build profile instead.
 rust_test_profile_variable = "NEXTEST_PROFILE"

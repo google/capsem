@@ -7,6 +7,10 @@ mkdir -p "$OUTPUT_DIR"
 export NEXTEST_STATE_DIR="$OUTPUT_DIR/nextest"
 
 packages=(
+    capsem-assets
+    capsem-config
+    capsem-credentials
+    capsem-foundation
     capsem-core
     capsem-admin
     capsem-agent
