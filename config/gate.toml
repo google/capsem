@@ -1098,7 +1098,6 @@ max_lines = 1000
 "crates/capsem-logger/src/session_index/tests.rs" = 1205
 "crates/capsem-logger/src/writer.rs" = 1708
 "crates/capsem-logger/src/writer/tests.rs" = 2002
-"crates/capsem-logger/tests/roundtrip.rs" = 3345
 "crates/capsem-mcp/src/main.rs" = 1033
 "crates/capsem-mcp/src/tests.rs" = 1019
 "crates/capsem-mock-server/src/main.rs" = 1611
