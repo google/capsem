@@ -12,6 +12,7 @@ authors.workspace = true
 [[bin]]
 name = "capsem-app"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 tauri = { version = "2", features = ["custom-protocol"] }
@@ -38,5 +39,6 @@ workspace = true
 tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
+tauri = { version = "2", features = ["test"] }
 tempfile = "3"
 filetime = "0.2"
